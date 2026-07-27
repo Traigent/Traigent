@@ -20,6 +20,50 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `sync_session_id` on the exceptions a failed run raises — `OptimizationError`
+  (and therefore the subclasses raised from inside a run, e.g.
+  `CloudBrainUnavailableError`) and the typed `ResolutionError` (#2029). This
+  closes the gap #2020 recorded and left open: a run that raises mid-flight
+  never returns an `OptimizationResult`, so #2020's field could not reach the
+  caller — yet the trials that already completed are durably on disk, because
+  trials are persisted per-trial rather than batched at finalize. Since
+  `traigent sync --all` **skips failed sessions**, those trials were strandable
+  with no supported way to name them.
+
+  ```python
+  try:
+      result = agent.optimize_sync()
+  except (OptimizationError, ResolutionError) as exc:
+      if exc.sync_session_id:
+          subprocess.run(["traigent", "sync", exc.sync_session_id], check=True)
+      raise
+  ```
+
+  The id comes from the same locality + durability predicate the success path
+  uses, so it means exactly what it means on `OptimizationResult` — including
+  the store-relative caveat — and is `None` for the same reasons, plus one
+  more: a failure before any session exists has nothing to name. The attribute
+  defaults to `None` on every one of these types, so it is safe to read
+  unconditionally without `getattr`.
+
+  `ResolutionError` is **not** wrapped to carry the id. Its exact type is the
+  RFC 0001 §3.4 public contract that lets callers tell a governance rejection
+  (stale certificate, evidence leak) from a generic failure, so the id is
+  attached in place and the type identity is preserved.
+
+  Scope, precisely. The class-level `None` default — and therefore the promise
+  that a bare `exc.sync_session_id` is safe — covers `OptimizationError`,
+  its subclasses and `ResolutionError`. Non-`Exception` exits (`SystemExit`,
+  `GeneratorExit`, a test framework's outcome exceptions) also get the id
+  attached before they propagate, and are never swallowed, but have no class
+  default: read those with `getattr(exc, "sync_session_id", None)`.
+  `KeyboardInterrupt` / `asyncio.CancelledError` are not affected — they still
+  return a partial `OptimizationResult` carrying #2020's field rather than
+  raising. `CostLimitExceeded` inherits the attribute but always reads `None`:
+  the only thing that raises it is the pre-run cost-approval gate, which fires
+  before a session exists, and a mid-run cost limit stops gracefully instead of
+  raising.
+
 - `OptimizationResult.sync_session_id` — the id of the run you just finished in
   **that run's local session store**, and the argument
   `traigent sync <SESSION_ID>` accepts against that store (#2020).
@@ -63,9 +107,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     acknowledgement) keeps the id it was given even if finalize then fails.
     The existing log still advises `traigent local sync`, which is whole-store.
     A targeted repair path is follow-up work.
-  - A run that raises mid-flight re-raises instead of returning a result (the
+  - ~~A run that raises mid-flight re-raises instead of returning a result (the
     orchestrator's FAILED path), so no `sync_session_id` is delivered even
-    though the local record holds the trials that completed.
+    though the local record holds the trials that completed.~~ **Closed by
+    #2029** (below): the id now rides on the raised exception.
 
 ### Fixed
 

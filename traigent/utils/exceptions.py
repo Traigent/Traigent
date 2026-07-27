@@ -184,7 +184,31 @@ class EvaluationError(TraigentError):
 
 
 class OptimizationError(TraigentError):
-    """Error in optimization process."""
+    """Error in optimization process.
+
+    Attributes:
+        sync_session_id: Id of this run's record in **this run's local session
+            store** when the run failed mid-flight and the local store holds the
+            authoritative record for the trials that completed (#2029) — the
+            argument ``traigent sync <SESSION_ID>`` accepts against that store.
+            ``None`` when the backend tracked the run end-to-end (nothing to
+            upload), when no local record can be read, or when the failure
+            happened before a session existed. Same locality + durability
+            predicate as ``OptimizationResult.sync_session_id`` (#2020); the id
+            is store-relative in exactly the same way. Note that
+            ``traigent sync --all`` skips failed sessions, so this id is the
+            supported route for a failed run.
+
+            The class-level ``None`` below is what makes an unguarded
+            ``exc.sync_session_id`` safe, and it covers this type and its
+            subclasses only. Non-``Exception`` exits (``SystemExit`` and
+            friends) also get the id attached before they propagate, but have
+            no such default — read those with ``getattr``. Subclasses raised
+            *outside* the orchestrator's failure handler never carry an id; see
+            ``CostLimitExceeded``.
+    """
+
+    sync_session_id: str | None = None
 
 
 class PluginError(TraigentError):
@@ -324,6 +348,13 @@ class CostLimitExceeded(OptimizationError):
     The mid-run cost-limit contract is intentionally graceful: optimization
     returns a partial result and callers should inspect
     ``result.stop_reason == "cost_limit"``.
+
+    Inherits ``sync_session_id`` from ``OptimizationError`` but ALWAYS reads
+    ``None`` (#2029): the pre-run approval gate (``_check_cost_approval``)
+    raises this ahead of the orchestrator's try block, before a session exists
+    and before any attach site — and there is nothing to sync anyway, because
+    no trial has run. The graceful mid-run stop above is the case that has
+    trials, and that one returns a result carrying ``sync_session_id`` (#2020).
     """
 
     def __init__(

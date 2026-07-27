@@ -1059,6 +1059,14 @@ class OptimizationResult:
             along in any verbatim ``metadata`` round-trip (e.g.
             ``ConfigStateManager``), where it is exactly as stale as a restored
             field would be; read this field, never the mirror, as a sync target.
+            This field only covers runs that RETURN. A run that raises never
+            produces an ``OptimizationResult`` at all, yet its completed trials
+            are already on disk (trials persist per-trial, not at finalize) and
+            ``traigent sync --all`` skips failed sessions — so the same id is
+            carried on the raised exception instead, as
+            ``OptimizationError.sync_session_id`` / ``ResolutionError``'s
+            (#2029). Same predicate, same store-relative caveat; see those
+            docstrings.
     """
 
     trials: list[TrialResult]
