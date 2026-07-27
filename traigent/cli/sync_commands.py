@@ -44,7 +44,13 @@ def _emit_session_warnings(result: dict[str, Any]) -> None:
 
 
 def _synced_session_id(result: dict[str, Any]) -> str:
-    """Return the id SyncManager actually synced, or raise if it did not report one.
+    """Return the LOCAL session id SyncManager synced, or raise if it reported none.
+
+    This must be the id of the row in **local** storage — both consumers key off
+    local state: ``storage.load_session`` for ``--clean`` verification and
+    ``cleanup_after_sync`` for deletion. It is deliberately *not* the cloud-side
+    identity, which the same result carries separately as ``cloud_session_id``.
+    Returning a canonical/cloud id here would make both local lookups miss.
 
     Downstream lookups (``--clean`` verification and cleanup) must key off the id
     the sync actually wrote, never the raw CLI argument. Substituting a default

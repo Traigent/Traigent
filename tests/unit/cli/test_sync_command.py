@@ -294,7 +294,17 @@ def test_sync_all_without_usable_id_fails_loudly(label, id_fields):
     assert result.exit_code == 1, (
         f"Expected exit 1 for a {label} session_id but got {result.exit_code}"
     )
-    assert "session_id" in result.output
+    # Assert on text only the strict-contract check emits. A bare ``r["session_id"]``
+    # also exits 1 for the "absent" case (KeyError, printed as just 'session_id'),
+    # so a plain "session_id" substring cannot tell the two apart.
+    assert "no usable 'session_id'" in result.output, (
+        f"Expected the strict-contract error for a {label} session_id, "
+        f"got: {result.output!r}"
+    )
+    assert "success" in result.output, (
+        f"Expected the echoed status in the error for a {label} session_id, "
+        f"got: {result.output!r}"
+    )
     manager.cleanup_after_sync.assert_not_called()
 
 
