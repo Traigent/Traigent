@@ -58,9 +58,13 @@ def _synced_session_id(result: dict[str, Any]) -> str:
     is verified, ``--clean`` deletes nothing and still exits 0. A result that
     claims success without a usable ``session_id`` is a contract violation, so it
     fails loudly here instead.
+
+    A whitespace-only id is just as unusable as an empty one — ``load_session("   ")``
+    misses and ``cleanup_after_sync`` has nothing to delete — so it is rejected too,
+    not silently stripped: the stripped value is not an id the sync ever wrote.
     """
     sid = result.get("session_id")
-    if not isinstance(sid, str) or not sid:
+    if not isinstance(sid, str) or not sid.strip():
         raise ValueError(
             "Sync result reported status "
             f"{result.get('status')!r} but no usable 'session_id' (got {sid!r}); "

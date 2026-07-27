@@ -242,10 +242,14 @@ def test_sync_clean_skips_when_persisted_state_is_not_synced(label, sync_state):
 
 # A result that claims success without a usable id is a contract violation: the
 # synced id is unknowable, so #2030's silent no-op must become a loud failure.
+# Whitespace-only ids are unusable for the same reason "" is — load_session("   ")
+# misses — but they are truthy, so a bare ``not sid`` check waves them through.
 _UNUSABLE_ID_RESULTS = [
     ("absent", {}),
     ("none", {"session_id": None}),
     ("empty", {"session_id": ""}),
+    ("spaces", {"session_id": "   "}),
+    ("tab-newline", {"session_id": "\t\n"}),
 ]
 
 
