@@ -508,12 +508,13 @@ def _validate_attribution(value: Any, *, what: str) -> None:
         raise AnalyticsClientError(
             f"Malformed {what} response: attribution must be first-party Traigent."
         )
-    for field in ("headline", "why"):
+    text_limits = {"headline": 500, "why": 1000}
+    for field, max_length in text_limits.items():
         text = value.get(field)
-        if not isinstance(text, str) or not text:
+        if not isinstance(text, str) or not text.strip() or len(text) > max_length:
             raise AnalyticsClientError(
                 f"Malformed {what} response: attribution.{field} must be a "
-                "non-empty string."
+                f"non-blank string of at most {max_length} characters."
             )
     basis = value.get("basis")
     if (
@@ -523,10 +524,12 @@ def _validate_attribution(value: Any, *, what: str) -> None:
             not isinstance(token, str) or token not in _ATTRIBUTION_BASIS_TOKENS
             for token in basis
         )
+        or len(basis) > 5
+        or len(set(basis)) != len(basis)
     ):
         raise AnalyticsClientError(
             f"Malformed {what} response: attribution.basis must be a non-empty "
-            "list of known basis tokens."
+            "list of at most five unique known basis tokens."
         )
     engine = value.get("engine")
     if not isinstance(engine, str) or engine not in _ATTRIBUTION_ENGINES:

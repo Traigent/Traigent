@@ -445,11 +445,13 @@ def _validate_attribution(value: Any) -> None:
         raise ValueError("Planner V2 attribution.source must be 'traigent'")
     if value.get("label") != "Traigent":
         raise ValueError("Planner V2 attribution.label must be 'Traigent'")
-    for field in ("headline", "why"):
+    text_limits = {"headline": 500, "why": 1000}
+    for field, max_length in text_limits.items():
         text = value.get(field)
-        if not isinstance(text, str) or not text:
+        if not isinstance(text, str) or not text.strip() or len(text) > max_length:
             raise ValueError(
-                f"Planner V2 attribution.{field} must be a non-empty string"
+                f"Planner V2 attribution.{field} must be a non-blank string "
+                f"of at most {max_length} characters"
             )
     basis = value.get("basis")
     if (
@@ -459,10 +461,12 @@ def _validate_attribution(value: Any) -> None:
             not isinstance(token, str) or token not in _ATTRIBUTION_BASIS_TOKENS
             for token in basis
         )
+        or len(basis) > 5
+        or len(set(basis)) != len(basis)
     ):
         raise ValueError(
-            "Planner V2 attribution.basis must be a non-empty list of known "
-            "basis tokens"
+            "Planner V2 attribution.basis must be a non-empty list of at most "
+            "five unique known basis tokens"
         )
     engine = value.get("engine")
     if not isinstance(engine, str) or engine not in _ATTRIBUTION_ENGINES:
