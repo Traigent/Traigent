@@ -935,3 +935,99 @@ def test_a_type_violating_real_result_fails_the_save_instead_of_downgrading(
     persistence = PersistenceManager(base_dir=tmp_path)
     with pytest.raises(ValueError, match="definitely_not_a_status"):
         persistence.save_result(result, "bogus-status")
+
+
+class _UnserializableMetadataValue:
+    """A metadata value whose ``to_dict()`` raises, as a plugin's might.
+
+    ``_safe_json_value`` calls ``to_dict()`` on anything that has one, and that
+    branch is unguarded — so an arbitrary caller exception reaches the save.
+    """
+
+    def to_dict(self) -> dict:
+        raise ValueError("boom: this object refuses to serialize")
+
+
+def test_unserializable_metadata_degrades_the_artifact_but_does_not_destroy_it(
+    tmp_path, caplog
+) -> None:
+    """A sanitization failure must cost fidelity, not the whole run.
+
+    ``encode_result_fields`` writes ``result.metadata`` in full, where the
+    pre-#2031 artifact only ever carried a curated four keys of it. That
+    widened what the sanitizer walks to *everything a user or plugin put in
+    metadata* — and ``metadata`` is declared ``dict[str, Any]``, so an object
+    in there is not the type violation the strict re-raise exists for. Letting
+    it out meant the entire artifact was lost, where the previous release
+    wrote the curated one.
+
+    So this degrades to exactly that curated artifact, loudly, and the run
+    stays on disk.
+    """
+    result = _sentinel_result()
+    result.metadata = {
+        "function_name": "answer_question",
+        "configuration_space": {"model": ["cheap", "smart"]},
+        "plugin_payload": _UnserializableMetadataValue(),
+    }
+
+    persistence = PersistenceManager(base_dir=tmp_path)
+    with caplog.at_level(logging.WARNING, logger="traigent.utils.persistence"):
+        persistence.save_result(result, "unserializable-metadata")
+
+    metadata = json.loads(
+        (tmp_path / "unserializable-metadata" / "metadata.json").read_text()
+    )
+    # Degraded: no full record, and the log says why rather than swallowing it.
+    assert "result_fields" not in metadata
+    assert SCHEMA_VERSION_KEY not in metadata
+    assert "boom" in caplog.text
+    assert "metadata" in caplog.text
+
+    # But the run is persisted, and the curated summary is intact and readable.
+    assert metadata["function_name"] == "answer_question"
+    assert metadata["best_score"] == _SENTINELS["best_score"]
+    loaded = persistence.load_result("unserializable-metadata")
+    assert loaded.best_config == _SENTINELS["best_config"]
+
+
+def test_the_strict_re_raise_still_covers_a_declared_field_type_violation(
+    tmp_path,
+) -> None:
+    """The degrade above must not become a blanket "never fail the save".
+
+    The two failure classes are different: an unserializable object under a
+    ``dict[str, Any]`` key is within that field's declared type, while a
+    ``timestamp`` that is not a timestamp is a caller bug that would otherwise
+    reach disk as an artifact ``load_result`` refuses. Only the first degrades.
+    """
+    result = _sentinel_result()
+    result.timestamp = "not-a-date"  # type: ignore[assignment]
+    result.metadata = {"plugin_payload": _UnserializableMetadataValue()}
+
+    persistence = PersistenceManager(base_dir=tmp_path)
+    with pytest.raises(ValueError, match="not-a-date"):
+        persistence.save_result(result, "violating-timestamp")
+
+
+def test_a_duck_typed_result_with_unserializable_metadata_also_degrades(
+    tmp_path, caplog
+) -> None:
+    """The duck-typed door gets the same treatment, for the same reason."""
+    duck = _DuckTypedResult()
+    duck.metadata = {
+        "function_name": "answer_question",
+        "x": _UnserializableMetadataValue(),
+    }
+
+    persistence = PersistenceManager(base_dir=tmp_path)
+    with caplog.at_level(logging.WARNING, logger="traigent.utils.persistence"):
+        persistence.save_result(duck, "duck-unserializable")
+
+    metadata = json.loads(
+        (tmp_path / "duck-unserializable" / "metadata.json").read_text()
+    )
+    assert "result_fields" not in metadata
+    assert persistence.load_result("duck-unserializable").best_config == {
+        "model": "cheap"
+    }

@@ -231,6 +231,100 @@ def test_legacy_artifact_loads_with_defaults_and_logs_what_was_lost(
         assert name in caplog.text
 
 
+@pytest.mark.parametrize("bad_timestamp", [None, "not-a-date", 1773584422])
+def test_the_writer_refuses_what_its_own_loader_refuses(
+    tmp_path, bad_timestamp
+) -> None:
+    """Stamping the schema version is a promise the writer has to keep.
+
+    ``SCHEMA_VERSION_KEY`` tells the reader "every restorable field is present
+    and readable, so a missing one is corruption". This writer dumps the whole
+    dataclass, and before the fix it stamped that promise without running the
+    encoder: ``asdict`` + ``json.dump(default=str)`` wrote ``timestamp: None``
+    happily, and ``load_optimization_results`` then refused the file it had
+    just written. The failure surfaced at read time, on data already on disk,
+    arbitrarily far from the caller that caused it — and the artifact was a
+    total loss, because nothing had validated it while the caller was still
+    around to be told.
+
+    ``PersistenceManager.save_result`` already refused these (#2031); routing
+    this writer through the same encoder is what makes that true of *both*
+    writers rather than one.
+    """
+    result = _sentinel_result()
+    result.timestamp = bad_timestamp  # type: ignore[assignment]
+
+    path = tmp_path / "unwritable.json"
+    saver = _manager(tmp_path)
+    saver._optimization_results = result
+
+    with pytest.raises(ValueError, match="timestamp"):
+        saver.save_optimization_results(str(path))
+
+    # And no artifact claiming a schema version it cannot honour is left behind.
+    assert not path.exists()
+
+
+def test_the_writer_refuses_a_status_its_loader_would_have_degraded(tmp_path) -> None:
+    """Same asymmetry for ``status``, caught on the write instead of the read.
+
+    The decoder is deliberately lenient here — an unrecognized member restores
+    as ``UNKNOWN`` (#1302 AC3) rather than raising — so an unvalidated write
+    did not fail loudly on load either: it silently downgraded the run's
+    outcome. Refusing the write is what keeps a caller bug from becoming a
+    quietly wrong artifact.
+    """
+    result = _sentinel_result()
+    result.status = "bogus"  # type: ignore[assignment]
+
+    path = tmp_path / "unwritable-status.json"
+    saver = _manager(tmp_path)
+    saver._optimization_results = result
+
+    with pytest.raises(ValueError, match="bogus"):
+        saver.save_optimization_results(str(path))
+
+    assert not path.exists()
+
+
+def test_everything_this_writer_stamps_is_readable_by_its_own_loader(
+    tmp_path, round_trip
+) -> None:
+    """The invariant behind the two refusals above, stated positively."""
+    path = _save(tmp_path, _sentinel_result(), name="readable.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload[SCHEMA_VERSION_KEY] == RESULT_SCHEMA_VERSION
+    # The encoder normalizes the timestamp; `default=str` used to write the
+    # space-separated `str(datetime)` form. Both decode to the same instant,
+    # and the round_trip fixture proves this one does.
+    assert payload["timestamp"] == _SENTINELS["timestamp"].isoformat()
+    assert payload["status"] == "cancelled"
+    assert round_trip.timestamp == _SENTINELS["timestamp"]
+
+
+def test_the_writer_still_dumps_the_whole_dataclass(tmp_path) -> None:
+    """Routing through the encoder must not narrow this format to the payload.
+
+    ``ConfigStateManager``'s artifact has always been a whole-dataclass dump —
+    trials inline, RESET fields included (the *loader* is what drops them,
+    #2020) — and readers of the raw JSON exist. The encoder re-encodes three
+    fields; it does not re-shape the file.
+    """
+    path = _save(tmp_path, _sentinel_result(), name="shape.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["trials"][0]["trial_id"] == "trial-sentinel-0"
+    assert "sync_session_id" in payload
+    assert "_experiment_stats" in payload
+    assert payload["metadata"] == _SENTINELS["metadata"]
+    # Nested dataclasses still arrive as dicts, not as `str(obj)`.
+    assert payload["preset_selection"]["selected_configs"] == [
+        {"model": "cheap"},
+        {"model": "smart"},
+    ]
+
+
 def test_restored_status_still_drives_the_manager_state(tmp_path) -> None:
     """A non-COMPLETED status is now really restored, so check the state mapping.
 

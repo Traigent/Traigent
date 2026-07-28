@@ -56,7 +56,16 @@ def _make_session(storage_root: Path, trial_count: int, *, legacy: bool) -> str:
 
 
 def test_local_show_detailed_reports_recorded_trials(tmp_path):
-    """`local show --format detailed` prints 3/3, not the old 3/0."""
+    """`local show --format detailed` prints a bare count, not the old 3/0.
+
+    Not "3/3" either. The session declares a 10-trial budget and stopped after
+    3, and since #2032 both halves of the old ratio are ``len(trials)`` — so it
+    could only ever render ``n/n``. "3/0" was obviously broken and ignored;
+    "3/3" is plausible, would be believed, and conceals the early stop. There
+    is no honest denominator available (see the comment at
+    ``local_commands.py`` in the detailed branch), so a single count is what
+    the display promises.
+    """
     storage_root = tmp_path / "storage"
     session_id = _make_session(storage_root, 3, legacy=False)
 
@@ -67,10 +76,11 @@ def test_local_show_detailed_reports_recorded_trials(tmp_path):
     )
 
     assert result.exit_code == 0, result.output
-    assert "Trials: 3/3" in result.output
-    assert "Trials: 3/0" not in result.output
-    # The declared budget of 10 is not the recorded count.
-    assert "Trials: 3/10" not in result.output
+    assert "Trials: 3\n" in result.output
+    # No ratio at all: neither the old broken one, nor the tautological one,
+    # nor the fabricated 10-trial budget as a denominator.
+    for tautology in ("Trials: 3/0", "Trials: 3/3", "Trials: 3/10"):
+        assert tautology not in result.output
 
 
 def test_local_show_json_reports_recorded_trials(tmp_path):
@@ -103,8 +113,9 @@ def test_local_show_detailed_reconciles_legacy_zero_record(tmp_path):
     )
 
     assert result.exit_code == 0, result.output
-    assert "Trials: 2/2" in result.output
+    assert "Trials: 2\n" in result.output
     assert "Trials: 2/0" not in result.output
+    assert "Trials: 2/2" not in result.output
 
 
 def test_local_show_json_reconciles_legacy_zero_record(tmp_path):

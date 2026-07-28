@@ -1107,6 +1107,16 @@ class OptimizationResult:
     # locally — either an intentionally local mode or a hybrid/cloud run that
     # degraded to local-only because the backend was unreachable mid-run. Also
     # mirrored in ``metadata["source"]`` for callers that inspect metadata.
+    #
+    # A *third* value, "unknown", reaches consumers only through persistence
+    # (issue #2031): both loaders return it for a result whose provenance was
+    # never recorded — a pre-#2031 artifact, which stored no source at all —
+    # and the encoder writes it for an object that carries no source, rather
+    # than substituting the "backend" default below and manufacturing a claim.
+    # A fresh run is always "backend" or "local". Branch on it accordingly:
+    # `if source == "local": ... else: <assume backend>` misreports an unknown
+    # run as a cloud-tracked one. See UNRESTORED_SOURCE in
+    # traigent/utils/optimization_result_persistence.py.
     source: str = "backend"
 
     # Winner-vs-runner-up paired margin significance (issue #1866). Additive

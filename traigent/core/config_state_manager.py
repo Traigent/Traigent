@@ -618,23 +618,26 @@ class ConfigStateManager:
 
         Raises:
             ConfigurationError: If no optimization results to save
+            ValueError: If the result holds a ``status`` or ``timestamp``
+                :meth:`load_optimization_results` could not read back.
         """
         if not self._optimization_results:
             raise ConfigurationError("No optimization results to save")
 
-        from dataclasses import asdict
-
         from traigent.utils.optimization_result_persistence import (
-            RESULT_SCHEMA_VERSION,
-            SCHEMA_VERSION_KEY,
+            encode_whole_result_dump,
         )
 
-        result_dict = asdict(self._optimization_results)
-        # Stamp the schema version so the loader can tell a full-fidelity
-        # artifact (every restorable field present; a missing one is
-        # corruption) from a pre-#2031 one (missing fields are expected and
-        # take dataclass defaults).
-        result_dict[SCHEMA_VERSION_KEY] = RESULT_SCHEMA_VERSION
+        # Dump the whole dataclass through the #2031 encoder, which stamps the
+        # schema version — so the loader can tell a full-fidelity artifact
+        # (every restorable field present; a missing one is corruption) from a
+        # pre-#2031 one (missing fields are expected and take dataclass
+        # defaults) — and *validates* the fields the loader decodes explicitly.
+        # Stamping without encoding is what let this writer persist a
+        # version-1 artifact its own loader then refused: a bare `asdict` +
+        # `json.dump(default=str)` wrote `timestamp: None` happily and
+        # load_optimization_results raised on it, one process later.
+        result_dict = encode_whole_result_dump(self._optimization_results)
         output_path = Path(path).expanduser()
         base_dir = (
             output_path.parent if output_path.is_absolute() else Path.cwd().resolve()

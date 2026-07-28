@@ -86,10 +86,23 @@ SCHEMA_VERSION_KEY = "_schema_version"
 #: results with backend records must be able to tell the difference.
 UNRESTORED_OPTIMIZATION_ID_PREFIX = "unrestored-legacy:"
 
-#: ``source`` given to a result restored from a pre-#2031 artifact. Deliberately
-#: not ``"backend"`` (the dataclass default): claiming backend provenance for a
-#: run that may well have been local is the #1265 regression.
+#: ``source`` for a result whose provenance was never recorded — restored from a
+#: pre-#2031 artifact, or encoded from an object that carries no ``source`` at
+#: all (see :data:`_UNRESTORED_DEFAULTS`). Deliberately not ``"backend"`` (the
+#: dataclass default): claiming backend provenance for a run that may well have
+#: been local is the #1265 regression. Consumers branching on ``source`` must
+#: treat this third value as "not known", not as the negation of ``"local"``.
 UNRESTORED_SOURCE = "unknown"
+
+#: Fields whose declared dataclass default must never stand in for a value the
+#: writer did not hold. Every other defaultable field defaults to an *absence*
+#: (``None`` / ``{}`` / ``[]``), which is a faithful encoding of "this object
+#: carried nothing here"; ``source`` defaults to ``"backend"``, which is a
+#: positive provenance claim about a run that may well have been local — the
+#: #1265 regression. :func:`_decode_legacy` refuses that substitution when
+#: *reading* a pre-#2031 artifact; this table is the same refusal when
+#: *writing* one from an object that has no ``source`` at all.
+_UNRESTORED_DEFAULTS: dict[str, Any] = {"source": UNRESTORED_SOURCE}
 
 _LEGACY_CONFIG_STATE = "config_state"
 _LEGACY_PERSISTENCE = "persistence"
@@ -279,6 +292,17 @@ def _default_for(name: str) -> Any:
     return dataclasses.MISSING
 
 
+#: The restorable fields whose persisted form is not their in-memory form, so
+#: both halves of the round trip handle them explicitly (:func:`_encode_value` /
+#: :func:`_decode_value`); every other field is stored as it stands. Named
+#: rather than left implicit in the ``if`` chains because these are exactly the
+#: fields a *decoder* can refuse, and therefore exactly the fields any writer
+#: that stamps :data:`SCHEMA_VERSION_KEY` must run through the encoder first —
+#: see :func:`encode_whole_result_dump`. Pinned by
+#: ``test_explicitly_encoded_names_the_fields_whose_form_actually_changes``.
+_EXPLICITLY_ENCODED: tuple[str, ...] = ("preset_selection", "status", "timestamp")
+
+
 def _encode_timestamp(value: Any) -> str:
     """Encode a run timestamp, refusing any value the reader could not decode.
 
@@ -388,6 +412,14 @@ def _read_field(result: Any, name: str) -> Any:
       produced. There is deliberately no second hand-written default table here
       that could drift away from the dataclass.
 
+    The one exception is :data:`_UNRESTORED_DEFAULTS`: a declared default that is
+    a positive *claim* rather than an absence must not be written into a
+    versioned artifact on behalf of an object that never made it. Unlike the
+    legacy path, where a defaulted field is announced by
+    :func:`_decode_legacy`'s warning, an encoded value is indistinguishable from
+    a recorded one once the artifact is on disk — so the honest sentinel has to
+    be chosen at write time or not at all.
+
     A field with neither ``default`` nor ``default_factory`` is required, so
     there is no declared value to fall back to and none is fabricated: that is a
     real contract violation and still raises, but as a ``TypeError`` naming both
@@ -396,6 +428,18 @@ def _read_field(result: Any, name: str) -> Any:
     value = getattr(result, name, dataclasses.MISSING)
     if value is not dataclasses.MISSING:
         return value
+    if name in _UNRESTORED_DEFAULTS:
+        unrestored = _UNRESTORED_DEFAULTS[name]
+        logger.warning(
+            "Persisting a %s as an optimization result: it has no '%s' "
+            "attribute, and OptimizationResult's declared default (%r) is a "
+            "claim rather than an absence, so %r is recorded instead.",
+            type(result).__name__,
+            name,
+            _default_for(name),
+            unrestored,
+        )
+        return unrestored
     default = _default_for(name)
     if default is dataclasses.MISSING:
         raise TypeError(
@@ -423,7 +467,9 @@ def encode_result_fields(result: OptimizationResult) -> dict[str, Any]:
     Fields in :data:`RESULT_RESET` are never written. Fields absent from a
     duck-typed ``result`` fall back to their declared dataclass default — see
     :func:`_read_field` for why that is a faithful encoding rather than a
-    fabricated one.
+    fabricated one — except for :data:`_UNRESTORED_DEFAULTS`, where the declared
+    default is a claim and the honest sentinel is written instead: an absent
+    ``source`` is recorded as :data:`UNRESTORED_SOURCE`, never as ``"backend"``.
 
     Fidelity is per *field*, and the free-form containers round-trip as their
     JSON-native equivalents rather than as their exact Python types: the on-disk
@@ -450,6 +496,46 @@ def encode_result_fields(result: OptimizationResult) -> dict[str, Any]:
         }
     )
     return encoded
+
+
+def encode_whole_result_dump(result: OptimizationResult) -> dict[str, Any]:
+    """Return a stamped, validated whole-dataclass dump of ``result``.
+
+    ``ConfigStateManager.save_optimization_results`` persists the entire
+    dataclass rather than the curated subset :func:`encode_result_fields` builds
+    for ``PersistenceManager``, so it cannot use that function — but it stamps
+    the same :data:`SCHEMA_VERSION_KEY`, which is a promise to *its own* reader
+    that every restorable field is present and readable. A writer that stamps
+    the version without running the encoder can persist an artifact its own
+    loader then refuses: ``asdict`` + ``json.dump(default=str)`` happily writes
+    ``timestamp: None`` or ``status: "bogus"``, and the failure surfaces at read
+    time, on data already on disk, arbitrarily far from the caller that caused
+    it. That is the asymmetry :func:`_encode_timestamp` exists to close, and it
+    has to close on both writers or it is not closed.
+
+    Only the fields whose persisted form differs from their in-memory one are
+    re-encoded (:data:`_EXPLICITLY_ENCODED`) — those are exactly the fields
+    :func:`_decode_value` treats specially, so they are exactly the ones a
+    decoder can refuse. Everything else keeps its ``asdict`` form, which
+    recurses into nested dataclasses and is what this format has always written.
+
+    Fields in :data:`RESULT_RESET` are left in the dump (the loader drops them
+    on read — see ``decode_result``) rather than stripped here, so the on-disk
+    shape of this format does not change.
+
+    Raises:
+        ValueError: If ``status`` or ``timestamp`` holds a value
+            :func:`decode_result` could not read back.
+        TypeError: If ``preset_selection`` is neither ``None`` nor a dataclass.
+    """
+    dump = dataclasses.asdict(result)
+    dump[SCHEMA_VERSION_KEY] = RESULT_SCHEMA_VERSION
+    for name in _EXPLICITLY_ENCODED:
+        # Read from `result`, not from `dump`: `asdict` has already flattened
+        # nested dataclasses, so `preset_selection` would arrive here as a dict
+        # that `_encode_value` (rightly) refuses.
+        dump[name] = _encode_value(name, _read_field(result, name))
+    return dump
 
 
 def _legacy_view(

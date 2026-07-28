@@ -995,6 +995,85 @@ def test_every_encoder_branch_is_at_least_as_strict_as_its_decoder() -> None:
         assert manifest._decode_value(name, marker) is marker
 
 
+def test_explicitly_encoded_names_the_fields_whose_form_actually_changes() -> None:
+    """``_EXPLICITLY_ENCODED`` is derived from behaviour, not maintained by hand.
+
+    It is what a whole-dataclass writer re-encodes (see
+    :func:`encode_whole_result_dump`), so if a fourth field ever gains an
+    ``_encode_value`` branch and is not added here, that writer keeps stamping
+    the schema version over a value its own decoder may refuse — the exact
+    asymmetry the config-state writer had. Derived here from the sentinel
+    result: a field whose persisted *type* differs from its in-memory type is
+    a field the encoder transforms, and therefore one the decoder can reject.
+    """
+    result = _sentinel_result()
+    transformed = {
+        name
+        for name in RESULT_RESTORE - {"trials"}
+        if type(manifest._encode_value(name, getattr(result, name)))
+        is not type(getattr(result, name))
+    }
+
+    assert transformed == set(manifest._EXPLICITLY_ENCODED)
+
+
+def test_the_whole_dump_encoder_stamps_and_validates_the_same_fields() -> None:
+    """The config-state writer's dump is stamped *and* checked, not just stamped.
+
+    ``ConfigStateManager`` persists ``asdict(result)`` rather than the curated
+    payload ``encode_result_fields`` builds, but it stamps the same schema
+    version — a promise to its own reader that every restorable field is
+    present and readable.
+    """
+    result = _sentinel_result()
+
+    dump = manifest.encode_whole_result_dump(result)
+
+    assert dump[SCHEMA_VERSION_KEY] == RESULT_SCHEMA_VERSION
+    # The three transformed fields carry their encoded form, not their raw one.
+    assert dump["status"] == "cancelled"
+    assert dump["timestamp"] == _SENTINELS["timestamp"].isoformat()
+    assert dump["preset_selection"]["preset_name"] == "balanced"
+    # `asdict` recursion is preserved for everything else, trials included.
+    assert dump["trials"][0]["trial_id"] == "trial-sentinel-0"
+    assert dump["metadata"] == _SENTINELS["metadata"]
+    # The RESET fields stay in the dump; the loader is what drops them (#2020).
+    assert "sync_session_id" in dump
+
+    # And what it wrote decodes back to what went in.
+    restored = decode_result(dump, trials=result.trials, artifact_name="whole-dump")
+    assert restored.status is OptimizationStatus.CANCELLED
+    assert restored.timestamp == _SENTINELS["timestamp"]
+    assert restored.sync_session_id is None
+
+
+@pytest.mark.parametrize("bad_timestamp", [None, "not-a-date", 1773584422])
+def test_the_whole_dump_encoder_refuses_what_its_own_loader_refuses(
+    bad_timestamp,
+) -> None:
+    """A stamped artifact must always be readable — on *both* writers.
+
+    ``asdict`` + ``json.dump(default=str)`` wrote these happily, and the
+    version stamp then told the reader a missing or unreadable field was
+    corruption. The failure surfaced at read time, on data already on disk,
+    arbitrarily far from the caller that caused it.
+    """
+    result = _sentinel_result()
+    result.timestamp = bad_timestamp  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="timestamp"):
+        manifest.encode_whole_result_dump(result)
+
+
+def test_the_whole_dump_encoder_refuses_an_unwritable_status() -> None:
+    """Same asymmetry for ``status``: refused on the write, not on the read."""
+    result = _sentinel_result()
+    result.status = "bogus"  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="bogus"):
+        manifest.encode_whole_result_dump(result)
+
+
 def test_encoder_never_writes_a_reset_field() -> None:
     """The writer side of the #2020 guarantee."""
     result = _sentinel_result()
@@ -1081,11 +1160,63 @@ def test_encodes_a_duck_typed_partial_result_using_declared_defaults() -> None:
     }
     for name in ("total_cost", "stop_reason", "experiment_id", "best_config_margin"):
         assert encoded[name] is defaults[name] is None
-    assert encoded["source"] == defaults["source"] == "backend"
+
+    # ... except `source`, whose declared default is a claim. See
+    # test_an_absent_source_is_never_encoded_as_backend_provenance.
+    assert defaults["source"] == "backend"
+    assert encoded["source"] == manifest.UNRESTORED_SOURCE
 
     # default_factory fields get a fresh instance, never a shared one.
     assert encoded["warnings"] == []
     assert encoded["warnings"] is not encode_result_fields(_PartialResult())["warnings"]
+
+
+def test_an_absent_source_is_never_encoded_as_backend_provenance(caplog) -> None:
+    """The one declared default that must not be substituted on the way *out*.
+
+    Every other defaultable field defaults to an absence (``None``/``{}``/
+    ``[]``), so writing it for an object that has no such attribute records
+    "nothing here" — true. ``source`` defaults to ``"backend"``, a positive
+    provenance claim about a run that may well have been local: the #1265
+    regression. ``_decode_legacy`` already refuses that substitution when
+    *reading* a pre-#2031 artifact, and says so in the log; the encode path made
+    it silently, and the result was a well-formed versioned artifact the reader
+    cannot tell apart from a genuine backend run.
+
+    So the honest sentinel has to be chosen at write time — after the artifact
+    is on disk there is no evidence left that a claim was manufactured.
+    """
+    partial = _PartialResult()
+    assert not hasattr(partial, "source")
+
+    with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
+        encoded = encode_result_fields(partial)
+
+    assert encoded["source"] == "unknown"
+    assert encoded["source"] != "backend"
+    assert "source" in caplog.text
+
+    # And it survives the round trip as "unknown": a consumer that reads the
+    # artifact back gets the honest value, not a laundered one.
+    restored = decode_result(encoded, trials=[], artifact_name="duck-typed")
+    assert restored.source == manifest.UNRESTORED_SOURCE
+
+    # A result that *does* carry provenance is untouched by any of this.
+    partial.source = "local"
+    assert encode_result_fields(partial)["source"] == "local"
+
+
+def test_a_real_result_still_encodes_its_declared_backend_default() -> None:
+    """The sentinel fires on *absence*, not on the value "backend" itself.
+
+    A real ``OptimizationResult`` always carries the attribute, so a genuine
+    backend run must still record ``"backend"`` — degrading that to "unknown"
+    would be the same defect pointed the other way.
+    """
+    result = _sentinel_result()
+    result.source = "backend"
+
+    assert encode_result_fields(result)["source"] == "backend"
 
 
 def test_missing_required_field_raises_a_named_error_not_attribute_error() -> None:

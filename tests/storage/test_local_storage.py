@@ -796,3 +796,47 @@ class TestTotalTrialsBookkeeping:
         assert info["total_trials"] == 3
         assert recorded == 3
         assert first != second
+
+    def test_from_dict_reconciles_the_same_legacy_record_as_load_session(self):
+        """Both deserializers must agree — ``from_dict`` is the other one.
+
+        ``OptimizationSession.from_dict`` is a public classmethod on the
+        dataclass whose docstring declares ``total_trials == len(trials)`` an
+        invariant. Reconciling only in ``LocalStorageManager.load_session``
+        left it reporting 0 next to a three-trial list for exactly the records
+        the other reader repairs, so the same file answered differently
+        depending on which door it came through.
+        """
+        session_id = self._make_legacy_record("legacy_from_dict", 3)
+        raw = self._read_raw(session_id)
+
+        assert raw["total_trials"] == 0
+        assert len(raw["trials"]) == 3
+
+        from_dict = OptimizationSession.from_dict(raw)
+        loaded = self.storage.load_session(session_id)
+
+        assert from_dict.total_trials == 3
+        assert from_dict.total_trials == len(from_dict.trials)
+        assert from_dict.total_trials == loaded.total_trials
+
+    def test_from_dict_leaves_an_already_consistent_record_alone(self):
+        """Reconciliation is a repair, not an unconditional overwrite."""
+        session_id = self.storage.create_session("consistent_from_dict")
+        for index in range(2):
+            self.storage.add_trial_result(session_id, {"param": index}, 0.5)
+
+        raw = self._read_raw(session_id)
+        session = OptimizationSession.from_dict(raw)
+
+        assert session.total_trials == 2
+        assert session.completed_trials == 2
+
+    def test_from_dict_on_a_trial_less_record_reports_zero(self):
+        """An empty session is consistent at 0 and stays there."""
+        session_id = self.storage.create_session("empty_from_dict")
+
+        session = OptimizationSession.from_dict(self._read_raw(session_id))
+
+        assert session.total_trials == 0
+        assert session.trials == []

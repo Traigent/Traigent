@@ -129,9 +129,12 @@ class OptimizationSession:
     status: str  # not_started, pending, running, completed, failed, cancelled
     # Number of trials RECORDED on this session. Invariant: ``total_trials ==
     # len(trials)``. Maintained by ``add_trial_result`` and re-asserted by
-    # ``finalize_session``; ``load_session`` reconciles it in memory so records
+    # ``finalize_session``; both deserializers — ``load_session`` and
+    # ``OptimizationSession.from_dict`` — reconcile it in memory so records
     # written before #2032 (which froze it at the 0 set at construction, next
-    # to a non-zero ``completed_trials``) report a truthful count.
+    # to a non-zero ``completed_trials``) report a truthful count. Any future
+    # deserializer belongs on that list too: a reader that skips the
+    # reconciliation is how the invariant comes back apart.
     #
     # It is deliberately NOT the ``max_trials`` budget, and must never be
     # populated from ``metadata["max_trials"]``: backend_session_manager.py:1387
@@ -173,7 +176,31 @@ class OptimizationSession:
                 trials.append(trial_data)
 
         data["trials"] = trials
-        return cls(**data)
+        session = cls(**data)
+        session._reconcile_total_trials(str(session.session_id))
+        return session
+
+    def _reconcile_total_trials(self, label: str) -> None:
+        """Restore ``total_trials == len(trials)`` on a just-deserialized session.
+
+        Shared by both deserializers (this dataclass's ``from_dict`` and
+        ``LocalStorageManager.load_session``) rather than written out twice: a
+        record written before #2032 carries ``total_trials: 0`` alongside a
+        non-zero trial list, which makes callers print a zero total and makes
+        any completion ratio divide by zero. The count is definitionally
+        derivable from the trials just read, so recomputing it recovers a fact
+        rather than inventing a default. No write here — these are read paths;
+        the file self-heals on its next save.
+        """
+        recorded_trials = len(self.trials or [])
+        if self.total_trials != recorded_trials:
+            logger.debug(
+                "Reconciled total_trials for session %s: %s -> %s (#2032)",
+                label,
+                self.total_trials,
+                recorded_trials,
+            )
+            self.total_trials = recorded_trials
 
 
 def _dataclass_kwargs(cls: type, data: dict[str, Any]) -> dict[str, Any]:
@@ -630,22 +657,10 @@ class LocalStorageManager:
                 **_dataclass_kwargs(OptimizationSession, data)
             )
 
-            # Reconcile the recorded-trial count in memory. Records written
-            # before #2032 carry total_trials: 0 alongside a non-zero trial
-            # list, which makes callers print "3/0" and makes any completion
-            # ratio divide by zero. total_trials is definitionally derivable
-            # from the trials we just read, so recomputing it recovers a fact
-            # rather than inventing a default. No write here — this is a read
-            # path; the file self-heals on its next save.
-            recorded_trials = len(session.trials or [])
-            if session.total_trials != recorded_trials:
-                logger.debug(
-                    "Reconciled total_trials for session %s: %s -> %s (#2032)",
-                    session_id,
-                    session.total_trials,
-                    recorded_trials,
-                )
-                session.total_trials = recorded_trials
+            # Reconcile the recorded-trial count in memory (#2032). Shared with
+            # OptimizationSession.from_dict so the two deserializers cannot
+            # disagree about the session they just read.
+            session._reconcile_total_trials(session_id)
 
             return session
 

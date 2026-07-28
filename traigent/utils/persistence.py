@@ -350,7 +350,7 @@ class PersistenceManager:
         # e.g. `status="bogus"` — and silently writing a lossy artifact for it
         # would hide a caller bug behind a log line.
         try:
-            encoded_fields = _safe_json_value(encode_result_fields(result))
+            result_fields = encode_result_fields(result)
         except (TypeError, ValueError) as exc:
             if isinstance(result, OptimizationResult):
                 raise
@@ -369,8 +369,37 @@ class PersistenceManager:
                 exc,
             )
         else:
-            metadata[SCHEMA_VERSION_KEY] = RESULT_SCHEMA_VERSION
-            metadata["result_fields"] = encoded_fields
+            # Sanitizing is a *separate* failure class from encoding, and it is
+            # deliberately not fatal even for a real OptimizationResult. The
+            # strict re-raise above is justified by a field whose declared type
+            # was violated; this step walks the free-form containers — above
+            # all `metadata`, declared `dict[str, Any]`, which the encode now
+            # carries in full where the pre-#2031 artifact only ever held a
+            # curated four keys of it. Any object a user or plugin put in there
+            # is in scope, and `_safe_json_value` calls `to_dict()` on anything
+            # that has one, so an arbitrary caller exception can arrive here.
+            # Letting it out would lose the whole artifact — the run is simply
+            # not persisted — where the pre-#2031 writer wrote the curated one.
+            # So this degrades to exactly that artifact, loudly. `Exception`,
+            # not `(TypeError, ValueError)`: a third-party `to_dict()` raises
+            # whatever it likes, and the point is that none of it destroys the
+            # save.
+            try:
+                encoded_fields = _safe_json_value(result_fields)
+            except Exception as exc:  # noqa: BLE001 - see comment above
+                logger.warning(
+                    "Could not convert the full result record of %s to a "
+                    "JSON-safe form (%s), most likely because result.metadata "
+                    "holds an object that cannot be serialized: writing the "
+                    "pre-#2031 summary artifact only. Fields such as "
+                    "optimization_id, status, source and total_cost will not "
+                    "survive load_result.",
+                    type(result).__name__,
+                    exc,
+                )
+            else:
+                metadata[SCHEMA_VERSION_KEY] = RESULT_SCHEMA_VERSION
+                metadata["result_fields"] = encoded_fields
 
         self._atomic_write_json(result_dir / METADATA_FILE, metadata)
 

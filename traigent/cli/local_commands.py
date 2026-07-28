@@ -182,7 +182,18 @@ def show_session(session_id: str, output_format: str) -> None:
             click.echo(f"Status: {session.status}")
             click.echo(f"Created: {session.created_at}")
             click.echo(f"Updated: {session.updated_at}")
-            click.echo(f"Trials: {session.completed_trials}/{session.total_trials}")
+            # A single count, not "completed/total": since #2032 total_trials
+            # *is* the recorded count, so both halves are len(trials) and the
+            # ratio could only ever render "n/n" — a run that stopped after 3
+            # of a declared 10 printed "3/3", which reads as a completed budget
+            # and hides the early stop. "3/0" was obviously broken and ignored;
+            # "3/3" is plausible and would be believed. There is no honest
+            # denominator to put back: metadata["max_trials"] is fabricated
+            # upstream (backend_session_manager.py:1387 substitutes 10 when
+            # none was configured), so a real budget of 10 is indistinguishable
+            # from no budget at all. The summary view at :211 already prints
+            # the bare count.
+            click.echo(f"Trials: {session.completed_trials}")
 
             if session.best_score is not None:
                 click.echo(f"Best Score: {session.best_score:.4f}")
