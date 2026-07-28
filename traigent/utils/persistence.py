@@ -16,11 +16,20 @@ from typing import Any, cast
 
 from ..api.types import (
     OptimizationResult,
-    OptimizationStatus,
-    PresetSelection,
     TrialResult,
 )
 from ..utils.function_identity import sanitize_identifier
+
+# Imported by full dotted path, never via `traigent.utils` — that barrel is
+# eager and `traigent.api.types` imports from it, so re-exporting the manifest
+# module there would cycle (see its module docstring).
+from ..utils.optimization_result_persistence import (
+    RESULT_SCHEMA_VERSION,
+    SCHEMA_VERSION_KEY,
+    decode_result,
+    encode_result_fields,
+    verify_envelope_version,
+)
 from ..utils.secure_path import safe_open, validate_path
 
 logger = logging.getLogger(__name__)
@@ -317,6 +326,52 @@ class PersistenceManager:
             "session_summary": _safe_json_value(result.metadata.get("session_summary")),
         }
 
+        # #2031: the 16 curated keys above are the human/CLI-readable summary
+        # (list_results sorts on created_at, can_resume matches on
+        # function_name + configuration_space), and they are kept exactly as
+        # they were. They are NOT a faithful record of the dataclass: they never
+        # carried optimization_id, status, source, stop_reason, total_cost,
+        # warnings, ... so load_result had nothing to restore them from. The
+        # full restorable field set is written alongside them, under its own
+        # schema version.
+        #
+        # This method has always accepted any object shaped like a result — it
+        # read ~10 attributes — so a duck-typed one must not start raising here.
+        # But "not an OptimizationResult" is not the same as "has nothing worth
+        # recording": an object that does carry optimization_id, timestamp and
+        # the rest encodes exactly as faithfully as the real dataclass, and
+        # falling back to the curated artifact for it would throw away fields
+        # this writer is holding. So the encode is attempted for every result and
+        # only a genuine encoding failure downgrades the artifact.
+        #
+        # A real OptimizationResult is not given that escape hatch: it cannot
+        # legitimately fail to encode (a dataclass always carries every
+        # attribute), so a failure there means a type-violating field value —
+        # e.g. `status="bogus"` — and silently writing a lossy artifact for it
+        # would hide a caller bug behind a log line.
+        try:
+            encoded_fields = _safe_json_value(encode_result_fields(result))
+        except (TypeError, ValueError) as exc:
+            if isinstance(result, OptimizationResult):
+                raise
+            # Required fields (`optimization_id`, `timestamp`) have no declared
+            # default to fall back to, and `status` may be an arbitrary string
+            # rather than an OptimizationStatus. Rather than fabricate those
+            # values or reject the caller, such a result gets exactly the
+            # pre-#2031 curated artifact it has always got; load_result reads it
+            # back through its `legacy_format="persistence"` branch.
+            logger.warning(
+                "Saving a %s rather than an OptimizationResult, and it cannot "
+                "be encoded as a full result record (%s): writing the pre-#2031 "
+                "summary artifact only. Fields such as optimization_id, status, "
+                "source and total_cost will not survive load_result.",
+                type(result).__name__,
+                exc,
+            )
+        else:
+            metadata[SCHEMA_VERSION_KEY] = RESULT_SCHEMA_VERSION
+            metadata["result_fields"] = encoded_fields
+
         self._atomic_write_json(result_dir / METADATA_FILE, metadata)
 
         # Save trials as compressed JSON (secure and portable)
@@ -343,6 +398,11 @@ class PersistenceManager:
                     if hasattr(trial, "timestamp") and trial.timestamp
                     else None
                 ),
+                # load_result has always read this key; nothing ever wrote it,
+                # so a failed trial's diagnosis was dropped by the round trip
+                # while its FAILED status survived. getattr for the same reason
+                # as trial_id above.
+                "error_message": getattr(trial, "error_message", None),
                 "metadata": serialized_metadata,
             }
             trials_data.append(trial_dict)
@@ -465,46 +525,47 @@ class PersistenceManager:
                     f"Corrupted metadata for result '{name}': missing '{key}'"
                 )
 
-        # Reconstruct optimization result
-        result = OptimizationResult(
-            trials=trials,
-            best_config=metadata["best_config"],
-            best_score=metadata["best_score"],
-            optimization_id=f"loaded_{name}",
-            duration=metadata["duration"],
-            convergence_info=metadata["convergence_info"],
-            status=OptimizationStatus.COMPLETED,
-            objectives=metadata["objectives"],
-            algorithm=metadata["algorithm"],
-            timestamp=datetime.fromisoformat(metadata["created_at"]),
-            metadata={
-                "function_name": metadata["function_name"],
-                "configuration_space": metadata["configuration_space"],
-                **(
-                    {"strategy_preset": metadata["strategy_preset"]}
-                    if metadata.get("strategy_preset") is not None
-                    else {}
-                ),
-                # #1854: restore the aggregated-winner identity so
-                # best_metrics keeps id-matched replicate means after load.
-                **(
-                    {"session_summary": metadata["session_summary"]}
-                    if metadata.get("session_summary") is not None
-                    else {}
-                ),
-            },
-            preset_selection=PresetSelection.from_dict(
-                metadata.get("preset_selection")
-            ),
-        )
+        # Reconstruct optimization result through the #2031 manifest. The old
+        # hand-written constructor named 11 of the dataclass's 27 fields and
+        # fabricated three of them (a "loaded_<name>" id, a COMPLETED status,
+        # and the save time as the run timestamp).
+        result_fields = metadata.get("result_fields")
+        # The version is stamped twice — on the envelope and on the payload —
+        # and only the payload's copy is decoded below. Checking that they agree
+        # is what stops an envelope declaring a version this build cannot read
+        # from being decoded anyway at whatever version its payload claims.
+        verify_envelope_version(metadata, result_fields, artifact_name=name)
+        if isinstance(result_fields, dict):
+            # The decoded `metadata` is authoritative and is returned exactly as
+            # the run recorded it. The curated keys around it are a *derived*
+            # summary written for list_results / can_resume — several of them
+            # (function_name, configuration_space) are copies with defaults
+            # substituted at save time. Merging them back in would let a
+            # `"function_name": "unknown"` or a `"configuration_space": {}`
+            # placeholder override the authoritative persisted field, and would
+            # break the verbatim metadata round trip pinned by #2026: a result
+            # saved with `metadata == {}` would come back non-empty.
+            return decode_result(result_fields, trials=trials, artifact_name=name)
 
-        return result
+        # Pre-#2031 artifact: the curated keys are all there ever was, so the
+        # loader rebuilds `metadata` from them (see `_legacy_view`) — there is
+        # no authoritative inner record to defer to.
+        return decode_result(
+            metadata,
+            trials=trials,
+            legacy_format="persistence",
+            artifact_name=name,
+        )
 
     def list_results(self) -> list[dict[str, Any]]:
         """List all saved optimization results.
 
         Returns:
-            List of result metadata dictionaries
+            List of result metadata dictionaries (the curated summary keys; the
+            full #2031 ``result_fields`` payload and its schema-version stamp
+            are dropped — they are for ``load_result``, and a listing must not
+            carry a second copy of every result's metadata, metrics and
+            best_config).
         """
         results = []
 
@@ -515,6 +576,12 @@ class PersistenceManager:
                     try:
                         with safe_open(metadata_file, self.base_dir, mode="r") as f:
                             metadata = json.load(f)
+                        metadata.pop("result_fields", None)
+                        # … and the version stamp that describes it: it says
+                        # nothing about the curated summary keys, and a renderer
+                        # that dumps every key of a listing entry would show it
+                        # as if it were one of the result's own values.
+                        metadata.pop(SCHEMA_VERSION_KEY, None)
                         metadata["name"] = result_dir.name
                         results.append(metadata)
                     except (json.JSONDecodeError, FileNotFoundError):

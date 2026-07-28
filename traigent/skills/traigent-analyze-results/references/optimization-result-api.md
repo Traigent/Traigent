@@ -11,7 +11,7 @@ The `OptimizationResult` dataclass is returned by `func.optimize()` and contains
 | `trials` | `list[TrialResult]` | All trial results from the optimization run, in execution order. |
 | `best_config` | `dict[str, Any]` | The configuration that achieved the best objective score. Empty dict if no trial succeeded. |
 | `best_score` | `float \| None` | The best objective score achieved. `None` when no trial produced a valid, rankable score. |
-| `optimization_id` | `str` | Unique identifier for this optimization run. |
+| `optimization_id` | `str` | Unique identifier for this optimization run. A result reloaded from a **pre-#2031 saved artifact** carries `"unrestored-legacy:<name>"` instead: that format never persisted the id, so it is genuinely unavailable rather than merely unknown. Do not treat such a value as a run id. |
 | `duration` | `float` | Total wall-clock time in seconds for the entire optimization. |
 | `convergence_info` | `dict[str, Any]` | Dictionary with convergence statistics (see convergence-patterns.md for fields). |
 | `status` | `OptimizationStatus` | Final status of the optimization. One of: `NOT_STARTED`, `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED`. |
@@ -65,6 +65,34 @@ print(stats.average_trial_duration)   # 4.53
 print(stats.cost_per_configuration)   # 0.0039
 print(stats.success_rate)            # 0.8
 ```
+
+### Reloading a saved result
+
+`PersistenceManager.load_result()` and `ConfigStateManager.load_optimization_results()`
+restore every field except two, per the manifest in
+`traigent/utils/optimization_result_persistence.py`:
+
+- **`sync_session_id`** — a live handle into *this machine's* local session store,
+  so a reloaded value could name a record `traigent sync` rejects. Always `None`
+  after a reload.
+- **`_experiment_stats`** — the memo cache behind `experiment_stats`; recomputed
+  on first access from the restored `trials`.
+
+Results saved by an SDK older than issue #2031 carry only a curated summary, so
+some fields cannot be restored from them. Such a reload is degraded honestly
+rather than fabricated, and logs a warning naming every field that fell back:
+
+- `optimization_id` is `"unrestored-legacy:<result name>"` — the sentinel means
+  the id was never written, not that it is unknown. Never treat it as a run id
+  or send it to the backend.
+- `status` is `OptimizationStatus.UNKNOWN` (the old format never stored one — it
+  is not assumed to be `COMPLETED`).
+- `source` is `"unknown"` (not the `"backend"` default — the run may have been
+  local).
+- `timestamp` is the artifact's *save* time; run-completion time was not stored.
+
+A result saved by a current SDK that is *missing* a field raises `ValueError`:
+truncated artifacts are treated as corruption, not as an older format.
 
 ---
 

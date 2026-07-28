@@ -936,6 +936,12 @@ class EvalAudit:
         }
 
 
+# Adding a field here? Classify it in the round-trip manifest at
+# traigent/utils/optimization_result_persistence.py (RESULT_RESTORE vs
+# RESULT_RESET) — otherwise both persisted formats silently drop it on load
+# (issue #2031). The manifest is enumerated against dataclasses.fields() by
+# tests/unit/utils/test_optimization_result_persistence_2031.py, which fails
+# until the classification is recorded.
 @dataclass
 class OptimizationResult:
     """Complete results from an optimization run.
@@ -945,7 +951,12 @@ class OptimizationResult:
         best_config: The configuration that achieved the best score, or None
             when no eligible trial produced a winner.
         best_score: The best objective score achieved (None when no eligible trial).
-        optimization_id: Unique identifier for this optimization run.
+        optimization_id: Unique identifier for this optimization run. A result
+            reloaded from a pre-#2031 saved artifact carries
+            ``"unrestored-legacy:<artifact name>"`` instead: that format never
+            persisted the id, so it is unavailable rather than unknown. Never
+            treat that sentinel as a run id (see
+            ``traigent/utils/optimization_result_persistence.py``).
         duration: Total wall-clock time in seconds.
         convergence_info: Dictionary with convergence statistics.
         status: Final status of the optimization (completed, failed, etc.).

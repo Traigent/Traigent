@@ -631,3 +631,168 @@ class TestTrialResult:
         assert restored_trial.total_cost == 0.03
         assert restored_trial.input_cost == 0.01
         assert restored_trial.output_cost == 0.02
+
+
+class TestTotalTrialsBookkeeping:
+    """``total_trials`` means RECORDED trials — ``== len(trials)`` (#2032).
+
+    It is not a planned budget. Copying ``max_trials`` in is not an option:
+    ``backend_session_manager.py:1387`` substitutes a literal 10 when the user
+    supplied no budget, so a connected run's metadata can carry a fabricated
+    number that nothing downstream can distinguish from a real one.
+    """
+
+    def setup_method(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.storage_path = Path(self.temp_dir)
+        self.storage = LocalStorageManager(str(self.storage_path))
+
+    def teardown_method(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def _session_file(self, session_id: str) -> Path:
+        return self.storage_path / "sessions" / f"{session_id}.json"
+
+    def _read_raw(self, session_id: str) -> dict:
+        with open(self._session_file(session_id)) as handle:
+            return json.load(handle)
+
+    def _write_raw(self, session_id: str, data: dict) -> None:
+        with open(self._session_file(session_id), "w") as handle:
+            json.dump(data, handle, indent=2)
+
+    def _make_legacy_record(self, function_name: str, trial_count: int) -> str:
+        """Build a session then rewrite it the way a pre-#2032 SDK left it."""
+        session_id = self.storage.create_session(function_name)
+        for index in range(trial_count):
+            self.storage.add_trial_result(
+                session_id, {"param": index}, 0.5 + index * 0.1
+            )
+        self.storage.finalize_session(session_id, "completed")
+
+        raw = self._read_raw(session_id)
+        raw["total_trials"] = 0
+        self._write_raw(session_id, raw)
+        return session_id
+
+    def test_add_trial_result_advances_total_trials(self):
+        """A normal run persists a recorded-trial count, not a frozen 0."""
+        session_id = self.storage.create_session("normal_run")
+
+        assert self._read_raw(session_id)["total_trials"] == 0
+
+        for index in range(3):
+            self.storage.add_trial_result(session_id, {"param": index}, 0.5)
+            assert self._read_raw(session_id)["total_trials"] == index + 1
+
+        session = self.storage.load_session(session_id)
+        assert session.total_trials == 3
+        assert session.total_trials == len(session.trials)
+        assert session.total_trials == session.completed_trials
+
+    def test_early_stopped_run_records_actual_not_planned_trials(self):
+        """Early stop: the count that persists is what ran, not the budget.
+
+        This is the case that distinguishes the two candidate semantics. The
+        session declares a 10-trial budget (exactly the value
+        ``backend_session_manager.py:1387`` fabricates when the user gave
+        none) but only 3 trials are recorded before the run stops.
+        """
+        session_id = self.storage.create_session(
+            "early_stopped_run",
+            optimization_config={"max_trials": 10},
+            metadata={"max_trials": 10},
+        )
+        for index in range(3):
+            self.storage.add_trial_result(session_id, {"param": index}, 0.9)
+
+        session = self.storage.finalize_session(session_id, "completed")
+
+        assert session.total_trials == 3, "planned budget must not be persisted"
+        assert self._read_raw(session_id)["total_trials"] == 3
+        assert self.storage.load_session(session_id).total_trials == 3
+
+    def test_finalize_session_reasserts_recorded_count(self):
+        """Finalizing repairs a drifted count on disk."""
+        session_id = self.storage.create_session("finalize_repair")
+        self.storage.add_trial_result(session_id, {"param": 1}, 0.5)
+        self.storage.add_trial_result(session_id, {"param": 2}, 0.6)
+
+        raw = self._read_raw(session_id)
+        raw["total_trials"] = 99
+        self._write_raw(session_id, raw)
+
+        self.storage.finalize_session(session_id, "completed")
+
+        assert self._read_raw(session_id)["total_trials"] == 2
+
+    def test_legacy_zero_record_is_reconciled_on_load(self):
+        """A pre-#2032 record reports its real trial count once loaded."""
+        session_id = self._make_legacy_record("legacy_run", 2)
+
+        assert self._read_raw(session_id)["total_trials"] == 0
+
+        session = self.storage.load_session(session_id)
+
+        assert session.total_trials == 2
+        assert session.total_trials == len(session.trials)
+
+    def test_legacy_reconciliation_does_not_write_on_the_read_path(self):
+        """Reconciliation is in memory only — loading never rewrites the file."""
+        session_id = self._make_legacy_record("legacy_readonly", 2)
+        before = self._session_file(session_id).read_bytes()
+
+        self.storage.load_session(session_id)
+
+        assert self._session_file(session_id).read_bytes() == before
+        assert self._read_raw(session_id)["total_trials"] == 0
+
+    def test_legacy_record_self_heals_on_next_save(self):
+        """The stale 0 is corrected the next time the session is written."""
+        session_id = self._make_legacy_record("legacy_selfheal", 2)
+
+        self.storage.finalize_session(session_id, "completed")
+
+        assert self._read_raw(session_id)["total_trials"] == 2
+
+    def test_list_sessions_reconciles_legacy_records(self):
+        """``traigent local list`` reads through ``list_sessions``."""
+        session_id = self._make_legacy_record("legacy_listed", 3)
+
+        sessions = self.storage.list_sessions()
+        listed = next(s for s in sessions if s.session_id == session_id)
+
+        assert listed.total_trials == 3
+
+    def test_session_summary_reports_recorded_total_trials(self):
+        """The summary surface no longer emits the stale 0."""
+        session_id = self._make_legacy_record("legacy_summary", 3)
+
+        summary = self.storage.get_session_summary(session_id)
+
+        assert summary["total_trials"] == 3
+        assert summary["completed_trials"] == 3
+        # The pair is now a usable ratio instead of a division by zero.
+        assert summary["completed_trials"] / summary["total_trials"] == 1.0
+
+    def test_session_summary_without_trials_reports_zero(self):
+        """The empty-session branch of the summary keeps the invariant."""
+        session_id = self.storage.create_session("no_trials")
+
+        summary = self.storage.get_session_summary(session_id)
+
+        assert summary["total_trials"] == 0
+        assert summary["completed_trials"] == 0
+
+    def test_storage_info_total_trials_matches_recorded_counts(self):
+        """Storage-wide totals agree with the per-session recorded counts."""
+        first = self._make_legacy_record("legacy_info_a", 2)
+        second = self.storage.create_session("fresh_info_b")
+        self.storage.add_trial_result(second, {"param": 1}, 0.4)
+
+        info = self.storage.get_storage_info()
+        recorded = sum(s.total_trials for s in self.storage.list_sessions())
+
+        assert info["total_trials"] == 3
+        assert recorded == 3
+        assert first != second

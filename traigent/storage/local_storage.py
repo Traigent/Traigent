@@ -127,6 +127,19 @@ class OptimizationSession:
     created_at: str
     updated_at: str
     status: str  # not_started, pending, running, completed, failed, cancelled
+    # Number of trials RECORDED on this session. Invariant: ``total_trials ==
+    # len(trials)``. Maintained by ``add_trial_result`` and re-asserted by
+    # ``finalize_session``; ``load_session`` reconciles it in memory so records
+    # written before #2032 (which froze it at the 0 set at construction, next
+    # to a non-zero ``completed_trials``) report a truthful count.
+    #
+    # It is deliberately NOT the ``max_trials`` budget, and must never be
+    # populated from ``metadata["max_trials"]``: backend_session_manager.py:1387
+    # does ``max_trials_value = max_trials if max_trials is not None else 10``,
+    # so a connected run that never specified a budget carries a fabricated 10
+    # in its metadata. Copying that in would make a 24-config exhaustive grid
+    # persist ``total_trials: 10, completed_trials: 24`` and the CLI print
+    # "24/10" — and no guard can tell a user's real 10 from the SDK's default.
     total_trials: int
     completed_trials: int
     best_config: dict[str, Any | None] | None = None
@@ -442,6 +455,9 @@ class LocalStorageManager:
 
         session.trials.append(trial_result)
         session.completed_trials = len(session.trials)
+        # total_trials counts recorded trials, so it moves with the trial list
+        # rather than staying at the 0 stamped at construction (#2032).
+        session.total_trials = len(session.trials)
         session.updated_at = datetime.now(UTC).isoformat()
 
         # Update best score if this is better
@@ -531,6 +547,10 @@ class LocalStorageManager:
             return None
 
         session.status = status or OptimizationStatus.COMPLETED.value
+        # Re-assert the recorded-trial invariant at the end of the run: an
+        # early-stopped run records fewer trials than it planned, and the count
+        # that persists is the one that actually happened (#2032).
+        session.total_trials = len(session.trials or [])
         session.updated_at = datetime.now(UTC).isoformat()
         self._save_session(session)
 
@@ -606,7 +626,28 @@ class LocalStorageManager:
             if "updated_at" not in data:
                 data["updated_at"] = current_time
 
-            return OptimizationSession(**_dataclass_kwargs(OptimizationSession, data))
+            session = OptimizationSession(
+                **_dataclass_kwargs(OptimizationSession, data)
+            )
+
+            # Reconcile the recorded-trial count in memory. Records written
+            # before #2032 carry total_trials: 0 alongside a non-zero trial
+            # list, which makes callers print "3/0" and makes any completion
+            # ratio divide by zero. total_trials is definitionally derivable
+            # from the trials we just read, so recomputing it recovers a fact
+            # rather than inventing a default. No write here — this is a read
+            # path; the file self-heals on its next save.
+            recorded_trials = len(session.trials or [])
+            if session.total_trials != recorded_trials:
+                logger.debug(
+                    "Reconciled total_trials for session %s: %s -> %s (#2032)",
+                    session_id,
+                    session.total_trials,
+                    recorded_trials,
+                )
+                session.total_trials = recorded_trials
+
+            return session
 
         except Exception as e:
             logger.error(f"Failed to load session {session_id}: {e}")
@@ -712,7 +753,13 @@ class LocalStorageManager:
             return False
 
     def get_session_summary(self, session_id: str) -> dict[str, Any | None] | None:
-        """Get a summary of session statistics."""
+        """Get a summary of session statistics.
+
+        The emitted ``total_trials`` is the recorded-trial count (``==
+        len(trials)``), not a planned budget — see ``OptimizationSession``.
+        It is truthful for pre-#2032 records because ``load_session``
+        reconciles the field before this method reads it.
+        """
         session = self.load_session(session_id)
         if not session:
             return None

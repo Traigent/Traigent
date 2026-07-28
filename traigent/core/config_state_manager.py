@@ -624,7 +624,17 @@ class ConfigStateManager:
 
         from dataclasses import asdict
 
+        from traigent.utils.optimization_result_persistence import (
+            RESULT_SCHEMA_VERSION,
+            SCHEMA_VERSION_KEY,
+        )
+
         result_dict = asdict(self._optimization_results)
+        # Stamp the schema version so the loader can tell a full-fidelity
+        # artifact (every restorable field present; a missing one is
+        # corruption) from a pre-#2031 one (missing fields are expected and
+        # take dataclass defaults).
+        result_dict[SCHEMA_VERSION_KEY] = RESULT_SCHEMA_VERSION
         output_path = Path(path).expanduser()
         base_dir = (
             output_path.parent if output_path.is_absolute() else Path.cwd().resolve()
@@ -666,18 +676,19 @@ class ConfigStateManager:
                 )
                 trials.append(trial)
 
-            self._optimization_results = OptimizationResult(
+            # Rebuild through the #2031 manifest rather than a hand-written
+            # constructor call: the old call named 11 of the dataclass's 27
+            # fields, so every field added since (cost, tokens, stop_reason,
+            # warnings, source, ...) was silently dropped on load. The manifest
+            # also drops sync_session_id unconditionally (#2020) even though
+            # the asdict-based writer puts it on disk.
+            from traigent.utils.optimization_result_persistence import decode_result
+
+            self._optimization_results = decode_result(
+                result_dict,
                 trials=trials,
-                best_config=result_dict["best_config"],
-                best_score=result_dict["best_score"],
-                optimization_id=result_dict["optimization_id"],
-                duration=result_dict["duration"],
-                convergence_info=result_dict["convergence_info"],
-                status=OptimizationStatus(result_dict["status"]),
-                objectives=result_dict["objectives"],
-                algorithm=result_dict["algorithm"],
-                timestamp=datetime.fromisoformat(result_dict["timestamp"]),
-                metadata=result_dict.get("metadata", {}),
+                legacy_format="config_state",
+                artifact_name=str(input_path),
             )
             self.append_optimization_result(self._optimization_results)
 
