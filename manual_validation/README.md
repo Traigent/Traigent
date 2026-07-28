@@ -47,16 +47,27 @@ without a live backend.
 
 ## Adding a harness
 
-**Name it `<subject>_check.py`** and drop it here — `.gitignore` un-ignores
-exactly `manual_validation/README.md` and `manual_validation/*_check.py`, so
-`git add` picks it up as usual. Add a row to the table above while you are at
-it, and make it exit non-zero when its subject is broken.
+**Name it `<subject>_check.py`** and drop it directly in this directory —
+`.gitignore` un-ignores exactly `manual_validation/README.md` and
+`manual_validation/*_check.py`, so `git add` picks it up as usual. Any subject
+works, including one that starts with `test`. Add a row to the table above while
+you are at it, and make it exit non-zero when its subject is broken.
+
+The one carve-out: the negation is top level only (`manual_validation/*_check.py`,
+never `**`), so a harness in a *subdirectory* stays ignored. Keep them flat here.
 
 The negation is deliberately that narrow. A broader one (`*.py`/`*.md` at any
 depth) sits *after* the global rules in `.gitignore` and therefore overrides
 them, which quietly un-ignored `local/`, `local_settings.py`, `local_results/`,
 `test_phase*.py` and `manual_validation_*.py` inside this directory — the exact
 internal scratch files those rules exist to keep out.
+
+Narrowness cuts both ways, and order decides which way. Git applies last match
+wins, so the belt-and-braces re-ignore lines in that block (`test_*.py`,
+`local_settings.py`, …) are listed **before** the two negations. Listed after,
+`manual_validation/**/test_*.py` would beat `!manual_validation/*_check.py` and
+silently drop `test_runner_check.py`. If you add a re-ignore line there, put it
+above the negations.
 
 Everything else here is a run artifact and stays ignored on purpose:
 `_run_artifacts/`, `__pycache__/`, `.pyc`, run logs, and result/dataset dumps.

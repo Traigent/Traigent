@@ -518,13 +518,19 @@ docs/installation-guide-offline.md
 # Adding a harness: name it `<subject>_check.py`. Anything else here is treated
 # as a run artifact; use `git add -f` if you genuinely need to track one.
 manual_validation/**
-!manual_validation/README.md
-!manual_validation/*_check.py
 # Belt and braces: keep the never-commit families ignored here even if the
-# negations above are ever loosened.
+# negations below are ever loosened. These sit *before* the negations on
+# purpose. Last match wins in git, so listing them after would make them beat
+# `!manual_validation/*_check.py` — and `test_*.py` would then silently drop a
+# harness whose subject happens to start with "test" (`test_runner_check.py`),
+# which is the exact silent-drop failure this whole block exists to prevent.
+# Ordering them first still serves their stated purpose: they only need to lose
+# to an explicit `*_check.py`/`README.md` negation, not to win over it.
 manual_validation/**/__pycache__/
 manual_validation/**/local/
 manual_validation/**/local_results/
 manual_validation/**/local_settings.py
 manual_validation/**/test_*.py
 manual_validation/**/manual_validation_*.py
+!manual_validation/README.md
+!manual_validation/*_check.py
