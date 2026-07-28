@@ -78,18 +78,29 @@ restore every field except two, per the manifest in
 - **`_experiment_stats`** — the memo cache behind `experiment_stats`; recomputed
   on first access from the restored `trials`.
 
-Results saved by an SDK older than issue #2031 carry only a curated summary, so
-some fields cannot be restored from them. Such a reload is degraded honestly
-rather than fabricated, and logs a warning naming every field that fell back:
+Results saved by an SDK older than issue #2031 restore with reduced fidelity, and
+how reduced depends on which of the two formats wrote them. Either way the reload
+is degraded honestly rather than fabricated, and logs a warning naming every
+field that fell back.
+
+**`PersistenceManager.save_result()` artifacts** stored only a curated summary,
+so most fields have nothing to restore from:
 
 - `optimization_id` is `"unrestored-legacy:<result name>"` — the sentinel means
   the id was never written, not that it is unknown. Never treat it as a run id
   or send it to the backend.
-- `status` is `OptimizationStatus.UNKNOWN` (the old format never stored one — it
-  is not assumed to be `COMPLETED`).
-- `source` is `"unknown"` (not the `"backend"` default — the run may have been
-  local).
+- `status` is `OptimizationStatus.UNKNOWN` (that format never stored one — it is
+  not assumed to be `COMPLETED`).
 - `timestamp` is the artifact's *save* time; run-completion time was not stored.
+
+**`ConfigStateManager.save_optimization_results()` artifacts** are whole-dataclass
+dumps, so every field that existed when the file was written comes back —
+including the real `optimization_id`, `status` and `timestamp`. Only fields added
+to `OptimizationResult` *after* that file was written fall back to their declared
+dataclass defaults.
+
+Common to both: `source` is `"unknown"` (not the `"backend"` default) whenever the
+artifact did not record it — the run may well have been local.
 
 A result saved by a current SDK that is *missing* a field raises `ValueError`:
 truncated artifacts are treated as corruption, not as an older format.

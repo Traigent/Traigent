@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import json
 import logging
 import socket
 from datetime import UTC, datetime
@@ -862,6 +863,136 @@ def test_encoded_payload_is_json_safe_for_the_typed_fields() -> None:
     )
     assert isinstance(encoded["preset_selection"], dict)
     assert encoded["preset_selection"]["preset_name"] == "balanced"
+
+
+@pytest.mark.parametrize(
+    "bad_timestamp",
+    [None, "not-a-date", 1773584422, datetime(2026, 3, 15).date()],
+    ids=["none", "unparseable-string", "epoch-seconds", "date-not-datetime"],
+)
+def test_a_timestamp_the_reader_would_refuse_fails_the_encode(bad_timestamp) -> None:
+    """The encoder must not write what ``decode_result`` cannot read back.
+
+    The asymmetry this pins: ``_encode_value`` used to pass a non-``datetime``
+    timestamp straight through, while ``_decode_timestamp`` rejects it. So
+    ``timestamp=None`` produced an artifact that ``save_result`` wrote happily
+    and ``load_result`` then refused — the failure surfaced at *read* time, on
+    data already on disk, with nothing left to say which caller wrote it.
+
+    This is the same contract the ``status`` branch has always had (see
+    ``tests/unit/utils/test_persistence.py::
+    test_a_type_violating_real_result_fails_the_save_instead_of_downgrading``):
+    a type-violating field value fails the save, loudly, naming the value.
+    """
+    result = _sentinel_result()
+    result.timestamp = bad_timestamp  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="timestamp"):
+        encode_result_fields(result)
+
+
+def test_an_unwritable_timestamp_fails_the_save_and_leaves_no_artifact(
+    tmp_path,
+) -> None:
+    """End of the same story, at the writer: the save fails, nothing is stored.
+
+    The encoder's refusal only helps if it reaches the caller. ``save_result``
+    has a deliberate escape hatch — a duck-typed result that cannot be encoded
+    downgrades to the pre-#2031 curated artifact — and a real
+    ``OptimizationResult`` must *not* get it, exactly as for an invalid
+    ``status`` (``tests/unit/utils/test_persistence.py::
+    test_a_type_violating_real_result_fails_the_save_instead_of_downgrading``).
+    Downgrading here would be worse than the original defect: the run's real
+    timestamp would be silently dropped from a result that had one.
+
+    This is the one test in this module that runs a loader, because the defect
+    is precisely that the manifest's write half and its read half disagreed, and
+    only the writer can show that the disagreement no longer reaches disk.
+    """
+    from traigent.utils.persistence import PersistenceManager
+
+    result = _sentinel_result()
+    result.timestamp = "not-a-date"  # type: ignore[assignment]
+
+    persistence = PersistenceManager(base_dir=tmp_path)
+    with pytest.raises(ValueError, match="not-a-date"):
+        persistence.save_result(result, "unreadable-timestamp")
+
+    # No half-written result_fields payload: whatever landed on disk must not be
+    # loadable-looking. (The directory itself may exist; metadata.json must not
+    # claim a schema version it cannot honour.)
+    metadata_file = tmp_path / "unreadable-timestamp" / "metadata.json"
+    if metadata_file.exists():  # pragma: no cover - defensive
+        assert SCHEMA_VERSION_KEY not in json.loads(metadata_file.read_text())
+
+
+def test_an_already_serialized_timestamp_encodes_and_round_trips() -> None:
+    """Strings the reader accepts stay accepted, and are normalized on the way.
+
+    ``save_result`` has always taken duck-typed results, and one may hold an
+    already-serialized timestamp. Both writers' forms are readable —
+    ``isoformat()`` and ``ConfigStateManager``'s ``default=str`` space separator
+    — so both must encode; canonicalizing them loses nothing, since the point of
+    the guard is that whatever is written decodes to the same instant.
+    """
+    moment = datetime(2026, 3, 15, 14, 30, 22, tzinfo=UTC)
+
+    for written in (moment.isoformat(), str(moment)):
+        result = _sentinel_result()
+        result.timestamp = written  # type: ignore[assignment]
+
+        encoded = encode_result_fields(result)
+
+        assert encoded["timestamp"] == moment.isoformat()
+        assert decode_result(encoded, trials=[]).timestamp == moment
+
+
+def test_every_encoder_branch_is_at_least_as_strict_as_its_decoder() -> None:
+    """The audit that keeps the write/read asymmetry from coming back.
+
+    ``_encode_value`` special-cases exactly three fields; the rest pass through
+    to a ``_decode_value`` that is the identity, and ``OptimizationResult``
+    declares no ``__post_init__``, so nothing the encoder emits for them can be
+    refused on load. The three are checked here against the only direction that
+    can put an unreadable artifact on disk — encoder accepts, decoder rejects:
+
+    * ``status`` — encoder raises on a non-member; decoder is *more* lenient and
+      degrades an unknown one to ``UNKNOWN`` (#1302 AC3). Safe direction.
+    * ``timestamp`` — the fixed defect: encoder now refuses exactly what
+      ``_decode_timestamp`` refuses.
+    * ``preset_selection`` — encoder raises ``TypeError`` on a non-dataclass;
+      decoder's ``PresetSelection.from_dict`` is total (any non-Mapping is
+      ``None``). Safe direction.
+    """
+    # The premise of "the pass-through fields cannot be refused on load".
+    assert not hasattr(OptimizationResult, "__post_init__")
+
+    # status: encoder rejects, decoder would have accepted (as UNKNOWN).
+    with pytest.raises(ValueError, match="quantum_superposition"):
+        manifest._encode_value("status", "quantum_superposition")
+    assert manifest._decode_value("status", "quantum_superposition") is (
+        OptimizationStatus.UNKNOWN
+    )
+
+    # timestamp: both halves refuse the same values.
+    for unreadable in (None, "not-a-date"):
+        with pytest.raises(ValueError):
+            manifest._encode_value("timestamp", unreadable)
+        with pytest.raises(ValueError):
+            manifest._decode_value("timestamp", unreadable)
+
+    # preset_selection: encoder is the stricter half.
+    with pytest.raises(TypeError):
+        manifest._encode_value("preset_selection", {"preset_name": "balanced"})
+    assert manifest._decode_value("preset_selection", "not-a-mapping") is None
+
+    # Everything else is a pass-through on both sides.
+    for name in sorted(RESULT_RESTORE - {"trials", "status", "timestamp"}):
+        if name == "preset_selection":
+            continue
+        marker = object()
+        assert manifest._encode_value(name, marker) is marker
+        assert manifest._decode_value(name, marker) is marker
 
 
 def test_encoder_never_writes_a_reset_field() -> None:

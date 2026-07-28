@@ -952,10 +952,12 @@ class OptimizationResult:
             when no eligible trial produced a winner.
         best_score: The best objective score achieved (None when no eligible trial).
         optimization_id: Unique identifier for this optimization run. A result
-            reloaded from a pre-#2031 saved artifact carries
-            ``"unrestored-legacy:<artifact name>"`` instead: that format never
-            persisted the id, so it is unavailable rather than unknown. Never
-            treat that sentinel as a run id (see
+            reloaded from a pre-#2031 ``PersistenceManager`` artifact carries
+            ``"unrestored-legacy:<artifact name>"`` instead: that format stored
+            a curated summary that never included the id, so it is unavailable
+            rather than unknown. Pre-#2031 ``ConfigStateManager`` artifacts are
+            whole-dataclass dumps and do carry the real id, so they restore it.
+            Never treat the sentinel as a run id (see
             ``traigent/utils/optimization_result_persistence.py``).
         duration: Total wall-clock time in seconds.
         convergence_info: Dictionary with convergence statistics.

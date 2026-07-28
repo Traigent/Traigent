@@ -279,12 +279,49 @@ def _default_for(name: str) -> Any:
     return dataclasses.MISSING
 
 
+def _encode_timestamp(value: Any) -> str:
+    """Encode a run timestamp, refusing any value the reader could not decode.
+
+    Deliberately defined in terms of :func:`_decode_timestamp` (below) rather
+    than repeating its accepted forms: the encoder's job is to write only what
+    the reader can read back, and a second hand-written notion of "timestamp-ish"
+    here is exactly how the two halves drift apart again.
+
+    The earlier version passed a non-``datetime`` through unchanged, so
+    ``timestamp=None`` or ``"not-a-date"`` produced an artifact ``save_result``
+    wrote happily and ``load_result`` then refused — the failure surfaced at read
+    time, on data already on disk, arbitrarily far from the caller that caused
+    it. Failing the *save* is what the invalid-``status`` branch above already
+    does, for the same reason.
+
+    A string that the reader accepts is still accepted here, so duck-typed
+    callers holding an already-serialized timestamp keep working; it is
+    normalized to ``isoformat()`` on the way out, which loses nothing (both
+    forms decode to the same instant) and makes the on-disk format one shape.
+    """
+    try:
+        return _decode_timestamp(value).isoformat()
+    except ValueError as exc:
+        raise ValueError(
+            f"Cannot persist an optimization result whose 'timestamp' is "
+            f"{value!r}: a persisted timestamp must be a datetime or an "
+            f"ISO-8601 string, and writing this value would produce an "
+            f"artifact that load_result cannot read back ({exc})."
+        ) from exc
+
+
 def _encode_value(name: str, value: Any) -> Any:
-    """Convert one field value to a JSON-safe form."""
+    """Convert one field value to a JSON-safe form.
+
+    Every branch here must be at least as strict as its :func:`_decode_value`
+    counterpart. A value the encoder accepts and the decoder rejects is not
+    caught at all until the artifact is read back, by which point the bad value
+    is on disk and the caller that supplied it is long gone.
+    """
     if name == "status":
         return OptimizationStatus(value).value
     if name == "timestamp":
-        return value.isoformat() if isinstance(value, datetime) else value
+        return _encode_timestamp(value)
     if name == "preset_selection":
         # `asdict`, not `to_dict`: to_dict() routes through to_metadata(), which
         # truncates selection_rationale to 280 chars and drops it entirely when
@@ -395,6 +432,15 @@ def encode_result_fields(result: OptimizationResult) -> dict[str, Any]:
     with a declared non-JSON type (``status``, ``timestamp``,
     ``preset_selection``) are encoded and decoded explicitly and do keep their
     types.
+
+    Raises:
+        ValueError: If ``status`` or ``timestamp`` holds a value
+            :func:`decode_result` could not read back. Refusing the *write* is
+            the point: the alternative is a well-formed-looking artifact that
+            fails on load, long after the caller that produced it.
+        TypeError: If a field required by ``OptimizationResult`` is absent from
+            a duck-typed ``result`` (see :func:`_read_field`), or if
+            ``preset_selection`` is neither ``None`` nor a dataclass instance.
     """
     encoded: dict[str, Any] = {SCHEMA_VERSION_KEY: RESULT_SCHEMA_VERSION}
     encoded.update(
