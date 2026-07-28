@@ -6,6 +6,7 @@ code (0) unchanged."""
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import Mock, patch
 from uuid import uuid4
@@ -52,7 +53,9 @@ def test_optimize_exits_nonzero_when_module_fails_to_load() -> None:
         _cleanup(module_path)
 
 
-def test_optimize_exits_nonzero_when_a_function_optimize_raises() -> None:
+def test_optimize_exits_nonzero_when_a_function_optimize_raises(
+    plain: Callable[[str], str],
+) -> None:
     module_path = _write_module(
         "async def _optimize_stub(*args, **kwargs):\n"
         "    raise RuntimeError('cost gate declined the run')\n"
@@ -66,9 +69,10 @@ def test_optimize_exits_nonzero_when_a_function_optimize_raises() -> None:
     )
     try:
         result = CliRunner().invoke(cli, ["optimize", str(module_path)])
+        output = plain(result.output)
         assert result.exit_code != 0, result.output
-        assert "Error optimizing fake_optimized_function" in result.output
-        assert "function(s) failed to optimize" in result.output
+        assert "Error optimizing fake_optimized_function" in output
+        assert "function(s) failed to optimize" in output
     finally:
         _cleanup(module_path)
 

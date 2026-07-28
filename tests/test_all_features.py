@@ -4,8 +4,11 @@ import asyncio
 import sys
 from pathlib import Path
 
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent))
+# Add the repo root to the path so `traigent` is importable. This must NOT be
+# `tests/`: putting `tests/` on sys.path makes its subpackages importable as
+# top-level modules, so `tests/mcp/` shadows the installed `mcp` distribution
+# for every later import in the same session.
+sys.path.insert(0, str(Path(__file__).parents[1]))
 
 import traigent
 from traigent.api.types import (

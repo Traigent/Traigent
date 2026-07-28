@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-"""Test script to verify custom evaluator metrics are properly stored in database."""
+"""Manual check: custom-evaluator metrics reach the database.
+
+This is a hands-on harness, not a test — it has no assertions and reports by
+printing. Run it directly and inspect the output plus the ``configuration_runs``
+row it tells you to query::
+
+    python manual_validation/custom_evaluator_metrics_check.py
+
+It previously sat in ``tests/integration/`` named ``test_custom_evaluator_fix.py``,
+where it collected zero tests (``@traigent.optimize`` returns a non-function, so
+pytest skipped it with a ``PytestCollectionWarning``) while its stale
+``execution_mode="edge_analytics"`` raised at import and broke suite collection.
+"""
 
 import asyncio
 import json
@@ -73,22 +85,22 @@ def custom_evaluator(
     eval_dataset=create_test_dataset(),
     objectives=["accuracy"],
     configuration_space={"multiplier": [0.5, 1.0, 1.5, 2.0]},
-    execution_mode="edge_analytics",
+    execution_mode="local",
 )
-def test_function(x: int, y: int, multiplier: float = 1.0) -> float:
-    """Test function that adds two numbers and multiplies by a factor."""
+def add_and_scale(x: int, y: int, multiplier: float = 1.0) -> float:
+    """Subject under check: adds two numbers and multiplies by a factor."""
     return (x + y) * multiplier
 
 
 async def main():
-    """Run the test."""
-    print("🧪 Testing Custom Evaluator Metrics Storage Fix")
+    """Run the check."""
+    print("🧪 Checking Custom Evaluator Metrics Storage")
     print("=" * 60)
 
     print("\n📊 Running optimization with custom evaluator...")
     print("-" * 50)
 
-    result = await test_function.optimize(
+    result = await add_and_scale.optimize(
         algorithm="grid", max_trials=4, custom_evaluator=custom_evaluator
     )
 

@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""Test script to verify that metrics are properly passed through to backend."""
+"""Manual check: trial metrics reach the backend as ``measures``.
+
+This is a hands-on harness, not a test — it has no assertions and reports by
+printing the payloads captured from a patched backend client. Run it directly::
+
+    python manual_validation/backend_measures_passthrough_check.py
+
+It previously sat in ``tests/integration/`` named ``test_metrics_fix.py``, where
+it collected zero tests (``@traigent.optimize`` returns a non-function, so pytest
+skipped it with a ``PytestCollectionWarning``) while its stale
+``execution_mode="edge_analytics"`` raised at import and broke suite collection.
+"""
 
 import asyncio
 import json
@@ -63,16 +74,16 @@ def custom_evaluator(
     eval_dataset=create_test_dataset(),
     objectives=["accuracy"],
     configuration_space={"multiplier": [1.0]},
-    execution_mode="edge_analytics",
+    execution_mode="local",
 )
-def test_function(x: int, y: int, multiplier: float = 1.0) -> float:
-    """Test function that adds two numbers and multiplies by a factor."""
+def add_and_scale(x: int, y: int, multiplier: float = 1.0) -> float:
+    """Subject under check: adds two numbers and multiplies by a factor."""
     return (x + y) * multiplier
 
 
 async def main():
     """Run the test and verify metrics are properly captured."""
-    print("🧪 Testing Metrics Fix")
+    print("🧪 Checking Backend Measures Passthrough")
     print("=" * 60)
 
     # Mock the backend client to capture what's being sent
@@ -102,7 +113,7 @@ async def main():
 
         # Run optimization
         print("\n📊 Running optimization with custom evaluator...")
-        result = await test_function.optimize(
+        result = await add_and_scale.optimize(
             algorithm="grid", max_trials=1, custom_evaluator=custom_evaluator
         )
 

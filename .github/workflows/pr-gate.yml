@@ -147,8 +147,63 @@ jobs:
       - name: Run unit tests
         env:
           PYTHONPATH: .
+          # This lane installs the pinned economics Schema above, so a missing
+          # traigent_schema here means the install step broke — not that the
+          # developer lacks a token. Setting this turns the module-level skip in
+          # tests/unit/economics/test_schema.py into a hard failure, so a broken
+          # install can never downgrade the contract lane to a silent green.
+          # Variable name is defined once in tests/unit/economics/conftest.py as
+          # REQUIRE_SCHEMA_ENV; keep the two in sync.
+          TRAIGENT_REQUIRE_ECONOMICS_SCHEMA: "1"
         # pyproject addopts already include -n auto --dist loadgroup (xdist).
         run: pytest tests/unit -q --tb=short
+
+  collection:
+    name: collection
+    # Deliberately NOT gated on head.repo == github.repository: this job needs no
+    # secrets, so it must protect fork PRs too. `unit` and `mcp-contract` cannot,
+    # because they install a token-gated dependency.
+    if: ${{ !cancelled() && needs.changes.outputs.code_changed == 'true' && needs.preflight.result == 'success' }}
+    runs-on: ubuntu-latest
+    # A collection hang is the failure mode this job exists to catch, so cap it
+    # low: import-time-only work that measures ~11s locally must never sit in the
+    # queue. Any future import-time hang fails loudly instead of stalling.
+    timeout-minutes: 10
+    needs: [changes, preflight]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install test deps
+        # NOTE: the pinned economics Schema is deliberately NOT installed here
+        # (unlike the `unit` job). That is the point of this job: it reproduces
+        # the environment every local developer actually has — one without the
+        # private, token-gated traigent-schema git pin — and proves the whole
+        # suite still *collects* there. It also exercises the module-level skip
+        # in tests/unit/economics/test_schema.py, which would otherwise never run
+        # in CI and could rot unnoticed. Do not add the schema install here.
+        run: |
+          bash scripts/ci/install_sdk_requirements.sh -e ".[all,dev]"
+      - name: Verify the whole test suite collects
+        env:
+          PYTHONPATH: .
+          TRAIGENT_MOCK_LLM: "true"
+          TRAIGENT_OFFLINE_MODE: "true"
+        # Pass/fail is the exit code alone: --collect-only exits 2 on any
+        # collection error and 0 when clean. No output grep and no pinned test
+        # count, so this cannot go stale as tests are added.
+        #
+        # `-o addopts=` clears pyproject's addopts on purpose. Those addopts
+        # --ignore three paths for *runtime* reasons (hangs); ignoring them here
+        # would let their imports rot invisibly, which is the exact class of
+        # false-green this gate exists to prevent. Clearing addopts also drops
+        # xdist, which collection does not need.
+        #
+        # `-rs` keeps optional-dependency skips visible in the log, so a skip
+        # that starts hiding something is noticeable in review.
+        run: |
+          pytest --collect-only -q tests/ -o addopts= -p no:cacheprovider -rs
 
   mcp-contract:
     name: mcp-contract
@@ -175,7 +230,7 @@ jobs:
     name: required-pr-gate
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, preflight, unit, mcp-contract]
+    needs: [changes, preflight, collection, unit, mcp-contract]
     if: ${{ !cancelled() }}
     steps:
       - name: Verify required gate jobs
@@ -185,6 +240,7 @@ jobs:
           for result in \
             "${{ needs.changes.result }}" \
             "${{ needs.preflight.result }}" \
+            "${{ needs.collection.result }}" \
             "${{ needs.unit.result }}" \
             "${{ needs.mcp-contract.result }}"; do
             case "$result" in

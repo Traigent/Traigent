@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import types
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -204,7 +205,7 @@ def test_whoami_accepts_backend_issued_prefixes(
 
 @pytest.mark.parametrize("status", [401, 403])
 def test_whoami_auth_failures_classified(
-    monkeypatch: pytest.MonkeyPatch, status: int
+    monkeypatch: pytest.MonkeyPatch, status: int, plain: Callable[[str], str]
 ) -> None:
     _install_fake_aiohttp(
         monkeypatch,
@@ -212,24 +213,28 @@ def test_whoami_auth_failures_classified(
     )
 
     result = _run_whoami(monkeypatch)
+    output = plain(result.output)
     assert result.exit_code == 1
-    assert "Invalid or unauthorized API key" in result.output
-    assert "Category:" in result.output
-    assert "authentication" in result.output
-    assert f"HTTP status: {status}" in result.output
+    assert "Invalid or unauthorized API key" in output
+    assert "Category:" in output
+    assert "authentication" in output
+    assert f"HTTP status: {status}" in output
 
 
-def test_whoami_404_backend_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_whoami_404_backend_mismatch(
+    monkeypatch: pytest.MonkeyPatch, plain: Callable[[str], str]
+) -> None:
     _install_fake_aiohttp(
         monkeypatch,
         response=_FakeResponse(status=404, text_payload="not found"),
     )
 
     result = _run_whoami(monkeypatch)
+    output = plain(result.output)
     assert result.exit_code == 1
-    assert "Backend endpoint mismatch" in result.output
-    assert "backend_endpoint_mismatch" in result.output
-    assert "TRAIGENT_BACKEND_URL / TRAIGENT_API_URL" in result.output
+    assert "Backend endpoint mismatch" in output
+    assert "backend_endpoint_mismatch" in output
+    assert "TRAIGENT_BACKEND_URL / TRAIGENT_API_URL" in output
 
 
 @pytest.mark.parametrize(
@@ -247,6 +252,7 @@ def test_whoami_extended_status_classification(
     status: int,
     category: str,
     message_fragment: str,
+    plain: Callable[[str], str],
 ) -> None:
     _install_fake_aiohttp(
         monkeypatch,
@@ -254,10 +260,11 @@ def test_whoami_extended_status_classification(
     )
 
     result = _run_whoami(monkeypatch)
+    output = plain(result.output)
     assert result.exit_code == 1
-    assert message_fragment in result.output
-    assert category in result.output
-    assert f"HTTP status: {status}" in result.output
+    assert message_fragment in output
+    assert category in output
+    assert f"HTTP status: {status}" in output
 
 
 def test_whoami_connectivity_error(monkeypatch: pytest.MonkeyPatch) -> None:
