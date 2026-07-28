@@ -267,7 +267,10 @@ def test_whoami_extended_status_classification(
     assert f"HTTP status: {status}" in output
 
 
-def test_whoami_connectivity_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_whoami_connectivity_error(
+    monkeypatch: pytest.MonkeyPatch,
+    plain: Callable[[str], str],
+) -> None:
     fake_aiohttp = _install_fake_aiohttp(monkeypatch)
 
     def _client_session(**kwargs: Any) -> _FakeSession:
@@ -277,15 +280,20 @@ def test_whoami_connectivity_error(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_aiohttp.ClientSession = _client_session
 
     result = _run_whoami(monkeypatch)
+    output = plain(result.output)
     assert result.exit_code == 1
-    assert "Cannot reach backend to validate API key" in result.output
-    assert "connectivity_error" in result.output
+    assert "Cannot reach backend to validate API key" in output
+    assert "connectivity_error" in output
 
 
-def test_whoami_timeout_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_whoami_timeout_error(
+    monkeypatch: pytest.MonkeyPatch,
+    plain: Callable[[str], str],
+) -> None:
     _install_fake_aiohttp(monkeypatch, error=TimeoutError("timed out"))
 
     result = _run_whoami(monkeypatch)
+    output = plain(result.output)
     assert result.exit_code == 1
-    assert "Cannot reach backend to validate API key" in result.output
-    assert "connectivity_error" in result.output
+    assert "Cannot reach backend to validate API key" in output
+    assert "connectivity_error" in output

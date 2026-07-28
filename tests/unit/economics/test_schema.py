@@ -15,40 +15,64 @@ from tests.unit.economics.conftest import REQUIRE_SCHEMA_ENV
 # state, and an unguarded module-level import here is a whole-suite collection
 # error for every developer.
 #
-# This guard is deliberately NOT a plain ``pytest.importorskip``. Per this
-# package's conftest, the schema's absence "is a failure, not a reason to pass
-# silently" — a plain skip would let a future break in CI's install step
-# downgrade this contract lane to a silent green. So the skip is visible (it
-# names the cause and the remedy) and is *disabled* wherever the schema is
-# supposed to exist: with REQUIRE_SCHEMA_ENV set, a missing schema is a hard
-# failure.
+# Two things this guard must NOT do, both of which an earlier revision did:
+#
+# 1. Swallow an unrelated ``ModuleNotFoundError``. If ``traigent_schema`` IS
+#    installed but its validator imports something missing, that is a broken
+#    install, not an absent optional dependency — reporting it as "not
+#    installed" and skipping hides a real failure. So only an error whose
+#    ``name`` identifies ``traigent_schema`` itself is eligible; anything else
+#    propagates.
+# 2. Stop the module before the imports it is meant to protect. A module-level
+#    skip fires at the ``pytest.skip`` call, so everything below it — including
+#    the ``traigent.economics`` imports — is never executed, and the collection
+#    lane (which deliberately omits ``traigent_schema``) would stay green even
+#    with a genuinely broken import further down. The real imports therefore
+#    run unconditionally, immediately below, and the skip is a *test-level*
+#    marker instead.
 try:
     import traigent_schema.validator as tsv
 except ModuleNotFoundError as exc:  # pragma: no cover - environment-dependent
-    if os.getenv(REQUIRE_SCHEMA_ENV):
-        pytest.fail(
-            f"{REQUIRE_SCHEMA_ENV} is set, so the exact economics TraigentSchema "
-            f"must be installed, but importing it failed: {exc}. This lane is "
-            "required to validate against the real contract; it must not skip. "
-            "Check the 'Install pinned economics Schema contract' step in "
-            ".github/workflows/pr-gate.yml.",
-            pytrace=False,
-        )
-    pytest.skip(
-        "traigent_schema is not installed, so the economics contract cannot be "
-        "validated. It is pinned to a private TraigentSchema git commit (see "
-        "pyproject.toml) and is not on PyPI, so it is not part of the 'dev' "
-        "extra and needs a token to install. CI installs it in the 'unit' job "
-        f"and sets {REQUIRE_SCHEMA_ENV}=1, which turns this skip into a hard "
-        "failure so a broken install step cannot pass silently.",
-        allow_module_level=True,
-    )
+    _missing = exc.name or ""
+    if _missing != "traigent_schema" and not _missing.startswith("traigent_schema."):
+        raise
+    tsv = None  # type: ignore[assignment]
 
+# Exercised on every collection, schema present or not — this is the import
+# surface the collection lane exists to check.
 from traigent.economics import build_telemetry_request, funnel_eligible_event
 from traigent.economics import schema as schema_mod
 from traigent.economics.errors import (
     EconomicsSchemaUnavailable,
     EconomicsTelemetryContractError,
+)
+
+# Per this package's conftest, the schema's absence "is a failure, not a reason
+# to pass silently". Wherever the schema is *supposed* to exist, a missing one
+# is a hard error rather than a skip, so a future break in CI's install step
+# cannot downgrade this contract lane to a silent green.
+if tsv is None and os.getenv(REQUIRE_SCHEMA_ENV):  # pragma: no cover - CI-only
+    pytest.fail(
+        f"{REQUIRE_SCHEMA_ENV} is set, so the exact economics TraigentSchema "
+        "must be installed, but importing traigent_schema.validator failed. "
+        "This lane is required to validate against the real contract; it must "
+        "not skip. Check the 'Install pinned economics Schema contract' step "
+        "in .github/workflows/pr-gate.yml.",
+        pytrace=False,
+    )
+
+# Visible test-level skip (names the cause and the remedy) for the normal local
+# state: no token, so no private git pin.
+pytestmark = pytest.mark.skipif(
+    tsv is None,
+    reason=(
+        "traigent_schema is not installed, so the economics contract cannot be "
+        "validated. It is pinned to a private TraigentSchema git commit (see "
+        "pyproject.toml) and is not on PyPI, so it is not part of the 'dev' "
+        "extra and needs a token to install. CI installs it in the 'unit' job "
+        f"and sets {REQUIRE_SCHEMA_ENV}=1, which turns this skip into a hard "
+        "failure so a broken install step cannot pass silently."
+    ),
 )
 
 _REQUEST_SCHEMA = schema_mod.REQUEST_SCHEMA_NAME

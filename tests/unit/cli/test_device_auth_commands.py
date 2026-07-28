@@ -413,6 +413,7 @@ def test_device_flow_secure_store_failure_prevents_backend_authorization(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    plain: Callable[[str], str],
 ) -> None:
     store, session = _install_device_test_fakes(
         monkeypatch,
@@ -435,7 +436,7 @@ def test_device_flow_secure_store_failure_prevents_backend_authorization(
     assert store.saved is None
     assert session.post_calls == []
     assert not (tmp_path / ".env").exists()
-    assert "Secure credential storage is not ready" in capsys.readouterr().out
+    assert "Secure credential storage is not ready" in plain(capsys.readouterr().out)
 
 
 def test_env_file_rewrite_replaces_export_prefixed_api_key(

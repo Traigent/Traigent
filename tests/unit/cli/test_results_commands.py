@@ -175,7 +175,7 @@ class TestResultsShow:
 class TestResultsCompare:
     """Tests for 'traigent results compare' command."""
 
-    def test_results_compare_two_runs(self, runner, mock_result):
+    def test_results_compare_two_runs(self, runner, mock_result, plain):
         """Test comparing two optimization runs."""
         mock_result2 = Mock()
         mock_result2.trials = mock_result.trials
@@ -191,9 +191,10 @@ class TestResultsCompare:
 
             result = runner.invoke(cli, ["results", "compare", "run1", "run2"])
 
+            output = plain(result.output)
             assert result.exit_code == 0
-            assert "Comparing" in result.output
-            assert "Best Score" in result.output
+            assert "Comparing" in output
+            assert "Best Score" in output
 
 
 class TestResultsRerank:

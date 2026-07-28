@@ -496,19 +496,35 @@ docs/installation-guide-offline.md
 # dataset/result dumps. None of that belongs in the repo. This is also what the
 # original blanket `manual_validation/` rule (#416) was for: back then the
 # directory was purely a dump of internal dev scratch scripts, untracked with
-# `git rm --cached` so they stayed on contributors' disks. Those specific files
-# were relocated under the ignored `local/` in 892456cc, so what is left to
-# protect against is the run artifacts.
+# `git rm --cached` so they stayed on contributors' disks.
 #
-# Half 2 (un-ignore source and docs): the directory now has a tracked,
+# Half 2 (un-ignore the tracked harnesses): the directory now has a tracked,
 # documented purpose (see manual_validation/README.md) — the harnesses and
-# their README are committed on purpose. Ignoring the directory outright made
-# `git add manual_validation/new_check.py` fail *silently*: the file never
-# showed up in `git status` and was quietly lost. So re-include directories and
-# any .py/.md at any depth. Anything else here is treated as a run artifact;
-# use `git add -f` if you genuinely need to track one.
+# their README are committed on purpose, and ignoring them outright made
+# `git add manual_validation/` drop a new harness silently.
+#
+# The negation is deliberately narrow: the top level only (never `**`, so no
+# subdirectory is re-included), and only the `*_check.py` harness naming
+# convention plus the README. Anything broader re-includes at higher priority
+# than the *earlier* global rules in this file and quietly un-ignores things
+# they exist to protect — a `!manual_validation/**/*.py` + `!.../*.md` pair
+# overrode `local/` (:445), `local_settings.py` (:84), `local_results/` (:212),
+# `test_phase*.py` (:232) and `manual_validation_*.py` (:233), i.e. the exact
+# internal scratch scripts the relocation in 892456cc moved under `local/` to
+# keep out. `*_check.py` and `README.md` collide with no un-anchored global
+# rule in this file, so this negation is safe by construction rather than by a
+# hand-maintained mirror of every rule above.
+#
+# Adding a harness: name it `<subject>_check.py`. Anything else here is treated
+# as a run artifact; use `git add -f` if you genuinely need to track one.
 manual_validation/**
-!manual_validation/**/
-!manual_validation/**/*.py
-!manual_validation/**/*.md
+!manual_validation/README.md
+!manual_validation/*_check.py
+# Belt and braces: keep the never-commit families ignored here even if the
+# negations above are ever loosened.
 manual_validation/**/__pycache__/
+manual_validation/**/local/
+manual_validation/**/local_results/
+manual_validation/**/local_settings.py
+manual_validation/**/test_*.py
+manual_validation/**/manual_validation_*.py
