@@ -142,7 +142,7 @@ jobs:
         with:
           repository: Traigent/traigent-validation-spine
           ref: ${{ steps.classify.outputs.spine_commit }}
-          token: ${{ secrets.SPINE_READ_TOKEN || github.token }}
+          token: ${{ secrets.SPINE_RO_TOKEN || github.token }}
           path: .spine-shadow
           persist-credentials: false
           fetch-depth: 0
