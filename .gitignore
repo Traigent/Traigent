@@ -486,6 +486,29 @@ nvidia/
 .codesync.yml
 MAINTENANCE.md
 /tools/
-manual_validation/
 scripts/project_review/
 docs/installation-guide-offline.md
+
+# Manual validation harnesses (manual_validation/) — two halves, both needed.
+#
+# Half 1 (ignore everything by default): the harnesses are run by hand and
+# leave artifacts next to themselves — __pycache__/, .pyc, run logs, and
+# dataset/result dumps. None of that belongs in the repo. This is also what the
+# original blanket `manual_validation/` rule (#416) was for: back then the
+# directory was purely a dump of internal dev scratch scripts, untracked with
+# `git rm --cached` so they stayed on contributors' disks. Those specific files
+# were relocated under the ignored `local/` in 892456cc, so what is left to
+# protect against is the run artifacts.
+#
+# Half 2 (un-ignore source and docs): the directory now has a tracked,
+# documented purpose (see manual_validation/README.md) — the harnesses and
+# their README are committed on purpose. Ignoring the directory outright made
+# `git add manual_validation/new_check.py` fail *silently*: the file never
+# showed up in `git status` and was quietly lost. So re-include directories and
+# any .py/.md at any depth. Anything else here is treated as a run artifact;
+# use `git add -f` if you genuinely need to track one.
+manual_validation/**
+!manual_validation/**/
+!manual_validation/**/*.py
+!manual_validation/**/*.md
+manual_validation/**/__pycache__/

@@ -42,3 +42,24 @@ harnesses are a debugging aid, not a substitute for it.
 > **Note:** `RUN_MANUAL_VALIDATION` is a documented convention that nothing
 > currently reads. It gates nothing today — the harnesses above are excluded
 > from the default suite by living outside `testpaths` and by their filenames.
+
+## Adding a harness
+
+**Files in this directory are tracked.** Drop your `.py` (and any `.md` notes)
+here and `git add` it as usual — `.gitignore` un-ignores `*.py` and `*.md` at
+any depth under `manual_validation/`. Add a row to the table above while you
+are at it.
+
+Everything else here is treated as a run artifact and stays ignored on purpose:
+`__pycache__/`, `.pyc`, run logs, and result/dataset dumps the harnesses write
+next to themselves. If you need to track a file of some other type, check what
+is happening first and then force it:
+
+```bash
+git check-ignore -v --no-index manual_validation/<file>   # shows the rule that matched
+git add -f manual_validation/<file>
+```
+
+(This directory was once ignored wholesale, which made `git add` refuse new
+harnesses silently. If a file you add here does not show up in `git status`,
+that regressed — fix the rule in `.gitignore` rather than working around it.)
