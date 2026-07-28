@@ -24,6 +24,13 @@ The properties under test:
   fixture that skipped on an ambient switch would silently convert the entire
   cloud suite from "ran" to "skipped" and still exit 0, including in the gate
   in front of a PyPI publish.
+* **the operator's kill switch survives in the lane that can egress.** The
+  clause above is scoped to ``backend_online`` on purpose. Env-gated
+  LIVE-contract tests are the opposite case: they are deliberately UNMOCKED and
+  really do open sockets, so no transport mock stands in for the env var there.
+  For them an explicit ambient ``TRAIGENT_OFFLINE`` must keep forcing offline —
+  clearing it would delete a zero-egress kill switch from precisely the lane
+  that can egress.
 * **an unregistered marker is a hard error.** ``strict_markers`` must stay
   honoured, or a typo'd ``backend_onlne`` degrades to a warning and the test
   runs offline under a connected name.
@@ -39,6 +46,7 @@ import ast
 import contextlib
 import itertools
 import os
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -132,9 +140,17 @@ _INHERIT_OFFLINE: dict[str, str | None | _Inherit] = dict.fromkeys(
 
 
 def _run_pytest(
-    args: list[str], *, junit_xml: Path, ambient: dict[str, str | None | _Inherit]
+    args: list[str],
+    *,
+    junit_xml: Path,
+    ambient: dict[str, str | None | _Inherit],
+    extra_env: dict[str, str] | None = None,
 ):
     """Run pytest in a child process with a deliberately constructed environment.
+
+    ``extra_env`` exports variables unrelated to the offline switches (a
+    live-lane gate, a probe's expectation). It may not name an offline switch —
+    those belong in ``ambient``, where the declaration is mandatory.
 
     ``ambient`` declares the environment the *operator* is simulated to have
     exported. Every name in ``_OFFLINE_ENV_NAMES`` must appear in it, and each
@@ -157,6 +173,11 @@ def _run_pytest(
         "each case must state what the child's offline environment is, "
         f"including {unspecified} — an implicit default is how a case ends up "
         "testing an environment other than the one its id claims"
+    )
+    smuggled = sorted(set(extra_env or ()) & set(_OFFLINE_ENV_NAMES))
+    assert not smuggled, (
+        f"{smuggled} must be declared in `ambient`, not slipped in via "
+        "`extra_env` where the mandatory-declaration check cannot see it"
     )
 
     env = dict(os.environ)
@@ -182,6 +203,7 @@ def _run_pytest(
             env.pop(name, None)
         else:
             env[name] = value
+    env.update(extra_env or {})
     return subprocess.run(  # noqa: S603 — fixed argv, no shell
         [
             sys.executable,
@@ -403,6 +425,170 @@ def test_ambient_offline_switch_does_not_suppress_the_marker(ambient, tmp_path):
     }, (
         f"a backend_online test did not run in connected mode under ambient "
         f"{ambient}:\n{result.stdout[-4000:]}\n{result.stderr[-2000:]}"
+    )
+    assert result.returncode == 0
+
+
+# --------------------------------------------------------------------------
+# ...but the LIVE-contract lane keeps it
+# --------------------------------------------------------------------------
+
+# The probe asserts against this rather than hard-coding an expectation, so one
+# probe source covers both directions of the kill switch.
+_EXPECT_OFFLINE_ENV = "TRAIGENT_PROBE_EXPECT_OFFLINE"
+
+_LIVE_LANE_PROBE = f'''
+"""Throwaway probe written by tests/unit/test_offline_fixture_contract.py.
+
+Placed at a path the root conftest recognises as a live-contract module. It
+opens no socket — a real live test would, which is the entire reason the
+operator's kill switch has to survive here.
+"""
+
+import os
+
+from traigent.utils.env_config import is_backend_offline
+
+
+def test_probe_gated_live_offline_state():
+    # Always cleared, so the live lane's own CI job (which exports no
+    # TRAIGENT_OFFLINE) runs connected.
+    assert os.environ["TRAIGENT_OFFLINE_MODE"] == "false"
+    expect_offline = os.environ["{_EXPECT_OFFLINE_ENV}"] == "1"
+    assert is_backend_offline() is expect_offline
+'''
+
+
+def _live_lane_spec() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """``(_live_gates, _live_test_paths)`` read out of the root conftest's AST.
+
+    Read rather than duplicated: the fixture's live-lane carve-out is compound
+    (env gate AND known live module) and neither half is importable, so a copy
+    here would silently stop matching the day someone edits the real list — and
+    a probe at an unrecognised path takes the ordinary offline branch and passes
+    for the wrong reason.
+    """
+    tree = ast.parse(_ROOT_CONFTEST.read_text(encoding="utf-8"))
+    found: dict[str, tuple[str, ...]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        if target.id not in {"_live_gates", "_live_test_paths"}:
+            continue
+        if not isinstance(node.value, ast.Tuple):
+            continue
+        found[target.id] = tuple(
+            element.value
+            for element in node.value.elts
+            if isinstance(element, ast.Constant) and isinstance(element.value, str)
+        )
+
+    gates = found.get("_live_gates", ())
+    paths = found.get("_live_test_paths", ())
+    assert gates and paths, (
+        "could not read the live-contract carve-out (_live_gates / "
+        f"_live_test_paths) out of {_ROOT_CONFTEST}; found {sorted(found)}. "
+        "Without it this test is inert."
+    )
+    return gates, paths
+
+
+@contextlib.contextmanager
+def _live_lane_probe_module(source: str):
+    """Yield a probe written at a path the fixture treats as a live module.
+
+    The fixture matches by substring, so the probe is nested under a throwaway
+    directory whose name starts with ``.`` — pytest's default ``norecursedirs``
+    skips dot-directories, so no directory scan can ever collect this file,
+    while an explicitly-passed path still is.
+    """
+    _, live_paths = _live_lane_spec()
+    root = (
+        _TESTS_ROOT
+        / "unit"
+        / f".offline_live_probe_{os.getpid()}_{next(_PROBE_COUNTER)}"
+    )
+    path = root / live_paths[0]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(textwrap.dedent(source).lstrip(), encoding="utf-8")
+    try:
+        yield path
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+@pytest.mark.parametrize(
+    ("ambient", "expect_offline"),
+    [
+        pytest.param(
+            {"TRAIGENT_OFFLINE": None, "TRAIGENT_OFFLINE_MODE": None},
+            False,
+            id="live-lane-no-ambient-switch-runs-connected",
+        ),
+        pytest.param(
+            {"TRAIGENT_OFFLINE": None, "TRAIGENT_OFFLINE_MODE": "true"},
+            False,
+            id="live-lane-overrides-ambient-offline-mode",
+        ),
+        pytest.param(
+            {"TRAIGENT_OFFLINE": "1", "TRAIGENT_OFFLINE_MODE": None},
+            True,
+            id="live-lane-kill-switch-survives",
+        ),
+        pytest.param(
+            {"TRAIGENT_OFFLINE": "1", "TRAIGENT_OFFLINE_MODE": "true"},
+            True,
+            id="live-lane-kill-switch-survives-both-spellings",
+        ),
+    ],
+)
+def test_operator_offline_kill_switch_survives_for_gated_live_tests(
+    ambient, expect_offline, tmp_path
+):
+    """An explicit ``TRAIGENT_OFFLINE`` still forces offline for live tests.
+
+    The ``backend_online`` branch clears BOTH spellings, and the rationale for
+    that — "mocked transports, not the env var, are the egress barrier" — is
+    true for marked tests and FALSE here: env-gated live-contract tests are
+    deliberately unmocked and make real network calls. Sharing one branch would
+    therefore remove an operator's zero-egress kill switch from the only lane
+    that can actually egress, which is the reverse of what a kill switch is for.
+
+    So this lane clears only ``TRAIGENT_OFFLINE_MODE`` (the pre-#2033
+    behaviour). The first two cases pin the half that must not regress — the
+    lane's own CI job exports no ``TRAIGENT_OFFLINE``, so it still runs
+    connected even under an ambient ``TRAIGENT_OFFLINE_MODE=true``. The last two
+    pin the kill switch: ``is_backend_offline()`` ORs the spellings, so an
+    ambient ``TRAIGENT_OFFLINE=1`` the fixture leaves alone still wins.
+
+    Collapsing the two branches back into ``if _wants_backend_online or
+    _is_gated_live_test:`` fails the last two cases.
+    """
+    gates, _ = _live_lane_spec()
+    with _live_lane_probe_module(_LIVE_LANE_PROBE) as probe:
+        junit = tmp_path / "live.xml"
+        result = _run_pytest(
+            [str(probe)],
+            junit_xml=junit,
+            ambient=ambient,
+            extra_env={
+                # Both halves of the compound carve-out: the path (above) and
+                # the gate. Without the gate the probe is an ordinary offline
+                # test and every case would pass vacuously.
+                gates[0]: "1",
+                _EXPECT_OFFLINE_ENV: "1" if expect_offline else "0",
+            },
+        )
+        outcomes = _outcomes(junit) if junit.exists() else {}
+
+    assert outcomes == {"test_probe_gated_live_offline_state": "passed"}, (
+        f"a gated live-contract test did not observe "
+        f"is_backend_offline() is {expect_offline} under ambient {ambient} — an "
+        "operator's zero-egress kill switch is not behaving as declared:\n"
+        f"{result.stdout[-4000:]}\n{result.stderr[-2000:]}"
     )
     assert result.returncode == 0
 

@@ -260,6 +260,12 @@ def jwt_development_mode(monkeypatch, request):
     # gate variable in a developer shell must NOT flip offline mode off for the
     # rest of the suite (that would silently no-op the backend-egress guards in
     # unit tests).
+    #
+    # The two opt-ins below are NOT the same lane and are deliberately NOT
+    # merged into one branch: `backend_online` tests run against mocked
+    # transports, live-contract tests are unmocked and really do open sockets.
+    # They therefore get different treatment for the operator's TRAIGENT_OFFLINE
+    # kill switch — see each branch.
     _live_gates = (
         "TRAIGENT_LIVE_SYNC_E2E",
         "TRAIGENT_HYBRID_LIVE",
@@ -281,32 +287,56 @@ def jwt_development_mode(monkeypatch, request):
     _wants_backend_online = (
         request.node.get_closest_marker("backend_online") is not None
     )
-    if _wants_backend_online or _is_gated_live_test:
-        # A marked test is put in connected mode UNCONDITIONALLY — an ambient
-        # TRAIGENT_OFFLINE / TRAIGENT_OFFLINE_MODE does not suppress it, and
-        # must never turn it into a skip. The marker was never permission for
-        # real egress (its registered description in pyproject.toml requires
-        # transports to be mocked), and mocked transports — not this env var —
-        # are what actually prevents network access. An ambient "no real
-        # network" switch is therefore already satisfied for these tests, so
-        # honouring it here would buy no safety while silently converting "ran"
-        # into "skipped": publish.yml, release-review.yml, sonarcloud.yml and
-        # tests.yml all export TRAIGENT_OFFLINE_MODE around `pytest
-        # tests/unit`, no lane asserts a skip count, and the publish gate would
-        # then ship a release with the whole cloud suite unexercised and exit 0.
+    if _is_gated_live_test:
+        # LIVE-CONTRACT LANE — checked FIRST, and deliberately so. A test that
+        # is BOTH `backend_online`-marked AND a gated live module lands here,
+        # not in the branch below, because this is the strictly safer of the
+        # two: this lane is the only one that can actually reach the network,
+        # so it keeps the operator's kill switch.
+        #
+        # These tests are NOT mocked. Unlike `backend_online` tests, there is no
+        # transport mock standing between them and a real socket, so an ambient
+        # TRAIGENT_OFFLINE is the only thing that can stop egress — clearing it
+        # here would delete a zero-egress kill switch from precisely the lane
+        # that can egress.
+        #
+        # So only TRAIGENT_OFFLINE_MODE is cleared (matching the pre-#2033
+        # behaviour). That is enough for the lane's own CI job, which does not
+        # export TRAIGENT_OFFLINE: is_backend_offline() then reads False and the
+        # live contract runs. But an operator who exports TRAIGENT_OFFLINE=1
+        # still forces offline, because is_backend_offline() ORs the two
+        # spellings (env_config.py:492-494) — the live test then fails or skips
+        # with "backend egress is disabled (offline)", which is the intended
+        # answer to "I said no network".
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    elif _wants_backend_online:
+        # MOCKED CONNECTED LANE. A marked test is put in connected mode
+        # UNCONDITIONALLY — an ambient TRAIGENT_OFFLINE / TRAIGENT_OFFLINE_MODE
+        # does not suppress it, and must never turn it into a skip. The marker
+        # was never permission for real egress (its registered description in
+        # pyproject.toml requires transports to be mocked), and for THESE tests
+        # — and only these — mocked transports, not this env var, are what
+        # actually prevents network access. An ambient "no real network" switch
+        # is therefore already satisfied here, so honouring it would buy no
+        # safety while silently converting "ran" into "skipped": publish.yml,
+        # release-review.yml, sonarcloud.yml and tests.yml all export
+        # TRAIGENT_OFFLINE_MODE around `pytest tests/unit`, no lane asserts a
+        # skip count, and the publish gate would then ship a release with the
+        # whole cloud suite unexercised and exit 0.
         #
         # RESIDUAL PRECEDENCE CHANGE (deliberate, called out rather than
         # hidden): before this change an ambient TRAIGENT_OFFLINE=1 survived
         # the fixture for cloud tests, because the old carve-out only wrote
-        # TRAIGENT_OFFLINE_MODE. It no longer survives — the connected branch
-        # clears BOTH spellings. That is required by #2033 AC1: a connected
-        # test must actually observe connected mode, and is_backend_offline()
-        # ORs the two spellings (env_config.py:492-494), so clearing only
-        # TRAIGENT_OFFLINE_MODE would leave an ambient TRAIGENT_OFFLINE in
-        # force and the test would run offline under a connected name. The two
-        # spellings are NOT interchangeable — see #1773. So for `backend_online`
-        # tests specifically, the operator's env var no longer decides egress;
-        # the per-module transport mocks do.
+        # TRAIGENT_OFFLINE_MODE. It no longer survives — this branch clears
+        # BOTH spellings. That is required by #2033 AC1: a connected test must
+        # actually observe connected mode, and since is_backend_offline() ORs
+        # the two spellings, clearing only TRAIGENT_OFFLINE_MODE would leave an
+        # ambient TRAIGENT_OFFLINE in force and the test would run offline under
+        # a connected name. The two spellings are NOT interchangeable — see
+        # #1773. So for `backend_online` tests specifically, the operator's env
+        # var no longer decides egress; the per-module transport mocks do. That
+        # trade is only defensible because the mocks exist, which is why the
+        # live branch above does not make it.
         monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
         monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
     else:
