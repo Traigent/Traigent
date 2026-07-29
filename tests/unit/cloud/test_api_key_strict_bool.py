@@ -31,6 +31,9 @@ from traigent.core.session_types import (
     SessionCreationFailureReason,
 )
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 @pytest.fixture(autouse=True)
 def _enable_backend_validation(monkeypatch):

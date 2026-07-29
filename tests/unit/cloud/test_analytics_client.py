@@ -13,7 +13,11 @@ import pytest
 
 HTTPX_AVAILABLE = importlib.util.find_spec("httpx") is not None
 
-pytestmark = pytest.mark.skipif(not HTTPX_AVAILABLE, reason="httpx not installed")
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = [
+    pytest.mark.skipif(not HTTPX_AVAILABLE, reason="httpx not installed"),
+    pytest.mark.backend_online,
+]
 
 
 @pytest.fixture()

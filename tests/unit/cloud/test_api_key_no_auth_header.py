@@ -23,6 +23,9 @@ from traigent.cloud.auth import AuthManager, _build_api_key_auth_headers
 from traigent.cloud.sync_manager import SyncManager
 from traigent.config.types import TraigentConfig
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 # ---------------------------------------------------------------------------
 # Helpers

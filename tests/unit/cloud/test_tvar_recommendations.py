@@ -8,6 +8,9 @@ import pytest
 
 from traigent.cloud.client import RecommendationBundle, TraigentCloudClient
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 class _Response:
     def __init__(self, payload: dict, status: int = 200) -> None:

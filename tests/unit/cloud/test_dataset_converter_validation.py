@@ -5,6 +5,9 @@ import pytest
 from traigent.cloud.dataset_converter import DatasetConverter, is_sensitive_metadata_key
 from traigent.config.backend_config import DEFAULT_CLOUD_URL
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 class TestDatasetConverterValidation:
     """Validate DatasetConverter input handling."""

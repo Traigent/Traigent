@@ -18,6 +18,9 @@ from traigent.cloud.sync_manager import SyncManager
 from traigent.config.types import TraigentConfig
 from traigent.storage.local_storage import LocalStorageManager
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 @pytest.fixture
 def storage(tmp_path) -> LocalStorageManager:

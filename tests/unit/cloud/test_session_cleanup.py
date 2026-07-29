@@ -28,6 +28,9 @@ import pytest
 from aiohttp.client import ClientSession as _REAL_CLIENT_SESSION
 from aiohttp.client import ClientTimeout as _REAL_CLIENT_TIMEOUT
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 _TEST_API_KEY = "tg_test_" + "x" * 56
 
 

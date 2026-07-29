@@ -5,6 +5,9 @@ import pytest
 from traigent.cloud.resilient_client import ResilientClient
 from traigent.utils.exceptions import RetryableError
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 def _client() -> ResilientClient:
     return ResilientClient(base_delay=1.0, max_delay=30.0, jitter_factor=0.0)

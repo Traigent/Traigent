@@ -16,6 +16,9 @@ import traigent.cloud.benchmark_client as bc_module
 from traigent.cloud.benchmark_client import BenchmarkClient, BenchmarkClientConfig
 from traigent.utils.error_handler import OfflineModeError
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 ORIGIN = "https://api.example.test"
 
 

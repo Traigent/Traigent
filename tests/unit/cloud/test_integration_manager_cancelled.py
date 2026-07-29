@@ -18,6 +18,9 @@ from traigent.cloud.integration_manager import (
     IntegrationMode,
 )
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

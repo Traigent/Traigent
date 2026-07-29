@@ -22,6 +22,9 @@ from traigent.cloud.api_operations import ApiOperations
 from traigent.cloud.models import OptimizationSession, SessionCreationRequest
 from traigent.cloud.session_operations import SessionOperations
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 def _make_api_ops() -> ApiOperations:
     return ApiOperations(MagicMock())

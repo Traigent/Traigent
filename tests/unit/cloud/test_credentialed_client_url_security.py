@@ -29,6 +29,9 @@ from traigent.projects.config import ProjectManagementConfig
 from traigent.prompts import PromptManagementClient
 from traigent.prompts.config import PromptManagementConfig
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 ClientFactory = Callable[[str], Any]
 
 

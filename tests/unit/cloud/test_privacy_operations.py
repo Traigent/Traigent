@@ -15,6 +15,9 @@ from traigent.cloud.models import OptimizationSession, OptimizationSessionStatus
 from traigent.cloud.privacy_operations import PrivacyOperations
 from traigent.cloud.trial_operations import TrialOperations
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 class FakeLock:
     """Lock stub recording enter counts."""

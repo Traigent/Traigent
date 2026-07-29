@@ -9,12 +9,31 @@ import pytest
 from traigent.cloud.auth import InvalidCredentialsError
 from traigent.cloud.password_auth_handler import PasswordAuthHandler
 
+pytestmark = pytest.mark.backend_online
+
+# https so it satisfies the production URL guard, and `.test` (RFC 6761) so the
+# name is reserved and can never be registered by anyone.
+#
+# Non-routability is NOT what keeps these tests offline: the fixture below
+# replaces url_security's getaddrinfo with a fixed public address precisely so
+# the guard's public-address check passes, which defeats `.test` not resolving.
+# What keeps them offline is that every test mocks the transport
+# (ResilientClient.execute_with_retry), so no socket is ever opened.
+PINNED_BACKEND_URL = "https://backend.example.test"
+
 
 @pytest.fixture(autouse=True)
 def _enable_backend_auth(monkeypatch):
     """Most password-auth tests mock backend calls and must bypass CI offline mode."""
-    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
     monkeypatch.setenv("ENVIRONMENT", "production")
+    # Pin the backend URL: the last ambient input this fixture did not control.
+    # get_cloud_backend_url falls through TRAIGENT_BACKEND_URL -> TRAIGENT_API_URL
+    # -> stored `traigent auth login` credentials -> the https default, so
+    # unsetting is not isolation. TRAIGENT_API_URL is deleted separately because
+    # _build_api_url reads it directly and it does NOT sit behind
+    # TRAIGENT_BACKEND_URL.
+    monkeypatch.setenv("TRAIGENT_BACKEND_URL", PINNED_BACKEND_URL)
+    monkeypatch.delenv("TRAIGENT_API_URL", raising=False)
 
     def _resolve_public_backend(_host, _port, *_args, **_kwargs):
         return [(0, 0, 0, "", ("93.184.216.34", 0))]
@@ -148,15 +167,23 @@ async def test_invalid_credentials_propagate_even_in_dev_mode():
         "password": "password123",  # pragma: allowlist secret
     }
 
+    execute = AsyncMock(side_effect=InvalidCredentialsError("Invalid credentials"))
+
     with (
         patch.object(handler, "_is_dev_mode_enabled", return_value=True),
         patch(
             "traigent.cloud.resilient_client.ResilientClient.execute_with_retry",
-            new=AsyncMock(side_effect=InvalidCredentialsError("Invalid credentials")),
+            new=execute,
         ),
     ):
         with pytest.raises(InvalidCredentialsError):
             await handler._perform_authentication(credentials)
+
+    # Reachability: _perform_authentication has two pre-transport exits that both
+    # `return None` -- the offline egress guard (cloud_backend_egress_disabled,
+    # the #2033 hazard) and the URL guard. Either turns this into a bare
+    # "DID NOT RAISE"; asserting the transport ran names the real cause instead.
+    execute.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -189,19 +216,72 @@ async def test_explicit_mock_auth_opt_in_falls_back_on_backend_outage():
         "password": "password123",  # pragma: allowlist secret
     }
 
+    execute = AsyncMock(side_effect=RuntimeError("backend down"))
+
     with (
         patch.dict("os.environ", {"TRAIGENT_ALLOW_MOCK_PASSWORD_AUTH": "1"}),
         patch.object(handler, "_is_dev_mode_enabled", return_value=True),
         patch(
             "traigent.cloud.resilient_client.ResilientClient.execute_with_retry",
-            new=AsyncMock(side_effect=RuntimeError("backend down")),
+            new=execute,
         ),
     ):
         token_data = await handler._perform_authentication(credentials)
 
+    # Reachability: the mock-token fallback lives in the `except Exception`
+    # around execute_with_retry, so it is reachable ONLY after the transport
+    # raised. Both pre-transport exits (the offline egress guard and the URL
+    # guard) `return None` instead, which the assertion below would catch as a
+    # bare None; asserting the transport ran names the cause instead.
+    execute.assert_awaited_once()
     assert token_data is not None
     assert token_data["dev_mode"] is True
     assert token_data["user"]["email"] == credentials["email"]
+
+
+@pytest.mark.asyncio
+async def test_stored_cli_credentials_do_not_steer_login_url():
+    """Stored `traigent auth login` state must not reach the login URL.
+
+    Regression for #2034. With no env vars set at all,
+    ``_get_configured_backend_origin`` falls through to the backend_url saved by
+    ``traigent auth login``, so *unsetting* TRAIGENT_BACKEND_URL is not
+    isolation -- only pinning it is. This is the one vector the filed issue
+    missed: it needs no environment variable to fire.
+    """
+    from traigent.config.backend_config import BackendConfig
+
+    handler = PasswordAuthHandler()
+    credentials = {
+        "email": "dev@example.com",
+        "password": "password123",  # pragma: allowlist secret
+    }
+    execute = AsyncMock(side_effect=InvalidCredentialsError("Invalid credentials"))
+
+    # Patch the accessor, not HOME: CREDENTIALS_FILE is resolved at import time,
+    # so this must never read the developer's real ~/.traigent.
+    with (
+        patch(
+            "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
+            return_value="http://127.0.0.1:5000",
+        ),
+        patch.object(handler, "_is_dev_mode_enabled", return_value=True),
+        patch(
+            "traigent.cloud.resilient_client.ResilientClient.execute_with_retry",
+            new=execute,
+        ),
+    ):
+        assert BackendConfig.get_cloud_backend_url() == PINNED_BACKEND_URL
+        assert BackendConfig.get_cloud_api_url().startswith(PINNED_BACKEND_URL)
+
+        with pytest.raises(InvalidCredentialsError):
+            await handler._perform_authentication(credentials)
+
+    # Reachability: pins that the login POST was actually attempted against the
+    # pinned URL. Both pre-transport exits of _perform_authentication (the
+    # offline egress guard and the URL guard) `return None` without raising, so
+    # without this the stored-credential vector would go unexercised.
+    execute.assert_awaited_once()
 
 
 @pytest.mark.asyncio

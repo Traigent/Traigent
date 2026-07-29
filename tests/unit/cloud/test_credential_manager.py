@@ -11,6 +11,9 @@ import pytest
 import traigent.cloud.credential_manager as credential_manager_module
 from traigent.cloud.credential_manager import CredentialManager
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 def _clear_env(monkeypatch) -> None:
     for key in (

@@ -11,6 +11,9 @@ from traigent.cloud.backend_components import (
     BackendTrialManager,
 )
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 def _auth_manager() -> BackendAuthManager:
     return BackendAuthManager(  # pragma: allowlist secret

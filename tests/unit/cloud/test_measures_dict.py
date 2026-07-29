@@ -14,6 +14,9 @@ import pytest
 
 from traigent.cloud.dtos import MeasuresDict
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 class TestMeasuresDictValidation:
     """Tests for MeasuresDict type and cardinality validation."""

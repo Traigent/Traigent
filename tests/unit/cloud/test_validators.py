@@ -17,6 +17,9 @@ from traigent.cloud.validators import (
     validate_summary_stats,
 )
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 class TestValidateMeasureResults:
     """Tests for validate_measure_results function."""

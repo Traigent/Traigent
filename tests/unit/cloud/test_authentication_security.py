@@ -22,6 +22,9 @@ from traigent.cloud.auth import (
 )
 from traigent.utils.logging import get_logger
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 logger = get_logger(__name__)
 
 _ALLOWED_KEY_CHARS = string.ascii_letters + string.digits + "_-"
