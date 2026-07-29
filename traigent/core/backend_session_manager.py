@@ -6,11 +6,14 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
 import re
+import shlex
 import threading
 import time
 from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent._version import get_version
@@ -81,6 +84,34 @@ _FINALIZE_CONNECTION_ERROR_NAMES = (
     "ReadTimeout",
     "Timeout",
 )
+
+
+def environment_default_store_root() -> Path | None:
+    """Session-store root a fresh ``traigent sync`` process would read (#2020).
+
+    ``traigent sync`` runs in a separate process: its ``SyncManager`` builds the
+    store from ``TraigentConfig.from_environment()``
+    (``sync_manager.py`` ``LocalStorageManager(config.get_local_storage_path())``),
+    so a *programmatic* ``@traigent.optimize(local_storage_path=...)`` never
+    reaches it. With no programmatic path, that chain collapses to exactly two
+    outcomes — ``TRAIGENT_RESULTS_FOLDER`` when set, otherwise ``~/.traigent``:
+    ``get_local_storage_path`` returns the env var (or ``None``, or ``~/.traigent``
+    in local mode) and ``LocalStorageManager._get_storage_path`` applies the same
+    env-then-``~/.traigent`` fallback to a ``None``. Resolved here without
+    constructing a ``LocalStorageManager``, which would create directories as a
+    side effect of a diagnostic. ``tests/unit/core/test_backend_session_manager.py``
+    pins this against the real resolution so the mirror cannot drift.
+
+    Returns ``None`` when the default cannot be determined (e.g. no home
+    directory) — an undetermined default must never produce a warning.
+    """
+    try:
+        env_path = os.getenv("TRAIGENT_RESULTS_FOLDER")
+        if env_path:
+            return Path(env_path).expanduser().resolve()
+        return (Path.home() / ".traigent").expanduser().resolve()
+    except Exception:
+        return None
 
 
 class _BackendFinalizeNotAcknowledgedError(RuntimeError):
@@ -652,6 +683,20 @@ class BackendSessionManager:
         # never acknowledged).
         self._acknowledged_trials: set[tuple[str, str]] = set()
 
+        # Tracks (session_id, backend_trial_id) pairs the SDK ATTEMPTED to hand
+        # the backend, recorded BEFORE the outcome is known — a transient skip
+        # (BE#1194), a rejection and a raised exception all leave an attempt on
+        # record. #2020's "the backend is missing part of this run" predicate
+        # subtracts acknowledgements from THIS set rather than from a count of
+        # ``result.trials``: the orchestrator appends trials it never submits
+        # (``_abandon_optuna_trial``; the pre-eval ``constraints=[...]``
+        # rejections in ``TrialLifecycleManager``), and no metadata-shape filter
+        # can be trusted to enumerate that family — each new member would
+        # silently re-inflate the denominator and hand out a sync id for a run
+        # the portal already holds. Recording the submissions themselves cannot
+        # miss one.
+        self._attempted_trials: set[tuple[str, str]] = set()
+
         # Issue #1265: a backend that becomes unreachable *mid-run* (transient
         # outage / maintenance window) is distinct from the explicit
         # TRAIGENT_OFFLINE_MODE air-gap. When it happens in a backend-tracking
@@ -884,6 +929,58 @@ class BackendSessionManager:
             "backend; its result is marked source='local_fallback'. Locally-stored "
             "results sync to the cloud on the next successful run.",
             context,
+        )
+
+    def _attempted_trial_ids(self) -> set[tuple[str, str]]:
+        """The ``(session_id, backend_trial_id)`` pairs this run tried to submit.
+
+        Materialized through ``getattr`` so a partially-constructed or
+        test-substituted manager that predates the attribute reads as "nothing
+        attempted" instead of raising — the same defensive shape the
+        ``_acknowledged_trials`` reader uses.
+        """
+        attempted = getattr(self, "_attempted_trials", None)
+        if attempted is None:
+            attempted = set()
+            self._attempted_trials = attempted
+        return attempted
+
+    def _trials_not_fully_acknowledged(self, session_id: str) -> bool:
+        """True when the backend is missing a trial the SDK tried to give it.
+
+        The #2020 predicate's notion of "the backend does not hold the whole
+        run". Both sets are keyed ``(session_id, backend_trial_id)`` — a manager
+        can outlive a single session — so the question is asked strictly within
+        ``session_id``: is any submission attempted for it still unacknowledged?
+
+        The denominator is what the SDK ATTEMPTED, not what ``result.trials``
+        holds. The orchestrator appends trials it never submits — abandoned
+        ask/tell residuals, and every config a pre-eval ``constraints=[...]``
+        predicate rejects — and reading their count as "missing from the
+        backend" would hand a healthy, fully-tracked run a sync id, duplicating
+        the experiment on import. Filtering them out by metadata shape only
+        works until the next never-submitted trial kind appears; comparing
+        against the submissions themselves cannot go stale that way.
+
+        Deliberately STRICTER than the all-or-nothing test ``result_source``
+        uses (``trial_count > 0 and not self._acknowledged_trials``, i.e. "the
+        backend acknowledged *none*"). Partial acknowledgement is the reachable
+        middle: the ``submitted is None`` branch of ``submit_trial_result``
+        (transient BE#1194 session-not-found) does NOT flag the run degraded,
+        so trial 1 can be acknowledged while trial 2 is silently missing from
+        the backend — and that branch's own comment tells the user to "Recover
+        via ``traigent sync``", which needs this id. ``result_source``'s looser
+        test would call that run ``cloud_brain`` and withhold it.
+
+        That looseness in ``result_source`` is a separate, pre-existing
+        weakness in a public, documented provenance field (#1265); it is
+        recorded as follow-up work and deliberately NOT changed here, so this
+        fix does not silently restate what ``result.source`` means.
+        """
+        acknowledged = getattr(self, "_acknowledged_trials", None) or set()
+        return any(
+            known == session_id and (known, trial_id) not in acknowledged
+            for known, trial_id in self._attempted_trial_ids()
         )
 
     def result_source(self, trial_count: int) -> str:
@@ -1543,6 +1640,177 @@ class BackendSessionManager:
                 exc,
             )
 
+    def local_session_record_exists(self, session_id: str | None) -> bool:
+        """Durability half of the #2020 predicate: does the local store the
+        ``SyncManager`` reads actually hold a record under ``session_id``?
+
+        Callers use this to decide whether an id is one ``traigent sync`` will
+        accept. Returning False when a record *does* exist on disk is possible
+        (``LocalStorageManager.load_session`` swallows every read error), so a
+        negative probe is announced at WARNING with the id and the manual
+        recovery path — never silently.
+
+        Best-effort and never raises: resolving the storage handle is inside
+        the exception boundary too, so a manager built via ``__new__`` (missing
+        the ``_local_storage_manager`` attributes) or an overridden
+        ``_local_storage`` cannot raise out of a method documented as safe.
+        """
+        if not session_id:
+            return False
+        try:
+            storage = self._local_storage()
+            if storage is None:
+                # _local_storage() already warned about the init failure; name
+                # the id here so it stays recoverable by hand if a record does
+                # exist.
+                logger.warning(
+                    "Not exposing a `traigent sync` id for session %s: local "
+                    "session storage is unavailable, so no record could be read "
+                    "for it. Run `traigent local list` to look the id up "
+                    "manually.",
+                    session_id,
+                )
+                return False
+            record = storage.load_session(session_id)
+        except Exception as exc:  # storage must never break the run
+            logger.warning(
+                "Not exposing a `traigent sync` id for session %s: resolving or "
+                "reading its local record failed (%s). The record may still be "
+                "on disk — run `traigent local list` to look the id up manually.",
+                session_id,
+                exc,
+            )
+            return False
+        if record is None:
+            logger.warning(
+                "Not exposing a `traigent sync` id for session %s: no local "
+                "record could be read for it (never written, removed, or "
+                "unreadable). Run `traigent local list` to look the id up "
+                "manually.",
+                session_id,
+            )
+            return False
+        return True
+
+    def _warn_if_store_not_cli_default(self, session_id: str) -> None:
+        """Warn when a fresh ``traigent sync`` would read a DIFFERENT store (#2020).
+
+        The id is STORE-RELATIVE. ``local_storage_path`` is a supported public
+        ``@traigent.optimize(...)`` option, but it is programmatic-only: the
+        separate ``traigent sync`` process rebuilds its store from the
+        environment (see ``environment_default_store_root``). A run that used a
+        custom root therefore hands out a perfectly valid id that the CLI, left
+        alone, rejects with "not found in the local store".
+
+        Rather than withhold a correct id, name the root the caller has to
+        export. Fires ONLY on a genuine mismatch of *resolved* paths — a normal
+        same-store run says nothing — and never raises: this is a diagnostic and
+        must not be able to break a run that already succeeded.
+        """
+        try:
+            storage = self._local_storage()
+            raw_run_root = getattr(storage, "storage_path", None)
+            if raw_run_root is None:
+                return
+            run_root = Path(raw_run_root).expanduser().resolve()
+            cli_root = environment_default_store_root()
+            if cli_root is None or cli_root == run_root:
+                return
+            logger.warning(
+                "`traigent sync %s` will not find this run as-is: it was written "
+                "to the local session store at %s (this run's "
+                "`local_storage_path`), but a fresh `traigent sync` process "
+                "resolves %s. Point the CLI at the same root, e.g. "
+                "`TRAIGENT_RESULTS_FOLDER=%s traigent sync %s`.",
+                session_id,
+                run_root,
+                cli_root,
+                # shell-quoted so a root containing whitespace stays a single
+                # copy-pasteable assignment (adds quotes only when needed)
+                shlex.quote(str(run_root)),
+                session_id,
+            )
+        except Exception:  # a diagnostic must never break the run
+            logger.debug(
+                "Could not compare the local session store root against the "
+                "`traigent sync` default for session %s",
+                session_id,
+                exc_info=True,
+            )
+
+    def syncable_local_session_id(self, session_id: str | None) -> str | None:
+        """Return ``session_id`` when the LOCAL store holds the authoritative,
+        sync-eligible record for this run; ``None`` otherwise (issue #2020).
+
+        Two independent conditions must both hold:
+
+        1. Locality — the backend is not the system of record for this run:
+           egress disabled, backend tracking disabled, the run degraded to
+           local-only mid-flight (#1265), the backend closed the tracking
+           session early while local sequencing continued (#1938), or the
+           backend did not acknowledge every trial the SDK submitted to it
+           (reachable with ``_runtime_degraded`` still False — see
+           ``_trials_not_fully_acknowledged``, which is stricter than the
+           all-or-nothing test ``result_source`` uses).
+        2. Durability — a session record actually exists under this id in THIS
+           run's local store, so the returned id is one ``traigent sync`` will
+           accept against that store (``local_session_record_exists``). This is
+           what excludes the ephemeral ``local_session_<uuid>`` produced when
+           local storage is unavailable
+           (``session_operations._create_local_fallback_session``).
+
+        The id is therefore STORE-RELATIVE: a run that set the programmatic
+        ``local_storage_path`` option writes to a root a fresh ``traigent sync``
+        process does not resolve. The id is still returned — it is correct for
+        its own store — and ``_warn_if_store_not_cli_default`` names the
+        ``TRAIGENT_RESULTS_FOLDER`` the caller must export.
+
+        Best-effort and never raises: a storage failure returns ``None`` — and,
+        because that withholds an id the store may well accept, the probe logs
+        a warning naming it rather than dropping it silently.
+
+        Deliberately does NOT reuse ``result_source()`` wholesale — a
+        connected, fully-tracked ``algorithm="grid"`` run reports
+        ``explicit_local`` (``initial_result_source``,
+        ``execution_policy_runtime.py:227``), so ``source != "cloud_brain"``
+        would offer a sync id for a run already on the portal.
+
+        Args:
+            session_id: The local/backend session id for this run.
+        """
+        if not session_id:
+            return None
+        # A privacy-enabled run never submits trials (`_log_trial_to_backend`
+        # returns early, ahead of the slot acquisition that records an attempt),
+        # so it reaches this clause with BOTH sets empty and the clause is
+        # already inert. The exclusion stays as a second lock on the same door:
+        # were a privacy-aware submission path ever to record attempts it
+        # deliberately does not expect the backend to acknowledge, the clause
+        # would start handing out an id whose `traigent sync` uploads the full
+        # local trial records — including exactly what the privacy path withheld
+        # from the backend. Scoped to this clause ONLY: an offline or
+        # tracking-disabled privacy run still legitimately owns its record
+        # locally. Doubly a guard rather than a live fix — the public
+        # `privacy_enabled` option is deprecated and dropped before it reaches
+        # the config.
+        privacy_enabled = bool(getattr(self._traigent_config, "privacy_enabled", False))
+        locally_authoritative = (
+            self._egress_disabled()
+            or not getattr(self, "_backend_tracking_enabled", True)
+            or bool(getattr(self, "_runtime_degraded", False))
+            or self._remote_session_completed(session_id)
+            or (not privacy_enabled and self._trials_not_fully_acknowledged(session_id))
+        )
+        if not locally_authoritative:
+            return None
+        if not self.local_session_record_exists(session_id):
+            return None
+        # The id is valid, but only against THIS run's store. If a fresh CLI
+        # process would resolve a different root, say so now — the id is still
+        # returned, with the export the caller needs to make it work.
+        self._warn_if_store_not_cli_default(session_id)
+        return session_id
+
     def update_backend_client(
         self, backend_client: BackendIntegratedClient | None
     ) -> None:
@@ -2012,6 +2280,14 @@ class BackendSessionManager:
             # Rebind in place: _best_trial_cached holds this same object, so the
             # incumbent's trial_id becomes the backend id the report needs.
             trial_result.trial_id = backend_trial_id
+
+            # Record the attempt BEFORE the outcome is known (#2020). Every way
+            # this submission can fail — the transient `submitted is None` skip
+            # (BE#1194), an outright rejection, a raised network error — leaves
+            # the backend without a trial the SDK tried to give it, which is
+            # exactly what `_trials_not_fully_acknowledged` must see. Keyed on
+            # the backend-minted id so it pairs with `_acknowledged_trials`.
+            self._attempted_trial_ids().add((session_id, backend_trial_id))
 
             # P8 content-freedom (live-E2E finding): the resolved trial
             # config carries injected CALIBRATED values; the wire submission

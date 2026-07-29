@@ -178,6 +178,13 @@ _OBJECTIVE_INERT_CONSTANT_WARNING_CODE = "OBJECTIVE_INERT_CONSTANT"
 # fixed additive term that cannot change the argmax. Using selection's OWN span
 # test makes the #1832 inertness warning provably equivalent to actual inertness.
 _OBJECTIVE_ZERO_SPAN_EPSILON = 1e-9
+# Marker ``_abandon_optuna_trial`` stamps on the trials it appends to the result
+# without ever evaluating them. Mirrors the same marker
+# ``MaxTrialsStopCondition`` excludes from the execution budget
+# (``stop_conditions.py``); that one is a private class attribute of an
+# unrelated stop condition, so it is not importable as a shared constant —
+# writer and reader are kept in sync here instead.
+_ABANDONED_TRIAL_METADATA_KEY = "abandoned"
 
 
 def _successful_trial_metric_names(trials: Sequence[TrialResult]) -> list[str]:
@@ -3629,10 +3636,33 @@ class OptimizationOrchestrator:
         # terminal local status ("completed"). No-op for connected
         # tracking-enabled runs (their backend finalize owns the local mirror).
         self.backend_session_manager.finalize_local_session(session_id, self._status)
-        if session_id is not None and backend_egress_disabled(self.traigent_config):
-            # Surface the syncable local session id on the result so offline
-            # users can run `traigent sync <session_id>` directly.
-            result.metadata["local_session_id"] = session_id
+        # #2020: surface the syncable LOCAL session id on the result so the
+        # caller can upload THIS run (`traigent sync r.sync_session_id`)
+        # without --all or private-storage archaeology. Covers the runs the
+        # #1939 offline-only metadata gate missed — no-key local fallback,
+        # tracking-disabled, mid-run degraded, backend-early-complete (#1938),
+        # and trials the SDK submitted that the backend did not acknowledge —
+        # and it verifies the record exists so a rejected id is never surfaced.
+        # The unacknowledged-trials clause counts SUBMISSION ATTEMPTS recorded
+        # by the session manager, not entries in `result.trials`: this
+        # orchestrator appends trials it never submits (abandoned residuals;
+        # configs a pre-eval `constraints=[...]` predicate rejects), and
+        # counting those would offer a sync id for a run the portal already
+        # holds. Assigned here,
+        # before the backend-finalize block, so a finalization failure that
+        # still returns a partial result (see
+        # _finalize_user_cancelled_optimization) cannot drop it. This is the
+        # ONLY assignment: a backend-persistence failure below deliberately
+        # does NOT upgrade it, because an exception out of finalize does not
+        # prove the backend dropped the run (a timeout or a lost response can
+        # follow a committed write), and handing out a sync id for a run the
+        # backend already holds would duplicate the experiment. It does not
+        # CLEAR it either — a run that already qualified under another locality
+        # clause keeps the id it was given even if finalize then fails.
+        syncable_id = self.backend_session_manager.syncable_local_session_id(session_id)
+        if syncable_id is not None:
+            result.sync_session_id = syncable_id
+            result.metadata["local_session_id"] = syncable_id
 
         persistence_status = "skipped"
         if (
@@ -4066,7 +4096,7 @@ class OptimizationOrchestrator:
             metadata={
                 "pruned_step": pruned_step,
                 "stop_reason": reason,
-                "abandoned": True,
+                _ABANDONED_TRIAL_METADATA_KEY: True,
             },
         )
 

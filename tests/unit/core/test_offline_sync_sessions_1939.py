@@ -211,6 +211,8 @@ class TestOfflineOptimizeEndToEnd:
         # The syncable local session id is surfaced on the result …
         local_session_id = result.metadata.get("local_session_id")
         assert local_session_id
+        # … and mirrored on the public result field (#2020).
+        assert result.sync_session_id == local_session_id
 
         # … a COMPLETED session with all trials exists on disk …
         storage = LocalStorageManager(str(tmp_path / "results"))

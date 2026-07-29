@@ -7,6 +7,7 @@ import json
 import logging
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
@@ -22,7 +23,11 @@ from traigent.cloud.session_types import (
     SessionCreationResult,
 )
 from traigent.cloud.trial_operations import TrialSlotResult, TrialSubmissionResult
-from traigent.config.types import TraigentConfig
+from traigent.config.types import (
+    ExecutionIntent,
+    TraigentConfig,
+    resolve_execution_policy,
+)
 from traigent.core.backend_session_manager import (
     BackendSessionManager,
     BackendTrialSubmissionOutcome,
@@ -32,10 +37,13 @@ from traigent.core.backend_session_manager import (
     _format_untracked_warning_block,
     _sanitize_significance,
     _sanitized_numeric_dict,
+    environment_default_store_root,
     sanitize_session_aggregation_payload,
     session_aggregation_echoed,
 )
+from traigent.core.execution_policy_runtime import initial_result_source
 from traigent.core.objectives import create_default_objectives
+from traigent.core.optimization_pipeline import create_traigent_config
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.storage.local_storage import LocalStorageManager
 from traigent.utils.function_identity import resolve_function_descriptor
@@ -3176,3 +3184,699 @@ class TestWeightedSchemaThreading1846:
         # autodetect (maximize-everything) winner t2 asserted above.
         assert weighted["best_weighted_config"] == {"model": "cheap"}
         assert weighted["best_weighted_config"] == result.best_config
+
+
+class TestAttemptedTrialBookkeeping:
+    """Issue #2020: the submission ATTEMPTS the unacknowledged-trials clause counts.
+
+    ``_trials_not_fully_acknowledged`` asks "is the backend missing a trial the
+    SDK tried to give it?". That only works if the writer records the attempt at
+    the moment of submission and BEFORE the outcome is known — every one of the
+    ways a submission can fail must leave an attempt behind, or the clause goes
+    blind exactly when the user needs the sync id.
+    """
+
+    @pytest.mark.asyncio
+    async def test_acknowledged_submission_leaves_nothing_missing(
+        self, backend_session_manager, mock_trial_result, mock_backend_client
+    ):
+        """The happy path: attempted once, acknowledged once, nothing missing."""
+        await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        assert backend_session_manager._attempted_trials == {
+            ("test-session-id", "be_trial_mint_1")
+        }
+        assert backend_session_manager._acknowledged_trials == {
+            ("test-session-id", "be_trial_mint_1")
+        }
+        assert (
+            backend_session_manager._trials_not_fully_acknowledged("test-session-id")
+            is False
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("label", "submit_mock"),
+        [
+            # BE#1194 transient session-not-found: deliberately does NOT flag
+            # the run degraded, so this clause is the ONLY thing that can hand
+            # out the id its own log message tells the user to sync with.
+            ("transient_none", AsyncMock(return_value=None)),
+            ("rejected", AsyncMock(return_value=False)),
+            ("raised", AsyncMock(side_effect=ConnectionError("network down"))),
+        ],
+    )
+    async def test_failed_submission_still_counts_as_attempted(
+        self,
+        backend_session_manager,
+        mock_trial_result,
+        mock_backend_client,
+        label,
+        submit_mock,
+    ):
+        """A post-slot failure leaves the backend missing a trial we sent."""
+        mock_backend_client._submit_trial_result_via_session = submit_mock
+
+        await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        assert backend_session_manager._attempted_trials == {
+            ("test-session-id", "be_trial_mint_1")
+        }
+        assert backend_session_manager._acknowledged_trials == set()
+        assert (
+            backend_session_manager._trials_not_fully_acknowledged("test-session-id")
+            is True
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_slot_records_no_attempt(
+        self, backend_session_manager, mock_trial_result, mock_backend_client
+    ):
+        """Nothing was sent, so nothing is "missing" by THIS clause.
+
+        The manager fails closed without a backend-minted slot, so there is no
+        id to key an attempt on and no submission ever leaves the process. The
+        run is not left without a sync id — ``_flag_backend_degraded`` fires and
+        the degraded locality clause covers it — but this clause must stay
+        inert rather than invent a missing trial.
+        """
+        mock_backend_client.request_trial_slot = AsyncMock(return_value=None)
+
+        await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        assert backend_session_manager._attempted_trials == set()
+        assert (
+            backend_session_manager._trials_not_fully_acknowledged("test-session-id")
+            is False
+        )
+        assert backend_session_manager.backend_degraded is True
+
+    @pytest.mark.asyncio
+    async def test_retry_of_the_same_trial_reuses_its_slot_and_leaves_nothing_missing(
+        self,
+        backend_session_manager,
+        mock_trial_result,
+        mock_backend_client,
+        monkeypatch,
+    ):
+        """Attempt-keyed bookkeeping is only safe because retries reuse a slot.
+
+        Keying `_attempted_trials` on the backend-minted id would strand a
+        stale, never-acknowledged entry if a retry of the SAME logical trial
+        minted a SECOND backend id — the run would stay "missing a trial"
+        forever and hand a healthy connected run a sync id, duplicating the
+        experiment on import. It does not: `_acquire_backend_trial_id` reuses
+        the id already recorded in `_started_trials`, because
+        `_log_trial_to_backend` rebinds `trial_result.trial_id` to the backend
+        id IN PLACE on the shared object before recording the attempt.
+
+        This test exists because two independent post-PR reviewers disagreed
+        about that behaviour (one ruled the stale-attempt defect out by
+        executing the path, the other reported it live from a static reading),
+        so the invariant is pinned here rather than left to argument.
+
+        If `_acquire_backend_trial_id` ever stops reusing slots, this test
+        fails FIRST — and the fix is not to relax it: attempt-vs-ack
+        bookkeeping would then have to be keyed on a stable logical trial id
+        instead of the backend-minted one.
+        """
+        # Attempt A takes the transient BE#1194 `None` skip; the retry of the
+        # very same TrialResult object is acknowledged.
+        mock_backend_client._submit_trial_result_via_session = AsyncMock(
+            side_effect=[None, True]
+        )
+
+        await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+        await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        # The retry reused attempt A's slot instead of burning a second one.
+        assert mock_backend_client.request_trial_slot.await_count == 1
+        assert backend_session_manager._attempted_trials == {
+            ("test-session-id", "be_trial_mint_1")
+        }
+        assert backend_session_manager._acknowledged_trials == {
+            ("test-session-id", "be_trial_mint_1")
+        }
+        assert (
+            backend_session_manager._trials_not_fully_acknowledged("test-session-id")
+            is False
+        )
+
+        # The user-visible consequence: an otherwise-healthy connected run gets
+        # NO sync id, even though a local record exists — nothing to re-import.
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+        backend_session_manager._traigent_config.execution_mode = "hybrid"
+        backend_session_manager._no_egress = False
+        backend_session_manager._backend_tracking_enabled = True
+        backend_session_manager._runtime_degraded = False
+        backend_session_manager._remote_completed_sessions = set()
+        assert backend_session_manager._egress_disabled() is False
+        storage = Mock()
+        storage.load_session = Mock(return_value=Mock())
+        backend_session_manager._local_storage = Mock(return_value=storage)
+
+        assert (
+            backend_session_manager.syncable_local_session_id("test-session-id") is None
+        )
+
+    def test_missing_attribute_reads_as_nothing_attempted(
+        self, backend_session_manager
+    ):
+        """A partially-constructed manager must not raise from the predicate.
+
+        Mirrors the ``getattr`` guard the ``_acknowledged_trials`` reader
+        already carries: this runs inside result finalization, where an
+        AttributeError would fail a run that otherwise succeeded.
+        """
+        del backend_session_manager._attempted_trials
+
+        assert (
+            backend_session_manager._trials_not_fully_acknowledged("test-session-id")
+            is False
+        )
+
+
+class TestSyncableLocalSessionId:
+    """Issue #2020: `syncable_local_session_id` hands out the id `traigent sync`
+    accepts — and ONLY when the local store is the system of record for the run.
+
+    Two independent conditions: locality (the backend did not track this run
+    end-to-end) and durability (a record really exists under that id).
+    """
+
+    @staticmethod
+    def _stub_storage(manager, load_session):
+        """Give the manager a stub local store with the given load_session."""
+        storage = Mock()
+        storage.load_session = load_session
+        manager._local_storage = Mock(return_value=storage)
+        return storage
+
+    @staticmethod
+    def _acks(session_id, count):
+        """The `(session_id, backend_trial_id)` entries `submit_trial_result`
+        records — the real key shape, so per-session counting is exercised."""
+        return {(session_id, f"backend-trial-{i}") for i in range(count)}
+
+    @staticmethod
+    def _attempts(session_id, count):
+        """The submission attempts `_log_trial_to_backend` records just before
+        it posts. Same key shape as `_acks`, so an acknowledged attempt cancels
+        out exactly; the first `count` entries here pair with `_acks(.., n)`."""
+        return {(session_id, f"backend-trial-{i}") for i in range(count)}
+
+    @staticmethod
+    def _connected(manager, monkeypatch):
+        """A healthy connected run: egress on, tracking on, nothing degraded."""
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+        manager._traigent_config.execution_mode = "hybrid"
+        manager._no_egress = False
+        manager._backend_tracking_enabled = True
+        manager._runtime_degraded = False
+        manager._remote_completed_sessions = set()
+        # Guard: the "None" rows below must be earned by the predicate, not by
+        # an accidentally offline fixture.
+        assert manager._egress_disabled() is False
+        return manager
+
+    def test_none_session_id_returns_none(self, backend_session_manager):
+        assert backend_session_manager.syncable_local_session_id(None) is None
+
+    def test_egress_disabled_with_record_returns_id(self, backend_session_manager):
+        manager = backend_session_manager
+        manager._no_egress = True
+        self._stub_storage(manager, Mock(return_value=Mock()))
+        assert manager.syncable_local_session_id("sess-2020") == "sess-2020"
+
+    def test_tracking_disabled_with_record_returns_id(
+        self, backend_session_manager, monkeypatch
+    ):
+        manager = self._connected(backend_session_manager, monkeypatch)
+        manager._backend_tracking_enabled = False
+        self._stub_storage(manager, Mock(return_value=Mock()))
+        assert manager.syncable_local_session_id("sess-2020") == "sess-2020"
+
+    def test_runtime_degraded_with_record_returns_id(
+        self, backend_session_manager, monkeypatch
+    ):
+        """Drive the REAL mid-flight degradation, not a hand-set flag.
+
+        ``_flag_backend_degraded`` also calls ``mark_local_fallback``, which
+        sets ``config.no_egress = True`` — so "degraded with egress still on"
+        is a state production cannot produce, and asserting it would pin a
+        fiction. The predicate keeps its own ``_runtime_degraded`` clause as
+        defense-in-depth so it does not silently depend on
+        ``mark_local_fallback``'s ``no_egress=True`` default staying put.
+        """
+        manager = self._connected(backend_session_manager, monkeypatch)
+        self._stub_storage(manager, Mock(return_value=Mock()))
+
+        manager._flag_backend_degraded("trial submission")
+
+        assert manager._runtime_degraded is True
+        assert manager._egress_disabled() is True
+        assert manager.syncable_local_session_id("sess-2020") == "sess-2020"
+
+    def test_unacknowledged_trials_with_record_returns_id(
+        self, backend_session_manager, monkeypatch
+    ):
+        """Trials ran, the backend acknowledged none — the local copy is it.
+
+        ``submit_trial_result``'s ``submitted is None`` branch (transient
+        BE#1194 session-not-found) deliberately does NOT call
+        ``_flag_backend_degraded``, so tracking and egress both stay on. Its own
+        comment tells the user to "Recover via ``traigent sync``" — without this
+        clause the id that advice needs is never handed out.
+        """
+        manager = self._connected(backend_session_manager, monkeypatch)
+        manager._attempted_trials = self._attempts("sess-2020", 2)
+        manager._acknowledged_trials = set()
+        self._stub_storage(manager, Mock(return_value=Mock()))
+
+        # Same shape `result_source` already calls local_fallback.
+        assert manager.result_source(trial_count=2) == "local_fallback"
+        assert manager.syncable_local_session_id("sess-2020") == "sess-2020"
+
+    def test_fully_acknowledged_trials_on_connected_run_returns_none(
+        self, backend_session_manager, monkeypatch
+    ):
+        """Every submitted trial acknowledged ⇒ the backend has the run."""
+        manager = self._connected(backend_session_manager, monkeypatch)
+        manager._attempted_trials = self._attempts("sess-2020", 3)
+        manager._acknowledged_trials = self._acks("sess-2020", 3)
+        self._stub_storage(manager, Mock(return_value=Mock()))
+
+        assert manager.result_source(trial_count=3) == "cloud_brain"
+        assert manager.syncable_local_session_id("sess-2020") is None
+
+    def test_nothing_attempted_does_not_trigger_unacknowledged_clause(
+        self, backend_session_manager, monkeypatch
+    ):
+        """No submission attempted ⇒ nothing can be missing from the backend.
+
+        An empty attempted set must read as "the clause has no opinion", not as
+        "the backend is missing everything" — otherwise every connected run that
+        produced no trials, and every locality shape that never reaches the
+        submission path at all, would be handed an id it does not need.
+        """
+        manager = self._connected(backend_session_manager, monkeypatch)
+        manager._attempted_trials = set()
+        manager._acknowledged_trials = set()
+        self._stub_storage(manager, Mock(return_value=Mock()))
+
+        assert manager.syncable_local_session_id("sess-2020") is None
+
+    def test_backend_closed_session_early_with_record_returns_id(
+        self, backend_session_manager, monkeypatch
+    ):
+        """#1938: trials after the backend-side completion are local-only."""
+        manager = self._connected(backend_session_manager, monkeypatch)
+        manager._remote_completed_sessions = {"sess-2020"}
+        self._stub_storage(manager, Mock(return_value=Mock()))
+        assert manager.syncable_local_session_id("sess-2020") == "sess-2020"
+
+    def test_healthy_connected_run_returns_none(
+        self, backend_session_manager, monkeypatch
+    ):
+        """The run is already on the portal — there is nothing to upload.
+
+        Records real submission attempts AND their matching acknowledgements,
+        so the ``None`` is earned by "the backend holds every trial the SDK
+        sent" rather than by an empty attempted set silently disabling the
+        clause (that inertness has its own test above).
+        """
+        manager = self._connected(backend_session_manager, monkeypatch)
+        manager._attempted_trials = self._attempts("sess-2020", 3)
+        manager._acknowledged_trials = self._acks("sess-2020", 3)
+        self._stub_storage(manager, Mock(return_value=Mock()))
+        assert manager.syncable_local_session_id("sess-2020") is None
+
+    def test_explicit_local_source_on_connected_run_returns_none(
+        self, backend_session_manager, monkeypatch
+    ):
+        """A `source`-based predicate would leak an id here.
+
+        Scope: this pins THE PREDICATE given a configured
+        ``result_source="explicit_local"`` — the source is assigned directly, so
+        the test does not (and cannot) show that production resolves connected
+        grid runs to `explicit_local`. That value is measured end-to-end by
+        ``tests/unit/core/test_result_sync_session_id_2020.py::
+        test_no_key_run_exposes_syncable_session_id``, which asserts
+        ``result.source == "explicit_local"`` off a real run.
+
+        Given that value, the point stands: a connected, fully-tracked grid run
+        would be stamped `explicit_local` while the backend tracks every trial,
+        so a `source != "cloud_brain"` predicate would offer a sync id for a run
+        already on the portal and duplicate it.
+        """
+        manager = self._connected(backend_session_manager, monkeypatch)
+        manager._traigent_config.result_source = "explicit_local"
+        manager._attempted_trials = self._attempts("sess-2020", 3)
+        manager._acknowledged_trials = self._acks("sess-2020", 3)
+        self._stub_storage(manager, Mock(return_value=Mock()))
+        assert manager.result_source(trial_count=3) == "explicit_local"
+        assert manager.syncable_local_session_id("sess-2020") is None
+
+    def test_partially_acknowledged_trials_returns_id(
+        self, backend_session_manager, monkeypatch
+    ):
+        """1 of 3 acknowledged: the backend is missing two trials.
+
+        The all-or-nothing test (``not self._acknowledged_trials``) that
+        ``result_source`` uses calls this set "non-empty" and so would withhold
+        the id — but the backend really is missing trials 2 and 3, exactly the
+        shape the ``submitted is None`` branch tells the user to "Recover via
+        ``traigent sync``". ``_trials_not_fully_acknowledged`` subtracts the
+        acknowledgements from the attempts instead.
+        """
+        manager = self._connected(backend_session_manager, monkeypatch)
+        manager._attempted_trials = self._attempts("sess-2020", 3)
+        manager._acknowledged_trials = self._acks("sess-2020", 1)
+        self._stub_storage(manager, Mock(return_value=Mock()))
+
+        # The looser provenance test disagrees — deliberately left unchanged.
+        assert manager.result_source(trial_count=3) == "cloud_brain"
+        assert manager.syncable_local_session_id("sess-2020") == "sess-2020"
+
+    def test_acks_from_another_session_do_not_count(
+        self, backend_session_manager, monkeypatch
+    ):
+        """A manager reused across sessions must not inflate the ack count.
+
+        Both sets are keyed ``(session_id, trial_id)``; three acks belonging to
+        a previous session leave THIS session's three attempts unacknowledged.
+        """
+        manager = self._connected(backend_session_manager, monkeypatch)
+        manager._attempted_trials = self._attempts("sess-2020", 3)
+        manager._acknowledged_trials = self._acks("sess-other", 3)
+        self._stub_storage(manager, Mock(return_value=Mock()))
+
+        assert manager.syncable_local_session_id("sess-2020") == "sess-2020"
+
+    def test_attempts_from_another_session_do_not_leak_in(
+        self, backend_session_manager, monkeypatch
+    ):
+        """The mirror of the ack-scoping test: a previous session's UNacknowledged
+        attempts must not make THIS fully-tracked session look incomplete."""
+        manager = self._connected(backend_session_manager, monkeypatch)
+        manager._attempted_trials = self._attempts("sess-2020", 2) | self._attempts(
+            "sess-other", 3
+        )
+        manager._acknowledged_trials = self._acks("sess-2020", 2)
+        self._stub_storage(manager, Mock(return_value=Mock()))
+
+        assert manager.syncable_local_session_id("sess-2020") is None
+
+    def test_privacy_enabled_run_returns_none(
+        self, backend_session_manager, monkeypatch
+    ):
+        """Guard, not a live fix: a privacy run must never be told to sync.
+
+        ``_log_trial_to_backend`` returns early for a privacy-enabled config —
+        ahead of the slot acquisition that records an attempt — so a real
+        privacy run reaches the clause with both sets empty and the clause is
+        already inert. This test constructs the state the guard exists FOR:
+        attempts on record that the backend is never expected to acknowledge.
+        Without the exclusion that shape offers an id whose ``traigent sync``
+        uploads the full local trial records, including what the privacy path
+        deliberately withheld from the backend.
+
+        Doubly hypothetical in production today:
+        ``@traigent.optimize(privacy_enabled=True)`` is deprecated and the value
+        is dropped before it reaches the config.
+        """
+        manager = self._connected(backend_session_manager, monkeypatch)
+        manager._traigent_config.privacy_enabled = True
+        manager._attempted_trials = self._attempts("sess-2020", 3)
+        manager._acknowledged_trials = set()
+        self._stub_storage(manager, Mock(return_value=Mock()))
+
+        assert manager.syncable_local_session_id("sess-2020") is None
+
+        # The exclusion is scoped to that clause only: an offline privacy run
+        # still legitimately owns its record locally.
+        manager._no_egress = True
+        assert manager.syncable_local_session_id("sess-2020") == "sess-2020"
+
+    def test_no_local_record_returns_none(self, backend_session_manager, caplog):
+        """The ephemeral `local_session_<uuid>` minted when storage is
+        unavailable is not an id `traigent sync` would accept."""
+        manager = backend_session_manager
+        manager._no_egress = True
+        self._stub_storage(manager, Mock(return_value=None))
+        with caplog.at_level(logging.WARNING):
+            assert manager.syncable_local_session_id("local_session_abc") is None
+        # Withholding must be audible: the record may exist and simply not be
+        # readable, in which case `traigent sync` would still accept the id.
+        assert "local_session_abc" in caplog.text
+        assert "traigent local list" in caplog.text
+
+    def test_storage_failure_returns_none_without_raising(
+        self, backend_session_manager, caplog
+    ):
+        """A raising store must not break the run — and must not go quiet.
+
+        NOTE: the real ``LocalStorageManager.load_session`` catches every
+        exception and returns None (local_storage.py), so this raise comes from
+        a stub / alternate storage implementation. Keep the ``except`` in
+        ``local_session_record_exists``: it is the only thing standing between
+        an unexpected storage type and a failed optimization run.
+        """
+        manager = backend_session_manager
+        manager._no_egress = True
+        self._stub_storage(manager, Mock(side_effect=OSError("disk gone")))
+        with caplog.at_level(logging.WARNING):
+            assert manager.syncable_local_session_id("sess-2020") is None
+        assert "sess-2020" in caplog.text
+        assert "disk gone" in caplog.text
+
+    def test_unavailable_local_storage_returns_none(
+        self, backend_session_manager, caplog
+    ):
+        manager = backend_session_manager
+        manager._no_egress = True
+        manager._local_storage = Mock(return_value=None)
+        with caplog.at_level(logging.WARNING):
+            assert manager.syncable_local_session_id("sess-2020") is None
+        assert "sess-2020" in caplog.text
+
+    def test_healthy_connected_run_stays_silent(
+        self, backend_session_manager, monkeypatch, caplog
+    ):
+        """No warning for the normal case: locality fails before the probe, so
+        a fully-tracked run never logs about a sync id it never wanted."""
+        manager = self._connected(backend_session_manager, monkeypatch)
+        self._stub_storage(manager, Mock(return_value=None))
+        with caplog.at_level(logging.WARNING):
+            assert manager.syncable_local_session_id("sess-2020") is None
+        assert "sess-2020" not in caplog.text
+
+    def test_connected_grid_run_is_explicit_local_through_production_path(
+        self, mock_backend_client, objective_schema, mock_optimizer, monkeypatch
+    ):
+        """Pin the claim that justified NOT keying the predicate on `source`.
+
+        The sibling ``test_explicit_local_source_on_connected_run_returns_none``
+        *assigns* ``result_source="explicit_local"``, so it cannot show that
+        production actually stamps a connected grid run that way — and the
+        end-to-end test it cross-references is a no-API-key FALLBACK run, not a
+        connected one. Without this test, a future change routing connected grid
+        runs to ``cloud_brain`` would leave both green while silently
+        invalidating the reasoning in ``syncable_local_session_id``'s docstring.
+
+        So derive the source the way production does — real
+        ``resolve_execution_policy`` → real ``initial_result_source`` → real
+        ``create_traigent_config`` — and only then assert the conclusion. No
+        live backend is needed: the policy resolution is pure, and only the
+        backend client and the local store are stubbed.
+        """
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+        monkeypatch.delenv("TRAIGENT_REQUIRE_CLOUD", raising=False)
+
+        policy = resolve_execution_policy(algorithm="grid", offline=False)
+        # Connected: egress is allowed, the LOCAL optimizer just owns sequencing.
+        assert policy.offline is False
+        assert policy.intent is ExecutionIntent.LOCAL_ONLY
+
+        config = create_traigent_config(
+            execution_mode="hybrid",
+            local_storage_path=None,
+            minimal_logging=False,
+            privacy_enabled=False,
+            execution_policy=policy,
+            no_egress=False,
+            result_source=initial_result_source(policy, external_evaluator=False),
+        )
+        # THE claim, measured rather than assumed.
+        assert config.result_source == "explicit_local"
+
+        manager = BackendSessionManager(
+            backend_client=mock_backend_client,
+            traigent_config=config,
+            objectives=["accuracy", "cost"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+        manager._backend_tracking_enabled = True
+        manager._runtime_degraded = False
+        manager._remote_completed_sessions = set()
+        manager._attempted_trials = self._attempts("sess-2020", 3)
+        manager._acknowledged_trials = self._acks("sess-2020", 3)
+        self._stub_storage(manager, Mock(return_value=Mock()))
+        assert manager._egress_disabled() is False
+
+        # A `source != "cloud_brain"` predicate would offer an id here …
+        assert manager.result_source(trial_count=3) == "explicit_local"
+        # … and duplicate a run the backend tracked end-to-end. Ours does not.
+        assert manager.syncable_local_session_id("sess-2020") is None
+
+
+class TestStoreRelativeSyncId:
+    """Issue #2020: the id is store-relative, and the SDK has to say so.
+
+    ``local_storage_path`` is a supported public ``@traigent.optimize(...)``
+    option, but ``traigent sync`` is a separate process that rebuilds its store
+    from the environment — so a run with a custom root hands out an id a default
+    CLI invocation rejects.
+    """
+
+    @staticmethod
+    def _real_cli_root(storage_path):
+        """What ``SyncManager`` really builds, via the production chain."""
+        return LocalStorageManager(
+            TraigentConfig.from_environment().get_local_storage_path()
+        ).storage_path
+
+    def test_env_default_root_matches_real_resolution_with_results_folder(
+        self, monkeypatch, tmp_path
+    ):
+        """Drift guard: the side-effect-free mirror must equal the real thing.
+
+        ``environment_default_store_root`` reimplements the
+        ``get_local_storage_path`` → ``LocalStorageManager._get_storage_path``
+        chain so a *diagnostic* does not create directories. This pins the
+        env-var branch against the real resolution.
+        """
+        monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path / "env_store"))
+        assert environment_default_store_root() == self._real_cli_root(None)
+
+    def test_env_default_root_matches_real_resolution_without_results_folder(
+        self, monkeypatch, tmp_path
+    ):
+        """Same drift guard for the `~/.traigent` branch (home redirected)."""
+        monkeypatch.delenv("TRAIGENT_RESULTS_FOLDER", raising=False)
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+        assert environment_default_store_root() == self._real_cli_root(None)
+        assert environment_default_store_root() == (fake_home / ".traigent")
+
+    def test_custom_store_warns_and_still_returns_the_id(
+        self, backend_session_manager, monkeypatch, tmp_path, caplog
+    ):
+        """The mismatch is announced with the export that fixes it — and the id
+        is still returned, because it IS valid against its own store."""
+        monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path / "cli_store"))
+        custom_root = tmp_path / "run_store"
+
+        manager = backend_session_manager
+        manager._no_egress = True
+        storage = Mock()
+        storage.load_session = Mock(return_value=Mock())
+        storage.storage_path = custom_root
+        manager._local_storage = Mock(return_value=storage)
+
+        with caplog.at_level(logging.WARNING):
+            assert manager.syncable_local_session_id("sess-2020") == "sess-2020"
+
+        assert "sess-2020" in caplog.text
+        assert str(custom_root.resolve()) in caplog.text
+        assert str((tmp_path / "cli_store").resolve()) in caplog.text
+        assert "TRAIGENT_RESULTS_FOLDER" in caplog.text
+
+    def test_same_store_run_does_not_warn(
+        self, backend_session_manager, monkeypatch, tmp_path, caplog
+    ):
+        """The normal case must stay silent — the warning is for mismatches only."""
+        shared_root = tmp_path / "shared_store"
+        monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(shared_root))
+
+        manager = backend_session_manager
+        manager._no_egress = True
+        storage = Mock()
+        storage.load_session = Mock(return_value=Mock())
+        storage.storage_path = shared_root
+        manager._local_storage = Mock(return_value=storage)
+
+        with caplog.at_level(logging.WARNING):
+            assert manager.syncable_local_session_id("sess-2020") == "sess-2020"
+
+        assert "TRAIGENT_RESULTS_FOLDER" not in caplog.text
+
+    def test_undeterminable_default_does_not_warn(
+        self, backend_session_manager, monkeypatch, tmp_path, caplog
+    ):
+        """An undeterminable environment default is not a mismatch.
+
+        Guessing would fire the warning on every run of a machine with no home
+        directory, so an unresolvable default is treated as "no opinion".
+        """
+        monkeypatch.delenv("TRAIGENT_RESULTS_FOLDER", raising=False)
+        monkeypatch.setattr(
+            Path, "home", classmethod(lambda cls: (_ for _ in ()).throw(RuntimeError))
+        )
+
+        manager = backend_session_manager
+        manager._no_egress = True
+        storage = Mock()
+        storage.load_session = Mock(return_value=Mock())
+        storage.storage_path = tmp_path / "run_store"
+        manager._local_storage = Mock(return_value=storage)
+
+        with caplog.at_level(logging.WARNING):
+            assert manager.syncable_local_session_id("sess-2020") == "sess-2020"
+
+        assert "TRAIGENT_RESULTS_FOLDER" not in caplog.text
+
+    def test_warning_never_breaks_the_run(
+        self, backend_session_manager, monkeypatch, tmp_path
+    ):
+        """A diagnostic must not be able to fail a run that already succeeded."""
+        monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path / "cli_store"))
+
+        class ExplodingStore:
+            """A storage handle whose root cannot be read at all."""
+
+            @staticmethod
+            def load_session(session_id):
+                return Mock()
+
+            @property
+            def storage_path(self):
+                raise OSError("path gone")
+
+        manager = backend_session_manager
+        manager._no_egress = True
+        manager._local_storage = Mock(return_value=ExplodingStore())
+
+        assert manager.syncable_local_session_id("sess-2020") == "sess-2020"

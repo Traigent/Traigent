@@ -262,6 +262,46 @@ def test_legacy_pickle_fallback_roundtrips_real_trial_result(tmp_path) -> None:
     assert loaded_trial.error.error_type == "ValueError"
 
 
+def test_load_result_does_not_restore_sync_session_id(tmp_path) -> None:
+    """load_result must NOT resurrect sync_session_id (#2020, Divergence 7).
+
+    The id is a live, machine-local handle into the local session store. A
+    reloaded historical result may have had its record removed by
+    ``traigent sync --clean``, may live under a different
+    TRAIGENT_RESULTS_FOLDER, or may come from another machine — so a restored
+    value would be a stale id that ``traigent sync`` rejects with
+    "Session ... not found", which is the exact failure #2020 removes. ``None``
+    correctly means "not available here". This test pins that deliberate
+    non-restoration: do not "fix" it into a round-trip.
+
+    Pins the LOAD side specifically. ``save_result`` writes a fixed metadata
+    whitelist that has never carried ``sync_session_id``, so a save→load
+    assertion alone passes even if round-tripping is added to both sides; so the
+    id is injected into the on-disk ``metadata.json`` here and ``load_result``
+    must still drop it.
+    """
+    persistence = PersistenceManager(base_dir=tmp_path)
+    result = _make_optimization_result()
+    result.sync_session_id = "local-abc"
+
+    persistence.save_result(result, "sync-handle")
+
+    # The whitelist must not have picked it up on the way out …
+    metadata_path = tmp_path / "sync-handle" / "metadata.json"
+    saved_metadata = json.loads(metadata_path.read_text())
+    assert "sync_session_id" not in saved_metadata
+
+    # … and a metadata.json that DOES carry one (hand-edited, or written by a
+    # future/forked SDK) must not resurrect it on the way in.
+    saved_metadata["sync_session_id"] = "local-abc"
+    metadata_path.write_text(json.dumps(saved_metadata))
+
+    loaded = persistence.load_result("sync-handle")
+
+    assert loaded.sync_session_id is None
+    assert "sync_session_id" not in loaded.metadata
+
+
 def test_restricted_unpickler_loads_protocol_2_real_payload() -> None:
     trial = TrialResult(
         trial_id="trial-1",

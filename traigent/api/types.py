@@ -999,6 +999,53 @@ class OptimizationResult:
             (``effective_alpha = alpha / max(1, n_configs - 1)``), applied to both
             the p-value and the CI level. A margin whose CI includes 0 at typical
             n is a tie, not a decision.
+        sync_session_id: Id of this run's record in **this run's local session
+            store** — the argument ``traigent sync <SESSION_ID>`` accepts
+            against that store (issue #2020). Populated when the local store
+            holds the authoritative copy of this run: offline / no-egress,
+            no-API-key local fallback, explicit-local with backend tracking
+            disabled, a connected run that degraded to local-only mid-flight,
+            a connected run whose trials the backend did not all acknowledge,
+            and a connected run the backend closed early (#1938). ``None`` when
+            the run was tracked end-to-end on the backend — there is nothing to
+            upload; use ``cloud_url`` / ``experiment_run_id`` — and ``None``
+            when no local record could be read for the id (storage unavailable
+            or the record unreadable; it may still be on disk — see
+            ``traigent local list``).
+            The id is store-relative. ``traigent sync`` is a separate process
+            that resolves its store from the environment, so a run that passed
+            the programmatic ``local_storage_path`` option must point the CLI at
+            the same root — ``TRAIGENT_RESULTS_FOLDER="<that path>" traigent
+            sync <id>``. The SDK logs a warning naming that root when the run's
+            configured store differs from the CLI default *as resolved in this
+            process*. That default is read from this process's environment, so
+            a script that sets ``TRAIGENT_RESULTS_FOLDER`` itself before
+            optimizing sees no warning even though a fresh shell without that
+            variable would reject the id; ``traigent local list`` looks the
+            record up either way.
+            For a backend-early-complete (#1938) or partially-acknowledged run
+            (which includes a run that degraded to local-only mid-flight, since
+            degradation means at least one trial went unacknowledged),
+            the trials already submitted are on the portal, so syncing
+            re-imports them as a *separate* experiment: a deliberate trade-off,
+            since the SDK's own message for those shapes tells the user to sync.
+            This is a live, machine-local handle, not a durable identifier: it
+            is not restored by ``PersistenceManager.load_result`` or
+            ``ConfigStateManager.load_optimization_results``, and it goes
+            stale if the record is deleted (``traigent sync --clean``) or the
+            local storage root changes. Dropping it on load is deliberate, not
+            an oversight: a reloaded result may come from another machine or a
+            store that has since been cleaned, so a restored id would name a
+            record ``traigent sync`` rejects — the exact #2020 failure. Note
+            ``ConfigStateManager.save_optimization_results`` serializes the
+            whole dataclass, so the on-disk JSON *does* carry the field; the
+            loader is what drops it (pinned by
+            ``tests/unit/core/test_config_state_manager_sync_session_id_2020.py``).
+            That non-restoration guarantee covers
+            this field only — the ``metadata["local_session_id"]`` mirror rides
+            along in any verbatim ``metadata`` round-trip (e.g.
+            ``ConfigStateManager``), where it is exactly as stale as a restored
+            field would be; read this field, never the mirror, as a sync target.
     """
 
     trials: list[TrialResult]
@@ -1061,6 +1108,13 @@ class OptimizationResult:
     # — the winner is interchangeable with the runner-up), or ``"na"`` (two
     # configs but no shared per-example data for a paired test).
     best_config_margin: dict[str, Any] | None = None
+
+    # Syncable local-session handle (issue #2020). The exact argument
+    # ``traigent sync <SESSION_ID>`` accepts for THIS run, populated when the
+    # local session store holds the authoritative copy of it. Distinct from
+    # ``optimization_id`` (which ``sync`` rejects) and from the backend
+    # ``experiment_run_id``. See the class docstring for the full contract.
+    sync_session_id: str | None = None
 
     _experiment_stats: ExperimentStats | None = field(
         default=None, init=False, repr=False
