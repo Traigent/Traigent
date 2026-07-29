@@ -255,3 +255,95 @@ def test_add_agent_span_works_with_restored_thread_context() -> None:
     spans = manager._group_spans_by_config_run()["config-run-1"]
     assert spans[0].node_id == "threaded_agent"
     assert "threaded_agent" in _graph_node_ids(manager)
+
+
+# ---------------------------------------------------------------------------
+# F1 — add_agent_span returns a receipt (spine-trail st_696dca8f2855)
+#
+# These do NOT change what is dropped (see #1649 regression above); they make
+# the drop observable to the caller instead of DEBUG-only.
+# ---------------------------------------------------------------------------
+
+
+def test_add_agent_span_returns_accepted_receipt() -> None:
+    manager = _manager()
+
+    with _active_trial(manager):
+        result = add_agent_span("planner", input_tokens=1)
+
+    assert result.accepted is True
+    assert result.reason is None
+    assert result.dropped_metadata_keys == ()
+
+
+def test_add_agent_span_receipt_reports_missing_trace_context() -> None:
+    result = add_agent_span("planner", input_tokens=1)
+
+    assert result.accepted is False
+    assert result.reason == "no_trace_context"
+
+
+def test_add_agent_span_receipt_is_falsy_when_rejected() -> None:
+    result = add_agent_span("planner", input_tokens=1)
+
+    # `is not None` matters: without it this passes vacuously against the old
+    # `-> None` signature and proves nothing.
+    assert result is not None
+    assert not result
+
+
+def test_add_agent_span_receipt_reports_dropped_metadata_keys() -> None:
+    manager = _manager()
+
+    with _active_trial(manager):
+        result = add_agent_span(
+            "privacy_node",
+            metadata={"auth_token_count": 5, "prompt": "x", "safe_score": 0.91},
+        )
+
+    assert result.accepted is True
+    assert set(result.dropped_metadata_keys) == {"auth_token_count", "prompt"}
+
+
+def test_add_agent_span_receipt_reports_collection_failure() -> None:
+    manager = _manager()
+
+    def fail_collect(_: Any) -> None:
+        raise RuntimeError("collector down")
+
+    manager.collect_span = fail_collect  # type: ignore[method-assign]
+
+    with _active_trial(manager):
+        result = add_agent_span("planner", input_tokens=1)
+
+    assert result.accepted is False
+    assert result.reason == "collection_failed"
+
+
+# ---------------------------------------------------------------------------
+# F6 — run-level invariant: tracing enabled but zero spans is not normal
+# ---------------------------------------------------------------------------
+
+
+def test_submit_traces_warns_when_tracing_enabled_but_no_spans(caplog: Any) -> None:
+    import asyncio
+
+    manager = _manager()  # tracker present => tracing enabled
+
+    with caplog.at_level(logging.WARNING):
+        asyncio.run(manager.submit_traces("session-1"))
+
+    assert any(record.levelno == logging.WARNING for record in caplog.records), (
+        "a tracing-enabled run that collected zero spans must not be silent"
+    )
+    assert "no workflow spans" in caplog.text.lower()
+
+
+def test_span_result_is_publicly_exported() -> None:
+    """`add_agent_span` returns a SpanResult, so callers must be able to import
+    and type-annotate against it from the public surface."""
+    import traigent
+    from traigent.observability import SpanResult as FromObservability
+
+    assert traigent.SpanResult is FromObservability
+    assert "SpanResult" in traigent.observability.__all__

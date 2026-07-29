@@ -6,6 +6,7 @@ import math
 import re
 import uuid
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -25,6 +26,25 @@ _SPAN_TYPE_ALIASES = {
     "agent": SpanType.NODE.value,
 }
 _VALID_SPAN_TYPES = {span_type.value for span_type in SpanType}
+
+
+@dataclass(frozen=True)
+class SpanResult:
+    """Receipt describing what `add_agent_span` did with a span.
+
+    Telemetry may legitimately be discarded (no active trial, tracing off,
+    sensitive metadata key). It must not be discarded *silently*: a caller
+    that cannot tell "recorded" from "dropped" ends up trusting empty
+    dashboards. Falsy when the span was not accepted, so `if not
+    add_agent_span(...)` reads naturally.
+    """
+
+    accepted: bool
+    reason: str | None = None
+    dropped_metadata_keys: tuple[str, ...] = field(default_factory=tuple)
+
+    def __bool__(self) -> bool:
+        return self.accepted
 
 
 def _is_safe_number(value: Any) -> bool:
@@ -96,22 +116,32 @@ def _is_sensitive_metadata_key(key: str) -> bool:
     return is_credential_key_name(key) or is_content_key_name(key)
 
 
-def _sanitize_metadata(metadata: Mapping[str, Any] | None) -> dict[str, float | int]:
+def _sanitize_metadata(
+    metadata: Mapping[str, Any] | None,
+) -> tuple[dict[str, float | int], tuple[str, ...]]:
+    """Return the numeric-only metadata plus the keys that were dropped.
+
+    What gets dropped is unchanged (see issue #1649): credential- and
+    content-shaped keys go, non-numeric values go. Only the reporting is new.
+    """
     sanitized: dict[str, float | int] = {}
+    dropped: list[str] = []
     if not metadata:
-        return sanitized
+        return sanitized, ()
 
     for raw_key, value in metadata.items():
         key = str(raw_key)
         if _is_sensitive_metadata_key(key):
             logger.debug("Dropping sensitive agent span metadata key %s", key)
+            dropped.append(key)
             continue
         if not _is_safe_number(value):
             logger.debug("Dropping non-numeric agent span metadata key %s", key)
+            dropped.append(key)
             continue
         sanitized[key] = int(value) if isinstance(value, int) else float(value)
 
-    return sanitized
+    return sanitized, tuple(dropped)
 
 
 def _sanitize_model(model: str | None) -> str | None:
@@ -138,38 +168,42 @@ def add_agent_span(
     latency_ms: float | None = None,
     model: str | None = None,
     metadata: Mapping[str, Any] | None = None,
-) -> None:
+) -> SpanResult:
     """Add an agent workflow span for the active optimization trial.
 
     The helper is safe to call from user code: when no optimization trial or
-    workflow trace transport is active, it logs at DEBUG and returns.
+    workflow trace transport is active it does not raise. It always returns a
+    `SpanResult` receipt saying whether the span was accepted, why not, and
+    which metadata keys were dropped — so a caller can detect lost telemetry
+    instead of inferring it from an empty dashboard.
     """
 
     trace_context = get_workflow_trace_context()
     if not trace_context:
         logger.debug("Skipping agent span: no active optimization trial context")
-        return
+        return SpanResult(accepted=False, reason="no_trace_context")
 
     workflow_trace_manager = trace_context.get("workflow_trace_manager")
     if workflow_trace_manager is None:
         logger.debug("Skipping agent span: no workflow trace manager in trial context")
-        return
+        return SpanResult(accepted=False, reason="no_trace_manager")
 
     if not bool(getattr(workflow_trace_manager, "is_enabled", False)):
         logger.debug("Skipping agent span: workflow trace collection is disabled")
-        return
+        return SpanResult(accepted=False, reason="tracing_disabled")
 
     normalized_node_id = _normalize_node_id(node_id)
     if normalized_node_id is None:
-        return
+        return SpanResult(accepted=False, reason="invalid_node_id")
 
     configuration_run_id = trace_context.get("configuration_run_id")
     trace_id = trace_context.get("workflow_trace_id")
     if not configuration_run_id or not trace_id:
         logger.debug("Skipping agent span: trial context has no trace/run linkage")
-        return
+        return SpanResult(accepted=False, reason="no_trace_linkage")
 
-    safe_metadata: dict[str, Any] = _sanitize_metadata(metadata)
+    sanitized_metadata, dropped_metadata_keys = _sanitize_metadata(metadata)
+    safe_metadata: dict[str, Any] = dict(sanitized_metadata)
     safe_latency_ms = _coerce_non_negative_float(latency_ms, field_name="latency_ms")
     if safe_latency_ms:
         safe_metadata["latency_ms"] = safe_latency_ms
@@ -206,3 +240,10 @@ def add_agent_span(
         workflow_trace_manager.collect_span(span)
     except Exception:
         logger.warning("Failed to collect agent workflow span", exc_info=True)
+        return SpanResult(
+            accepted=False,
+            reason="collection_failed",
+            dropped_metadata_keys=dropped_metadata_keys,
+        )
+
+    return SpanResult(accepted=True, dropped_metadata_keys=dropped_metadata_keys)
