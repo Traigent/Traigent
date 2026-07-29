@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import Mock, patch
 
+import pytest
 from click.testing import CliRunner
 
 from traigent.cli.main import cli
@@ -162,6 +163,160 @@ def test_sync_all_failure_exits_nonzero():
     assert result.exit_code == 1, (
         f"Expected exit code 1 when all syncs fail but got {result.exit_code}"
     )
+
+
+@pytest.mark.parametrize("status", ["success", "already_synced"])
+def test_sync_clean_uses_resolved_session_id(status):
+    """--clean must verify and delete the id SyncManager synced, not the raw argument.
+
+    Regression test for issue #2030: the single-session branch recorded the
+    user-supplied argument, so when SyncManager resolved it to a different id the
+    sync_state lookup missed and --clean silently deleted nothing. Both accepted
+    statuses take that path, so both must use the resolved id.
+    """
+    manager = _patched_manager()
+    manager.sync_session_to_cloud.return_value = {
+        "session_id": "resolved-1",
+        "status": status,
+        "cloud_experiment_id": "e1",
+        "trials_converted": 3,
+    }
+    synced_session = Mock()
+    synced_session.sync_state = {"status": "synced"}
+    manager.storage.load_session.side_effect = lambda sid: (
+        synced_session if sid == "resolved-1" else None
+    )
+    manager.cleanup_after_sync.return_value = {"sessions_deleted": 1}
+
+    with patch("traigent.cli.sync_commands.SyncManager", return_value=manager):
+        result = CliRunner().invoke(
+            cli, ["sync", "alias-1", "--clean", "--api-key", "k"]
+        )
+
+    assert result.exit_code == 0
+    # Verification must actually happen, and against the resolved id — not the
+    # raw argument and not a blind pass-through of synced_ids.
+    manager.storage.load_session.assert_called_once_with("resolved-1")
+    manager.cleanup_after_sync.assert_called_once_with(["resolved-1"], keep_backup=True)
+    assert "Cleaned 1" in result.output
+
+
+@pytest.mark.parametrize(
+    ("label", "sync_state"),
+    [
+        ("failed", {"status": "failed"}),
+        ("partial", {"status": "partial"}),
+        ("missing", None),
+    ],
+)
+def test_sync_clean_skips_when_persisted_state_is_not_synced(label, sync_state):
+    """--clean deletes nothing unless the persisted sync_state confirms a sync.
+
+    Pins ``_verified_synced``: a stored session whose sync_state is not "synced"
+    (or that cannot be loaded at all) must never reach ``cleanup_after_sync``.
+    """
+    manager = _patched_manager()
+    manager.sync_session_to_cloud.return_value = {
+        "session_id": "resolved-1",
+        "status": "success",
+        "cloud_experiment_id": "e1",
+        "trials_converted": 3,
+    }
+    if sync_state is None:
+        session = None
+    else:
+        session = Mock()
+        session.sync_state = sync_state
+    manager.storage.load_session.return_value = session
+
+    with patch("traigent.cli.sync_commands.SyncManager", return_value=manager):
+        result = CliRunner().invoke(
+            cli, ["sync", "alias-1", "--clean", "--api-key", "k"]
+        )
+
+    assert result.exit_code == 0
+    manager.storage.load_session.assert_called_once_with("resolved-1")
+    manager.cleanup_after_sync.assert_not_called()
+    assert "Cleaned" not in result.output
+
+
+# A result that claims success without a usable id is a contract violation: the
+# synced id is unknowable, so #2030's silent no-op must become a loud failure.
+# Whitespace-only ids are unusable for the same reason "" is — load_session("   ")
+# misses — but they are truthy, so a bare ``not sid`` check waves them through.
+# Padded ids ("  resolved-1 ") are the same bug one step along: they survive a
+# ``not sid.strip()`` check, then load_session(" resolved-1 ") misses the real
+# ``resolved-1`` row. Generated ids (timestamp_function_uuid) never carry surrounding
+# whitespace, so a padded one is always a contract violation, not a value to strip.
+_UNUSABLE_ID_RESULTS = [
+    ("absent", {}),
+    ("none", {"session_id": None}),
+    ("empty", {"session_id": ""}),
+    ("spaces", {"session_id": "   "}),
+    ("tab-newline", {"session_id": "\t\n"}),
+    ("leading-space", {"session_id": " resolved-1"}),
+    ("trailing-space", {"session_id": "resolved-1 "}),
+    ("both-padded", {"session_id": " resolved-1 "}),
+]
+
+
+@pytest.mark.parametrize(("label", "id_fields"), _UNUSABLE_ID_RESULTS)
+@pytest.mark.parametrize("status", ["success", "already_synced"])
+def test_sync_single_session_without_usable_id_fails_loudly(label, id_fields, status):
+    """No usable session_id → error + exit 1, never a silent fallback to the argument."""
+    manager = _patched_manager()
+    manager.sync_session_to_cloud.return_value = {"status": status, **id_fields}
+    manager.storage.load_session.return_value = None
+
+    with patch("traigent.cli.sync_commands.SyncManager", return_value=manager):
+        result = CliRunner().invoke(
+            cli, ["sync", "alias-1", "--clean", "--api-key", "k"]
+        )
+
+    assert result.exit_code == 1, (
+        f"Expected exit 1 for a {label} session_id but got {result.exit_code}"
+    )
+    assert "session_id" in result.output
+    assert status in result.output
+    # Never fall back to the raw argument, and never "clean" on an unverified id.
+    manager.storage.load_session.assert_not_called()
+    manager.cleanup_after_sync.assert_not_called()
+
+
+@pytest.mark.parametrize(("label", "id_fields"), _UNUSABLE_ID_RESULTS)
+def test_sync_all_without_usable_id_fails_loudly(label, id_fields):
+    """--all applies the same strict contract as the single-session branch."""
+    manager = _patched_manager()
+    manager.sync_all_sessions.return_value = {
+        "total_sessions": 1,
+        "eligible_sessions": 1,
+        "synced_successfully": 1,
+        "skipped": 0,
+        "sync_errors": 0,
+        "dry_run": False,
+        "session_results": [{"status": "success", **id_fields}],
+        "overall_status": "completed",
+    }
+    manager.storage.load_session.return_value = None
+
+    with patch("traigent.cli.sync_commands.SyncManager", return_value=manager):
+        result = CliRunner().invoke(cli, ["sync", "--all", "--clean", "--api-key", "k"])
+
+    assert result.exit_code == 1, (
+        f"Expected exit 1 for a {label} session_id but got {result.exit_code}"
+    )
+    # Assert on text only the strict-contract check emits. A bare ``r["session_id"]``
+    # also exits 1 for the "absent" case (KeyError, printed as just 'session_id'),
+    # so a plain "session_id" substring cannot tell the two apart.
+    assert "no usable 'session_id'" in result.output, (
+        f"Expected the strict-contract error for a {label} session_id, "
+        f"got: {result.output!r}"
+    )
+    assert "success" in result.output, (
+        f"Expected the echoed status in the error for a {label} session_id, "
+        f"got: {result.output!r}"
+    )
+    manager.cleanup_after_sync.assert_not_called()
 
 
 def test_sync_failure_in_dry_run_exits_zero():

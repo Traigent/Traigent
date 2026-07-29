@@ -43,6 +43,43 @@ def _emit_session_warnings(result: dict[str, Any]) -> None:
         click.echo(f"   ⚠️  {warning}")
 
 
+def _synced_session_id(result: dict[str, Any]) -> str:
+    """Return the LOCAL session id SyncManager synced, or raise if it reported none.
+
+    This must be the id of the row in **local** storage — both consumers key off
+    local state: ``storage.load_session`` for ``--clean`` verification and
+    ``cleanup_after_sync`` for deletion. It is deliberately *not* the cloud-side
+    identity, which the same result carries separately as ``cloud_session_id``.
+    Returning a canonical/cloud id here would make both local lookups miss.
+
+    Downstream lookups (``--clean`` verification and cleanup) must key off the id
+    the sync actually wrote, never the raw CLI argument. Substituting a default
+    would silently reintroduce issue #2030: the sync_state lookup misses, nothing
+    is verified, ``--clean`` deletes nothing and still exits 0. A result that
+    claims success without a usable ``session_id`` is a contract violation, so it
+    fails loudly here instead.
+
+    The accepted contract is exact: a ``str`` that is non-empty and equal to its own
+    ``strip()``. Anything else — absent, ``None``, non-``str``, empty, whitespace-only,
+    or surrounded by whitespace — is rejected. Session ids are machine-generated
+    (``local_storage.py``: ``f"{timestamp}_{safe_function}_{uuid4().hex[:8]}"``) and can
+    never legitimately carry leading or trailing whitespace, so a padded id is always a
+    contract violation. It is rejected rather than stripped, in either direction:
+    ``load_session(" resolved-1 ")`` misses the real ``resolved-1`` row (``--clean``
+    then deletes nothing and still exits 0), while silently stripping it would return an
+    id the sync never actually wrote.
+    """
+    sid = result.get("session_id")
+    if not isinstance(sid, str) or not sid.strip() or sid != sid.strip():
+        raise ValueError(
+            "Sync result reported status "
+            f"{result.get('status')!r} but no usable 'session_id' (got {sid!r}); "
+            "a session id must be a non-empty string with no surrounding whitespace. "
+            "Refusing to verify or clean a run whose synced id is unknown."
+        )
+    return sid
+
+
 def _resolve_api_key(api_key: str | None) -> str | None:
     if api_key:
         return api_key
@@ -148,7 +185,9 @@ def sync_command(
             else:
                 _emit_session_result(result, dry_run=dry_run)
             if result.get("status") in {"success", "already_synced"}:
-                synced_ids.append(session_id)
+                # Record the id SyncManager actually synced, not the raw argument:
+                # downstream lookups (--clean verification) must use the resolved id.
+                synced_ids.append(_synced_session_id(result))
             elif not dry_run:
                 # A real sync that did not succeed is a failure — exit non-zero
                 # so callers (CI, scripts) do not assume the session was uploaded.
@@ -167,7 +206,7 @@ def sync_command(
                 for session_result in result["session_results"]:
                     _emit_session_result(session_result, dry_run=dry_run)
             synced_ids = [
-                r["session_id"]
+                _synced_session_id(r)
                 for r in result["session_results"]
                 if r.get("status") in {"success", "already_synced"}
             ]
