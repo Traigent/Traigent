@@ -47,7 +47,9 @@ CONFIG_SPACE = {
 # Real results from walkthrough/real/09_rag_multi_objective.py
 # (algorithm=random, seed=42, 16 completed trials)
 TRIALS_DATA = [
-    # (model, prompt, temp, instructions, max_tokens, accuracy, cost, latency)
+    # (model, prompt, temp, instructions, max_tokens, accuracy, cost, latency_seconds)
+    # ``latency_seconds`` is wall-clock elapsed time; the canonical ``latency``
+    # metric is in MILLISECONDS, so build_results() multiplies it by 1000.
     ("gpt-5.1", "minimal", 0.0, "direct", 50, 0.180, 0.00055, 2.747),
     ("gpt-4o-mini", "minimal", 0.1, "CoT", 200, 0.771, 0.00010, 3.728),
     ("gpt-5.2", "minimal", 0.0, "CoT", 50, 0.128, 0.00079, 1.665),
@@ -97,7 +99,16 @@ class FakeResult:
 
 def build_results() -> FakeResult:
     trials: list[FakeTrial] = []
-    for model, prompt, temp, instr, max_tokens, acc, cost, latency in TRIALS_DATA:
+    for (
+        model,
+        prompt,
+        temp,
+        instr,
+        max_tokens,
+        acc,
+        cost,
+        latency_seconds,
+    ) in TRIALS_DATA:
         cfg = {
             "model": model,
             "prompt": prompt,
@@ -109,9 +120,13 @@ def build_results() -> FakeResult:
             FakeTrial(
                 config=cfg,
                 configuration=cfg,
-                metrics={"accuracy": acc, "cost": cost, "latency": latency},
+                metrics={
+                    "accuracy": acc,
+                    "cost": cost,
+                    "latency": latency_seconds * 1000.0,
+                },
                 score=acc,
-                duration=latency,
+                duration=latency_seconds,
             )
         )
 
@@ -126,7 +141,11 @@ def build_results() -> FakeResult:
     return FakeResult(
         best_config=best_cfg,
         best_score=best[5],
-        best_metrics={"accuracy": best[5], "cost": best[6], "latency": best[7]},
+        best_metrics={
+            "accuracy": best[5],
+            "cost": best[6],
+            "latency": best[7] * 1000.0,
+        },
         trials=trials,
         duration=sum(trial[7] for trial in TRIALS_DATA),
     )
@@ -167,7 +186,7 @@ def main() -> None:
     print("\nPerformance:")
     print(f"  Accuracy: {results.best_metrics['accuracy']:.1%}")
     print(f"  Cost:     ${results.best_metrics['cost']:.5f}")
-    print(f"  Latency:  {results.best_metrics['latency']:.3f}s")
+    print(f"  Latency:  {results.best_metrics['latency']:.0f}ms")
     print(
         "\nNote: Results recorded from real OpenAI API calls. Replayed here to save time."
     )
