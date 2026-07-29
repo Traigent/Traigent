@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import types
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -54,6 +55,7 @@ def _extract_plan(output: str) -> dict[str, object]:
 
 def test_onboard_non_tty_emits_human_and_json_plan(
     monkeypatch: pytest.MonkeyPatch,
+    plain: Callable[[str], str],
 ) -> None:
     monkeypatch.setattr(
         onboard_commands, "_detect_coding_agents", lambda _cwd: ["codex"]
@@ -73,7 +75,10 @@ def test_onboard_non_tty_emits_human_and_json_plan(
         result = runner.invoke(cli, ["onboard"])
 
     assert result.exit_code == 0
-    assert "Traigent onboarding plan (non-interactive)" in result.output
+    # Human banner: rendering-independent. The machine-readable frame below
+    # stays raw on purpose, so control-code corruption in structured output is
+    # not normalized away.
+    assert "Traigent onboarding plan (non-interactive)" in plain(result.output)
     assert PLAN_JSON_BEGIN in result.output
     assert PLAN_JSON_END in result.output
 

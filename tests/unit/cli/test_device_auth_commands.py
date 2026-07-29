@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import types
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -346,6 +347,7 @@ def test_device_flow_env_api_url_precedence_banner_matches_transport_host(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    plain: Callable[[str], str],
 ) -> None:
     monkeypatch.setenv("TRAIGENT_BACKEND_URL", "http://localhost:5000")
     monkeypatch.setenv("TRAIGENT_API_URL", "https://api.example.test/custom/v1")
@@ -369,7 +371,9 @@ def test_device_flow_env_api_url_precedence_banner_matches_transport_host(
         "https://api.example.test/custom/v1/auth/device/authorize",
         "https://api.example.test/custom/v1/auth/device/token",
     ]
-    output = capsys.readouterr().out
+    # Both sides of the banner contract share one normalization discipline, so
+    # the negative assertion cannot pass merely because colour split the host.
+    output = plain(capsys.readouterr().out)
     assert "Authenticating with: https://api.example.test/custom/v1" in output
     assert "Authenticating with: http://localhost:5000" not in output
 
@@ -409,6 +413,7 @@ def test_device_flow_secure_store_failure_prevents_backend_authorization(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    plain: Callable[[str], str],
 ) -> None:
     store, session = _install_device_test_fakes(
         monkeypatch,
@@ -431,7 +436,7 @@ def test_device_flow_secure_store_failure_prevents_backend_authorization(
     assert store.saved is None
     assert session.post_calls == []
     assert not (tmp_path / ".env").exists()
-    assert "Secure credential storage is not ready" in capsys.readouterr().out
+    assert "Secure credential storage is not ready" in plain(capsys.readouterr().out)
 
 
 def test_env_file_rewrite_replaces_export_prefixed_api_key(
@@ -593,6 +598,7 @@ def test_device_poll_transport_error_retry_bound(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    plain: Callable[[str], str],
 ) -> None:
     store, session = _install_device_test_fakes(
         monkeypatch,
@@ -621,7 +627,9 @@ def test_device_poll_transport_error_retry_bound(
         if call["url"].endswith("/auth/device/token")
     ]
     assert len(token_calls) == 3
-    assert "failed after 3 consecutive transport errors" in capsys.readouterr().out
+    assert "failed after 3 consecutive transport errors" in plain(
+        capsys.readouterr().out
+    )
 
 
 @pytest.mark.parametrize(
@@ -683,6 +691,7 @@ def test_device_authorize_error_reports_status_and_backend_message(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    plain: Callable[[str], str],
 ) -> None:
     store, _session = _install_device_test_fakes(
         monkeypatch,
@@ -703,7 +712,7 @@ def test_device_authorize_error_reports_status_and_backend_message(
 
     assert result is False
     assert store.saved is None
-    output = capsys.readouterr().out
+    output = plain(capsys.readouterr().out)
     assert "HTTP 400" in output
     assert "Validation error" in output
 

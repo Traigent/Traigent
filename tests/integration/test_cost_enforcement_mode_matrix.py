@@ -11,7 +11,7 @@ mode-agnostic. This is NOT an oversight but a deliberate design decision:
 
 1. **CostEnforcer operates below the mode abstraction layer**: It tracks costs
    regardless of how configurations are injected (CONTEXT, PARAMETER, SEAMLESS)
-   or where optimization runs (EDGE_ANALYTICS, HYBRID, HYBRID_API, PRIVACY alias).
+   or where optimization runs (LOCAL, HYBRID, HYBRID_API).
 
 2. **InjectionMode affects decorator → user function**, NOT orchestrator → CostEnforcer:
    - TraigentConfig has no injection_mode field
@@ -225,12 +225,13 @@ INJECTION_MODES = [
     # SEAMLESS requires source code rewriting, skip for unit test
 ]
 
-# Currently supported execution modes to test.
-# ``privacy`` and ``standard`` are legacy string aliases that now emit
-# DeprecationWarning and map to canonical modes (HYBRID and HYBRID respectively);
-# ``cloud`` maps to EDGE_ANALYTICS. They are no longer enum members.
+# Currently supported execution modes to test — these are exactly the surviving
+# ``ExecutionMode`` members. ``privacy``, ``standard`` and ``cloud`` are legacy
+# string aliases that emit DeprecationWarning and map onto canonical modes; they
+# are no longer enum members. ``edge_analytics`` was removed outright and its
+# alias now fails closed, so LOCAL is the mode that covers local execution here.
 EXECUTION_MODES = [
-    ExecutionMode.EDGE_ANALYTICS,
+    ExecutionMode.LOCAL,
     ExecutionMode.HYBRID,
     ExecutionMode.HYBRID_API,
 ]
@@ -317,7 +318,7 @@ class TestCostEnforcerModeMatrix:
         context = f"injection_mode={injection_mode.value}"
 
         # Create config with specific injection mode
-        config = TraigentConfig(execution_mode="edge_analytics")
+        config = TraigentConfig(execution_mode="local")
         evaluator = MockEvaluator(cost_per_eval=0.05)
         optimizer = MockOptimizer(max_trials=3)
 
@@ -348,15 +349,9 @@ class TestCostEnforcerModeMatrix:
     @pytest.mark.parametrize(
         "execution_mode,injection_mode",
         [
-            (ExecutionMode.EDGE_ANALYTICS, InjectionMode.CONTEXT),
-            (ExecutionMode.HYBRID, InjectionMode.PARAMETER),
-            (ExecutionMode.HYBRID, InjectionMode.CONTEXT),  # ATTRIBUTE removed in v2.x
-            (ExecutionMode.HYBRID_API, InjectionMode.CONTEXT),
-            (ExecutionMode.EDGE_ANALYTICS, InjectionMode.PARAMETER),
-            (
-                ExecutionMode.HYBRID,
-                InjectionMode.CONTEXT,
-            ),  # Was PRIVACY alias; now canonical HYBRID
+            (execution_mode, injection_mode)
+            for execution_mode in EXECUTION_MODES
+            for injection_mode in INJECTION_MODES
         ],
     )
     @pytest.mark.asyncio
@@ -366,10 +361,13 @@ class TestCostEnforcerModeMatrix:
         injection_mode: InjectionMode,
         sample_dataset: Dataset,
     ) -> None:
-        """Verify runtime invariants hold for representative mode combinations.
+        """Verify runtime invariants hold for every mode combination.
 
-        This is a pairwise sampling of the mode matrix to provide explicit
-        evidence that the orthogonality assumption holds.
+        This is the full cross product of the supported execution modes and the
+        supported injection modes, providing explicit evidence that the
+        orthogonality assumption holds. It replaces a hand-written six-entry
+        "pairwise sample" that duplicated (HYBRID, CONTEXT) and never covered
+        (HYBRID_API, PARAMETER) — same case count, no duplicate, full coverage.
         """
         context = f"exec={execution_mode.value},inj={injection_mode.value}"
 
