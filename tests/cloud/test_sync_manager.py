@@ -9,6 +9,7 @@ imports cleanly. These tests exercise data conversion, the per-endpoint
 helpers, and the end-to-end sync sequence against that contract.
 """
 
+import json
 import re
 import shutil
 import tempfile
@@ -184,6 +185,42 @@ class TestSyncManager:
         assert cloud_value["sessions_to_sync"] == 1
         assert cloud_value["average_trials_per_session"] == 4.0
         assert "cloud_benefits" in cloud_value
+
+    def test_sync_status_total_trials_agrees_with_stored_total_trials(self):
+        """``get_sync_status`` sidesteps ``total_trials`` by summing
+        ``completed_trials``. Since #2032 the stored field is maintained
+        (``== len(trials)``) and reconciled on load, so the two agree — the
+        recomputation is now redundant rather than load-bearing.
+
+        Pinned here so a future switch to reading the stored field is a
+        provably behaviour-preserving change. ``sync_manager.py`` is
+        deliberately left untouched.
+        """
+        self.test_session = self._create_test_session()
+
+        sessions = self.sync_manager.storage.list_sessions()
+        stored_sum = sum(session.total_trials for session in sessions)
+        completed_sum = sum(session.completed_trials for session in sessions)
+
+        assert stored_sum == completed_sum == 4
+        assert self.sync_manager.get_sync_status()["total_trials"] == stored_sum
+
+    def test_sync_status_total_trials_survives_legacy_zero_records(self):
+        """Legacy ``total_trials: 0`` records reconcile before sync reads them."""
+        self.test_session = self._create_test_session()
+
+        session_path = (
+            self.storage_path / "sessions" / f"{self.test_session.session_id}.json"
+        )
+        raw = json.loads(session_path.read_text())
+        assert raw["total_trials"] == 4
+        raw["total_trials"] = 0
+        session_path.write_text(json.dumps(raw, indent=2))
+
+        sessions = self.sync_manager.storage.list_sessions()
+
+        assert sum(session.total_trials for session in sessions) == 4
+        assert self.sync_manager.get_sync_status()["total_trials"] == 4
 
     def test_estimate_cloud_value(self):
         """Test cloud value estimation."""

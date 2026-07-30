@@ -1677,6 +1677,9 @@ def _local_session_success_rate(session: OptimizationSession) -> float:
 
 def _local_session_to_result_info(session: OptimizationSession) -> dict[str, Any]:
     completed_trials = session.completed_trials or len(session.trials or [])
+    # session.total_trials is the recorded-trial count and is reconciled on
+    # load (#2032), so the fallback is now belt-and-braces for sessions built
+    # in memory rather than read from disk.
     total_trials = session.total_trials or completed_trials
     return {
         "name": f"local:{session.session_id}",
