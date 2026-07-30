@@ -1,12 +1,13 @@
 """Tests for validation utilities."""
 
 import json
+import warnings
 from pathlib import Path
 
 import pytest
 
 from traigent.utils.secure_path import PathTraversalError, safe_open
-from traigent.utils.validation import Validators
+from traigent.utils.validation import Validators, validate_config_space
 
 
 def _write_jsonl(path: Path, records: list[dict] | None = None) -> None:
@@ -301,3 +302,27 @@ class TestSafeOpenContainmentGuard:
         with pytest.raises(PathTraversalError):
             with safe_open("link.jsonl", base, mode="r"):
                 pass
+
+
+class TestValidateConfigSpaceIsSideEffectFree:
+    """``validate_config_space`` must stay a pure validator (issue #2021).
+
+    The #2021 warning is emitted by the decorator, which is the only layer that
+    knows the whole resolved space and the wrapped function's name. Surfacing
+    per-parameter warnings from here instead nagged on the supported "pin one
+    knob, sweep another" pattern, so this validator deliberately emits nothing.
+    """
+
+    def test_single_value_space_is_valid_and_silent(self) -> None:
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            validate_config_space({"temperature": [0.7]})
+
+        assert record == []
+
+    def test_pinned_knob_alongside_varying_knob_is_silent(self) -> None:
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            validate_config_space({"temperature": [0.0], "model": ["a", "b"]})
+
+        assert record == []
