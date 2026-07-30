@@ -98,6 +98,11 @@ _FALLBACK_MODELS: dict[tuple[str | None, str], list[str]] = {
         "meta-llama/Meta-Llama-3-70B-Instruct",
         "mistralai/Mixtral-8x7B-Instruct-v0.1",
     ],
+    # Nous Portal (Hermes family) — real published names; the exact
+    # portal-served ID string is OWNER-confirmed in Phase-0 (see models.yaml).
+    ("nous", "fast"): ["NousResearch/Hermes-3-Llama-3.1-8B"],
+    ("nous", "balanced"): ["NousResearch/Hermes-3-Llama-3.1-70B"],
+    ("nous", "quality"): ["NousResearch/Hermes-3-Llama-3.1-405B"],
     # Default (unknown provider)
     (None, "fast"): ["gpt-4o-mini"],
     (None, "balanced"): ["gpt-4o-mini", "gpt-4o"],
@@ -154,6 +159,27 @@ _MODEL_TIERS: dict[str, dict[str, list[str]]] = {
         "quality": [
             "meta-llama/Meta-Llama-3-70B-Instruct",
             "mistralai/Mixtral-8x7B-Instruct-v0.1",
+        ],
+    },
+    # Nous Portal (Hermes family) — sourced from config/models.yaml known_models,
+    # tiered by parameter count. Real published Hermes names; the exact
+    # portal-served ID string form is OWNER-confirmed in Phase-0 (see
+    # models.yaml + nous_discovery.NOUS_MODEL_PATTERN).
+    "nous": {
+        "fast": [
+            "NousResearch/Hermes-3-Llama-3.1-8B",
+            "NousResearch/DeepHermes-3-Llama-3-8B-Preview",
+        ],
+        "balanced": [
+            # DeepHermes-3-Mistral-24B is a mid-size (24B) model — classified
+            # here so every models.yaml known_model is tier-covered (#1978).
+            "NousResearch/DeepHermes-3-Mistral-24B-Preview",
+            "NousResearch/Hermes-3-Llama-3.1-70B",
+            "NousResearch/Hermes-4-70B",
+        ],
+        "quality": [
+            "NousResearch/Hermes-3-Llama-3.1-405B",
+            "NousResearch/Hermes-4-405B",
         ],
     },
 }
