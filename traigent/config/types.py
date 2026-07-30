@@ -702,6 +702,10 @@ class TraigentConfig:
     no_egress: bool = False
     result_source: str | None = None
     fallback_reason: str | None = None
+    # Typed counterpart of ``fallback_reason`` (a SessionCreationFailureReason
+    # value). ``fallback_reason`` embeds backend-controlled prose, so reporting
+    # reads this code instead of pattern-matching that text (issue #2024).
+    fallback_reason_code: str | None = None
     persistence_status: str | None = None
     persistence_reason: str | None = None
     persistence_rejection_reason: str | None = None

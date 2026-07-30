@@ -71,6 +71,7 @@ from traigent.core.execution_policy_runtime import (
     exception_is_connectivity,
     initial_result_source,
     is_offline_requested,
+    local_fallback_notice,
     mark_local_fallback,
     policy_allows_cloud_fallback,
     policy_from_config,
@@ -2383,14 +2384,25 @@ class OptimizedFunction(Generic[_P, _R]):
             if not exception_is_connectivity(e):
                 raise
             reason = str(getattr(e, "reason", None) or e)
-            mark_local_fallback(traigent_config, reason)
+            # Re-stamping the run must not lose the typed classification the
+            # raiser already established: this handler re-records the SAME
+            # fallback event, and the run that finally reports is built from
+            # this config. Without the enum a no-key run would degrade to the
+            # reason-agnostic notice and the user would never be told their key
+            # was missing (issue #2024). It stays None for any raiser that had
+            # no typed classification — we never invent one from the text.
+            failure_reason = (
+                e.failure_reason if isinstance(e, CloudBrainUnavailableError) else None
+            )
+            mark_local_fallback(traigent_config, reason, failure_reason=failure_reason)
             if not (
                 isinstance(e, CloudBrainUnavailableError)
                 and e.stage == "session-create"
             ):
                 logger.warning(
-                    "traigent.cloud_brain_fallback source=%s fallback_reason=%s "
-                    "stage=next-trial",
+                    "⚠️  %s traigent.cloud_brain_fallback source=%s "
+                    "fallback_reason=%s stage=next-trial",
+                    local_fallback_notice(reason, failure_reason),
                     SOURCE_LOCAL_FALLBACK,
                     reason,
                 )
