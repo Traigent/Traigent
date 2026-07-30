@@ -6,7 +6,80 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-07-18
+
+Client-sequenced grid/sync release: online mode is the default and always
+supported for grid, random, and auto — local decision-making never blocks
+transmission of results to the backend.
+
+### Added
+
+- **Grid & random runs finish locally, then sync.** Connected `grid`/`random`
+  runs now enumerate every planned configuration even when the backend closes
+  the tracking session early — the run no longer truncates at ~4 configs. Such
+  a run completes locally, persists every trial, and is marked
+  `backend_tracking="partial"` / `persistence_status="degraded"` so you can tell
+  it was client-sequenced. `auto`/cloud-brain behavior is unchanged (#1938,
+  #1947).
+- **Offline runs are now syncable.** An offline optimization mints a local
+  session, mirrors every trial to `sessions/<id>.json`, and finalizes to a
+  sync-eligible status — so `traigent local list` shows it and
+  `traigent sync --all` uploads it once you reconnect. Local storage is no
+  longer coupled to backend connectivity (#1939, #1947).
+
+### Fixed
+
+- Hybrid MCP transport now classifies transport errors correctly and falls back
+  cleanly when a model has been retired; retired model IDs removed from the
+  provider tier tables (#1930, #1931, #1932, #1933, #1934).
+- `update_best` no longer errors when a run declares no objectives (#1909).
+- The optimizer meta-skill is no longer re-injected unbounded each epoch — its
+  injection is gated and capped (#1929).
+
 ### Security
+
+- Skill-training input is hardened against invisible-character prompt injection:
+  default-ignorable Unicode (including non-`Cf` `Default_Ignorable_Code_Point`)
+  is stripped before the meta-skill injection scan (#1926, #1929).
+- MCP floor raised to `>=1.28.1,<2` to pick up CVE-2026-59950 (websocket
+  Host/Origin validation) and CVE-2026-52870 (task-handler session scoping)
+  (#1946).
+
+### Dependencies
+
+- `anyio>=4.14.2` (new floor; IDNA2008 TLS hostname certificate matching,
+  AIKIDO-2026-889297) and `mcp>=1.28.1,<2.0.0` in the `hybrid` and `mcp` extras
+  (#1943, #1946).
+
+### Docs
+
+- Examples and public docs use current-catalog model IDs, validated against
+  `models.yaml`; assorted public-doc accuracy fixes (#1903, #1909, #1917, #1921).
+
+## [0.24.0] - 2026-07-16
+
+### Added
+
+- **Eval-defect audit** (`result.eval_audit`, opt-in, zero-cost by default): a
+  per-example × per-config outcome matrix persisted with each run (#1838/#1889),
+  deterministic dataset-defect detectors — never-correct, token-leak,
+  cross-family consensus-on-wrong (#1880/#1897) — and a continuous 0-1 defect
+  score with percentile ranking per example via `result.eval_audit.scored`
+  (#1881/#1901). Pure functions of already-persisted run data: no LLM calls,
+  no network.
+- `setup_logging(logger_name=...)`: confine SDK logging to a scoped logger
+  instead of the root logger (opt-in; default behavior unchanged) (#1883/#1899).
+- `TRAIGENT_OPTIMIZATION_LOG_MAX_RUNS`: opt-in retention pruning of old local
+  run directories — never touches the active run, errs on keeping data
+  (#1884/#1899).
+
+### Security
+
+- Span error strings are scrubbed before OTLP export in both the core and
+  plugin tracing paths: exception messages/payloads are redacted of emails,
+  keys, and secrets before entering any trace backend (#1885/#1898).
+- The outcome-matrix loader refuses artifacts resolving outside the artifacts
+  directory (symlink containment).
 
 - `@observe` exception metadata now honors the content gate. `error_message`
   carries free-form content — exception strings routinely interpolate prompts,
