@@ -8,6 +8,9 @@ from traigent.cloud.models import TrialStatus, TrialSuggestion
 from traigent.cloud.trial_tracker import TrialState, TrialTracker
 from traigent.utils.exceptions import ValidationError
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 class TestTrialState:
     """Test TrialState dataclass."""

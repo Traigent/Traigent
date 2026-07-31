@@ -14,6 +14,9 @@ from traigent.cloud.backend_client import (
 )
 from traigent.testing import _reset_for_tests, enable_mock_mode_for_quickstart
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 FAKE_API_KEY = "tg_" + "x" * 61  # pragma: allowlist secret
 
 

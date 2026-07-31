@@ -486,6 +486,51 @@ nvidia/
 .codesync.yml
 MAINTENANCE.md
 /tools/
-manual_validation/
 scripts/project_review/
 docs/installation-guide-offline.md
+
+# Manual validation harnesses (manual_validation/) — two halves, both needed.
+#
+# Half 1 (ignore everything by default): the harnesses are run by hand and
+# leave artifacts next to themselves — __pycache__/, .pyc, run logs, and
+# dataset/result dumps. None of that belongs in the repo. This is also what the
+# original blanket `manual_validation/` rule (#416) was for: back then the
+# directory was purely a dump of internal dev scratch scripts, untracked with
+# `git rm --cached` so they stayed on contributors' disks.
+#
+# Half 2 (un-ignore the tracked harnesses): the directory now has a tracked,
+# documented purpose (see manual_validation/README.md) — the harnesses and
+# their README are committed on purpose, and ignoring them outright made
+# `git add manual_validation/` drop a new harness silently.
+#
+# The negation is deliberately narrow: the top level only (never `**`, so no
+# subdirectory is re-included), and only the `*_check.py` harness naming
+# convention plus the README. Anything broader re-includes at higher priority
+# than the *earlier* global rules in this file and quietly un-ignores things
+# they exist to protect — a `!manual_validation/**/*.py` + `!.../*.md` pair
+# overrode `local/` (:445), `local_settings.py` (:84), `local_results/` (:212),
+# `test_phase*.py` (:232) and `manual_validation_*.py` (:233), i.e. the exact
+# internal scratch scripts the relocation in 892456cc moved under `local/` to
+# keep out. `*_check.py` and `README.md` collide with no un-anchored global
+# rule in this file, so this negation is safe by construction rather than by a
+# hand-maintained mirror of every rule above.
+#
+# Adding a harness: name it `<subject>_check.py`. Anything else here is treated
+# as a run artifact; use `git add -f` if you genuinely need to track one.
+manual_validation/**
+# Belt and braces: keep the never-commit families ignored here even if the
+# negations below are ever loosened. These sit *before* the negations on
+# purpose. Last match wins in git, so listing them after would make them beat
+# `!manual_validation/*_check.py` — and `test_*.py` would then silently drop a
+# harness whose subject happens to start with "test" (`test_runner_check.py`),
+# which is the exact silent-drop failure this whole block exists to prevent.
+# Ordering them first still serves their stated purpose: they only need to lose
+# to an explicit `*_check.py`/`README.md` negation, not to win over it.
+manual_validation/**/__pycache__/
+manual_validation/**/local/
+manual_validation/**/local_results/
+manual_validation/**/local_settings.py
+manual_validation/**/test_*.py
+manual_validation/**/manual_validation_*.py
+!manual_validation/README.md
+!manual_validation/*_check.py

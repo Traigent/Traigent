@@ -208,7 +208,7 @@ def _generate_covering_combos(
 def _expected_mode(combo: dict[str, Any]) -> ExecutionMode:
     # CTD auto-detection cases still resolve to local execution; explicit
     # hybrid/backend tracking is covered by dedicated execution-mode tests.
-    return ExecutionMode.EDGE_ANALYTICS
+    return ExecutionMode.LOCAL
 
 
 def _grid_configurations(config_space: dict[str, list[Any]]):

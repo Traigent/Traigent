@@ -14,6 +14,9 @@ from traigent.cloud.models import (
 from traigent.cloud.sessions import InMemorySessionStorage, SessionManager
 from traigent.utils.exceptions import SessionError
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 @pytest.fixture
 def session_manager():

@@ -33,11 +33,38 @@ add_agent_span(
     latency_ms: float | None = None,
     model: str | None = None,
     metadata: Mapping[str, Any] | None = None,
-) -> None
+) -> SpanResult
 ```
 
-The helper is safe to call from user code. If no optimization trial or workflow
-trace transport is active, it logs at debug level and returns.
+The helper is safe to call from user code: it never raises. It always returns a
+`SpanResult` receipt describing what happened to the span, so a caller can detect
+lost telemetry instead of inferring it from an empty dashboard.
+
+```python
+@dataclass(frozen=True)
+class SpanResult:
+    accepted: bool
+    reason: str | None = None                  # set when accepted is False
+    dropped_metadata_keys: tuple[str, ...] = ()
+```
+
+`SpanResult` is falsy when the span was not accepted, so a check reads naturally:
+
+```python
+result = add_agent_span("retriever", input_tokens=1200)
+if not result:
+    log.warning("span dropped: %s", result.reason)
+```
+
+`reason` is one of `no_trace_context` (no active optimization trial),
+`no_trace_manager`, `tracing_disabled`, `invalid_node_id`, `no_trace_linkage`, or
+`collection_failed`.
+
+`dropped_metadata_keys` names any `metadata` entries that were removed. Metadata is
+numeric-only, and credential- or content-shaped keys are always dropped — so
+`{"prompt": "...", "auth_token_count": 5, "score": 0.9}` keeps only `score` and
+reports the other two. This is a security boundary, not a bug: pass token and cost
+figures through the dedicated parameters rather than through `metadata`.
 
 ## Sanitization
 

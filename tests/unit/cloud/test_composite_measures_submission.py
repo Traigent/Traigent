@@ -38,6 +38,9 @@ from traigent.knobs.patterns import binary_cascade
 from traigent.knobs.runtime import StageRunner, execute_composite
 from traigent.knobs.telemetry import merge_composite_measures
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 GATE = "router_margin_threshold"
 
 

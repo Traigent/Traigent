@@ -388,6 +388,37 @@ def _find_best_trial_index(
     return None
 
 
+def _local_fallback_notice(results: OptimizationResult) -> str | None:
+    """Return the user-facing local-fallback notice for this result, if any.
+
+    Issue #2024: ``result.metadata`` already carried ``source`` and
+    ``fallback_reason``, but nothing printed reflected them, so a run that
+    degraded to a local search rendered exactly like managed optimization.
+    Printing it under the table makes the caveat travel with the number.
+
+    The remedy is selected from the typed ``fallback_reason_code`` the run
+    stamped, never from ``fallback_reason`` — that string embeds the backend's
+    own ``error_code``/``message``/``raw_body`` text, so matching against it
+    would let a backend 500 body decide what we tell the user about their key.
+    """
+    from traigent.core.execution_policy_runtime import (
+        SOURCE_LOCAL_FALLBACK,
+        failure_reason_from_code,
+        local_fallback_notice,
+    )
+
+    metadata = getattr(results, "metadata", {}) or {}
+    if not isinstance(metadata, dict):
+        return None
+    if metadata.get("source") != SOURCE_LOCAL_FALLBACK:
+        return None
+    code = metadata.get("fallback_reason_code")
+    return local_fallback_notice(
+        metadata.get("fallback_reason"),
+        failure_reason_from_code(code if isinstance(code, str) else None),
+    )
+
+
 def _trials_all_failed(trials: list) -> bool:
     """True iff every completed trial explicitly recorded zero successful examples.
 
@@ -587,3 +618,9 @@ def print_results_table(
         legend = [f"{C.GREEN}★{C.RESET} Overall Best"]
         legend.extend(f"{C.GREEN}{C.BOLD}{m}{C.RESET} = Best {m}" for m in metric_names)
         _safe_table_print(f"{C.DIM}Legend: {', '.join(legend)}{C.RESET}")
+
+    # Provenance caveat (issue #2024): a local-fallback run must say so next to
+    # the number it produced, not only in a startup log line.
+    fallback_notice = _local_fallback_notice(results)
+    if fallback_notice:
+        _safe_table_print(f"{C.YELLOW}⚠ {fallback_notice}{C.RESET}")

@@ -5,6 +5,9 @@ import pytest
 
 from traigent.cloud.optimizer_client import OptimizerDirectClient
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 @pytest.fixture(autouse=True)
 def _mock_public_optimizer_dns(monkeypatch):

@@ -1,12 +1,13 @@
 """Tests for validation utilities."""
 
 import json
+import warnings
 from pathlib import Path
 
 import pytest
 
 from traigent.utils.secure_path import PathTraversalError, safe_open
-from traigent.utils.validation import Validators
+from traigent.utils.validation import Validators, validate_config_space
 
 
 def _write_jsonl(path: Path, records: list[dict] | None = None) -> None:
@@ -247,6 +248,156 @@ class TestValidateDataset:
         assert any(error.error_code == "NOT_FOUND" for error in result.errors)
 
 
+class TestValidateDatasetReadsEveryRow:
+    """Regression: issue #2022 (content validation stopped after 5 lines).
+
+    ``Validators.validate_dataset`` used to ``break`` once it had seen five
+    lines, so a malformed row past line 5 validated clean while the runtime
+    loader (``Dataset.from_jsonl``) parsed the same file and raised. The two
+    paths must agree, and the reported row count must not overstate what was
+    actually inspected.
+    """
+
+    def test_malformed_row_past_line_five_is_rejected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The issue's exact repro: 8 good rows, then unparseable line 9."""
+        dataset_path = tmp_path / "bad.jsonl"
+        lines = [json.dumps({"input": f"q{i}", "output": "a"}) for i in range(8)]
+        lines.append("THIS IS NOT JSON AT ALL")
+        dataset_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+
+        result = Validators.validate_dataset("bad.jsonl")
+
+        assert not result.is_valid
+        assert any(
+            error.error_code == "JSON_ERROR" and error.field == "dataset:line9"
+            for error in result.errors
+        ), [(e.field, e.error_code, e.message) for e in result.errors]
+
+    def test_missing_input_field_past_line_five_is_rejected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A parseable-but-shapeless row past line 5 is reported too."""
+        dataset_path = tmp_path / "shapeless.jsonl"
+        records = [{"input": f"q{i}", "expected_output": "a"} for i in range(8)]
+        records.append({"question": "no input field"})
+        _write_jsonl(dataset_path, records)
+        monkeypatch.chdir(tmp_path)
+
+        result = Validators.validate_dataset("shapeless.jsonl")
+
+        assert not result.is_valid
+        assert any(
+            error.error_code == "INVALID_FORMAT" and error.field == "dataset:line9"
+            for error in result.errors
+        ), [(e.field, e.error_code, e.message) for e in result.errors]
+
+    def test_valid_dataset_longer_than_five_rows_stays_valid(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Full scanning must not introduce false positives on a good file."""
+        dataset_path = tmp_path / "good.jsonl"
+        _write_jsonl(
+            dataset_path,
+            [{"input": f"q{i}", "expected_output": "a"} for i in range(50)],
+        )
+        monkeypatch.chdir(tmp_path)
+
+        result = Validators.validate_dataset("good.jsonl")
+
+        assert result.is_valid, [(e.field, e.message) for e in result.errors]
+        assert result.metadata["dataset_rows_inspected"] == 50
+        assert result.metadata["dataset_invalid_rows"] == 0
+
+    def test_blank_lines_are_skipped_like_the_runtime_loader(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``Dataset.from_jsonl`` skips blank lines, so validation must too."""
+        dataset_path = tmp_path / "blanks.jsonl"
+        dataset_path.write_text(
+            "\n".join(
+                [json.dumps({"input": "q1", "expected_output": "a"})]
+                + ["", "   "]
+                + [json.dumps({"input": "q2", "expected_output": "b"})]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+
+        result = Validators.validate_dataset("blanks.jsonl")
+
+        assert result.is_valid, [(e.field, e.message) for e in result.errors]
+        assert result.metadata["dataset_rows_inspected"] == 2
+
+    def test_non_object_row_does_not_abort_the_scan(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A scalar row is reported per-row, not raised as an opaque READ_ERROR.
+
+        Without this, ``"input" not in 5`` raises TypeError, the whole read is
+        reported as READ_ERROR and every later row goes uninspected - which
+        would re-create the partial-scan problem this fix removes.
+        """
+        dataset_path = tmp_path / "scalar.jsonl"
+        dataset_path.write_text(
+            "\n".join(
+                [json.dumps({"input": "q1", "expected_output": "a"}), "5", "not json"]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+
+        result = Validators.validate_dataset("scalar.jsonl")
+
+        assert not result.is_valid
+        codes = {(e.field, e.error_code) for e in result.errors}
+        assert ("dataset:line2", "INVALID_FORMAT") in codes, codes
+        assert ("dataset:line3", "JSON_ERROR") in codes, codes
+        assert not any(e.error_code == "READ_ERROR" for e in result.errors), codes
+
+    def test_many_bad_rows_report_the_true_total(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Listing is bounded, but the count of inspected/invalid rows is not."""
+        dataset_path = tmp_path / "all_bad.jsonl"
+        dataset_path.write_text(
+            "\n".join("nope" for _ in range(60)) + "\n", encoding="utf-8"
+        )
+        monkeypatch.chdir(tmp_path)
+
+        result = Validators.validate_dataset("all_bad.jsonl")
+
+        assert not result.is_valid
+        assert result.metadata["dataset_rows_inspected"] == 60
+        assert result.metadata["dataset_invalid_rows"] == 60
+        assert any("60 of 60 rows are invalid" in e.message for e in result.errors), [
+            e.message for e in result.errors
+        ]
+
+    def test_agrees_with_runtime_loader_on_the_same_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The point of the issue: validator and loader must not disagree."""
+        from traigent.evaluators.base import Dataset
+        from traigent.utils.exceptions import ValidationError as LoaderValidationError
+
+        dataset_path = tmp_path / "disagree.jsonl"
+        lines = [json.dumps({"input": f"q{i}", "output": "a"}) for i in range(8)]
+        lines.append("THIS IS NOT JSON AT ALL")
+        dataset_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+
+        with pytest.raises(LoaderValidationError):
+            Dataset.from_jsonl(str(dataset_path))
+
+        assert not Validators.validate_dataset("disagree.jsonl").is_valid
+
+
 class TestSafeOpenContainmentGuard:
     """The containment guard the issue #1983 fix relies on stays intact.
 
@@ -301,3 +452,27 @@ class TestSafeOpenContainmentGuard:
         with pytest.raises(PathTraversalError):
             with safe_open("link.jsonl", base, mode="r"):
                 pass
+
+
+class TestValidateConfigSpaceIsSideEffectFree:
+    """``validate_config_space`` must stay a pure validator (issue #2021).
+
+    The #2021 warning is emitted by the decorator, which is the only layer that
+    knows the whole resolved space and the wrapped function's name. Surfacing
+    per-parameter warnings from here instead nagged on the supported "pin one
+    knob, sweep another" pattern, so this validator deliberately emits nothing.
+    """
+
+    def test_single_value_space_is_valid_and_silent(self) -> None:
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            validate_config_space({"temperature": [0.7]})
+
+        assert record == []
+
+    def test_pinned_knob_alongside_varying_knob_is_silent(self) -> None:
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            validate_config_space({"temperature": [0.0], "model": ["a", "b"]})
+
+        assert record == []

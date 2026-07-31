@@ -23,6 +23,9 @@ from traigent.cloud.auth import (
     InvalidCredentialsError,
 )
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 def _force_backend_reject():
     """Force ``_validate_api_key_with_backend`` to report a failure."""

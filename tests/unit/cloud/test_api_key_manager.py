@@ -15,6 +15,9 @@ import pytest
 from traigent.cloud.api_key_manager import APIKeyManager
 from traigent.cloud.auth import APIKey, AuthCredentials, UnifiedAuthConfig
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 TEST_KEY_PREFIX = "t" + "g_"
 
 

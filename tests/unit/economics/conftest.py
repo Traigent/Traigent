@@ -15,6 +15,15 @@ from typing import Any
 
 import pytest
 
+#: When set to a non-empty value, a missing ``traigent_schema`` is a hard
+#: failure rather than a visible module-level skip. CI sets this in the lane
+#: that installs the pinned economics Schema commit, so a broken install step
+#: can never quietly downgrade this contract lane to a green skip. Local
+#: developers, who cannot install the private git pin without a token, get the
+#: explicit skip instead. Referenced by ``test_schema.py`` and by the ``unit``
+#: job in ``.github/workflows/pr-gate.yml`` — keep this the single definition.
+REQUIRE_SCHEMA_ENV = "TRAIGENT_REQUIRE_ECONOMICS_SCHEMA"
+
 
 class _InstalledContract:
     """Validates payloads and exposes raw schema/endpoint definitions.

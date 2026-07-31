@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "traigent"
-version = "0.25.0"
+version = "0.26.0"
 authors = [
     {name = "Traigent Team", email = "opensource@traigent.ai"},
 ]
@@ -379,6 +379,22 @@ addopts = [
     "--ignore=tests/unit/core/test_orchestrator.py",
 ]
 asyncio_mode = "auto"
+# A typo'd marker must be a collection error, not a silent no-op: an
+# unregistered `backend_onlne` would otherwise just run the test offline — the
+# exact silent-failure class #2033 exists to remove.
+#
+# This MUST be the ini option, not "--strict-markers" in addopts (verified on
+# pytest 9.0.2): the check reads config.getini("strict_markers")
+# (_pytest/mark/structures.py:588), which resolves from Config._inicfg. _inicfg
+# is built by determine_setup() during the FIRST parse_known_args pass, whereas
+# ini `addopts` is only spliced into argv for the SECOND pass
+# (_pytest/config/__init__.py:1495-1530). --strict-markers is an
+# OverrideIniAction, so from addopts its "strict_markers=true" override lands
+# too late to be seen and the flag silently degrades to a
+# PytestUnknownMarkWarning. That degradation is version-gated and invisible, so
+# it is asserted by
+# tests/unit/test_offline_fixture_contract.py::test_unregistered_marker_is_a_collection_error.
+strict_markers = true
 filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning",
@@ -397,6 +413,7 @@ markers = [
     "chaos: marks chaos/fault injection tests (slow, may be flaky)",
     "contract: marks contract tests against real APIs (requires credentials)",
     "performance: marks benchmark/performance tests (excluded from default suite)",
+    "backend_online: test exercises connected/backend code paths; the autouse offline fixture clears offline mode instead of forcing it. Replaces the tests/unit/cloud/ path carve-out. Does NOT permit real network egress - transports must still be mocked.",
 ]
 
 [tool.coverage.run]

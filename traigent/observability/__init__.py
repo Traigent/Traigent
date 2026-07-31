@@ -1,6 +1,6 @@
 """Public observability API for Traigent SDK."""
 
-from traigent.observability.agent_spans import add_agent_span
+from traigent.observability.agent_spans import SpanResult, add_agent_span
 from traigent.observability.analytics_dtos import (
     ObservabilityAnalysisInsightsDTO,
     ObservabilityCohortComparisonDTO,
@@ -90,6 +90,7 @@ __all__ = [
     "TraceListResponse",
     "TraceObservationsResponse",
     "TraceRecord",
+    "SpanResult",
     "add_agent_span",
     "get_default_observability_client",
     "observe",

@@ -272,6 +272,145 @@ class TestPrintResultsTableBanner:
         assert "$0.01500" in out
 
 
+class TestLocalFallbackNotice:
+    """Issue #2024: a local-fallback run must say so next to its number.
+
+    ``result.metadata`` already carried ``source``/``fallback_reason``, but
+    nothing printed reflected them, so an ``algorithm="auto"`` run that
+    degraded to a local search rendered exactly like managed optimization.
+    """
+
+    @staticmethod
+    def _build_results(metadata: dict[str, Any]) -> MagicMock:
+        trials = [
+            _trial({"model": "m1"}, {"accuracy": 0.25}, trial_id="t1"),
+            _trial({"model": "m2"}, {"accuracy": 0.75}, trial_id="t2"),
+        ]
+        results = MagicMock()
+        results.trials = trials
+        results.metadata = metadata
+        results.best_trial_id = None
+        results.best_config = trials[1].config
+        results.best_score = 0.75
+        results.calculate_weighted_scores.return_value = {
+            "best_weighted_config": trials[1].config,
+            "weighted_scores": [],
+        }
+        return results
+
+    def test_no_api_key_fallback_is_reported_with_the_number(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        print_results_table(
+            self._build_results(
+                {
+                    "source": "local_fallback",
+                    "fallback_reason": "no_api_key: No API key configured",
+                    "fallback_reason_code": "no_api_key",
+                }
+            ),
+            config_space={"model": ["m1", "m2"]},
+            objectives=["accuracy"],
+        )
+
+        out = capsys.readouterr().out
+        assert "No Traigent API key was found" in out
+        assert "LOCAL search on your machine" in out
+        assert "not Traigent's managed optimization" in out
+        assert "TRAIGENT_API_KEY" in out
+        assert "TRAIGENT_REQUIRE_CLOUD=1" in out
+
+    def test_non_key_fallback_reports_generic_unavailability(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        print_results_table(
+            self._build_results(
+                {
+                    "source": "local_fallback",
+                    "fallback_reason": "session_failed: HTTP 503",
+                    "fallback_reason_code": "session_failed",
+                }
+            ),
+            config_space={"model": ["m1", "m2"]},
+            objectives=["accuracy"],
+        )
+
+        out = capsys.readouterr().out
+        assert "managed optimization was unavailable" in out
+        assert "LOCAL search on your machine" in out
+        assert "session_failed: HTTP 503" in out
+        assert "No Traigent API key was found" not in out
+        # A user whose key works must not be told to set the key they set.
+        assert "TRAIGENT_API_KEY" not in out
+        assert "TRAIGENT_REQUIRE_CLOUD=1" in out
+
+    def test_backend_prose_mentioning_no_api_key_does_not_claim_a_missing_key(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The remedy comes from the typed code, never from backend text.
+
+        ``fallback_reason`` embeds ``one_line_summary()``, i.e. the backend's
+        ``error_code``/``message``/``raw_body``. A 500 body that happens to
+        contain the ``no_api_key`` token must not make us tell a user with a
+        valid key that no key was found.
+        """
+        print_results_table(
+            self._build_results(
+                {
+                    "source": "local_fallback",
+                    "fallback_reason": (
+                        "session_failed: HTTP 500 | scope no_api_key_admin missing"
+                    ),
+                    "fallback_reason_code": "session_failed",
+                }
+            ),
+            config_space={"model": ["m1", "m2"]},
+            objectives=["accuracy"],
+        )
+
+        out = capsys.readouterr().out
+        assert "managed optimization was unavailable" in out
+        assert "No Traigent API key was found" not in out
+        assert "TRAIGENT_API_KEY" not in out
+
+    def test_missing_reason_code_falls_back_to_the_reason_agnostic_notice(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Without a typed code we state only what is true of every fallback.
+
+        Results produced before the typed code existed (or by a path with no
+        typed classification, e.g. a mid-run connectivity drop) carry
+        ``fallback_reason`` alone. Those must still declare the local search
+        and must not guess a credentials remedy.
+        """
+        print_results_table(
+            self._build_results(
+                {"source": "local_fallback", "fallback_reason": "trial submission"}
+            ),
+            config_space={"model": ["m1", "m2"]},
+            objectives=["accuracy"],
+        )
+
+        out = capsys.readouterr().out
+        assert "managed optimization was unavailable" in out
+        assert "LOCAL search on your machine" in out
+        assert "trial submission" in out
+        assert "TRAIGENT_API_KEY" not in out
+
+    def test_managed_run_prints_no_fallback_notice(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        print_results_table(
+            self._build_results({"source": "cloud_brain"}),
+            config_space={"model": ["m1", "m2"]},
+            objectives=["accuracy"],
+        )
+
+        out = capsys.readouterr().out
+        assert "LOCAL search on your machine" not in out
+        assert "TRAIGENT_REQUIRE_CLOUD" not in out
+
+
 class TestBestPerObjective:
     def test_returns_all_tied_best_indices(self) -> None:
         trials = [

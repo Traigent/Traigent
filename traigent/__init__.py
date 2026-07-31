@@ -397,6 +397,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
         "traigent.observability",
         "get_default_observability_client",
     ),
+    "SpanResult": ("traigent.observability", "SpanResult"),
     "add_agent_span": ("traigent.observability", "add_agent_span"),
     "observe": ("traigent.observability", "observe"),
     "set_default_observability_client": (
@@ -645,6 +646,7 @@ __all__ = [
     "TraceListResponse",
     "TraceObservationsResponse",
     "TraceRecord",
+    "SpanResult",
     "add_agent_span",
     "get_default_observability_client",
     "observe",

@@ -16,6 +16,9 @@ from traigent.cloud.models import (
 )
 from traigent.config.backend_config import BackendConfig
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 @pytest_asyncio.fixture
 async def mock_session():

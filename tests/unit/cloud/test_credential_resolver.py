@@ -16,6 +16,9 @@ import pytest
 from traigent.cloud.auth import AuthCredentials, AuthMode, UnifiedAuthConfig
 from traigent.cloud.credential_resolver import CredentialResolver
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 @pytest.fixture
 def config() -> UnifiedAuthConfig:

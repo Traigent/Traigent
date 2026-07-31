@@ -6,6 +6,9 @@ from traigent.cloud.service import OptimizationRequest, TraigentCloudService
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import ValidationError as ValidationException
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 def _sample_dataset() -> Dataset:
     example = EvaluationExample(

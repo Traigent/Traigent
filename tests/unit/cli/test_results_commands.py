@@ -130,6 +130,57 @@ class TestResultsList:
         assert "local_func" in result.output
         assert "Local session rows are loaded from" in result.output
 
+    def test_results_list_reports_recorded_trials_not_planned(self, runner, tmp_path):
+        """total_trials is the recorded count, never the max_trials budget.
+
+        The session below declares a 10-trial budget — the exact value
+        backend_session_manager.py:1387 fabricates when the caller gave none —
+        but stops after 3 trials (#2032).
+        """
+        local_store = tmp_path / "early-stop-store"
+        storage = LocalStorageManager(str(local_store))
+        session_id = storage.create_session(
+            "early_stopped_func",
+            optimization_config={"algorithm": "random", "max_trials": 10},
+            metadata={"max_trials": 10},
+        )
+        for index in range(3):
+            storage.add_trial_result(session_id, {"temperature": index / 10}, 0.5)
+        storage.finalize_session(session_id)
+
+        local_results, _ = _list_local_session_results(str(local_store))
+
+        assert local_results[0]["total_trials"] == 3
+
+        result = runner.invoke(cli, ["results", "list", "-d", str(local_store)])
+        assert result.exit_code == 0
+        assert "early_stopped_func" in result.output
+
+    def test_results_list_reconciles_legacy_zero_total_trials(self, runner, tmp_path):
+        """Sessions written before #2032 carry total_trials: 0 on disk."""
+        local_store = tmp_path / "legacy-store"
+        storage = LocalStorageManager(str(local_store))
+        session_id = storage.create_session(
+            "legacy_func",
+            optimization_config={"algorithm": "random"},
+        )
+        for index in range(2):
+            storage.add_trial_result(session_id, {"temperature": index / 10}, 0.7)
+        storage.finalize_session(session_id)
+
+        session_path = local_store / "sessions" / f"{session_id}.json"
+        raw = json.loads(session_path.read_text())
+        raw["total_trials"] = 0
+        session_path.write_text(json.dumps(raw, indent=2))
+
+        local_results, _ = _list_local_session_results(str(local_store))
+
+        assert local_results[0]["total_trials"] == 2
+
+        result = runner.invoke(cli, ["results", "list", "-d", str(local_store)])
+        assert result.exit_code == 0
+        assert "legacy_func" in result.output
+
 
 class TestResultsShow:
     """Tests for 'traigent results show' command."""
@@ -175,7 +226,7 @@ class TestResultsShow:
 class TestResultsCompare:
     """Tests for 'traigent results compare' command."""
 
-    def test_results_compare_two_runs(self, runner, mock_result):
+    def test_results_compare_two_runs(self, runner, mock_result, plain):
         """Test comparing two optimization runs."""
         mock_result2 = Mock()
         mock_result2.trials = mock_result.trials
@@ -191,9 +242,10 @@ class TestResultsCompare:
 
             result = runner.invoke(cli, ["results", "compare", "run1", "run2"])
 
+            output = plain(result.output)
             assert result.exit_code == 0
-            assert "Comparing" in result.output
-            assert "Best Score" in result.output
+            assert "Comparing" in output
+            assert "Best Score" in output
 
 
 class TestResultsRerank:

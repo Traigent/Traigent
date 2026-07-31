@@ -204,7 +204,18 @@ class WorkflowTraceManager:
             collected_spans = list(self._collected_spans)
 
         if not collected_spans:
-            logger.debug("No workflow spans to submit")
+            # Run-level invariant: tracing was configured (a tracker exists) yet
+            # the whole run produced zero spans. That is almost always a wiring
+            # fault — a sync agent function losing workflow_trace_context across
+            # the thread boundary, or add_agent_span never being reached — not a
+            # legitimately empty run. DEBUG hides it until someone reads the
+            # backend and finds nothing.
+            logger.warning(
+                "Workflow tracing is enabled but no workflow spans were collected "
+                "for this run; nothing will appear in the workflow traces view. "
+                "Check that add_agent_span() is reached and that its SpanResult "
+                "receipt reports accepted=True."
+            )
             return
 
         # Skip trace submission when running in offline mode or with mock sessions

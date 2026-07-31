@@ -15,6 +15,9 @@ from traigent.cloud.trial_operations import (
 )
 from traigent.core.metadata_helpers import build_backend_metadata
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 class TestRedactSensitiveFields:
     """Tests for _redact_sensitive_fields method."""

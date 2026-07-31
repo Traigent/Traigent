@@ -159,6 +159,40 @@ tables so you can verify the workflow before connecting an account. For
 specialized routing controls, see
 [Choosing the Right Optimization Model](../user-guide/choosing_optimization_model.md).
 
+If you ran a baseline before creating an account, you can upload that exact
+run later instead of paying to re-run it:
+
+```python
+result = my_agent.optimize_sync()
+print(result.sync_session_id)   # pass this to `traigent sync`
+```
+
+```bash
+traigent sync <sync_session_id> --dry-run   # preview, uploads nothing
+traigent sync <sync_session_id>             # upload just this run
+```
+
+`sync_session_id` is `None` when the backend tracked the run end-to-end. The id
+names a record in *that run's* local session store, so if you passed
+`local_storage_path=...` to `@traigent.optimize`, point the CLI at the same root
+with `TRAIGENT_RESULTS_FOLDER="<that path>" traigent sync <id>` — the SDK logs a
+warning naming the root when it differs from the CLI default.
+
+If the run **failed partway through**, the trials that finished are still on
+disk and still uploadable — the same id is on the exception:
+
+```python
+from traigent.utils.exceptions import OptimizationError
+
+try:
+    result = my_agent.optimize_sync()
+except OptimizationError as exc:
+    print(exc.sync_session_id)   # pass this to `traigent sync`
+    raise
+```
+
+`traigent sync --all` skips failed runs, so this id is how you recover one.
+
 ---
 
 Ready for more? Dive into the [examples](../examples/) and the [API reference](../api-reference/complete-function-specification.md).

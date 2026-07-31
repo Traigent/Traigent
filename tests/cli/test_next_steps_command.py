@@ -288,6 +288,35 @@ def test_next_steps_json_mode(
     assert json.loads(result.output) == next_steps_payload
 
 
+def test_next_steps_json_mode_surfaces_attribution(
+    runner: CliRunner,
+    next_steps_payload: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The optional attribution block is surfaced unchanged through the CLI."""
+    payload_with_attribution = {
+        **next_steps_payload,
+        "attribution": {
+            "source": "traigent",
+            "label": "Traigent",
+            "headline": "Traigent tuned this recommendation.",
+            "why": "Chosen from your optimization history.",
+            "basis": ["optimization_history"],
+            "engine": "policy",
+        },
+    }
+    _FakeNextStepsClient.payload = payload_with_attribution
+    monkeypatch.setattr(
+        "traigent.cli.next_steps_command.NextStepsClient",
+        _FakeNextStepsClient,
+    )
+
+    result = runner.invoke(cli, ["next-steps", "run_123", "--json"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.output) == payload_with_attribution
+
+
 def test_next_steps_uses_explicit_backend_url_and_api_key_over_stored_credentials(
     runner: CliRunner,
     next_steps_payload: dict[str, object],

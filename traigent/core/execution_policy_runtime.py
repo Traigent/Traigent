@@ -93,7 +93,13 @@ HARD_FAILURE_PATTERNS = (
 
 
 class CloudBrainUnavailableError(OptimizationError):
-    """Raised when the cloud optimization brain is unavailable."""
+    """Raised when the cloud optimization brain is unavailable.
+
+    ``failure_reason`` carries the typed classification when the raiser has
+    one, so a handler that re-stamps the run as locally-degraded keeps the
+    classification instead of re-deriving it from ``reason`` — a string that
+    embeds backend-controlled text (issue #2024).
+    """
 
     def __init__(
         self,
@@ -101,11 +107,13 @@ class CloudBrainUnavailableError(OptimizationError):
         reason: str,
         *,
         original: BaseException | None = None,
+        failure_reason: SessionCreationFailureReason | None = None,
     ) -> None:
         super().__init__(f"Cloud brain unavailable during {stage}: {reason}")
         self.stage = stage
         self.reason = reason
         self.original = original
+        self.failure_reason = failure_reason
 
 
 def backend_optimization_strategy_for_algorithm(
@@ -242,6 +250,70 @@ def fallback_reason_from_session_result(result: SessionCreationResult) -> str:
     return ": ".join(parts) or "backend unavailable"
 
 
+def failure_reason_from_code(code: str | None) -> SessionCreationFailureReason | None:
+    """Rehydrate the typed failure reason stamped on a result's metadata.
+
+    The only accepted input is a value this SDK itself wrote (see
+    ``mark_local_fallback``), so this is an enum round-trip across the
+    result-metadata boundary, not a classification of backend prose. An
+    unrecognised or absent code yields ``None``, which makes reporting fall
+    back to the reason-agnostic notice — a statement that is true for every
+    local fallback — rather than guessing a remedy.
+    """
+
+    if not code:
+        return None
+    try:
+        return SessionCreationFailureReason(code)
+    except ValueError:
+        return None
+
+
+def local_fallback_notice(
+    reason: str | None,
+    failure_reason: SessionCreationFailureReason | None,
+) -> str:
+    """User-facing, one-paragraph explanation of a local-fallback run.
+
+    Issue #2024: the machine-readable ``traigent.cloud_brain_fallback`` line
+    tells a maintainer what happened but tells a user nothing, so an ``auto``
+    run that degraded to a local search reads exactly like managed
+    optimization. Single formatter so the session-create warning and the
+    reporting-time banner cannot drift apart.
+
+    ``failure_reason`` is the TYPED classification recorded when the run
+    degraded, and it alone selects the remedy. It is deliberately never
+    re-derived from ``reason``: that string embeds
+    ``SessionCreationFailureDetail.one_line_summary()``, i.e.
+    backend-controlled ``error_code``/``message``/``raw_body`` text, so a 500
+    body mentioning ``no_api_key`` would otherwise tell a user with a valid
+    key to set the key they already set. Only the no-key branch mentions
+    ``TRAIGENT_API_KEY``; the other branch already knows the key is not the
+    problem.
+    """
+
+    reason_text = (reason or "backend unavailable").strip()
+    if failure_reason is SessionCreationFailureReason.NO_API_KEY:
+        lead = (
+            "No Traigent API key was found, so this ran a LOCAL search on your "
+            "machine, not Traigent's managed optimization."
+        )
+        remedy = (
+            "Set TRAIGENT_API_KEY to run managed optimization, or "
+            "TRAIGENT_REQUIRE_CLOUD=1 to fail instead of falling back."
+        )
+    else:
+        lead = (
+            "Traigent's managed optimization was unavailable, so this ran a "
+            "LOCAL search on your machine."
+        )
+        remedy = "Set TRAIGENT_REQUIRE_CLOUD=1 to fail instead of falling back."
+    return (
+        f"{lead} The reported best configuration was chosen by that local "
+        f"search (reason: {reason_text}). {remedy}"
+    )
+
+
 def _combined_session_text(result: SessionCreationResult) -> str:
     detail = result.failure_response
     return " ".join(
@@ -343,10 +415,22 @@ def mark_local_fallback(
     config: TraigentConfig,
     reason: str,
     *,
+    failure_reason: SessionCreationFailureReason | None = None,
     no_egress: bool = True,
 ) -> None:
-    """Stamp a config as degraded to local fallback."""
+    """Stamp a config as degraded to local fallback.
+
+    ``failure_reason`` is the typed classification, when the caller has one.
+    It is recorded alongside the human ``reason`` so reporting can pick the
+    right remedy without re-parsing prose the backend controls. The two are
+    always written together: a caller with no typed classification clears the
+    code rather than leaving the previous fallback's code next to a new
+    reason.
+    """
 
     config.result_source = SOURCE_LOCAL_FALLBACK
     config.fallback_reason = reason
+    config.fallback_reason_code = (
+        failure_reason.value if failure_reason is not None else None
+    )
     config.no_egress = no_egress

@@ -19,6 +19,9 @@ from traigent.cloud.session_operations import SessionOperations
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import ValidationError as ValidationException
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 # ---------------------------------------------------------------------------
 # Shared helpers / stubs
 # ---------------------------------------------------------------------------

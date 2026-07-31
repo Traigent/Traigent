@@ -25,6 +25,9 @@ from traigent.knobs.certificates import (
     issue_certificate,
 )
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 def _target() -> TargetProperty:
     return TargetProperty(name="accuracy", mode="require_calibration")

@@ -28,6 +28,12 @@ from traigent.utils.secure_path import safe_open
 
 logger = get_logger(__name__)
 
+# Dataset content validation inspects EVERY row (issue #2022): a sample must
+# never be mistakable for a guarantee. Only the number of individually
+# *reported* row errors is bounded, so a badly broken file does not produce a
+# thousand-line message; the summary error still states the true totals.
+MAX_REPORTED_DATASET_ROW_ERRORS = 20
+
 
 @dataclass
 class ValidationError:
@@ -881,6 +887,11 @@ class Validators:
         process's current working directory when omitted). Absolute paths keep
         their existing compatibility behavior and are not constrained by that
         relative-path boundary.
+
+        Content validation reads every row of a single dataset file, so the
+        result agrees with the runtime loader (``Dataset.from_jsonl``) about
+        whether the file is acceptable. ``result.metadata`` reports
+        ``dataset_rows_inspected`` and ``dataset_invalid_rows``.
         """
         result = ValidationResult()
 
@@ -1062,28 +1073,64 @@ class Validators:
                         mode="r",
                         encoding="utf-8",
                     ) as f:
-                        line_count = 0
-                        for line_num, line in enumerate(f, 1):
-                            line_count += 1
-                            if line_count > 5:  # Only check first 5 lines
-                                break
+                        row_count = 0
+                        invalid_rows = 0
 
-                            try:
-                                data = json.loads(line.strip())
-                                if "input" not in data and "input_data" not in data:
-                                    result.add_error(
-                                        f"dataset:line{line_num}",
-                                        "Missing 'input' or 'input_data' field",
-                                        error_code="INVALID_FORMAT",
-                                    )
-                            except json.JSONDecodeError:
+                        def report_row_error(
+                            line_num: int, message: str, error_code: str
+                        ) -> None:
+                            """Record a row error, listing at most the first N."""
+                            nonlocal invalid_rows
+                            invalid_rows += 1
+                            if invalid_rows <= MAX_REPORTED_DATASET_ROW_ERRORS:
                                 result.add_error(
                                     f"dataset:line{line_num}",
-                                    "Invalid JSON",
-                                    error_code="JSON_ERROR",
+                                    message,
+                                    error_code=error_code,
                                 )
 
-                        if line_count == 0:
+                        for line_num, line in enumerate(f, 1):
+                            text = line.strip()
+                            if not text:
+                                # Blank lines are skipped by Dataset.from_jsonl;
+                                # validation must agree with the runtime loader.
+                                continue
+                            row_count += 1
+
+                            try:
+                                data = json.loads(text)
+                            except json.JSONDecodeError:
+                                report_row_error(line_num, "Invalid JSON", "JSON_ERROR")
+                                continue
+
+                            if not isinstance(data, dict):
+                                report_row_error(
+                                    line_num,
+                                    f"Expected a JSON object, got {type(data).__name__}",
+                                    "INVALID_FORMAT",
+                                )
+                                continue
+
+                            if "input" not in data and "input_data" not in data:
+                                report_row_error(
+                                    line_num,
+                                    "Missing 'input' or 'input_data' field",
+                                    "INVALID_FORMAT",
+                                )
+
+                        result.metadata["dataset_rows_inspected"] = row_count
+                        result.metadata["dataset_invalid_rows"] = invalid_rows
+
+                        if invalid_rows > MAX_REPORTED_DATASET_ROW_ERRORS:
+                            result.add_error(
+                                "dataset",
+                                f"{invalid_rows} of {row_count} rows are invalid "
+                                f"(all rows were inspected; only the first "
+                                f"{MAX_REPORTED_DATASET_ROW_ERRORS} are listed above)",
+                                error_code="INVALID_FORMAT",
+                            )
+
+                        if row_count == 0:
                             result.add_error(
                                 "dataset",
                                 "Dataset file is empty",

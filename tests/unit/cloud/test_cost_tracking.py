@@ -16,6 +16,9 @@ from traigent.cloud.billing import (
     UsageMetrics,
 )
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 class TestCostTrackingConfig:
     """Test CostTrackingConfig class."""

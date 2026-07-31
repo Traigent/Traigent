@@ -15,6 +15,9 @@ from traigent.cloud.subset_selection import (
 )
 from traigent.evaluators.base import Dataset, EvaluationExample
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 @pytest.fixture
 def sample_dataset():

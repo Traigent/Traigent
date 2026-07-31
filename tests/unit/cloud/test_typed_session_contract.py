@@ -23,6 +23,9 @@ from traigent.cloud.models import SessionCreationRequest
 from traigent.config.types import _reset_deprecation_warning_state_for_tests
 from traigent.core.session_types import SessionCreationFailureDetail
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 STRICT_POLICY = {
     "dominance": "epsilon_pareto",
     "alpha": 0.05,

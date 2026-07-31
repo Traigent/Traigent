@@ -362,6 +362,10 @@ async def test_cloud_brain_session_create_fallback_runs_real_local_trials(
     assert result.source == "local_fallback"
     assert result.metadata["source"] == "local_fallback"
     assert "fallback_reason" in result.metadata
+    # The TYPED reason travels session-result -> config -> result metadata, so
+    # reporting selects the remedy from the enum instead of re-deriving it from
+    # the backend-controlled reason text (issue #2024).
+    assert result.metadata["fallback_reason_code"] == failure_reason.value
     assert len(result.trials) >= 1
     assert result.best_score == pytest.approx(1.0)
     assert calls.call_count >= 1
@@ -396,6 +400,9 @@ async def test_cloud_brain_runtime_degradation_stops_remote_next_trial(
     assert result.source == "local_fallback"
     assert result.metadata["source"] == "local_fallback"
     assert result.metadata["fallback_reason"] == "trial submission"
+    # A runtime degradation carries no typed SessionCreationFailureReason, so
+    # no code is stamped and reporting stays reason-agnostic (issue #2024).
+    assert "fallback_reason_code" not in result.metadata
     assert len(result.trials) >= 1
     assert result.best_score == pytest.approx(1.0)
     assert calls.call_count >= 2

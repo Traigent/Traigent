@@ -14,6 +14,9 @@ import pytest
 from traigent.cloud.backend_client import BackendClientConfig, BackendIntegratedClient
 from traigent.cloud.client import TraigentCloudClient
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 class TestConcurrentSessionCreation:
     """Test concurrent calls to _ensure_session don't create race conditions."""

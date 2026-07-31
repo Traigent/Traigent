@@ -7,6 +7,11 @@ import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import pytest
+
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CLOUD_ROOT = REPO_ROOT / "traigent" / "cloud"

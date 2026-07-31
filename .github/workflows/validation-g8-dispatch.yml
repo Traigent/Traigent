@@ -16,9 +16,24 @@ jobs:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
+      # Mint a spine-dispatch App installation token instead of VALIDATION_CI_PAT
+      # (a PAT; org SAML SSO enforcement since 2026-07-24 revokes a PAT's org SSO
+      # grant, and the repo-level VALIDATION_CI_PAT here predates that and is
+      # SSO-deauthorized). `owner:` with no `repositories:` is required so the
+      # token can reach the sibling traigent-validation-spine repo, not just
+      # this one.
+      - name: Mint spine-dispatch App token
+        id: spine-app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.SPINE_DISPATCH_APP_ID }}
+          private-key: ${{ secrets.SPINE_DISPATCH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Dispatch validation-spine repository_dispatch
         env:
-          GH_TOKEN: ${{ secrets.VALIDATION_CI_PAT }}
+          GH_TOKEN: ${{ steps.spine-app-token.outputs.token }}
           WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           WORKFLOW_EVENT: ${{ github.event.workflow_run.event }}
           SOURCE_REPO: ${{ github.repository }}
@@ -28,17 +43,25 @@ jobs:
           SOURCE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           SOURCE_BASE_BRANCH: ${{ github.event.workflow_run.pull_requests[0].base.ref }}
         run: |
+          set -euo pipefail
+
           if [ "$GITHUB_EVENT_NAME" = "workflow_run" ] && [ "$WORKFLOW_EVENT" != "pull_request" ]; then
-            echo "Skipping G8 dispatch for non-PR upstream event: $WORKFLOW_EVENT"
+            echo "::notice::Skipping G8 dispatch for non-PR upstream event: $WORKFLOW_EVENT"
             exit 0
           fi
           if [ "$GITHUB_EVENT_NAME" = "workflow_run" ] && [ "$WORKFLOW_CONCLUSION" != "success" ]; then
-            echo "Skipping G8 dispatch because upstream workflow concluded: $WORKFLOW_CONCLUSION"
+            echo "::notice::Skipping G8 dispatch because upstream workflow concluded: $WORKFLOW_CONCLUSION"
             exit 0
           fi
+          # Credential presence is a HARD requirement past this point. The two
+          # skips above are legitimate untrusted/irrelevant contexts; a missing
+          # token is operator misconfiguration. A quietly-skipped dispatch reads
+          # as "the spine validated this" when nothing was ever sent — an unsafe
+          # false-green. This mirrors the hardening already in
+          # traigent-model-checking's copy of this workflow.
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::warning::VALIDATION_CI_PAT is not configured; skipping validation-spine dispatch."
-            exit 0
+            echo "::error::spine-dispatch App token unavailable (SPINE_DISPATCH_APP_ID/SPINE_DISPATCH_APP_PRIVATE_KEY not configured, or token mint failed) for a trusted run; cannot dispatch validation-spine G8. Configure the secrets or the spine will never see this change."
+            exit 1
           fi
 
           source_sha="${SOURCE_HEAD_SHA:-$GITHUB_SHA}"
@@ -46,6 +69,15 @@ jobs:
           source_base_branch="${SOURCE_BASE_BRANCH:-}"
           source_run_id="${SOURCE_RUN_ID:-}"
           source_workflow="${SOURCE_WORKFLOW:-}"
+
+          # The payload must carry the exact commit, never a branch name that
+          # can move under the spine between dispatch and validation.
+          if ! printf '%s' "$source_sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::Refusing to dispatch without a full 40-char source SHA (got '$source_sha')."
+            exit 1
+          fi
+
+          echo "Dispatching validation-g8 for $SOURCE_REPO@$source_sha (base ${source_base_branch:-<none>})."
 
           gh api --method POST repos/Traigent/traigent-validation-spine/dispatches \
             -f event_type=validation-g8 \

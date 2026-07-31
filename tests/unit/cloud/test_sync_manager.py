@@ -28,6 +28,9 @@ from traigent.config.types import TraigentConfig
 from traigent.storage.local_storage import OptimizationSession, TrialResult
 from traigent.utils.exceptions import TraigentStorageError
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 def backend_response(status_code=201, payload=None, text="Created"):
     response = Mock(status_code=status_code, text=text)
@@ -705,8 +708,17 @@ class TestSyncManager:
         """Test sync session when session not found."""
         sync_manager.storage.load_session.return_value = None
 
-        with pytest.raises(TraigentStorageError, match="Session .* not found"):
+        with pytest.raises(
+            TraigentStorageError, match="Session .* not found"
+        ) as excinfo:
             sync_manager.sync_session_to_cloud("nonexistent_session")
+
+        # #2020: the miss must point somewhere. The common mistake is passing an
+        # optimization_id, which `sync` does not accept.
+        message = str(excinfo.value)
+        assert "optimization_id" in message
+        assert "result.sync_session_id" in message
+        assert "traigent local list" in message
 
     def test_sync_session_to_cloud_no_api_key(
         self, sync_manager_no_key: SyncManager, sample_session: OptimizationSession

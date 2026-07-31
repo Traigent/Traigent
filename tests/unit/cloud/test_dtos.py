@@ -28,6 +28,9 @@ from traigent.cloud.dtos import (
 )
 from traigent.utils.exceptions import DTOSerializationError
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 FIXTURES_DIR = Path(__file__).parents[2] / "cloud" / "fixtures"
 
 

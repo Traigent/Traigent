@@ -10,6 +10,9 @@ from traigent.cloud.backend_synchronizer import BackendSynchronizer
 from traigent.utils.exceptions import NonRetryableError
 from traigent.utils.exceptions import ValidationError as ValidationException
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 def test_backend_synchronizer_rejects_non_positive_concurrency():
     with pytest.raises(ValidationException):

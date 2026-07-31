@@ -17,6 +17,9 @@ from traigent.cloud.models import (
 )
 from traigent.evaluators.base import Dataset, EvaluationExample
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 async def _stub_validate(self, api_key):  # noqa: ARG001
     """Bypass backend API key validation for offline tests."""

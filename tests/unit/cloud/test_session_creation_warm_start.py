@@ -14,6 +14,9 @@ from traigent.cloud.models import OptimizationSession, SessionCreationRequest
 from traigent.cloud.session_operations import SessionOperations
 from traigent.core.backend_session_manager import BackendSessionManager
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 # ---------------------------------------------------------------------------
 # Shared FakeClient infrastructure (mirrors test_session_operations_validation.py)
 # ---------------------------------------------------------------------------

@@ -548,6 +548,7 @@ class OptimizationResult:
     experiment_id: str | None = None
     cloud_url: str | None = None
     run_label: str | None = None
+    sync_session_id: str | None = None
 ```
 
 **Properties:**
@@ -557,6 +558,88 @@ class OptimizationResult:
 
 `metadata["source"]` records result provenance as one of `cloud_brain`,
 `local_fallback`, `explicit_local`, or `offline`.
+
+`sync_session_id` identifies this run's record in **this run's local session
+store**, and is the argument `traigent sync` accepts against that store. It is
+populated when the local store holds the authoritative copy (offline /
+no-egress, no-API-key fallback, explicit-local with backend tracking disabled,
+mid-run degradation, trials the backend did not all acknowledge,
+backend-early-completion) and `None` when the run was tracked end-to-end on the
+backend — in that case the run is already on the portal; use `cloud_url` /
+`experiment_run_id` — or when no local record could be read for the id (storage
+unavailable or the record unreadable; it may still be on disk — check
+`traigent local list`).
+
+The id is store-relative. `traigent sync` runs as a separate process and
+resolves its store from the environment, so a run that passed the programmatic
+`local_storage_path` option must point the CLI at the same root:
+
+```bash
+TRAIGENT_RESULTS_FOLDER="<that path>" traigent sync <sync_session_id>
+```
+
+The SDK logs a warning naming that root when the run's configured store differs
+from the CLI default *as resolved in this process*. That default is read from
+this process's environment, so a script that sets `TRAIGENT_RESULTS_FOLDER`
+itself before optimizing sees no warning even though a fresh shell without that
+variable would reject the id — `traigent local list` looks the record up either
+way. For a backend-early-complete (#1938) or partially-acknowledged run
+(which includes a run that degraded to local-only mid-flight, since degradation
+means at least one trial went unacknowledged), the
+trials already submitted are on the portal, so syncing re-imports them as a
+*separate* experiment — a deliberate trade-off, since the SDK's own message for
+those shapes tells the user to sync.
+`optimization_id` is **not** accepted by `traigent sync`.
+The id is machine-local and is not restored when a result is reloaded from disk.
+
+```python
+import subprocess
+
+result = agent.optimize_sync()
+if result.sync_session_id:
+    subprocess.run(["traigent", "sync", result.sync_session_id], check=True)
+```
+
+#### Recovering a run that *failed* mid-flight
+
+A run that raises never returns an `OptimizationResult`, but the trials that
+finished before the failure are already on disk — trials are persisted one at a
+time, not batched at the end. Those trials are reachable: the same id rides on
+the raised exception as `sync_session_id`, on `OptimizationError` and on the
+typed `ResolutionError` alike.
+
+```python
+from traigent.knobs import ResolutionError
+from traigent.utils.exceptions import OptimizationError
+
+try:
+    result = agent.optimize_sync()
+except (OptimizationError, ResolutionError) as exc:
+    if exc.sync_session_id:
+        # Upload the trials that DID complete before the failure.
+        subprocess.run(["traigent", "sync", exc.sync_session_id], check=True)
+    raise
+```
+
+`traigent sync --all` **skips failed sessions**, so naming the id explicitly is
+the supported way to recover one. On `OptimizationError` (with its subclasses)
+and `ResolutionError` the attribute always exists — it defaults to `None` — so
+it is safe to read without `getattr`. It follows exactly the same locality +
+durability rules and the same store-relative caveat as the field on
+`OptimizationResult` above, and is `None` for the same reasons — plus one more:
+a failure that happens before a session exists has nothing to name.
+
+Exactly which exits carry it:
+
+| Exit | Carries the id | How to read it |
+|---|---|---|
+| `OptimizationError` + subclasses raised inside the run | yes | `exc.sync_session_id` |
+| `ResolutionError` (unwrapped, type preserved) | yes | `exc.sync_session_id` |
+| Any other `Exception` (wrapped into `OptimizationError`) | yes, on the wrapper | `exc.sync_session_id` |
+| `SystemExit` / `GeneratorExit` / other non-`Exception` exits | yes, attached then re-raised untouched | `getattr(exc, "sync_session_id", None)` — no class default |
+| `KeyboardInterrupt` / `asyncio.CancelledError` | n/a — normally does not raise; a partial result is returned | `result.sync_session_id` (#2020) |
+| …**unless a second interrupt lands during finalization** | no — a bare `KeyboardInterrupt`/`CancelledError` propagates, so there is no result and no attribute | `traigent local list`, then `traigent sync <id>` |
+| `CostLimitExceeded` | no, always `None` — the pre-run approval gate raises it before a session exists | — |
 
 #### `best_config` in multi-objective runs (authoritative accessor)
 

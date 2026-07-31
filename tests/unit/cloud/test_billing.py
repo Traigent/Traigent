@@ -16,6 +16,9 @@ from traigent.cloud.billing import (
     _write_json_file,
 )
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 class TestUsageRecord:
     """Test cases for UsageRecord dataclass."""

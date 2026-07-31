@@ -22,6 +22,9 @@ from traigent.cloud.models import (
 )
 from traigent.evaluators.base import Dataset, EvaluationExample
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 class TestStatusEnumDeduplication:
     """Issue #1302 AC4 — the dual status enums share ONE source of truth."""

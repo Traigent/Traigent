@@ -134,6 +134,26 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           exit 0
 
+      # SPINE_RO_TOKEN is an org secret with `visibility: private`, invisible to
+      # this public repo, so it was never actually reachable here (this SHADOW
+      # job never blocks, so that gap was silent). Mint a spine-dispatch App
+      # installation token instead — not a PAT, not subject to per-user SAML SSO
+      # revocation, and not subject to org-secret visibility rules. `owner:`
+      # with no `repositories:` is required so the token can reach the sibling
+      # traigent-validation-spine repo. Keep the `github.token` fallback: it
+      # cannot read a private sibling repo either, but preserves this step's
+      # existing fail-soft shape (checkout failure -> `skipped_no_access`,
+      # never a hard failure) if the App token is unavailable.
+      - name: Mint spine-dispatch App token (shadow)
+        id: spine_app_token
+        if: ${{ steps.classify.outputs.need_checkout == 'true' }}
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.SPINE_DISPATCH_APP_ID }}
+          private-key: ${{ secrets.SPINE_DISPATCH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Checkout spine at receipt commit (shadow)
         id: spine_checkout
         if: ${{ steps.classify.outputs.need_checkout == 'true' }}
@@ -142,7 +162,7 @@ jobs:
         with:
           repository: Traigent/traigent-validation-spine
           ref: ${{ steps.classify.outputs.spine_commit }}
-          token: ${{ secrets.SPINE_READ_TOKEN || github.token }}
+          token: ${{ steps.spine_app_token.outputs.token || github.token }}
           path: .spine-shadow
           persist-credentials: false
           fetch-depth: 0

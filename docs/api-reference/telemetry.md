@@ -175,8 +175,14 @@ def add_agent_span(
     latency_ms: float | None = None,
     model: str | None = None,
     metadata: Mapping[str, Any] | None = None,
-) -> None
+) -> SpanResult
 ```
+
+Returns a `SpanResult` receipt — `accepted`, `reason` when it was not, and
+`dropped_metadata_keys` for any `metadata` entries the sanitizer removed. It is falsy
+when the span was rejected, so `if not add_agent_span(...)` works. The call never
+raises. See [Observability spans](../features/observability-spans.md) for the reason
+codes and the metadata rules.
 
 The helper is safe to call from user code. If no active optimization trial or
 workflow trace manager exists, it logs at debug level and returns. Metadata is

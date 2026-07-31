@@ -9,6 +9,9 @@ import pytest
 
 from traigent.cloud.production_mcp_client import MCPServerConfig, ProductionMCPClient
 
+# SDK #2033: opt into the connected/backend code paths (see pyproject markers).
+pytestmark = pytest.mark.backend_online
+
 
 @pytest.mark.asyncio
 async def test_call_tool_reraises_cancelled_error() -> None:
