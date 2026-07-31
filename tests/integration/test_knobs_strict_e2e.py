@@ -15,6 +15,8 @@ import pytest
 import traigent
 from traigent.api.config_space import ConfigSpace
 from traigent.api.parameter_ranges import Choices
+from traigent.cloud.sync_manager import SyncManager
+from traigent.config.types import TraigentConfig
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.knobs import (
     Calibrated,
@@ -170,11 +172,19 @@ async def test_cvar_resolves_in_trial_and_strict_run_never_silently_promotes():
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("cost_preflight_approved")
-async def test_stale_certificate_blocks_the_run_with_typed_error():
+async def test_stale_certificate_blocks_the_run_with_typed_error(monkeypatch, tmp_path):
     """Parent-specific certificate (depends_on=variant, issued for 'cheap'):
     the first suggestion for the other parent value is R6 stale — the run
-    aborts with the typed fail-closed error and no winner is ever applied."""
+    aborts with the typed fail-closed error and no winner is ever applied.
+
+    Also the #2029 real-run case for the typed error: the id must be readable
+    on a ``ResolutionError`` without the exception being wrapped, since callers
+    match on its exact type (RFC 0001 §3.4). The store is isolated under
+    ``tmp_path`` so the id can be checked against a store this run alone wrote.
+    """
     from traigent.knobs import Ref
+
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path / "results"))
 
     space = _space(depends_on=(Ref(knob="variant"),))
     ctx = _ctx(parents=(("variant", "cheap"),))
@@ -190,8 +200,33 @@ async def test_stale_certificate_blocks_the_run_with_typed_error():
     with pytest.raises(ResolutionError) as err:
         await wrapped.optimize(algorithm="grid", max_trials=3)
 
+    # The typed contract survives: exactly ResolutionError, never diluted into
+    # OptimizationError by the #2029 attach.
+    assert type(err.value) is ResolutionError
     assert ResolutionRejection.STALE_CERTIFICATE in err.value.rejections
     assert wrapped.get_best_config() is None
+
+    # #2029: the id is populated on the typed error (pre-fix: AttributeError).
+    #
+    # It was an open question whether this shape could populate it at all, on
+    # the assumption that R6 fires on the first suggestion and no trial ever
+    # completes. Measured, that assumption is wrong and this is a genuine
+    # stranded-trials case: the certificate is valid for variant='cheap', so
+    # the baseline and 'cheap' trials run to completion and only the 'strong'
+    # suggestion is rejected. Two completed trials are on disk when the run
+    # aborts, and this id is the only supported way to name them — a failed
+    # session is skipped by `traigent sync --all`.
+    sync_id = err.value.sync_session_id
+    assert isinstance(sync_id, str) and sync_id
+
+    session_files = list((tmp_path / "results" / "sessions").glob("*.json"))
+    assert sync_id in {path.stem for path in session_files}
+
+    sync = SyncManager(TraigentConfig.from_environment())
+    outcome = sync.sync_session_to_cloud(sync_id, dry_run=True)
+    assert outcome["status"] == "success"
+    # The trials that completed before the rejection ride the payload.
+    assert outcome["trials_converted"] >= 1
 
 
 class _TwoPassScheduleOptimizer(RandomSearchOptimizer):

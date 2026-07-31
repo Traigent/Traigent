@@ -281,6 +281,64 @@ except OptimizationStateError as e:
     print(f"Wrong state: {e.current_state}, need: {e.expected_states}")
 ```
 
+## Recovering the trials of a failed run (`sync_session_id`)
+
+A run that raises never returns an `OptimizationResult` — but the trials that
+completed before the failure are already durably on disk, because trials are
+persisted one at a time rather than batched at the end. The handle to them is
+on the exception:
+
+```python
+from traigent.knobs import ResolutionError
+from traigent.utils.exceptions import OptimizationError
+
+try:
+    results = func.optimize()
+except (OptimizationError, ResolutionError) as e:
+    if e.sync_session_id:
+        print(f"Recover the completed trials: traigent sync {e.sync_session_id}")
+    raise
+```
+
+Notes when debugging with this:
+
+- **`traigent sync --all` skips failed sessions.** Passing the id explicitly is
+  the supported way to recover a failed run; `--all` will silently not include it.
+- The attribute exists on `OptimizationError` (and therefore on subclasses
+  raised from inside the run, such as `CloudBrainUnavailableError`) and on the
+  typed `ResolutionError`. It defaults to `None`, so reading it unconditionally
+  is safe — no `getattr` guard needed.
+- `CostLimitExceeded` **always reads `None`.** It inherits the attribute, but
+  the only thing that raises it is the *pre-run* cost-approval gate, which runs
+  before a session exists and before the failure handler that attaches ids.
+  Nothing has been run, so there is nothing to sync. (A mid-run cost limit does
+  not raise at all — the run stops gracefully and returns a partial result with
+  `stop_reason == "cost_limit"`, so use `result.sync_session_id` there.)
+- `ResolutionError` is **not** wrapped into an `OptimizationError` when it
+  carries the id; its exact type is a public contract, so keep matching on it.
+- Non-`Exception` exits (`SystemExit`, `GeneratorExit`, a test framework's
+  outcome exceptions) also get the id attached before they propagate, but those
+  types have no class-level default, so read them with
+  `getattr(exc, "sync_session_id", None)`. `KeyboardInterrupt` and
+  `asyncio.CancelledError` are not in this group: they normally do not raise out
+  of `optimize()` at all — the run returns a partial `OptimizationResult`, and
+  the id is on `result.sync_session_id`.
+- **The one exit with no id at all: an interrupt that lands *during*
+  finalization.** After the first Ctrl-C the run finalizes its completed trials,
+  and that finalize talks to the network. A *second* Ctrl-C (or an outer
+  cancellation) while it is in flight is not caught — a bare
+  `KeyboardInterrupt`/`CancelledError` propagates, so there is no result to read
+  and no exception attribute to read either. The trials are still on disk; find
+  the session with `traigent local list` and sync it by id.
+- `None` means there is nothing to name: the backend tracked the run
+  end-to-end (it is already on the portal), no local record could be read, or
+  the failure happened before a session existed.
+- The id is store-relative. If the run passed `local_storage_path=...`, point
+  the CLI at the same root:
+  `TRAIGENT_RESULTS_FOLDER="<that path>" traigent sync <id>`.
+- Use `traigent local list` to look up the record by hand if the id is `None`
+  but you believe a record exists.
+
 ## Warnings
 
 Traigent also issues warnings (non-fatal) for deprecated patterns:

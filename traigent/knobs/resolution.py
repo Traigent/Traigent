@@ -33,7 +33,16 @@ class ResolutionError(Exception):
 
     Carries the full set of rejections so callers can report every reason,
     not just the first — mirrors the model checker's collect-all semantics.
+
+    Attributes:
+        sync_session_id: Syncable local session id for a run this rejection
+            aborted mid-flight, or ``None`` (#2029). Same contract as
+            ``OptimizationError.sync_session_id``; see that docstring. The
+            orchestrator attaches it without wrapping the exception, so the
+            RFC 0001 §3.4 typed identity callers match on is preserved.
     """
+
+    sync_session_id: str | None = None
 
     def __init__(
         self, rejections: tuple[ResolutionRejection, ...], detail: str = ""

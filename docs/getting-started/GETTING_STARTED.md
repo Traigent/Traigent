@@ -178,6 +178,21 @@ names a record in *that run's* local session store, so if you passed
 with `TRAIGENT_RESULTS_FOLDER="<that path>" traigent sync <id>` — the SDK logs a
 warning naming the root when it differs from the CLI default.
 
+If the run **failed partway through**, the trials that finished are still on
+disk and still uploadable — the same id is on the exception:
+
+```python
+from traigent.utils.exceptions import OptimizationError
+
+try:
+    result = my_agent.optimize_sync()
+except OptimizationError as exc:
+    print(exc.sync_session_id)   # pass this to `traigent sync`
+    raise
+```
+
+`traigent sync --all` skips failed runs, so this id is how you recover one.
+
 ---
 
 Ready for more? Dive into the [examples](../examples/) and the [API reference](../api-reference/complete-function-specification.md).
