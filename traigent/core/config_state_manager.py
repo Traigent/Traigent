@@ -618,13 +618,26 @@ class ConfigStateManager:
 
         Raises:
             ConfigurationError: If no optimization results to save
+            ValueError: If the result holds a ``status`` or ``timestamp``
+                :meth:`load_optimization_results` could not read back.
         """
         if not self._optimization_results:
             raise ConfigurationError("No optimization results to save")
 
-        from dataclasses import asdict
+        from traigent.utils.optimization_result_persistence import (
+            encode_whole_result_dump,
+        )
 
-        result_dict = asdict(self._optimization_results)
+        # Dump the whole dataclass through the #2031 encoder, which stamps the
+        # schema version — so the loader can tell a full-fidelity artifact
+        # (every restorable field present; a missing one is corruption) from a
+        # pre-#2031 one (missing fields are expected and take dataclass
+        # defaults) — and *validates* the fields the loader decodes explicitly.
+        # Stamping without encoding is what let this writer persist a
+        # version-1 artifact its own loader then refused: a bare `asdict` +
+        # `json.dump(default=str)` wrote `timestamp: None` happily and
+        # load_optimization_results raised on it, one process later.
+        result_dict = encode_whole_result_dump(self._optimization_results)
         output_path = Path(path).expanduser()
         base_dir = (
             output_path.parent if output_path.is_absolute() else Path.cwd().resolve()
@@ -666,18 +679,19 @@ class ConfigStateManager:
                 )
                 trials.append(trial)
 
-            self._optimization_results = OptimizationResult(
+            # Rebuild through the #2031 manifest rather than a hand-written
+            # constructor call: the old call named 11 of the dataclass's 27
+            # fields, so every field added since (cost, tokens, stop_reason,
+            # warnings, source, ...) was silently dropped on load. The manifest
+            # also drops sync_session_id unconditionally (#2020) even though
+            # the asdict-based writer puts it on disk.
+            from traigent.utils.optimization_result_persistence import decode_result
+
+            self._optimization_results = decode_result(
+                result_dict,
                 trials=trials,
-                best_config=result_dict["best_config"],
-                best_score=result_dict["best_score"],
-                optimization_id=result_dict["optimization_id"],
-                duration=result_dict["duration"],
-                convergence_info=result_dict["convergence_info"],
-                status=OptimizationStatus(result_dict["status"]),
-                objectives=result_dict["objectives"],
-                algorithm=result_dict["algorithm"],
-                timestamp=datetime.fromisoformat(result_dict["timestamp"]),
-                metadata=result_dict.get("metadata", {}),
+                legacy_format="config_state",
+                artifact_name=str(input_path),
             )
             self.append_optimization_result(self._optimization_results)
 

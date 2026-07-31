@@ -187,6 +187,37 @@ _OBJECTIVE_ZERO_SPAN_EPSILON = 1e-9
 _ABANDONED_TRIAL_METADATA_KEY = "abandoned"
 
 
+def _safe_exception_text(exc: BaseException) -> str:
+    """``str(exc)`` for an exception whose ``__str__`` may itself raise (#2029).
+
+    The failure handler renders the caught exception twice — once into the
+    ``logger.error`` diagnostic and once into the ``OptimizationError`` wrapper
+    message. Both are f-string conversions, i.e. calls into user-controlled
+    code: a dataclass-y exception whose ``__str__`` dereferences a half-built
+    attribute raises from inside the handler, and that formatting error then
+    *replaces* the real optimization failure the caller was about to receive.
+
+    Boundary (same as ``_attach_sync_session_id``): only ``Exception`` is
+    absorbed. A ``__str__`` that raises ``KeyboardInterrupt`` / ``SystemExit``
+    is the interpreter or the user asking to stop, and a text-formatting helper
+    must not be the thing that swallows that.
+
+    ``core.utils.safe_str_convert`` is deliberately not reused: it absorbs only
+    ``ValueError``/``TypeError``, which is exactly the narrow set a broken
+    ``__str__`` tends not to raise.
+    """
+    try:
+        return str(exc)
+    except Exception:
+        pass
+    # Never re-enter user code: ``type(exc).__name__`` reads the class, not the
+    # instance, so it cannot run the same broken ``__str__`` again.
+    try:
+        return f"<unprintable {type(exc).__name__}>"
+    except Exception:
+        return "<unprintable exception>"
+
+
 def _successful_trial_metric_names(trials: Sequence[TrialResult]) -> list[str]:
     metric_names: set[str] = set()
     for trial in trials:
@@ -3859,6 +3890,116 @@ class OptimizationOrchestrator:
         finally:
             self._session_finalized = True
 
+    def _label_with_sync_session_id(
+        self, exc: BaseException, syncable_id: str | None
+    ) -> None:
+        """Write an ALREADY-RESOLVED syncable id onto ``exc`` (#2029).
+
+        Split out of ``_attach_sync_session_id`` so a second object can be
+        labelled with the *same* answer instead of re-probing storage. The
+        generic-failure handler labels the original exception and then builds an
+        ``OptimizationError`` wrapper around it; probing twice there meant the
+        wrapper — the only object the caller ever sees — could end up carrying
+        ``None`` (or a different id) because the second probe declined or the
+        store had moved on, while the valid id sat on the unreachable-by-default
+        ``__cause__``. One probe, one answer, both objects.
+
+        Assignment is unconditional and lands on the INSTANCE, for the reasons
+        spelled out on ``_attach_sync_session_id``: the attribute describes THIS
+        raise, so ``None`` must overwrite a stale value, and writing to the
+        class would poison every other exception object in the process.
+
+        KNOWN BOUNDARY — an exception that refuses attribute assignment cannot
+        be labelled. A caller-defined ``OptimizationError`` subclass declared as
+        a frozen dataclass, or one with a restrictive ``__setattr__`` / a
+        ``__slots__`` without this field, makes the line below raise. There is
+        deliberately no fallback for the identity-preserving branches: they must
+        re-raise the caller's own object unchanged (for ``ResolutionError``, RFC
+        0001 §3.4 typed identity depends on it), so substituting a labelled copy
+        is not available and the id simply does not ride along. This is not
+        swallowed: the assignment failure escapes into ``_attach_sync_session_id``'s
+        guarded handler — the write happens in that method's ``finally``, inside
+        its ``try`` — and is reported by its ``logger.warning(..., exc_info=True)``
+        rather than replacing the run's real failure. ``OptimizedFunction``'s
+        post-orchestrator call site guards it the same way. Ordinary
+        ``OptimizationError`` / ``ResolutionError`` carry class-level defaults for
+        the field and are unaffected.
+        """
+        exc.sync_session_id = syncable_id  # type: ignore[attr-defined]
+
+    def _attach_sync_session_id(
+        self, exc: BaseException, session_id: str | None
+    ) -> str | None:
+        """Attach the syncable LOCAL session id to the exception the caller
+        receives (#2029), the failure-path twin of the #2020 assignment at
+        _finalize_optimization. Returns the id it resolved, so a caller that
+        must label a second object (the wrapper branch) can reuse this answer
+        via ``_label_with_sync_session_id`` rather than probe storage again.
+
+        Called at each raise site rather than inside
+        _finalize_failed_backend_session so the raise-site contract stays
+        visible where the object is raised. Ordering note: that finalizer is
+        NOT wholly guarded — only its *backend* ``finalize_session`` sits in a
+        try/except, while ``finalize_local_session`` and the egress/tracking
+        pre-checks ahead of it are not — so "call it first, then attach" would
+        let a storage-handle failure skip the attach. Every call site therefore
+        pairs the two in ``try: finalize … finally: attach``, which is what
+        actually makes the attach unskippable. Attaching after the finalize (not
+        before) is deliberate: the id must describe the run in its terminal
+        state.
+
+        ALWAYS assigns, including ``None``. The attribute describes THIS raise,
+        so a declining predicate must overwrite whatever is there rather than
+        leave it. Assigning only on success would let a re-raised exception
+        *instance* — the same object raised by an earlier run, or shared by two
+        concurrent runs — keep the previous run's id and send the caller off to
+        upload the wrong session. Written to the instance, never the class, for
+        the same reason. Class-level defaults on ``OptimizationError`` /
+        ``ResolutionError`` mean the attribute already reads ``None`` before
+        this ever runs.
+
+        Never raises for anything the caller could reasonably continue from.
+        ``syncable_local_session_id()`` is documented safe, but only its
+        durability half is actually inside a try — the locality clauses are not
+        — and neither the probe nor the diagnostic that reports the probe's
+        failure may replace the caller's original exception with its own error
+        (for a ``ResolutionError`` that would destroy the RFC 0001 §3.4 typed
+        identity callers match on). The recovery ``logger.warning`` is
+        therefore itself guarded: an application logging handler whose
+        ``emit()`` raises is not permitted to become the run's failure.
+
+        BaseException boundary, chosen deliberately: only ``Exception`` is
+        absorbed. ``KeyboardInterrupt`` / ``SystemExit`` raised *inside* this
+        helper propagate and do replace the original error — accepted, because
+        a best-effort diagnostic silently eating the interpreter's or the
+        user's request to stop is the worse failure of the two (an
+        un-interruptible run). The attribute assignment still happens first, in
+        a ``finally``, so even that exit leaves the caller's exception
+        correctly labelled.
+        """
+        syncable_id: str | None = None
+        try:
+            try:
+                syncable_id = self.backend_session_manager.syncable_local_session_id(
+                    session_id
+                )
+            finally:
+                # Unconditional, and last-write-wins over any stale value.
+                self._label_with_sync_session_id(exc, syncable_id)
+        except Exception:
+            try:
+                logger.warning(
+                    "Could not determine a `traigent sync` id for the failed "
+                    "optimization %s; the local record may still be on disk — "
+                    "run `traigent local list` to look it up.",
+                    self._optimization_id,
+                    exc_info=True,
+                )
+            except Exception:
+                # A broken logging handler must not become the run's failure.
+                pass
+        return syncable_id
+
     async def _finalize_user_cancelled_optimization(
         self,
         session_id: str | None,
@@ -4037,7 +4178,14 @@ class OptimizationOrchestrator:
             self._status = OptimizationStatus.FAILED
             if not self._stop_reason:
                 self._stop_reason = "error"
-            self._finalize_failed_backend_session(session_id, e)
+            # #2029: `finally`, not a plain next statement — only the *backend*
+            # finalize inside _finalize_failed_backend_session is guarded, so a
+            # local-storage-handle failure would otherwise skip the attach and
+            # cost the caller the only handle to the stranded trials.
+            try:
+                self._finalize_failed_backend_session(session_id, e)
+            finally:
+                self._attach_sync_session_id(e, session_id)
             raise
         except Exception as e:
             from traigent.knobs import ResolutionError
@@ -4045,15 +4193,71 @@ class OptimizationOrchestrator:
             self._status = OptimizationStatus.FAILED
             if not self._stop_reason:
                 self._stop_reason = "error"
-            logger.error(f"Optimization {self._optimization_id} failed: {e}")
-            self._finalize_failed_backend_session(session_id, e)
+            # #2029: recovery FIRST, diagnostics second. The log line below
+            # renders `e`, which calls user-controlled `__str__`; when that
+            # raises, doing it first meant the local session was never
+            # finalized FAILED, no id was attached, and the caller received the
+            # formatting error instead of the real failure. Both renderings now
+            # go through _safe_exception_text, AND both happen after the
+            # recovery work, so neither ordering nor `__str__` can strand a run.
+            try:
+                self._finalize_failed_backend_session(session_id, e)
+            finally:
+                syncable_id = self._attach_sync_session_id(e, session_id)
+            try:
+                logger.error(
+                    "Optimization %s failed: %s",
+                    self._optimization_id,
+                    _safe_exception_text(e),
+                )
+            except Exception:
+                # #2029: this diagnostic is a call into application code —
+                # a logging handler whose emit() raises (a misconfigured
+                # Sentry/Datadog transport is the usual culprit) would
+                # otherwise propagate from here and REPLACE the caller's
+                # failure with a logging error, costing them both the
+                # ResolutionError's RFC 0001 §3.4 typed identity and the
+                # sync id just attached. Same boundary as
+                # _attach_sync_session_id / _safe_exception_text: only
+                # Exception is absorbed, so a KeyboardInterrupt/SystemExit
+                # raised in a handler still stops the run.
+                pass
             if isinstance(e, ResolutionError):
                 # RFC 0001 §3.4: the typed fail-closed governance rejection
                 # IS the public contract — callers distinguish a stale
                 # certificate / evidence leak from a generic optimization
-                # failure. Never dilute it into OptimizationError.
+                # failure. Never dilute it into OptimizationError. Attaching an
+                # attribute does not change its type identity.
                 raise
-            raise OptimizationError(f"Optimization failed: {e}") from e
+            wrapped = OptimizationError(
+                f"Optimization failed: {_safe_exception_text(e)}"
+            )
+            # #2029: reuse the id already resolved above rather than probing
+            # storage a second time. A second probe that declines or throws
+            # would leave the WRAPPER — the only object the caller sees —
+            # carrying None while the valid id hides on __cause__.
+            self._label_with_sync_session_id(wrapped, syncable_id)
+            raise wrapped from e
+        except BaseException as e:
+            # #2029: a BaseException that is neither Exception nor the
+            # KeyboardInterrupt/CancelledError pair handled above — SystemExit,
+            # GeneratorExit, pytest's outcome exceptions — used to escape past
+            # every handler: the run was never marked FAILED and no id was
+            # attached, while the docs promised the id unqualifiedly. Handled
+            # here so code and docs agree, deliberately as the *narrowest*
+            # possible handler: same recovery work as the Exception branch, no
+            # wrapping (an exit must keep its exact type), and an unconditional
+            # bare `raise`. Nothing is swallowed — the exit still exits, it just
+            # leaves a finalized session and a named id behind it.
+            self._status = OptimizationStatus.FAILED
+            # `_stop_reason` is left alone on purpose: unset, the finalizer's
+            # terminal reason becomes `type(failure).__name__` ("SystemExit"),
+            # which describes this exit far better than a generic "error".
+            try:
+                self._finalize_failed_backend_session(session_id, e)
+            finally:
+                self._attach_sync_session_id(e, session_id)
+            raise
         finally:
             await self._cleanup_backend_client()
             await self._cleanup_hybrid_lifecycle()

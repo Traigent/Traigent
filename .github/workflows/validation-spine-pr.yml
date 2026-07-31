@@ -57,12 +57,12 @@ jobs:
       # When changing the scan command below, bump this ref in lockstep.
       SPINE_REF: 7766f10589b24971696c63d0235763a743cd9cd3  # pragma: allowlist secret
       SPINE_FILE_LIMIT: "5000"
-      # Dedicated read-only spine token only. The former
-      # `|| secrets.VALIDATION_CI_PAT` fallback was removed 2026-07-25: that PAT
-      # expired and now 403s, so the fallback did not keep the scan running — it
-      # converted a clean "token not configured" signal into a hard checkout
-      # failure, which the job-level continue-on-error then hid.
-      SPINE_RO_TOKEN: ${{ secrets.SPINE_RO_TOKEN }}
+      # SPINE_RO_TOKEN was an org secret with `visibility: private`, which makes
+      # it invisible to THIS repo (Traigent/Traigent is public) — see
+      # tools/secret-ops/setup-spine-dispatch-app.sh in the workspace repo. Use
+      # the spine-dispatch GitHub App installation token instead: it is not a
+      # PAT and is not subject to per-user SAML SSO revocation.
+      SPINE_APP_ID: ${{ secrets.SPINE_DISPATCH_APP_ID }}
 
     steps:
       # Checkout the product repo as $GITHUB_WORKSPACE/Traigent/ so the
@@ -77,20 +77,35 @@ jobs:
           fetch-depth: 1
           path: Traigent
 
+      # Mint a short-lived installation token for the spine-dispatch App instead
+      # of using a PAT. `owner:` with no `repositories:` is required so the
+      # token can reach traigent-validation-spine (a sibling repo, not this
+      # one) — scoping `repositories:` here would mint a token good for this
+      # repo only and the checkout below would 404.
+      - name: Mint spine-dispatch App token
+        id: spine-app-token
+        if: env.SPINE_APP_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.SPINE_DISPATCH_APP_ID }}
+          private-key: ${{ secrets.SPINE_DISPATCH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       # continue-on-error here does NOT mean "tolerate a broken scan". It exists only so
-      # this workflow can tell "token absent" apart from "token present but unusable"
-      # (expired, revoked, SAML-unauthorised, or scoped without Contents:Read on the spine
-      # repo) and report the precise reason. Either way the job still fails closed below.
+      # this workflow can tell "token absent"/"mint failed" apart from "token present but
+      # unusable" (App not installed on the spine repo, missing Contents:Read) and report the
+      # precise reason. Either way the job still fails closed below.
       - name: Checkout validation spine
         id: spine-checkout
         continue-on-error: true
-        if: env.SPINE_RO_TOKEN != ''
+        if: steps.spine-app-token.outputs.token != ''
         uses: actions/checkout@v7
         with:
           repository: Traigent/traigent-validation-spine
           ref: ${{ env.SPINE_REF }}
           path: .spine
-          token: ${{ env.SPINE_RO_TOKEN }}
+          token: ${{ steps.spine-app-token.outputs.token }}
 
       # Availability is proven by the checkout actually SUCCEEDING, not by the token merely
       # being non-empty. On 2026-07-25 the org token existed everywhere and was rejected by
@@ -110,13 +125,15 @@ jobs:
         if: env.SPINE_AVAILABLE != 'true'
         run: |
           if [ "${{ github.actor }}" = "dependabot[bot]" ]; then
-            echo "::notice::SPINE_RO_TOKEN unavailable for dependabot PR (secrets blocked by design); spine scan skipped - dependabot bumps carry no policy surface."
+            echo "::notice::spine-dispatch App token unavailable for dependabot PR (secrets blocked by design); spine scan skipped - dependabot bumps carry no policy surface."
             exit 0
           fi
-          if [ -z "${SPINE_RO_TOKEN}" ]; then
-            reason="repository/org secret SPINE_RO_TOKEN is not configured"
+          if [ -z "${SPINE_APP_ID}" ]; then
+            reason="repository secrets SPINE_DISPATCH_APP_ID / SPINE_DISPATCH_APP_PRIVATE_KEY are not configured"
+          elif [ "${{ steps.spine-app-token.outcome }}" != "success" ]; then
+            reason="minting a spine-dispatch App installation token failed (check the App ID/private key)"
           else
-            reason="the configured token could not check out Traigent/traigent-validation-spine (expired, revoked, SAML-unauthorised, or missing Contents:Read)"
+            reason="the App token could not check out Traigent/traigent-validation-spine (App not installed on that repo, suspended, or missing Contents:Read)"
           fi
           echo "::error::Validation spine scan FAILED TO RUN — ${reason}. Failing closed: a scan that cannot execute must not report success."
           {

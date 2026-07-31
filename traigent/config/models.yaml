@@ -216,3 +216,26 @@ bedrock:
     - mistral.mistral-large-2407-v1:0
     - mistral.mixtral-8x7b-instruct-v0:1
   pattern: "^(anthropic\\.|amazon\\.|ai21\\.|meta\\.|mistral\\.|cohere\\.)"
+
+nous:
+  # Nous Portal (Hermes family + hosted third-party models). OpenAI-compatible
+  # inference API at https://inference-api.nousresearch.com/v1. Authenticates
+  # with a short-lived JWT minted from a refresh token (OAuth), not a static
+  # API key -> support_level mapping_only (recognized for routing/discovery,
+  # not preflight-validated). Must match provider_support.py; the drift test
+  # enforces it.
+  support_level: mapping_only
+  # OWNER: confirm the exact portal-served model-ID strings (bare vs
+  # "NousResearch/"-prefixed) against `traigent models -p nous --json` in
+  # Phase-0 before merge. These are real published Hermes-family names; the
+  # portal ID spelling is the only unknown. known_models is SERVED as the
+  # discovery fallback when SDK discovery is unavailable, so it must be real.
+  known_models:
+    - NousResearch/Hermes-3-Llama-3.1-8B
+    - NousResearch/Hermes-3-Llama-3.1-70B
+    - NousResearch/Hermes-3-Llama-3.1-405B
+    - NousResearch/DeepHermes-3-Llama-3-8B-Preview
+    - NousResearch/DeepHermes-3-Mistral-24B-Preview
+    - NousResearch/Hermes-4-70B
+    - NousResearch/Hermes-4-405B
+  pattern: "^(NousResearch/|Hermes-|DeepHermes-)"

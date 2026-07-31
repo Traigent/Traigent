@@ -936,6 +936,12 @@ class EvalAudit:
         }
 
 
+# Adding a field here? Classify it in the round-trip manifest at
+# traigent/utils/optimization_result_persistence.py (RESULT_RESTORE vs
+# RESULT_RESET) — otherwise both persisted formats silently drop it on load
+# (issue #2031). The manifest is enumerated against dataclasses.fields() by
+# tests/unit/utils/test_optimization_result_persistence_2031.py, which fails
+# until the classification is recorded.
 @dataclass
 class OptimizationResult:
     """Complete results from an optimization run.
@@ -945,7 +951,14 @@ class OptimizationResult:
         best_config: The configuration that achieved the best score, or None
             when no eligible trial produced a winner.
         best_score: The best objective score achieved (None when no eligible trial).
-        optimization_id: Unique identifier for this optimization run.
+        optimization_id: Unique identifier for this optimization run. A result
+            reloaded from a pre-#2031 ``PersistenceManager`` artifact carries
+            ``"unrestored-legacy:<artifact name>"`` instead: that format stored
+            a curated summary that never included the id, so it is unavailable
+            rather than unknown. Pre-#2031 ``ConfigStateManager`` artifacts are
+            whole-dataclass dumps and do carry the real id, so they restore it.
+            Never treat the sentinel as a run id (see
+            ``traigent/utils/optimization_result_persistence.py``).
         duration: Total wall-clock time in seconds.
         convergence_info: Dictionary with convergence statistics.
         status: Final status of the optimization (completed, failed, etc.).
@@ -1046,6 +1059,14 @@ class OptimizationResult:
             along in any verbatim ``metadata`` round-trip (e.g.
             ``ConfigStateManager``), where it is exactly as stale as a restored
             field would be; read this field, never the mirror, as a sync target.
+            This field only covers runs that RETURN. A run that raises never
+            produces an ``OptimizationResult`` at all, yet its completed trials
+            are already on disk (trials persist per-trial, not at finalize) and
+            ``traigent sync --all`` skips failed sessions — so the same id is
+            carried on the raised exception instead, as
+            ``OptimizationError.sync_session_id`` / ``ResolutionError``'s
+            (#2029). Same predicate, same store-relative caveat; see those
+            docstrings.
     """
 
     trials: list[TrialResult]
@@ -1094,6 +1115,16 @@ class OptimizationResult:
     # locally — either an intentionally local mode or a hybrid/cloud run that
     # degraded to local-only because the backend was unreachable mid-run. Also
     # mirrored in ``metadata["source"]`` for callers that inspect metadata.
+    #
+    # A *third* value, "unknown", reaches consumers only through persistence
+    # (issue #2031): both loaders return it for a result whose provenance was
+    # never recorded — a pre-#2031 artifact, which stored no source at all —
+    # and the encoder writes it for an object that carries no source, rather
+    # than substituting the "backend" default below and manufacturing a claim.
+    # A fresh run is always "backend" or "local". Branch on it accordingly:
+    # `if source == "local": ... else: <assume backend>` misreports an unknown
+    # run as a cloud-tracked one. See UNRESTORED_SOURCE in
+    # traigent/utils/optimization_result_persistence.py.
     source: str = "backend"
 
     # Winner-vs-runner-up paired margin significance (issue #1866). Additive

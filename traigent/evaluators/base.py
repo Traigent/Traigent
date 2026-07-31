@@ -86,6 +86,24 @@ record_example_result = None  # type: ignore
 
 logger = get_logger(__name__)
 
+
+class _TaskBoundaryInterrupt:
+    """Carries a KeyboardInterrupt/SystemExit back across an asyncio Task boundary.
+
+    Never returned to callers: ``_execute_async_with_timeout`` unwraps it and
+    re-raises the original exception in its own frame. It exists only so the
+    exception travels as a *value* through the Task that ``asyncio.wait_for``
+    creates, instead of as a raise that CPython would re-throw out of the event
+    loop. Not a dataclass or a NamedTuple, so it cannot be confused with any
+    legitimate agent return value.
+    """
+
+    __slots__ = ("exc",)
+
+    def __init__(self, exc: BaseException) -> None:
+        self.exc = exc
+
+
 _ACCURACY_REL_TOL = 1e-9
 _ACCURACY_ABS_TOL = 1e-12
 
@@ -1899,11 +1917,35 @@ class BaseEvaluator(ABC):
         Returns:
             Function output
         """
-        if self.timeout:
-            return await asyncio.wait_for(
-                func(*call_args, **call_kwargs), timeout=self.timeout
-            )
-        return await func(*call_args, **call_kwargs)
+        if not self.timeout:
+            return await func(*call_args, **call_kwargs)
+
+        # ``wait_for`` runs the user's coroutine in its OWN Task, and CPython's
+        # Task step treats KeyboardInterrupt/SystemExit specially: it stores the
+        # exception on the future *and re-raises it out of the step*. That
+        # re-raise unwinds the event loop itself — ``_run_once`` →
+        # ``run_forever`` → ``run_until_complete`` — past every awaiting frame.
+        #
+        # So a user pressing Ctrl-C inside an async agent function tore the loop
+        # down from under the optimizer. The orchestrator's interrupt handler
+        # still received its copy through the future and dutifully finalized a
+        # partial result, but that result had nowhere left to be returned to.
+        # The completed trials were on disk with no handle to reach them.
+        #
+        # Capture those two inside the Task and re-raise below, in a frame the
+        # caller's handlers actually cover. ``CancelledError`` is deliberately
+        # NOT captured: it must stay cooperative, and asyncio does not re-raise
+        # it out of the loop the way it does these two.
+        async def _contained() -> Any:
+            try:
+                return await func(*call_args, **call_kwargs)
+            except (KeyboardInterrupt, SystemExit) as exc:
+                return _TaskBoundaryInterrupt(exc)
+
+        outcome = await asyncio.wait_for(_contained(), timeout=self.timeout)
+        if type(outcome) is _TaskBoundaryInterrupt:
+            raise outcome.exc
+        return outcome
 
     async def _execute_sync_in_thread(
         self,
