@@ -38,14 +38,30 @@ jobs:
         with:
           path: Traigent
 
+      # Mint a spine-dispatch App installation token instead of a PAT
+      # (TRAIGENT_JS_SDK_TOKEN / TRAIGENT_PRIVATE_DEPS_TOKEN — both PATs; org
+      # SAML SSO enforcement since 2026-07-24 revokes a PAT's org SSO grant,
+      # confirmed as a 403 on this exact checkout in run 30643670166 / issue
+      # #2065). `owner:` with no `repositories:` is required so the token can
+      # reach the sibling traigent-js and TraigentSchema repos, not just this
+      # one.
+      - name: Mint cross-repo App token
+        id: cross-repo-app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.SPINE_DISPATCH_APP_ID }}
+          private-key: ${{ secrets.SPINE_DISPATCH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Check cross-repo token
         id: cross-repo-token
         env:
-          CROSS_REPO_TOKEN: ${{ secrets.TRAIGENT_JS_SDK_TOKEN || secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
+          CROSS_REPO_TOKEN: ${{ steps.cross-repo-app-token.outputs.token }}
         run: |
           set -euo pipefail
           if [ -z "${CROSS_REPO_TOKEN:-}" ]; then
-            echo "::warning::Skipping JS public parity guard. Configure TRAIGENT_JS_SDK_TOKEN or TRAIGENT_PRIVATE_DEPS_TOKEN with read access to Traigent/traigent-js and Traigent/TraigentSchema to enable it."
+            echo "::warning::Skipping JS public parity guard. spine-dispatch App token unavailable (SPINE_DISPATCH_APP_ID/SPINE_DISPATCH_APP_PRIVATE_KEY not configured, mint failed, or the App is not installed on Traigent/traigent-js and Traigent/TraigentSchema)."
             echo "available=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -61,7 +77,7 @@ jobs:
           repository: Traigent/traigent-js
           ref: main
           path: traigent-js
-          token: ${{ secrets.TRAIGENT_JS_SDK_TOKEN || secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
+          token: ${{ steps.cross-repo-app-token.outputs.token }}
 
       - name: Checkout TraigentSchema
         if: steps.cross-repo-token.outputs.available == 'true'
@@ -70,7 +86,7 @@ jobs:
           repository: Traigent/TraigentSchema
           ref: main
           path: TraigentSchema
-          token: ${{ secrets.TRAIGENT_JS_SDK_TOKEN || secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
+          token: ${{ steps.cross-repo-app-token.outputs.token }}
 
       - name: Set up Python
         if: steps.cross-repo-token.outputs.available == 'true'

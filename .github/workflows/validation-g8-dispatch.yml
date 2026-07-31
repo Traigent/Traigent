@@ -16,9 +16,24 @@ jobs:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
+      # Mint a spine-dispatch App installation token instead of VALIDATION_CI_PAT
+      # (a PAT; org SAML SSO enforcement since 2026-07-24 revokes a PAT's org SSO
+      # grant, and the repo-level VALIDATION_CI_PAT here predates that and is
+      # SSO-deauthorized). `owner:` with no `repositories:` is required so the
+      # token can reach the sibling traigent-validation-spine repo, not just
+      # this one.
+      - name: Mint spine-dispatch App token
+        id: spine-app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.SPINE_DISPATCH_APP_ID }}
+          private-key: ${{ secrets.SPINE_DISPATCH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Dispatch validation-spine repository_dispatch
         env:
-          GH_TOKEN: ${{ secrets.VALIDATION_CI_PAT }}
+          GH_TOKEN: ${{ steps.spine-app-token.outputs.token }}
           WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           WORKFLOW_EVENT: ${{ github.event.workflow_run.event }}
           SOURCE_REPO: ${{ github.repository }}
@@ -45,7 +60,7 @@ jobs:
           # false-green. This mirrors the hardening already in
           # traigent-model-checking's copy of this workflow.
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::error::VALIDATION_CI_PAT is not configured for a trusted run; cannot dispatch validation-spine G8. Configure the secret or the spine will never see this change."
+            echo "::error::spine-dispatch App token unavailable (SPINE_DISPATCH_APP_ID/SPINE_DISPATCH_APP_PRIVATE_KEY not configured, or token mint failed) for a trusted run; cannot dispatch validation-spine G8. Configure the secrets or the spine will never see this change."
             exit 1
           fi
 
