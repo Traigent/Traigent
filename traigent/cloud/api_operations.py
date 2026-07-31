@@ -717,10 +717,13 @@ class ApiOperations:
             },
         }
         # Agent identity + per-run narrative ride TOP-LEVEL and typed, never
-        # tunnelled through `metadata` — same rule the finalize path follows. Each
-        # is omitted entirely when unset so the payload of an existing caller is
-        # byte-identical to before. The two narrative fields are user-authored free
-        # text: trimmed to the contract caps here, and never used for identity.
+        # tunnelled through `metadata` — same rule the finalize path follows. Each is
+        # omitted when unset. Note the optimized path always supplies `agent_key`
+        # (set to the portal name, the exact value the backend previously normalized
+        # out of `function_name`), so that key IS added there: the payload gains a
+        # field but the resolved agent — and therefore the cohort — is unchanged.
+        # The two narrative fields are user-authored free text: trimmed to the
+        # contract caps here, and never used for identity.
         agent_key = getattr(session_request, "agent_key", None)
         if isinstance(agent_key, str) and agent_key.strip():
             payload["agent_key"] = agent_key.strip()[:512]
