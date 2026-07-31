@@ -3015,6 +3015,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#recovering-a-run-that-failed-mid-flight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recovering a run that failed mid-flight
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#best_config-in-multi-objective-runs-authoritative-accessor" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4927,6 +4938,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#recovering-a-run-that-failed-mid-flight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recovering a run that failed mid-flight
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#best_config-in-multi-objective-runs-authoritative-accessor" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5953,6 +5975,7 @@ task-local heuristics and do not provide a statistical certificate.</p>
     <span class="n">experiment_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="n">cloud_url</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="n">run_label</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">sync_session_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
 </code></pre></div>
 <p><strong>Properties:</strong>
 - <code>total_trials</code>: Total number of trials executed
@@ -5960,6 +5983,111 @@ task-local heuristics and do not provide a statistical certificate.</p>
 - <code>success_rate</code>: Ratio of successful trials to total trials</p>
 <p><code>metadata["source"]</code> records result provenance as one of <code>cloud_brain</code>,
 <code>local_fallback</code>, <code>explicit_local</code>, or <code>offline</code>.</p>
+<p><code>sync_session_id</code> identifies this run's record in <strong>this run's local session
+store</strong>, and is the argument <code>traigent sync</code> accepts against that store. It is
+populated when the local store holds the authoritative copy (offline /
+no-egress, no-API-key fallback, explicit-local with backend tracking disabled,
+mid-run degradation, trials the backend did not all acknowledge,
+backend-early-completion) and <code>None</code> when the run was tracked end-to-end on the
+backend — in that case the run is already on the portal; use <code>cloud_url</code> /
+<code>experiment_run_id</code> — or when no local record could be read for the id (storage
+unavailable or the record unreadable; it may still be on disk — check
+<code>traigent local list</code>).</p>
+<p>The id is store-relative. <code>traigent sync</code> runs as a separate process and
+resolves its store from the environment, so a run that passed the programmatic
+<code>local_storage_path</code> option must point the CLI at the same root:</p>
+<div class="highlight"><pre><span></span><code><span class="nv">TRAIGENT_RESULTS_FOLDER</span><span class="o">=</span><span class="s2">&quot;&lt;that path&gt;&quot;</span><span class="w"> </span>traigent<span class="w"> </span>sync<span class="w"> </span>&lt;sync_session_id&gt;
+</code></pre></div>
+<p>The SDK logs a warning naming that root when the run's configured store differs
+from the CLI default <em>as resolved in this process</em>. That default is read from
+this process's environment, so a script that sets <code>TRAIGENT_RESULTS_FOLDER</code>
+itself before optimizing sees no warning even though a fresh shell without that
+variable would reject the id — <code>traigent local list</code> looks the record up either
+way. For a backend-early-complete (#1938) or partially-acknowledged run
+(which includes a run that degraded to local-only mid-flight, since degradation
+means at least one trial went unacknowledged), the
+trials already submitted are on the portal, so syncing re-imports them as a
+<em>separate</em> experiment — a deliberate trade-off, since the SDK's own message for
+those shapes tells the user to sync.
+<code>optimization_id</code> is <strong>not</strong> accepted by <code>traigent sync</code>.
+The id is machine-local and is not restored when a result is reloaded from disk.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span>
+
+<span class="n">result</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">optimize_sync</span><span class="p">()</span>
+<span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">sync_session_id</span><span class="p">:</span>
+    <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="s2">&quot;traigent&quot;</span><span class="p">,</span> <span class="s2">&quot;sync&quot;</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">sync_session_id</span><span class="p">],</span> <span class="n">check</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<h4 id="recovering-a-run-that-failed-mid-flight">Recovering a run that <em>failed</em> mid-flight<a class="headerlink" href="#recovering-a-run-that-failed-mid-flight" title="Permanent link">&para;</a></h4>
+<p>A run that raises never returns an <code>OptimizationResult</code>, but the trials that
+finished before the failure are already on disk — trials are persisted one at a
+time, not batched at the end. Those trials are reachable: the same id rides on
+the raised exception as <code>sync_session_id</code>, on <code>OptimizationError</code> and on the
+typed <code>ResolutionError</code> alike.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.knobs</span><span class="w"> </span><span class="kn">import</span> <span class="n">ResolutionError</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">traigent.utils.exceptions</span><span class="w"> </span><span class="kn">import</span> <span class="n">OptimizationError</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">optimize_sync</span><span class="p">()</span>
+<span class="k">except</span> <span class="p">(</span><span class="n">OptimizationError</span><span class="p">,</span> <span class="n">ResolutionError</span><span class="p">)</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">exc</span><span class="o">.</span><span class="n">sync_session_id</span><span class="p">:</span>
+        <span class="c1"># Upload the trials that DID complete before the failure.</span>
+        <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="s2">&quot;traigent&quot;</span><span class="p">,</span> <span class="s2">&quot;sync&quot;</span><span class="p">,</span> <span class="n">exc</span><span class="o">.</span><span class="n">sync_session_id</span><span class="p">],</span> <span class="n">check</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">raise</span>
+</code></pre></div>
+<p><code>traigent sync --all</code> <strong>skips failed sessions</strong>, so naming the id explicitly is
+the supported way to recover one. On <code>OptimizationError</code> (with its subclasses)
+and <code>ResolutionError</code> the attribute always exists — it defaults to <code>None</code> — so
+it is safe to read without <code>getattr</code>. It follows exactly the same locality +
+durability rules and the same store-relative caveat as the field on
+<code>OptimizationResult</code> above, and is <code>None</code> for the same reasons — plus one more:
+a failure that happens before a session exists has nothing to name.</p>
+<p>Exactly which exits carry it:</p>
+<table>
+<thead>
+<tr>
+<th>Exit</th>
+<th>Carries the id</th>
+<th>How to read it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OptimizationError</code> + subclasses raised inside the run</td>
+<td>yes</td>
+<td><code>exc.sync_session_id</code></td>
+</tr>
+<tr>
+<td><code>ResolutionError</code> (unwrapped, type preserved)</td>
+<td>yes</td>
+<td><code>exc.sync_session_id</code></td>
+</tr>
+<tr>
+<td>Any other <code>Exception</code> (wrapped into <code>OptimizationError</code>)</td>
+<td>yes, on the wrapper</td>
+<td><code>exc.sync_session_id</code></td>
+</tr>
+<tr>
+<td><code>SystemExit</code> / <code>GeneratorExit</code> / other non-<code>Exception</code> exits</td>
+<td>yes, attached then re-raised untouched</td>
+<td><code>getattr(exc, "sync_session_id", None)</code> — no class default</td>
+</tr>
+<tr>
+<td><code>KeyboardInterrupt</code> / <code>asyncio.CancelledError</code></td>
+<td>n/a — normally does not raise; a partial result is returned</td>
+<td><code>result.sync_session_id</code> (#2020)</td>
+</tr>
+<tr>
+<td>…<strong>unless a second interrupt lands during finalization</strong></td>
+<td>no — a bare <code>KeyboardInterrupt</code>/<code>CancelledError</code> propagates, so there is no result and no attribute</td>
+<td><code>traigent local list</code>, then <code>traigent sync &lt;id&gt;</code></td>
+</tr>
+<tr>
+<td><code>CostLimitExceeded</code></td>
+<td>no, always <code>None</code> — the pre-run approval gate raises it before a session exists</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
 <h4 id="best_config-in-multi-objective-runs-authoritative-accessor"><code>best_config</code> in multi-objective runs (authoritative accessor)<a class="headerlink" href="#best_config-in-multi-objective-runs-authoritative-accessor" title="Permanent link">&para;</a></h4>
 <p>When you declare more than one objective — e.g. <code>objectives=["accuracy", "cost"]</code>,
 <strong>including the default equal weights</strong> — <code>results.best_config</code> is the winner of

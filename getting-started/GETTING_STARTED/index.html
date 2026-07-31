@@ -4150,6 +4150,30 @@ and Traigent syncs results to the portal automatically.</p>
 tables so you can verify the workflow before connecting an account. For
 specialized routing controls, see
 <a href="../../user-guide/choosing_optimization_model/">Choosing the Right Optimization Model</a>.</p>
+<p>If you ran a baseline before creating an account, you can upload that exact
+run later instead of paying to re-run it:</p>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize_sync</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">sync_session_id</span><span class="p">)</span>   <span class="c1"># pass this to `traigent sync`</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>traigent<span class="w"> </span>sync<span class="w"> </span>&lt;sync_session_id&gt;<span class="w"> </span>--dry-run<span class="w">   </span><span class="c1"># preview, uploads nothing</span>
+traigent<span class="w"> </span>sync<span class="w"> </span>&lt;sync_session_id&gt;<span class="w">             </span><span class="c1"># upload just this run</span>
+</code></pre></div>
+<p><code>sync_session_id</code> is <code>None</code> when the backend tracked the run end-to-end. The id
+names a record in <em>that run's</em> local session store, so if you passed
+<code>local_storage_path=...</code> to <code>@traigent.optimize</code>, point the CLI at the same root
+with <code>TRAIGENT_RESULTS_FOLDER="&lt;that path&gt;" traigent sync &lt;id&gt;</code> — the SDK logs a
+warning naming the root when it differs from the CLI default.</p>
+<p>If the run <strong>failed partway through</strong>, the trials that finished are still on
+disk and still uploadable — the same id is on the exception:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.utils.exceptions</span><span class="w"> </span><span class="kn">import</span> <span class="n">OptimizationError</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize_sync</span><span class="p">()</span>
+<span class="k">except</span> <span class="n">OptimizationError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">exc</span><span class="o">.</span><span class="n">sync_session_id</span><span class="p">)</span>   <span class="c1"># pass this to `traigent sync`</span>
+    <span class="k">raise</span>
+</code></pre></div>
+<p><code>traigent sync --all</code> skips failed runs, so this id is how you recover one.</p>
 <hr />
 <p>Ready for more? Dive into the <a href="../examples/">examples</a> and the <a href="../../api-reference/complete-function-specification/">API reference</a>.</p>
 

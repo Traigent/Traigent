@@ -3965,10 +3965,30 @@ agent workflow spans inside active optimization trials.</p>
     <span class="n">latency_ms</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">model</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">metadata</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">SpanResult</span>
 </code></pre></div>
-<p>The helper is safe to call from user code. If no optimization trial or workflow
-trace transport is active, it logs at debug level and returns.</p>
+<p>The helper is safe to call from user code: it never raises. It always returns a
+<code>SpanResult</code> receipt describing what happened to the span, so a caller can detect
+lost telemetry instead of inferring it from an empty dashboard.</p>
+<div class="highlight"><pre><span></span><code><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">SpanResult</span><span class="p">:</span>
+    <span class="n">accepted</span><span class="p">:</span> <span class="nb">bool</span>
+    <span class="n">reason</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>                  <span class="c1"># set when accepted is False</span>
+    <span class="n">dropped_metadata_keys</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">()</span>
+</code></pre></div>
+<p><code>SpanResult</code> is falsy when the span was not accepted, so a check reads naturally:</p>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">add_agent_span</span><span class="p">(</span><span class="s2">&quot;retriever&quot;</span><span class="p">,</span> <span class="n">input_tokens</span><span class="o">=</span><span class="mi">1200</span><span class="p">)</span>
+<span class="k">if</span> <span class="ow">not</span> <span class="n">result</span><span class="p">:</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;span dropped: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">reason</span><span class="p">)</span>
+</code></pre></div>
+<p><code>reason</code> is one of <code>no_trace_context</code> (no active optimization trial),
+<code>no_trace_manager</code>, <code>tracing_disabled</code>, <code>invalid_node_id</code>, <code>no_trace_linkage</code>, or
+<code>collection_failed</code>.</p>
+<p><code>dropped_metadata_keys</code> names any <code>metadata</code> entries that were removed. Metadata is
+numeric-only, and credential- or content-shaped keys are always dropped — so
+<code>{"prompt": "...", "auth_token_count": 5, "score": 0.9}</code> keeps only <code>score</code> and
+reports the other two. This is a security boundary, not a bug: pass token and cost
+figures through the dedicated parameters rather than through <code>metadata</code>.</p>
 <h2 id="sanitization">Sanitization<a class="headerlink" href="#sanitization" title="Permanent link">&para;</a></h2>
 <p><code>add_agent_span</code> keeps numeric metadata only. Sensitive content-like metadata
 keys are dropped. Unsafe model identifiers, negative numbers, and non-finite

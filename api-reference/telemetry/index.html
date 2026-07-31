@@ -4797,8 +4797,13 @@ active optimization workflow trace:</p>
     <span class="n">latency_ms</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">model</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">metadata</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">SpanResult</span>
 </code></pre></div>
+<p>Returns a <code>SpanResult</code> receipt — <code>accepted</code>, <code>reason</code> when it was not, and
+<code>dropped_metadata_keys</code> for any <code>metadata</code> entries the sanitizer removed. It is falsy
+when the span was rejected, so <code>if not add_agent_span(...)</code> works. The call never
+raises. See <a href="../../features/observability-spans/">Observability spans</a> for the reason
+codes and the metadata rules.</p>
 <p>The helper is safe to call from user code. If no active optimization trial or
 workflow trace manager exists, it logs at debug level and returns. Metadata is
 limited to safe numeric values, sensitive keys such as prompt/response/output
