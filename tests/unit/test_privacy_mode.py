@@ -129,6 +129,27 @@ class TestPrivacyCompliance:
             # implementation, prompt, dataset content, or credentials.
             "evaluator_id",
             "evaluator_definition_id",
+            # Stable agent identity. The same class of value as function_name
+            # (already allowed) and derived from it — a name the user chose for
+            # their agent, carrying no dataset or example content.
+            "agent_key",
+            # Author-supplied run narrative. These are the FIRST fields on this wire
+            # to carry deliberate free-form user prose, so they are argued for here
+            # rather than waved through:
+            #   * Opt-in. Nothing is sent unless the caller passes run_title /
+            #     run_description to @traigent.optimize; a caller who does not gets a
+            #     byte-identical payload to before.
+            #   * Author intent ("Check best router model"), not extracted data.
+            #     Nothing in the SDK derives them from the dataset, the prompt, or
+            #     model output — they exist only because a human or their coding
+            #     agent typed them for display in the portal.
+            #   * The server-side content scanner above still runs over the whole
+            #     request (violation_count == 0 / compliant is True above), so a
+            #     title that did contain dataset content would still be caught.
+            # Bounded at 512 / 4000 chars and classified user_content in
+            # TraigentSchema, which is what governs redaction downstream.
+            "run_title",
+            "run_description",
         }
 
         for req in dummy_server.received_data:

@@ -219,6 +219,14 @@ class SessionCreationRequest:
     """Request to create a new optimization session."""
 
     function_name: str | None = None
+    # Stable agent identity. When present the backend resolves the owning agent
+    # from this alone, so a per-run `run_title` can never move the run into a
+    # different (agent, dataset) optimization history.
+    agent_key: str | None = None
+    # Author-supplied per-run narrative: what this run tests, and why. Labels only —
+    # never identity, cohorting, scoring, or guidance inputs.
+    run_title: str | None = None
+    run_description: str | None = None
     configuration_space: dict[str, Any] | None = None
     objectives: Sequence[str | SessionObjectiveDefinition | dict[str, Any]] | None = (
         None

@@ -716,6 +716,21 @@ class ApiOperations:
                 **metadata,
             },
         }
+        # Agent identity + per-run narrative ride TOP-LEVEL and typed, never
+        # tunnelled through `metadata` — same rule the finalize path follows. Each
+        # is omitted entirely when unset so the payload of an existing caller is
+        # byte-identical to before. The two narrative fields are user-authored free
+        # text: trimmed to the contract caps here, and never used for identity.
+        agent_key = getattr(session_request, "agent_key", None)
+        if isinstance(agent_key, str) and agent_key.strip():
+            payload["agent_key"] = agent_key.strip()[:512]
+        run_title = getattr(session_request, "run_title", None)
+        if isinstance(run_title, str) and run_title.strip():
+            payload["run_title"] = run_title.strip()[:512]
+        run_description = getattr(session_request, "run_description", None)
+        if isinstance(run_description, str) and run_description.strip():
+            payload["run_description"] = run_description.strip()[:4000]
+
         # CHOKE POINT (review round 2): the allowlist serializer runs on the
         # actual request body, not only on the orchestrator path — a direct
         # SessionCreationRequest caller must not be able to serialize

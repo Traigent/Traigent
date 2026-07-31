@@ -823,6 +823,8 @@ def collect_orchestrator_kwargs(
     safety_constraints: list[Any] | None = None,
     invocations_per_example: int = 1,
     warm_start_from: str | None = None,
+    run_title: str | None = None,
+    run_description: str | None = None,
 ) -> dict[str, Any]:
     """Collect optional kwargs for orchestrator from algorithm_kwargs and attrs.
 
@@ -838,6 +840,8 @@ def collect_orchestrator_kwargs(
         promotion_gate: Promotion gate configuration
         safety_constraints: Post-evaluation safety constraints
         invocations_per_example: Number of invocations per example (default: 1)
+        run_title: Optional author-supplied title for this run (label only)
+        run_description: Optional author-supplied run description (label only)
 
     Returns:
         Dict of orchestrator keyword arguments.
@@ -885,6 +889,8 @@ def collect_orchestrator_kwargs(
         ("promotion_gate", promotion_gate, None),
         ("safety_constraints", safety_constraints, None),
         ("warm_start_from", warm_start_from, None),
+        ("run_title", run_title, None),
+        ("run_description", run_description, None),
     ]
     for attr_name, value, transform in optional_attrs:
         if value is not None:
