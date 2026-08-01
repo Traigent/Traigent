@@ -146,6 +146,7 @@ def _quarantine_reason(reason: str | None) -> QuarantineReason:
         "missing_or_empty_input": QuarantineReason.INVALID_INPUT,
         "input_not_json_serializable": QuarantineReason.INVALID_INPUT,
         "expected_output_not_json_serializable": QuarantineReason.INVALID_INPUT,
+        "unsupported_expected_output": QuarantineReason.CONTRACT_MISMATCH,
         "unsupported_scoring_contract": QuarantineReason.CONTRACT_MISMATCH,
     }
     return mapping.get(reason or "", QuarantineReason.CONTRACT_MISMATCH)

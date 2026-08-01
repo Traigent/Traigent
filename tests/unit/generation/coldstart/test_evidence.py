@@ -237,8 +237,60 @@ def test_absent_or_blank_expected_output_is_never_admitted_or_persisted(
         )
 
 
+def test_mapping_expected_output_is_never_admitted_persisted_or_revalidated() -> None:
+    candidate = ScenarioCandidate(
+        "candidate-1",
+        {"number": 4},
+        GroundTruth(
+            {"answer": 16},
+            GroundTruthSource.ORACLE_COMPUTED,
+            ScoringContract.EXACT_MATCH,
+        ),
+    )
+
+    admission = admit_candidate(
+        candidate, seen_input_digests=set(), max_input_bytes=1024
+    )
+    assert admission.quarantine_reason == "unsupported_expected_output"
+    with pytest.raises(ValueError, match="admissible evidence"):
+        build_tuning_row(
+            candidate=candidate,
+            schema_version="traigent.coldstart.v1",
+            oracle_id="square",
+            generator_id="contract_grounded",
+            seed=7,
+            system_fingerprint="system-digest",
+        )
+
+    row = build_tuning_row(
+        candidate=_admitted_candidate(),
+        schema_version="traigent.coldstart.v1",
+        oracle_id="square",
+        generator_id="contract_grounded",
+        seed=7,
+        system_fingerprint="system-digest",
+    )
+    row["expected_output"] = {"answer": 16}
+    provenance = row["traigent_coldstart"]
+    unsigned_row = dict(row)
+    unsigned_provenance = dict(provenance)
+    unsigned_provenance.pop("row_digest")
+    unsigned_row["traigent_coldstart"] = unsigned_provenance
+    provenance["row_digest"] = sha256_bytes(canonical_json_bytes(unsigned_row))
+
+    assert (
+        validate_tuning_row(
+            row,
+            expected_schema_version="traigent.coldstart.v1",
+            seen_input_digests=set(),
+            max_input_bytes=1024,
+        )
+        == "unsupported_expected_output"
+    )
+
+
 def test_tuning_row_canonical_copies_mutable_oracle_output() -> None:
-    oracle_output = {"answers": ["four"]}
+    oracle_output = [["four"]]
     generator_input = {"number": {"nested": [4]}}
     candidate = ScenarioCandidate(
         "candidate-1",
@@ -257,12 +309,10 @@ def test_tuning_row_canonical_copies_mutable_oracle_output() -> None:
         seed=7,
         system_fingerprint="system-digest",
     )
-    oracle_output["answers"].append("mutated")
+    oracle_output[0].append("mutated")
     generator_input["number"]["nested"].append(5)
 
-    assert json.loads(canonical_json_bytes(row["expected_output"])) == {
-        "answers": ["four"]
-    }
+    assert json.loads(canonical_json_bytes(row["expected_output"])) == [["four"]]
     assert row["input"] == {"number": {"nested": [4]}}
     assert (
         validate_tuning_row(

@@ -121,3 +121,16 @@ def test_writer_refuses_absent_or_blank_expected_output(
             audit_rows=[{"artifact": "coldstart_audit"}],
             manifest=_manifest(row),
         )
+
+
+def test_writer_refuses_mapping_expected_output(tmp_path) -> None:
+    row = _tuning_row()
+    row["expected_output"] = {"answer": 16}
+
+    with pytest.raises(ColdStartArtifactError, match="mapping expected_output"):
+        write_coldstart_artifacts(
+            output_dir=tmp_path,
+            tuning_rows=[row],
+            audit_rows=[{"artifact": "coldstart_audit"}],
+            manifest=_manifest(row),
+        )

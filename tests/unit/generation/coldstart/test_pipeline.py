@@ -486,6 +486,26 @@ def test_blank_oracle_gold_is_no_gold_and_charges_actual_oracle_calls(
     assert budget.consumed_examples == 4
 
 
+def test_mapping_oracle_gold_is_contract_mismatch_without_tuning_file(
+    tmp_path, monkeypatch
+) -> None:
+    result = generate_eval_set(
+        func=_target_must_not_run,
+        repo_root=REPO_ROOT,
+        oracle=CallableOracle(lambda inputs: {"answer": inputs["number"] ** 2}),
+        generator=_InputsOnlyGenerator({"number": 3}),
+        options=_OPTIONS,
+        output_dir=_output_dir(tmp_path, monkeypatch),
+    )
+
+    assert result.outcome is ColdStartOutcome.DISCOVERY_ONLY
+    assert result.tuning_path is None
+    assert result.gaps == (DiscoveryGap.NO_ELIGIBLE_ROWS,)
+    assert '"quarantine_reason":"contract_mismatch"' in result.audit_path.read_text(
+        encoding="utf-8"
+    )
+
+
 def test_audit_and_manifest_do_not_export_candidate_content(
     tmp_path, monkeypatch
 ) -> None:
@@ -571,6 +591,34 @@ def test_integrity_rejects_recomputed_empty_gold_row(
     assert result.tuning_path is not None
     row = json.loads(result.tuning_path.read_text(encoding="utf-8"))
     row["expected_output"] = empty_gold
+    provenance = row["traigent_coldstart"]
+    unsigned_row = dict(row)
+    unsigned_provenance = dict(provenance)
+    unsigned_provenance.pop("row_digest")
+    unsigned_row["traigent_coldstart"] = unsigned_provenance
+    provenance["row_digest"] = sha256_bytes(canonical_json_bytes(unsigned_row))
+    payload = canonical_json_bytes(row) + b"\n"
+    result.tuning_path.write_bytes(payload)
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    manifest["dataset_sha256"] = sha256_bytes(payload)
+    result.manifest_path.write_bytes(canonical_json_bytes(manifest) + b"\n")
+
+    with pytest.raises(ColdStartConfigurationError, match="construction-evidence"):
+        assert_optimizer_eligible(result.tuning_path)
+
+
+def test_integrity_rejects_recomputed_mapping_gold_row(tmp_path, monkeypatch) -> None:
+    result = generate_eval_set(
+        func=_target_must_not_run,
+        repo_root=REPO_ROOT,
+        oracle=CallableOracle(_square_oracle),
+        generator=_InputsOnlyGenerator({"number": 3}),
+        options=_OPTIONS,
+        output_dir=_output_dir(tmp_path, monkeypatch),
+    )
+    assert result.tuning_path is not None
+    row = json.loads(result.tuning_path.read_text(encoding="utf-8"))
+    row["expected_output"] = {"answer": 9}
     provenance = row["traigent_coldstart"]
     unsigned_row = dict(row)
     unsigned_provenance = dict(provenance)

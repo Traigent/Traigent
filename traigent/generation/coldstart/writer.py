@@ -159,6 +159,10 @@ def _validate_tuning_rows(rows: Sequence[Mapping[str, Any]]) -> None:
             raise ColdStartArtifactError(
                 "Cold-start tuning rows require one non-empty expected_output."
             )
+        if isinstance(row.get("expected_output"), Mapping):
+            raise ColdStartArtifactError(
+                "Cold-start tuning rows do not support mapping expected_output."
+            )
         example_id = row.get("example_id")
         if not isinstance(example_id, str) or not example_id:
             raise ColdStartArtifactError(

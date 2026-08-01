@@ -99,6 +99,9 @@ A tuning row is written only when all of these are true:
 - a local oracle returns one expected output that is neither `None` nor an
   empty/whitespace-only string; blank gold is `NO_GOLD` and is never
   optimizer-eligible;
+- expected output is a scalar or list, not a mapping. V1 rejects mapping gold
+  because the existing accuracy evaluator unwraps mapping-valued actual output
+  through its `text` field, which cannot score a mapping gold value reliably;
 - its ground-truth source is exactly `oracle_computed`;
 - its scoring contract is exactly `exact_match`; and
 - its literal split is `tune`.

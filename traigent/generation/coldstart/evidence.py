@@ -113,6 +113,8 @@ def _ground_truth_rejection(candidate: ScenarioCandidate) -> str | None:
         return "ineligible_ground_truth_source"
     if not _has_expected_output(ground_truth.expected_output):
         return "missing_expected_output"
+    if isinstance(ground_truth.expected_output, Mapping):
+        return "unsupported_expected_output"
     if ground_truth.scoring_contract is not ScoringContract.EXACT_MATCH:
         return "unsupported_scoring_contract"
     try:
@@ -171,6 +173,7 @@ def build_tuning_row(
         ground_truth.source is not GroundTruthSource.ORACLE_COMPUTED
         or ground_truth.scoring_contract is not ScoringContract.EXACT_MATCH
         or not _has_expected_output(ground_truth.expected_output)
+        or isinstance(ground_truth.expected_output, Mapping)
     ):
         raise ValueError("Cannot persist a scenario that lacks admissible evidence.")
     try:
@@ -214,6 +217,8 @@ def _row_payload_parts(
     expected_output = row.get("expected_output")
     if not _has_expected_output(expected_output):
         return None, "missing_expected_output"
+    if isinstance(expected_output, Mapping):
+        return None, "unsupported_expected_output"
     example_id = row.get("example_id")
     if not isinstance(example_id, str) or not example_id:
         return None, "missing_example_id"
