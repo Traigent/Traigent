@@ -295,18 +295,22 @@ class TestDocumentationConsistency(unittest.TestCase):
         manifest_path = self.project_root / "examples" / "MANIFEST.txt"
         script_path = self.project_root / "examples" / "test_all_examples.sh"
         privacy_example = "../walkthrough/mock/08_privacy_modes.py"
+        cold_start_example = "core/cold-start-eval-set/run.py"
 
         entries = [
             line.strip()
             for line in manifest_path.read_text().splitlines()
             if line.strip() and not line.startswith("#")
         ]
-        self.assertEqual(39, len(entries))
+        self.assertEqual(40, len(entries))
         self.assertIn(privacy_example, entries)
+        self.assertIn(cold_start_example, entries)
 
         script = script_path.read_text()
         self.assertIn(f'"{privacy_example}"', script)
-        self.assertIn("SDK Publication Manifest (39 examples)", script)
+        self.assertIn(f'"{cold_start_example}"', script)
+        self.assertIn("SDK Publication Manifest (40 examples)", script)
+        self.assertIn("--- Core (13) ---", script)
         self.assertIn("--- Walkthrough (8) ---", script)
 
     def test_documented_dataset_and_decorator_surface_is_current(self):

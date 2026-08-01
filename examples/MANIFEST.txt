@@ -1,14 +1,15 @@
 # Traigent SDK Publication Manifest
 # Canonical list of all publication-ready examples that must pass in mock mode.
 # Documentation artifact (not parsed at runtime; keep in sync with test_all_examples.sh arrays).
-# 39 examples total.
+# 40 examples total.
 
-# Core (12)
+# Core (13)
 core/rag-optimization/run.py
 core/simple-prompt/run.py
 core/few-shot-classification/run.py
 core/prompt-style-optimization/run.py
 core/structured-output-json/run.py
+core/cold-start-eval-set/run.py
 core/safety-guardrails/run.py
 core/token-budget-summarization/run.py
 core/prompt-ab-test/run.py

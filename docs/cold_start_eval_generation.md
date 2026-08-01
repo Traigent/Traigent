@@ -164,3 +164,6 @@ for its oracle-grounding attempt. Neither injected seam has a portable cost
 receipt, so both are recorded with
 `ExecutionBudget.record_external(cost_usd=None, ...)`; their cost remains
 untracked/incomplete rather than being reported as `$0`.
+This integration records proposal/oracle units and unknown cost but does not
+stop construction when the budget is exhausted; `ColdStartOptions.num_candidates`
+is the enforced construction cap.
