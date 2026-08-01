@@ -10,10 +10,10 @@ import pytest
 from traigent.generation.coldstart.contracts import (
     COLDSTART_SCHEMA_VERSION,
     CandidateState,
+    ColdStartInputContractError,
     ColdStartOptions,
     ColdStartOutcome,
     ColdStartResult,
-    ColdStartInputContractError,
     DiscoveryGap,
     GroundTruth,
     GroundTruthSource,

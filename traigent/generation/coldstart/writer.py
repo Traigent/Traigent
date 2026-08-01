@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 _TUNING_FILENAME = "coldstart_tuning.jsonl"
 _AUDIT_FILENAME = "coldstart_audit.jsonl"
 _MANIFEST_FILENAME = "coldstart_manifest.json"

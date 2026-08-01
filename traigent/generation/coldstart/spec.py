@@ -21,7 +21,6 @@ from .contracts import (
     SystemSpec,
 )
 
-
 _EXCLUDED_DIRECTORY_NAMES = frozenset(
     {
         ".git",

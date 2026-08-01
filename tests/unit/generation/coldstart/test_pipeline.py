@@ -12,8 +12,8 @@ import traigent
 from traigent.core.execution_budget import ExecutionBudget
 from traigent.evaluators.base import Dataset
 from traigent.generation.coldstart import (
-    CandidateState,
     CallableOracle,
+    CandidateState,
     ColdStartConfigurationError,
     ColdStartOptions,
     ColdStartOutcome,
@@ -26,7 +26,6 @@ from traigent.generation.coldstart import (
     generate_eval_set,
 )
 from traigent.generation.coldstart.writer import canonical_json_bytes, sha256_bytes
-
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 _OPTIONS = ColdStartOptions(

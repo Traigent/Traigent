@@ -7,9 +7,9 @@ admission check or alter the persisted provenance shape.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-import json
 from typing import Any, cast
 
 from traigent.generation.validators import looks_like_injection
@@ -21,7 +21,6 @@ from .contracts import (
     ScoringContract,
 )
 from .writer import _has_expected_output, canonical_json_bytes, sha256_bytes
-
 
 MAX_INPUT_BYTES = 65_536
 
