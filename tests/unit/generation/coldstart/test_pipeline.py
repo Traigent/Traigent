@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -321,6 +322,34 @@ def test_evaluation_contract_mismatch_has_a_distinct_discovery_gap(
 
     assert result.outcome is ColdStartOutcome.DISCOVERY_ONLY
     assert result.gaps == (DiscoveryGap.EVALUATION_CONTRACT_MISMATCH,)
+
+
+@pytest.mark.parametrize(
+    "raw_inputs",
+    [
+        {1: "top-level-numeric-key"},
+        {"nested": {1: "numeric-key"}},
+        {"nested": {1: "numeric-key", "safe": "string-key"}},
+    ],
+)
+def test_non_string_mapping_keys_produce_typed_discovery_only_outcome(
+    tmp_path, monkeypatch, raw_inputs: dict[object, object]
+) -> None:
+    result = generate_eval_set(
+        func=_target_must_not_run,
+        repo_root=REPO_ROOT,
+        oracle=CallableOracle(lambda inputs: "safe"),
+        generator=_InputsOnlyGenerator(cast(dict[str, object], raw_inputs)),
+        options=_OPTIONS,
+        output_dir=_output_dir(tmp_path, monkeypatch),
+    )
+
+    assert result.outcome is ColdStartOutcome.DISCOVERY_ONLY
+    assert result.tuning_path is None
+    assert result.gaps == (DiscoveryGap.NO_ELIGIBLE_ROWS,)
+    assert '"quarantine_reason":"invalid_input"' in result.audit_path.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_oracle_failure_still_counts_the_oracle_call_in_the_budget(

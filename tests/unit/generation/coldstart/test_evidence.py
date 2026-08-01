@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+from typing import Any, cast
 
 import pytest
 
+from traigent.evaluators.base import _is_empty_expected_output
 from traigent.generation.coldstart.contracts import (
     GroundTruth,
     GroundTruthSource,
@@ -13,6 +15,7 @@ from traigent.generation.coldstart.contracts import (
     ScoringContract,
 )
 from traigent.generation.coldstart.evidence import (
+    _has_expected_output,
     admit_candidate,
     build_tuning_row,
     validate_tuning_row,
@@ -30,6 +33,27 @@ def _admitted_candidate() -> ScenarioCandidate:
             ScoringContract.EXACT_MATCH,
         ),
     )
+
+
+def _candidate_with_raw_inputs(inputs: dict[object, object]) -> ScenarioCandidate:
+    """Build a maliciously typed candidate to exercise the trust boundary."""
+    return ScenarioCandidate(
+        "candidate-raw-inputs",
+        cast(dict[str, Any], inputs),
+        GroundTruth(
+            "safe",
+            GroundTruthSource.ORACLE_COMPUTED,
+            ScoringContract.EXACT_MATCH,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, "", " \t\n", "answer", 0, 0.0, False, True, [], ["answer"], {}, {"a": 1}],
+)
+def test_coldstart_expected_output_rule_matches_evaluator(value: object) -> None:
+    assert _has_expected_output(value) is (not _is_empty_expected_output(value))
 
 
 def test_model_created_gold_is_never_admitted() -> None:
@@ -90,6 +114,57 @@ def test_admission_quarantines_injection_and_duplicate_inputs() -> None:
         _admitted_candidate(), seen_input_digests=seen, max_input_bytes=1024
     )
     assert duplicate.quarantine_reason == "duplicate_input"
+
+
+@pytest.mark.parametrize(
+    "inputs",
+    [
+        {1: "top-level-numeric-key"},
+        {"nested": {1: "numeric-key"}},
+        {"nested": {1: "numeric-key", "safe": "string-key"}},
+    ],
+)
+def test_non_string_mapping_keys_are_quarantined_before_canonicalization(
+    inputs: dict[object, object],
+) -> None:
+    admission = admit_candidate(
+        _candidate_with_raw_inputs(inputs),
+        seen_input_digests=set(),
+        max_input_bytes=1024,
+    )
+
+    assert not admission.admitted
+    assert admission.input_digest == ""
+    assert admission.quarantine_reason == "input_not_json_serializable"
+
+
+def test_non_string_key_cannot_collide_with_its_string_form() -> None:
+    seen: set[str] = set()
+    invalid = admit_candidate(
+        _candidate_with_raw_inputs({1: "value"}),
+        seen_input_digests=seen,
+        max_input_bytes=1024,
+    )
+    valid = admit_candidate(
+        _candidate_with_raw_inputs({"1": "value"}),
+        seen_input_digests=seen,
+        max_input_bytes=1024,
+    )
+
+    assert invalid.quarantine_reason == "input_not_json_serializable"
+    assert valid.admitted
+
+
+def test_build_tuning_row_reports_noncanonical_input_separately_from_gold() -> None:
+    with pytest.raises(ValueError, match="input mapping with non-string keys"):
+        build_tuning_row(
+            candidate=_candidate_with_raw_inputs({1: "value"}),
+            schema_version="traigent.coldstart.v1",
+            oracle_id="square",
+            generator_id="contract_grounded",
+            seed=7,
+            system_fingerprint="system-digest",
+        )
 
 
 def test_made_up_scoring_contract_is_rejected_even_with_a_recomputed_digest() -> None:

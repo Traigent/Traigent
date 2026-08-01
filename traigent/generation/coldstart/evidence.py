@@ -55,6 +55,18 @@ def _contains_injection_marker(value: Any) -> bool:
     return isinstance(value, str) and looks_like_injection(value)
 
 
+def _contains_non_string_mapping_key(value: Any) -> bool:
+    """Reject mappings JSON would silently coerce into different input shapes."""
+    if isinstance(value, Mapping):
+        return any(
+            not isinstance(key, str) or _contains_non_string_mapping_key(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(_contains_non_string_mapping_key(item) for item in value)
+    return False
+
+
 def input_digest(inputs: Mapping[str, Any]) -> str:
     """Digest an input payload without exposing it in audit or manifest records."""
     return cast(str, sha256_bytes(canonical_json_bytes(dict(inputs))))
@@ -72,6 +84,8 @@ def _screen_candidate_inputs(
     inputs = candidate.inputs
     if not isinstance(inputs, Mapping) or not inputs:
         return None, EvidenceAdmission(False, "", "missing_or_empty_input")
+    if _contains_non_string_mapping_key(inputs):
+        return None, EvidenceAdmission(False, "", "input_not_json_serializable")
 
     try:
         digest = input_digest(inputs)
@@ -151,6 +165,8 @@ def build_tuning_row(
     ground_truth = candidate.ground_truth
     if not isinstance(inputs, Mapping) or not isinstance(ground_truth, GroundTruth):
         raise ValueError("Cannot persist a scenario that lacks admissible evidence.")
+    if _contains_non_string_mapping_key(inputs):
+        raise ValueError("Cannot persist an input mapping with non-string keys.")
     if (
         ground_truth.source is not GroundTruthSource.ORACLE_COMPUTED
         or ground_truth.scoring_contract is not ScoringContract.EXACT_MATCH
@@ -161,6 +177,9 @@ def build_tuning_row(
         persisted_input = cast(
             dict[str, Any], json.loads(canonical_json_bytes(dict(inputs)))
         )
+    except ValueError as exc:
+        raise ValueError("Cannot persist a non-JSON input mapping.") from exc
+    try:
         expected_output = json.loads(canonical_json_bytes(ground_truth.expected_output))
     except ValueError as exc:
         raise ValueError("Cannot persist a non-JSON expected output.") from exc

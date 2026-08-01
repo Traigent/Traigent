@@ -187,8 +187,12 @@ def _allowlisted_files(
             if file_stat.st_size > options.max_file_bytes:
                 skipped_file_count += 1
                 continue
-            payload = path.read_bytes()
+            with path.open("rb") as file_handle:
+                payload = file_handle.read(options.max_file_bytes + 1)
         except (OSError, ValueError):
+            skipped_file_count += 1
+            continue
+        if len(payload) > options.max_file_bytes:
             skipped_file_count += 1
             continue
         files.append(

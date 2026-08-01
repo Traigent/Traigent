@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from os import stat_result
 from pathlib import Path
 
@@ -161,6 +162,45 @@ def test_skips_oversized_non_source_file_before_reading_its_bytes(
     ]
     assert spec.skipped_file_count == 1
     assert oversized not in read_paths
+
+
+def test_bounded_read_skips_non_source_file_that_grows_after_stat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "customer.py"
+    source.write_text("def answer(question: str) -> str:\n    return question\n")
+    growing = tmp_path / "growing.py"
+    growing.write_text("x")
+    (tmp_path / "ordinary.py").write_text("VALUE = 'kept'\n")
+    _point_at(source, monkeypatch)
+
+    original_open = Path.open
+    requested_sizes: list[int] = []
+
+    class _GrowingFile(BytesIO):
+        def read(self, size: int = -1) -> bytes:
+            requested_sizes.append(size)
+            return super().read(size)
+
+    def open_with_growth(path: Path, mode: str = "r", *args, **kwargs):
+        if path == growing:
+            return _GrowingFile(b"x" * 129)
+        return original_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", open_with_growth)
+
+    spec = extract_system_spec(
+        _SourcePointer(),
+        repo_root=tmp_path,
+        options=ColdStartOptions(max_files=3, max_file_bytes=128),
+    )
+
+    assert [file.path for file in spec.files] == [
+        Path("customer.py"),
+        Path("ordinary.py"),
+    ]
+    assert spec.skipped_file_count == 1
+    assert requested_sizes == [129]
 
 
 @pytest.mark.parametrize(
