@@ -139,8 +139,9 @@ def admit_candidate(
         seen_input_digests=seen_input_digests,
         max_input_bytes=max_input_bytes,
     )
-    if inputs is None or admission is None:
-        assert admission is not None
+    if admission is None:
+        return EvidenceAdmission(False, "", "invalid_tuning_row")
+    if inputs is None:
         return admission
 
     rejection = _ground_truth_rejection(candidate)
@@ -292,7 +293,8 @@ def validate_tuning_row(
     parts, reason = _row_payload_parts(row)
     if reason is not None:
         return reason
-    assert parts is not None
+    if parts is None:
+        return "invalid_tuning_row"
     reason = _provenance_rejection(
         parts.provenance, expected_schema_version=expected_schema_version
     )
@@ -301,7 +303,8 @@ def validate_tuning_row(
     digest, reason = _serialized_input_rejection(parts, max_input_bytes=max_input_bytes)
     if reason is not None:
         return reason
-    assert digest is not None
+    if digest is None:
+        return "invalid_tuning_row"
     if digest in seen_input_digests:
         return "duplicate_input"
     if not _has_valid_row_digest(row, parts.provenance):

@@ -441,7 +441,10 @@ def _ground_candidate(
         seen_input_digests=seen_proposal_inputs,
         max_input_bytes=MAX_INPUT_BYTES,
     )
-    assert input_admission is not None
+    if input_admission is None:
+        raise ColdStartConfigurationError(
+            "Cold-start input screening returned an invalid internal result."
+        )
     if not input_admission.admitted:
         _record_input_quarantine(
             candidate=candidate,
@@ -463,7 +466,10 @@ def _ground_candidate(
             counts=counts,
         )
         return None, False, oracle_call_count
-    assert oracle_truth is not None
+    if oracle_truth is None:
+        raise ColdStartConfigurationError(
+            "Cold-start oracle grounding returned an invalid internal result."
+        )
     grounded = ScenarioCandidate(
         candidate_id=candidate.candidate_id,
         inputs=candidate.inputs,
@@ -626,7 +632,10 @@ def generate_eval_set(
     )
     if discovery_result is not None:
         return discovery_result
-    assert system is not None
+    if system is None:
+        raise ColdStartConfigurationError(
+            "Cold-start static inspection returned an invalid internal result."
+        )
     selected_generator, proposed, discovery_result = _proposals_or_discovery_only(
         generator=generator,
         system=system,
@@ -775,19 +784,19 @@ def _manifest_descriptors(
         raise ColdStartConfigurationError(
             "Cold-start manifest descriptors fail construction-evidence eligibility."
         )
-    assert isinstance(system, Mapping)
-    assert isinstance(generator, Mapping)
-    assert isinstance(oracle, Mapping)
-    assert isinstance(counts, Mapping)
-    fingerprint = _nonempty_manifest_descriptor(system, "fingerprint")
-    generator_id = _nonempty_manifest_descriptor(generator, "technique_id")
-    oracle_id = _nonempty_manifest_descriptor(oracle, "oracle_id")
+    system_mapping = cast(Mapping[str, Any], system)
+    generator_mapping = cast(Mapping[str, Any], generator)
+    oracle_mapping = cast(Mapping[str, Any], oracle)
+    counts_mapping = cast(Mapping[str, Any], counts)
+    fingerprint = _nonempty_manifest_descriptor(system_mapping, "fingerprint")
+    generator_id = _nonempty_manifest_descriptor(generator_mapping, "technique_id")
+    oracle_id = _nonempty_manifest_descriptor(oracle_mapping, "oracle_id")
     scoring_contract = manifest.get("scoring_contract")
     if (
         fingerprint is None
         or generator_id is None
         or oracle_id is None
-        or oracle.get("scoring_contract") != ScoringContract.EXACT_MATCH.value
+        or oracle_mapping.get("scoring_contract") != ScoringContract.EXACT_MATCH.value
         or scoring_contract != ScoringContract.EXACT_MATCH.value
     ):
         raise ColdStartConfigurationError(
@@ -800,7 +809,7 @@ def _manifest_descriptors(
             oracle_id=oracle_id,
             scoring_contract=scoring_contract,
         ),
-        counts,
+        counts_mapping,
     )
 
 
@@ -875,7 +884,10 @@ def _assert_row_eligible(
             "Cold-start tuning row fails construction-evidence eligibility."
         )
     provenance = row.get("traigent_coldstart")
-    assert isinstance(provenance, Mapping)
+    if not isinstance(provenance, Mapping):
+        raise ColdStartConfigurationError(
+            "Cold-start tuning row fails construction-evidence eligibility."
+        )
     if not _provenance_matches_manifest(provenance, descriptors):
         raise ColdStartConfigurationError(
             "Cold-start tuning row fails construction-evidence eligibility."
