@@ -13,6 +13,7 @@ from traigent.generation.coldstart.contracts import (
     ColdStartOptions,
     ColdStartOutcome,
     ColdStartResult,
+    ColdStartInputContractError,
     DiscoveryGap,
     GroundTruth,
     GroundTruthSource,
@@ -40,10 +41,26 @@ def test_contract_enums_are_strict_string_values() -> None:
     assert COLDSTART_SCHEMA_VERSION == "traigent.coldstart.v1"
     assert ColdStartOutcome.EVAL_SET == "eval_set"
     assert GroundTruthSource.ORACLE_COMPUTED == "oracle_computed"
-    assert ScoringContract.JSON_SUBSET == "json_subset"
+    assert list(ScoringContract) == [ScoringContract.EXACT_MATCH]
 
     with pytest.raises(ValueError):
         DiscoveryGap("missing_oracle")
+    with pytest.raises(ValueError):
+        ScoringContract("numeric_tolerance")
+    assert issubclass(ColdStartInputContractError, ValueError)
+
+
+def test_input_contract_error_carries_a_typed_discovery_gap() -> None:
+    assert (
+        ColdStartInputContractError("missing annotation").gap
+        is DiscoveryGap.UNTYPED_INPUT_CONTRACT
+    )
+    assert (
+        ColdStartInputContractError(
+            "unsupported input", gap=DiscoveryGap.UNSUPPORTED_INPUT_CONTRACT
+        ).gap
+        is DiscoveryGap.UNSUPPORTED_INPUT_CONTRACT
+    )
 
 
 def test_artifacts_are_frozen_and_mapping_fields_cannot_be_mutated() -> None:
@@ -113,5 +130,11 @@ def test_options_are_strict_and_apply_safety_bounds() -> None:
         ColdStartOptions(max_file_bytes=0)
     with pytest.raises(ValueError):
         ColdStartOptions(include_globs=())
+    with pytest.raises(ValueError, match="relative patterns"):
+        ColdStartOptions(include_globs=("/etc/*.py",))
+    with pytest.raises(ValueError, match="relative patterns"):
+        ColdStartOptions(include_globs=("../outside/*.py",))
+    with pytest.raises(ValueError, match="relative patterns"):
+        ColdStartOptions(include_globs=(r"..\outside\*.py",))
     with pytest.raises(ValueError):
         ColdStartOptions(unknown=True)

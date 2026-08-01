@@ -2,9 +2,10 @@
 
 `traigent.generation.coldstart` builds a local, tuning-only evaluation dataset
 before an optimization run. Construction statically inspects the callable and
-repository, proposes inputs, and requires independent ground truth. It does
-not execute the target function, run a baseline, compare configurations, or
-select examples based on current performance.
+repository, proposes inputs from its typed contract, and obtains every expected
+output from a separate local oracle. It does not execute the target function,
+run a baseline, compare configurations, or select examples based on current
+performance.
 
 ```python
 from pathlib import Path
@@ -40,7 +41,7 @@ result = generate_eval_set(
     func=classify,
     repo_root=Path.cwd(),
     oracle=CallableOracle(labels, oracle_id="local_labels.v1"),
-    output_dir=Path.cwd() / "coldstart-output",
+    output_dir=Path.cwd() / "coldstart-attempt-001",
 )
 if result.outcome is ColdStartOutcome.EVAL_SET:
     assert result.tuning_path is not None
@@ -53,10 +54,37 @@ if result.outcome is ColdStartOutcome.EVAL_SET:
     best = await classify.optimize()
 ```
 
-`output_dir` is caller-selected but must be within the trusted dataset root:
-the current working directory by default, or `TRAIGENT_DATASET_ROOT` when that
-environment variable is configured. This preserves the existing
-`Dataset.from_jsonl` path-security contract.
+`output_dir` must be within the trusted dataset root: the current working
+directory by default, or `TRAIGENT_DATASET_ROOT` when configured. Use a fresh,
+per-attempt output directory. A construction attempt can honestly degrade to
+discovery-only, and the writer rejects discovery-only output beside a prior
+tuning artifact rather than risking an ambiguous handoff.
+
+## Static inspection and truthful discovery
+
+The default `ColdStartOptions()` recursively considers Python files in a normal
+repository. It prunes `.git`, virtual environments and `site-packages`,
+`node_modules`, `build`, `dist`, and `__pycache__`; never follows symlinks;
+and never imports or executes repository code. The callable's source is always
+selected first. Remaining eligible files are selected in deterministic path
+order up to `max_files`; oversized or unreadable non-source files are skipped.
+
+This bounded selection is deliberately not fatal. `SystemSpec` reports
+`inspection_truncated` and `skipped_file_count` whenever matching files were
+omitted, so a caller can see that the static view was bounded. The manifest
+records only structural metadata such as file count and fingerprint; it never
+persists source paths or file content.
+
+Discovery-only is a valid, explicit outcome. `UNTYPED_INPUT_CONTRACT` means a
+callable parameter has no annotation. `UNSUPPORTED_INPUT_CONTRACT` means the
+signature is outside the v1 scalar boundary: it is variadic, has no input
+parameters, or uses an unsupported annotation. Repository root,
+source-location, symlink, read, size, parse, and other static-inspection
+failures instead produce `STATIC_INSPECTION_FAILED`; they are not relabeled as
+an input-contract diagnosis. Missing oracle, unavailable oracle ground truth,
+or zero eligible rows likewise return their own typed `DiscoveryGap` values.
+Every discovery-only result has `tuning_path=None` and writes only audit and
+manifest artifacts.
 
 ## Admission policy
 
@@ -64,17 +92,15 @@ A tuning row is written only when all of these are true:
 
 - input is a non-empty JSON mapping, within the fixed local size limit, free of
   concrete instruction-injection markers, and unique;
-- one expected output exists;
-- its ground-truth source is exactly `spec_derived` or `oracle_computed`;
-- its scoring contract is one of the supported deterministic contracts; and
+- a local oracle returns one expected output;
+- its ground-truth source is exactly `oracle_computed`;
+- its scoring contract is exactly `exact_match`; and
 - its literal split is `tune`.
 
-There is no admission override. Labels made by `ExampleSynthesizer` are always
-discarded; a `SynthesizedInputGenerator` contributes inputs only, and the
-oracle must ground them independently. A missing oracle, untyped/insufficient
-callable contract, unavailable gold, or zero eligible rows returns
-`ColdStartOutcome.DISCOVERY_ONLY`, `tuning_path=None`, and only audit/manifest
-artifacts.
+There is no admission override, no model-label adapter, and no seed-requiring
+synthesis path in v1. `ContractGroundedGenerator` is the built-in zero-seed
+input proposer: it can propose only from the inspected scalar parameter
+contract, and the supplied oracle must independently ground each proposal.
 
 ## Artifacts and integrity
 
@@ -82,7 +108,7 @@ Eligible output contains these fixed files:
 
 - `coldstart_tuning.jsonl` is compatible with `Dataset.from_jsonl`. Each row
   has a unique `example_id`, `expected_output`, and `traigent_coldstart`
-  provenance (source, scoring contract, oracle/generator ids, seed, system
+  provenance (oracle/generator ids, exact-match contract, seed, system
   fingerprint, row digest, schema version, and `tune` split).
 - `coldstart_audit.jsonl` contains candidate digests, states, and quarantine
   reasons only. It intentionally has no `input` field and cannot be loaded as
@@ -107,11 +133,9 @@ target. After a successful result, load the generated path with
 optimizer then owns all target execution and configuration comparison; do not
 create a parallel runner for configurations, scoring, or cost tracking.
 
-The default `accuracy` scorer is exact-match, matching
-`ScoringContract.EXACT_MATCH`. If generated rows use another scoring contract,
-provide an existing matching metric function to the decorator: the row contract
-does not automatically configure or enforce the metric. Cold-start rows are
-strictly `tune` rows and are not holdout evidence.
+Cold-start rows are strictly tuning rows: they are not holdout data and cannot
+support a holdout or generalization claim. The default `accuracy` scorer is
+exact-match, which is the only cold-start scoring contract in v1.
 
 Pass an `ExecutionBudget` to `generate_eval_set` when construction shares an
 execution budget with later work. Calls to injected generators/oracles have no

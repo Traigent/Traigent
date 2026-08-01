@@ -7,6 +7,7 @@ from .contracts import (
     CandidateState,
     ColdStartConfigurationError,
     ColdStartError,
+    ColdStartInputContractError,
     ColdStartOptions,
     ColdStartOutcome,
     ColdStartResult,
@@ -22,7 +23,7 @@ from .contracts import (
     ScoringContract,
     SystemSpec,
 )
-from .generators import ContractGroundedGenerator, SynthesizedInputGenerator
+from .generators import ContractGroundedGenerator
 from .oracles import CallableOracle
 from .pipeline import assert_optimizer_eligible, generate_eval_set
 
@@ -32,6 +33,7 @@ __all__ = [
     "CallableOracle",
     "ColdStartConfigurationError",
     "ColdStartError",
+    "ColdStartInputContractError",
     "ColdStartOptions",
     "ColdStartOutcome",
     "ColdStartResult",
@@ -46,7 +48,6 @@ __all__ = [
     "ScenarioCandidate",
     "ScenarioGenerator",
     "ScoringContract",
-    "SynthesizedInputGenerator",
     "SystemSpec",
     "assert_optimizer_eligible",
     "generate_eval_set",

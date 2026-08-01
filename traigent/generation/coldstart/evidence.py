@@ -9,21 +9,20 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+import json
+from typing import Any, cast
 
+from traigent.generation.validators import looks_like_injection
+
+from .contracts import (
+    GroundTruth,
+    GroundTruthSource,
+    ScenarioCandidate,
+    ScoringContract,
+)
 from .writer import canonical_json_bytes, sha256_bytes
 
 
-_ALLOWED_GROUND_TRUTH_SOURCES = frozenset({"spec_derived", "oracle_computed"})
-_INJECTION_MARKERS = (
-    "ignore previous instructions",
-    "ignore all previous instructions",
-    "disregard previous instructions",
-    "reveal the system prompt",
-    "developer message",
-    "<|system|>",
-    "jailbreak",
-)
 MAX_INPUT_BYTES = 65_536
 
 
@@ -36,113 +35,109 @@ class EvidenceAdmission:
     quarantine_reason: str | None = None
 
 
-def _value(value: Any) -> str:
-    """Normalize a string-or-enum descriptor without accepting arbitrary objects."""
-    raw = getattr(value, "value", value)
-    return raw.strip().lower() if isinstance(raw, str) else ""
+@dataclass(frozen=True, slots=True)
+class _TuningRowParts:
+    """Typed row fields after the structural tuning-row checks pass."""
 
-
-def _attribute_or_mapping(value: Any, *names: str) -> Any:
-    for name in names:
-        if isinstance(value, Mapping) and name in value:
-            return value[name]
-        if hasattr(value, name):
-            return getattr(value, name)
-    return None
-
-
-def candidate_inputs(candidate: Any) -> Mapping[str, Any] | None:
-    """Extract a proposed input mapping from the shared candidate contract."""
-    inputs = _attribute_or_mapping(candidate, "inputs", "input_data", "input")
-    return inputs if isinstance(inputs, Mapping) else None
-
-
-def candidate_ground_truth(candidate: Any) -> Any:
-    """Extract a candidate's independently created ground truth, if any."""
-    return _attribute_or_mapping(candidate, "ground_truth")
+    inputs: Mapping[str, Any]
+    expected_output: Any
+    example_id: str
+    provenance: Mapping[str, Any]
 
 
 def _contains_injection_marker(value: Any) -> bool:
     if isinstance(value, Mapping):
-        return any(_contains_injection_marker(item) for item in value.values())
+        return any(
+            _contains_injection_marker(item) for pair in value.items() for item in pair
+        )
     if isinstance(value, (list, tuple)):
         return any(_contains_injection_marker(item) for item in value)
-    if not isinstance(value, str):
-        return False
-    normalized = value.casefold()
-    return any(marker in normalized for marker in _INJECTION_MARKERS)
+    return isinstance(value, str) and looks_like_injection(value)
 
 
 def input_digest(inputs: Mapping[str, Any]) -> str:
     """Digest an input payload without exposing it in audit or manifest records."""
-    return sha256_bytes(canonical_json_bytes(dict(inputs)))
+    return cast(str, sha256_bytes(canonical_json_bytes(dict(inputs))))
 
 
-def _supported_scoring_contract(ground_truth: Any) -> str:
-    contract = _attribute_or_mapping(
-        ground_truth,
-        "scoring_contract",
-        "supported_scoring_contract",
-    )
-    normalized = _value(contract)
-    if normalized in {"", "unknown", "unsupported", "none"}:
-        return ""
-    return normalized
+def _screen_candidate_inputs(
+    candidate: ScenarioCandidate,
+    *,
+    seen_input_digests: set[str],
+    max_input_bytes: int,
+) -> tuple[Mapping[str, Any] | None, EvidenceAdmission | None]:
+    """Return screened inputs or the precise admission rejection."""
+    if not isinstance(candidate, ScenarioCandidate):
+        return None, EvidenceAdmission(False, "", "invalid_candidate")
+    inputs = candidate.inputs
+    if not isinstance(inputs, Mapping) or not inputs:
+        return None, EvidenceAdmission(False, "", "missing_or_empty_input")
+
+    try:
+        digest = input_digest(inputs)
+        serialized_size = len(canonical_json_bytes(dict(inputs)))
+    except ValueError:
+        return None, EvidenceAdmission(False, "", "input_not_json_serializable")
+
+    if serialized_size > max_input_bytes:
+        return None, EvidenceAdmission(False, digest, "input_too_large")
+    if _contains_injection_marker(inputs):
+        return None, EvidenceAdmission(False, digest, "input_injection_marker")
+    if digest in seen_input_digests:
+        return None, EvidenceAdmission(False, digest, "duplicate_input")
+    return inputs, EvidenceAdmission(True, digest)
+
+
+def _ground_truth_rejection(candidate: ScenarioCandidate) -> str | None:
+    """Return why a candidate lacks independently grounded exact-match gold."""
+    ground_truth = candidate.ground_truth
+    if ground_truth is None:
+        return "missing_ground_truth"
+    if not isinstance(ground_truth, GroundTruth):
+        return "invalid_ground_truth"
+    if ground_truth.source is not GroundTruthSource.ORACLE_COMPUTED:
+        return "ineligible_ground_truth_source"
+    if ground_truth.expected_output is None:
+        return "missing_expected_output"
+    if ground_truth.scoring_contract is not ScoringContract.EXACT_MATCH:
+        return "unsupported_scoring_contract"
+    try:
+        canonical_json_bytes(ground_truth.expected_output)
+    except ValueError:
+        return "expected_output_not_json_serializable"
+    return None
 
 
 def admit_candidate(
-    candidate: Any,
+    candidate: ScenarioCandidate,
     *,
     seen_input_digests: set[str],
     max_input_bytes: int,
 ) -> EvidenceAdmission:
     """Admit only independent gold that has passed concrete input screening.
 
-    The result has no override.  In particular, a model-created label is never
-    a substitute for absent oracle/spec evidence because its source is not one
-    of the two accepted construction-evidence sources.
+    The result has no override. Only a real ``GroundTruth`` from the injected
+    oracle with the one supported scoring contract can become a tuning row.
     """
-    inputs = candidate_inputs(candidate)
-    if not inputs:
-        return EvidenceAdmission(False, "", "missing_or_empty_input")
+    inputs, admission = _screen_candidate_inputs(
+        candidate,
+        seen_input_digests=seen_input_digests,
+        max_input_bytes=max_input_bytes,
+    )
+    if inputs is None or admission is None:
+        assert admission is not None
+        return admission
 
-    try:
-        digest = input_digest(inputs)
-        serialized_size = len(canonical_json_bytes(dict(inputs)))
-    except ValueError:
-        return EvidenceAdmission(False, "", "input_not_json_serializable")
-
-    if serialized_size > max_input_bytes:
-        return EvidenceAdmission(False, digest, "input_too_large")
-    if _contains_injection_marker(inputs):
-        return EvidenceAdmission(False, digest, "input_injection_marker")
-    if digest in seen_input_digests:
-        return EvidenceAdmission(False, digest, "duplicate_input")
-
-    ground_truth = candidate_ground_truth(candidate)
-    if ground_truth is None:
-        return EvidenceAdmission(False, digest, "missing_ground_truth")
-    source = _value(_attribute_or_mapping(ground_truth, "source"))
-    if source not in _ALLOWED_GROUND_TRUTH_SOURCES:
-        return EvidenceAdmission(False, digest, "ineligible_ground_truth_source")
-    expected_output = _attribute_or_mapping(ground_truth, "expected_output", "output")
-    if expected_output is None:
-        return EvidenceAdmission(False, digest, "missing_expected_output")
-    if not _supported_scoring_contract(ground_truth):
-        return EvidenceAdmission(False, digest, "unsupported_scoring_contract")
-
-    try:
-        canonical_json_bytes(expected_output)
-    except ValueError:
-        return EvidenceAdmission(False, digest, "expected_output_not_json_serializable")
-
-    seen_input_digests.add(digest)
-    return EvidenceAdmission(True, digest)
+    rejection = _ground_truth_rejection(candidate)
+    if rejection is not None:
+        return EvidenceAdmission(False, admission.input_digest, rejection)
+    seen_input_digests.add(admission.input_digest)
+    return admission
 
 
 def build_tuning_row(
     *,
-    candidate: Any,
+    candidate: ScenarioCandidate,
     schema_version: str,
     oracle_id: str,
     generator_id: str,
@@ -150,25 +145,27 @@ def build_tuning_row(
     system_fingerprint: str,
 ) -> dict[str, Any]:
     """Create the sole Dataset-compatible persistence shape for an admitted row."""
-    inputs = candidate_inputs(candidate)
-    ground_truth = candidate_ground_truth(candidate)
-    if inputs is None or ground_truth is None:
+    if not isinstance(candidate, ScenarioCandidate):
+        raise ValueError("Cannot persist a non-ScenarioCandidate value.")
+    inputs = candidate.inputs
+    ground_truth = candidate.ground_truth
+    if not isinstance(inputs, Mapping) or not isinstance(ground_truth, GroundTruth):
         raise ValueError("Cannot persist a scenario that lacks admissible evidence.")
-
-    source = _value(_attribute_or_mapping(ground_truth, "source"))
-    scoring_contract = _supported_scoring_contract(ground_truth)
-    expected_output = _attribute_or_mapping(ground_truth, "expected_output", "output")
     if (
-        source not in _ALLOWED_GROUND_TRUTH_SOURCES
-        or not scoring_contract
-        or expected_output is None
+        ground_truth.source is not GroundTruthSource.ORACLE_COMPUTED
+        or ground_truth.scoring_contract is not ScoringContract.EXACT_MATCH
+        or ground_truth.expected_output is None
     ):
         raise ValueError("Cannot persist a scenario that lacks admissible evidence.")
+    try:
+        expected_output = json.loads(canonical_json_bytes(ground_truth.expected_output))
+    except ValueError as exc:
+        raise ValueError("Cannot persist a non-JSON expected output.") from exc
 
     provenance: dict[str, Any] = {
         "schema_version": schema_version,
-        "ground_truth_source": source,
-        "scoring_contract": scoring_contract,
+        "ground_truth_source": ground_truth.source.value,
+        "scoring_contract": ground_truth.scoring_contract.value,
         "oracle_id": oracle_id,
         "generator_id": generator_id,
         "seed": seed,
@@ -185,6 +182,74 @@ def build_tuning_row(
     return unsigned_row
 
 
+def _row_payload_parts(
+    row: Mapping[str, Any],
+) -> tuple[_TuningRowParts | None, str | None]:
+    """Extract required row fields before validating their provenance."""
+    inputs = row.get("input")
+    if not isinstance(inputs, Mapping) or not inputs:
+        return None, "missing_or_empty_input"
+    expected_output = row.get("expected_output")
+    if expected_output is None:
+        return None, "missing_expected_output"
+    example_id = row.get("example_id")
+    if not isinstance(example_id, str) or not example_id:
+        return None, "missing_example_id"
+    provenance = row.get("traigent_coldstart")
+    if not isinstance(provenance, Mapping):
+        return None, "missing_coldstart_provenance"
+    return _TuningRowParts(inputs, expected_output, example_id, provenance), None
+
+
+def _provenance_rejection(
+    provenance: Mapping[str, Any], *, expected_schema_version: str
+) -> str | None:
+    """Return the first fixed cold-start provenance invariant that fails."""
+    if provenance.get("schema_version") != expected_schema_version:
+        return "schema_version_mismatch"
+    if provenance.get("split") != "tune":
+        return "non_tune_split"
+    if provenance.get("ground_truth_source") != GroundTruthSource.ORACLE_COMPUTED.value:
+        return "ineligible_ground_truth_source"
+    if provenance.get("scoring_contract") != ScoringContract.EXACT_MATCH.value:
+        return "unsupported_scoring_contract"
+    if not all(
+        isinstance(provenance.get(field), str) and provenance[field]
+        for field in ("oracle_id", "generator_id", "system_fingerprint", "row_digest")
+    ):
+        return "missing_required_provenance"
+    if not isinstance(provenance.get("seed"), int):
+        return "invalid_seed"
+    return None
+
+
+def _serialized_input_rejection(
+    parts: _TuningRowParts, *, max_input_bytes: int
+) -> tuple[str | None, str | None]:
+    """Return an input digest or the serialization and policy rejection."""
+    try:
+        digest = input_digest(parts.inputs)
+        if len(canonical_json_bytes(dict(parts.inputs))) > max_input_bytes:
+            return None, "input_too_large"
+        if _contains_injection_marker(parts.inputs):
+            return None, "input_injection_marker"
+        canonical_json_bytes(parts.expected_output)
+    except ValueError:
+        return None, "row_not_json_serializable"
+    return digest, None
+
+
+def _has_valid_row_digest(
+    row: Mapping[str, Any], provenance: Mapping[str, Any]
+) -> bool:
+    """Recompute the row digest without its self-referential digest field."""
+    without_digest = dict(row)
+    unsigned_provenance = dict(provenance)
+    supplied_digest = unsigned_provenance.pop("row_digest")
+    without_digest["traigent_coldstart"] = unsigned_provenance
+    return bool(supplied_digest == sha256_bytes(canonical_json_bytes(without_digest)))
+
+
 def validate_tuning_row(
     row: Mapping[str, Any],
     *,
@@ -198,54 +263,25 @@ def validate_tuning_row(
     authentication: a party able to alter both a row and the manifest can still
     recompute hashes, and semantic oracle correctness remains external.
     """
-    inputs = row.get("input")
-    expected_output = row.get("expected_output")
-    provenance = row.get("traigent_coldstart")
-    if not isinstance(inputs, Mapping) or not inputs:
-        return "missing_or_empty_input"
-    if expected_output is None:
-        return "missing_expected_output"
-    if not isinstance(row.get("example_id"), str) or not row["example_id"]:
-        return "missing_example_id"
-    if not isinstance(provenance, Mapping):
-        return "missing_coldstart_provenance"
-    if provenance.get("schema_version") != expected_schema_version:
-        return "schema_version_mismatch"
-    if provenance.get("split") != "tune":
-        return "non_tune_split"
-    if (
-        _value(provenance.get("ground_truth_source"))
-        not in _ALLOWED_GROUND_TRUTH_SOURCES
-    ):
-        return "ineligible_ground_truth_source"
-    if not _value(provenance.get("scoring_contract")):
-        return "unsupported_scoring_contract"
-    if not all(
-        isinstance(provenance.get(field), str) and provenance[field]
-        for field in ("oracle_id", "generator_id", "system_fingerprint", "row_digest")
-    ):
-        return "missing_required_provenance"
-    if not isinstance(provenance.get("seed"), int):
-        return "invalid_seed"
-
-    try:
-        digest = input_digest(inputs)
-        if len(canonical_json_bytes(dict(inputs))) > max_input_bytes:
-            return "input_too_large"
-        if _contains_injection_marker(inputs):
-            return "input_injection_marker"
-        canonical_json_bytes(expected_output)
-    except ValueError:
-        return "row_not_json_serializable"
+    parts, reason = _row_payload_parts(row)
+    if reason is not None:
+        return reason
+    assert parts is not None
+    reason = _provenance_rejection(
+        parts.provenance, expected_schema_version=expected_schema_version
+    )
+    if reason is not None:
+        return reason
+    digest, reason = _serialized_input_rejection(parts, max_input_bytes=max_input_bytes)
+    if reason is not None:
+        return reason
+    assert digest is not None
     if digest in seen_input_digests:
         return "duplicate_input"
-
-    without_digest = dict(row)
-    unsigned_provenance = dict(provenance)
-    supplied_digest = unsigned_provenance.pop("row_digest")
-    without_digest["traigent_coldstart"] = unsigned_provenance
-    if supplied_digest != sha256_bytes(canonical_json_bytes(without_digest)):
+    if not _has_valid_row_digest(row, parts.provenance):
         return "row_digest_mismatch"
+    if parts.example_id != f"coldstart_{digest[:24]}":
+        return "example_id_mismatch"
 
     seen_input_digests.add(digest)
     return None
@@ -253,16 +289,17 @@ def validate_tuning_row(
 
 def build_audit_row(
     *,
-    candidate: Any,
+    candidate: ScenarioCandidate,
     admission: EvidenceAdmission,
     schema_version: str,
 ) -> dict[str, Any]:
     """Build a non-Dataset audit record without copying user input or gold."""
+    if not isinstance(candidate, ScenarioCandidate):
+        raise ValueError("Cannot audit a non-ScenarioCandidate value.")
     digest = admission.input_digest
     if not digest:
         try:
-            inputs = candidate_inputs(candidate)
-            digest = input_digest(inputs) if inputs else ""
+            digest = input_digest(candidate.inputs) if candidate.inputs else ""
         except ValueError:
             digest = ""
     return {
@@ -279,8 +316,6 @@ __all__ = [
     "admit_candidate",
     "build_audit_row",
     "build_tuning_row",
-    "candidate_ground_truth",
-    "candidate_inputs",
     "input_digest",
     "validate_tuning_row",
 ]

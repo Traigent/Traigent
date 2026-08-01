@@ -21,15 +21,14 @@ class CallableOracle:
         ground_truth_callable: Callable[[Mapping[str, Any]], Any],
         *,
         oracle_id: str = "callable_oracle.v1",
-        scoring_contract: ScoringContract = ScoringContract.EXACT_MATCH,
     ) -> None:
         if not callable(ground_truth_callable):
             raise ColdStartConfigurationError("ground_truth_callable must be callable.")
-        if not oracle_id.strip():
+        if not isinstance(oracle_id, str) or not oracle_id.strip():
             raise ColdStartConfigurationError("oracle_id must be a non-empty string.")
         self._ground_truth_callable = ground_truth_callable
         self.oracle_id = oracle_id
-        self.scoring_contract = ScoringContract(scoring_contract)
+        self.scoring_contract = ScoringContract.EXACT_MATCH
 
     def ground_truth(self, inputs: Mapping[str, Any]) -> GroundTruth:
         """Call the supplied local oracle and record its independent provenance."""

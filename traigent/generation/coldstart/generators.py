@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any
-
-from traigent.evaluators.base import EvaluationExample
-from traigent.generation.example_synth import ExampleSynthesizer
-from traigent.generation.models import GuidanceAction
 
 from .contracts import (
     ColdStartConfigurationError,
@@ -33,9 +28,9 @@ def _value_for_annotation(annotation: str, *, seed: int, index: int, name: str) 
 class ContractGroundedGenerator:
     """Deterministically propose inputs from a sufficiently typed static contract.
 
-    This generator does not infer expected outputs.  Its proposals must still be
-    grounded by a spec-derived value or an :class:`~.contracts.Oracle` before
-    any row can be admitted to an evaluation set.
+    This generator does not infer expected outputs. Every proposal must be
+    independently grounded by the injected :class:`~.contracts.Oracle` before
+    it can be admitted to an evaluation set.
     """
 
     technique_id = "contract_grounded.v1"
@@ -72,45 +67,4 @@ class ContractGroundedGenerator:
         ]
 
 
-class SynthesizedInputGenerator:
-    """Adapt ``ExampleSynthesizer`` while unconditionally discarding its labels."""
-
-    technique_id = "synthesized_input.v1"
-
-    def __init__(
-        self,
-        synthesizer: ExampleSynthesizer,
-        seed_examples: Sequence[EvaluationExample],
-        *,
-        action: GuidanceAction = GuidanceAction.DIVERSIFY_AROUND,
-    ) -> None:
-        self._synthesizer = synthesizer
-        self._seed_examples = tuple(seed_examples)
-        self._action = action
-
-    def propose(
-        self, system: SystemSpec, count: int, seed: int
-    ) -> list[ScenarioCandidate]:
-        if count <= 0:
-            raise ColdStartConfigurationError(
-                "Scenario proposal count must be positive."
-            )
-        if not self._seed_examples:
-            return []
-        synthesized = self._synthesizer.synthesize(
-            self._seed_examples, self._action, count
-        )
-        candidates: list[ScenarioCandidate] = []
-        for index, example in enumerate(synthesized[:count]):
-            if not isinstance(example.input_data, dict):
-                continue
-            candidates.append(
-                ScenarioCandidate(
-                    candidate_id=f"{self.technique_id}:{seed}:{index}",
-                    inputs=example.input_data,
-                )
-            )
-        return candidates
-
-
-__all__ = ["ContractGroundedGenerator", "SynthesizedInputGenerator"]
+__all__ = ["ContractGroundedGenerator"]

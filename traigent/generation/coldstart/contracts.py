@@ -11,11 +11,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 if TYPE_CHECKING:
     from traigent.contract import EvaluationContractReport
@@ -36,6 +36,10 @@ class DiscoveryGap(StrEnum):
 
     NO_ORACLE = "no_oracle"
     UNTYPED_INPUT_CONTRACT = "untyped_input_contract"
+    UNSUPPORTED_INPUT_CONTRACT = "unsupported_input_contract"
+    STATIC_INSPECTION_FAILED = "static_inspection_failed"
+    EVALUATION_CONTRACT_MISMATCH = "evaluation_contract_mismatch"
+    NO_SCENARIOS_PROPOSED = "no_scenarios_proposed"
     NO_GOLD_DERIVABLE = "no_gold_derivable"
     NO_ELIGIBLE_ROWS = "no_eligible_rows"
 
@@ -64,7 +68,6 @@ class QuarantineReason(StrEnum):
 class GroundTruthSource(StrEnum):
     """Origin of a scenario's expected output."""
 
-    SPEC_DERIVED = "spec_derived"
     ORACLE_COMPUTED = "oracle_computed"
     MODEL_PROPOSED = "model_proposed"
 
@@ -73,9 +76,6 @@ class ScoringContract(StrEnum):
     """Supported deterministic comparisons for independently grounded output."""
 
     EXACT_MATCH = "exact_match"
-    NUMERIC_TOLERANCE = "numeric_tolerance"
-    SET_EQUALITY = "set_equality"
-    JSON_SUBSET = "json_subset"
 
 
 class ColdStartError(Exception):
@@ -84,6 +84,19 @@ class ColdStartError(Exception):
 
 class ColdStartConfigurationError(ColdStartError, ValueError):
     """Raised when a cold-start extension or configuration is invalid."""
+
+
+class ColdStartInputContractError(ColdStartConfigurationError):
+    """Raised for untyped or unsupported callable input parameters only."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        gap: DiscoveryGap = DiscoveryGap.UNTYPED_INPUT_CONTRACT,
+    ) -> None:
+        super().__init__(message)
+        self.gap = gap
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +127,8 @@ class SystemSpec:
     return_annotation: str | None
     files: tuple[FileDigest, ...]
     fingerprint: str
+    inspection_truncated: bool = False
+    skipped_file_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,7 +197,7 @@ class Oracle(Protocol):
     oracle_id: str
     scoring_contract: ScoringContract
 
-    def ground_truth(self, inputs: Mapping[str, Any]) -> GroundTruth:
+    def ground_truth(self, inputs: Mapping[str, Any]) -> GroundTruth | None:
         """Produce independently grounded expected output for ``inputs``."""
 
 
@@ -198,12 +213,32 @@ class ColdStartOptions(BaseModel):
     include_globs: tuple[str, ...] = Field(("*.py",), min_length=1)
     dataset_name: str | None = None
 
+    @field_validator("include_globs")
+    @classmethod
+    def _include_globs_stay_inside_repo(cls, globs: tuple[str, ...]) -> tuple[str, ...]:
+        """Reject glob spellings that could escape the inspected repository."""
+        for pattern in globs:
+            portable_pattern = pattern.replace("\\", "/")
+            posix_path = PurePosixPath(portable_pattern)
+            windows_path = PureWindowsPath(pattern)
+            if (
+                posix_path.is_absolute()
+                or windows_path.is_absolute()
+                or bool(windows_path.root)
+                or ".." in posix_path.parts
+            ):
+                raise ValueError(
+                    "include_globs must be relative patterns without parent traversal."
+                )
+        return globs
+
 
 __all__ = [
     "COLDSTART_SCHEMA_VERSION",
     "CandidateState",
     "ColdStartConfigurationError",
     "ColdStartError",
+    "ColdStartInputContractError",
     "ColdStartOptions",
     "ColdStartOutcome",
     "ColdStartResult",
