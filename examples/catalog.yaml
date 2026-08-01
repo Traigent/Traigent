@@ -65,6 +65,20 @@
   docs_sections:
     - label: "Guided Generation Concept"
       href: "../../docs/concepts/guided-generation.md"
+- slug: cold-start-eval-set
+  category: core
+  title: "Cold-Start Evaluation Dataset"
+  summary: "Construct a local tune-only evaluation dataset from typed inputs and an independent oracle."
+  run: "core/cold-start-eval-set/run.py"
+  order: 4
+  difficulty: intermediate
+  est_time: "5 min"
+  tags: ["evaluation", "offline", "cold-start", "provenance"]
+  datasets: []
+  docs: "../core/cold-start-eval-set/README.md"
+  docs_sections:
+    - label: "Cold-Start Evaluation Dataset Generation"
+      href: "../../docs/cold_start_eval_generation.md"
 - slug: multi-objective-tradeoff
   category: core
   title: "Multi-Objective Trade-off"
