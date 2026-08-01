@@ -66,6 +66,7 @@ from .models import (
     SessionSummary,
     TrialResultSubmission,
     TrialSuggestion,
+    session_narrative_to_wire,
 )
 from .session_budgets import (
     ensure_cost_metric_for_budgeted_completed_submission,
@@ -1983,6 +1984,14 @@ class TraigentCloudClient(BaseTraigentClient):
             "billing_tier": request.billing_tier,
             "metadata": metadata,
         }
+        # Agent identity + per-run narrative, top-level and typed. This path used to
+        # drop them: `SessionCreationRequest` declared the fields, this serializer
+        # posted only `function_name`, so a caller who pinned `agent_key` alongside a
+        # descriptive `function_name` had identity silently resolved from the title —
+        # a new Agent per run, and the optimization history fragmented into one-run
+        # cohorts. Shared with the orchestrator payload builder so the two paths
+        # cannot drift apart again.
+        payload.update(session_narrative_to_wire(request))
         if request.budget is not None:
             payload["budget"] = request.budget
         if request.constraints is not None:

@@ -29,6 +29,7 @@ from traigent.cloud.models import (
     SessionCreationRequest,
     SessionCreationResponse,
     TrialResultSubmission,
+    session_narrative_to_wire,
 )
 from traigent.cloud.session_budgets import remember_cost_budget_armed_session
 from traigent.cloud.session_objectives import normalize_typed_objectives
@@ -723,16 +724,9 @@ class ApiOperations:
         # out of `function_name`), so that key IS added there: the payload gains a
         # field but the resolved agent — and therefore the cohort — is unchanged.
         # The two narrative fields are user-authored free text: trimmed to the
-        # contract caps here, and never used for identity.
-        agent_key = getattr(session_request, "agent_key", None)
-        if isinstance(agent_key, str) and agent_key.strip():
-            payload["agent_key"] = agent_key.strip()[:512]
-        run_title = getattr(session_request, "run_title", None)
-        if isinstance(run_title, str) and run_title.strip():
-            payload["run_title"] = run_title.strip()[:512]
-        run_description = getattr(session_request, "run_description", None)
-        if isinstance(run_description, str) and run_description.strip():
-            payload["run_description"] = run_description.strip()[:4000]
+        # contract caps, and never used for identity. Shared with CloudClient's
+        # direct serializer so the two session-create paths cannot drift.
+        payload.update(session_narrative_to_wire(session_request))
 
         # CHOKE POINT (review round 2): the allowlist serializer runs on the
         # actual request body, not only on the orchestrator path — a direct

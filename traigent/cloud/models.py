@@ -214,6 +214,47 @@ class TrialResultSubmission:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+# Contract caps from TraigentSchema optimization_endpoints.json. `agent_key` stops
+# at the backend's agent-name storage limit rather than function_name's 512.
+NARRATIVE_MAX_AGENT_KEY = 255
+NARRATIVE_MAX_RUN_TITLE = 512
+NARRATIVE_MAX_RUN_DESCRIPTION = 4000
+
+
+def session_narrative_to_wire(session_request: Any) -> dict[str, str]:
+    """Serialize agent identity + per-run narrative for /api/v1/sessions.
+
+    ONE serializer for every path that builds a session-create body. There used to
+    be two: the orchestrator payload emitted these fields and ``CloudClient``'s
+    direct serializer silently dropped them, so a caller who set ``agent_key`` on a
+    ``SessionCreationRequest`` got a body without it — and the backend fell back to
+    resolving identity from ``function_name``, which for a titled run is the exact
+    cohort fragmentation this feature exists to prevent. A field declared on the
+    request dataclass but discarded on the wire is worse than an absent feature: it
+    looks like it works.
+
+    Titles and descriptions are truncated to their caps — losing the tail of a label
+    is cosmetic. ``agent_key`` is NEVER truncated: shortening an identity would let
+    two distinct agents collide on a shared prefix and silently merge their two
+    optimization histories into one. An over-length key is passed through for the
+    server to reject.
+    """
+    wire: dict[str, str] = {}
+    for attr, cap in (
+        ("agent_key", None),
+        ("run_title", NARRATIVE_MAX_RUN_TITLE),
+        ("run_description", NARRATIVE_MAX_RUN_DESCRIPTION),
+    ):
+        value = getattr(session_request, attr, None)
+        if not isinstance(value, str):
+            continue
+        cleaned = value.strip()
+        if not cleaned:
+            continue
+        wire[attr] = cleaned if cap is None else cleaned[:cap]
+    return wire
+
+
 @dataclass
 class SessionCreationRequest:
     """Request to create a new optimization session."""
