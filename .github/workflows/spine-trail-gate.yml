@@ -29,11 +29,29 @@ jobs:
     name: spine-trail present
     runs-on: ubuntu-latest
     steps:
+      # Dependabot PRs carry no spine mark and cannot be given one: the bot
+      # composes the body, and a maintainer editing it does not re-trigger this
+      # gate reliably. They are also not governed product work — they are
+      # mechanical dependency bumps whose review surface is the diff itself.
+      # Leaving them to fail meant 11 dependency PRs sat red across six repos on
+      # 2026-08-01, including security updates, which inverts the point of the
+      # gate: it stopped being a signal and became noise everyone routes around.
+      #
+      # Keyed on the PR AUTHOR, never the branch name. A branch prefix would be
+      # spoofable — any contributor could push `dependabot/x` to skip governance.
+      # Only GitHub's Dependabot app can author a PR as `dependabot[bot]`.
+      # This mirrors the identical, already-reviewed exemption in
+      # `enforce-develop-to-main.yml`.
       - name: Check PR body for a spine mark
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           set -euo pipefail
+          if [ "$PR_AUTHOR" = "dependabot[bot]" ]; then
+            echo "✅ Dependabot PR: mechanical dependency bump, exempt from the spine-mark requirement."
+            exit 0
+          fi
           if [ "${{ github.event_name }}" = "merge_group" ]; then
             echo "✅ merge_group candidate — spine mark already validated at PR time."
             exit 0
