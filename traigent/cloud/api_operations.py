@@ -29,6 +29,7 @@ from traigent.cloud.models import (
     SessionCreationRequest,
     SessionCreationResponse,
     TrialResultSubmission,
+    session_narrative_to_wire,
 )
 from traigent.cloud.session_budgets import remember_cost_budget_armed_session
 from traigent.cloud.session_objectives import normalize_typed_objectives
@@ -716,6 +717,17 @@ class ApiOperations:
                 **metadata,
             },
         }
+        # Agent identity + per-run narrative ride TOP-LEVEL and typed, never
+        # tunnelled through `metadata` — same rule the finalize path follows. Each is
+        # omitted when unset. Note the optimized path always supplies `agent_key`
+        # (set to the portal name, the exact value the backend previously normalized
+        # out of `function_name`), so that key IS added there: the payload gains a
+        # field but the resolved agent — and therefore the cohort — is unchanged.
+        # The two narrative fields are user-authored free text: trimmed to the
+        # contract caps, and never used for identity. Shared with CloudClient's
+        # direct serializer so the two session-create paths cannot drift.
+        payload.update(session_narrative_to_wire(session_request))
+
         # CHOKE POINT (review round 2): the allowlist serializer runs on the
         # actual request body, not only on the orchestrator path — a direct
         # SessionCreationRequest caller must not be able to serialize

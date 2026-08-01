@@ -1647,6 +1647,9 @@ class BackendIntegratedClient:
         smart_pruning: dict[str, Any] | None = None,
         cost_limit: float | None = None,
         optimization_strategy: dict[str, Any] | None = None,
+        agent_key: str | None = None,
+        run_title: str | None = None,
+        run_description: str | None = None,
     ) -> SessionCreationResult:
         """Synchronous wrapper for creating a session.
         Delegates to session_operations module. Phase 8: objectives are
@@ -1669,6 +1672,9 @@ class BackendIntegratedClient:
             smart_pruning=smart_pruning,
             cost_limit=cost_limit,
             optimization_strategy=optimization_strategy,
+            agent_key=agent_key,
+            run_title=run_title,
+            run_description=run_description,
         )
 
     async def create_hybrid_session(

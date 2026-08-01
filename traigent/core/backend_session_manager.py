@@ -1355,6 +1355,8 @@ class BackendSessionManager:
         promotion_policy: dict[str, Any] | None = None,
         tvl_governance: dict[str, Any] | None = None,
         experiment_display_name: str | None = None,
+        run_title: str | None = None,
+        run_description: str | None = None,
         warm_start_from: str | None = None,
         smart_pruning: dict[str, Any] | None = None,
         artifact_fingerprints: dict[str, str | None] | None = None,
@@ -1502,8 +1504,17 @@ class BackendSessionManager:
                 policy_requires_cloud(_policy) or policy_is_cloud_brain(_policy)
             )
 
+            # `agent_key` pins agent identity explicitly on the wire. It is set to
+            # `portal_name` — byte-identical to the value the backend has always
+            # normalized into an identity — so nothing re-keys on upgrade. Sending it
+            # explicitly means identity no longer depends on whatever `function_name`
+            # happens to carry, which is what let a per-run label fragment an agent's
+            # optimization history into one-run cohorts.
             raw_result = self._backend_client.create_session(
                 function_name=portal_name,
+                agent_key=portal_name,
+                run_title=run_title,
+                run_description=run_description,
                 search_space=getattr(self._optimizer, "config_space", {}),
                 optimization_goal="maximize",
                 metadata=session_metadata,

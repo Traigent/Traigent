@@ -668,6 +668,14 @@ class OptimizedFunction(Generic[_P, _R]):
         self._default_experiment_name: str | None = kwargs.pop(
             "_default_experiment_name", None
         )
+        # Per-run narrative. `agent_name` is already collapsed into
+        # `experiment_name` by decorators.py (they are two spellings of one concept:
+        # the AGENT's identity, which decides the (agent, dataset) cohort whose
+        # history a run joins). These two are deliberately kept OUT of that
+        # resolution — they vary per run by design, and folding a per-run label into
+        # identity is exactly what fragments an agent's history into one-run cohorts.
+        self._run_title: str | None = kwargs.pop("run_title", None)
+        self._run_description: str | None = kwargs.pop("run_description", None)
 
         self.timeout = kwargs.pop("timeout", None)
         kwargs["timeout"] = self.timeout
@@ -1104,6 +1112,9 @@ class OptimizedFunction(Generic[_P, _R]):
             "warm_start_from",
             "eval_dataset",
             "experiment_name",
+            "agent_name",
+            "run_title",
+            "run_description",
             "default_config",
             "constraints",
             "safety_constraints",
@@ -2014,6 +2025,8 @@ class OptimizedFunction(Generic[_P, _R]):
             promotion_gate=getattr(self, "promotion_gate", None),
             safety_constraints=getattr(self, "safety_constraints", None),
             warm_start_from=getattr(self, "warm_start_from", None),
+            run_title=self._run_title,
+            run_description=self._run_description,
         )
         orchestrator_kwargs["requested_algorithm"] = requested_algorithm
 
@@ -3885,10 +3898,17 @@ Remediation:
 
     @property
     def experiment_name(self) -> str:
-        """Resolved experiment display name for portal/storage.
+        """Resolved AGENT identity used for portal/storage and cohort grouping.
+
+        Despite the name (kept for back-compatibility), this identifies the agent,
+        not an individual run: the portal groups optimization history by
+        (agent, evaluation dataset), so this value decides which runs share a
+        history. Per-run intent belongs in ``run_title`` / ``run_description``.
 
         Resolution order (highest to lowest priority):
-        1. ``experiment_name`` passed to ``@traigent.optimize()`` — stored in ``_experiment_name``.
+        1. ``agent_name`` (preferred) or ``experiment_name`` (deprecated alias) passed
+           to ``@traigent.optimize()`` — collapsed to one value by decorators.py and
+           stored in ``_experiment_name``; ``agent_name`` wins if both are given.
         2. ``TRAIGENT_EXPERIMENT_NAME`` environment variable — checked at access time, so
            setting it after decoration still takes effect.
         3. Self-describing default precomputed at decoration time (func name + objectives + knobs)
@@ -3903,6 +3923,24 @@ Remediation:
         if self._default_experiment_name is not None:
             return self._default_experiment_name
         return self.__name__
+
+    @property
+    def agent_name(self) -> str:
+        """Preferred alias of :pyattr:`experiment_name` — the agent's stable identity."""
+        return self.experiment_name
+
+    @property
+    def run_title(self) -> str | None:
+        """Author-supplied title for this run ("Check best router model"), if any.
+
+        A label only: it never participates in agent identity or cohort grouping.
+        """
+        return self._run_title
+
+    @property
+    def run_description(self) -> str | None:
+        """Author-supplied description of what this run is testing and why, if any."""
+        return self._run_description
 
     @property
     def __doc__(self) -> str | None:  # type: ignore[override]

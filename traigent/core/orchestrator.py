@@ -419,6 +419,11 @@ class OptimizationOrchestrator:
             "strategy_preset", None
         )
         self._warm_start_from: str | None = kwargs.pop("warm_start_from", None)
+        # Per-run narrative, read at session-create time. Held as instance state
+        # (like _warm_start_from) rather than optimize() parameters so the public
+        # optimize() signature — which test doubles and callers mirror — is unchanged.
+        self._run_title: str | None = kwargs.pop("run_title", None)
+        self._run_description: str | None = kwargs.pop("run_description", None)
         self._smart_pruning: dict[str, Any] | None = kwargs.pop("smart_pruning", None)
         self._config_metrics_history: dict[str, dict[str, list[float]]] = {}
         self._incumbent_config_hash: str | None = None
@@ -2811,6 +2816,8 @@ class OptimizationOrchestrator:
             promotion_policy=wire_policy,
             tvl_governance=wire_governance,
             experiment_display_name=experiment_display_name,
+            run_title=self._run_title,
+            run_description=self._run_description,
             warm_start_from=self._warm_start_from,
             smart_pruning=self._smart_pruning,
             artifact_fingerprints=self.artifact_fingerprints,
@@ -3018,7 +3025,11 @@ class OptimizationOrchestrator:
         Args:
             func: Function to optimize
             dataset: Evaluation dataset
-            function_name: Name of the function being optimized (for session tracking)
+            function_name: Agent identity for session tracking. This decides which
+                (agent, dataset) cohort the run's history joins, so it must stay
+                stable across runs of one agent. The per-run title/description are
+                read from ``self._run_title`` / ``self._run_description``, set at
+                construction (same pattern as ``warm_start_from``).
 
         Returns:
             OptimizationResult with all trial results
