@@ -66,6 +66,11 @@ def sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _has_expected_output(value: Any) -> bool:
+    """Reject absent and blank text gold before it can enter a tuning artifact."""
+    return value is not None and (not isinstance(value, str) or bool(value.strip()))
+
+
 def _lexical_absolute(path: str | os.PathLike[str]) -> Path:
     """Make an absolute path without resolving through an untrusted symlink."""
     raw = Path(path).expanduser()
@@ -150,9 +155,9 @@ def _validate_tuning_rows(rows: Sequence[Mapping[str, Any]]) -> None:
             raise ColdStartArtifactError(
                 "Cold-start tuning rows require a non-empty mapping input."
             )
-        if row.get("expected_output") is None:
+        if not _has_expected_output(row.get("expected_output")):
             raise ColdStartArtifactError(
-                "Cold-start tuning rows require one expected_output."
+                "Cold-start tuning rows require one non-empty expected_output."
             )
         example_id = row.get("example_id")
         if not isinstance(example_id, str) or not example_id:

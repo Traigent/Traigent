@@ -20,7 +20,7 @@ from .contracts import (
     ScenarioCandidate,
     ScoringContract,
 )
-from .writer import canonical_json_bytes, sha256_bytes
+from .writer import _has_expected_output, canonical_json_bytes, sha256_bytes
 
 
 MAX_INPUT_BYTES = 65_536
@@ -97,7 +97,7 @@ def _ground_truth_rejection(candidate: ScenarioCandidate) -> str | None:
         return "invalid_ground_truth"
     if ground_truth.source is not GroundTruthSource.ORACLE_COMPUTED:
         return "ineligible_ground_truth_source"
-    if ground_truth.expected_output is None:
+    if not _has_expected_output(ground_truth.expected_output):
         return "missing_expected_output"
     if ground_truth.scoring_contract is not ScoringContract.EXACT_MATCH:
         return "unsupported_scoring_contract"
@@ -154,10 +154,13 @@ def build_tuning_row(
     if (
         ground_truth.source is not GroundTruthSource.ORACLE_COMPUTED
         or ground_truth.scoring_contract is not ScoringContract.EXACT_MATCH
-        or ground_truth.expected_output is None
+        or not _has_expected_output(ground_truth.expected_output)
     ):
         raise ValueError("Cannot persist a scenario that lacks admissible evidence.")
     try:
+        persisted_input = cast(
+            dict[str, Any], json.loads(canonical_json_bytes(dict(inputs)))
+        )
         expected_output = json.loads(canonical_json_bytes(ground_truth.expected_output))
     except ValueError as exc:
         raise ValueError("Cannot persist a non-JSON expected output.") from exc
@@ -173,9 +176,9 @@ def build_tuning_row(
         "split": "tune",
     }
     unsigned_row: dict[str, Any] = {
-        "input": dict(inputs),
+        "input": persisted_input,
         "expected_output": expected_output,
-        "example_id": f"coldstart_{input_digest(inputs)[:24]}",
+        "example_id": f"coldstart_{input_digest(persisted_input)[:24]}",
         "traigent_coldstart": provenance,
     }
     provenance["row_digest"] = sha256_bytes(canonical_json_bytes(unsigned_row))
@@ -190,7 +193,7 @@ def _row_payload_parts(
     if not isinstance(inputs, Mapping) or not inputs:
         return None, "missing_or_empty_input"
     expected_output = row.get("expected_output")
-    if expected_output is None:
+    if not _has_expected_output(expected_output):
         return None, "missing_expected_output"
     example_id = row.get("example_id")
     if not isinstance(example_id, str) or not example_id:

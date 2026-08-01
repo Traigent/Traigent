@@ -71,6 +71,16 @@ class _InputsOnlyGenerator:
         return [ScenarioCandidate("candidate-1", self._inputs)]
 
 
+class _TwoInputsGenerator:
+    technique_id = "test.two_inputs.v1"
+
+    def propose(self, system, count: int, seed: int):  # noqa: ANN001
+        return [
+            ScenarioCandidate("candidate-1", {"number": 3}),
+            ScenarioCandidate("candidate-2", {"number": 4}),
+        ]
+
+
 class _ModelGoldGenerator:
     technique_id = "test.model_gold.v1"
 
@@ -333,6 +343,35 @@ def test_oracle_failure_still_counts_the_oracle_call_in_the_budget(
     assert budget.consumed_examples == 2
 
 
+@pytest.mark.parametrize("empty_gold", ["", " \t\n "])
+def test_blank_oracle_gold_is_no_gold_and_charges_actual_oracle_calls(
+    tmp_path, monkeypatch, empty_gold: str
+) -> None:
+    calls = 0
+
+    def oracle(inputs):  # noqa: ANN001
+        nonlocal calls
+        calls += 1
+        return empty_gold
+
+    budget = ExecutionBudget(max_examples=10)
+    result = generate_eval_set(
+        func=_target_must_not_run,
+        repo_root=REPO_ROOT,
+        oracle=CallableOracle(oracle),
+        generator=_TwoInputsGenerator(),
+        options=_OPTIONS,
+        output_dir=_output_dir(tmp_path, monkeypatch),
+        budget=budget,
+    )
+
+    assert result.outcome is ColdStartOutcome.DISCOVERY_ONLY
+    assert result.tuning_path is None
+    assert result.gaps == (DiscoveryGap.NO_GOLD_DERIVABLE,)
+    assert calls == 2
+    assert budget.consumed_examples == 4
+
+
 def test_audit_and_manifest_do_not_export_candidate_content(
     tmp_path, monkeypatch
 ) -> None:
@@ -388,6 +427,37 @@ def test_integrity_rejects_manifest_row_provenance_mismatch(
     row = json.loads(result.tuning_path.read_text(encoding="utf-8"))
     provenance = row["traigent_coldstart"]
     provenance["oracle_id"] = "forged.oracle.v1"
+    unsigned_row = dict(row)
+    unsigned_provenance = dict(provenance)
+    unsigned_provenance.pop("row_digest")
+    unsigned_row["traigent_coldstart"] = unsigned_provenance
+    provenance["row_digest"] = sha256_bytes(canonical_json_bytes(unsigned_row))
+    payload = canonical_json_bytes(row) + b"\n"
+    result.tuning_path.write_bytes(payload)
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    manifest["dataset_sha256"] = sha256_bytes(payload)
+    result.manifest_path.write_bytes(canonical_json_bytes(manifest) + b"\n")
+
+    with pytest.raises(ColdStartConfigurationError, match="construction-evidence"):
+        assert_optimizer_eligible(result.tuning_path)
+
+
+@pytest.mark.parametrize("empty_gold", ["", " \t\n "])
+def test_integrity_rejects_recomputed_empty_gold_row(
+    tmp_path, monkeypatch, empty_gold: str
+) -> None:
+    result = generate_eval_set(
+        func=_target_must_not_run,
+        repo_root=REPO_ROOT,
+        oracle=CallableOracle(_square_oracle),
+        generator=_InputsOnlyGenerator({"number": 3}),
+        options=_OPTIONS,
+        output_dir=_output_dir(tmp_path, monkeypatch),
+    )
+    assert result.tuning_path is not None
+    row = json.loads(result.tuning_path.read_text(encoding="utf-8"))
+    row["expected_output"] = empty_gold
+    provenance = row["traigent_coldstart"]
     unsigned_row = dict(row)
     unsigned_provenance = dict(provenance)
     unsigned_provenance.pop("row_digest")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from os import stat_result
 from pathlib import Path
 
 import pytest
@@ -104,6 +105,62 @@ def test_skips_excluded_and_unsafe_non_source_files(
     ]
     assert spec.inspection_truncated
     assert spec.skipped_file_count == 2
+
+
+def test_skips_oversized_non_source_file_before_reading_its_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "customer.py"
+    source.write_text("def answer(question: str) -> str:\n    return question\n")
+    (tmp_path / "ordinary.py").write_text("VALUE = 'kept'\n")
+    oversized = tmp_path / "oversized.py"
+    oversized.write_text("VALUE = 'stat-only'\n")
+    _point_at(source, monkeypatch)
+
+    original_stat = Path.stat
+    original_read_bytes = Path.read_bytes
+    read_paths: list[Path] = []
+
+    def stat_with_oversized_file(path: Path, *, follow_symlinks: bool = True):
+        result = original_stat(path, follow_symlinks=follow_symlinks)
+        if path == oversized:
+            return stat_result(
+                (
+                    result.st_mode,
+                    result.st_ino,
+                    result.st_dev,
+                    result.st_nlink,
+                    result.st_uid,
+                    result.st_gid,
+                    129,
+                    result.st_atime,
+                    result.st_mtime,
+                    result.st_ctime,
+                )
+            )
+        return result
+
+    def spy_read_bytes(path: Path) -> bytes:
+        read_paths.append(path)
+        if path == oversized:
+            raise AssertionError("oversized non-source file must not be read")
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "stat", stat_with_oversized_file)
+    monkeypatch.setattr(Path, "read_bytes", spy_read_bytes)
+
+    spec = extract_system_spec(
+        _SourcePointer(),
+        repo_root=tmp_path,
+        options=ColdStartOptions(max_files=3, max_file_bytes=128),
+    )
+
+    assert [file.path for file in spec.files] == [
+        Path("customer.py"),
+        Path("ordinary.py"),
+    ]
+    assert spec.skipped_file_count == 1
+    assert oversized not in read_paths
 
 
 @pytest.mark.parametrize(

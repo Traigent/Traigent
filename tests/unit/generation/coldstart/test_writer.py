@@ -106,3 +106,18 @@ def test_writer_refuses_symlink_target(tmp_path) -> None:
             audit_rows=[{"artifact": "coldstart_audit"}],
             manifest=_manifest(row),
         )
+
+
+@pytest.mark.parametrize("expected_output", [None, "", " \t\n "])
+def test_writer_refuses_absent_or_blank_expected_output(
+    tmp_path, expected_output: object
+) -> None:
+    row = _tuning_row()
+    row["expected_output"] = expected_output
+    with pytest.raises(ColdStartArtifactError, match="non-empty expected_output"):
+        write_coldstart_artifacts(
+            output_dir=tmp_path,
+            tuning_rows=[row],
+            audit_rows=[{"artifact": "coldstart_audit"}],
+            manifest=_manifest(row),
+        )

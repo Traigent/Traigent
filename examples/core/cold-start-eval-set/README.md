@@ -46,8 +46,11 @@ produces `UNTYPED_INPUT_CONTRACT`; a variadic, zero-input, or otherwise
 unsupported signature produces `UNSUPPORTED_INPUT_CONTRACT`. None produces a
 partial tuning dataset.
 
-The example uses the default `accuracy` scorer, which is exact-match. Its
-generated rows are tuning-only and are not holdout evidence. No cloud
-credential or model call is needed. In a real project, replace the local
-deterministic oracle with a separately maintained, deterministic source of
-ground truth; do not wrap the target callable as its own oracle.
+The example uses the default `accuracy` scorer behind
+`ScoringContract.EXACT_MATCH`. This is the SDK accuracy comparator, not
+byte-for-byte equality: it trims and lowercases strings and applies the SDK's
+small existing float tolerance. Its generated rows are tuning-only and are not
+holdout evidence. No cloud credential or model call is needed. In a real
+project, replace the local deterministic oracle with a separately maintained,
+deterministic source of ground truth; do not wrap the target callable as its
+own oracle.

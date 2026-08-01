@@ -6,6 +6,7 @@ import ast
 import hashlib
 import inspect
 import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -179,14 +180,15 @@ def _allowlisted_files(
                 skipped_file_count += 1
                 continue
             path.resolve().relative_to(repo_root)
-            if not path.is_file():
+            file_stat = path.stat()
+            if not stat.S_ISREG(file_stat.st_mode):
+                skipped_file_count += 1
+                continue
+            if file_stat.st_size > options.max_file_bytes:
                 skipped_file_count += 1
                 continue
             payload = path.read_bytes()
         except (OSError, ValueError):
-            skipped_file_count += 1
-            continue
-        if len(payload) > options.max_file_bytes:
             skipped_file_count += 1
             continue
         files.append(

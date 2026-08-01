@@ -102,6 +102,11 @@ synthesis path in v1. `ContractGroundedGenerator` is the built-in zero-seed
 input proposer: it can propose only from the inspected scalar parameter
 contract, and the supplied oracle must independently ground each proposal.
 
+`ScoringContract.EXACT_MATCH` binds these rows to the SDK's existing `accuracy`
+comparison path. It is a scoring-contract name, not byte-for-byte equality:
+string outputs are trimmed and compared case-insensitively, while floating
+outputs use the SDK's small existing relative and absolute tolerances.
+
 ## Artifacts and integrity
 
 Eligible output contains these fixed files:
@@ -138,7 +143,9 @@ support a holdout or generalization claim. The default `accuracy` scorer is
 exact-match, which is the only cold-start scoring contract in v1.
 
 Pass an `ExecutionBudget` to `generate_eval_set` when construction shares an
-execution budget with later work. Calls to injected generators/oracles have no
-portable cost receipt, so their cost is recorded with
-`ExecutionBudget.record_external(cost_usd=None, ...)`: cost tracking remains
-unknown/incomplete rather than being reported as `$0`.
+execution budget with later work. Proposal generation and oracle grounding are
+separate external units: each proposal is counted once for generation and once
+for its oracle-grounding attempt. Neither injected seam has a portable cost
+receipt, so both are recorded with
+`ExecutionBudget.record_external(cost_usd=None, ...)`; their cost remains
+untracked/incomplete rather than being reported as `$0`.
