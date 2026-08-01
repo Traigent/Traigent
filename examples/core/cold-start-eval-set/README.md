@@ -53,4 +53,7 @@ small existing float tolerance. Its generated rows are tuning-only and are not
 holdout evidence. No cloud credential or model call is needed. In a real
 project, replace the local deterministic oracle with a separately maintained,
 deterministic source of ground truth; do not wrap the target callable as its
-own oracle.
+own oracle. As written, the built-in generator and local `CallableOracle`
+perform no network I/O. Custom generator/oracle code is caller-supplied and can
+use the network, so privacy-sensitive deployments must keep and audit those
+implementations locally.

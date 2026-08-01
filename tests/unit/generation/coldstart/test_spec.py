@@ -203,6 +203,38 @@ def test_bounded_read_skips_non_source_file_that_grows_after_stat(
     assert requested_sizes == [129]
 
 
+def test_bounded_read_rejects_source_file_that_grows_after_stat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "customer.py"
+    source.write_text("def answer(question: str) -> str:\n    return question\n")
+    _point_at(source, monkeypatch)
+
+    original_open = Path.open
+    requested_sizes: list[int] = []
+
+    class _GrowingSource(BytesIO):
+        def read(self, size: int = -1) -> bytes:
+            requested_sizes.append(size)
+            return super().read(size)
+
+    def open_with_growth(path: Path, mode: str = "r", *args, **kwargs):
+        if path == source and mode == "rb":
+            return _GrowingSource(b"x" * 129)
+        return original_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", open_with_growth)
+
+    with pytest.raises(ColdStartConfigurationError, match="exceeds max_file_bytes"):
+        extract_system_spec(
+            _SourcePointer(),
+            repo_root=tmp_path,
+            options=ColdStartOptions(max_file_bytes=128),
+        )
+
+    assert requested_sizes == [129]
+
+
 @pytest.mark.parametrize(
     "source_text, message, expected_gap",
     [
@@ -277,14 +309,14 @@ def test_source_configuration_failures_remain_configuration_errors(
         extract_system_spec(_SourcePointer(), repo_root=tmp_path)
 
     _point_at(source, monkeypatch)
-    original_read_bytes = Path.read_bytes
+    original_open = Path.open
 
-    def reject_source(path: Path) -> bytes:
-        if path == source:
+    def reject_source(path: Path, mode: str = "r", *args, **kwargs):
+        if path == source and mode == "rb":
             raise OSError("permission denied")
-        return original_read_bytes(path)
+        return original_open(path, mode, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "read_bytes", reject_source)
+    monkeypatch.setattr(Path, "open", reject_source)
     with pytest.raises(ColdStartConfigurationError, match="could not read"):
         extract_system_spec(_SourcePointer(), repo_root=tmp_path)
 

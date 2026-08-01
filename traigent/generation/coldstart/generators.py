@@ -14,13 +14,13 @@ from .contracts import (
 def _value_for_annotation(annotation: str, *, seed: int, index: int, name: str) -> Any:
     """Return a deterministic, conservative sample for a supported input type."""
     normalized = annotation.replace("typing.", "").replace(" ", "").lower()
-    if normalized in {"str", "optional[str]", "str | none", "none | str"}:
+    if normalized in {"str", "optional[str]", "str|none", "none|str"}:
         return f"coldstart-{name}-{seed}-{index}"
-    if normalized in {"int", "optional[int]", "int | none", "none | int"}:
+    if normalized in {"int", "optional[int]", "int|none", "none|int"}:
         return seed + index
-    if normalized in {"float", "optional[float]", "float | none", "none | float"}:
+    if normalized in {"float", "optional[float]", "float|none", "none|float"}:
         return float(seed + index)
-    if normalized in {"bool", "optional[bool]", "bool | none", "none | bool"}:
+    if normalized in {"bool", "optional[bool]", "bool|none", "none|bool"}:
         return bool((seed + index) % 2)
     return None
 

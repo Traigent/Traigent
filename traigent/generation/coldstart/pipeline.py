@@ -43,6 +43,7 @@ from .contracts import (
 from .evidence import (
     MAX_INPUT_BYTES,
     EvidenceAdmission,
+    _screen_candidate_inputs,
     admit_candidate,
     build_audit_row,
     build_tuning_row,
@@ -383,6 +384,24 @@ def _record_oracle_quarantine(
     )
 
 
+def _record_input_quarantine(
+    *,
+    candidate: ScenarioCandidate,
+    admission: EvidenceAdmission,
+    audit_rows: list[dict[str, Any]],
+    counts: Counter[CandidateState],
+) -> None:
+    """Record a proposal rejected by concrete screening before oracle use."""
+    audit = build_audit_row(
+        candidate=candidate,
+        admission=admission,
+        schema_version=COLDSTART_SCHEMA_VERSION,
+    )
+    audit["quarantine_reason"] = _quarantine_reason(admission.quarantine_reason).value
+    audit_rows.append(audit)
+    counts[CandidateState.QUARANTINED] += 1
+
+
 def _oracle_truth_or_quarantine_reason(
     candidate: ScenarioCandidate, oracle: Oracle
 ) -> tuple[GroundTruth | None, QuarantineReason | None, int]:
@@ -410,12 +429,29 @@ def _ground_candidate(
     generator: ScenarioGenerator,
     options: ColdStartOptions,
     system: SystemSpec,
-    seen_inputs: set[str],
+    seen_proposal_inputs: set[str],
+    seen_admitted_inputs: set[str],
     audit_rows: list[dict[str, Any]],
     counts: Counter[CandidateState],
 ) -> tuple[dict[str, Any] | None, bool, int]:
     """Oracle-ground one proposal and return an eligible row when admissible."""
     counts[CandidateState.PROPOSED] += 1
+    _, input_admission = _screen_candidate_inputs(
+        candidate,
+        seen_input_digests=seen_proposal_inputs,
+        max_input_bytes=MAX_INPUT_BYTES,
+    )
+    assert input_admission is not None
+    if not input_admission.admitted:
+        _record_input_quarantine(
+            candidate=candidate,
+            admission=input_admission,
+            audit_rows=audit_rows,
+            counts=counts,
+        )
+        return None, True, 0
+    seen_proposal_inputs.add(input_admission.input_digest)
+
     oracle_truth, quarantine_reason, oracle_call_count = (
         _oracle_truth_or_quarantine_reason(candidate, oracle)
     )
@@ -437,7 +473,7 @@ def _ground_candidate(
     counts[CandidateState.GROUNDED] += 1
     admission = admit_candidate(
         grounded,
-        seen_input_digests=seen_inputs,
+        seen_input_digests=seen_admitted_inputs,
         max_input_bytes=MAX_INPUT_BYTES,
     )
     audit = build_audit_row(
@@ -483,30 +519,32 @@ def _ground_proposals(
     counts: Counter[CandidateState],
 ) -> tuple[list[dict[str, Any]], int, int]:
     """Ground every valid proposal and report actual oracle invocation count."""
-    seen_inputs: set[str] = set()
+    seen_proposal_inputs: set[str] = set()
+    seen_admitted_inputs: set[str] = set()
     eligible_rows: list[dict[str, Any]] = []
-    independently_grounded = 0
+    non_gold_blockers = 0
     oracle_call_count = 0
     for candidate in proposed:
         if not isinstance(candidate, ScenarioCandidate):
             raise ColdStartConfigurationError(
                 "generator.propose must return ScenarioCandidate values."
             )
-        row, grounded, candidate_oracle_calls = _ground_candidate(
+        row, has_non_gold_blocker, candidate_oracle_calls = _ground_candidate(
             candidate=candidate,
             oracle=oracle,
             generator=generator,
             options=options,
             system=system,
-            seen_inputs=seen_inputs,
+            seen_proposal_inputs=seen_proposal_inputs,
+            seen_admitted_inputs=seen_admitted_inputs,
             audit_rows=audit_rows,
             counts=counts,
         )
-        independently_grounded += int(grounded)
+        non_gold_blockers += int(has_non_gold_blocker)
         oracle_call_count += candidate_oracle_calls
         if row is not None:
             eligible_rows.append(row)
-    return eligible_rows, independently_grounded, oracle_call_count
+    return eligible_rows, non_gold_blockers, oracle_call_count
 
 
 def _evaluation_dataset(
@@ -602,7 +640,7 @@ def generate_eval_set(
     if discovery_result is not None:
         return discovery_result
 
-    eligible_rows, independently_grounded, oracle_call_count = _ground_proposals(
+    eligible_rows, non_gold_blockers, oracle_call_count = _ground_proposals(
         proposed=proposed,
         oracle=selected_oracle,
         generator=selected_generator,
@@ -617,7 +655,7 @@ def generate_eval_set(
     if not eligible_rows:
         gap = (
             DiscoveryGap.NO_GOLD_DERIVABLE
-            if independently_grounded == 0
+            if non_gold_blockers == 0
             else DiscoveryGap.NO_ELIGIBLE_ROWS
         )
         return _discovery_only(

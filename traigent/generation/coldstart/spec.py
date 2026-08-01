@@ -134,11 +134,17 @@ def _source_bytes(source_path: Path, options: ColdStartOptions) -> bytes:
             "The callable source file exceeds max_file_bytes."
         )
     try:
-        return source_path.read_bytes()
+        with source_path.open("rb") as source_handle:
+            payload = source_handle.read(options.max_file_bytes + 1)
     except OSError as exc:
         raise ColdStartConfigurationError(
             "Static inspection could not read the callable source file."
         ) from exc
+    if len(payload) > options.max_file_bytes:
+        raise ColdStartConfigurationError(
+            "The callable source file exceeds max_file_bytes."
+        )
+    return payload
 
 
 def _allowlisted_files(

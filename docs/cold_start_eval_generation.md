@@ -68,9 +68,10 @@ repository. It prunes `.git`, virtual environments and `site-packages`,
 and never imports or executes repository code. The callable's source is always
 selected first. Remaining eligible files are selected in deterministic path
 order up to `max_files`; oversized or unreadable non-source files are skipped.
-Each non-source read is bounded to `max_file_bytes + 1` after its size check,
-so a file that grows between those operations is still skipped rather than
-being read without a cap.
+Every file read, including the callable source, is bounded to
+`max_file_bytes + 1` after its size check. A non-source file that grows between
+those operations is skipped; growth beyond the cap in the required callable
+source fails static inspection. Neither path performs an unbounded read.
 
 This bounded selection is deliberately not fatal. `SystemSpec` reports
 `inspection_truncated` and `skipped_file_count` whenever matching files were
@@ -106,6 +107,12 @@ There is no admission override, no model-label adapter, and no seed-requiring
 synthesis path in v1. `ContractGroundedGenerator` is the built-in zero-seed
 input proposer: it can propose only from the inspected scalar parameter
 contract, and the supplied oracle must independently ground each proposal.
+
+The built-in generator and local `CallableOracle` example above perform no
+network I/O. Custom `ScenarioGenerator` and `Oracle` implementations (including
+the callable wrapped by `CallableOracle`) are caller-supplied Python code; the
+SDK cannot prevent that code from using the network. Privacy-sensitive users
+must keep those implementations local and audit them before use.
 
 `ScoringContract.EXACT_MATCH` binds these rows to the SDK's existing `accuracy`
 comparison path. It is a scoring-contract name, not byte-for-byte equality:
