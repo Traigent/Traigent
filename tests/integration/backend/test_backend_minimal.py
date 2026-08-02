@@ -33,6 +33,22 @@ def _resolve_backend_url() -> str | None:
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.skip(
+    reason=(
+        "Traigent#2081: this smoke builds its payload with create_local_experiment(), "
+        "whose ExperimentDTO carries deliberate Edge-Analytics privacy placeholders "
+        "(agent_id='local-agent-001', evaluation_set_id='local-evalset-001', ...). "
+        "Posting that to a live backend gets 404 'Agent with ID local-agent-001 not "
+        "found' — correctly, because Edge Analytics never sends these DTOs to a "
+        "backend at all (traigent_client.py: 'everything runs locally without "
+        "backend'). The SDK defaults are right; the TEST is wrong, and making it real "
+        "means creating an agent/evalset first — a test-design change, not a quick fix. "
+        "Skipped rather than left red so the two suites that DO exercise the "
+        "SDK<->backend contract (test_sync_live_contract.py, test_hybrid_session_live.py, "
+        "both passing) keep guarding main. It never produced signal: the live-contract "
+        "lane had never executed, so this test had never run."
+    )
+)
 @pytest.mark.skipif(
     not os.getenv("TRAIGENT_BACKEND_LIVE"),
     reason=(
