@@ -3,6 +3,20 @@ name: Protected Target Authorization
 # This workflow deliberately uses pull_request_target and never checks out or
 # executes pull-request code. The workflow definition is read from the trusted
 # base branch, so a contributor cannot rewrite the gate in their own PR.
+#
+# Two principals may target a protected branch:
+#
+#   1. The Principal Engineer, unconditionally.
+#   2. Dependabot, ONLY for pull requests whose entire diff is dependency
+#      manifests. Everything else Dependabot can open -- notably the
+#      `github-actions` and `docker` ecosystems configured in
+#      .github/dependabot.yml -- still requires the Principal Engineer, because
+#      those pull requests edit CI definitions and image build inputs, which are
+#      exactly the surfaces this gate exists to protect.
+#
+# The Dependabot lane is fail-closed: every identity condition must hold AND
+# every changed path must match the allowlist. Any API error, any unrecognised
+# path, or a diff too large to enumerate denies the pull request.
 on:
   pull_request_target:
     branches: [develop, main]
@@ -11,27 +25,132 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   principal-target-authorization:
     name: principal-target-authorization
     runs-on: ubuntu-latest
     steps:
-      - name: Require Principal Engineer as protected-target author
+      - name: Authorize the author of this protected-target pull request
         env:
           EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+          PR_CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+          # github.actor is the account whose privileges the run carries. On a
+          # re-run it stays the original actor, so it cannot be swapped by
+          # re-running someone else's workflow. Do not substitute
+          # github.triggering_actor here.
+          TRIGGERING_ACTOR: ${{ github.actor }}
           PRINCIPAL_ENGINEER: nimrodbusany
+          DEPENDABOT: 'dependabot[bot]'
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # A merge-group commit is created only after the PR gate above passed.
-          # Its event has no pull-request author, so it must preserve the same
-          # required-check context for the merge queue.
+          set -euo pipefail
+
+          # A merge-group commit is created only after the PR-level required
+          # checks passed, and its event carries no pull-request author, so the
+          # context is reproduced here to keep the same required-check name.
+          #
+          # INVARIANT: this is sound only while `principal-target-authorization`
+          # remains a REQUIRED status check at the pull-request level. If it is
+          # ever dropped from the branch ruleset's required checks, this early
+          # exit becomes fail-open and must be revisited.
           if [ "$EVENT_NAME" = "merge_group" ]; then
+            echo "merge_group event: the pull-request-level gate already passed."
             exit 0
           fi
 
-          if [ "$PR_AUTHOR" != "$PRINCIPAL_ENGINEER" ]; then
-            echo "Protected branches accept pull requests only from the Principal Engineer."
-            echo "Author: $PR_AUTHOR"
-            exit 1
+          # ---- Lane 1: the Principal Engineer, unconditionally. ----
+          if [ "$PR_AUTHOR" = "$PRINCIPAL_ENGINEER" ]; then
+            echo "Authorized: pull request authored by the Principal Engineer."
+            exit 0
           fi
+
+          # ---- Lane 2: Dependabot, manifest-only. Fail closed. ----
+          deny() {
+            echo "::error::Protected-target authorization denied: $1"
+            echo "Protected branches accept pull requests from the Principal Engineer,"
+            echo "or from Dependabot when the diff is limited to dependency manifests."
+            echo "Author: $PR_AUTHOR (type ${PR_AUTHOR_TYPE:-unknown})"
+            exit 1
+          }
+
+          if [ "$PR_AUTHOR" != "$DEPENDABOT" ]; then
+            deny "author is neither the Principal Engineer nor Dependabot."
+          fi
+
+          # Identity must be corroborated, not taken from the login alone.
+          if [ "$PR_AUTHOR_TYPE" != "Bot" ]; then
+            deny "author claims to be Dependabot but the account type is '$PR_AUTHOR_TYPE', not 'Bot'."
+          fi
+
+          # A fork head would let an outside branch ride a Dependabot-authored
+          # pull request.
+          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            deny "head branch lives in '$HEAD_REPO', not in '$BASE_REPO'."
+          fi
+
+          # A repository writer can push commits onto a Dependabot branch while
+          # the pull-request author stays Dependabot. Requiring the acting
+          # identity closes that path: only Dependabot itself or the Principal
+          # Engineer may drive this lane.
+          if [ "$TRIGGERING_ACTOR" != "$DEPENDABOT" ] && [ "$TRIGGERING_ACTOR" != "$PRINCIPAL_ENGINEER" ]; then
+            deny "acting identity '$TRIGGERING_ACTOR' is neither Dependabot nor the Principal Engineer; the branch was advanced by another account."
+          fi
+
+          # The pull-request files API returns at most 3000 files. A diff beyond
+          # that cannot be fully enumerated, so it cannot be proven safe.
+          if [ -z "${PR_CHANGED_FILES:-}" ]; then
+            deny "changed-file count unavailable; cannot prove the diff is manifest-only."
+          fi
+          if [ "$PR_CHANGED_FILES" -gt 3000 ]; then
+            deny "diff spans $PR_CHANGED_FILES files, beyond the 3000-file API ceiling; cannot be enumerated."
+          fi
+
+          # Enumerate the diff over the API. No checkout: pull-request code is
+          # never fetched and never executed by this workflow.
+          if ! files="$(gh api --paginate "repos/$BASE_REPO/pulls/$PR_NUMBER/files" --jq '.[].filename')"; then
+            deny "could not list changed files; refusing to authorize without the diff."
+          fi
+
+          if [ -z "$files" ]; then
+            deny "the API reported no changed files; refusing to authorize an unverifiable diff."
+          fi
+
+          seen="$(printf '%s\n' "$files" | grep -c . || true)"
+          if [ "$seen" -ne "$PR_CHANGED_FILES" ]; then
+            deny "enumerated $seen files but the pull request reports $PR_CHANGED_FILES; the diff was not fully retrieved."
+          fi
+
+          # Allowlist: dependency manifests for the `pip` ecosystem only.
+          #
+          # Deliberately excluded, and therefore denied by omission:
+          #   .github/workflows/**, .github/actions/**  (github-actions ecosystem)
+          #   Dockerfile*                               (docker ecosystem)
+          #   setup.py, setup.cfg, Makefile, *.sh, scripts/**
+          # Those execute at build or install time, so a bumped pin there is a
+          # code-execution change, not a dependency change.
+          violations=0
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              pyproject.toml|uv.lock|requirements.txt) ;;
+              requirements/*.txt) ;;
+              constraints.txt|constraints-*.txt) ;;
+              *)
+                echo "::error file=$f::path is outside the Dependabot manifest allowlist"
+                violations=$((violations + 1))
+                ;;
+            esac
+          done <<< "$files"
+
+          if [ "$violations" -gt 0 ]; then
+            deny "$violations of $seen changed path(s) are outside the dependency-manifest allowlist. Dependabot pull requests that touch CI workflows, Dockerfiles, or build scripts require the Principal Engineer."
+          fi
+
+          echo "Authorized: Dependabot manifest-only pull request ($seen path(s) verified)."
