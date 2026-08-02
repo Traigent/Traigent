@@ -68,9 +68,10 @@ pytestmark = pytest.mark.skipif(
     reason=(
         "traigent_schema is not installed, so the economics contract cannot be "
         "validated. It is pinned to a private TraigentSchema git commit (see "
-        "pyproject.toml) and is not on PyPI, so it is not part of the 'dev' "
-        "extra and needs a token to install. CI installs it in the 'unit' job "
-        f"and sets {REQUIRE_SCHEMA_ENV}=1, which turns this skip into a hard "
+        "scripts/ci/schema-pin.txt) and is not on PyPI, so it is not part of "
+        "the 'dev' extra and needs a token to install. CI installs it in the "
+        f"'unit' job and sets {REQUIRE_SCHEMA_ENV}=1, which turns this skip "
+        "into a hard "
         "failure so a broken install step cannot pass silently."
     ),
 )
