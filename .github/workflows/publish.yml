@@ -129,7 +129,12 @@ jobs:
           echo "::error::economics contract tests cannot run. Refusing to publish on a partial test gate."
           exit 1
         fi
-        python - <<'PY' > /tmp/schema-req.txt
+        # The requirements file carries the token in its VCS URL, so it is
+        # created via mktemp and removed by a trap — `pip install` failing must
+        # not leave a token-bearing file behind for the rest of the job.
+        req_file="$(mktemp)"
+        trap 'rm -f "$req_file"' EXIT
+        python - <<'PY' > "$req_file"
         import os
         import tomllib
 
@@ -148,9 +153,8 @@ jobs:
         else:
             raise SystemExit("no traigent-schema requirement in [internal_schema]")
         PY
-        pip install -r /tmp/schema-req.txt
-        rm -f /tmp/schema-req.txt
-        # Fail here with one clear message rather than as ~30 opaque test errors.
+        pip install -r "$req_file"
+        # Fail here with one clear message rather than as ~80 opaque test errors.
         python -c "import traigent_schema; print('traigent_schema is importable')"
 
     - name: Run tests before publishing
@@ -158,6 +162,14 @@ jobs:
         TRAIGENT_MOCK_LLM: true
         TRAIGENT_OFFLINE_MODE: true
         PYTHONPATH: .
+        # The step above installs the pinned economics Schema, so a missing
+        # traigent_schema here means that install broke — not that a developer
+        # lacks a token. This turns the module-level skip in
+        # tests/unit/economics/test_schema.py into a hard failure, so a broken
+        # install can never downgrade the publish gate to a silent green.
+        # Mirrors pr-gate.yml; the name is defined once in
+        # tests/unit/economics/conftest.py as REQUIRE_SCHEMA_ENV.
+        TRAIGENT_REQUIRE_ECONOMICS_SCHEMA: "1"
       run: |
         pytest tests/unit/ -v --tb=short
 
