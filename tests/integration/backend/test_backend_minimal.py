@@ -49,6 +49,19 @@ async def test_backend_api():
             "Set TRAIGENT_API_URL (preferred) or TRAIGENT_BACKEND_URL for the live backend DTO smoke test"
         )
 
+    # This test posted to /experiments with NO credentials, so the backend
+    # (correctly) answered 401 AUTHENTICATION_REQUIRED. It went unnoticed because
+    # the live-contract lane never actually ran: LIVE_CONTRACT_CHECKOUT_TOKEN was
+    # unset, so every substantive step was skipped and the job reported success in
+    # 5-15s. The first real execution of that lane surfaced this immediately.
+    #
+    # Sibling live tests (test_hybrid_session_live.py) already take the key from
+    # the environment and skip without it; match that. Header name per
+    # traigent/cloud/auth.py: API-key auth emits X-API-Key, never Bearer.
+    api_key = os.getenv("TRAIGENT_API_KEY")
+    if not api_key:
+        pytest.skip("TRAIGENT_API_KEY must be set for the live backend DTO smoke test")
+
     # Create experiment DTO
     experiment_dto = create_local_experiment(
         experiment_id="test_exp_001",
@@ -65,8 +78,8 @@ async def test_backend_api():
     # Validate DTO (optional) - skip if traigent_schemas not installed
     # The validate() method requires traigent_schemas package
     # In strict mode (default), it raises DTOSerializationError when unavailable
-    import os
-
+    # (`os` is imported at module scope; a redundant local `import os` here made
+    # the name function-local, so any earlier os.* use raised UnboundLocalError.)
     os.environ.setdefault("TRAIGENT_STRICT_VALIDATION", "false")
     if hasattr(experiment_dto, "validate"):
         try:
@@ -78,7 +91,9 @@ async def test_backend_api():
     # Convert to dict for API
     experiment_data = experiment_dto.to_dict()
 
-    async with aiohttp.ClientSession() as session:
+    # Default headers on the session, so every request in this smoke test is
+    # authenticated rather than only the first one someone remembers to fix.
+    async with aiohttp.ClientSession(headers={"X-API-Key": api_key}) as session:
         # 1. Create experiment
         print("\n1. Creating experiment...")
         url = f"{backend_url}/experiments"
