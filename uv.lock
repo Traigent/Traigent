@@ -6018,7 +6018,7 @@ wheels = [
 
 [[package]]
 name = "traigent"
-version = "0.25.0"
+version = "0.26.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -6217,9 +6217,6 @@ integrations = [
     { name = "rank-bm25" },
     { name = "wandb" },
 ]
-internal-schema = [
-    { name = "traigent-schema" },
-]
 mcp = [
     { name = "mcp" },
 ]
@@ -6387,24 +6384,13 @@ requires-dist = [
     { name = "traigent", extras = ["bayesian", "analytics"], marker = "extra == 'ml'" },
     { name = "traigent", extras = ["integrations", "analytics", "bayesian", "visualization", "hybrid", "pydanticai"], marker = "extra == 'recommended'" },
     { name = "traigent", extras = ["security"], marker = "extra == 'cloud'" },
-    { name = "traigent-schema", marker = "extra == 'internal-schema'", git = "https://github.com/Traigent/TraigentSchema.git?rev=01f3e2a2bbc1ca7d1b1cc8dde94f82d73dbe822a" },
     { name = "types-bleach", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31.0" },
     { name = "uvicorn", marker = "extra == 'security'", specifier = ">=0.18.0" },
     { name = "wandb", marker = "extra == 'integrations'", specifier = ">=0.15.0" },
 ]
-provides-extras = ["analytics", "bayesian", "integrations", "chroma", "dspy", "pydanticai", "security", "visualization", "hybrid", "mcp", "internal-schema", "test", "tracing", "dev", "docs", "ml", "deepeval", "cloud", "recommended", "all", "enterprise"]
-
-[[package]]
-name = "traigent-schema"
-version = "5.0.0"
-source = { git = "https://github.com/Traigent/TraigentSchema.git?rev=01f3e2a2bbc1ca7d1b1cc8dde94f82d73dbe822a#01f3e2a2bbc1ca7d1b1cc8dde94f82d73dbe822a" }
-dependencies = [
-    { name = "jsonschema" },
-    { name = "pyyaml" },
-    { name = "referencing" },
-]
+provides-extras = ["analytics", "bayesian", "integrations", "chroma", "dspy", "pydanticai", "security", "visualization", "hybrid", "mcp", "test", "tracing", "dev", "docs", "ml", "deepeval", "cloud", "recommended", "all", "enterprise"]
 
 [[package]]
 name = "typeguard"
