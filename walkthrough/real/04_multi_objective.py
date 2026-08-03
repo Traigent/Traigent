@@ -59,7 +59,7 @@ CONFIG_SPACE = {
         "gpt-4o-mini",
         "gpt-4o",
     ],
-    "prompt": ["v1", "v2"],
+    "prompt": ["minimal", "role_based"],
     "temperature": [0.0, 0.3],
     "instructions": ["CoT", "direct"],
 }
@@ -94,12 +94,11 @@ def ai_agent_classify_text_sentiment(text: str) -> str:
     )
 
     instructions = config.get("instructions", "direct")
-    prompt_ver = config.get("prompt", "v1")
+    prompt_ver = config.get("prompt", "minimal")
 
-    # v1: minimal, v2: explicit role
-    if prompt_ver == "v2":
+    if prompt_ver == "role_based":
         base = f"You are a sentiment classifier.\nText: {text}\nLabel:"
-    else:  # v1
+    else:  # minimal
         base = f"Classify sentiment:\nText: {text}\nLabel:"
 
     if instructions == "CoT":

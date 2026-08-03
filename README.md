@@ -108,6 +108,11 @@ def your_function(question: str) -> str:
         messages=[{"role": "user", "content": question}],
     )
     return response.choices[0].message.content
+
+
+# Run it — this executes the trials and returns the winner
+result = your_function.optimize_sync(max_trials=10)
+print(result.best_config, result.best_score)
 ```
 
 Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Anthropic](https://docs.anthropic.com), [LiteLLM](https://github.com/BerriAI/litellm) (100+ providers), or plain HTTP calls.
