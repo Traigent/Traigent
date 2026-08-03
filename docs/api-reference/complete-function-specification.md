@@ -51,9 +51,6 @@ def optimize(
     best_config_cache_ttl_seconds: int = 24 * 60 * 60,
     best_config_stale_ok_ttl_seconds: int | None = None,
     enable_auto_load_dev_logs: bool | None = None,
-    # Guided generation
-    prompt_rewrite: dict[str, Any] | None = None,
-    grow_dataset: dict[str, Any] | None = None,
     # Legacy compatibility
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
@@ -79,7 +76,6 @@ function returns Traigent's optimized wrapper.
 | `effectuation` | `bool` | `False` | Enables effectuation tracking for tuned-variable observations. |
 | `agents`, `agent_prefixes`, `agent_measures`, `global_measures` | See signature | `None` | Multi-agent measurement configuration. |
 | Config persistence fields | See signature | See signature | `auto_load_best`, `load_from`, `config_id`, `best_config_*`, and cache TTL controls for persisted best configurations. |
-| Guided-generation fields | `dict[str, Any] \| None` | `None` | `prompt_rewrite` and `grow_dataset` configure guided generation; run it with `.optimize_with_guidance(provider)`. |
 
 **SE-friendly tuned variables (first-class)**
 

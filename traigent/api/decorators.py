@@ -66,7 +66,6 @@ from pydantic import (
 from traigent.api.functions import _GLOBAL_CONFIG
 from traigent.api.parameter_ranges import (
     ParameterRange,
-    TextDocument,
     is_inline_param_definition,
     normalize_configuration_space,
 )
@@ -2080,9 +2079,6 @@ def _normalize_config_space_and_defaults(
         normalized_space, param_defaults = normalize_configuration_space(
             configuration_space, inline_params
         )
-        _restore_text_document_markers(
-            normalized_space, configuration_space, inline_params
-        )
         if param_defaults:
             default_config = {**param_defaults, **(default_config or {})}
 
@@ -2142,21 +2138,6 @@ def _validate_constraint_satisfiability(
     if result.status == SatStatus.UNSAT:
         detail = result.message or "no valid configuration satisfies all constraints"
         raise ValueError(f"constraints are unsatisfiable: {detail}")
-
-
-def _restore_text_document_markers(
-    normalized_space: dict[str, Any],
-    raw_configuration_space: dict[str, Any] | ConfigSpace | None,
-    inline_params: dict[str, Any],
-) -> None:
-    """Keep train_skill auto-discovery markers after decorator normalization."""
-
-    for source in _iter_constraint_scope_sources(
-        raw_configuration_space, inline_params
-    ):
-        for name, value in source.items():
-            if isinstance(value, TextDocument):
-                normalized_space[name] = value
 
 
 def _resolve_auto_detect_tvars_mode(
@@ -2407,10 +2388,6 @@ def optimize(  # NOSONAR(S107)
     best_config_cache_ttl_seconds: int = 24 * 60 * 60,
     best_config_stale_ok_ttl_seconds: int | None = None,
     enable_auto_load_dev_logs: bool | None = None,
-    # Guided generation: configure here, then run via fn.optimize_with_guidance(provider)
-    prompt_rewrite: dict[str, Any] | None = None,
-    grow_dataset: dict[str, Any] | None = None,
-    skill_train: dict[str, Any] | None = None,
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
 ) -> Callable[
@@ -3294,10 +3271,6 @@ def optimize(  # NOSONAR(S107)
             run_description=run_description_value,
             # Warm-start: seed this run from a prior experiment's learned configs.
             warm_start_from=warm_start_from_value,
-            # Guided-generation defaults (consumed by optimize_with_guidance)
-            prompt_rewrite=prompt_rewrite,
-            grow_dataset=grow_dataset,
-            skill_train=skill_train,
             **combined_runtime_overrides,
         )
         optimized_func.execution_policy = execution_policy
