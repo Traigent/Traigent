@@ -17,8 +17,6 @@ __all__ = [
     "override_config",
     "set_strategy",
     "get_available_strategies",
-    "list_recommendation_agent_types",
-    "recommend_configuration_space",
     "get_version_info",
     "OptimizationResult",
     "PresetSelection",
@@ -64,14 +62,6 @@ _EXPORT_MAP = {
     "override_config": ("traigent.api.functions", "override_config"),
     "set_strategy": ("traigent.api.functions", "set_strategy"),
     "get_available_strategies": ("traigent.api.functions", "get_available_strategies"),
-    "list_recommendation_agent_types": (
-        "traigent.api.functions",
-        "list_recommendation_agent_types",
-    ),
-    "recommend_configuration_space": (
-        "traigent.api.functions",
-        "recommend_configuration_space",
-    ),
     "get_version_info": ("traigent.api.functions", "get_version_info"),
     "OptimizationResult": ("traigent.api.types", "OptimizationResult"),
     "PresetSelection": ("traigent.api.types", "PresetSelection"),

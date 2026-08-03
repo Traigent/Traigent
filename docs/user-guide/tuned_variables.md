@@ -4,10 +4,7 @@ This guide covers Traigent's tuned variables system, which provides domain-aware
 
 ## Overview
 
-Tuned variables in Traigent consist of two components:
-
-1. **Core SDK** (`traigent.tuned_variables`): Callable auto-discovery from source code
-2. **Recommendation catalog**: `traigent recommend` plus `recommend_configuration_space()` and `list_recommendation_agent_types()` for evidence-backed configuration-space suggestions
+Tuned variables in Traigent provide callable auto-discovery from source code.
 
 ## Installation
 
@@ -155,36 +152,7 @@ compatible = filter_by_signature(all_funcs, target_sig, strict=False)
 
 ---
 
-## Part 2: Recommendation Catalog
-
-Traigent 0.12.0 exposes configuration-space recommendations through the core SDK and CLI. There is no separate `traigent-tuned-variables` package to install for this path.
-
-### CLI
-
-```bash
-traigent recommend --list-types
-traigent recommend rag
-traigent recommend code_gen --min-impact medium
-```
-
-The recommendations are advisory catalog entries. They include task-local evidence notes and suggested ranges, but they are not a statistical certificate for your dataset. Validate returned knobs on your own evaluation dataset.
-
-### Python API
-
-```python
-from traigent import (
-    list_recommendation_agent_types,
-    recommend_configuration_space,
-)
-
-agent_types = list_recommendation_agent_types()
-recommendations = recommend_configuration_space("rag", min_impact="medium")
-configuration_space = recommendations["configuration_space"]
-```
-
-You can pass the returned `configuration_space` into `@traigent.optimize(...)` after reviewing it for your task and provider constraints.
-
-### Provider Override Variables
+## Part 2: Provider Override Variables
 
 SDK provider override variables such as `TRAIGENT_MODELS_OPENAI_FAST`, `TRAIGENT_MODELS_OPENAI_BALANCED`, and `TRAIGENT_MODELS_ANTHROPIC_QUALITY` are available when using integration/provider presets. They are not tied to a separate tuned-variables plugin.
 
@@ -464,16 +432,6 @@ class TunedVariableCandidate:
 | `CandidateType` | Enum: `NUMERIC_CONTINUOUS`, `NUMERIC_INTEGER`, `CATEGORICAL`, `BOOLEAN` |
 | `SourceLocation` | Frozen dataclass: line/col position in source |
 | `SuggestedRange` | Frozen dataclass with `range_type` and `kwargs`; `.to_parameter_range_code()` |
-
-### Recommendation APIs
-
-| Symbol | Description |
-| ------ | ----------- |
-| `traigent recommend` | CLI for listing agent types and showing recommendation catalog entries |
-| `list_recommendation_agent_types()` | Return valid agent/task types for recommendation queries |
-| `recommend_configuration_space(agent_type, *, min_impact=None, min_confidence=None)` | Return advisory configuration-space recommendations for an agent/task type |
-
----
 
 ### CLI: detect-tvars
 

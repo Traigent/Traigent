@@ -114,7 +114,6 @@ traigent quickstart                             # Packaged mock-mode demo
 traigent onboard                                # Guided project setup
 traigent auth device-login                      # Browser device login
 traigent first-prompt --agent codex             # Coding-agent prompt
-traigent recommend rag                          # Configuration recommendations
 traigent mcp serve                              # Local stdio MCP server
 traigent optimize examples/core/rag-optimization/run.py -n 5
 traigent validate examples/datasets/rag-optimization/evaluation_set.jsonl
