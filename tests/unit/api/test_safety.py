@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from traigent.api.safety import (
+    DEFAULT_SAFETY_CONFIDENCE,
     CompoundSafetyConstraint,
     MetricKeyMetric,
     SafetyConstraint,
@@ -45,7 +46,8 @@ class TestSafetyThreshold:
         assert threshold.metric_name == "faithfulness"
         assert threshold.operator == ">="
         assert threshold.value == 0.9
-        assert threshold.confidence is None
+        # Defaults to statistical validation; there is no 'no confidence' mode.
+        assert threshold.confidence == DEFAULT_SAFETY_CONFIDENCE
         assert threshold.min_samples == 30
 
     def test_threshold_with_confidence(self) -> None:
@@ -352,13 +354,18 @@ class TestCompoundSafetyConstraint:
 class TestSafetyValidator:
     """Tests for SafetyValidator with Clopper-Pearson bounds."""
 
-    def test_validator_simple_threshold(self) -> None:
-        """Test validation without statistical confidence."""
+    def test_validator_default_threshold_uses_confidence_bound(self) -> None:
+        """A constraint built without an explicit confidence still gets a CI.
+
+        95/100 passing does NOT satisfy a 0.9 bar once the exact lower bound is
+        applied (the 95% Clopper-Pearson lower bound on 95/100 is ~0.89). Before
+        DEFAULT_SAFETY_CONFIDENCE this asserted satisfied is True, because the
+        validator compared the raw observed rate.
+        """
         metric = MetricKeyMetric(name="accuracy", metric_key="accuracy")
         constraint = metric.above(0.9)
         validator = SafetyValidator()
 
-        # Record 95 passing trials out of 100
         for _ in range(95):
             validator.record_result(constraint, {}, {"accuracy": 0.95})
         for _ in range(5):
@@ -367,9 +374,12 @@ class TestSafetyValidator:
         result = validator.validate(constraint)
 
         assert isinstance(result, SafetyValidationResult)
-        assert result.satisfied is True
         assert result.observed_rate == 0.95
         assert result.threshold == 0.9
+        assert result.confidence == DEFAULT_SAFETY_CONFIDENCE
+        # The bound, not the point estimate, decides.
+        assert result.lower_bound < result.observed_rate
+        assert result.satisfied is False
 
     def test_validator_with_confidence(self) -> None:
         """Test validation with Clopper-Pearson confidence bounds."""
@@ -924,10 +934,19 @@ class TestSafetyValidatorAdvanced:
         result1 = validator.validate(c1)
         result2 = validator.validate(c2)
 
+        # The point of this test is that the two constraints are tracked separately.
         assert result1.sample_count == 10
         assert result2.sample_count == 5
-        assert result1.satisfied is True
-        assert result2.satisfied is True
+        assert result1.metric_name == "accuracy"
+        assert result2.metric_name == "latency"
+
+        # Neither is satisfied, and that is correct: 10 and 5 clean samples are far too
+        # few to certify these bars once the exact lower bound is applied (10/10 gives a
+        # 95% lower bound of ~0.69, well under the 0.9 threshold). This assertion used to
+        # read `satisfied is True` because the validator compared raw observed rates.
+        assert result1.satisfied is False
+        assert result2.satisfied is False
+        assert result1.lower_bound < result1.observed_rate
 
     def test_validator_record_returns_result(self) -> None:
         """Test that record_result returns the constraint result."""
@@ -1089,3 +1108,79 @@ class TestCompoundConstraintEdgeCases:
 
         compound = constraint & metric.below(0.9)
         assert compound.requires_metrics is True
+
+
+class TestConfidenceIsMandatory:
+    """Regression tests for the silent point-estimate downgrade (guardrails GAPS G-5b).
+
+    `SafetyThreshold.confidence` used to be Optional and default to None. When it was
+    None, `SafetyValidator.validate` skipped the Clopper-Pearson interval entirely and
+    compared the raw observed rate to the threshold, so a handful of clean samples
+    "satisfied" an arbitrarily strict safety bar with no statistical basis.
+    """
+
+    def test_small_clean_sample_does_not_satisfy_a_strict_bar(self) -> None:
+        """50 clean samples must NOT certify a 99.9% safety bar.
+
+        This is the exact false green. Under the old point-estimate path the observed
+        rate was 1.0 >= 0.999 and the constraint passed. The 95% Clopper-Pearson lower
+        bound on 50/50 is ~0.943, which is below 0.999, so it now fails.
+        """
+        metric = MetricKeyMetric(name="safety_score", metric_key="safety_score")
+        constraint = metric.above(0.999)
+        validator = SafetyValidator()
+
+        for _ in range(50):
+            validator.record_result(constraint, {}, {"safety_score": 1.0})
+
+        result = validator.validate(constraint)
+
+        assert result.observed_rate == 1.0
+        assert result.satisfied is False, (
+            "50 clean samples certified a 99.9% safety bar - the point-estimate "
+            "downgrade has regressed"
+        )
+        assert result.lower_bound < 0.999
+
+    def test_enough_clean_samples_do_satisfy_the_bar(self) -> None:
+        """The bar is reachable, not impossible: the fix is not merely 'always fail'."""
+        metric = MetricKeyMetric(name="safety_score", metric_key="safety_score")
+        constraint = metric.above(0.99)
+        validator = SafetyValidator()
+
+        for _ in range(500):
+            validator.record_result(constraint, {}, {"safety_score": 1.0})
+
+        result = validator.validate(constraint)
+
+        assert result.satisfied is True
+        assert result.lower_bound >= 0.99
+
+    def test_explicit_none_confidence_is_rejected(self) -> None:
+        """Passing confidence=None explicitly must fail loudly, not silently degrade."""
+        with pytest.raises(ValueError, match="confidence must not be None"):
+            SafetyThreshold(
+                metric_name="safety_score",
+                operator=">=",
+                value=0.999,
+                confidence=None,  # type: ignore[arg-type]
+            )
+
+    def test_factories_default_to_statistical_validation(self) -> None:
+        """.above/.below/.between all carry a confidence level by default."""
+        metric = MetricKeyMetric(name="m", metric_key="m")
+
+        assert metric.above(0.9).threshold.confidence == DEFAULT_SAFETY_CONFIDENCE
+        assert metric.below(0.1).threshold.confidence == DEFAULT_SAFETY_CONFIDENCE
+        for c in metric.between(0.1, 0.9).constraints:
+            assert c.threshold.confidence == DEFAULT_SAFETY_CONFIDENCE
+
+    def test_every_constraint_converts_to_a_chance_constraint(self) -> None:
+        """to_chance_constraint no longer has an unreachable failure mode."""
+        metric = MetricKeyMetric(name="m", metric_key="m")
+        constraint = metric.above(0.9)
+
+        assert constraint.has_statistical_validation is True
+        cc = constraint.to_chance_constraint()
+        assert cc.confidence == DEFAULT_SAFETY_CONFIDENCE
+        assert cc.threshold == 0.9
