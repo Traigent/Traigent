@@ -7,8 +7,8 @@ This module provides async-first methods to:
 
 Proprietary tuning signals and raw signal values are NOT returned to clients.
 The backend redacts them and only exposes bounded metadata such as review
-priority, difficulty bucket, suspicious flags, and recommended action. Signal-
-driven guidance is delivered via the GuidancePlan API.
+priority, difficulty bucket, suspicious flags, and recommended action. Backend
+policy remains opaque to this client.
 
 Usage:
     >>> from traigent.analytics import ExampleInsightsClient
@@ -235,8 +235,7 @@ class ExampleInsightsClient:
             - algorithm_version: Scoring algorithm version
             - scored: True when scoring has been computed for the example
 
-            Proprietary tuning signals are NOT returned; use the GuidancePlan API
-            for signal-driven guidance.
+            Proprietary tuning signals and policy are not returned.
 
         Raises:
             httpx.HTTPError: If request fails

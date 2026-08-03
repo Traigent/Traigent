@@ -45,7 +45,6 @@ nav:
       - Testing: getting-started/testing.md
       - Portal Dev Laptop Agent: getting-started/portal-dev-laptop-agent.md
   - Concepts:
-      - Guided Generation: concepts/guided-generation.md
       - Composite-Knob IR: concepts/composite-knob-ir.md
       - Composite Knobs (Execution & Telemetry): concepts/composite-knobs.md
       - Configuration Spaces: user-guide/configuration-spaces.md

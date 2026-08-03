@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 import traigent
+from traigent import generation
 from traigent.generation import coldstart
 from traigent.generation.coldstart import build_cold_start_eval_set
 
@@ -67,6 +68,7 @@ def test_builder_rejects_malformed_response(response: Mapping[str, Any]) -> None
 
 
 def test_exports_are_closed() -> None:
+    assert generation.__all__ == ["coldstart"]
     assert coldstart.__all__ == [
         "ColdStartResult",
         "DiscoveryGap",
@@ -74,6 +76,30 @@ def test_exports_are_closed() -> None:
         "build_cold_start_eval_set",
     ]
     assert not hasattr(traigent, "build_cold_start_eval_set")
+
+
+def test_only_coldstart_source_remains() -> None:
+    package = Path(generation.__file__).parent
+    source_files = {
+        path.relative_to(package).as_posix() for path in package.rglob("*.py")
+    }
+
+    assert source_files == {
+        "__init__.py",
+        "coldstart/__init__.py",
+        "coldstart/executor.py",
+        "coldstart/models.py",
+    }
+
+    forbidden_exports = {
+        "BackendGuidanceProvider",
+        "ExampleSynthesizer",
+        "GuidanceLoop",
+        "PromptRewriter",
+        "SkillTrainOptions",
+        "SkillTrainer",
+    }
+    assert not {name for name in forbidden_exports if hasattr(generation, name)}
 
 
 def test_implementation_has_no_forbidden_markers() -> None:
