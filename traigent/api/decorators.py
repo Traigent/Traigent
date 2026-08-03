@@ -69,12 +69,6 @@ from traigent.api.parameter_ranges import (
     is_inline_param_definition,
     normalize_configuration_space,
 )
-from traigent.api.strategy_presets import (
-    NormalizedStrategyPreset,
-    UnknownStrategyPresetError,
-    is_strategy_preset_name,
-    normalize_strategy_preset,
-)
 from traigent.api.types import AgentDefinition
 from traigent.cloud.smart_pruning import SmartPruningOptions
 from traigent.cloud.smart_pruning import (
@@ -1321,44 +1315,6 @@ def _normalize_runtime_override_aliases(
     return dict(overrides)
 
 
-def _resolve_strategy_argument(
-    *,
-    strategy: str | None,
-    strategy_params: Mapping[str, Any] | None,
-    runtime_overrides: dict[str, Any],
-) -> tuple[str | None, dict[str, Any]]:
-    """Split public ``strategy`` into preset selection."""
-    if strategy is None:
-        if strategy_params is not None:
-            normalize_strategy_preset(None, strategy_params)
-        return None, runtime_overrides
-
-    if is_strategy_preset_name(strategy) or strategy_params is not None:
-        return strategy, runtime_overrides
-
-    raise UnknownStrategyPresetError(strategy)
-
-
-def _apply_strategy_preset_to_options(
-    *,
-    strategy_preset: NormalizedStrategyPreset | None,
-    objectives: list[str] | ObjectiveSchema | None,
-    constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None,
-) -> tuple[
-    list[str] | ObjectiveSchema | None,
-    list[Constraint | BoolExpr | Callable[..., Any]] | None,
-]:
-    """Apply advisory preset objectives without adding search constraints."""
-    if strategy_preset is None:
-        return objectives, constraints
-    if objectives is not None:
-        raise ValueError(
-            "strategy presets are mutually exclusive with explicit objectives. "
-            "Use either strategy=... or objectives=..., not both."
-        )
-    return list(strategy_preset.objectives), constraints
-
-
 def _validate_runtime_overrides(remaining_overrides: dict[str, Any]) -> None:
     """Validate that runtime overrides don't contain unknown keys."""
     unknown_keys = (
@@ -2407,17 +2363,11 @@ def optimize(  # NOSONAR(S107)
             infers sensible orientations and equal weights) or an ObjectiveSchema
             for explicit weights, orientations, and metadata. Omitted values fall
             back to ``traigent.configure(objectives=...)`` or ``["accuracy"]``.
-            Mutually exclusive with strategy presets; use one path so the
-            business-goal preset cannot silently override hand-set objectives.
-        strategy: Optional advisory strategy preset name. Supported preset names
-            are ``max_accuracy_then_cheapest_within_epsilon``,
-            ``quality_floor_min_cost``, and ``pareto_frontier``.
-            Use ``algorithm`` to select an optimizer by name.
-        strategy_params: Typed parameters for the selected strategy preset.
-            ``epsilon`` is required for
-            ``max_accuracy_then_cheapest_within_epsilon`` and must be > 0 and
-            <= 1. ``floor`` is required for ``quality_floor_min_cost`` and must
-            be between 0 and 1 inclusive. ``pareto_frontier`` accepts no params.
+        strategy: Retained only for signature compatibility; a non-``None`` value
+            now raises ``TypeError``. Use ``algorithm`` to select an optimizer by
+            name, or ``objectives`` to set what is optimized.
+        strategy_params: Retained only for signature compatibility; a non-``None``
+            value now raises ``TypeError``.
         configuration_space: Dictionary describing the search space. Keys are
             parameter names; values can be discrete lists, numeric tuples, or nested
             dicts for composite parameters.
@@ -2696,16 +2646,10 @@ def optimize(  # NOSONAR(S107)
         for key, value in legacy_args.iter_known_values():
             record_option(key, value, "legacy arguments")
 
-    preset_strategy_name, runtime_overrides = _resolve_strategy_argument(
-        strategy=strategy,
-        strategy_params=strategy_params,
-        runtime_overrides=runtime_overrides,
-    )
-    strategy_preset = (
-        normalize_strategy_preset(preset_strategy_name, strategy_params)
-        if preset_strategy_name is not None
-        else None
-    )
+    if strategy is not None or strategy_params is not None:
+        raise TypeError(
+            "strategy presets are no longer supported; use algorithm or objectives."
+        )
 
     direct_inputs = {
         "objectives": objectives,
@@ -3041,11 +2985,6 @@ def optimize(  # NOSONAR(S107)
         eval_dataset,
         combined_runtime_overrides,
     )
-    objectives, constraints = _apply_strategy_preset_to_options(
-        strategy_preset=strategy_preset,
-        objectives=objectives,
-        constraints=constraints,
-    )
     constraint_scope_var_names = _augment_constraint_scope_var_names(
         constraint_scope_var_names, configuration_space
     )
@@ -3256,8 +3195,6 @@ def optimize(  # NOSONAR(S107)
             enable_auto_load_dev_logs=enable_auto_load_dev_logs_value,
             # TVL promotion gate for statistical best-config selection
             promotion_gate=promotion_gate,
-            # Advisory strategy preset metadata/selection.
-            strategy_preset=strategy_preset,
             # Optimizer limits (extracted from combined_settings)
             max_trials=max_trials_value,
             _max_trials_explicit=max_trials_explicit,

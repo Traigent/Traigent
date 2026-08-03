@@ -39,11 +39,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Generic, ParamSpec, TypeVar, cast
 
-from traigent.api.strategy_presets import (
-    NormalizedStrategyPreset,
-    is_strategy_preset_name,
-    normalize_strategy_preset,
-)
 from traigent.api.types import OptimizationResult, OptimizationStatus
 from traigent.config import get_provider
 from traigent.config.parallel import coerce_parallel_config, merge_parallel_configs
@@ -789,11 +784,6 @@ class OptimizedFunction(Generic[_P, _R]):
             kwargs, sentinel, "promotion_gate", None
         )
 
-        # Advisory strategy preset for task-local selection metadata.
-        self.strategy_preset = self._store_optional_param(
-            kwargs, sentinel, "strategy_preset", None
-        )
-
         # Warm-start: seed a new run from a prior experiment's learned configs.
         self.warm_start_from = self._store_optional_param(
             kwargs, sentinel, "warm_start_from", None
@@ -823,7 +813,6 @@ class OptimizedFunction(Generic[_P, _R]):
             "global_measures",
             # Safety constraints
             "safety_constraints",
-            "strategy_preset",
             "warm_start_from",
         }
         self._decorator_runtime_overrides = {
@@ -1485,15 +1474,14 @@ class OptimizedFunction(Generic[_P, _R]):
         strategy: str | None,
         strategy_params: Mapping[str, Any] | None,
         algorithm: str | None,
-    ) -> tuple[str | None, str | None]:
-        """Resolve runtime strategy into a preset name or deprecated algorithm alias."""
+    ) -> str | None:
+        """Resolve the deprecated optimizer-alias compatibility argument."""
+        if strategy_params is not None:
+            raise TypeError(
+                "strategy_params is no longer supported; use algorithm or objectives."
+            )
         if strategy is None:
-            if strategy_params is not None:
-                normalize_strategy_preset(None, strategy_params)
-            return None, algorithm
-
-        if is_strategy_preset_name(strategy) or strategy_params is not None:
-            return strategy, algorithm
+            return algorithm
 
         if algorithm is not None and algorithm != strategy:
             raise TypeError(
@@ -1507,46 +1495,7 @@ class OptimizedFunction(Generic[_P, _R]):
             DeprecationWarning,
             stacklevel=3,
         )
-        return None, strategy
-
-    @staticmethod
-    def _resolve_effective_strategy_preset(
-        *,
-        decorator_preset: NormalizedStrategyPreset | None,
-        runtime_strategy: str | None,
-        strategy_params: Mapping[str, Any] | None,
-    ) -> NormalizedStrategyPreset | None:
-        """Resolve runtime preset override against a decorator-level preset."""
-        if runtime_strategy is None:
-            return decorator_preset
-
-        if decorator_preset is not None:
-            raise ValueError("runtime strategy cannot override a decorator strategy.")
-
-        runtime_preset = normalize_strategy_preset(runtime_strategy, strategy_params)
-        return runtime_preset
-
-    def _apply_runtime_strategy_preset(
-        self,
-        preset: NormalizedStrategyPreset | None,
-        objectives: ObjectiveSchema | Sequence[str] | None,
-    ) -> tuple[
-        ObjectiveSchema | Sequence[str] | None,
-        list[Callable[..., bool]],
-        NormalizedStrategyPreset | None,
-    ]:
-        """Apply runtime preset objectives without adding search constraints."""
-        original_constraints = list(self.constraints or [])
-        original_preset = getattr(self, "strategy_preset", None)
-        if preset is None:
-            return objectives, original_constraints, original_preset
-        if objectives is not None:
-            raise ValueError(
-                "strategy presets are mutually exclusive with explicit objectives. "
-                "Use either strategy=... or objectives=..., not both."
-            )
-        self.strategy_preset = preset
-        return list(preset.objectives), original_constraints, original_preset
+        return strategy
 
     async def optimize(
         self,
@@ -1592,9 +1541,10 @@ class OptimizedFunction(Generic[_P, _R]):
             tvl_spec: Optional TVL spec path to load at runtime.
             tvl_environment: Environment overlay to apply when loading the spec.
             tvl: Structured TVL options (dict or TVLOptions) for runtime overrides.
-            strategy: Optional advisory strategy preset name. Non-preset values retain
-                the deprecated optimizer-alias behavior.
-            strategy_params: Typed parameters for the selected strategy preset.
+            strategy: Deprecated alias for ``algorithm`` (emits ``DeprecationWarning``);
+                no longer accepts a preset name.
+            strategy_params: Retained only for signature compatibility; a non-``None``
+                value raises ``TypeError``.
             progress_bar: Controls the live progress bar during optimization.
                 ``True`` forces a progress bar even in non-interactive mode,
                 ``False`` suppresses it, ``None`` (default) auto-enables in
@@ -1623,7 +1573,7 @@ class OptimizedFunction(Generic[_P, _R]):
         logger.info(f"Starting optimization of {self.func.__name__}")
         _emit_cost_warning_once()
 
-        runtime_strategy_name, algorithm = self._resolve_runtime_strategy_argument(
+        algorithm = self._resolve_runtime_strategy_argument(
             strategy=strategy,
             strategy_params=strategy_params,
             algorithm=algorithm,
@@ -1655,26 +1605,6 @@ class OptimizedFunction(Generic[_P, _R]):
             configuration_space, _ = normalize_configuration_space(configuration_space)
 
         original_schema = self.objective_schema
-        strategy_original_constraints: list[Callable[..., bool]] | None = None
-        strategy_original_preset: NormalizedStrategyPreset | None = None
-        decorator_preset = getattr(self, "strategy_preset", None)
-        effective_preset = self._resolve_effective_strategy_preset(
-            decorator_preset=decorator_preset,
-            runtime_strategy=runtime_strategy_name,
-            strategy_params=strategy_params,
-        )
-        if decorator_preset is not None and objectives is not None:
-            raise ValueError(
-                "strategy presets are mutually exclusive with explicit objectives. "
-                "Use either strategy=... or objectives=..., not both."
-            )
-        if decorator_preset is None:
-            (
-                objectives,
-                strategy_original_constraints,
-                strategy_original_preset,
-            ) = self._apply_runtime_strategy_preset(effective_preset, objectives)
-
         runtime_objective_input = (
             objectives if objectives is not None else legacy_objectives
         )
@@ -1710,9 +1640,6 @@ class OptimizedFunction(Generic[_P, _R]):
         finally:
             if runtime_schema is not None:
                 self.objective_schema = original_schema
-            if strategy_original_constraints is not None:
-                self.constraints = strategy_original_constraints
-                self.strategy_preset = strategy_original_preset
             self._restore_tvl_state(tvl_state)
 
         return result
@@ -1758,8 +1685,9 @@ class OptimizedFunction(Generic[_P, _R]):
             tvl_spec: Optional TVL spec path
             tvl_environment: Environment overlay for TVL spec
             tvl: Structured TVL options
-            strategy: Optional advisory strategy preset name.
-            strategy_params: Typed parameters for the selected strategy preset.
+            strategy: Deprecated alias for ``algorithm``; no longer accepts a preset name.
+            strategy_params: Retained only for signature compatibility; a non-``None``
+                value raises ``TypeError``.
             progress_bar: ``True`` to force, ``False`` to suppress, ``None``
                 (default) auto-enables in interactive terminals.
             **algorithm_kwargs: Additional algorithm parameters
@@ -2037,7 +1965,6 @@ class OptimizedFunction(Generic[_P, _R]):
             objectives=self.objectives,
             objective_schema=self.objective_schema,
             workflow_traces_tracker=workflow_traces_tracker,
-            strategy_preset=getattr(self, "strategy_preset", None),
             smart_pruning=getattr(self, "smart_pruning", None),
             **orchestrator_kwargs,
         )

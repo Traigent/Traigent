@@ -548,7 +548,7 @@ class PresetSelection:
             raise ValueError("preset selection_grade must be 'advisory'.")
 
     def to_metadata(self) -> dict[str, Any]:
-        """Return the schema-shaped strategy_preset metadata payload."""
+        """Return the schema-shaped preset-selection metadata payload."""
         metadata: dict[str, Any] = {
             "preset_name": self.preset_name,
             "params": dict(self.params),
