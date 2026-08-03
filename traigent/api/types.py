@@ -527,7 +527,7 @@ class TrialResult:
 
 @dataclass
 class PresetSelection:
-    """Advisory strategy-preset selection result.
+    """Advisory preset-selection result.
 
     Preset selection is deliberately separate from ``best_config``. It is a
     task-local recommendation and never a statistical certificate.
@@ -966,7 +966,10 @@ class OptimizationResult:
         algorithm: Name of the optimization algorithm used.
         timestamp: When the optimization completed.
         metadata: Additional metadata from the optimization run.
-        preset_selection: Advisory strategy-preset selection, when requested.
+        preset_selection: Advisory preset-selection record restored from a result
+            persisted by an older SDK build. No code path in this build can
+            populate this on a live run; it exists for backward-compatible
+            reads of older artifacts.
         total_cost: Total API cost incurred (if tracked).
         total_tokens: Total tokens consumed (if tracked).
         metrics: Aggregated metrics across all trials.
