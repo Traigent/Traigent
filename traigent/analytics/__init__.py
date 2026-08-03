@@ -94,7 +94,6 @@ except ImportError:
         OptimizationHistory,
         PerformancePredictor,
     )
-    from .next_steps import NextStepsClient
     from .optimization_plan import OptimizationPlanClient
 
     # Predictive analytics
@@ -133,7 +132,6 @@ def is_plugin_installed() -> bool:
 __all__ = [
     # Example Insights
     "ExampleInsightsClient",
-    "NextStepsClient",
     "PlannerV2Client",
     "OptimizationPlanClient",
     # Historical analytics

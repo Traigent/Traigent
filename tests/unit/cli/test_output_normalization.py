@@ -363,8 +363,8 @@ def test_columns_governs_a_console_that_did_not_fix_its_width() -> None:
 def test_fixture_repins_a_console_built_at_cli_import_time() -> None:
     """``COLUMNS`` alone does not reach a console constructed with a width.
 
-    ``traigent.cli.plan_command`` (and ``guidance_command``,
-    ``next_steps_command``) build ``Console(width=120)`` when the module is
+    ``traigent.cli.plan_command`` and ``guidance_command`` build
+    ``Console(width=120)`` when the module is
     first imported — during collection here, long before any fixture runs.
     rich stores that on the instance and never consults ``COLUMNS`` again, so
     the environment export is powerless over it and the fixture has to
