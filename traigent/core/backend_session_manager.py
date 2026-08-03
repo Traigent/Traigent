@@ -633,7 +633,6 @@ class BackendSessionManager:
         optimizer: BaseOptimizer,
         optimization_id: str,
         optimization_status: OptimizationStatus,
-        strategy_preset_metadata: dict[str, Any] | None = None,
         smart_pruning: dict[str, Any] | None = None,
     ) -> None:
         """Initialize backend session manager.
@@ -654,9 +653,6 @@ class BackendSessionManager:
         self._optimizer = optimizer
         self._optimization_id = optimization_id
         self._optimization_status = optimization_status
-        self._strategy_preset_metadata = (
-            dict(strategy_preset_metadata) if strategy_preset_metadata else None
-        )
         self._smart_pruning = dict(smart_pruning) if smart_pruning else None
 
         # Run-scoped circuit breaker — once disabled, all backend writes skip
@@ -1458,10 +1454,6 @@ class BackendSessionManager:
                     session_metadata["client_algorithm"] = _local_policy.algorithm
             if agent_configuration is not None:
                 session_metadata["agent_configuration"] = agent_configuration.to_dict()
-            if self._strategy_preset_metadata is not None:
-                session_metadata["strategy_preset"] = dict(
-                    self._strategy_preset_metadata
-                )
             if warm_start_from:
                 session_metadata["warm_start_from"] = warm_start_from
 
@@ -1985,8 +1977,6 @@ class BackendSessionManager:
             dataset_name,
             session_id=session_id,
         )
-        if self._strategy_preset_metadata is not None:
-            trial_metadata["strategy_preset"] = dict(self._strategy_preset_metadata)
 
         # #1939: the LOCAL write is unconditional — offline runs must produce a
         # syncable session. Only the REMOTE submission below is egress-gated.
