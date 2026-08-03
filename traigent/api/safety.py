@@ -38,6 +38,16 @@ if TYPE_CHECKING:
     from traigent.tvl.models import ChanceConstraint
 
 # =============================================================================
+# Defaults
+# =============================================================================
+
+#: Confidence level used when a SafetyThreshold does not specify one.
+#: Safety validation is always statistical: there is deliberately no "no confidence"
+#: mode, because that mode compared a raw observed rate to the threshold and passed
+#: trivially on small samples.
+DEFAULT_SAFETY_CONFIDENCE = 0.95
+
+# =============================================================================
 # RAGAS Attribution (Apache 2.0 License)
 # =============================================================================
 
@@ -102,20 +112,33 @@ class SafetyThreshold:
         metric_name: Name of the metric being constrained.
         operator: Comparison operator (">=", "<=", ">", "<", "==").
         value: Threshold value in [0, 1] range.
-        confidence: Optional statistical confidence level for Clopper-Pearson
-            validation. If None, uses simple threshold checking.
+        confidence: Statistical confidence level for Clopper-Pearson validation.
+            Defaults to ``DEFAULT_SAFETY_CONFIDENCE`` (0.95). ``None`` is rejected:
+            a safety threshold without a confidence level would be checked against a
+            raw point estimate, which passes trivially on small samples.
         min_samples: Minimum samples required for statistical validity.
     """
 
     metric_name: str
     operator: str
     value: float
-    confidence: float | None = None
+    confidence: float = DEFAULT_SAFETY_CONFIDENCE
     min_samples: int = 30
 
     def __post_init__(self) -> None:
         """Validate threshold configuration."""
-        if self.confidence is not None and not 0 < self.confidence < 1:
+        # Fail closed. Previously ``confidence`` was Optional and defaulted to None,
+        # which silently downgraded validation from an exact Clopper-Pearson interval
+        # to a comparison of the observed rate against the threshold. Zero violations
+        # in 50 samples then "satisfied" a 0.001 threshold with no statistical basis.
+        if self.confidence is None:
+            raise ValueError(
+                "confidence must not be None. A safety threshold without a confidence "
+                "level is validated against a raw observed rate, which passes trivially "
+                f"on small samples. Pass an explicit level (e.g. confidence=0.95) or "
+                f"omit the argument to use the default of {DEFAULT_SAFETY_CONFIDENCE}."
+            )
+        if not 0 < self.confidence < 1:
             raise ValueError(f"confidence must be in (0, 1), got {self.confidence}")
         if self.min_samples < 1:
             raise ValueError(f"min_samples must be >= 1, got {self.min_samples}")
@@ -217,23 +240,23 @@ class SafetyMetric(ABC):
         self,
         threshold: float,
         *,
-        confidence: float | None = None,
+        confidence: float = DEFAULT_SAFETY_CONFIDENCE,
         min_samples: int = 30,
     ) -> SafetyConstraint:
         """Create constraint requiring metric >= threshold.
 
         Args:
             threshold: Minimum acceptable value.
-            confidence: Optional statistical confidence level (e.g., 0.95).
-                If provided, uses Clopper-Pearson lower bound validation.
+            confidence: Statistical confidence level for Clopper-Pearson lower-bound
+                validation. Defaults to DEFAULT_SAFETY_CONFIDENCE (0.95).
             min_samples: Minimum samples for statistical validity.
 
         Returns:
             SafetyConstraint usable in @optimize(safety_constraints=[...]).
 
         Example:
-            >>> faithfulness.above(0.9)  # Simple threshold
-            >>> faithfulness.above(0.85, confidence=0.95)  # With CI
+            >>> faithfulness.above(0.9)  # 95% Clopper-Pearson lower bound
+            >>> faithfulness.above(0.85, confidence=0.99)  # stricter CI
         """
         return SafetyConstraint(
             metric=self,
@@ -250,7 +273,7 @@ class SafetyMetric(ABC):
         self,
         threshold: float,
         *,
-        confidence: float | None = None,
+        confidence: float = DEFAULT_SAFETY_CONFIDENCE,
         min_samples: int = 30,
     ) -> SafetyConstraint:
         """Create constraint requiring metric <= threshold.
@@ -259,7 +282,7 @@ class SafetyMetric(ABC):
 
         Args:
             threshold: Maximum acceptable value.
-            confidence: Optional statistical confidence level.
+            confidence: Statistical confidence level (default 0.95).
             min_samples: Minimum samples for statistical validity.
 
         Returns:
@@ -284,7 +307,7 @@ class SafetyMetric(ABC):
         lower: float,
         upper: float,
         *,
-        confidence: float | None = None,
+        confidence: float = DEFAULT_SAFETY_CONFIDENCE,
         min_samples: int = 30,
     ) -> CompoundSafetyConstraint:
         """Create constraint requiring lower <= metric <= upper.
@@ -292,7 +315,7 @@ class SafetyMetric(ABC):
         Args:
             lower: Minimum acceptable value.
             upper: Maximum acceptable value.
-            confidence: Optional statistical confidence level.
+            confidence: Statistical confidence level (default 0.95).
             min_samples: Minimum samples for statistical validity.
 
         Returns:
@@ -367,20 +390,11 @@ class SafetyConstraint:
     def to_chance_constraint(self) -> ChanceConstraint:
         """Convert to ChanceConstraint for TVL statistical validation.
 
-        Only valid if confidence is specified.
+        Always valid: SafetyThreshold guarantees a confidence level.
 
         Returns:
             ChanceConstraint instance for promotion gate validation.
-
-        Raises:
-            ValueError: If confidence is not specified.
         """
-        if self.threshold.confidence is None:
-            raise ValueError(
-                "Cannot create ChanceConstraint without confidence level. "
-                f"Use {self.metric.name}.above(threshold, confidence=0.95)"
-            )
-
         from traigent.tvl.models import ChanceConstraint
 
         return ChanceConstraint(
@@ -391,8 +405,12 @@ class SafetyConstraint:
 
     @property
     def has_statistical_validation(self) -> bool:
-        """Whether this constraint uses statistical validation."""
-        return self.threshold.confidence is not None
+        """Whether this constraint uses statistical validation.
+
+        Always True. Retained for API compatibility; SafetyThreshold no longer
+        permits a constraint without a confidence level.
+        """
+        return True
 
     @property
     def requires_metrics(self) -> bool:
@@ -693,9 +711,8 @@ class CallableMetric(SafetyMetric):
 class SafetyValidator:
     """Validates safety constraints with optional statistical rigor.
 
-    For constraints with confidence levels, uses Clopper-Pearson
-    confidence intervals to ensure the lower bound of the success
-    rate meets the threshold.
+    Uses Clopper-Pearson exact confidence intervals to ensure the lower bound
+    of the success rate meets the threshold. Validation is always statistical.
 
     Thread Safety:
         This class is thread-safe. Internal state is protected by locks.
@@ -742,11 +759,9 @@ class SafetyValidator:
     def validate(self, constraint: SafetyConstraint) -> SafetyValidationResult:
         """Validate a safety constraint with statistical analysis.
 
-        For constraints without confidence level, checks if all recorded
-        trials passed (or uses observed rate).
-
-        For constraints with confidence level, uses Clopper-Pearson
-        lower bound to validate statistical significance.
+        Always uses a Clopper-Pearson exact lower bound on the pass rate; there is
+        no point-estimate path. Too few samples therefore yields a loose bound and
+        the constraint fails, rather than passing on an unsupported observed rate.
 
         Args:
             constraint: The safety constraint to validate.
@@ -766,7 +781,7 @@ class SafetyValidator:
                 observed_rate=0.0,
                 lower_bound=0.0,
                 threshold=constraint.threshold.value,
-                confidence=constraint.threshold.confidence or 0.95,
+                confidence=constraint.threshold.confidence,
                 sample_count=0,
                 message=f"No samples recorded for {key}",
             )
@@ -774,33 +789,6 @@ class SafetyValidator:
         n_samples = len(results)
         n_passed = sum(results)
         observed_rate = n_passed / n_samples
-
-        # Simple threshold check (no confidence)
-        if constraint.threshold.confidence is None:
-            op = constraint.threshold.operator
-            threshold = constraint.threshold.value
-
-            if op == ">=":
-                satisfied = observed_rate >= threshold
-            elif op == "<=":
-                satisfied = observed_rate <= threshold
-            else:
-                satisfied = observed_rate >= threshold
-
-            return SafetyValidationResult(
-                metric_name=key,
-                satisfied=satisfied,
-                observed_rate=observed_rate,
-                lower_bound=observed_rate,
-                threshold=threshold,
-                confidence=1.0,
-                sample_count=n_samples,
-                message=(
-                    f"{key}: {observed_rate:.2%} "
-                    f"{'meets' if satisfied else 'fails'} "
-                    f"{threshold:.2%} threshold"
-                ),
-            )
 
         # Statistical validation with Clopper-Pearson
         from traigent.tvl.statistics import clopper_pearson_lower_bound
