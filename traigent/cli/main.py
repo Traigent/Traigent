@@ -2766,10 +2766,6 @@ from traigent.cli.generate_config_command import generate_config  # noqa: E402
 
 cli.add_command(generate_config)
 
-from traigent.cli.guidance_command import guidance  # noqa: E402
-
-cli.add_command(guidance)
-
 from traigent.cli.plan_command import plan  # noqa: E402
 
 cli.add_command(plan)
