@@ -554,6 +554,6 @@ logger.setLevel(logging.DEBUG)
 
 ## Next Steps
 
-- Start with `traigent quickstart`, then use `traigent recommend rag` for configuration-space suggestions.
+- Start with `traigent quickstart`.
 - Review [Choosing the Right Optimization Model](./choosing_optimization_model.md) for the current `algorithm` / `offline` routing model
 - Read [Architecture Overview](../architecture/ARCHITECTURE.md) for system design details

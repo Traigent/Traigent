@@ -450,27 +450,7 @@ def override_config(
 def get_available_strategies() -> dict[str, Any]
 ```
 
-### Recommendation Catalog and Strategy Presets
-
-0.12.0 exposes local catalog helpers and advisory selection presets through
-`traigent.api`.
-
-```python
-def list_recommendation_agent_types() -> tuple[str, ...]
-
-def recommend_configuration_space(
-    agent_type: str,
-    *,
-    min_impact: str | None = None,
-    min_confidence: str | None = None,
-) -> dict[str, Any]
-```
-
-`recommend_configuration_space()` returns catalog metadata for supported
-agent/task types: knob names, suggested ranges, impact estimates, evidence
-notes, effectuation status, and apply guidance. It does not call a remote
-service.
-
+### Strategy Presets
 ```python
 VALID_PRESET_NAMES: tuple[str, ...] = (
     "max_accuracy_then_cheapest_within_epsilon",
@@ -494,17 +474,15 @@ task-local heuristics and do not provide a statistical certificate.
 
 ### CLI surfaces in 0.12.0
 
-The local CLI includes these onboarding and recommendation entry points:
+The local CLI includes these onboarding entry points:
 
 - `traigent onboard`
 - `traigent auth device-login`
 - `traigent first-prompt --agent claude|cursor|codex`
 - `traigent quickstart`
 - `traigent mcp serve`
-- `traigent recommend`
 
 The local MCP server in this worktree exposes these tools: `auth_status`,
-`list_recommendation_agent_types`, `recommend_configuration_space`,
 `detect_tvars`, `scaffold_eval`, `validate_dataset`, `estimate_cost`,
 `run_optimization`, `get_results`, and `export_evidence`.
 

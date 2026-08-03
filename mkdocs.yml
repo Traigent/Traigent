@@ -63,7 +63,6 @@ nav:
       - Strict Metrics Nulls: features/strict_metrics_nulls.md
       - Onboarding & CLI: features/onboarding.md
       - Local MCP Server: features/mcp-server.md
-      - Configuration Recommendations: features/recommendations.md
       - Strategy Presets: features/strategy-presets.md
       - Safety Gates: features/safety-gates.md
       - Agent Observability Spans: features/observability-spans.md

@@ -16,12 +16,6 @@ from types import ModuleType
 from typing import Any, Literal, cast
 from urllib.parse import urlsplit, urlunsplit
 
-from traigent.api.functions import (
-    list_recommendation_agent_types as public_list_recommendation_agent_types,
-)
-from traigent.api.functions import (
-    recommend_configuration_space as public_recommend_configuration_space,
-)
 from traigent.analytics.optimization_plan import OptimizationPlanClient
 from traigent.cloud.credential_manager import CredentialManager
 from traigent.config.backend_config import BackendConfig
@@ -39,8 +33,6 @@ from traigent.utils.validation import ValidationResult, Validators
 
 V1_TOOL_NAMES: tuple[str, ...] = (
     "auth_status",
-    "list_recommendation_agent_types",
-    "recommend_configuration_space",
     "detect_tvars",
     "scaffold_eval",
     "validate_dataset",
@@ -278,31 +270,6 @@ async def auth_status_tool(check: bool = False) -> dict[str, Any]:
         "backend_url": _sanitize_backend_url(cast("str | None", backend_url)),
         "validity": validity,
     }
-
-
-def list_recommendation_agent_types_tool() -> dict[str, Any]:
-    """Return the local public recommendation catalog's agent types."""
-    return {
-        "ok": True,
-        "agent_types": list(public_list_recommendation_agent_types()),
-    }
-
-
-def recommend_configuration_space_tool(
-    agent_type: str,
-    min_impact: Literal["low", "medium", "high"] | None = None,
-    min_confidence: Literal["low", "medium", "high"] | None = None,
-) -> dict[str, Any]:
-    """Return a versioned local public recommendation response."""
-    try:
-        data = public_recommend_configuration_space(
-            agent_type,
-            min_impact=min_impact,
-            min_confidence=min_confidence,
-        )
-    except ValueError as exc:
-        return _failure(str(exc))
-    return {"ok": True, "recommendation": data}
 
 
 def _serialize_detection_result(result: DetectionResult) -> dict[str, Any]:
