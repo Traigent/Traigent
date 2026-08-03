@@ -4,7 +4,7 @@ version: 2
 #     cycle rather than landing directly on the default branch.
 #   - schedule: monthly across all ecosystems.
 #   - open-pull-requests-limit: 1 per ecosystem (was 3) — at most 3 PRs/month
-#     total across pip + github-actions + docker.
+#     total across pip + uv + github-actions + docker.
 #   - groups: single catch-all version-updates per ecosystem covering
 #     patch+minor+major. Previously had many domain-specific groups (LLM,
 #     langchain, auth-security, api-framework, optimization, dev-tools)
@@ -27,6 +27,59 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    labels:
+      - "dependencies"
+      - "python"
+      - "automated"
+
+    groups:
+      security-updates:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+      version-updates:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+          - "minor"
+          - "major"
+
+    ignore:
+      # Python language majors — held manually.
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major"]
+      # LLM-provider majors have shipped real breaking APIs (openai 1.x →
+      # 2.x restructured the client; litellm cap history shows the same).
+      # Security updates still flow via the separate Security Updates path.
+      - dependency-name: "openai"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "litellm"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "anthropic"
+        update-types: ["version-update:semver-major"]
+      # LangChain has shipped minor-version breaking changes (1.x → 2.x);
+      # hold both major and minor for manual review. Wildcard covers every
+      # langchain-* and langsmith-* package.
+      - dependency-name: "langchain*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "langsmith*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # OpenTelemetry: historically non-semver-compatible jumps.
+      - dependency-name: "opentelemetry-*"
+        update-types: ["version-update:semver-major"]
+
+  # uv dependencies — routine updates follow the develop → main promote cycle.
+  # Security updates remain on GitHub's separate Dependabot Security Updates path.
+  - package-ecosystem: "uv"
+    directory: "/"
+    target-branch: "develop"
+    schedule:
+      interval: "monthly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 1
     labels:
       - "dependencies"
       - "python"
