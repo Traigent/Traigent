@@ -51,6 +51,20 @@
   docs_sections:
     - label: "Testing Toolkit"
       href: "../../docs/getting-started/testing.md"
+- slug: guided-generation
+  category: core
+  title: "Guided Generation"
+  summary: "Privacy-preserving prompt rewrite + benchmark growth, guided by an opaque backend GuidancePlan (offline demo, no API key)."
+  run: "core/guided-generation/run.py"
+  order: 3
+  difficulty: intermediate
+  est_time: "5 min"
+  tags: ["guided-generation", "prompt-rewrite", "dataset-growth", "privacy"]
+  datasets: []
+  docs: "../core/guided-generation/README.md"
+  docs_sections:
+    - label: "Guided Generation Concept"
+      href: "../../docs/concepts/guided-generation.md"
 - slug: multi-objective-tradeoff
   category: core
   title: "Multi-Objective Trade-off"
