@@ -18,6 +18,7 @@ from unittest.mock import Mock, patch
 import pytest
 from click.testing import CliRunner
 
+from traigent.api.types import PresetSelection
 from traigent.cli.main import (
     _build_comparison_summary_table,
     _format_best_score,
@@ -210,6 +211,39 @@ class TestResultsShow:
             assert result.exit_code == 0
             assert "All Trials" in result.output
 
+    def test_results_show_displays_persisted_preset_selection(
+        self, runner, mock_result, plain
+    ):
+        """A ``preset_selection`` saved by an older SDK build still renders.
+
+        Nothing in this build can populate the field, so this is the only test
+        keeping the deliberately-retained read/display path honest.
+        """
+        mock_result.preset_selection = PresetSelection.from_dict(
+            {
+                "preset_name": "balanced",
+                "params": {"epsilon": 0.02},
+                "selection_grade": "advisory",
+                "selection_rationale": "cheapest within tolerance of the best",
+                "status": "selected",
+                "selected_config": {"model": "gpt-3.5"},
+                "selected_trial_indices": [1],
+            }
+        )
+
+        with patch("traigent.cli.main.PersistenceManager") as mock_persistence_class:
+            mock_persistence = Mock()
+            mock_persistence_class.return_value = mock_persistence
+            mock_persistence.load_result.return_value = mock_result
+
+            result = runner.invoke(cli, ["results", "show", "test_run"])
+
+        output = plain(result.output)
+        assert result.exit_code == 0
+        assert "Preset Selection" in output
+        assert "balanced" in output
+        assert "advisory selection" in output
+
     def test_results_show_not_found(self, runner):
         """Test showing non-existent result."""
         with patch("traigent.cli.main.PersistenceManager") as mock_persistence_class:
@@ -276,48 +310,28 @@ class TestResultsRerank:
         # Should fail gracefully with error message
         assert "Invalid" in result.output or result.exit_code != 0
 
-    def test_results_rerank_with_preset(self, runner, mock_result):
-        """Test reranking with an advisory strategy preset."""
-        with patch("traigent.cli.main.PersistenceManager") as mock_persistence_class:
-            mock_persistence = Mock()
-            mock_persistence_class.return_value = mock_persistence
-            mock_persistence.load_result.return_value = mock_result
-
-            result = runner.invoke(
-                cli,
-                [
-                    "results",
-                    "rerank",
-                    "--preset",
-                    "max_accuracy_then_cheapest_within_epsilon",
-                    "--epsilon",
-                    "0.11",
-                    "test_run",
-                ],
-            )
-
-            assert result.exit_code == 0
-            assert "Advisory Preset Selection" in result.output
-            assert "advisory selection" in result.output
-            assert "gpt-3.5" in result.output
-
-    def test_results_rerank_rejects_weights_and_preset(self, runner):
-        """Weights and presets are alternative rerank modes."""
+    def test_results_rerank_preset_option_is_gone(self, runner):
+        """The named strategy-preset rerank mode (epsilon/floor/Pareto) is removed."""
         result = runner.invoke(
             cli,
             [
                 "results",
                 "rerank",
                 "test_run",
-                "--weights",
-                "accuracy=1",
                 "--preset",
-                "pareto_frontier",
+                "max_accuracy_then_cheapest_within_epsilon",
             ],
         )
 
-        assert result.exit_code == 0
-        assert "exactly one" in result.output
+        assert result.exit_code != 0
+        assert "no such option" in result.output.lower()
+
+    def test_results_rerank_requires_weights(self, runner):
+        """``--weights`` is now the only rerank mode, so it is required."""
+        result = runner.invoke(cli, ["results", "rerank", "test_run"])
+
+        assert result.exit_code != 0
+        assert "missing option" in result.output.lower()
 
 
 class TestExportCommand:

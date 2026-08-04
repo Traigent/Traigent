@@ -4,7 +4,90 @@ All notable changes to Traigent SDK are documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.27.0] - unreleased
+
+### Removed
+
+- **Named strategy presets removed** (#2100, #2101). The advisory selection rules
+  behind `max_accuracy_then_cheapest_within_epsilon`, `quality_floor_min_cost`, and
+  `pareto_frontier` are the technique, not something a public package ships readable
+  source for; that logic belongs in the backend. This removal is **forward-looking**:
+  it stops future publication and closes the #2100/#2101 defects, but it does not
+  retract what is already out. The deleted source stays readable in this public
+  repository's git history and in every wheel and sdist released from ~0.12.0 through
+  0.26.0. What to do about those already-published artifacts and that history — rewrite,
+  yank, or accept — is a separate decision for the repository owner and is not made here.
+  `traigent.api.strategy_presets` is
+  deleted along with all eight symbols it exported from `traigent` and `traigent.api`
+  (`ADVISORY_SELECTION_NOTICE`, `NormalizedStrategyPreset`, `StrategyPresetError`,
+  `StrategyPresetValidationError`, `UnknownStrategyPresetError`, `VALID_PRESET_NAMES`,
+  `normalize_strategy_preset`, `select_strategy_preset`). There is no shim and no
+  compatibility alias. Use `algorithm=<optimizer>` to choose a search algorithm and
+  `objectives=[...]` to declare what is being optimized.
+
+  Scope note for anyone tracking **#2101**: removing the presets removes the surface that
+  reported the defect, not its underlying cause. #2101's root cause — the built-in
+  exact-match rate occupying `metrics["accuracy"]` when `accuracy` is not the ranked
+  metric, so a graded `metric_functions` scorer registered under another name still leaves
+  `metrics["accuracy"] == 0.0` — is **not** fixed here, and is being addressed separately.
+  What is fixed is that no preset silently floors or ranks on that value any more.
+- **Decorator `strategy=` / `strategy_params=` now raise `TypeError`.** Both parameters
+  stay in the signature so the error can say what happened instead of reading as a typo.
+  Passing one of the three retired preset names names the removal explicitly.
+- **Runtime `.optimize(strategy=<preset name>)` and `.optimize(strategy_params=...)` now
+  raise `TypeError`.** `strategy_params` raises on every non-`None` value, whether or not
+  `strategy` is also passed. `strategy=<optimizer name>` is unaffected: it remains the
+  pre-existing, unrelated deprecated alias for `algorithm=`. The three retired names are
+  matched exactly, so a name you have registered yourself via `register_optimizer` still
+  resolves to your optimizer — including a casing such as `"PARETO_FRONTIER"`, which the
+  registry treats as a distinct name from `"pareto_frontier"`.
+- **`OptimizedFunction(...)` raises `TypeError` for `strategy=<preset name>`,
+  `strategy_params=` and the former internal `strategy_preset=`.** The constructor takes
+  `**kwargs`, so these were accepted as unknown keywords, stored, and never read — the
+  call returned an ordinary result for a request that asked for a preset. Other `**kwargs`
+  keys, and a non-preset `strategy=` value, are unchanged.
+- **Migration — the exception *type* changed, so an `except ValueError:` around one of
+  these calls no longer catches it.** The deleted preset errors were declared as
+  `StrategyPresetError(ValueError)`, with `UnknownStrategyPresetError` and
+  `StrategyPresetValidationError` deriving from it. Everything above now raises
+  **`TypeError`**, which is not a `ValueError`:
+
+  ```python
+  try:
+      result = fn.optimize_sync(strategy_params={"epsilon": 0.02})
+  except ValueError:
+      result = fall_back()
+  ```
+
+  now lets the `TypeError` propagate. Widening the `except` is not the fix: no preset name
+  and no `strategy_params` value works any more, so the call itself has to go. Replace it
+  with `algorithm=<optimizer>` and `objectives=[...]`.
+
+  The TVL-spec route raises the same `TypeError`, which means it is the one spec failure
+  that does **not** arrive as `TVLValidationError`/`ValidationError`: an `except
+  ValidationError:` wrapped around a spec-driven `optimize()` catches every other
+  malformed-spec case but lets this one through. Catch `TypeError` as well if a spec whose
+  `strategy` names a retired preset has to be handled rather than fixed.
+- **A TVL spec naming a retired preset in `optimization.strategy` / `exploration.strategy`
+  now fails when the spec is loaded**, with the same by-name message, instead of loading
+  clean and dying mid-run as `OptimizationError: Unknown optimizer '<preset>'` after a
+  session had already been created.
+- **`traigent validate-config` fails a config whose `"algorithm"` is a retired preset
+  name**, with the same by-name message, instead of reporting "Configuration validation
+  passed" for a config that cannot run. Only the three retired names are checked; the
+  route still does not validate algorithm names in general.
+- **`traigent results rerank` loses `--preset`, `--epsilon`, and `--floor`.** `--weights`
+  is the only remaining mode and is now required, so a bare invocation fails with Click's
+  missing-option error rather than the SDK's former "use exactly one of" message.
+- **Supersedes the 0.14.0 entry "`strategy=` non-preset alias removed"**, whose closing
+  guidance — "Use one of the documented preset names" — is no longer valid advice; there
+  are no documented preset names. That historical entry is left as written.
+- Not removed: `OptimizationResult.preset_selection` and `traigent.api.types.PresetSelection`,
+  including their persistence round-trip and the CLI's display-only rendering. They are
+  retained solely so a result persisted by an older SDK build still loads and still shows
+  its selection record. No code path in this build populates them. The `strategy_preset`
+  key is no longer written to session or trial metadata, and is no longer reconstructed
+  when reading a pre-#2031 legacy artifact (such artifacts still load).
 
 ## [0.26.0] - 2026-07-30
 

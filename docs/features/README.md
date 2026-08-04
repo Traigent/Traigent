@@ -14,7 +14,6 @@ Documentation for Traigent SDK features and configuration options.
 - **[Onboarding & CLI](onboarding.md)** - Guided setup, browser device login, first-prompt generation, and the mock quickstart.
 - **[Local MCP Server](mcp-server.md)** - Local stdio MCP tools for coding agents, recommendations, datasets, cost estimates, and dry-run-first optimization.
 - **[Configuration Recommendations](recommendations.md)** - Catalog-backed configuration-space recommendations through the public API and CLI.
-- **[Strategy Presets](strategy-presets.md)** - Advisory selection helpers for choosing completed trials by accuracy and cost rules.
 - **[Safety Gates](safety-gates.md)** - Cost coverage, CI approval, dataset containment, backend validation, and content logging controls.
 - **[Agent Observability Spans](observability-spans.md)** - Public workflow-span API plus Bedrock token, cost, and mock capture paths.
 

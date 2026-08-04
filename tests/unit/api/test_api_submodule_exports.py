@@ -16,7 +16,6 @@ _SUBMODULES = [
     "decorators",
     "functions",
     "parameter_validator",
-    "strategy_presets",
     "types",
 ]
 

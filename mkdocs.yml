@@ -65,7 +65,6 @@ nav:
       - Onboarding & CLI: features/onboarding.md
       - Local MCP Server: features/mcp-server.md
       - Configuration Recommendations: features/recommendations.md
-      - Strategy Presets: features/strategy-presets.md
       - Safety Gates: features/safety-gates.md
       - Agent Observability Spans: features/observability-spans.md
       - Hybrid Mode API Contract: hybrid-mode-api-contract.md
