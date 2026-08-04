@@ -1393,11 +1393,31 @@ class OptimizationValidator:
         dataset: str | list[str] | None = None,
         strategy: str | None = None,
     ) -> ValidationResult:
-        """Validate optimization configuration (class method for backward compatibility)."""
+        """Validate optimization configuration (class method for backward compatibility).
+
+        ``strategy`` carries the config file's ``"algorithm"`` value on the
+        ``traigent validate-config`` route. It is otherwise unused, which meant
+        a config naming a retired strategy preset was reported as valid and
+        only failed at run time as an unknown optimizer. The retired names are
+        refused here by name; no other algorithm-name checking is performed,
+        because none exists on this route to build on.
+        """
         validator = cls()
-        return validator.validate(
+        result = validator.validate(
             config_space=config_space, objectives=objectives, dataset=dataset
         )
+
+        from traigent.core.optimized_function import (
+            _REMOVED_STRATEGY_PRESETS,
+            _removed_strategy_preset_message,
+        )
+
+        if isinstance(strategy, str) and strategy in _REMOVED_STRATEGY_PRESETS:
+            result.add_error(
+                "algorithm",
+                _removed_strategy_preset_message(strategy, "algorithm"),
+            )
+        return result
 
     def validate(
         self,

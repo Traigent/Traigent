@@ -1050,13 +1050,25 @@ class TestRemovedDecoratorCompatibilityOptions:
         assert isinstance(py_func_with_config, OptimizedFunction)
 
     def test_decorator_rejects_strategy(self):
-        """Named strategy presets (epsilon/floor/Pareto selection) are gone."""
-        with pytest.raises(TypeError, match="no longer supported"):
+        """Named strategy presets (epsilon/floor/Pareto selection) are gone.
+
+        A retired preset name gets the removal-specific message; see
+        ``tests/unit/api/test_strategy_preset_absence.py`` for what it must say.
+        """
+        with pytest.raises(TypeError, match="named strategy presets"):
 
             @optimize(
                 configuration_space={"x": [1, 2, 3]},
                 strategy="max_accuracy_then_cheapest_within_epsilon",
             )
+            def sample_function(x: int) -> int:
+                return x
+
+    def test_decorator_rejects_a_non_preset_strategy_value(self):
+        """``strategy=`` is refused outright, not only for the retired names."""
+        with pytest.raises(TypeError, match="no longer supported"):
+
+            @optimize(configuration_space={"x": [1, 2, 3]}, strategy="grid")
             def sample_function(x: int) -> int:
                 return x
 

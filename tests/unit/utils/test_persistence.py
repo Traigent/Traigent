@@ -448,19 +448,30 @@ def test_warning_codes_clamp_survives_the_round_trip(tmp_path) -> None:
     assert loaded.success_rate == 0.0
 
 
-def test_curated_metadata_keys_are_unchanged_by_the_new_payload(tmp_path) -> None:
-    """The human/CLI-readable summary keys keep their names and meaning.
+def test_curated_metadata_keeps_its_15_keys_and_no_longer_writes_strategy_preset(
+    tmp_path,
+) -> None:
+    """The human/CLI-readable summary keys keep their names and meaning — minus one.
 
     ``list_results`` sorts on ``created_at`` and ``can_resume`` matches on
     ``function_name`` + ``configuration_space``; ``created_at`` stays *save*
     time. The result's own ``timestamp`` now lives in ``result_fields``.
+
+    The presence loop below is deliberately not the whole test. A loop over
+    expected keys can only catch a *disappearance*; deleting ``strategy_preset``
+    from its tuple is invisible to it, so on its own it left the write-side
+    removal unpinned — restoring the ``"strategy_preset": ...`` line in
+    ``PersistenceManager.save_result`` kept the suite green. The absence
+    assertions are what pin the removal, so the curated key set is checked in
+    both directions: exactly these 15 keys are written, and ``strategy_preset``
+    is not one of them.
     """
     persistence = PersistenceManager(base_dir=tmp_path)
     persistence.save_result(_sentinel_result(), "curated")
 
     metadata = json.loads((tmp_path / "curated" / "metadata.json").read_text())
 
-    for key in (
+    curated_keys = (
         "function_identifier",
         "function_name",
         "algorithm",
@@ -476,11 +487,21 @@ def test_curated_metadata_keys_are_unchanged_by_the_new_payload(tmp_path) -> Non
         "total_trials",
         "successful_trials",
         "session_summary",
-    ):
+    )
+    for key in curated_keys:
         assert key in metadata, f"curated key '{key}' disappeared"
     assert metadata["created_at"] != metadata["result_fields"]["timestamp"]
+
+    # #2100/#2101: nothing populates ``metadata["strategy_preset"]`` any more,
+    # so the curated summary must stop writing the key — not write it as null.
+    # ``preset_selection`` above is the one that stays, for old artifacts.
+    assert "strategy_preset" not in metadata
     assert "sync_session_id" not in metadata
     assert "_experiment_stats" not in metadata
+
+    # Both directions: an EXTRA curated key is as much a regression as a
+    # missing one, and this is what a re-added write actually trips.
+    assert set(metadata) - {"result_fields", SCHEMA_VERSION_KEY} == set(curated_keys)
 
 
 def test_versioned_metadata_round_trips_verbatim_including_an_empty_dict(
@@ -630,6 +651,39 @@ def test_legacy_artifact_still_rebuilds_metadata_from_the_curated_keys(
 
     loaded = persistence.load_result("legacy-metadata")
 
+    assert loaded.metadata == {
+        "function_name": "answer_question",
+        "configuration_space": {"model": ["cheap", "smart"]},
+        "session_summary": {"winning_trial_ids": ["t0"]},
+    }
+
+
+def test_legacy_artifact_carrying_strategy_preset_still_loads(tmp_path) -> None:
+    """A real pre-#2031 artifact does carry ``strategy_preset``; it must load.
+
+    The fixture above no longer writes the key, because nothing produces it any
+    more — but artifacts already on disk do. Dropping the key from the legacy
+    read allowlist is only safe if such a file still opens, so this pins the
+    read path: the artifact loads, and the retired key is simply not
+    reconstructed rather than raising or taking the rest of the metadata down
+    with it.
+    """
+    result_dir = _write_legacy_result(tmp_path, "legacy-preset")
+    metadata_path = result_dir / "metadata.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["strategy_preset"] = {
+        "preset_name": "balanced",
+        "params": {"epsilon": 0.02},
+        "selection_grade": "advisory",
+    }
+    metadata_path.write_text(json.dumps(metadata))
+
+    persistence = PersistenceManager(base_dir=tmp_path)
+
+    loaded = persistence.load_result("legacy-preset")
+
+    assert loaded.best_config == {"model": "cheap"}
+    assert [trial.trial_id for trial in loaded.trials] == ["t0"]
     assert loaded.metadata == {
         "function_name": "answer_question",
         "configuration_space": {"model": ["cheap", "smart"]},

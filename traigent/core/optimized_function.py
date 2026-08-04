@@ -135,6 +135,78 @@ logger = get_logger(__name__)
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
+# The named strategy presets that used to be accepted by ``strategy=``. They are
+# listed only so that passing one still produces a message naming the removal,
+# rather than the generic "unknown algorithm" error a bare removal would give —
+# the same shape as the budget_limit removal in core/optimization_pipeline.py.
+_REMOVED_STRATEGY_PRESETS = frozenset(
+    (
+        "max_accuracy_then_cheapest_within_epsilon",
+        "quality_floor_min_cost",
+        "pareto_frontier",
+    )
+)
+
+
+def _removed_strategy_preset_message(value: str, parameter: str = "strategy") -> str:
+    """The single wording every route uses to refuse a retired preset name."""
+    return (
+        f"{parameter}={value!r} was a named strategy preset; named strategy "
+        "presets were removed in 0.27.0 and are not coming back. Use "
+        "algorithm=<optimizer> to choose a search algorithm and "
+        "objectives=[...] to declare what to optimize."
+    )
+
+
+def _reject_removed_strategy_preset(
+    strategy: str | None, parameter: str = "strategy"
+) -> None:
+    """Raise if ``strategy`` names one of the removed strategy presets.
+
+    Matched by **exact** string, deliberately. Case folding here would not be
+    a harmless generosity: ``register_optimizer`` accepts any casing
+    (optimizers/registry.py) and ``get_optimizer`` looks names up
+    case-sensitively, so a caller who registers their own optimizer as
+    ``"PARETO_FRONTIER"`` owns a working, unrelated name. A folded refusal
+    would tell them their own optimizer is a retired preset and refuse to run
+    it. Folding cannot distinguish the two, so only the exact retired spelling
+    is refused; a case variant that is *not* registered still fails, just via
+    the pre-existing unknown-optimizer path.
+    """
+    if isinstance(strategy, str) and strategy in _REMOVED_STRATEGY_PRESETS:
+        raise TypeError(_removed_strategy_preset_message(strategy, parameter))
+
+
+def _reject_removed_strategy_constructor_kwargs(kwargs: Mapping[str, Any]) -> None:
+    """Refuse the retired preset arguments passed to ``OptimizedFunction(...)``.
+
+    The public constructor accepts ``**kwargs``, so ``strategy=``,
+    ``strategy_params=`` and the former internal ``strategy_preset=`` are not
+    signature errors here: they land in ``_decorator_runtime_overrides``, are
+    merged into the optimizer's ``algorithm_config``, and are then never read.
+    The run returns an ordinary result for a call that asked for a preset —
+    #2100's silent-substitution shape through a public door. The decorator and
+    the runtime ``optimize()`` already refuse these; the constructor is the
+    third door onto the same removed feature.
+
+    Only the retired *names* are refused for ``strategy``: every other value
+    keeps whatever behaviour it already had, so legitimate ``**kwargs``
+    consumers are untouched.
+    """
+    _reject_removed_strategy_preset(kwargs.get("strategy"))
+    for parameter in ("strategy_params", "strategy_preset"):
+        value = kwargs.get(parameter)
+        if value is None:
+            continue
+        # A retired name passed under either key still gets the by-name message.
+        _reject_removed_strategy_preset(value, parameter)
+        raise TypeError(
+            f"{parameter} is no longer supported; named strategy presets were "
+            "removed in 0.27.0 and are not coming back. Use "
+            "algorithm=<optimizer> to choose a search algorithm and "
+            "objectives=[...] to declare what to optimize."
+        )
+
 
 def _resolve_callbacks(
     explicit_callbacks: list[Any] | None,
@@ -430,6 +502,11 @@ class OptimizedFunction(Generic[_P, _R]):
             effectuation: Opt-in executable TVAR effectuation.
             **kwargs: Additional configuration
         """
+        # Refused before anything is stored: **kwargs would otherwise swallow
+        # the removed preset arguments into _decorator_runtime_overrides and
+        # run as if they had not been passed.
+        _reject_removed_strategy_constructor_kwargs(kwargs)
+
         # Extract decorator-provided metadata before core storage
         max_trials_explicit = kwargs.pop("_max_trials_explicit", None)
         self._max_trials_uses_sdk_default = (
@@ -1490,6 +1567,10 @@ class OptimizedFunction(Generic[_P, _R]):
         algorithm: str | None,
     ) -> str | None:
         """Resolve the deprecated optimizer-alias compatibility argument."""
+        # Checked first: a removed preset name must not be answered with either
+        # the strategy_params message or the "use 'algorithm' instead"
+        # DeprecationWarning, both of which point at something that cannot work.
+        _reject_removed_strategy_preset(strategy)
         if strategy_params is not None:
             raise TypeError(
                 "strategy_params is no longer supported; use algorithm or objectives."
