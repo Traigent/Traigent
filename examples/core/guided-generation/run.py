@@ -85,8 +85,14 @@ def fake_user_llm(prompt: str) -> str:
     # example synthesis: return new {input, expected_output} objects
     return json.dumps(
         [
-            {"input": {"text": "Absolutely loved every minute of it."}, "expected_output": "positive"},
-            {"input": {"text": "A complete waste of my money."}, "expected_output": "negative"},
+            {
+                "input": {"text": "Absolutely loved every minute of it."},
+                "expected_output": "positive",
+            },
+            {
+                "input": {"text": "A complete waste of my money."},
+                "expected_output": "negative",
+            },
         ]
     )
 
@@ -142,15 +148,21 @@ def demo_prompt_rewriter() -> None:
 def demo_example_synth() -> None:
     section("2. ExampleSynthesizer: grow the dataset toward the harder frontier")
     synth = ExampleSynthesizer(fake_user_llm)
-    seeds = [EvaluationExample(input_data={"text": "great film"}, expected_output="positive")]
-    new = synth.synthesize(seeds, GuidanceAction.GENERATE_HARDER, seed_ids=["ex_seed_0"])
+    seeds = [
+        EvaluationExample(input_data={"text": "great film"}, expected_output="positive")
+    ]
+    new = synth.synthesize(
+        seeds, GuidanceAction.GENERATE_HARDER, seed_ids=["ex_seed_0"]
+    )
     print(f"Generated {len(new)} new examples (tagged synthetic):")
     for ex in new:
         print(f"  + {ex.input_data} -> {ex.expected_output}  metadata={ex.metadata}")
 
 
 def demo_guidance_loop() -> None:
-    section("3. GuidanceLoop: optimize -> opaque plan -> generate locally -> re-optimize")
+    section(
+        "3. GuidanceLoop: optimize -> opaque plan -> generate locally -> re-optimize"
+    )
 
     # An injected 'optimize round' so the loop runs offline. In production this is
     # OptimizedFunction.optimize_with_guidance(), which drives the real optimizer.
@@ -165,7 +177,11 @@ def demo_guidance_loop() -> None:
 
     provider = DemoPlanProvider(
         PlanKind.PROMPT_REWRITE,
-        [GuidancePlanItem("prompt_template", GuidanceAction.REWRITE_PROMPT, CoarsePriority.HIGH)],
+        [
+            GuidancePlanItem(
+                "prompt_template", GuidanceAction.REWRITE_PROMPT, CoarsePriority.HIGH
+            )
+        ],
     )
     loop = GuidanceLoop(
         provider=provider,
