@@ -356,6 +356,20 @@ def _emit_cost_warning_once() -> None:
     sys.stderr.flush()
 
 
+def _fallback_reason_text(exc: Exception) -> str:
+    """Render the cloud-fallback reason without re-entering user ``__str__``.
+
+    A plain non-empty string ``reason`` is used as-is (no user code runs);
+    anything else goes through the #2029-safe renderer so an exception whose
+    ``__str__`` raises cannot replace the connectivity diagnosis it labels
+    (#2050 — the un-ported sibling of the handler at the optimize() boundary).
+    """
+    reason_attr = getattr(exc, "reason", None)
+    if isinstance(reason_attr, str) and reason_attr:
+        return reason_attr
+    return _safe_exception_text(exc)
+
+
 class OptimizedFunction(Generic[_P, _R]):
     """Wrapper for functions decorated with @traigent.optimize.
 
@@ -2387,7 +2401,7 @@ class OptimizedFunction(Generic[_P, _R]):
                 raise
             if not exception_is_connectivity(e):
                 raise
-            reason = str(getattr(e, "reason", None) or e)
+            reason = _fallback_reason_text(e)
             # Re-stamping the run must not lose the typed classification the
             # raiser already established: this handler re-records the SAME
             # fallback event, and the run that finally reports is built from

@@ -197,10 +197,6 @@ def _safe_exception_text(exc: BaseException) -> str:
     absorbed. A ``__str__`` that raises ``KeyboardInterrupt`` / ``SystemExit``
     is the interpreter or the user asking to stop, and a text-formatting helper
     must not be the thing that swallows that.
-
-    ``core.utils.safe_str_convert`` is deliberately not reused: it absorbs only
-    ``ValueError``/``TypeError``, which is exactly the narrow set a broken
-    ``__str__`` tends not to raise.
     """
     try:
         return str(exc)

@@ -21,7 +21,6 @@ from traigent.core.constants import (
     DEFAULT_EXECUTION_TIME,
     RESPONSE_TIME_METRIC,
     TOKEN_METRICS,
-    VALIDATION_ERROR_CODES,
 )
 
 logger = logging.getLogger(__name__)
@@ -376,24 +375,6 @@ def safe_int_convert(value: Any, default: int = 0) -> int:
         return default
 
 
-def safe_str_convert(value: Any, default: str = "") -> str:
-    """Safely convert a value to string.
-
-    Args:
-        value: Value to convert
-        default: Default value if conversion fails
-
-    Returns:
-        String representation of value or default
-    """
-    try:
-        if value is None:
-            return default
-        return str(value)
-    except (ValueError, TypeError):
-        return default
-
-
 # =============================================================================
 # CONFIGURATION UTILITIES
 # =============================================================================
@@ -446,45 +427,6 @@ def validate_config_keys(
                 errors.append(f"Unexpected configuration key: '{key}'")
 
     return errors
-
-
-# =============================================================================
-# ERROR HANDLING UTILITIES
-# =============================================================================
-
-
-def create_error_message(error_code: str, message: str, **kwargs) -> str:
-    """Create a standardized error message.
-
-    Args:
-        error_code: Error code from VALIDATION_ERROR_CODES
-        message: Error message
-        **kwargs: Additional context for message formatting
-
-    Returns:
-        Formatted error message
-    """
-    if error_code not in VALIDATION_ERROR_CODES:
-        error_code = "UNKNOWN_ERROR"
-
-    formatted_message = message.format(**kwargs) if kwargs else message
-    return f"[{error_code}] {formatted_message}"
-
-
-def truncate_error_message(message: str, max_length: int = 500) -> str:
-    """Truncate an error message to a maximum length.
-
-    Args:
-        message: Original error message
-        max_length: Maximum allowed length
-
-    Returns:
-        Truncated message with ellipsis if needed
-    """
-    if len(message) <= max_length:
-        return message
-
-    return message[: max_length - 3] + "..."
 
 
 # =============================================================================

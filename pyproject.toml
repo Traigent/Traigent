@@ -376,7 +376,6 @@ addopts = [
     # Hangs at ~33% — works in CI with different timeout handling
     "--ignore=tests/unit/core/test_constraints_enforced.py",
     # Hangs at ~33% locally — works in CI with different timeout handling
-    "--ignore=tests/unit/core/test_orchestrator.py",
 ]
 asyncio_mode = "auto"
 # A typo'd marker must be a collection error, not a silent no-op: an
