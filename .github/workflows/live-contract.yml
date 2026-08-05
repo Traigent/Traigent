@@ -22,6 +22,14 @@ concurrency:
 
 jobs:
   sdk-backend-live-contract:
+    # A fork PR cannot read secrets, so the App token cannot be minted and this
+    # lane genuinely cannot run. Skip the whole JOB there — a skipped job is
+    # visibly skipped. It must never RUN and report success with its real steps
+    # skipped, which is what the previous per-step
+    # `if: env.LIVE_CONTRACT_CHECKOUT_TOKEN != ''` guards did: with the secret
+    # unset, all 14 substantive steps skipped and the job "succeeded" in 5-15s.
+    # It reported SUCCESS on the 0.26.0 promotion PR while checking nothing.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -32,15 +40,33 @@ jobs:
       BACKEND_DIR: ${{ github.workspace }}/TraigentBackend
       SCHEMA_DIR: ${{ github.workspace }}/TraigentSchema
       COMPOSE_PROJECT_NAME: live-contract-${{ github.run_id }}-${{ github.run_attempt }}
-      LIVE_CONTRACT_CHECKOUT_TOKEN: ${{ secrets.LIVE_CONTRACT_CHECKOUT_TOKEN }}
+      CI_READ_APP_ID: ${{ secrets.CI_READ_APP_ID }}
 
     steps:
-      - name: Skip live contract when sibling checkout token is unavailable
-        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN == '' }}
-        run: echo "::notice::LIVE_CONTRACT_CHECKOUT_TOKEN is not configured; skipping live contract lane for this run."
+      # Fail, do not skip. Past this point the job is running in a context that
+      # HAS secrets, so a missing credential is a misconfiguration, not an
+      # expected state — and a silent green here is the exact defect being fixed.
+      - name: Require the CI read App to be configured
+        if: ${{ env.CI_READ_APP_ID == '' }}
+        run: |
+          echo "::error::CI_READ_APP_ID / CI_READ_APP_PRIVATE_KEY are not configured on this repo."
+          echo "::error::This lane checks out sibling private repos and cannot run without them."
+          echo "::error::Set them with tools/secret-ops/setup-ci-read-app.sh (see BROWSER-AGENT-ci-read-app.md)."
+          echo "::error::Refusing to report success for a contract that was never executed."
+          exit 1
+
+      - name: Mint CI read token
+        id: ci-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.CI_READ_APP_ID }}
+          private-key: ${{ secrets.CI_READ_APP_PRIVATE_KEY }}
+          owner: Traigent
+          # Least privilege per workflow: only the two siblings this lane checks
+          # out. The installation itself is org-wide; this narrows the token.
+          repositories: TraigentBackend,TraigentSchema
 
       - name: Checkout SDK
-        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
         uses: actions/checkout@v7
         with:
           path: Traigent
@@ -49,31 +75,28 @@ jobs:
           persist-credentials: false
 
       - name: Checkout TraigentBackend develop
-        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
         uses: actions/checkout@v7
         with:
           repository: Traigent/TraigentBackend
           ref: develop
           path: TraigentBackend
-          # Configure LIVE_CONTRACT_CHECKOUT_TOKEN if this repo's GITHUB_TOKEN
-          # cannot read sibling private repositories.
-          token: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN }}
+          # The repo GITHUB_TOKEN cannot read sibling private repos; use the
+          # short-lived traigent-ci-read App installation token instead.
+          token: ${{ steps.ci-token.outputs.token }}
           persist-credentials: false
 
       - name: Checkout TraigentSchema develop
-        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
         uses: actions/checkout@v7
         with:
           repository: Traigent/TraigentSchema
           ref: develop
           path: TraigentSchema
-          # Configure LIVE_CONTRACT_CHECKOUT_TOKEN if this repo's GITHUB_TOKEN
-          # cannot read sibling private repositories.
-          token: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN }}
+          # The repo GITHUB_TOKEN cannot read sibling private repos; use the
+          # short-lived traigent-ci-read App installation token instead.
+          token: ${{ steps.ci-token.outputs.token }}
           persist-credentials: false
 
       - name: Verify backend provides the CI mint script
-        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
         working-directory: ${{ env.BACKEND_DIR }}
         run: |
           # Fail fast with an actionable message instead of booting the whole
@@ -86,17 +109,14 @@ jobs:
           fi
 
       - name: Set up Python
-        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Install uv
-        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
         run: python -m pip install --upgrade pip "uv==0.8.13"
 
       - name: Prepare compose environment
-        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
         run: |
           {
             echo "JWT_SECRET_KEY=$(openssl rand -hex 32)"
@@ -106,7 +126,6 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Start dockerized backend
-        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
         working-directory: ${{ env.BACKEND_DIR }}
         run: |
           docker compose \
@@ -115,7 +134,6 @@ jobs:
             up -d --wait postgres redis backend
 
       - name: Poll backend health
-        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
         run: |
           for attempt in {1..60}; do
             if curl -fsS "http://localhost:${API_PORT}/health" >/dev/null; then
@@ -131,7 +149,6 @@ jobs:
           exit 1
 
       - name: Mint live-contract API key
-        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
         working-directory: ${{ env.BACKEND_DIR }}
         run: |
           # The mint script writes the raw key to a private (0600) file inside
@@ -154,7 +171,6 @@ jobs:
           echo "TRAIGENT_API_KEY=$key" >> "$GITHUB_ENV"
 
       - name: Clean container-owned build artifacts from the SDK checkout
-        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
         working-directory: ${{ env.SDK_DIR }}
         run: |
           # The backend container pip-installs the mounted SDK, writing a
@@ -164,12 +180,10 @@ jobs:
           sudo rm -rf traigent.egg-info
 
       - name: Install SDK dev dependencies
-        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
         working-directory: ${{ env.SDK_DIR }}
         run: uv sync --extra dev
 
       - name: Run sync live-contract test
-        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
         working-directory: ${{ env.SDK_DIR }}
         env:
           ENVIRONMENT: development
@@ -181,7 +195,6 @@ jobs:
           uv run pytest tests/cloud/test_sync_live_contract.py -m contract --tb=short
 
       - name: Run hybrid session live test
-        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
         working-directory: ${{ env.SDK_DIR }}
         env:
           ENVIRONMENT: development
@@ -193,7 +206,6 @@ jobs:
           uv run pytest tests/integration/backend/test_hybrid_session_live.py --tb=short
 
       - name: Run backend DTO live smoke
-        if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
         working-directory: ${{ env.SDK_DIR }}
         env:
           ENVIRONMENT: development
@@ -205,7 +217,7 @@ jobs:
           uv run pytest tests/integration/backend/test_backend_minimal.py --tb=short
 
       - name: Backend logs on failure
-        if: ${{ failure() && env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
+        if: ${{ failure() }}
         working-directory: ${{ env.BACKEND_DIR }}
         run: |
           docker compose \
@@ -214,7 +226,7 @@ jobs:
             logs --tail=300 backend
 
       - name: Stop dockerized backend
-        if: ${{ always() && env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
+        if: ${{ always() }}
         working-directory: ${{ env.BACKEND_DIR }}
         run: |
           docker compose \

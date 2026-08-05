@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "traigent"
-version = "0.23.0"
+version = "0.26.0"
 authors = [
     {name = "Traigent Team", email = "opensource@traigent.ai"},
 ]
@@ -137,14 +137,21 @@ mcp = [
     "mcp>=1.28.1,<2.0.0",  # CVE-2026-59950 (websocket Host/Origin), CVE-2026-52870 (task-handler session scoping)
 ]
 
-# Internal schema validation support for DTO strict-validation paths.
-internal_schema = [
-    # Exact-commit pin: the economics telemetry contract (WI-B) lands in
-    # TraigentSchema at 01f3e2a2 (5.0.0) and predates the 5.0.0 PyPI release, so
-    # this emission surface requires the exact Git commit (matching the Backend
-    # pin), not the registry version. Bump both this ref and uv.lock together.
-    "traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@01f3e2a2bbc1ca7d1b1cc8dde94f82d73dbe822a",
-]
+# NOTE: there is deliberately no `internal_schema` extra here.
+#
+# traigent-schema is needed at an exact commit (the economics contract is
+# fingerprinted), and PyPI rejects any distribution whose metadata contains a
+# direct URL reference — including one nested in an optional extra. Declaring
+# the pin here made traigent 0.26.0 unpublishable:
+#
+#     400 Can't have direct dependency: traigent-schema @ git+https://...
+#     ; extra == "internal-schema"
+#
+# The pin now lives in scripts/ci/schema-pin.txt, which is not shipped in the
+# sdist, so pyproject carries no direct reference that could reintroduce this.
+# Internal lanes install it with `pip install -r scripts/ci/schema-pin.txt`.
+# Restore a real extra here only once traigent-schema is on PyPI at the version
+# the SDK's economics contract expects, and then as a version specifier.
 
 # Testing dependencies
 test = [
