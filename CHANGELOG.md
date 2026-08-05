@@ -14,7 +14,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   behind `max_accuracy_then_cheapest_within_epsilon`, `quality_floor_min_cost`, and
   `pareto_frontier` are the technique, not something a public package ships readable
   source for; that logic belongs in the backend. The presets are gone outright — there
-  is no shim, no compatibility alias, and no replacement — which removes the surface
+  is no shim and no compatibility alias — which removes the surface
   both #2100 and #2101 were reported against and stops it being published again. The
   removal takes effect from this release onward and does not alter anything already
   published. `traigent.api.strategy_presets` is deleted along with all eight symbols
