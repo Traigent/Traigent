@@ -39,6 +39,7 @@ except ImportError:
 
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.security.redaction import is_credential_key_name
+from traigent.utils.exceptions import ValidationError
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import safe_write_text, sanitize_filename, validate_path
 
@@ -105,6 +106,12 @@ def metadata_to_backend_tags(
     """Convert metadata to backend tags while filtering sensitive keys."""
     sanitized = sanitize_backend_metadata(metadata, privacy_mode=privacy_mode)
     return [f"{key}:{value}" for key, value in sanitized.items()]
+
+
+# Mirrors MAX_REPORTED_DATASET_ROW_ERRORS in utils/validation.py: enough rows to
+# diagnose a systematic problem, few enough that a wholly malformed dataset does
+# not produce one error line per row.
+MAX_REPORTED_CONVERSION_ERRORS = 20
 
 
 @dataclass
@@ -276,23 +283,43 @@ class DatasetConverter:
     # SDK Dataset to Backend Example Set Conversion
 
     def sdk_dataset_to_backend_examples(
-        self, dataset: Dataset, privacy_mode: bool = False
+        self,
+        dataset: Dataset,
+        privacy_mode: bool = False,
+        *,
+        strict: bool = True,
+        conversion_errors: list[dict[str, Any]] | None = None,
     ) -> tuple[list[dict[str, Any]], ExampleSetMetadata]:
         """Convert SDK dataset to backend example format.
 
         Args:
             dataset: SDK dataset
             privacy_mode: If True, excludes sensitive data
+            strict: Fail closed (the default). Any row that cannot be converted
+                raises ``ValidationError`` naming the rows, instead of being
+                dropped. A silently shorter dataset changes what the
+                optimization is measured against while every count the caller
+                can see still says it succeeded.
+            conversion_errors: Optional accumulator for structured per-row
+                degradation records when ``strict`` is False, mirroring the
+                ``metric_errors`` accumulator used by the evaluators for the
+                same reason (see ``evaluators/local.py``).
 
         Returns:
             Tuple of (examples list, metadata)
+
+        Raises:
+            ValidationError: If ``strict`` and any example fails to convert.
         """
         logger.info(
             f"Converting SDK dataset '{dataset.name}' to backend format (privacy={privacy_mode})"
         )
 
         examples = []
-        error_count = 0
+        # Every failure is recorded, not just counted: "3 rows failed" does not
+        # tell anyone WHICH rows or why, and the previous code discarded even
+        # the count before it reached a caller.
+        failures: list[dict[str, Any]] = []
 
         for i, example in enumerate(dataset.examples):
             try:
@@ -302,7 +329,38 @@ class DatasetConverter:
                 examples.append(backend_example)
             except Exception as e:
                 logger.warning(f"Failed to convert example {i}: {e}")
-                error_count += 1
+                failures.append(
+                    {
+                        "example_index": i,
+                        "error_type": type(e).__name__,
+                        "error_message": str(e),
+                    }
+                )
+
+        error_count = len(failures)
+
+        if failures:
+            if strict:
+                # Cap the detail the same way utils/validation.py does, so a
+                # wholly malformed dataset produces a readable error rather
+                # than one line per row.
+                shown = failures[:MAX_REPORTED_CONVERSION_ERRORS]
+                detail = "; ".join(
+                    f"example {f['example_index']}: {f['error_type']}: {f['error_message']}"
+                    for f in shown
+                )
+                if error_count > MAX_REPORTED_CONVERSION_ERRORS:
+                    detail += (
+                        f"; ... and {error_count - MAX_REPORTED_CONVERSION_ERRORS} more"
+                    )
+                raise ValidationError(
+                    f"{error_count} of {len(dataset.examples)} dataset examples "
+                    f"failed to convert for upload: {detail}. Refusing to upload a "
+                    f"silently shorter dataset; pass strict=False to accept the "
+                    f"drop and receive the per-row errors instead."
+                )
+            if conversion_errors is not None:
+                conversion_errors.extend(failures)
 
         # Determine example set type
         example_type = self._determine_example_set_type(dataset)
@@ -412,6 +470,12 @@ class DatasetConverter:
                 example_set_id, examples, no_egress=no_egress
             )
 
+            # `errors=[]` is now a guarantee rather than an assumption: the
+            # conversion above runs strict, so reaching this line means every
+            # example converted. It previously sat next to a converter that
+            # dropped rows and discarded its own error count, so a run that lost
+            # half the dataset still reported success with no errors.
+            # `error_count` remains the BACKEND's invalid count.
             return ConversionResult(
                 success=True,
                 converted_count=result.get("added", 0),
