@@ -150,7 +150,10 @@ class TestCloudLicenseValidationIsLoud:
         )
 
         validator = LicenseValidator()
-        validator._api_key = "key-123"
+        # Value is the literal word "placeholder" so the push-time secret scanner
+        # recognises it as one. Any value works: the branch under test is reached
+        # before the credential is ever read.
+        validator._api_key = "placeholder"
         # The test environment enables offline mode, which short-circuits before the
         # cloud path is reached. Pinned off so the branch under test actually runs --
         # without this the test passes trivially by never entering the code it guards.
