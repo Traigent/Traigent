@@ -157,10 +157,23 @@ class TraigentClient:
         self.backend_url = backend_url or BackendConfig.get_backend_url()
         self.no_egress = bool(offline or no_egress)
 
-        # Determine execution policy first (before initializing cloud components)
+        # Determine execution policy first (before initializing cloud components).
+        #
+        # #1776: `no_egress` used to reach only the TRANSPORT gate on the line above
+        # and was dropped here, so a caller who set the documented `no_egress=True`
+        # knob and left `algorithm` at its "auto" default resolved to
+        # intent=CLOUD_BRAIN / execution_mode=hybrid with transport blocked -- and
+        # optimize() hard-failed with CloudEgressBlockedError instead of running
+        # locally. The error text even said "clear the runtime no_egress policy",
+        # which is the opposite of what the caller wanted.
+        #
+        # Folding it into `offline` here makes ONE predicate drive BOTH the transport
+        # gate and the execution intent, which is the invariant #1773 established for
+        # the env-alias route. Not a privacy change -- egress was already blocked;
+        # this only stops the two halves disagreeing about it.
         self.execution_policy = self._resolve_execution_policy(
             algorithm=algorithm,
-            offline=offline,
+            offline=bool(offline or no_egress),
             execution_mode=execution_mode,
             has_execution_mode=has_execution_mode,
         )

@@ -1930,9 +1930,29 @@ def _print_valid_key_info(key_data: dict[str, Any]) -> None:
     console.print()
 
 
+#: Signals that a 403 came from the EDGE (Cloudflare/WAF) rather than from Traigent.
+#: Same vocabulary the session path classifies on (core/backend_session_manager,
+#: SessionCreationFailureClassification.EDGE_BLOCKED), kept in step deliberately --
+#: two different answers for one HTTP response is the defect #1754 fixed there and
+#: #1775 reports here.
+_EDGE_BLOCK_SIGNALS: tuple[str, ...] = (
+    "edge_blocked",
+    "edge blocked",
+    "cloudflare",
+    "cf-ray",
+    "cf-mitigated",
+    "error code: 1010",
+    "browser_signature_banned",
+    "waf",
+)
+
 _ERROR_STATUS_MAP: dict[int | str, tuple[str, str]] = {
-    401: ("[red]❌ Invalid or unauthorized API key[/red]", "authentication"),
-    403: ("[red]❌ Invalid or unauthorized API key[/red]", "authentication"),
+    # 401 and 403 used to share one message. #1754 (PR #1762) split them on the
+    # session path; #1775 is the same collapse still live on the CLI. A 403 is NOT a
+    # bad key -- it is a good key lacking a scope, or an edge block -- and telling the
+    # user to rotate a perfectly valid credential is the wrong remediation.
+    401: ("[red]❌ Invalid or expired API key[/red]", "authentication"),
+    403: ("[red]❌ API key lacks the required scope[/red]", "authorization"),
     404: ("[red]❌ Backend endpoint mismatch[/red]", "backend_endpoint_mismatch"),
     408: ("[red]❌ Backend request timed out[/red]", "timeout"),
     409: ("[red]❌ Backend reported a request conflict[/red]", "backend_conflict"),
@@ -1941,9 +1961,22 @@ _ERROR_STATUS_MAP: dict[int | str, tuple[str, str]] = {
 }
 
 
+def _looks_edge_blocked(body_preview: str) -> bool:
+    """True when a 403 body carries an edge/WAF signature rather than a Traigent one."""
+    lowered = (body_preview or "").lower()
+    return any(signal in lowered for signal in _EDGE_BLOCK_SIGNALS)
+
+
 def _print_error_status(status: int, body_preview: str) -> None:
     """Print error details for a non-200 validation response."""
-    if status in _ERROR_STATUS_MAP:
+    if status == 403 and _looks_edge_blocked(body_preview):
+        # A Cloudflare/WAF 403 is neither a bad key nor a missing scope, and
+        # "request the missing scope" would send the user somewhere useless.
+        msg, category = (
+            "[red]❌ Blocked at the network edge before reaching Traigent[/red]",
+            "edge_blocked",
+        )
+    elif status in _ERROR_STATUS_MAP:
         msg, category = _ERROR_STATUS_MAP[status]
     elif 500 <= status <= 599:
         msg, category = _ERROR_STATUS_MAP["5xx"]
@@ -1956,6 +1989,16 @@ def _print_error_status(status: int, body_preview: str) -> None:
     if status == 404:
         console.print(
             "[yellow]Hint:[/yellow] Check TRAIGENT_BACKEND_URL / TRAIGENT_API_URL"
+        )
+    elif category == "authorization":
+        console.print(
+            "[yellow]Hint:[/yellow] The key is valid but lacks a required scope. "
+            "Grant the scope rather than rotating the key."
+        )
+    elif category == "edge_blocked":
+        console.print(
+            "[yellow]Hint:[/yellow] The request did not reach Traigent. Check for a "
+            "proxy, VPN or WAF between you and the backend; the key is unaffected."
         )
     console.print(f"[yellow]HTTP status:[/yellow] {status}")
     if body_preview:
