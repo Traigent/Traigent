@@ -16,9 +16,6 @@ from __future__ import annotations
 
 import warnings as _warnings
 
-# Planner V2 is a core protocol, independent of the optional analytics plugin.
-from .planner import PlannerV2Client
-
 _PLUGIN_AVAILABLE = False
 
 # Try to import from the plugin first
@@ -94,7 +91,6 @@ except ImportError:
         OptimizationHistory,
         PerformancePredictor,
     )
-    from .next_steps import NextStepsClient
     from .optimization_plan import OptimizationPlanClient
 
     # Predictive analytics
@@ -133,8 +129,6 @@ def is_plugin_installed() -> bool:
 __all__ = [
     # Example Insights
     "ExampleInsightsClient",
-    "NextStepsClient",
-    "PlannerV2Client",
     "OptimizationPlanClient",
     # Historical analytics
     "HistoricalAnalyticsEngine",

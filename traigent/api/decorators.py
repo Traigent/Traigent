@@ -66,15 +66,8 @@ from pydantic import (
 from traigent.api.functions import _GLOBAL_CONFIG
 from traigent.api.parameter_ranges import (
     ParameterRange,
-    TextDocument,
     is_inline_param_definition,
     normalize_configuration_space,
-)
-from traigent.api.strategy_presets import (
-    NormalizedStrategyPreset,
-    UnknownStrategyPresetError,
-    is_strategy_preset_name,
-    normalize_strategy_preset,
 )
 from traigent.api.types import AgentDefinition
 from traigent.cloud.smart_pruning import SmartPruningOptions
@@ -804,6 +797,9 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "objectives": None,
     "configuration_space": None,
     "experiment_name": None,
+    "agent_name": None,
+    "run_title": None,
+    "run_description": None,
     "default_config": None,
     "warm_start_from": None,
     "constraints": None,
@@ -1317,44 +1313,6 @@ def _normalize_runtime_override_aliases(
 ) -> dict[str, Any]:
     """Normalize runtime override keys."""
     return dict(overrides)
-
-
-def _resolve_strategy_argument(
-    *,
-    strategy: str | None,
-    strategy_params: Mapping[str, Any] | None,
-    runtime_overrides: dict[str, Any],
-) -> tuple[str | None, dict[str, Any]]:
-    """Split public ``strategy`` into preset selection."""
-    if strategy is None:
-        if strategy_params is not None:
-            normalize_strategy_preset(None, strategy_params)
-        return None, runtime_overrides
-
-    if is_strategy_preset_name(strategy) or strategy_params is not None:
-        return strategy, runtime_overrides
-
-    raise UnknownStrategyPresetError(strategy)
-
-
-def _apply_strategy_preset_to_options(
-    *,
-    strategy_preset: NormalizedStrategyPreset | None,
-    objectives: list[str] | ObjectiveSchema | None,
-    constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None,
-) -> tuple[
-    list[str] | ObjectiveSchema | None,
-    list[Constraint | BoolExpr | Callable[..., Any]] | None,
-]:
-    """Apply advisory preset objectives without adding search constraints."""
-    if strategy_preset is None:
-        return objectives, constraints
-    if objectives is not None:
-        raise ValueError(
-            "strategy presets are mutually exclusive with explicit objectives. "
-            "Use either strategy=... or objectives=..., not both."
-        )
-    return list(strategy_preset.objectives), constraints
 
 
 def _validate_runtime_overrides(remaining_overrides: dict[str, Any]) -> None:
@@ -2077,9 +2035,6 @@ def _normalize_config_space_and_defaults(
         normalized_space, param_defaults = normalize_configuration_space(
             configuration_space, inline_params
         )
-        _restore_text_document_markers(
-            normalized_space, configuration_space, inline_params
-        )
         if param_defaults:
             default_config = {**param_defaults, **(default_config or {})}
 
@@ -2139,21 +2094,6 @@ def _validate_constraint_satisfiability(
     if result.status == SatStatus.UNSAT:
         detail = result.message or "no valid configuration satisfies all constraints"
         raise ValueError(f"constraints are unsatisfiable: {detail}")
-
-
-def _restore_text_document_markers(
-    normalized_space: dict[str, Any],
-    raw_configuration_space: dict[str, Any] | ConfigSpace | None,
-    inline_params: dict[str, Any],
-) -> None:
-    """Keep train_skill auto-discovery markers after decorator normalization."""
-
-    for source in _iter_constraint_scope_sources(
-        raw_configuration_space, inline_params
-    ):
-        for name, value in source.items():
-            if isinstance(value, TextDocument):
-                normalized_space[name] = value
 
 
 def _resolve_auto_detect_tvars_mode(
@@ -2368,6 +2308,9 @@ def optimize(  # NOSONAR(S107)
     objectives: list[str] | ObjectiveSchema | None = None,
     configuration_space: dict[str, Any] | ConfigSpace | None = None,
     experiment_name: str | None = None,
+    agent_name: str | None = None,
+    run_title: str | None = None,
+    run_description: str | None = None,
     default_config: dict[str, Any] | None = None,
     warm_start_from: str | None = None,
     constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None = None,
@@ -2401,10 +2344,6 @@ def optimize(  # NOSONAR(S107)
     best_config_cache_ttl_seconds: int = 24 * 60 * 60,
     best_config_stale_ok_ttl_seconds: int | None = None,
     enable_auto_load_dev_logs: bool | None = None,
-    # Guided generation: configure here, then run via fn.optimize_with_guidance(provider)
-    prompt_rewrite: dict[str, Any] | None = None,
-    grow_dataset: dict[str, Any] | None = None,
-    skill_train: dict[str, Any] | None = None,
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
 ) -> Callable[
@@ -2424,27 +2363,36 @@ def optimize(  # NOSONAR(S107)
             infers sensible orientations and equal weights) or an ObjectiveSchema
             for explicit weights, orientations, and metadata. Omitted values fall
             back to ``traigent.configure(objectives=...)`` or ``["accuracy"]``.
-            Mutually exclusive with strategy presets; use one path so the
-            business-goal preset cannot silently override hand-set objectives.
-        strategy: Optional advisory strategy preset name. Supported preset names
-            are ``max_accuracy_then_cheapest_within_epsilon``,
-            ``quality_floor_min_cost``, and ``pareto_frontier``.
-            Use ``algorithm`` to select an optimizer by name.
-        strategy_params: Typed parameters for the selected strategy preset.
-            ``epsilon`` is required for
-            ``max_accuracy_then_cheapest_within_epsilon`` and must be > 0 and
-            <= 1. ``floor`` is required for ``quality_floor_min_cost`` and must
-            be between 0 and 1 inclusive. ``pareto_frontier`` accepts no params.
+        strategy: Retained only for signature compatibility; a non-``None`` value
+            now raises ``TypeError``. Use ``algorithm`` to select an optimizer by
+            name, or ``objectives`` to set what is optimized.
+        strategy_params: Retained only for signature compatibility; a non-``None``
+            value now raises ``TypeError``.
         configuration_space: Dictionary describing the search space. Keys are
             parameter names; values can be discrete lists, numeric tuples, or nested
             dicts for composite parameters.
-        experiment_name: Human-readable display name for this experiment shown in
-            the Traigent portal and local storage. When ``None`` (default), the
-            decorated function's ``__name__`` is used. Falls back to the
-            ``TRAIGENT_EXPERIMENT_NAME`` environment variable if set and no
-            explicit value is passed. Allows names with spaces, punctuation, and
-            other characters not valid in Python identifiers, for example
-            ``"Amir txt2sql v1 (ACL 0.8)"``.
+        experiment_name: Deprecated alias of ``agent_name`` — it names the AGENT,
+            not an individual run, and is kept only for back-compatibility. Prefer
+            ``agent_name``; if both are given, ``agent_name`` wins.
+        agent_name: Stable identity of the agent being optimized. The portal groups
+            optimization history by (agent, evaluation dataset), so this string
+            decides which runs share a history. **Keep it identical across every run
+            of the same agent** — do not encode a variant, hypothesis, weighting,
+            permutation count, or date into it, or each run becomes a separate agent
+            and the history fragments into one-run pieces. To say what a particular
+            run is testing, use ``run_title``. Resolution order: ``agent_name`` →
+            ``experiment_name`` → the ``TRAIGENT_EXPERIMENT_NAME`` environment
+            variable (read at access time) → a self-describing default derived from
+            the function name, objectives, and knobs. Note the derived default
+            changes when knobs or objectives change, so set this explicitly to hold
+            one history across a changing search space.
+        run_title: Optional title for THIS run, stating what it is testing — e.g.
+            ``"Check best router model"``. Free to differ on every run; it never
+            affects agent identity, cohorting, scoring, or recommendations. Trimmed
+            to 512 characters.
+        run_description: Optional description of what this run is testing and why —
+            the hypothesis or intent, recorded before results are known. Trimmed to
+            4000 characters. Like ``run_title`` it is a label only.
         default_config: Baseline configuration materialized before the first trial.
             In seamless/attribute modes these override literal values during the
             initial run. In parameter mode the dict is converted to a TraigentConfig
@@ -2698,21 +2646,18 @@ def optimize(  # NOSONAR(S107)
         for key, value in legacy_args.iter_known_values():
             record_option(key, value, "legacy arguments")
 
-    preset_strategy_name, runtime_overrides = _resolve_strategy_argument(
-        strategy=strategy,
-        strategy_params=strategy_params,
-        runtime_overrides=runtime_overrides,
-    )
-    strategy_preset = (
-        normalize_strategy_preset(preset_strategy_name, strategy_params)
-        if preset_strategy_name is not None
-        else None
-    )
+    if strategy is not None or strategy_params is not None:
+        raise TypeError(
+            "strategy presets are no longer supported; use algorithm or objectives."
+        )
 
     direct_inputs = {
         "objectives": objectives,
         "configuration_space": configuration_space,
         "experiment_name": experiment_name,
+        "agent_name": agent_name,
+        "run_title": run_title,
+        "run_description": run_description,
         "default_config": default_config,
         "warm_start_from": warm_start_from,
         "constraints": constraints,
@@ -2850,8 +2795,25 @@ def optimize(  # NOSONAR(S107)
     max_trials_value = combined_settings["max_trials"]
     if max_trials_value is not None and max_trials_value <= 0:
         raise ValueError("max_trials must be a positive integer")
-    # Experiment display name (decorator > env var > func.__name__ at decoration time)
+    # Agent identity (decorator > env var > func.__name__ at decoration time).
+    # `agent_name` is the preferred spelling; `experiment_name` is the deprecated
+    # alias for the same concept, so the explicit value is whichever was supplied.
     experiment_name_value = combined_settings["experiment_name"]
+    agent_name_value = combined_settings.get("agent_name")
+    if agent_name_value is not None and experiment_name_value is not None:
+        _warn_deprecated_once(
+            "optimize.experiment_name_with_agent_name",
+            "Both agent_name and experiment_name were supplied; agent_name wins. "
+            "experiment_name is a deprecated alias for the agent's identity — drop it.",
+            stacklevel=4,
+        )
+    if agent_name_value is not None:
+        experiment_name_value = agent_name_value
+    # Per-run narrative. Deliberately NOT part of identity resolution above: these
+    # vary per run by design, and folding them into identity is exactly what
+    # fragments an agent's optimization history into one-run cohorts.
+    run_title_value: str | None = combined_settings.get("run_title") or None
+    run_description_value: str | None = combined_settings.get("run_description") or None
     # Warm-start: prior experiment id to seed this run (empty string -> None).
     warm_start_from_value: str | None = combined_settings.get("warm_start_from") or None
     # Tuned variable auto-detection
@@ -3022,11 +2984,6 @@ def optimize(  # NOSONAR(S107)
         default_config,
         eval_dataset,
         combined_runtime_overrides,
-    )
-    objectives, constraints = _apply_strategy_preset_to_options(
-        strategy_preset=strategy_preset,
-        objectives=objectives,
-        constraints=constraints,
     )
     constraint_scope_var_names = _augment_constraint_scope_var_names(
         constraint_scope_var_names, configuration_space
@@ -3238,8 +3195,6 @@ def optimize(  # NOSONAR(S107)
             enable_auto_load_dev_logs=enable_auto_load_dev_logs_value,
             # TVL promotion gate for statistical best-config selection
             promotion_gate=promotion_gate,
-            # Advisory strategy preset metadata/selection.
-            strategy_preset=strategy_preset,
             # Optimizer limits (extracted from combined_settings)
             max_trials=max_trials_value,
             _max_trials_explicit=max_trials_explicit,
@@ -3248,12 +3203,11 @@ def optimize(  # NOSONAR(S107)
             # The precomputed self-describing default is stored separately.
             experiment_name=experiment_name_value,
             _default_experiment_name=default_experiment_name,
+            # Per-run narrative — labels only, never identity.
+            run_title=run_title_value,
+            run_description=run_description_value,
             # Warm-start: seed this run from a prior experiment's learned configs.
             warm_start_from=warm_start_from_value,
-            # Guided-generation defaults (consumed by optimize_with_guidance)
-            prompt_rewrite=prompt_rewrite,
-            grow_dataset=grow_dataset,
-            skill_train=skill_train,
             **combined_runtime_overrides,
         )
         optimized_func.execution_policy = execution_policy

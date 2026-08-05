@@ -51,9 +51,6 @@ def optimize(
     best_config_cache_ttl_seconds: int = 24 * 60 * 60,
     best_config_stale_ok_ttl_seconds: int | None = None,
     enable_auto_load_dev_logs: bool | None = None,
-    # Guided generation
-    prompt_rewrite: dict[str, Any] | None = None,
-    grow_dataset: dict[str, Any] | None = None,
     # Legacy compatibility
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
@@ -74,12 +71,11 @@ function returns Traigent's optimized wrapper.
 | `default_config` | `dict[str, Any] \| None` | `None` | Baseline configuration applied before the first trial. Missing keys remain unset unless you provide defaults via `default_config` or parameter defaults (for example `Range(..., default=...)`). |
 | `constraints` | `list[Constraint \| Callable[..., Any]] \| None` | `None` | Hard constraints evaluated before running a trial. Accepts SE-friendly `Constraint` objects and/or callables that take `(config, metrics=None)` and return `True/False`. |
 | `safety_constraints` | `list[SafetyConstraint \| CompoundSafetyConstraint] \| None` | `None` | Safety metric gates evaluated as part of optimization. |
-| `strategy` | `str \| None` | `None` | Optional strategy preset name. 0.12.0 presets are advisory selection rules over completed trials. |
-| `strategy_params` | `Mapping[str, Any] \| None` | `None` | Parameters for the selected strategy preset. |
+| `strategy` | `str \| None` | `None` | Retained only for signature compatibility; a non-`None` value now raises `TypeError`. Use `algorithm` or `objectives`. |
+| `strategy_params` | `Mapping[str, Any] \| None` | `None` | Retained only for signature compatibility; a non-`None` value now raises `TypeError`. |
 | `effectuation` | `bool` | `False` | Enables effectuation tracking for tuned-variable observations. |
 | `agents`, `agent_prefixes`, `agent_measures`, `global_measures` | See signature | `None` | Multi-agent measurement configuration. |
 | Config persistence fields | See signature | See signature | `auto_load_best`, `load_from`, `config_id`, `best_config_*`, and cache TTL controls for persisted best configurations. |
-| Guided-generation fields | `dict[str, Any] \| None` | `None` | `prompt_rewrite` and `grow_dataset` configure guided generation; run it with `.optimize_with_guidance(provider)`. |
 
 **SE-friendly tuned variables (first-class)**
 
@@ -229,8 +225,8 @@ async def optimize(
 | `tvl_spec` | `str \| Path \| None` | `None` | Load TVL spec at runtime. |
 | `tvl_environment` | `str \| None` | `None` | Environment overlay from the TVL spec. |
 | `tvl` | `TVLOptions \| dict \| None` | `None` | Structured TVL options for runtime overrides. |
-| `strategy` | `str \| None` | `None` | Runtime strategy preset override. Preset selections are advisory only. |
-| `strategy_params` | `Mapping[str, Any] \| None` | `None` | Runtime parameters for the strategy preset. |
+| `strategy` | `str \| None` | `None` | Deprecated alias for `algorithm` (emits `DeprecationWarning`); no longer accepts a preset name. |
+| `strategy_params` | `Mapping[str, Any] \| None` | `None` | Retained only for signature compatibility; a non-`None` value now raises `TypeError`. |
 | `progress_bar` | `bool \| None` | `None` | Runtime progress-bar override. |
 | `**algorithm_kwargs` | `Any` | – | Extra tuning knobs. See recognised keys below. |
 
@@ -454,61 +450,17 @@ def override_config(
 def get_available_strategies() -> dict[str, Any]
 ```
 
-### Recommendation Catalog and Strategy Presets
-
-0.12.0 exposes local catalog helpers and advisory selection presets through
-`traigent.api`.
-
-```python
-def list_recommendation_agent_types() -> tuple[str, ...]
-
-def recommend_configuration_space(
-    agent_type: str,
-    *,
-    min_impact: str | None = None,
-    min_confidence: str | None = None,
-) -> dict[str, Any]
-```
-
-`recommend_configuration_space()` returns catalog metadata for supported
-agent/task types: knob names, suggested ranges, impact estimates, evidence
-notes, effectuation status, and apply guidance. It does not call a remote
-service.
-
-```python
-VALID_PRESET_NAMES: tuple[str, ...] = (
-    "max_accuracy_then_cheapest_within_epsilon",
-    "quality_floor_min_cost",
-    "pareto_frontier",
-)
-
-def normalize_strategy_preset(
-    preset_name: str | None,
-    params: Mapping[str, Any] | None = None,
-) -> NormalizedStrategyPreset
-
-def select_strategy_preset(
-    preset: NormalizedStrategyPreset,
-    trials: Iterable[TrialResult],
-) -> PresetSelection
-```
-
-Strategy presets are advisory selection rules over completed trials. They are
-task-local heuristics and do not provide a statistical certificate.
-
 ### CLI surfaces in 0.12.0
 
-The local CLI includes these onboarding and recommendation entry points:
+The local CLI includes these onboarding entry points:
 
 - `traigent onboard`
 - `traigent auth device-login`
 - `traigent first-prompt --agent claude|cursor|codex`
 - `traigent quickstart`
 - `traigent mcp serve`
-- `traigent recommend`
 
 The local MCP server in this worktree exposes these tools: `auth_status`,
-`list_recommendation_agent_types`, `recommend_configuration_space`,
 `detect_tvars`, `scaffold_eval`, `validate_dataset`, `estimate_cost`,
 `run_optimization`, `get_results`, and `export_evidence`.
 

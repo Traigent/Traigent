@@ -21,10 +21,6 @@ from traigent.api.agent_inference import (
     build_agent_configuration,
     extract_parameter_agents,
 )
-from traigent.api.strategy_presets import (
-    NormalizedStrategyPreset,
-    select_strategy_preset,
-)
 from traigent.api.types import (
     AgentConfiguration,
     AgentDefinition,
@@ -201,10 +197,6 @@ def _safe_exception_text(exc: BaseException) -> str:
     absorbed. A ``__str__`` that raises ``KeyboardInterrupt`` / ``SystemExit``
     is the interpreter or the user asking to stop, and a text-formatting helper
     must not be the thing that swallows that.
-
-    ``core.utils.safe_str_convert`` is deliberately not reused: it absorbs only
-    ``ValueError``/``TypeError``, which is exactly the narrow set a broken
-    ``__str__`` tends not to raise.
     """
     try:
         return str(exc)
@@ -415,10 +407,12 @@ class OptimizationOrchestrator:
             kwargs.pop("tie_breakers", None) or {}
         )
         self._promotion_gate: PromotionGate | None = kwargs.pop("promotion_gate", None)
-        self.strategy_preset: NormalizedStrategyPreset | None = kwargs.pop(
-            "strategy_preset", None
-        )
         self._warm_start_from: str | None = kwargs.pop("warm_start_from", None)
+        # Per-run narrative, read at session-create time. Held as instance state
+        # (like _warm_start_from) rather than optimize() parameters so the public
+        # optimize() signature — which test doubles and callers mirror — is unchanged.
+        self._run_title: str | None = kwargs.pop("run_title", None)
+        self._run_description: str | None = kwargs.pop("run_description", None)
         self._smart_pruning: dict[str, Any] | None = kwargs.pop("smart_pruning", None)
         self._config_metrics_history: dict[str, dict[str, list[float]]] = {}
         self._incumbent_config_hash: str | None = None
@@ -488,11 +482,6 @@ class OptimizationOrchestrator:
             optimizer=self.optimizer,
             optimization_id=self._optimization_id,
             optimization_status=self._status,
-            strategy_preset_metadata=(
-                self.strategy_preset.to_metadata()
-                if self.strategy_preset is not None
-                else None
-            ),
             smart_pruning=self._smart_pruning,
         )
 
@@ -2811,6 +2800,8 @@ class OptimizationOrchestrator:
             promotion_policy=wire_policy,
             tvl_governance=wire_governance,
             experiment_display_name=experiment_display_name,
+            run_title=self._run_title,
+            run_description=self._run_description,
             warm_start_from=self._warm_start_from,
             smart_pruning=self._smart_pruning,
             artifact_fingerprints=self.artifact_fingerprints,
@@ -2982,8 +2973,6 @@ class OptimizationOrchestrator:
                 ),
                 "evaluation_set": dataset_name or "default_evaluation",
             }
-            if self.strategy_preset is not None:
-                metadata["strategy_preset"] = self.strategy_preset.to_metadata()
 
             raw_result = self.backend_client.create_session(
                 function_name=identifier,
@@ -3018,7 +3007,11 @@ class OptimizationOrchestrator:
         Args:
             func: Function to optimize
             dataset: Evaluation dataset
-            function_name: Name of the function being optimized (for session tracking)
+            function_name: Agent identity for session tracking. This decides which
+                (agent, dataset) cohort the run's history joins, so it must stay
+                stable across runs of one agent. The per-run title/description are
+                read from ``self._run_title`` / ``self._run_description``, set at
+                construction (same pattern as ``warm_start_from``).
 
         Returns:
             OptimizationResult with all trial results
@@ -4552,14 +4545,11 @@ class OptimizationOrchestrator:
         self,
         session_summary: dict[str, Any] | None,
         safeguards_telemetry: dict[str, Any],
-        strategy_preset_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         metadata: dict[str, Any] = {
             **({} if session_summary is None else {"session_summary": session_summary}),
             "safeguards": safeguards_telemetry,
         }
-        if strategy_preset_metadata is not None:
-            metadata["strategy_preset"] = dict(strategy_preset_metadata)
 
         if self._function_descriptor is not None:
             descriptor = self._function_descriptor
@@ -4750,20 +4740,6 @@ class OptimizationOrchestrator:
                 else:
                     session_summary = dict(session_summary)
                 session_summary["inert_constant_objectives"] = list(inert_objectives)
-        preset_selection = (
-            select_strategy_preset(self.strategy_preset, self._trials)
-            if self.strategy_preset is not None
-            else None
-        )
-        strategy_preset_metadata = (
-            preset_selection.to_metadata()
-            if preset_selection is not None
-            else (
-                self.strategy_preset.to_metadata()
-                if self.strategy_preset is not None
-                else None
-            )
-        )
 
         # Calculate duration
         duration = time.time() - self._start_time if self._start_time else 0.0
@@ -4813,7 +4789,6 @@ class OptimizationOrchestrator:
         result_metadata = self._build_result_metadata(
             session_summary,
             safeguards_telemetry,
-            strategy_preset_metadata,
         )
         semantic_saturation = (
             self._stop_condition_manager.semantic_saturation_diagnostics(self._trials)
@@ -4874,7 +4849,6 @@ class OptimizationOrchestrator:
             total_tokens=total_tokens if total_tokens > 0 else None,
             metrics=processed_metrics,
             metadata=result_metadata,
-            preset_selection=preset_selection,
             stop_reason=self._stop_reason,
             reason_code=selection.reason_code,
             run_label=run_label,

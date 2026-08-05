@@ -12,7 +12,6 @@ from traigent.core.utils import (
     aggregate_response_times,
     aggregate_tokens,
     calculate_execution_time,
-    create_error_message,
     create_validation_result,
     debug_print_object,
     merge_configs,
@@ -20,9 +19,7 @@ from traigent.core.utils import (
     safe_get_attr,
     safe_get_nested_attr,
     safe_int_convert,
-    safe_str_convert,
     timing_decorator,
-    truncate_error_message,
     validate_bounds,
     validate_config_keys,
     validate_positive_number,
@@ -366,24 +363,6 @@ class TestTypeConversion:
         result = safe_int_convert("invalid", default=5)
         assert result == 5
 
-    def test_safe_str_convert_valid(self):
-        """Test safe_str_convert with valid values."""
-        assert safe_str_convert("hello") == "hello"
-        assert safe_str_convert(123) == "123"
-        assert safe_str_convert(3.14) == "3.14"
-
-    def test_safe_str_convert_none(self):
-        """Test safe_str_convert with None."""
-        result = safe_str_convert(None, default="default")
-        assert result == "default"
-
-    def test_safe_str_convert_object(self):
-        """Test safe_str_convert with object."""
-        obj = Mock()
-        obj.__str__ = Mock(return_value="mock_str")
-        result = safe_str_convert(obj)
-        assert result == "mock_str"
-
 
 class TestConfigurationUtilities:
     """Test configuration utility functions."""
@@ -441,35 +420,6 @@ class TestConfigurationUtilities:
         config = {"required": 1, "optional": 2}
         errors = validate_config_keys(config, ["required"], optional_keys=["optional"])
         assert errors == []
-
-
-class TestErrorUtilities:
-    """Test error message utilities."""
-
-    def test_create_error_message_simple(self):
-        """Test create_error_message with simple message."""
-        # "ERR001" is not in VALIDATION_ERROR_CODES, so it returns UNKNOWN_ERROR
-        result = create_error_message("ERR001", "Something went wrong")
-        assert "UNKNOWN_ERROR" in result
-        assert "Something went wrong" in result
-
-    def test_create_error_message_with_kwargs(self):
-        """Test create_error_message with keyword arguments."""
-        result = create_error_message("ERR002", "Error in {param}", param="temperature")
-        assert "temperature" in result
-
-    def test_truncate_error_message_short(self):
-        """Test truncate_error_message with short message."""
-        message = "Short message"
-        result = truncate_error_message(message, max_length=100)
-        assert result == message
-
-    def test_truncate_error_message_long(self):
-        """Test truncate_error_message with long message."""
-        message = "A" * 1000
-        result = truncate_error_message(message, max_length=100)
-        assert len(result) <= 100
-        assert "..." in result
 
 
 class TestTimingUtilities:

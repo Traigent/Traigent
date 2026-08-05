@@ -19,7 +19,11 @@ import pytest
 
 import traigent
 from traigent.api.types import ExampleResult, OptimizationResult, OptimizationStatus
-from traigent.core.optimized_function import OptimizationState, OptimizedFunction
+from traigent.core.optimized_function import (
+    OptimizationState,
+    OptimizedFunction,
+    _fallback_reason_text,
+)
 from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import (
@@ -2393,3 +2397,28 @@ class TestConfigPersistence:
         # Should not raise, just skip loading
         # Config should remain unset (or default)
         assert opt_func._best_config is None or opt_func._best_config == {}
+
+
+class TestFallbackReasonText:
+    """#2050: cloud-fallback reason rendering must survive a raising __str__."""
+
+    def test_prefers_plain_string_reason(self):
+        exc = RuntimeError("boom")
+        exc.reason = "connection refused"
+        assert _fallback_reason_text(exc) == "connection refused"
+
+    def test_broken_str_yields_placeholder_not_formatting_error(self):
+        class BrokenStr(Exception):
+            def __str__(self) -> str:
+                raise RuntimeError("broken __str__")
+
+        assert "BrokenStr" in _fallback_reason_text(BrokenStr())
+
+    def test_non_string_reason_falls_back_to_safe_render(self):
+        class BrokenStr(Exception):
+            def __str__(self) -> str:
+                raise RuntimeError("broken __str__")
+
+        exc = BrokenStr()
+        exc.reason = 12345
+        assert "BrokenStr" in _fallback_reason_text(exc)

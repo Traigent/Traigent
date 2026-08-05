@@ -507,6 +507,13 @@ class SessionOperations:
         evaluator_definition_id: str | None = None,
         cost_limit: float | None = None,
         optimization_strategy: dict[str, Any] | None = None,
+        # Keyword-only and last: this signature is invoked POSITIONALLY by
+        # BackendIntegratedClient.create_session, so inserting anything earlier
+        # would silently shift optimization_goal/metadata into the wrong slots.
+        *,
+        agent_key: str | None = None,
+        run_title: str | None = None,
+        run_description: str | None = None,
     ) -> SessionCreationResult:
         """Create a session with backend metadata submission.
 
@@ -642,6 +649,9 @@ class SessionOperations:
 
             session_request = SessionCreationRequest(
                 function_name=function_name,
+                agent_key=agent_key,
+                run_title=run_title,
+                run_description=run_description,
                 configuration_space=search_space,
                 # Typed contract: objectives are METRIC names/objects. The
                 # legacy [optimization_goal] placeholder survives only as the

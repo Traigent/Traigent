@@ -7,21 +7,11 @@ from __future__ import annotations
 from traigent.evaluators.base import BaseEvaluator, Dataset, SimpleScoringEvaluator
 from traigent.evaluators.hybrid_api import HybridAPIEvaluator
 from traigent.evaluators.local import LocalEvaluator
-from traigent.evaluators.recommendations import (
-    EVAL_RECOMMENDATION_CAVEAT,
-    list_eval_recommendation_task_types,
-    recommend_evaluator,
-    recommend_metrics,
-)
 
 __all__ = [
     "BaseEvaluator",
     "Dataset",
-    "EVAL_RECOMMENDATION_CAVEAT",
     "HybridAPIEvaluator",
     "LocalEvaluator",
     "SimpleScoringEvaluator",
-    "list_eval_recommendation_task_types",
-    "recommend_evaluator",
-    "recommend_metrics",
 ]

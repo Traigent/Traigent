@@ -16,8 +16,6 @@ code and local auth storage.
 The current server source registers these tools:
 
 - `auth_status`
-- `list_recommendation_agent_types`
-- `recommend_configuration_space`
 - `detect_tvars`
 - `scaffold_eval`
 - `validate_dataset`

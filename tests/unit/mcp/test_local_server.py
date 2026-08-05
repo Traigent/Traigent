@@ -89,22 +89,6 @@ async def test_tool_listing_matches_v1_set() -> None:
     assert "generate_examples" not in {tool.name for tool in result.tools}
 
 
-async def test_catalog_and_recommend_happy_path() -> None:
-    async with mcp_session() as session:
-        types_payload = await call_tool(session, "list_recommendation_agent_types")
-        recommendation = await call_tool(
-            session,
-            "recommend_configuration_space",
-            {"agent_type": "rag", "min_impact": "low", "min_confidence": "low"},
-        )
-
-    assert types_payload["ok"] is True
-    assert "rag" in types_payload["agent_types"]
-    assert recommendation["ok"] is True
-    assert recommendation["recommendation"]["agent_type"] == "rag"
-    assert "configuration_space" in recommendation["recommendation"]
-
-
 async def test_get_optimization_plan_delegates_to_backend_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

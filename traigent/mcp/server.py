@@ -11,8 +11,6 @@ from traigent.mcp.tools import (
     export_evidence_tool,
     get_optimization_plan_tool,
     get_results_tool,
-    list_recommendation_agent_types_tool,
-    recommend_configuration_space_tool,
     run_optimization_tool,
     scaffold_eval_tool,
     validate_dataset_tool,
@@ -52,33 +50,6 @@ def create_server() -> Any:
     )
     async def auth_status(check: bool = False) -> dict[str, Any]:
         return await auth_status_tool(check=check)
-
-    @server.tool(
-        description=(
-            "List valid local public catalog agent/task types for configuration "
-            "space recommendations. No network call."
-        )
-    )
-    def list_recommendation_agent_types() -> dict[str, Any]:
-        return list_recommendation_agent_types_tool()
-
-    @server.tool(
-        description=(
-            "Return the versioned public catalog recommendation response for an "
-            "agent/task type. Optional min_impact and min_confidence filters "
-            "accept low, medium, or high. No network call."
-        )
-    )
-    def recommend_configuration_space(
-        agent_type: str,
-        min_impact: Literal["low", "medium", "high"] | None = None,
-        min_confidence: Literal["low", "medium", "high"] | None = None,
-    ) -> dict[str, Any]:
-        return recommend_configuration_space_tool(
-            agent_type=agent_type,
-            min_impact=min_impact,
-            min_confidence=min_confidence,
-        )
 
     @server.tool(
         description=(

@@ -10,7 +10,6 @@ import pytest
 
 from traigent.admin.config import EnterpriseAdminConfig
 from traigent.analytics.example_insights import ExampleInsightsClient
-from traigent.analytics.next_steps import NextStepsClient
 from traigent.analytics.optimization_plan import OptimizationPlanClient
 from traigent.cli import auth_commands
 from traigent.cli.auth_commands import TraigentAuthCLI
@@ -39,10 +38,6 @@ CLIENT_FACTORY_PARAMS = [
     pytest.param(
         lambda url: ExampleInsightsClient(backend_url=url, api_key="test-key"),
         id="ExampleInsightsClient",
-    ),
-    pytest.param(
-        lambda url: NextStepsClient(backend_url=url, api_key="test-key"),
-        id="NextStepsClient",
     ),
     pytest.param(
         lambda url: OptimizationPlanClient(backend_url=url, api_key="test-key"),

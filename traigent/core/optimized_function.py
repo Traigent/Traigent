@@ -39,11 +39,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Generic, ParamSpec, TypeVar, cast
 
-from traigent.api.strategy_presets import (
-    NormalizedStrategyPreset,
-    is_strategy_preset_name,
-    normalize_strategy_preset,
-)
 from traigent.api.types import OptimizationResult, OptimizationStatus
 from traigent.config import get_provider
 from traigent.config.parallel import coerce_parallel_config, merge_parallel_configs
@@ -361,6 +356,20 @@ def _emit_cost_warning_once() -> None:
     sys.stderr.flush()
 
 
+def _fallback_reason_text(exc: Exception) -> str:
+    """Render the cloud-fallback reason without re-entering user ``__str__``.
+
+    A plain non-empty string ``reason`` is used as-is (no user code runs);
+    anything else goes through the #2029-safe renderer so an exception whose
+    ``__str__`` raises cannot replace the connectivity diagnosis it labels
+    (#2050 — the un-ported sibling of the handler at the optimize() boundary).
+    """
+    reason_attr = getattr(exc, "reason", None)
+    if isinstance(reason_attr, str) and reason_attr:
+        return reason_attr
+    return _safe_exception_text(exc)
+
+
 class OptimizedFunction(Generic[_P, _R]):
     """Wrapper for functions decorated with @traigent.optimize.
 
@@ -461,11 +470,6 @@ class OptimizedFunction(Generic[_P, _R]):
         )
         self._best_config_environment = kwargs.pop("best_config_environment", None)
         self._enable_auto_load_dev_logs = kwargs.pop("enable_auto_load_dev_logs", None)
-        # Guided-generation defaults configured at decoration time; consumed by
-        # optimize_with_guidance when not overridden at the call site.
-        self.prompt_rewrite_options = kwargs.pop("prompt_rewrite", None)
-        self.grow_dataset_options = kwargs.pop("grow_dataset", None)
-        self.skill_train_options = kwargs.pop("skill_train", None)
         # Store core parameters
         self._store_core_parameters(
             func,
@@ -529,9 +533,6 @@ class OptimizedFunction(Generic[_P, _R]):
         """Store core initialization parameters."""
         self.func = func
         self.eval_dataset = eval_dataset
-        # Guided generation may swap in a grown dataset that must persist across
-        # rounds (see set_eval_dataset_override / optimize_with_guidance).
-        self._dataset_override: Dataset | None = None
 
         # Handle ObjectiveSchema creation
         resolved_schema = normalize_objectives(objectives)
@@ -668,6 +669,14 @@ class OptimizedFunction(Generic[_P, _R]):
         self._default_experiment_name: str | None = kwargs.pop(
             "_default_experiment_name", None
         )
+        # Per-run narrative. `agent_name` is already collapsed into
+        # `experiment_name` by decorators.py (they are two spellings of one concept:
+        # the AGENT's identity, which decides the (agent, dataset) cohort whose
+        # history a run joins). These two are deliberately kept OUT of that
+        # resolution — they vary per run by design, and folding a per-run label into
+        # identity is exactly what fragments an agent's history into one-run cohorts.
+        self._run_title: str | None = kwargs.pop("run_title", None)
+        self._run_description: str | None = kwargs.pop("run_description", None)
 
         self.timeout = kwargs.pop("timeout", None)
         kwargs["timeout"] = self.timeout
@@ -789,11 +798,6 @@ class OptimizedFunction(Generic[_P, _R]):
             kwargs, sentinel, "promotion_gate", None
         )
 
-        # Advisory strategy preset for task-local selection metadata.
-        self.strategy_preset = self._store_optional_param(
-            kwargs, sentinel, "strategy_preset", None
-        )
-
         # Warm-start: seed a new run from a prior experiment's learned configs.
         self.warm_start_from = self._store_optional_param(
             kwargs, sentinel, "warm_start_from", None
@@ -823,7 +827,6 @@ class OptimizedFunction(Generic[_P, _R]):
             "global_measures",
             # Safety constraints
             "safety_constraints",
-            "strategy_preset",
             "warm_start_from",
         }
         self._decorator_runtime_overrides = {
@@ -1104,6 +1107,9 @@ class OptimizedFunction(Generic[_P, _R]):
             "warm_start_from",
             "eval_dataset",
             "experiment_name",
+            "agent_name",
+            "run_title",
+            "run_description",
             "default_config",
             "constraints",
             "safety_constraints",
@@ -1482,15 +1488,14 @@ class OptimizedFunction(Generic[_P, _R]):
         strategy: str | None,
         strategy_params: Mapping[str, Any] | None,
         algorithm: str | None,
-    ) -> tuple[str | None, str | None]:
-        """Resolve runtime strategy into a preset name or deprecated algorithm alias."""
+    ) -> str | None:
+        """Resolve the deprecated optimizer-alias compatibility argument."""
+        if strategy_params is not None:
+            raise TypeError(
+                "strategy_params is no longer supported; use algorithm or objectives."
+            )
         if strategy is None:
-            if strategy_params is not None:
-                normalize_strategy_preset(None, strategy_params)
-            return None, algorithm
-
-        if is_strategy_preset_name(strategy) or strategy_params is not None:
-            return strategy, algorithm
+            return algorithm
 
         if algorithm is not None and algorithm != strategy:
             raise TypeError(
@@ -1504,46 +1509,7 @@ class OptimizedFunction(Generic[_P, _R]):
             DeprecationWarning,
             stacklevel=3,
         )
-        return None, strategy
-
-    @staticmethod
-    def _resolve_effective_strategy_preset(
-        *,
-        decorator_preset: NormalizedStrategyPreset | None,
-        runtime_strategy: str | None,
-        strategy_params: Mapping[str, Any] | None,
-    ) -> NormalizedStrategyPreset | None:
-        """Resolve runtime preset override against a decorator-level preset."""
-        if runtime_strategy is None:
-            return decorator_preset
-
-        if decorator_preset is not None:
-            raise ValueError("runtime strategy cannot override a decorator strategy.")
-
-        runtime_preset = normalize_strategy_preset(runtime_strategy, strategy_params)
-        return runtime_preset
-
-    def _apply_runtime_strategy_preset(
-        self,
-        preset: NormalizedStrategyPreset | None,
-        objectives: ObjectiveSchema | Sequence[str] | None,
-    ) -> tuple[
-        ObjectiveSchema | Sequence[str] | None,
-        list[Callable[..., bool]],
-        NormalizedStrategyPreset | None,
-    ]:
-        """Apply runtime preset objectives without adding search constraints."""
-        original_constraints = list(self.constraints or [])
-        original_preset = getattr(self, "strategy_preset", None)
-        if preset is None:
-            return objectives, original_constraints, original_preset
-        if objectives is not None:
-            raise ValueError(
-                "strategy presets are mutually exclusive with explicit objectives. "
-                "Use either strategy=... or objectives=..., not both."
-            )
-        self.strategy_preset = preset
-        return list(preset.objectives), original_constraints, original_preset
+        return strategy
 
     async def optimize(
         self,
@@ -1589,9 +1555,10 @@ class OptimizedFunction(Generic[_P, _R]):
             tvl_spec: Optional TVL spec path to load at runtime.
             tvl_environment: Environment overlay to apply when loading the spec.
             tvl: Structured TVL options (dict or TVLOptions) for runtime overrides.
-            strategy: Optional advisory strategy preset name. Non-preset values retain
-                the deprecated optimizer-alias behavior.
-            strategy_params: Typed parameters for the selected strategy preset.
+            strategy: Deprecated alias for ``algorithm`` (emits ``DeprecationWarning``);
+                no longer accepts a preset name.
+            strategy_params: Retained only for signature compatibility; a non-``None``
+                value raises ``TypeError``.
             progress_bar: Controls the live progress bar during optimization.
                 ``True`` forces a progress bar even in non-interactive mode,
                 ``False`` suppresses it, ``None`` (default) auto-enables in
@@ -1620,7 +1587,7 @@ class OptimizedFunction(Generic[_P, _R]):
         logger.info(f"Starting optimization of {self.func.__name__}")
         _emit_cost_warning_once()
 
-        runtime_strategy_name, algorithm = self._resolve_runtime_strategy_argument(
+        algorithm = self._resolve_runtime_strategy_argument(
             strategy=strategy,
             strategy_params=strategy_params,
             algorithm=algorithm,
@@ -1652,26 +1619,6 @@ class OptimizedFunction(Generic[_P, _R]):
             configuration_space, _ = normalize_configuration_space(configuration_space)
 
         original_schema = self.objective_schema
-        strategy_original_constraints: list[Callable[..., bool]] | None = None
-        strategy_original_preset: NormalizedStrategyPreset | None = None
-        decorator_preset = getattr(self, "strategy_preset", None)
-        effective_preset = self._resolve_effective_strategy_preset(
-            decorator_preset=decorator_preset,
-            runtime_strategy=runtime_strategy_name,
-            strategy_params=strategy_params,
-        )
-        if decorator_preset is not None and objectives is not None:
-            raise ValueError(
-                "strategy presets are mutually exclusive with explicit objectives. "
-                "Use either strategy=... or objectives=..., not both."
-            )
-        if decorator_preset is None:
-            (
-                objectives,
-                strategy_original_constraints,
-                strategy_original_preset,
-            ) = self._apply_runtime_strategy_preset(effective_preset, objectives)
-
         runtime_objective_input = (
             objectives if objectives is not None else legacy_objectives
         )
@@ -1707,9 +1654,6 @@ class OptimizedFunction(Generic[_P, _R]):
         finally:
             if runtime_schema is not None:
                 self.objective_schema = original_schema
-            if strategy_original_constraints is not None:
-                self.constraints = strategy_original_constraints
-                self.strategy_preset = strategy_original_preset
             self._restore_tvl_state(tvl_state)
 
         return result
@@ -1755,8 +1699,9 @@ class OptimizedFunction(Generic[_P, _R]):
             tvl_spec: Optional TVL spec path
             tvl_environment: Environment overlay for TVL spec
             tvl: Structured TVL options
-            strategy: Optional advisory strategy preset name.
-            strategy_params: Typed parameters for the selected strategy preset.
+            strategy: Deprecated alias for ``algorithm``; no longer accepts a preset name.
+            strategy_params: Retained only for signature compatibility; a non-``None``
+                value raises ``TypeError``.
             progress_bar: ``True`` to force, ``False`` to suppress, ``None``
                 (default) auto-enables in interactive terminals.
             **algorithm_kwargs: Additional algorithm parameters
@@ -2014,6 +1959,8 @@ class OptimizedFunction(Generic[_P, _R]):
             promotion_gate=getattr(self, "promotion_gate", None),
             safety_constraints=getattr(self, "safety_constraints", None),
             warm_start_from=getattr(self, "warm_start_from", None),
+            run_title=self._run_title,
+            run_description=self._run_description,
         )
         orchestrator_kwargs["requested_algorithm"] = requested_algorithm
 
@@ -2032,7 +1979,6 @@ class OptimizedFunction(Generic[_P, _R]):
             objectives=self.objectives,
             objective_schema=self.objective_schema,
             workflow_traces_tracker=workflow_traces_tracker,
-            strategy_preset=getattr(self, "strategy_preset", None),
             smart_pruning=getattr(self, "smart_pruning", None),
             **orchestrator_kwargs,
         )
@@ -2455,7 +2401,7 @@ class OptimizedFunction(Generic[_P, _R]):
                 raise
             if not exception_is_connectivity(e):
                 raise
-            reason = str(getattr(e, "reason", None) or e)
+            reason = _fallback_reason_text(e)
             # Re-stamping the run must not lose the typed classification the
             # raiser already established: this handler re-records the SAME
             # fallback event, and the run that finally reports is built from
@@ -3204,398 +3150,6 @@ Remediation:
             },
         )
 
-    def optimize_with_guidance(
-        self,
-        provider: Any,
-        *,
-        plan_kind: Any = "benchmark_guide",
-        rewrite_llm: Any = None,
-        prompt_rewrite: Any = None,
-        grow_dataset: Any = None,
-        prompt_param: str | None = None,
-        weak_examples: Sequence[tuple[Any, Any, Any]] = (),
-        **optimize_kwargs: Any,
-    ) -> Any:
-        """Run guided generation: optimize, fetch an opaque backend GuidancePlan,
-        generate locally with the user's own LLM, and re-optimize across rounds.
-
-        ``provider`` supplies the GuidancePlan (a ``GuidancePlanProvider``);
-        generation runs on ``rewrite_llm`` (a callable ``fn(prompt) -> str`` or an
-        already-constructed client). Content never leaves the client. Returns the
-        best ``OptimizationResult`` across rounds.
-        """
-        from traigent.generation import (
-            DatasetGrowthOptions,
-            ExampleSynthesizer,
-            GuidanceLoop,
-            PromptRewriteOptions,
-            PromptRewriter,
-            resolve_rewrite_llm,
-        )
-        from traigent.generation.models import PlanKind
-        from traigent.utils.example_id import (
-            compute_dataset_hash,
-            generate_stable_example_id,
-        )
-
-        kind = plan_kind if isinstance(plan_kind, PlanKind) else PlanKind(plan_kind)
-        llm = resolve_rewrite_llm(rewrite_llm)
-
-        def _coerce(spec: Any, cls: type) -> Any:
-            if spec is None:
-                return cls()
-            if isinstance(spec, cls):
-                return spec
-            return cls(**spec)
-
-        prompt_opts = _coerce(
-            (
-                prompt_rewrite
-                if prompt_rewrite is not None
-                else self.prompt_rewrite_options
-            ),
-            PromptRewriteOptions,
-        )
-        growth_opts = _coerce(
-            grow_dataset if grow_dataset is not None else self.grow_dataset_options,
-            DatasetGrowthOptions,
-        )
-
-        config_space = dict(self.configuration_space or {})
-        dataset = self._load_dataset()
-
-        is_rewrite = kind is PlanKind.PROMPT_REWRITE
-        rewriter = PromptRewriter(llm, prompt_opts) if is_rewrite else None
-        synthesizer = ExampleSynthesizer(llm, growth_opts) if not is_rewrite else None
-
-        # Best-effort stable-id -> example map for resolving plan seeds locally.
-        ds_hash = compute_dataset_hash(getattr(dataset, "name", "dataset"))
-        id_to_example = {
-            generate_stable_example_id(ds_hash, i): ex
-            for i, ex in enumerate(getattr(dataset, "examples", []))
-        }
-
-        def _seed_resolver(seed_ref: str) -> Any:
-            return id_to_example.get(seed_ref)
-
-        def _optimize_round(cs: dict[str, Any], ds: Any) -> Any:
-            self.set_eval_dataset_override(ds)
-            return self.optimize_sync(configuration_space=cs, **optimize_kwargs)
-
-        loop = GuidanceLoop(
-            provider=provider,
-            rewriter=rewriter,
-            synthesizer=synthesizer,
-            prompt_options=prompt_opts,
-            growth_options=growth_opts,
-        )
-        try:
-            outcome = loop.run(
-                optimize_round=_optimize_round,
-                config_space=config_space,
-                dataset=dataset,
-                plan_kind=kind,
-                prompt_param=prompt_param,
-                seed_resolver=None if is_rewrite else _seed_resolver,
-                weak_examples=weak_examples,
-            )
-        finally:
-            self.set_eval_dataset_override(None)
-        return outcome.best_result
-
-    def train_skill(
-        self,
-        *,
-        document: str,
-        optimizer_llm: Any = None,
-        skill_train: Any = None,
-        doc_param: str | None = None,
-        selection_dataset: Dataset | None = None,
-        test_dataset: Dataset | None = None,
-        **fixed_config: Any,
-    ) -> Any:
-        """Train a text skill document behind a strict selection gate.
-
-        Privacy semantics, precisely: no Traigent-managed optimizer is invoked —
-        optimizer calls go only to the caller-supplied ``optimizer_llm``, which
-        RECEIVES ROLLOUT CONTENTS (inputs, expected/actual outputs, metrics) in
-        its reflection prompts. Candidate evaluation runs through this
-        function's configured execution path; end-to-end local training is
-        guaranteed only when ``execution_mode`` is local/edge. Under hybrid
-        modes, trial payloads (including the candidate document as a
-        configuration value) may be submitted to the backend; a warning is
-        emitted in that case.
-        """
-
-        from traigent.api.parameter_ranges import Choices
-        from traigent.generation import (
-            SkillTrainOptions,
-            merge_prompt_candidates,
-            resolve_rewrite_llm,
-        )
-        from traigent.generation.skill_train.reflection import Reflector
-        from traigent.generation.skill_train.trainer import RolloutRecord, SkillTrainer
-
-        def _coerce(spec: Any) -> SkillTrainOptions:
-            if spec is None:
-                return SkillTrainOptions()
-            if isinstance(spec, SkillTrainOptions):
-                return spec
-            return SkillTrainOptions(**spec)
-
-        options = _coerce(
-            skill_train if skill_train is not None else self.skill_train_options
-        )
-        llm = resolve_rewrite_llm(optimizer_llm)
-        reflector = Reflector(llm, model_hint=options.optimizer_model)
-        effective_mode = getattr(self, "execution_mode", None)
-        if effective_mode and effective_mode != "local":
-            logger.warning(
-                "train_skill candidate evaluation follows this function's "
-                "execution mode (%s): trial payloads, including the candidate "
-                "document as a configuration value, may reach the backend. "
-                "End-to-end local training requires local mode.",
-                effective_mode,
-            )
-        config_space = dict(self.configuration_space or {})
-        resolved_doc_param = self._resolve_skill_doc_param(
-            config_space, explicit=doc_param or options.doc_param
-        )
-        pinned = self._preflight_skill_fixed_config(
-            config_space,
-            doc_param=resolved_doc_param,
-            fixed_config=fixed_config,
-        )
-        dataset = self._load_dataset()
-
-        def _evaluate_document(
-            text: str, split_dataset: Dataset
-        ) -> tuple[float, list[RolloutRecord]]:
-            evaluation_space: dict[str, Any] = {
-                name: Choices([value]) for name, value in pinned.items()
-            }
-            evaluation_space[resolved_doc_param] = Choices([text])
-            self.set_eval_dataset_override(split_dataset)
-            try:
-                result = self.optimize_sync(
-                    configuration_space=evaluation_space,
-                    max_trials=1,
-                )
-            finally:
-                self.set_eval_dataset_override(None)
-            return self._skill_result_to_rollouts(result, options)
-
-        trainer = SkillTrainer(
-            dataset=dataset,
-            evaluate_fn=_evaluate_document,
-            reflector=reflector,
-            options=options,
-            selection_dataset=selection_dataset,
-            test_dataset=test_dataset,
-            artifacts_root=self.local_storage_path,
-        )
-        result = trainer.run(document)
-        result.summary = {
-            **result.summary,
-            "doc_param": resolved_doc_param,
-            "evaluation_basis": result.evaluation_basis,
-        }
-        if resolved_doc_param in config_space:
-            merged = merge_prompt_candidates(
-                config_space, resolved_doc_param, [result.best_document]
-            )
-            result.summary["merged_config_space"] = {
-                **config_space,
-                resolved_doc_param: merged,
-            }
-        return result
-
-    def set_eval_dataset_override(self, dataset: Dataset | None) -> None:
-        """Pin the dataset returned by ``_load_dataset``.
-
-        Used by guided generation so a grown dataset persists across
-        re-optimization rounds. Pass ``None`` to clear.
-        """
-        self._dataset_override = dataset
-
-    def _resolve_skill_doc_param(
-        self,
-        config_space: dict[str, Any],
-        *,
-        explicit: str | None,
-    ) -> str:
-        from traigent.api.parameter_ranges import TextDocument
-
-        if explicit:
-            if explicit not in config_space:
-                available = ", ".join(sorted(config_space)) or "<empty>"
-                raise ValueError(
-                    f"train_skill doc_param {explicit!r} is not a configuration-space "
-                    f"parameter (available: {available}). Add it to the config space "
-                    "(e.g. as a TextDocument) so the trained document is actually "
-                    "wired into the function."
-                )
-            return explicit
-
-        candidates: list[str] = []
-        for name, value in config_space.items():
-            if isinstance(value, TextDocument):
-                candidates.append(name)
-
-        if len(candidates) == 1:
-            return candidates[0]
-        if not candidates:
-            raise ValueError(
-                "train_skill requires doc_param because the config space has no "
-                "TextDocument parameter to train."
-            )
-        raise ValueError(
-            "train_skill requires doc_param because multiple TextDocument "
-            f"parameters could hold the document: {sorted(candidates)}"
-        )
-
-    def _preflight_skill_fixed_config(
-        self,
-        config_space: dict[str, Any],
-        *,
-        doc_param: str,
-        fixed_config: dict[str, Any],
-    ) -> dict[str, Any]:
-        pinned: dict[str, Any] = {}
-        unpinned: list[str] = []
-        default_config = dict(getattr(self, "default_config", {}) or {})
-
-        for name, spec in config_space.items():
-            if name == doc_param:
-                continue
-            if name in fixed_config:
-                pinned[name] = fixed_config[name]
-                continue
-            if name in default_config:
-                pinned[name] = default_config[name]
-                continue
-
-            default_getter = getattr(spec, "get_default", None)
-            if callable(default_getter):
-                default_value = default_getter()
-                if default_value is not None:
-                    pinned[name] = default_value
-                    continue
-
-            values = getattr(spec, "values", None)
-            if values is not None and len(values) == 1:
-                pinned[name] = list(values)[0]
-                continue
-            if isinstance(spec, (list, tuple)) and len(spec) == 1:
-                pinned[name] = spec[0]
-                continue
-            if not isinstance(spec, (list, tuple, dict)) and values is None:
-                pinned[name] = spec
-                continue
-            unpinned.append(name)
-
-        if unpinned:
-            raise ValueError(
-                "train_skill requires every non-document config parameter to be "
-                "pinned. Provide fixed_config values or single defaults for: "
-                + ", ".join(sorted(unpinned))
-            )
-        return pinned
-
-    def _skill_result_to_rollouts(
-        self, result: Any, options: Any
-    ) -> tuple[float, list[Any]]:
-        if not getattr(result, "trials", None):
-            raise RuntimeError("train_skill optimization produced no trials")
-        trial = result.trials[0]
-        score = self._skill_extract_score(result, trial, options.score_metric)
-        entries: Any = []
-        metadata = getattr(trial, "metadata", None)
-        if isinstance(metadata, dict):
-            entries = metadata.get("example_results") or []
-        rollouts = [
-            self._skill_entry_to_rollout(
-                entry, options.score_metric, options.failure_threshold
-            )
-            for entry in entries
-        ]
-        return score, rollouts
-
-    def _skill_extract_score(
-        self, result: Any, trial: Any, score_metric: str | None
-    ) -> float:
-        metrics = dict(getattr(trial, "metrics", {}) or {})
-        result_metrics = dict(getattr(result, "metrics", {}) or {})
-        if score_metric is not None:
-            for source in (metrics, result_metrics):
-                value = source.get(score_metric)
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    return float(value)
-
-        best_score = getattr(result, "best_score", None)
-        if isinstance(best_score, (int, float)) and not isinstance(best_score, bool):
-            return float(best_score)
-
-        objective_names = list(getattr(result, "objectives", []) or [])
-        for name in [*(objective_names[:1]), "accuracy", "score"]:
-            value = metrics.get(name, result_metrics.get(name))
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                return float(value)
-
-        for source in (metrics, result_metrics):
-            for value in source.values():
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    return float(value)
-        raise RuntimeError("train_skill could not resolve a numeric trial score")
-
-    def _skill_entry_to_rollout(
-        self,
-        entry: Any,
-        score_metric: str | None,
-        failure_threshold: float,
-    ) -> Any:
-        from traigent.generation.skill_train.trainer import RolloutRecord
-
-        def _get(name: str, default: Any = None) -> Any:
-            if isinstance(entry, Mapping):
-                return entry.get(name, default)
-            return getattr(entry, name, default)
-
-        metrics_raw = _get("metrics", {}) or {}
-        metrics = {
-            key: float(value)
-            for key, value in dict(metrics_raw).items()
-            if isinstance(value, (int, float)) and not isinstance(value, bool)
-        }
-        success_value = _get("success", None)
-        if success_value is None:
-            success_value = bool(getattr(entry, "is_successful", False))
-        success = bool(success_value)
-        metric = score_metric or self._skill_resolve_metric_name(metrics)
-        metric_value = metrics.get(metric) if metric else None
-        is_failure = not success or (
-            isinstance(metric_value, (int, float))
-            and float(metric_value) < failure_threshold
-        )
-        return RolloutRecord(
-            example_id=str(_get("example_id", "")),
-            input_data=_get("input_data", {}),
-            expected=_get("expected_output", _get("expected")),
-            actual=_get("actual_output", _get("actual")),
-            metrics=metrics,
-            success=success,
-            is_failure=is_failure,
-        )
-
-    @staticmethod
-    def _skill_resolve_metric_name(metrics: dict[str, float]) -> str | None:
-        for preferred in ("accuracy", "score", "primary"):
-            if preferred in metrics:
-                return preferred
-        if metrics:
-            return sorted(metrics)[0]
-        return None
-
     def _load_dataset(self) -> Dataset:
         """Load evaluation dataset.
 
@@ -3605,11 +3159,6 @@ Remediation:
         Raises:
             ConfigurationError: If dataset cannot be loaded
         """
-        # A guided-generation round may have grown the dataset; the override takes
-        # precedence so synthesized examples persist across re-optimization rounds.
-        if self._dataset_override is not None:
-            return self._dataset_override
-
         if isinstance(self.eval_dataset, Dataset):
             return self.eval_dataset
 
@@ -3885,10 +3434,17 @@ Remediation:
 
     @property
     def experiment_name(self) -> str:
-        """Resolved experiment display name for portal/storage.
+        """Resolved AGENT identity used for portal/storage and cohort grouping.
+
+        Despite the name (kept for back-compatibility), this identifies the agent,
+        not an individual run: the portal groups optimization history by
+        (agent, evaluation dataset), so this value decides which runs share a
+        history. Per-run intent belongs in ``run_title`` / ``run_description``.
 
         Resolution order (highest to lowest priority):
-        1. ``experiment_name`` passed to ``@traigent.optimize()`` — stored in ``_experiment_name``.
+        1. ``agent_name`` (preferred) or ``experiment_name`` (deprecated alias) passed
+           to ``@traigent.optimize()`` — collapsed to one value by decorators.py and
+           stored in ``_experiment_name``; ``agent_name`` wins if both are given.
         2. ``TRAIGENT_EXPERIMENT_NAME`` environment variable — checked at access time, so
            setting it after decoration still takes effect.
         3. Self-describing default precomputed at decoration time (func name + objectives + knobs)
@@ -3903,6 +3459,24 @@ Remediation:
         if self._default_experiment_name is not None:
             return self._default_experiment_name
         return self.__name__
+
+    @property
+    def agent_name(self) -> str:
+        """Preferred alias of :pyattr:`experiment_name` — the agent's stable identity."""
+        return self.experiment_name
+
+    @property
+    def run_title(self) -> str | None:
+        """Author-supplied title for this run ("Check best router model"), if any.
+
+        A label only: it never participates in agent identity or cohort grouping.
+        """
+        return self._run_title
+
+    @property
+    def run_description(self) -> str | None:
+        """Author-supplied description of what this run is testing and why, if any."""
+        return self._run_description
 
     @property
     def __doc__(self) -> str | None:  # type: ignore[override]

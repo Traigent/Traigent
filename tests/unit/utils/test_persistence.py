@@ -469,7 +469,6 @@ def test_curated_metadata_keys_are_unchanged_by_the_new_payload(tmp_path) -> Non
         "best_score",
         "best_config",
         "preset_selection",
-        "strategy_preset",
         "success_rate",
         "duration",
         "convergence_info",
@@ -538,7 +537,7 @@ def test_versioned_metadata_is_not_overwritten_by_the_outer_summary(
 
 
 def _write_legacy_result(tmp_path, name: str) -> Path:
-    """Write a pre-#2031 artifact: the 16 curated keys and nothing else."""
+    """Write a pre-#2031 artifact: the 15 curated keys and nothing else."""
     result_dir = tmp_path / name
     result_dir.mkdir(parents=True)
     (result_dir / "metadata.json").write_text(
@@ -552,7 +551,6 @@ def _write_legacy_result(tmp_path, name: str) -> Path:
                 "best_score": 0.9,
                 "best_config": {"model": "cheap"},
                 "preset_selection": None,
-                "strategy_preset": None,
                 "success_rate": 1.0,
                 "duration": 12.5,
                 "convergence_info": {"converged": True},

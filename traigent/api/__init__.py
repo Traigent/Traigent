@@ -17,8 +17,6 @@ __all__ = [
     "override_config",
     "set_strategy",
     "get_available_strategies",
-    "list_recommendation_agent_types",
-    "recommend_configuration_space",
     "get_version_info",
     "OptimizationResult",
     "PresetSelection",
@@ -31,14 +29,6 @@ __all__ = [
     "OptimizationStatus",
     "StopReason",
     "StrategyConfig",
-    "ADVISORY_SELECTION_NOTICE",
-    "NormalizedStrategyPreset",
-    "StrategyPresetError",
-    "StrategyPresetValidationError",
-    "UnknownStrategyPresetError",
-    "VALID_PRESET_NAMES",
-    "normalize_strategy_preset",
-    "select_strategy_preset",
     "faithfulness",
     "answer_relevancy",
     "context_precision",
@@ -54,7 +44,6 @@ __all__ = [
     "SafetyThreshold",
     "SafetyValidator",
     "get_available_safety_presets",
-    "TextDocument",
     "ExternalServiceEvaluator",
 ]
 
@@ -65,14 +54,6 @@ _EXPORT_MAP = {
     "override_config": ("traigent.api.functions", "override_config"),
     "set_strategy": ("traigent.api.functions", "set_strategy"),
     "get_available_strategies": ("traigent.api.functions", "get_available_strategies"),
-    "list_recommendation_agent_types": (
-        "traigent.api.functions",
-        "list_recommendation_agent_types",
-    ),
-    "recommend_configuration_space": (
-        "traigent.api.functions",
-        "recommend_configuration_space",
-    ),
     "get_version_info": ("traigent.api.functions", "get_version_info"),
     "OptimizationResult": ("traigent.api.types", "OptimizationResult"),
     "PresetSelection": ("traigent.api.types", "PresetSelection"),
@@ -85,32 +66,6 @@ _EXPORT_MAP = {
     "OptimizationStatus": ("traigent.api.types", "OptimizationStatus"),
     "StopReason": ("traigent.api.types", "StopReason"),
     "StrategyConfig": ("traigent.api.types", "StrategyConfig"),
-    "ADVISORY_SELECTION_NOTICE": (
-        "traigent.api.strategy_presets",
-        "ADVISORY_SELECTION_NOTICE",
-    ),
-    "NormalizedStrategyPreset": (
-        "traigent.api.strategy_presets",
-        "NormalizedStrategyPreset",
-    ),
-    "StrategyPresetError": ("traigent.api.strategy_presets", "StrategyPresetError"),
-    "StrategyPresetValidationError": (
-        "traigent.api.strategy_presets",
-        "StrategyPresetValidationError",
-    ),
-    "UnknownStrategyPresetError": (
-        "traigent.api.strategy_presets",
-        "UnknownStrategyPresetError",
-    ),
-    "VALID_PRESET_NAMES": ("traigent.api.strategy_presets", "VALID_PRESET_NAMES"),
-    "normalize_strategy_preset": (
-        "traigent.api.strategy_presets",
-        "normalize_strategy_preset",
-    ),
-    "select_strategy_preset": (
-        "traigent.api.strategy_presets",
-        "select_strategy_preset",
-    ),
     "faithfulness": ("traigent.api.safety", "faithfulness"),
     "answer_relevancy": ("traigent.api.safety", "answer_relevancy"),
     "context_precision": ("traigent.api.safety", "context_precision"),
@@ -129,7 +84,6 @@ _EXPORT_MAP = {
         "traigent.api.safety",
         "get_available_safety_presets",
     ),
-    "TextDocument": ("traigent.api.parameter_ranges", "TextDocument"),
     "ExternalServiceEvaluator": (
         "traigent.api.decorators",
         "ExternalServiceEvaluator",

@@ -14,29 +14,12 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 from traigent import get_version_info
-from traigent.api.functions import (
-    list_recommendation_agent_types,
-    recommend_configuration_space,
-)
-from traigent.api.strategy_presets import (
-    ADVISORY_SELECTION_NOTICE,
-    VALID_PRESET_NAMES,
-    StrategyPresetError,
-    calculate_weighted_trial_score,
-    normalize_strategy_preset,
-    select_strategy_preset,
-)
 from traigent.api.types import PresetSelection
 from traigent.cli.auth_commands import auth
 from traigent.cli.hooks_commands import hooks
 from traigent.cli.local_commands import register_local_commands
 from traigent.cli.sync_commands import register_sync_command
 from traigent.config.types import accepted_algorithm_values
-from traigent.evaluators import (
-    list_eval_recommendation_task_types,
-    recommend_evaluator,
-    recommend_metrics,
-)
 from traigent.storage.local_storage import LocalStorageManager, OptimizationSession
 from traigent.utils.console import configure_stdout_encoding
 from traigent.utils.logging import setup_logging
@@ -63,6 +46,12 @@ _MSG_BEST_SCORE = "Best Score"
 _MSG_TOTAL_TRIALS = "Total Trials"
 _MSG_SUCCESS_RATE = "Success Rate"
 _STYLE_HIGHLIGHT = "[yellow]"
+
+# Disclaimer shown alongside a persisted result's advisory preset_selection
+# field (display-only; no live preset-selection logic ships in the SDK).
+_ADVISORY_SELECTION_NOTICE = (
+    "advisory selection — no statistical certificate; results are task-local"
+)
 
 
 def _resolve_workspace_path(
@@ -535,325 +524,6 @@ def algorithms() -> None:
         "\n[dim]Runtime-only registry names are intentionally omitted here because "
         "they are not accepted by public SDK validation.[/dim]"
     )
-
-
-@cli.command("recommend")
-@click.argument("agent_type", required=False)
-@click.option(
-    "--list-types",
-    is_flag=True,
-    default=False,
-    help="List valid recommendation agent/task types.",
-)
-@click.option(
-    "--min-impact",
-    type=click.Choice(["low", "medium", "high"], case_sensitive=False),
-    default=None,
-    help="Minimum impact estimate to include.",
-)
-@click.option(
-    "--min-confidence",
-    type=click.Choice(["low", "medium", "high"], case_sensitive=False),
-    default=None,
-    help="Minimum public evidence-strength label to include.",
-)
-@click.option(
-    "--json",
-    "output_json",
-    is_flag=True,
-    default=False,
-    help="Output recommendations as JSON for tooling integration.",
-)
-def recommend(
-    agent_type: str | None,
-    list_types: bool,
-    min_impact: str | None,
-    min_confidence: str | None,
-    output_json: bool,
-) -> None:
-    """Show evidence-backed TVAR recommendations for an agent/task type.
-
-    Examples:
-        traigent recommend rag
-        traigent recommend code_gen --min-impact medium
-        traigent recommend --list-types
-    """
-    valid_types = list_recommendation_agent_types()
-    if list_types:
-        if output_json:
-            click.echo(json.dumps({"valid_agent_types": list(valid_types)}, indent=2))
-            return
-        console.print(
-            "Valid recommendation agent types: "
-            + ", ".join(f"[cyan]{agent_type}[/cyan]" for agent_type in valid_types)
-        )
-        return
-
-    if agent_type is None:
-        raise click.ClickException(
-            "agent_type is required unless --list-types is provided. "
-            f"Valid types: {', '.join(valid_types)}"
-        )
-
-    try:
-        data = recommend_configuration_space(
-            agent_type,
-            min_impact=min_impact,
-            min_confidence=min_confidence,
-        )
-    except ValueError as exc:
-        raise click.ClickException(str(exc)) from exc
-
-    if output_json:
-        click.echo(json.dumps(data, indent=2))
-        return
-
-    _print_recommendations_table(data)
-
-
-@cli.command("recommend-eval")
-@click.argument("task_type", required=False)
-@click.option(
-    "--list-types",
-    is_flag=True,
-    default=False,
-    help="List valid metric/evaluator recommendation task types.",
-)
-@click.option(
-    "--measure-type",
-    "measure_types",
-    multiple=True,
-    type=click.Choice(
-        [
-            "sanity_check",
-            "accuracy",
-            "quality",
-            "latency",
-            "safety",
-            "efficiency",
-            "reliability",
-        ],
-        case_sensitive=False,
-    ),
-    help="Measure type to include. Can be repeated.",
-)
-@click.option(
-    "--evaluator",
-    "show_evaluator",
-    is_flag=True,
-    default=False,
-    help="Show evaluator recommendations instead of metric recommendations.",
-)
-@click.option(
-    "--json",
-    "output_json",
-    is_flag=True,
-    default=False,
-    help="Output recommendations as JSON for tooling integration.",
-)
-def recommend_eval(
-    task_type: str | None,
-    list_types: bool,
-    measure_types: tuple[str, ...],
-    show_evaluator: bool,
-    output_json: bool,
-) -> None:
-    """Show metric/evaluator recommendations for a task type.
-
-    Examples:
-        traigent recommend-eval rag
-        traigent recommend-eval code_gen --measure-type accuracy
-        traigent recommend-eval general --evaluator
-        traigent recommend-eval --list-types
-    """
-    valid_types = list_eval_recommendation_task_types()
-    if list_types:
-        if output_json:
-            click.echo(json.dumps({"valid_task_types": list(valid_types)}, indent=2))
-            return
-        console.print(
-            "Valid metric/evaluator recommendation task types: "
-            + ", ".join(f"[cyan]{task_type}[/cyan]" for task_type in valid_types)
-        )
-        return
-
-    if task_type is None:
-        raise click.ClickException(
-            "task_type is required unless --list-types is provided. "
-            f"Valid types: {', '.join(valid_types)}"
-        )
-
-    try:
-        data = (
-            recommend_evaluator(task_type)
-            if show_evaluator
-            else recommend_metrics(
-                task_type,
-                measure_types=measure_types or None,
-            )
-        )
-    except ValueError as exc:
-        raise click.ClickException(str(exc)) from exc
-
-    if output_json:
-        click.echo(json.dumps(data, indent=2))
-        return
-
-    if show_evaluator:
-        _print_eval_evaluator_table(data)
-        return
-    _print_eval_metrics_table(data)
-
-
-def _print_recommendations_table(data: dict[str, Any]) -> None:
-    recommendations = data["recommendations"]
-    console.print(
-        f"\n[bold blue]TVar Recommendations for {data['agent_type']}[/bold blue]"
-    )
-    console.print(f"[dim]{data['caveat']}[/dim]\n")
-
-    if not recommendations:
-        console.print(
-            "[yellow]No recommendations matched the requested filters.[/yellow]"
-        )
-        return
-
-    table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
-    table.add_column("Knob", style="cyan", no_wrap=True)
-    table.add_column("Suggested Range", style="green", no_wrap=True)
-    table.add_column("Impact / Evidence", no_wrap=True)
-    table.add_column("Effectuation", no_wrap=True)
-
-    for row in recommendations:
-        table.add_row(
-            str(row["name"]),
-            _format_recommendation_range(row),
-            f"{row['impact']} / {row['confidence']}",
-            str(row["effectuation_status"]),
-        )
-
-    console.print(table)
-    console.print("\n[bold]Evidence Notes[/bold]")
-    for row in recommendations:
-        console.print(
-            f"[cyan]{row['name']}[/cyan]: "
-            f"{_truncate_text(str(row['evidence_note']), 300)}"
-        )
-    console.print("\n[bold]Apply Guidance[/bold]")
-    for row in recommendations:
-        console.print(
-            f"[cyan]{row['name']}[/cyan]: "
-            f"{_truncate_text(str(row['apply_guidance']), 300)}"
-        )
-
-
-def _print_eval_metrics_table(data: dict[str, Any]) -> None:
-    recommendations = data["recommendations"]
-    console.print(
-        f"\n[bold blue]Metric Recommendations for {data['task_type']}[/bold blue]"
-    )
-    console.print(f"[dim]{data['caveat']}[/dim]\n")
-
-    if not recommendations:
-        console.print(
-            "[yellow]No recommendations matched the requested filters.[/yellow]"
-        )
-        return
-
-    table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
-    table.add_column("Metric", style="cyan", no_wrap=True)
-    table.add_column("Measure", no_wrap=True)
-    table.add_column("Method", no_wrap=True)
-    table.add_column("Function", style="green", no_wrap=True)
-    table.add_column("Impact / Evidence", no_wrap=True)
-
-    for row in recommendations:
-        metric = row["metric"]
-        table.add_row(
-            str(metric["name"]),
-            str(row["measure_type"]),
-            str(row["evaluation_method"]),
-            str(metric.get("builtin_function") or "custom"),
-            f"{row['impact_estimate']} / {row['confidence']}",
-        )
-
-    console.print(table)
-    console.print("\n[bold]Provenance[/bold]")
-    for row in recommendations:
-        metric = row["metric"]
-        console.print(
-            f"[cyan]{metric['name']}[/cyan]: "
-            f"{_truncate_text(_format_eval_provenance(row), 300)}"
-        )
-
-
-def _print_eval_evaluator_table(data: dict[str, Any]) -> None:
-    recommendations = data["recommendations"]
-    console.print(
-        f"\n[bold blue]Evaluator Recommendations for {data['task_type']}[/bold blue]"
-    )
-    console.print(f"[dim]{data['caveat']}[/dim]\n")
-
-    if not recommendations:
-        console.print(
-            "[yellow]No evaluator recommendations matched the requested filters."
-            "[/yellow]"
-        )
-        return
-
-    table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
-    table.add_column("Metric", style="cyan", no_wrap=True)
-    table.add_column("Method", no_wrap=True)
-    table.add_column("Binding", style="green", no_wrap=True)
-    table.add_column("Cost", no_wrap=True)
-    table.add_column("Impact / Evidence", no_wrap=True)
-
-    for row in recommendations:
-        binding = row["evaluator_binding"]
-        table.add_row(
-            str(row["metric_name"]),
-            str(row["evaluation_method"]),
-            f"{binding['kind']}\n{binding['sdk_ref']}",
-            str(row["cost_tier"]),
-            f"{row['impact_estimate']} / {row['confidence']}",
-        )
-
-    console.print(table)
-    console.print("\n[bold]Setup Notes[/bold]")
-    for row in recommendations:
-        binding = row["evaluator_binding"]
-        console.print(
-            f"[cyan]{row['metric_name']}[/cyan]: "
-            f"{_truncate_text(str(binding['setup_note']), 300)}"
-        )
-    console.print("\n[bold]Cost Notes[/bold]")
-    for row in recommendations:
-        console.print(
-            f"[cyan]{row['metric_name']}[/cyan]: "
-            f"{_truncate_text(str(row['cost_note']), 300)}"
-        )
-
-
-def _format_eval_provenance(row: dict[str, Any]) -> str:
-    parts = []
-    for ref in row.get("provenance", []):
-        citation = str(ref.get("citation", ""))
-        summary = str(ref.get("finding_summary", ""))
-        parts.append(f"{citation}: {summary}")
-    return "; ".join(parts) or "No provenance note listed."
-
-
-def _format_recommendation_range(row: dict[str, Any]) -> str:
-    values = row.get("suggested_values") or []
-    if values:
-        return f"{row['range_code']}\nvalues: {values}"
-    return str(row["range_code"])
-
-
-def _truncate_text(value: str, limit: int) -> str:
-    if len(value) <= limit:
-        return value
-    return value[: limit - 3].rstrip() + "..."
 
 
 def _list_bedrock_foundation_models(region: str | None) -> list[str]:
@@ -1405,7 +1075,7 @@ def _print_result_summary(result: Any) -> None:
 
     console.print(summary_table)
     if preset_selection is not None:
-        console.print(f"[dim]{ADVISORY_SELECTION_NOTICE}[/dim]")
+        console.print(f"[dim]{_ADVISORY_SELECTION_NOTICE}[/dim]")
 
 
 def _print_config_json(
@@ -1459,7 +1129,7 @@ def _print_preset_selection(selection: PresetSelection | None) -> None:
         for index, config in enumerate(selection.selected_configs, 1):
             console.print(f"[dim]#{index}[/dim]")
             console.print(Syntax(json.dumps(config, indent=2), "json", theme="monokai"))
-    console.print(f"[dim]{ADVISORY_SELECTION_NOTICE}[/dim]")
+    console.print(f"[dim]{_ADVISORY_SELECTION_NOTICE}[/dim]")
 
 
 def _print_trials_table(trials: list[Any], max_display: int = 50) -> None:
@@ -1600,7 +1270,20 @@ def _parse_weights(weights_str: str) -> dict[str, float] | None:
 
 def _calculate_trial_score(trial: Any, weight_dict: dict[str, float]) -> float | None:
     """Calculate weighted score for a trial. Returns None if no valid metrics."""
-    return calculate_weighted_trial_score(trial, weight_dict)
+    if not trial.metrics:
+        return None
+
+    score = 0.0
+    has_metrics = False
+    for metric, weight in weight_dict.items():
+        metric_value = trial.metrics.get(metric)
+        if isinstance(metric_value, (int, float)) and not isinstance(
+            metric_value, bool
+        ):
+            score += weight * float(metric_value)
+            has_metrics = True
+
+    return score if has_metrics else None
 
 
 def _build_rerank_table(
@@ -1620,34 +1303,6 @@ def _build_rerank_table(
         orig_score_val = trial.metrics.get("overall") or trial.metrics.get("score")
         orig_score = f"{orig_score_val:.4f}" if orig_score_val is not None else "N/A"
         table.add_row(str(i), f"{new_score:.4f}", orig_score, config_str)
-
-    return table
-
-
-def _build_preset_rerank_table(
-    selection: PresetSelection,
-    trials: list[Any],
-) -> Table:
-    """Build a table showing advisory preset-selected configurations."""
-    table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
-    table.add_column("Rank", justify="right")
-    table.add_column("Trial Index", justify="right")
-    table.add_column("Accuracy", justify="right")
-    table.add_column("Cost", justify="right")
-    table.add_column("Config")
-
-    for rank, trial_index in enumerate(selection.selected_trial_indices, 1):
-        trial = trials[trial_index]
-        config_str = json.dumps(trial.config)
-        if len(config_str) > 50:
-            config_str = config_str[:47] + "..."
-        table.add_row(
-            str(rank),
-            str(trial_index),
-            _format_metric_value((trial.metrics or {}).get("accuracy")),
-            _format_metric_value((trial.metrics or {}).get("cost")),
-            config_str,
-        )
 
     return table
 
@@ -1860,36 +1515,15 @@ def results_compare(result1: str, result2: str, storage_dir: str) -> None:
 @click.option(
     "--weights",
     "-w",
-    required=False,
+    required=True,
     help="Objective weights as key=value pairs (e.g., accuracy=0.7,cost=0.3)",
-)
-@click.option(
-    "--preset",
-    type=click.Choice(VALID_PRESET_NAMES),
-    required=False,
-    help="Advisory strategy preset to apply instead of custom weights",
-)
-@click.option(
-    "--epsilon",
-    type=float,
-    required=False,
-    help="Tolerance for max_accuracy_then_cheapest_within_epsilon",
-)
-@click.option(
-    "--floor",
-    type=float,
-    required=False,
-    help="Quality floor for quality_floor_min_cost",
 )
 @click.option(
     "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
 )
 def results_rerank(
     result_name: str,
-    weights: str | None,
-    preset: str | None,
-    epsilon: float | None,
-    floor: float | None,
+    weights: str,
     storage_dir: str,
 ) -> None:
     """Recalculate best config with different objective weights.
@@ -1899,44 +1533,20 @@ def results_rerank(
     Examples:
         traigent results rerank my_run --weights accuracy=0.8,cost=0.2
         traigent results rerank my_run -w "accuracy=0.5,latency=0.3,cost=0.2"
-        traigent results rerank --preset max_accuracy_then_cheapest_within_epsilon --epsilon 0.02 my_run
     """
-    if bool(weights) == bool(preset):
-        console.print("[red]Use exactly one of --weights or --preset[/red]")
+    console.print(
+        f"\n[bold blue]Re-ranking: {result_name} with custom weights[/bold blue]\n"
+    )
+
+    weight_dict = _parse_weights(weights)
+    if weight_dict is None:
+        console.print("[red]Invalid weights format[/red]")
+        console.print("Use format: --weights accuracy=0.7,cost=0.3")
         return
 
-    if preset:
-        console.print(
-            f"\n[bold blue]Re-ranking: {result_name} with preset {preset}[/bold blue]\n"
-        )
-    else:
-        console.print(
-            f"\n[bold blue]Re-ranking: {result_name} with custom weights[/bold blue]\n"
-        )
-
-    weight_dict: dict[str, float] | None = None
-    strategy_preset = None
-    if weights:
-        weight_dict = _parse_weights(weights)
-        if weight_dict is None:
-            console.print("[red]Invalid weights format[/red]")
-            console.print("Use format: --weights accuracy=0.7,cost=0.3")
-            return
-
-        console.print("[bold]Weights (normalized):[/bold]")
-        for k, v in weight_dict.items():
-            console.print(f"  {k}: {v:.2%}")
-    else:
-        params: dict[str, Any] = {}
-        if epsilon is not None:
-            params["epsilon"] = epsilon
-        if floor is not None:
-            params["floor"] = floor
-        try:
-            strategy_preset = normalize_strategy_preset(preset, params)
-        except StrategyPresetError as exc:
-            console.print(f"[red]{exc}[/red]")
-            return
+    console.print("[bold]Weights (normalized):[/bold]")
+    for k, v in weight_dict.items():
+        console.print(f"  {k}: {v:.2%}")
 
     try:
         persistence = PersistenceManager(storage_dir)
@@ -1946,23 +1556,10 @@ def results_rerank(
             console.print("[yellow]No trials found in this result[/yellow]")
             return
 
-        if strategy_preset is not None:
-            selection = select_strategy_preset(strategy_preset, result.trials)
-            if selection.status != "selected":
-                console.print(f"[yellow]{selection.selection_rationale}[/yellow]")
-                console.print(f"[dim]{ADVISORY_SELECTION_NOTICE}[/dim]")
-                return
-
-            console.print("\n[bold]Advisory Preset Selection[/bold]")
-            console.print(_build_preset_rerank_table(selection, result.trials))
-            _print_preset_selection(selection)
-            return
-
         # Re-score trials using helper
         scored_trials = [
             (score, trial)
             for trial in result.trials
-            if weight_dict is not None
             if (score := _calculate_trial_score(trial, weight_dict)) is not None
         ]
 
@@ -2765,14 +2362,6 @@ cli.add_command(detect_tvars)
 from traigent.cli.generate_config_command import generate_config  # noqa: E402
 
 cli.add_command(generate_config)
-
-from traigent.cli.next_steps_command import next_steps  # noqa: E402
-
-cli.add_command(next_steps)
-
-from traigent.cli.guidance_command import guidance  # noqa: E402
-
-cli.add_command(guidance)
 
 from traigent.cli.plan_command import plan  # noqa: E402
 
