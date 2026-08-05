@@ -283,7 +283,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../concepts/guided-generation/" class="md-tabs__link">
+        <a href="../../concepts/composite-knob-ir/" class="md-tabs__link">
           
   
   
@@ -832,34 +832,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../concepts/guided-generation/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Guided Generation
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../concepts/composite-knob-ir/" class="md-nav__link">
         
   
@@ -1375,62 +1347,6 @@
     
   
     Local MCP Server
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../features/recommendations/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Configuration Recommendations
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../features/strategy-presets/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Strategy Presets
   
 
     
@@ -2946,17 +2862,6 @@
     <span class="md-ellipsis">
       
         traigent.get_available_strategies()
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#recommendation-catalog-and-strategy-presets" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Recommendation Catalog and Strategy Presets
       
     </span>
   </a>
@@ -4876,17 +4781,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#recommendation-catalog-and-strategy-presets" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Recommendation Catalog and Strategy Presets
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#cli-surfaces-in-0120" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5252,9 +5146,6 @@
     <span class="n">best_config_cache_ttl_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">24</span> <span class="o">*</span> <span class="mi">60</span> <span class="o">*</span> <span class="mi">60</span><span class="p">,</span>
     <span class="n">best_config_stale_ok_ttl_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">enable_auto_load_dev_logs</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="c1"># Guided generation</span>
-    <span class="n">prompt_rewrite</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="n">grow_dataset</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="c1"># Legacy compatibility</span>
     <span class="n">legacy</span><span class="p">:</span> <span class="n">LegacyOptimizeArgs</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="o">**</span><span class="n">runtime_overrides</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
@@ -5310,13 +5201,13 @@ function returns Traigent's optimized wrapper.</p>
 <td><code>strategy</code></td>
 <td><code>str \| None</code></td>
 <td><code>None</code></td>
-<td>Optional strategy preset name. 0.12.0 presets are advisory selection rules over completed trials.</td>
+<td>Retained only for signature compatibility; a non-<code>None</code> value now raises <code>TypeError</code>. Use <code>algorithm</code> or <code>objectives</code>.</td>
 </tr>
 <tr>
 <td><code>strategy_params</code></td>
 <td><code>Mapping[str, Any] \| None</code></td>
 <td><code>None</code></td>
-<td>Parameters for the selected strategy preset.</td>
+<td>Retained only for signature compatibility; a non-<code>None</code> value now raises <code>TypeError</code>.</td>
 </tr>
 <tr>
 <td><code>effectuation</code></td>
@@ -5335,12 +5226,6 @@ function returns Traigent's optimized wrapper.</p>
 <td>See signature</td>
 <td>See signature</td>
 <td><code>auto_load_best</code>, <code>load_from</code>, <code>config_id</code>, <code>best_config_*</code>, and cache TTL controls for persisted best configurations.</td>
-</tr>
-<tr>
-<td>Guided-generation fields</td>
-<td><code>dict[str, Any] \| None</code></td>
-<td><code>None</code></td>
-<td><code>prompt_rewrite</code> and <code>grow_dataset</code> configure guided generation; run it with <code>.optimize_with_guidance(provider)</code>.</td>
 </tr>
 </tbody>
 </table>
@@ -5676,13 +5561,13 @@ object with structured constraints.</p>
 <td><code>strategy</code></td>
 <td><code>str \| None</code></td>
 <td><code>None</code></td>
-<td>Runtime strategy preset override. Preset selections are advisory only.</td>
+<td>Deprecated alias for <code>algorithm</code> (emits <code>DeprecationWarning</code>); no longer accepts a preset name.</td>
 </tr>
 <tr>
 <td><code>strategy_params</code></td>
 <td><code>Mapping[str, Any] \| None</code></td>
 <td><code>None</code></td>
-<td>Runtime parameters for the strategy preset.</td>
+<td>Retained only for signature compatibility; a non-<code>None</code> value now raises <code>TypeError</code>.</td>
 </tr>
 <tr>
 <td><code>progress_bar</code></td>
@@ -5897,52 +5782,16 @@ This is additive qualification only: it never changes which config wins.</p>
 <h3 id="traigentget_available_strategies"><code>traigent.get_available_strategies()</code><a class="headerlink" href="#traigentget_available_strategies" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">get_available_strategies</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
 </code></pre></div>
-<h3 id="recommendation-catalog-and-strategy-presets">Recommendation Catalog and Strategy Presets<a class="headerlink" href="#recommendation-catalog-and-strategy-presets" title="Permanent link">&para;</a></h3>
-<p>0.12.0 exposes local catalog helpers and advisory selection presets through
-<code>traigent.api</code>.</p>
-<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">list_recommendation_agent_types</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">recommend_configuration_space</span><span class="p">(</span>
-    <span class="n">agent_type</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-    <span class="o">*</span><span class="p">,</span>
-    <span class="n">min_impact</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="n">min_confidence</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
-</code></pre></div>
-<p><code>recommend_configuration_space()</code> returns catalog metadata for supported
-agent/task types: knob names, suggested ranges, impact estimates, evidence
-notes, effectuation status, and apply guidance. It does not call a remote
-service.</p>
-<div class="highlight"><pre><span></span><code><span class="n">VALID_PRESET_NAMES</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
-    <span class="s2">&quot;max_accuracy_then_cheapest_within_epsilon&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;quality_floor_min_cost&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;pareto_frontier&quot;</span><span class="p">,</span>
-<span class="p">)</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">normalize_strategy_preset</span><span class="p">(</span>
-    <span class="n">preset_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="n">params</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">NormalizedStrategyPreset</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">select_strategy_preset</span><span class="p">(</span>
-    <span class="n">preset</span><span class="p">:</span> <span class="n">NormalizedStrategyPreset</span><span class="p">,</span>
-    <span class="n">trials</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">TrialResult</span><span class="p">],</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PresetSelection</span>
-</code></pre></div>
-<p>Strategy presets are advisory selection rules over completed trials. They are
-task-local heuristics and do not provide a statistical certificate.</p>
 <h3 id="cli-surfaces-in-0120">CLI surfaces in 0.12.0<a class="headerlink" href="#cli-surfaces-in-0120" title="Permanent link">&para;</a></h3>
-<p>The local CLI includes these onboarding and recommendation entry points:</p>
+<p>The local CLI includes these onboarding entry points:</p>
 <ul>
 <li><code>traigent onboard</code></li>
 <li><code>traigent auth device-login</code></li>
 <li><code>traigent first-prompt --agent claude|cursor|codex</code></li>
 <li><code>traigent quickstart</code></li>
 <li><code>traigent mcp serve</code></li>
-<li><code>traigent recommend</code></li>
 </ul>
 <p>The local MCP server in this worktree exposes these tools: <code>auth_status</code>,
-<code>list_recommendation_agent_types</code>, <code>recommend_configuration_space</code>,
 <code>detect_tvars</code>, <code>scaffold_eval</code>, <code>validate_dataset</code>, <code>estimate_cost</code>,
 <code>run_optimization</code>, <code>get_results</code>, and <code>export_evidence</code>.</p>
 <h3 id="traigentget_optimization_insights"><code>traigent.get_optimization_insights()</code><a class="headerlink" href="#traigentget_optimization_insights" title="Permanent link">&para;</a></h3>
