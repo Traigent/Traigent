@@ -4,6 +4,8 @@ All notable changes to Traigent SDK are documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
 ## [0.27.0] - unreleased
 
 ### Removed
@@ -11,19 +13,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Named strategy presets removed** (#2100, #2101). The advisory selection rules
   behind `max_accuracy_then_cheapest_within_epsilon`, `quality_floor_min_cost`, and
   `pareto_frontier` are the technique, not something a public package ships readable
-  source for; that logic belongs in the backend. This removal is **forward-looking**:
-  it stops future publication and closes the #2100/#2101 defects, but it does not
-  retract what is already out. The deleted source stays readable in this public
-  repository's git history and in every wheel and sdist released from ~0.12.0 through
-  0.26.0. What to do about those already-published artifacts and that history — rewrite,
-  yank, or accept — is a separate decision for the repository owner and is not made here.
-  `traigent.api.strategy_presets` is
-  deleted along with all eight symbols it exported from `traigent` and `traigent.api`
+  source for; that logic belongs in the backend. The presets are gone outright — there
+  is no shim, no compatibility alias, and no replacement — which removes the surface
+  both #2100 and #2101 were reported against and stops it being published again. The
+  removal takes effect from this release onward and does not alter anything already
+  published. `traigent.api.strategy_presets` is deleted along with all eight symbols
+  it exported from `traigent` and `traigent.api`
   (`ADVISORY_SELECTION_NOTICE`, `NormalizedStrategyPreset`, `StrategyPresetError`,
   `StrategyPresetValidationError`, `UnknownStrategyPresetError`, `VALID_PRESET_NAMES`,
-  `normalize_strategy_preset`, `select_strategy_preset`). There is no shim and no
-  compatibility alias. Use `algorithm=<optimizer>` to choose a search algorithm and
-  `objectives=[...]` to declare what is being optimized.
+  `normalize_strategy_preset`, `select_strategy_preset`). Use `algorithm=<optimizer>`
+  to choose a search algorithm and `objectives=[...]` to declare what is being
+  optimized.
 
   Scope note for anyone tracking **#2101**: removing the presets removes the surface that
   reported the defect, not its underlying cause. #2101's root cause — the built-in
@@ -33,7 +33,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   What is fixed is that no preset silently floors or ranks on that value any more.
 - **Decorator `strategy=` / `strategy_params=` now raise `TypeError`.** Both parameters
   stay in the signature so the error can say what happened instead of reading as a typo.
-  Passing one of the three retired preset names names the removal explicitly.
+  Passing one of the three retired preset names reports the removal explicitly.
 - **Runtime `.optimize(strategy=<preset name>)` and `.optimize(strategy_params=...)` now
   raise `TypeError`.** `strategy_params` raises on every non-`None` value, whether or not
   `strategy` is also passed. `strategy=<optimizer name>` is unaffected: it remains the
