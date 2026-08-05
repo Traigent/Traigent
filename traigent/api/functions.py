@@ -8,6 +8,7 @@ import warnings
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
+from traigent.core.cache_usage import normalize_cache_usage
 from traigent.api.types import OptimizationResult, StrategyConfig
 from traigent.config.api_keys import _API_KEY_MANAGER
 from traigent.config.context import get_applied_config
@@ -1013,6 +1014,7 @@ def with_usage(
     input_tokens: int | None = None,
     output_tokens: int | None = None,
     response_time_ms: float | None = None,
+    provider_usage: dict[str, Any] | None = None,
 ) -> str | dict[str, Any]:
     """Wrap a response with usage metadata if in optimization mode.
 
@@ -1134,7 +1136,7 @@ def with_usage(
         or output_tokens is not None
         or response_time_ms is not None
     ):
-        usage: dict[str, int | float] = {}
+        usage: dict[str, Any] = {}
         if input_tokens is not None:
             usage["input_tokens"] = int(input_tokens)
         if output_tokens is not None:
@@ -1142,6 +1144,20 @@ def with_usage(
         if response_time_ms is not None:
             usage["response_time_ms"] = float(response_time_ms)
         meta["usage"] = usage
+
+    # Prompt-cache dimensions (Traigent#2068). Passing the provider's raw usage
+    # payload is preferred over hand-extracting counts: normalize_cache_usage knows
+    # each provider's field names AND whether that provider counts cached tokens
+    # inside its input total, which is the part callers get wrong. It also keeps
+    # "the provider did not report this" distinct from "zero", so a cached workload
+    # is never silently priced as if it had no cache.
+    if provider_usage is not None:
+        cache_usage = normalize_cache_usage(provider_usage)
+        meta["cache_usage"] = cache_usage.as_metadata()
+        if cache_usage.input_tokens is not None and input_tokens is None:
+            # The caller gave us the raw payload and no explicit count, so use the
+            # cache-exclusive figure rather than leaving input unrecorded.
+            meta.setdefault("usage", {})["input_tokens"] = cache_usage.input_tokens
 
     result["__traigent_meta__"] = meta
 
