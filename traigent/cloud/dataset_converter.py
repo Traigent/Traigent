@@ -39,7 +39,7 @@ except ImportError:
 
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.security.redaction import is_credential_key_name
-from traigent.utils.exceptions import ValidationError
+from traigent.utils.exceptions import DatasetValidationError
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import safe_write_text, sanitize_filename, validate_path
 
@@ -296,20 +296,26 @@ class DatasetConverter:
             dataset: SDK dataset
             privacy_mode: If True, excludes sensitive data
             strict: Fail closed (the default). Any row that cannot be converted
-                raises ``ValidationError`` naming the rows, instead of being
-                dropped. A silently shorter dataset changes what the
+                raises ``DatasetValidationError`` naming the rows, instead of
+                being dropped. A silently shorter dataset changes what the
                 optimization is measured against while every count the caller
                 can see still says it succeeded.
             conversion_errors: Optional accumulator for structured per-row
-                degradation records when ``strict`` is False, mirroring the
-                ``metric_errors`` accumulator used by the evaluators for the
-                same reason (see ``evaluators/local.py``).
+                degradation records, mirroring the ``metric_errors``
+                accumulator used by the evaluators for the same reason (see
+                ``evaluators/local.py``). Filled in BOTH modes.
 
         Returns:
-            Tuple of (examples list, metadata)
+            Tuple of (examples list, metadata). ``metadata.total_examples`` is
+            the INPUT row count, so a lenient run that dropped rows does not
+            describe itself as complete.
 
         Raises:
-            ValidationError: If ``strict`` and any example fails to convert.
+            DatasetValidationError: If ``strict`` and any example fails to
+                convert. ``.details`` carries every failure (including any past
+                the message cap) as ``{"failures", "converted", "total"}``.
+                Imported from ``traigent.utils.exceptions``; it subclasses
+                ``ValidationError``, so existing handlers still catch it.
         """
         logger.info(
             f"Converting SDK dataset '{dataset.name}' to backend format (privacy={privacy_mode})"
@@ -327,8 +333,15 @@ class DatasetConverter:
                     example, i, privacy_mode
                 )
                 examples.append(backend_example)
+            except (MemoryError, SystemError, RecursionError):
+                # Resource exhaustion is not a property of the row. Recording it
+                # as a per-row conversion failure would relabel a process-level
+                # problem as bad user data -- and, on a constrained runner,
+                # convert an out-of-memory condition into a confident claim that
+                # the dataset is malformed.
+                raise
             except Exception as e:
-                logger.warning(f"Failed to convert example {i}: {e}")
+                logger.warning(f"Failed to convert example {i}: {e}", exc_info=True)
                 failures.append(
                     {
                         "example_index": i,
@@ -340,6 +353,12 @@ class DatasetConverter:
         error_count = len(failures)
 
         if failures:
+            # Filled in BOTH modes. An accumulator passed alongside the default
+            # strict=True used to be silently ignored, so the natural way to ask
+            # "tell me what broke" returned an empty list.
+            if conversion_errors is not None:
+                conversion_errors.extend(failures)
+
             if strict:
                 # Cap the detail the same way utils/validation.py does, so a
                 # wholly malformed dataset produces a readable error rather
@@ -353,14 +372,20 @@ class DatasetConverter:
                     detail += (
                         f"; ... and {error_count - MAX_REPORTED_CONVERSION_ERRORS} more"
                     )
-                raise ValidationError(
+                raise DatasetValidationError(
                     f"{error_count} of {len(dataset.examples)} dataset examples "
                     f"failed to convert for upload: {detail}. Refusing to upload a "
-                    f"silently shorter dataset; pass strict=False to accept the "
-                    f"drop and receive the per-row errors instead."
+                    f"silently shorter dataset; pass strict=False (and "
+                    f"conversion_errors=[] for the per-row records) to accept the "
+                    f"drop.",
+                    # The capped message is for humans; every failure, including
+                    # the ones past the cap, stays reachable programmatically.
+                    details={
+                        "failures": failures,
+                        "converted": len(examples),
+                        "total": len(dataset.examples),
+                    },
                 )
-            if conversion_errors is not None:
-                conversion_errors.extend(failures)
 
         # Determine example set type
         example_type = self._determine_example_set_type(dataset)
@@ -373,7 +398,11 @@ class DatasetConverter:
             type=example_type,
             description=dataset.description
             or f"Converted from SDK dataset with {len(examples)} examples",
-            total_examples=len(examples),
+            # The INPUT size, not the post-drop count. Reporting len(examples)
+            # was the metadata half of #1722: under strict=False a shortened
+            # dataset still described itself as complete, so the backend had no
+            # way to see rows had been lost. Identical when nothing failed.
+            total_examples=len(dataset.examples),
             created_from="sdk_dataset",
             privacy_mode=privacy_mode,
         )
@@ -436,6 +465,8 @@ class DatasetConverter:
         example_set_name: str | None = None,
         privacy_mode: bool = False,
         no_egress: bool | None = None,
+        *,
+        strict: bool = True,
     ) -> ConversionResult:
         """Upload SDK dataset to backend as example set.
 
@@ -445,16 +476,28 @@ class DatasetConverter:
             example_set_name: Custom example set name
             privacy_mode: Enable privacy-preserving upload
             no_egress: Optional per-call runtime policy forbidding backend transport
+            strict: Forwarded to :meth:`sdk_dataset_to_backend_examples`. Fail
+                closed on an unconvertible row (the default) rather than
+                uploading a silently shorter dataset. Exposed here because this
+                is the entry point callers actually use -- the conversion error
+                tells them to pass ``strict=False``, so the parameter has to
+                exist on the API they are holding.
 
         Returns:
-            Conversion result
+            Conversion result. When ``strict`` is False and rows were dropped,
+            the drops are reported in ``errors`` and counted in ``error_count``.
         """
         logger.info(f"Uploading SDK dataset to backend (privacy={privacy_mode})")
+
+        conversion_errors: list[dict[str, Any]] = []
 
         try:
             # Convert to backend format
             examples, metadata = self.sdk_dataset_to_backend_examples(
-                dataset, privacy_mode
+                dataset,
+                privacy_mode,
+                strict=strict,
+                conversion_errors=conversion_errors,
             )
 
             if example_set_name:
@@ -470,19 +513,46 @@ class DatasetConverter:
                 example_set_id, examples, no_egress=no_egress
             )
 
-            # `errors=[]` is now a guarantee rather than an assumption: the
-            # conversion above runs strict, so reaching this line means every
-            # example converted. It previously sat next to a converter that
-            # dropped rows and discarded its own error count, so a run that lost
-            # half the dataset still reported success with no errors.
-            # `error_count` remains the BACKEND's invalid count.
+            # Two independent sources of loss, and BOTH have to reach the
+            # caller or this returns the exact shape #1722 is about --
+            # success=True with an empty error list over a shortened dataset.
+            #   local:   rows this SDK could not convert (only possible when
+            #            strict=False; a strict run has already raised).
+            #   backend: rows the backend rejected, reported as `invalid`.
+            # The previous version hardcoded errors=[] and took error_count from
+            # the backend alone, so a response of {"added": 40, "invalid": 60}
+            # still read as a clean success.
+            backend_invalid = int(result.get("invalid", 0) or 0)
+            errors = [
+                f"example {failure['example_index']}: {failure['error_type']}: "
+                f"{failure['error_message']}"
+                for failure in conversion_errors
+            ]
+            if backend_invalid:
+                errors.append(
+                    f"backend rejected {backend_invalid} example(s) as invalid"
+                )
+            if errors:
+                logger.error(
+                    "Dataset upload completed with loss: %d local conversion "
+                    "failure(s), %d backend rejection(s)",
+                    len(conversion_errors),
+                    backend_invalid,
+                )
+
             return ConversionResult(
-                success=True,
+                # Not "the request returned 2xx": success means the dataset the
+                # backend now holds is the dataset that was handed over.
+                success=not errors,
                 converted_count=result.get("added", 0),
                 skipped_count=result.get("skipped", 0),
-                error_count=result.get("invalid", 0),
-                errors=[],
-                metadata={"example_set_id": example_set_id, "backend_response": result},
+                error_count=len(conversion_errors) + backend_invalid,
+                errors=errors,
+                metadata={
+                    "example_set_id": example_set_id,
+                    "backend_response": result,
+                    "local_conversion_errors": conversion_errors,
+                },
             )
 
         except Exception as e:

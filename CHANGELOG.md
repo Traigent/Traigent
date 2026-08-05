@@ -112,6 +112,26 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     though the local record holds the trials that completed.~~ **Closed by
     #2029** (below): the id now rides on the raised exception.
 
+### Changed
+
+- **BREAKING (default behaviour):** `DatasetConverter.sdk_dataset_to_backend_examples`
+  and `upload_sdk_dataset_to_backend` now **fail closed** on a dataset row that
+  cannot be converted, raising `DatasetValidationError` instead of dropping the
+  row (#1722, `g6:dataset-row-drop`). Previously each failure was logged once and
+  counted into a local `error_count` that was discarded before any caller could
+  see it, while `ExampleSetMetadata.total_examples` reported the POST-drop count
+  — so an upload that silently lost rows reported `success=True, errors=[]`. A
+  shorter dataset changes what the optimization is measured against, and a
+  dropped row was indistinguishable from a row that was never there.
+
+  Escape hatch: pass `strict=False` (on either method) to accept the drop, and
+  `conversion_errors=[]` to the converter for the structured per-row records.
+  `upload_sdk_dataset_to_backend` now reports drops in `ConversionResult.errors`
+  and no longer returns `success=True` when the backend rejected examples as
+  `invalid`. `metadata.total_examples` is now the INPUT row count in both modes.
+
+  A dataset in which every row converts is unaffected.
+
 ### Fixed
 
 - `traigent sync` now explains what it wants when an id is not found: the old

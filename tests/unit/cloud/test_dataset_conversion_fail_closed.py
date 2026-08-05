@@ -26,11 +26,7 @@ from traigent.cloud.dataset_converter import (
     DatasetConverter,
 )
 from traigent.evaluators.base import Dataset, EvaluationExample
-from traigent.utils.exceptions import ValidationError
-
-
-class _UnconvertibleExample(EvaluationExample):
-    """An example whose conversion raises, standing in for a malformed row."""
+from traigent.utils.exceptions import DatasetValidationError, ValidationError
 
 
 def _dataset(*examples: EvaluationExample, name: str = "ds") -> Dataset:
@@ -164,12 +160,32 @@ class TestNonStrictSurfacesWhatItDropped:
 
 
 class TestMetadataNoLongerOverstatesCompleteness:
-    def test_total_examples_cannot_silently_describe_a_shortened_dataset(
+    def test_total_examples_reports_the_INPUT_size_when_rows_were_dropped(
         self, monkeypatch, converter
     ):
-        """`total_examples=len(examples)` was the post-drop count, so the upload
-        looked complete. Under strict that state is now unreachable — the only
-        way to get metadata back is for every row to have converted."""
+        """The metadata half of #1722, and it lived on in the lenient mode.
+
+        `total_examples` was `len(examples)` -- the POST-drop count -- so a
+        shortened dataset described itself to the backend as complete. Strict
+        makes that unreachable, but `strict=False` reached it every time, which
+        is exactly where it still mattered.
+        """
+        dataset = _dataset(_good("a"), _good("b"), _good("c"))
+        _break_one(monkeypatch, converter, {1})
+
+        examples, metadata = converter.sdk_dataset_to_backend_examples(
+            dataset, strict=False
+        )
+
+        assert len(examples) == 2, "one row really was dropped"
+        assert metadata.total_examples == 3, (
+            "metadata must describe the dataset handed in, not what survived -- "
+            "reporting 2 here is the upload calling itself complete"
+        )
+
+    def test_strict_makes_the_shortened_metadata_state_unreachable(
+        self, monkeypatch, converter
+    ):
         dataset = _dataset(_good("a"), _good("b"), _good("c"))
         _break_one(monkeypatch, converter, {1})
 
@@ -185,3 +201,80 @@ class TestMetadataNoLongerOverstatesCompleteness:
         examples, metadata = converter.sdk_dataset_to_backend_examples(dataset)
 
         assert metadata.total_examples == len(examples) == len(dataset.examples) == 3
+
+
+class TestTheRaiseCarriesStructuredData:
+    def test_details_carry_every_failure_including_past_the_message_cap(
+        self, monkeypatch, converter
+    ):
+        """The message is capped for humans; a caller must still be able to reach
+        all of them without regexing the string."""
+        count = MAX_REPORTED_CONVERSION_ERRORS + 5
+        dataset = _dataset(*[_good(str(i)) for i in range(count)])
+        _break_one(monkeypatch, converter, set(range(count)))
+
+        with pytest.raises(DatasetValidationError) as excinfo:
+            converter.sdk_dataset_to_backend_examples(dataset)
+
+        details = excinfo.value.details
+        assert len(details["failures"]) == count, "capped in the message only"
+        assert details["converted"] == 0
+        assert details["total"] == count
+
+    def test_it_is_still_catchable_as_ValidationError(self, monkeypatch, converter):
+        """DatasetValidationError subclasses ValidationError, so narrowing the
+        type must not break a caller already catching the broader one."""
+        dataset = _dataset(_good("a"))
+        _break_one(monkeypatch, converter, {0})
+
+        with pytest.raises(ValidationError):
+            converter.sdk_dataset_to_backend_examples(dataset)
+
+    def test_the_message_names_a_parameter_the_caller_can_actually_pass(self):
+        """The remedy it prescribes has to exist on the API being held.
+
+        The upload method is the entry point callers actually use. With `strict`
+        only on the converter, the error told them to pass an argument their call
+        site does not accept.
+        """
+        import inspect
+
+        signature = inspect.signature(DatasetConverter.upload_sdk_dataset_to_backend)
+
+        assert "strict" in signature.parameters
+
+
+class TestResourceExhaustionIsNotADataDefect:
+    @pytest.mark.parametrize("exc", [MemoryError, SystemError, RecursionError])
+    def test_it_propagates_instead_of_being_recorded_as_a_bad_row(
+        self, monkeypatch, converter, exc
+    ):
+        """Relabelling an out-of-memory condition as "this row is malformed"
+        blames the user's data for a process-level problem."""
+        dataset = _dataset(_good("a"), _good("b"))
+
+        def _explode(example, index, privacy_mode):
+            raise exc("resource exhausted")
+
+        monkeypatch.setattr(
+            converter, "_convert_evaluation_example_to_backend", _explode
+        )
+
+        with pytest.raises(exc):
+            converter.sdk_dataset_to_backend_examples(dataset, strict=False)
+
+
+class TestTheAccumulatorIsHonouredInBothModes:
+    def test_strict_still_fills_the_accumulator_before_raising(
+        self, monkeypatch, converter
+    ):
+        """Passing an accumulator alongside the DEFAULT mode used to be a silent
+        no-op, so the natural way to ask "tell me what broke" returned nothing."""
+        dataset = _dataset(_good("a"), _good("b"))
+        _break_one(monkeypatch, converter, {0})
+        errors: list[dict] = []
+
+        with pytest.raises(DatasetValidationError):
+            converter.sdk_dataset_to_backend_examples(dataset, conversion_errors=errors)
+
+        assert [e["example_index"] for e in errors] == [0]
