@@ -676,6 +676,30 @@ class LicenseValidator:
             from traigent.cloud.client import TraigentCloudClient
 
             async with TraigentCloudClient() as client:
+                # #1774: this path has NEVER worked. `get_license_features` is not
+                # defined on TraigentCloudClient or BaseTraigentClient, neither exposes
+                # __getattr__, and `git log -S "def get_license_features" --all` is
+                # empty -- the call was introduced already-broken. Every invocation
+                # raised AttributeError, which the broad handler below turned into a
+                # "validation failed" warning and a None return, i.e. a silent
+                # downgrade to FREE for legitimately paid users.
+                #
+                # Checked explicitly rather than left to AttributeError so the message
+                # names the defect instead of reading like a transient cloud problem.
+                # NOT implemented here: there is no license endpoint anywhere in
+                # traigent/cloud/, so writing one would mean inventing a URL and a
+                # response shape. That is an owner decision, not a bug fix.
+                if not callable(getattr(client, "get_license_features", None)):
+                    logger.error(
+                        "Cloud license validation is unavailable: "
+                        "%s has no get_license_features(). This path has never "
+                        "worked (Traigent#1774); paid tiers validated through it "
+                        "silently resolve to FREE. Falling back to the offline "
+                        "license path.",
+                        type(client).__name__,
+                    )
+                    return None
+
                 # Call the license features endpoint
                 response = await asyncio.wait_for(
                     client.get_license_features(),
@@ -706,6 +730,21 @@ class LicenseValidator:
             return None
         except ImportError:
             logger.debug("Cloud client not available")
+            return None
+        except (AttributeError, TypeError, NameError) as e:
+            # PROGRAMMING errors, not validation outcomes. The broad handler below
+            # used to absorb these at WARNING alongside genuine network failures,
+            # which is how #1774 stayed invisible for its whole life: a missing
+            # method, a renamed attribute or a wrong-type access read exactly like
+            # "the cloud was unreachable". Logged at ERROR and labelled so the two
+            # can never again be confused in a log search.
+            logger.error(
+                "Cloud license validation hit a PROGRAMMING error (not a cloud "
+                "failure): %s: %s. This is a defect in the SDK, not a transient "
+                "condition -- the licence tier below is a fallback, not a verdict.",
+                type(e).__name__,
+                e,
+            )
             return None
         except Exception as e:
             logger.warning(f"Cloud license validation failed: {e}")
