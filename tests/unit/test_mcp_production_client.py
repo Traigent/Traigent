@@ -11,7 +11,6 @@ import pytest
 from traigent.cloud.production_mcp_client import (
     MCP_AVAILABLE,
     ClientSession,
-    StdioClientTransport,
     StdioServerParameters,
 )
 from traigent.utils.exceptions import ValidationError
@@ -69,17 +68,23 @@ class TestMockMCPClasses:
             params = StdioServerParameters(command="python", args=["-m", "x"], env=None)
             assert isinstance(params, StdioServerParameters)
 
-    def test_stdio_client_transport_mock(self):
-        """When MCP is unavailable, StdioClientTransport is documented as a
-        stub "never used at runtime": it must accept the positional
-        server-params argument used by ProductionMCPClient.connect() without
-        raising, and the resulting instance is of the stub type (it has no
-        documented attributes or methods beyond construction -- there is
-        nothing else in its public contract to assert).
+    def test_the_nonexistent_transport_symbol_is_gone(self):
+        """#1777: `StdioClientTransport` never existed.
+
+        It was imported from `mcp.client.stdio`, which has never exported it, so
+        the ImportError branch ran and MCP_AVAILABLE was False even with `mcp`
+        installed. This module used to import that local stub by name and assert
+        it could be constructed -- pinning the artifact of the bug.
+
+        The real API is `stdio_client`; porting to it is tracked separately.
         """
-        if not MCP_AVAILABLE:
-            transport = StdioClientTransport(StdioServerParameters())
-            assert isinstance(transport, StdioClientTransport)
+        import traigent.cloud.production_mcp_client as mod
+
+        assert not hasattr(mod, "StdioClientTransport")
+
+        stdio = pytest.importorskip("mcp.client.stdio")
+        assert not hasattr(stdio, "StdioClientTransport")
+        assert hasattr(stdio, "stdio_client"), "the real API this needs porting to"
 
 
 class TestProductionMCPClientBasics:
@@ -161,12 +166,15 @@ class TestMCPClientConnectionManagement:
     async def test_connection_lifecycle_mocked(self):
         """Test connection lifecycle with mocked MCP components."""
         with patch("traigent.cloud.production_mcp_client.MCP_AVAILABLE", True):
+            # `connect()` now raises NotImplementedError naming `stdio_client`
+            # rather than building a no-op transport, so there is no
+            # StdioClientTransport to patch. Patching ClientSession alone keeps
+            # the lifecycle shape this test was written for.
             with patch(
-                "traigent.cloud.production_mcp_client.StdioClientTransport"
-            ) as mock_transport:
-                with patch(
-                    "traigent.cloud.production_mcp_client.ClientSession"
-                ) as mock_session:
+                "traigent.cloud.production_mcp_client.ClientSession"
+            ) as mock_session:
+                if True:
+                    mock_transport = Mock()
                     mock_transport_instance = AsyncMock()
                     mock_session_instance = AsyncMock()
 
@@ -201,11 +209,9 @@ class TestMCPClientConnectionManagement:
     async def test_connection_error_handling(self):
         """Test connection error handling."""
         with patch("traigent.cloud.production_mcp_client.MCP_AVAILABLE", True):
-            with patch(
-                "traigent.cloud.production_mcp_client.StdioClientTransport"
-            ) as mock_transport:
-                mock_transport.side_effect = Exception("Connection failed")
-
+            # Same: no StdioClientTransport to patch. connect() failing is now
+            # the expected outcome regardless, since the transport is unported.
+            if True:
                 if hasattr(self.client, "connect"):
                     try:
                         await self.client.connect()
@@ -404,12 +410,12 @@ class TestMCPRequestHandling:
 
                 # The client handles timeout gracefully - returns MCPResponse with success=False
                 result = await self.client.call_tool("test_tool", {})
-                assert result.success is False, (
-                    "Timeout should result in failed response"
-                )
-                assert "timeout" in result.error_message.lower(), (
-                    "Error message should mention timeout"
-                )
+                assert (
+                    result.success is False
+                ), "Timeout should result in failed response"
+                assert (
+                    "timeout" in result.error_message.lower()
+                ), "Error message should mention timeout"
 
 
 class TestMCPRetryMechanism:
@@ -2088,9 +2094,9 @@ class TestCreateAgent:
                 await self.client.create_agent(spec)
 
             _, arguments = mock_call_tool.call_args.args
-            assert "agent_id" not in arguments, (
-                f"create_agent must not forward agent_id (spec.id={spec.id!r})"
-            )
+            assert (
+                "agent_id" not in arguments
+            ), f"create_agent must not forward agent_id (spec.id={spec.id!r})"
 
 
 class TestUploadDataset:
