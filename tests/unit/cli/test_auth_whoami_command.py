@@ -203,9 +203,25 @@ def test_whoami_accepts_backend_issued_prefixes(
     assert "✅ Valid" in result.output
 
 
-@pytest.mark.parametrize("status", [401, 403])
+# This test changed deliberately (#1775). It previously asserted that BOTH 401 and 403
+# print "Invalid or unauthorized API key" under category "authentication" -- i.e. it
+# pinned the exact collapse the issue reports. #1754 / PR #1762 split these on the
+# session path; the CLI kept the collapse, so an insufficient-scope 403 told the user
+# to rotate a perfectly valid key. The parametrisation now carries the EXPECTED
+# distinction rather than asserting the two are the same.
+@pytest.mark.parametrize(
+    "status,expected_fragment,expected_category",
+    [
+        (401, "Invalid or expired API key", "authentication"),
+        (403, "lacks the required scope", "authorization"),
+    ],
+)
 def test_whoami_auth_failures_classified(
-    monkeypatch: pytest.MonkeyPatch, status: int, plain: Callable[[str], str]
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    expected_fragment: str,
+    expected_category: str,
+    plain: Callable[[str], str],
 ) -> None:
     _install_fake_aiohttp(
         monkeypatch,
@@ -215,10 +231,28 @@ def test_whoami_auth_failures_classified(
     result = _run_whoami(monkeypatch)
     output = plain(result.output)
     assert result.exit_code == 1
-    assert "Invalid or unauthorized API key" in output
+    assert expected_fragment in output
     assert "Category:" in output
-    assert "authentication" in output
+    assert expected_category in output
     assert f"HTTP status: {status}" in output
+
+
+def test_whoami_403_from_the_edge_is_not_reported_as_a_scope_problem(
+    monkeypatch: pytest.MonkeyPatch, plain: Callable[[str], str]
+) -> None:
+    """A Cloudflare 403 never reached Traigent, so neither key nor scope is at fault."""
+    _install_fake_aiohttp(
+        monkeypatch,
+        response=_FakeResponse(
+            status=403,
+            text_payload="Attention Required! | Cloudflare (error code: 1010)",
+        ),
+    )
+
+    output = plain(_run_whoami(monkeypatch).output)
+
+    assert "edge" in output.lower()
+    assert "lacks the required scope" not in output
 
 
 def test_whoami_404_backend_mismatch(
