@@ -584,7 +584,6 @@ def _legacy_view(
         for key in (
             "function_name",
             "configuration_space",
-            "strategy_preset",
             "session_summary",
         )
         if data.get(key) is not None

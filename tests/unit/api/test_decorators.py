@@ -1,21 +1,12 @@
 """Comprehensive tests for traigent.api.decorators module."""
 
 import asyncio
-import json
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
 from traigent.api.decorators import optimize
-from traigent.api.strategy_presets import (
-    MAX_ACCURACY_THEN_CHEAPEST,
-    PARETO_FRONTIER,
-    QUALITY_FLOOR_MIN_COST,
-    VALID_PRESET_NAMES,
-    UnknownStrategyPresetError,
-)
-from traigent.api.types import ExampleResult
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset
 from traigent.utils.exceptions import ConfigurationError
@@ -235,245 +226,6 @@ class TestOptimizeDecorator:
 
         assert isinstance(sample_function, OptimizedFunction)
         assert sample_function.algorithm == "grid"
-
-    def test_decorator_rejects_unknown_strategy_name(self):
-        """Non-preset strategy values should list valid presets."""
-        with pytest.raises(ValueError) as exc_info:
-
-            @optimize(
-                configuration_space={"x": [1, 2]},
-                strategy="grid",
-            )
-            def sample_function(x: int) -> int:
-                return x
-
-        assert isinstance(exc_info.value, UnknownStrategyPresetError)
-        message = str(exc_info.value)
-        assert message == (
-            f"Unknown strategy preset 'grid'. Valid presets: "
-            f"{', '.join(VALID_PRESET_NAMES)}."
-        )
-        for preset_name in VALID_PRESET_NAMES:
-            assert preset_name in message
-
-    def test_decorator_accepts_strategy_preset(self):
-        """Registered strategy names should configure advisory preset metadata."""
-
-        @optimize(
-            configuration_space={"model": ["cheap", "accurate"]},
-            strategy=MAX_ACCURACY_THEN_CHEAPEST,
-            strategy_params={"epsilon": 0.02},
-        )
-        def sample_function() -> str:
-            return "ok"
-
-        assert isinstance(sample_function, OptimizedFunction)
-        assert sample_function.objectives == ["accuracy", "cost"]
-        assert sample_function.constraints == []
-        assert sample_function.strategy_preset.to_metadata() == {
-            "preset_name": MAX_ACCURACY_THEN_CHEAPEST,
-            "params": {"epsilon": 0.02},
-            "selection_grade": "advisory",
-            "selection_rationale": (
-                "Selected the lowest-cost completed trial within the preset accuracy band."
-            ),
-        }
-
-    def test_decorator_accepts_pareto_frontier_strategy_preset(self):
-        """Pareto frontier preset should resolve objectives without extra params."""
-
-        @optimize(
-            configuration_space={"model": ["cheap", "accurate"]},
-            strategy=PARETO_FRONTIER,
-            strategy_params={},
-        )
-        def sample_function() -> str:
-            return "ok"
-
-        assert isinstance(sample_function, OptimizedFunction)
-        assert sample_function.objectives == ["accuracy", "cost"]
-        assert sample_function.strategy_preset.to_metadata() == {
-            "preset_name": PARETO_FRONTIER,
-            "params": {},
-            "selection_grade": "advisory",
-            "selection_rationale": (
-                "Selected all completed trials on the advisory accuracy-cost Pareto frontier."
-            ),
-        }
-
-    def test_decorator_rejects_pareto_frontier_unexpected_params(self):
-        with pytest.raises(ValueError, match="does not accept strategy_params"):
-
-            @optimize(
-                configuration_space={"model": ["cheap", "accurate"]},
-                strategy=PARETO_FRONTIER,
-                strategy_params={"epsilon": 0.1},
-            )
-            def sample_function() -> str:
-                return "ok"
-
-    def test_decorator_rejects_strategy_preset_with_objectives(self):
-        """Preset business goals should not silently override hand-set objectives."""
-        with pytest.raises(ValueError, match="mutually exclusive"):
-
-            @optimize(
-                configuration_space={"model": ["cheap", "accurate"]},
-                objectives=["accuracy"],
-                strategy=QUALITY_FLOOR_MIN_COST,
-                strategy_params={"floor": 0.8},
-            )
-            def sample_function() -> str:
-                return "ok"
-
-    def test_decorator_strategy_preset_end_to_end_mock_mode(self, monkeypatch):
-        """Preset selection should be exposed without replacing best_config."""
-        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
-
-        async def evaluator(func, config, example):
-            _ = func, example
-            if config["model"] == "accurate":
-                metrics = {"accuracy": 0.9, "cost": 0.03}
-            else:
-                metrics = {"accuracy": 0.85, "cost": 0.01}
-            return ExampleResult(
-                example_id="ex_1",
-                input_data={"prompt": "hello"},
-                expected_output="ok",
-                actual_output="ok",
-                metrics=metrics,
-                execution_time=0.01,
-                success=True,
-            )
-
-        @optimize(
-            eval_dataset=[{"input": {"prompt": "hello"}, "expected": "ok"}],
-            configuration_space={"model": ["accurate", "cheap"]},
-            custom_evaluator=evaluator,
-            algorithm="grid",
-            max_trials=2,
-            strategy=MAX_ACCURACY_THEN_CHEAPEST,
-            strategy_params={"epsilon": 0.05},
-        )
-        def sample_function() -> str:
-            return "ok"
-
-        result = sample_function.optimize_sync()
-
-        assert result.preset_selection is not None
-        assert result.preset_selection.selection_grade == "advisory"
-        assert result.preset_selection.selected_config == {"model": "cheap"}
-        assert result.metadata["strategy_preset"]["preset_name"] == (
-            MAX_ACCURACY_THEN_CHEAPEST
-        )
-        assert result.metadata["strategy_preset"]["selection_grade"] == "advisory"
-
-        # #1846: the preset registers accuracy+cost, so this is a genuine
-        # multi-objective run and best_config is the weighted-aggregate winner,
-        # computed independently of the advisory preset. Prove best_config is
-        # the run's own weighted default (NOT copied from the preset) by
-        # comparing it to the independent post-hoc weighted computation
-        # (calculate_weighted_scores), which crowns best_weighted_config via a
-        # separate code path from terminal selection.
-        weighted = result.calculate_weighted_scores()
-        assert result.best_config == weighted["best_weighted_config"]
-        assert result.best_config == {"model": "cheap"}
-        # preset_selection stays exposed as its own advisory field alongside
-        # best_config. Here the weighted winner happens to coincide with the
-        # preset's advisory pick (equal-weight accuracy/cost tie broken to
-        # lowest cost == the epsilon-band cheapest), but the preset never
-        # *replaced* best_config: the two are computed independently.
-        assert result.preset_selection.selected_config == {"model": "cheap"}
-
-    def test_quality_floor_preset_matches_no_preset_trial_outcomes_and_best_config(
-        self, monkeypatch, tmp_path
-    ):
-        """Floor preset selection must not constrain trials or exported best_config."""
-        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
-        configuration_space = {"model": ["accurate", "good-cheap", "bad-cheap"]}
-        metrics_by_model = {
-            "accurate": {"accuracy": 0.95, "cost": 0.20},
-            "good-cheap": {"accuracy": 0.91, "cost": 0.01},
-            "bad-cheap": {"accuracy": 0.70, "cost": 0.001},
-        }
-
-        async def evaluator(func, config, example):
-            _ = func, example
-            return ExampleResult(
-                example_id="ex_1",
-                input_data={"prompt": "hello"},
-                expected_output="ok",
-                actual_output="ok",
-                metrics=dict(metrics_by_model[config["model"]]),
-                execution_time=0.01,
-                success=True,
-            )
-
-        @optimize(
-            eval_dataset=[{"input": {"prompt": "hello"}, "expected": "ok"}],
-            configuration_space=configuration_space,
-            custom_evaluator=evaluator,
-            algorithm="grid",
-            max_trials=3,
-            objectives=["accuracy", "cost"],
-        )
-        def no_preset_function() -> str:
-            return "ok"
-
-        @optimize(
-            eval_dataset=[{"input": {"prompt": "hello"}, "expected": "ok"}],
-            configuration_space=configuration_space,
-            custom_evaluator=evaluator,
-            algorithm="grid",
-            max_trials=3,
-            strategy=QUALITY_FLOOR_MIN_COST,
-            strategy_params={"floor": 0.9},
-        )
-        def floor_preset_function() -> str:
-            return "ok"
-
-        no_preset_result = no_preset_function.optimize_sync()
-        floor_result = floor_preset_function.optimize_sync()
-
-        def trial_outcomes(result):
-            return [
-                (dict(trial.config), trial.status, trial.error_message)
-                for trial in result.trials
-            ]
-
-        assert trial_outcomes(floor_result) == trial_outcomes(no_preset_result)
-        assert floor_result.best_config == no_preset_result.best_config
-        assert floor_preset_function.current_config == no_preset_result.best_config
-        assert floor_result.preset_selection is not None
-        assert floor_result.preset_selection.selected_config == {"model": "good-cheap"}
-
-        # #1846: QUALITY_FLOOR_MIN_COST registers the SAME accuracy+cost
-        # objectives as the no-preset run, so the preset must not constrain
-        # best_config — it equals the no-preset run's best_config (asserted
-        # above) AND each run's own independent post-hoc weighted winner. This
-        # proves best_config is the weighted default, not the preset's advisory
-        # floor pick. Here the weighted winner (good-cheap) happens to coincide
-        # with the preset's advisory pick, but preset_selection remains a
-        # distinct, separately-populated advisory field — never a replacement
-        # for best_config.
-        assert (
-            floor_result.best_config
-            == floor_result.calculate_weighted_scores()["best_weighted_config"]
-        )
-        assert (
-            no_preset_result.best_config
-            == no_preset_result.calculate_weighted_scores()["best_weighted_config"]
-        )
-
-        export_path = floor_preset_function.export_config(
-            tmp_path / "floor-preset-config.json",
-            format="slim",
-        )
-        exported = json.loads(export_path.read_text(encoding="utf-8"))
-        # Export tracks the actual best_config (the weighted winner), which
-        # equals the no-preset run's best_config — the preset did not change
-        # what gets exported.
-        assert exported["config"] == no_preset_result.best_config
-        assert exported["config"] == floor_result.best_config
 
     def test_decorated_function_execution(self):
         """Test that decorated function can still be called normally."""
@@ -1296,6 +1048,50 @@ class TestRemovedDecoratorCompatibilityOptions:
             return x
 
         assert isinstance(py_func_with_config, OptimizedFunction)
+
+    def test_decorator_rejects_strategy(self):
+        """Named strategy presets (epsilon/floor/Pareto selection) are gone.
+
+        A retired preset name gets the removal-specific message; see
+        ``tests/unit/api/test_strategy_preset_absence.py`` for what it must say.
+        """
+        with pytest.raises(TypeError, match="named strategy presets"):
+
+            @optimize(
+                configuration_space={"x": [1, 2, 3]},
+                strategy="max_accuracy_then_cheapest_within_epsilon",
+            )
+            def sample_function(x: int) -> int:
+                return x
+
+    def test_decorator_rejects_a_non_preset_strategy_value(self):
+        """``strategy=`` is refused outright, not only for the retired names."""
+        with pytest.raises(TypeError, match="no longer supported"):
+
+            @optimize(configuration_space={"x": [1, 2, 3]}, strategy="grid")
+            def sample_function(x: int) -> int:
+                return x
+
+    def test_decorator_rejects_strategy_params(self):
+        """Named strategy presets (epsilon/floor/Pareto selection) are gone."""
+        with pytest.raises(TypeError, match="no longer supported"):
+
+            @optimize(
+                configuration_space={"x": [1, 2, 3]},
+                strategy_params={"epsilon": 0.02},
+            )
+            def sample_function(x: int) -> int:
+                return x
+
+    def test_runtime_optimize_rejects_strategy_params(self):
+        """Runtime .optimize(strategy_params=...) also no longer selects a preset."""
+
+        @optimize(configuration_space={"x": [1, 2, 3]}, max_trials=1)
+        def sample_function(x: int) -> int:
+            return x
+
+        with pytest.raises(TypeError, match="strategy_params is no longer supported"):
+            sample_function.optimize_sync(strategy_params={"floor": 0.8})
 
 
 class TestExperimentName:

@@ -312,7 +312,6 @@ class PersistenceManager:
                 if result.preset_selection is not None
                 else None
             ),
-            "strategy_preset": _safe_json_value(result.metadata.get("strategy_preset")),
             "success_rate": _safe_json_value(result.success_rate),
             "duration": result.duration,
             "convergence_info": _safe_json_value(result.convergence_info),
@@ -326,7 +325,7 @@ class PersistenceManager:
             "session_summary": _safe_json_value(result.metadata.get("session_summary")),
         }
 
-        # #2031: the 16 curated keys above are the human/CLI-readable summary
+        # #2031: the 15 curated keys above are the human/CLI-readable summary
         # (list_results sorts on created_at, can_resume matches on
         # function_name + configuration_space), and they are kept exactly as
         # they were. They are NOT a faithful record of the dataclass: they never

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import warnings
 from pathlib import Path
 
 import pytest
@@ -1639,6 +1640,140 @@ class TestResolveAlgorithm:
             }
         )
         assert result == "bayesian"
+
+
+REMOVED_PRESET_NAMES = (
+    "max_accuracy_then_cheapest_within_epsilon",
+    "quality_floor_min_cost",
+    "pareto_frontier",
+)
+
+
+def _spec_with_strategy(tmp_path: Path, strategy: str) -> Path:
+    """A minimal, otherwise-valid legacy spec whose only oddity is ``strategy``."""
+    spec_file = tmp_path / "test.tvl.yml"
+    spec_file.write_text(
+        f"""
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o", "gpt-4o-mini"]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+
+optimization:
+  strategy: {strategy}
+"""
+    )
+    return spec_file
+
+
+class TestRetiredStrategyPresetInSpec:
+    """A retired preset name in a spec is refused by name, at load time.
+
+    ``optimization.strategy`` / ``exploration.strategy`` used to be read
+    straight into ``algorithm``, so a spec naming one of the three removed
+    presets loaded cleanly and only failed later, during the run, as
+    ``OptimizationError: Unknown optimizer '<preset>'`` — after session
+    creation. This is the route where a retired name is most likely to be
+    *checked into a repo* rather than typed at a call site, so it is the one
+    that most needs the by-name refusal the call sites already get.
+    """
+
+    @pytest.mark.parametrize("preset_name", REMOVED_PRESET_NAMES)
+    def test_resolve_algorithm_refuses_a_retired_preset_by_name(
+        self, preset_name: str
+    ) -> None:
+        """The name is never returned as an algorithm to fail on later."""
+        with pytest.raises(TypeError) as excinfo:
+            _resolve_algorithm({"strategy": preset_name})
+
+        message = str(excinfo.value)
+        lowered = message.lower()
+        assert preset_name in message, message
+        assert "named strategy preset" in lowered, message
+        assert "removed" in lowered, message
+        assert "algorithm=" in lowered, message
+        assert "objectives=" in lowered, message
+        # It must not send the reader back to the name that just failed.
+        assert f"algorithm={preset_name}" not in message
+
+    def test_dict_form_strategy_is_refused_too(self) -> None:
+        """TVL 0.9's ``strategy: {type: ...}`` form goes through the same check."""
+        with pytest.raises(TypeError, match="named strategy preset"):
+            _resolve_algorithm({"strategy": {"type": "pareto_frontier"}})
+
+    def test_a_nearby_legal_strategy_still_resolves(self) -> None:
+        """The refusal is by exact name, not by resemblance."""
+        assert _resolve_algorithm({"strategy": "pareto_optimal"}) == "nsga2"
+        assert _resolve_algorithm({"strategy": "quality_floor"}) == "quality_floor"
+
+    @pytest.mark.parametrize(
+        "written",
+        [
+            "PARETO_FRONTIER",
+            "Pareto_Frontier",
+            "Quality_Floor_Min_Cost",
+            "MAX_ACCURACY_THEN_CHEAPEST_WITHIN_EPSILON",
+        ],
+    )
+    def test_a_case_variant_of_a_retired_preset_is_refused_too(
+        self, written: str
+    ) -> None:
+        """Casing does not buy a retired name a way past this route.
+
+        Unlike a call site, this function lowercases every strategy it
+        resolves, so a case variant cannot reach a differently-cased
+        ``register_optimizer`` name — it can only reach the retired preset.
+        Refusing the literal spelling alone let ``PARETO_FRONTIER`` resolve to
+        ``"pareto_frontier"`` and die mid-run as ``Unknown optimizer``, after
+        the session existed: the failure the refusal exists to prevent.
+        """
+        with pytest.raises(TypeError) as excinfo:
+            _resolve_algorithm({"strategy": written})
+
+        message = str(excinfo.value)
+        # The message names the spelling the spec actually used, so a reader
+        # can find it in their file.
+        assert written in message, message
+        assert "named strategy preset" in message.lower(), message
+
+    def test_a_case_variant_fails_at_load_time_not_mid_run(
+        self, tmp_path: Path
+    ) -> None:
+        """End to end: the whole-file route refuses the cased spelling too."""
+        spec_file = _spec_with_strategy(tmp_path, "PARETO_FRONTIER")
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            with pytest.raises(TypeError) as excinfo:
+                load_tvl_spec(spec_path=spec_file)
+
+        assert "PARETO_FRONTIER" in str(excinfo.value)
+        assert "named strategy preset" in str(excinfo.value).lower()
+
+    @pytest.mark.parametrize("preset_name", REMOVED_PRESET_NAMES)
+    def test_loading_a_spec_naming_a_retired_preset_fails_at_load_time(
+        self, tmp_path: Path, preset_name: str
+    ) -> None:
+        """End to end: ``load_tvl_spec`` raises rather than returning an artifact.
+
+        Pinning the whole-file route, not just the helper: this is what runs
+        before a session exists, and an artifact coming back at all is the
+        regression — the run would then die much later on the resolved
+        "algorithm".
+        """
+        spec_file = _spec_with_strategy(tmp_path, preset_name)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            with pytest.raises(TypeError) as excinfo:
+                load_tvl_spec(spec_path=spec_file)
+
+        assert preset_name in str(excinfo.value)
+        assert "named strategy preset" in str(excinfo.value).lower()
 
 
 # T-5: Early Schema Validation Tests

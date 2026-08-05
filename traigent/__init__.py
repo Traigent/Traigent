@@ -225,32 +225,6 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "TrialError": ("traigent.api.types", "TrialError"),
     "TrialResult": ("traigent.api.types", "TrialResult"),
     "serialize_trials": ("traigent.api.types", "serialize_trials"),
-    "ADVISORY_SELECTION_NOTICE": (
-        "traigent.api.strategy_presets",
-        "ADVISORY_SELECTION_NOTICE",
-    ),
-    "NormalizedStrategyPreset": (
-        "traigent.api.strategy_presets",
-        "NormalizedStrategyPreset",
-    ),
-    "StrategyPresetError": ("traigent.api.strategy_presets", "StrategyPresetError"),
-    "StrategyPresetValidationError": (
-        "traigent.api.strategy_presets",
-        "StrategyPresetValidationError",
-    ),
-    "UnknownStrategyPresetError": (
-        "traigent.api.strategy_presets",
-        "UnknownStrategyPresetError",
-    ),
-    "VALID_PRESET_NAMES": ("traigent.api.strategy_presets", "VALID_PRESET_NAMES"),
-    "normalize_strategy_preset": (
-        "traigent.api.strategy_presets",
-        "normalize_strategy_preset",
-    ),
-    "select_strategy_preset": (
-        "traigent.api.strategy_presets",
-        "select_strategy_preset",
-    ),
     "ExternalServiceEvaluator": (
         "traigent.api.decorators",
         "ExternalServiceEvaluator",
@@ -702,14 +676,6 @@ __all__ = [
     "ParetoFront",
     "OptimizationStatus",
     "StrategyConfig",
-    "ADVISORY_SELECTION_NOTICE",
-    "NormalizedStrategyPreset",
-    "StrategyPresetError",
-    "StrategyPresetValidationError",
-    "UnknownStrategyPresetError",
-    "VALID_PRESET_NAMES",
-    "normalize_strategy_preset",
-    "select_strategy_preset",
     # No-execution evaluation-compatibility contract
     "validate_evaluation_contract",
     "EvaluationContractReport",
