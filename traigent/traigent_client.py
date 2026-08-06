@@ -823,25 +823,23 @@ class TraigentClient:
             if self._is_legacy_auto_execution_mode(requested_mode):
                 return ExecutionMode.LOCAL
             validated = validate_execution_mode(requested_mode)
-            # The invariant this PR is about has to hold on THIS route too.
-            # Returning the requested mode verbatim let
-            # `TraigentClient(no_egress=True, execution_mode="hybrid")` resolve to
-            # policy=local_only/offline=True while execution_mode stayed HYBRID --
-            # so optimize() still egressed, and the two halves that are supposed to
-            # be driven by one predicate actively disagreed. On develop they agreed.
+            # `TraigentClient(no_egress=True, execution_mode="hybrid")` DOES leave
+            # this attribute reading HYBRID while the resolved policy says
+            # local_only/offline=True. Review called that a broken invariant and I
+            # first "fixed" it by downgrading to LOCAL here. That was wrong, and
+            # `test_offline_legacy_traigent_client_hybrid_zero_transport_calls`
+            # (tests/unit/cloud/test_no_content_egress_canary.py) is why:
             #
-            # no_egress is a PRIVACY control, so it wins: the alternative is
-            # honouring a deprecated mode by sending data the caller explicitly
-            # asked us not to send. Downgraded rather than raised, because raising
-            # would be a second breaking change on a deprecated parameter.
-            if self.no_egress and validated != ExecutionMode.LOCAL:
-                logger.warning(
-                    "execution_mode=%s requires egress but no_egress/offline is set; "
-                    "running LOCAL. no_egress wins -- drop it if you intended to "
-                    "reach the cloud.",
-                    validated.value if hasattr(validated, "value") else validated,
-                )
-                return ExecutionMode.LOCAL
+            #   - The disagreement is cosmetic, not a leak. The transport guard
+            #     fails CLOSED -- optimize() raises CloudEgressBlockedError and the
+            #     canary asserts `capture.calls == []`. Nothing egresses.
+            #   - Downgrading traded that loud failure for a silent one. A caller
+            #     who asked for hybrid would get a different, weaker optimization
+            #     algorithm behind a log line they may never read.
+            #
+            # So the requested mode is returned verbatim and the egress guard stays
+            # the thing that stops the request. Failing loudly on a contradiction
+            # beats quietly picking one side of it.
             return validated
         return execution_policy.legacy_execution_mode
 
