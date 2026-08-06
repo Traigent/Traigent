@@ -34,7 +34,6 @@ concurrency:
 env:
   PYTHON_VERSION: "3.11"
   LINT_PYTHON_VERSION: "3.12"
-  RELEASE_GATE_CODEQL_ENABLED: "false"
   TRAIGENT_MOCK_LLM: "true"
   TRAIGENT_OFFLINE_MODE: "true"
 jobs:
@@ -223,21 +222,25 @@ jobs:
       actions: read
       contents: read
       security-events: write
+    # Deliberately GUARD-FREE: this job used to gate on
+    # RELEASE_GATE_CODEQL_ENABLED (hardcoded "false" since 2026-03-25, when
+    # GitHub code scanning was not yet enabled for this private repo) and
+    # unconditionally recorded gate_status=pass whenever disabled. That made
+    # this the SDK release gate's only permanently-green check: it never ran
+    # once, and its "pass" was consumed downstream (validation-g8-dispatch.yml
+    # dispatches spine G8 evidence whenever this workflow, named "release-gate",
+    # concludes success). Code scanning is confirmed working for this repo
+    # today (main's .github/workflows/codeql.yml produces live alerts), so
+    # there is no longer a reason to skip. Run it for real and let a genuine
+    # failure fail the job loudly, matching the guard-free precedent already
+    # established in codeql.yml's own comment: "do not reintroduce that
+    # pattern" of a silent availability guard that reports success while
+    # scanning nothing.
     steps:
-      - name: Detect CodeQL availability
-        id: codeql_capability
-        run: |
-          if [ "${{ env.RELEASE_GATE_CODEQL_ENABLED }}" = "true" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          fi
       - uses: actions/checkout@v7
-        if: steps.codeql_capability.outputs.enabled == 'true'
       - name: Initialize CodeQL
         id: codeql_init
         continue-on-error: true
-        if: steps.codeql_capability.outputs.enabled == 'true'
         uses: github/codeql-action/init@v4.36.2
         with:
           languages: python
@@ -248,18 +251,12 @@ jobs:
       - name: Perform CodeQL analysis
         id: codeql_analyze
         continue-on-error: true
-        if: steps.codeql_capability.outputs.enabled == 'true'
         uses: github/codeql-action/analyze@v4.36.2
-      - name: Skip unavailable CodeQL upload
-        if: steps.codeql_capability.outputs.enabled != 'true'
-        run: echo "CodeQL upload is disabled for this repository until GitHub code scanning is enabled."
       - name: Capture CodeQL status
         id: codeql_status
         if: always()
         run: |
-          if [ "${{ steps.codeql_capability.outputs.enabled }}" != "true" ]; then
-            echo "status=pass" >> "$GITHUB_OUTPUT"
-          elif [ "${{ steps.codeql_init.outcome }}" = "success" ] && [ "${{ steps.codeql_analyze.outcome }}" = "success" ]; then
+          if [ "${{ steps.codeql_init.outcome }}" = "success" ] && [ "${{ steps.codeql_analyze.outcome }}" = "success" ]; then
             echo "status=pass" >> "$GITHUB_OUTPUT"
           else
             echo "status=fail" >> "$GITHUB_OUTPUT"
@@ -287,6 +284,16 @@ jobs:
       - name: Detect release-review automation
         id: release_review_tools
         run: |
+          # local/ is gitignored (and its former contents were relocated to
+          # Traigent/business-strategy and Traigent/internal-docs), so these
+          # scripts are NEVER present in a CI checkout. This step used to
+          # report "available=false" and let every later step skip silently,
+          # which made release-review-consistency report pass 100% of the
+          # time in CI without ever validating anything or building the
+          # canonical release verdict. A missing required implementation is
+          # an error, not a skip: fail loudly so this is visible instead of
+          # being read as "the release-review consistency gate ran and
+          # passed."
           if [ \
             -f "local/release_review/automation/validate_release_review_consistency.py" \
           ] && [ \
@@ -296,11 +303,9 @@ jobs:
           ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
-            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::error::local/release_review/automation/{validate_release_review_consistency,generate_tracking,build_release_verdict}.py are missing from this checkout. This gate cannot silently report success without running: either vendor CI-safe copies of the release-review automation into the tracked tree so this job can execute for real, or remove this job from the automated release-gate workflow. Do not let it report pass while unpopulated."
+            exit 1
           fi
-      - name: Skip missing release-review automation
-        if: steps.release_review_tools.outputs.available != 'true'
-        run: echo "Release-review automation is maintainer-local only; skipping internal consistency gate."
       - name: Install release-review tooling
         if: steps.release_review_tools.outputs.available == 'true'
         run: |

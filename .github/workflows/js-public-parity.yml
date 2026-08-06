@@ -60,10 +60,18 @@ jobs:
           CROSS_REPO_TOKEN: ${{ steps.cross-repo-app-token.outputs.token }}
         run: |
           set -euo pipefail
+          # A missing token here used to `exit 0` after a warning, which let
+          # this job report success having checked out neither traigent-js
+          # nor TraigentSchema and run zero parity assertions. A quietly
+          # skipped parity guard reads as "parity holds" when nothing was
+          # ever verified. This is a trusted context (same-repo PR/dispatch/
+          # schedule against a private repo with a single authorized
+          # principal, not an untrusted fork), so a missing token is operator
+          # misconfiguration, not a legitimate skip: fail loudly, mirroring
+          # the hardening already applied to validation-g8-dispatch.yml.
           if [ -z "${CROSS_REPO_TOKEN:-}" ]; then
-            echo "::warning::Skipping JS public parity guard. spine-dispatch App token unavailable (SPINE_DISPATCH_APP_ID/SPINE_DISPATCH_APP_PRIVATE_KEY not configured, mint failed, or the App is not installed on Traigent/traigent-js and Traigent/TraigentSchema)."
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::spine-dispatch App token unavailable (SPINE_DISPATCH_APP_ID/SPINE_DISPATCH_APP_PRIVATE_KEY not configured, mint failed, or the App is not installed on Traigent/traigent-js and Traigent/TraigentSchema); cannot run the JS public parity guard. Configure the secrets/App installation instead of letting this check silently pass."
+            exit 1
           fi
           echo "available=true" >> "$GITHUB_OUTPUT"
 

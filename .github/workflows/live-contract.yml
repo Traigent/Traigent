@@ -35,9 +35,20 @@ jobs:
       LIVE_CONTRACT_CHECKOUT_TOKEN: ${{ secrets.LIVE_CONTRACT_CHECKOUT_TOKEN }}
 
     steps:
-      - name: Skip live contract when sibling checkout token is unavailable
+      - name: Require sibling checkout token
         if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN == '' }}
-        run: echo "::notice::LIVE_CONTRACT_CHECKOUT_TOKEN is not configured; skipping live contract lane for this run."
+        run: |
+          # This used to echo a notice and let every later step's `if:` guard
+          # skip silently, so the job reported success having stood up no
+          # backend, minted no key, and run zero live-contract tests. A
+          # quietly skipped live-contract lane reads as "the SDK<->backend
+          # contract holds" when nothing was ever exercised. This is a
+          # trusted context (schedule/dispatch/same-repo PR against a
+          # private repo with a single authorized principal), so a missing
+          # token is operator misconfiguration, not a legitimate skip: fail
+          # loudly instead of reporting a false pass.
+          echo "::error::LIVE_CONTRACT_CHECKOUT_TOKEN is not configured; cannot check out TraigentBackend/TraigentSchema to run the live contract lane. Configure the secret instead of letting this check silently pass."
+          exit 1
 
       - name: Checkout SDK
         if: ${{ env.LIVE_CONTRACT_CHECKOUT_TOKEN != '' }}
