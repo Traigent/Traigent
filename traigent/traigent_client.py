@@ -822,7 +822,27 @@ class TraigentClient:
         if has_requested_mode:
             if self._is_legacy_auto_execution_mode(requested_mode):
                 return ExecutionMode.LOCAL
-            return validate_execution_mode(requested_mode)
+            validated = validate_execution_mode(requested_mode)
+            # The invariant this PR is about has to hold on THIS route too.
+            # Returning the requested mode verbatim let
+            # `TraigentClient(no_egress=True, execution_mode="hybrid")` resolve to
+            # policy=local_only/offline=True while execution_mode stayed HYBRID --
+            # so optimize() still egressed, and the two halves that are supposed to
+            # be driven by one predicate actively disagreed. On develop they agreed.
+            #
+            # no_egress is a PRIVACY control, so it wins: the alternative is
+            # honouring a deprecated mode by sending data the caller explicitly
+            # asked us not to send. Downgraded rather than raised, because raising
+            # would be a second breaking change on a deprecated parameter.
+            if self.no_egress and validated != ExecutionMode.LOCAL:
+                logger.warning(
+                    "execution_mode=%s requires egress but no_egress/offline is set; "
+                    "running LOCAL. no_egress wins -- drop it if you intended to "
+                    "reach the cloud.",
+                    validated.value if hasattr(validated, "value") else validated,
+                )
+                return ExecutionMode.LOCAL
+            return validated
         return execution_policy.legacy_execution_mode
 
     def _check_privacy_requirements(self) -> bool:

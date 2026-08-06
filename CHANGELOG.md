@@ -112,6 +112,32 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     though the local record holds the trials that completed.~~ **Closed by
     #2029** (below): the id now rides on the raised exception.
 
+### Changed
+
+- **Breaking (narrow):** `TraigentClient(algorithm=..., no_egress=True)` now
+  raises `ConfigurationError` at **construction** for the managed algorithms —
+  `bayesian`, `optuna`, `tpe`, `cmaes`, `nsga2`. Previously the client
+  constructed and the run failed later, at `optimize()`. The combination can
+  never work: those algorithms require managed optimization, which requires
+  egress. Failing at construction reports it where it can be acted on, with the
+  algorithm named. Local algorithms (`grid`, `random`) are unaffected and still
+  construct with `no_egress=True`. Fallout of wiring `no_egress` into execution
+  intent (#1776); pinned by
+  `TestManagedAlgorithmsWithNoEgressIsABreakingChange`.
+- `no_egress=True` now wins over an explicit deprecated
+  `execution_mode="hybrid"`/`"cloud"`, downgrading the run to `local` with a
+  warning rather than egressing. Previously the resolved policy said
+  `local_only, offline=True` while `execution_mode` stayed `hybrid` and
+  `optimize()` still egressed — the two halves that one predicate is supposed to
+  drive actively disagreed on that route. `no_egress` is a privacy control, so
+  it takes precedence; it is a downgrade rather than an error because
+  `execution_mode` is already deprecated.
+- `traigent auth whoami` no longer guesses at a 403 it cannot attribute. It now
+  reports `forbidden_indeterminate` and says both causes are possible, instead
+  of defaulting to "the key lacks a required scope — grant the scope rather than
+  rotating the key", which was stated with full confidence for AWS WAF, Akamai
+  and API Gateway blocks that never reached Traigent (#1775).
+
 ### Fixed
 
 - `traigent sync` now explains what it wants when an id is not found: the old
