@@ -240,35 +240,53 @@ class TestForbiddenClassificationDoesNotGuess:
 _TEST_KEY = "k"  # pragma: allowlist secret
 
 
-class TestNoEgressWinsOverAnExplicitExecutionMode:
-    """Review finding on PR #2107: the stated invariant failed on the `execution_mode=` route.
+class TestNoEgressPlusExplicitExecutionModeFailsClosed:
+    """Review finding on PR #2107, and the correction to my first answer to it.
 
-    The PR's claim is that ONE predicate drives both the transport gate and the
-    execution intent. On the deprecated `execution_mode=` route they actively
-    DISAGREED: policy resolved to local_only/offline=True while `execution_mode`
-    stayed `hybrid`, so `optimize()` still egressed. On develop they agreed.
+    Review observed that `TraigentClient(no_egress=True, execution_mode="hybrid")`
+    leaves `execution_mode` reading HYBRID while the resolved policy says
+    local_only/offline=True, and called the run "still egressing".
+
+    The disagreement is real but the consequence is not: the transport guard fails
+    CLOSED. `test_offline_legacy_traigent_client_hybrid_zero_transport_calls` in
+    tests/unit/cloud/test_no_content_egress_canary.py already pins that -- the run
+    raises CloudEgressBlockedError and asserts zero outbound calls.
+
+    My first fix downgraded the mode to LOCAL. That was worse: it replaced a loud
+    failure with a silent one, handing a caller who asked for hybrid a different and
+    weaker optimizer behind a log line. These tests pin the behaviour that is
+    actually correct.
     """
 
-    def test_no_egress_downgrades_an_explicit_hybrid_mode(self):
-        from traigent.traigent_client import TraigentClient
+    def test_the_attribute_keeps_the_requested_mode(self):
         from traigent.config.types import ExecutionMode
+        from traigent.traigent_client import TraigentClient
 
         client = TraigentClient(
             api_key=_TEST_KEY, no_egress=True, execution_mode="hybrid"
         )
 
-        assert client.execution_mode == ExecutionMode.LOCAL
+        assert client.execution_mode == ExecutionMode.HYBRID
+
+    def test_but_the_policy_and_the_egress_flag_both_say_offline(self):
+        """The half that matters: nothing is permitted to leave."""
+        from traigent.traigent_client import TraigentClient
+
+        client = TraigentClient(
+            api_key=_TEST_KEY, no_egress=True, execution_mode="hybrid"
+        )
+
         assert client.execution_policy.offline is True
         assert client.no_egress is True
 
     def test_an_explicit_mode_is_untouched_without_no_egress(self):
-        """Non-vacuity: the downgrade is driven by no_egress, not applied blanket."""
-        from traigent.traigent_client import TraigentClient
         from traigent.config.types import ExecutionMode
+        from traigent.traigent_client import TraigentClient
 
         client = TraigentClient(api_key=_TEST_KEY, execution_mode="hybrid")
 
         assert client.execution_mode == ExecutionMode.HYBRID
+        assert client.no_egress is False
 
 
 class TestManagedAlgorithmsWithNoEgressIsABreakingChange:

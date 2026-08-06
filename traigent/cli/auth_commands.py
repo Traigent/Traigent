@@ -2037,7 +2037,10 @@ def _is_traigent_error_body(body: str) -> bool:
     """
     try:
         parsed = json.loads((body or "").strip())
-    except (ValueError, TypeError):
+    except (ValueError, TypeError):  # silent-ok: a non-JSON body is not a
+        # Traigent error body -- that IS the answer this predicate returns, not a
+        # failure to report. Edge blocks are HTML precisely because they never
+        # reached our API.
         return False
     if not isinstance(parsed, dict):
         return False
