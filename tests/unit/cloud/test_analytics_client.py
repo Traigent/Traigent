@@ -846,6 +846,67 @@ class TestWave2SingleRunAnalytics:
             await client.get_example_insights("proj_abc", "run_123")
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "recommended_action",
+        [
+            "review_label",
+            "clarify_expected_output",
+            "increase_repetitions",
+            "replace_or_rewrite",
+            "keep_as_hard_case",
+            "inspect_evaluator",
+        ],
+    )
+    async def test_get_example_insights_accepts_all_current_recommended_action_values(
+        self,
+        example_insights_payload: dict[str, object],
+        recommended_action: str,
+    ) -> None:
+        """The retirement of remove_redundant must not disturb any surviving value."""
+        client = _make_client()
+        payload = dict(example_insights_payload)
+        rows = example_insights_payload["example_rows"]
+        assert isinstance(rows, list)
+        assert isinstance(rows[0], dict)
+        payload["example_rows"] = [
+            {**rows[0], "recommended_action": recommended_action}
+        ]
+        _mock_get_response(client, payload)
+
+        result = await client.get_example_insights("proj_abc", "run_123")
+
+        rows_out = result["example_rows"]
+        assert isinstance(rows_out, list)
+        assert rows_out[0]["recommended_action"] == recommended_action
+
+    @pytest.mark.asyncio
+    async def test_get_example_insights_rejects_retired_remove_redundant_action(
+        self, example_insights_payload: dict[str, object]
+    ) -> None:
+        """remove_redundant is retired (Rule 0 / TraigentSchema PR #389): subtractive
+        curation advice keyed to an observed signal biases the customer's own
+        measurement if acted on (top-15-by-observed-discrimination pruning gave
+        -0.202 vs a true -0.073, 2.77x biased; random pruning was unbiased). A
+        response that still carries this value — e.g. from a stale/un-upgraded
+        backend — must now be rejected fail-closed rather than silently passed
+        through to the caller.
+        """
+        from traigent.cloud.analytics_client import AnalyticsClientError
+
+        client = _make_client()
+        payload = dict(example_insights_payload)
+        rows = example_insights_payload["example_rows"]
+        assert isinstance(rows, list)
+        assert isinstance(rows[0], dict)
+        payload["example_rows"] = [
+            {**rows[0], "recommended_action": "remove_redundant"}
+        ]
+        _mock_get_response(client, payload)
+
+        with pytest.raises(AnalyticsClientError, match="recommended_action"):
+            await client.get_example_insights("proj_abc", "run_123")
+
+    @pytest.mark.asyncio
     async def test_get_example_insights_rejects_too_many_rows(
         self, example_insights_payload: dict[str, object]
     ) -> None:
