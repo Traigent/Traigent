@@ -337,9 +337,9 @@ class TestErrorHandling:
                     test_dataset
                 )
             except Exception as e:
-                assert "Conversion failed" in str(
-                    e
-                ), f"Exception lost original cause: {e!r}"
+                assert "Conversion failed" in str(e), (
+                    f"Exception lost original cause: {e!r}"
+                )
             else:
                 assert len(examples) in (0, 1), (
                     f"Expected 0 or 1 examples after graceful degradation, "
@@ -371,9 +371,9 @@ class TestErrorHandling:
             # ValidationError wraps and quotes the underlying cause.
 
             msg = str(e).lower()
-            assert (
-                "circular" in msg or "recursion" in msg
-            ), f"Exception does not identify circular reference: {e!r}"
+            assert "circular" in msg or "recursion" in msg, (
+                f"Exception does not identify circular reference: {e!r}"
+            )
         else:
             assert len(examples) in (0, 1), (
                 f"Expected 0 or 1 examples after handling circular input, "

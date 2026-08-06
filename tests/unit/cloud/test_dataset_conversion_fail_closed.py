@@ -111,9 +111,9 @@ class TestStrictIsTheDefault:
 
         message = str(excinfo.value)
         assert f"{count} of {count}" in message
-        assert (
-            "and 5 more" in message
-        ), "the remainder must be acknowledged, not dropped"
+        assert "and 5 more" in message, (
+            "the remainder must be acknowledged, not dropped"
+        )
         # The cap is real: the last row must not be spelled out.
         assert f"example {count - 1}:" not in message
 
