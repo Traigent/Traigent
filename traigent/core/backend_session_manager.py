@@ -1420,13 +1420,27 @@ class BackendSessionManager:
                 )
             )
 
-            max_trials_value = max_trials if max_trials is not None else 10
+            # #2049: do NOT substitute a plausible number here. An unset max_trials
+            # used to be stamped as a literal 10, which is indistinguishable on disk
+            # from a user who actually asked for 10 -- and wrong by construction for
+            # an exhaustive grid, where the trial count is a property of the
+            # configuration space rather than a budget. A 24-configuration grid
+            # recorded `max_trials: 10`, so a completion ratio rendered as 24/10 and
+            # a progress bar computed from it exceeded 100%.
+            #
+            # The honest representation of "no budget was set" is no value, which is
+            # exactly what the sibling `max_total_examples` on the next line already
+            # does. Nothing internal needed the fabricated cap: this value only ever
+            # fed the log line and the persisted metadata.
+            max_trials_value = max_trials
             max_samples_value = (
                 max_total_examples if max_total_examples is not None else None
             )
             logger.info(
                 "Creating backend session with max_trials=%s for %s (remote_name=%s)",
-                max_trials_value,
+                max_trials_value
+                if max_trials_value is not None
+                else "unset (no budget)",
                 function_identifier,
                 function_slug,
             )
