@@ -1154,9 +1154,22 @@ def with_usage(
     if provider_usage is not None:
         cache_usage = normalize_cache_usage(provider_usage)
         meta["cache_usage"] = cache_usage.as_metadata()
-        if cache_usage.input_tokens is not None and input_tokens is None:
-            # The caller gave us the raw payload and no explicit count, so use the
-            # cache-exclusive figure rather than leaving input unrecorded.
+        if cache_usage.input_tokens is not None:
+            # The NORMALIZED figure wins, even over an explicit caller value.
+            #
+            # TraigentSchema's contract defines input_tokens as EXCLUDING
+            # cache_read_tokens (the disjoint convention). A caller passing the
+            # provider's own number is usually passing a cache-INCLUSIVE one --
+            # OpenAI's prompt_tokens counts cached tokens inside it -- so storing
+            # that verbatim alongside cache_read_tokens double-counts: a natural
+            # OpenAI call recorded input_tokens=2006 next to cache_read_tokens=1920,
+            # and anything summing them got 3926 against a truth of 2006.
+            #
+            # Preferring the normalized value is also what the JS SDK does
+            # (integrations/shared.ts). The two SDKs previously disagreed on exactly
+            # the question this feature exists to settle, each with a green test
+            # asserting its own answer. Where a provider already reports disjointly
+            # (Bedrock), the two values are equal and this changes nothing.
             meta.setdefault("usage", {})["input_tokens"] = cache_usage.input_tokens
 
     result["__traigent_meta__"] = meta

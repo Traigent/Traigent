@@ -30,6 +30,8 @@ that predates the field.
 
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -144,9 +146,22 @@ def _coerce_count(raw: Any) -> int | None:
     """
     if raw is None or isinstance(raw, bool):
         return None
+    if isinstance(raw, float):
+        # inf/-inf/nan are not counts. `json.loads` accepts bare `Infinity`, so a
+        # provider payload really can carry one, and `int(inf)` raises
+        # OverflowError -- which the handler below did not catch, so the whole
+        # normalization crashed instead of reporting an honest gap.
+        if not math.isfinite(raw):
+            return None
+        # A fractional token count is junk, not a count to round. Truncating
+        # 4609.7 to 4609 invents a precise-looking number from a broken input,
+        # which is the coercion this function's docstring exists to refuse -- and
+        # it is what the JS SDK already refuses (`undefined`).
+        if not raw.is_integer():
+            return None
     try:
         value = int(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return value if value >= 0 else None
 

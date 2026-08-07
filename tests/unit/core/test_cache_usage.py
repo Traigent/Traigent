@@ -258,8 +258,18 @@ def test_with_usage_is_unchanged_for_callers_that_pass_no_provider_payload():
     assert "cache_usage" not in meta
 
 
-def test_with_usage_keeps_an_explicit_input_count_over_the_payload():
-    """An explicitly-passed count is the caller's intent and must win."""
+def test_the_normalized_count_wins_over_an_explicit_cache_inclusive_one():
+    """The normalized, cache-EXCLUSIVE figure wins, even over an explicit value.
+
+    This asserted the opposite -- that an explicitly-passed count is the caller's
+    intent and must win. It was a reasonable-sounding rule that broke the contract
+    the field is defined by, and the JS SDK asserted the other answer, so the two
+    SDKs disagreed on exactly the question this feature exists to settle.
+
+    TraigentSchema defines `input_tokens` as EXCLUDING `cache_read_tokens`. A
+    caller passing the provider's own number is usually passing a cache-INCLUSIVE
+    one, so storing it verbatim next to `cache_read_tokens` double-counts.
+    """
     from unittest.mock import patch
 
     from traigent.api import functions
@@ -272,4 +282,96 @@ def test_with_usage_keeps_an_explicit_input_count_over_the_payload():
             provider_usage={"inputTokens": 6, "cacheReadInputTokens": 4609},
         )
 
-    assert result["__traigent_meta__"]["usage"]["input_tokens"] == 999
+    usage = result["__traigent_meta__"]["usage"]
+    assert usage["input_tokens"] == 6, (
+        "the disjoint, cache-exclusive count must win; 999 was the caller's "
+        "unnormalized value"
+    )
+
+
+def test_an_openai_style_call_does_not_double_count_its_cached_tokens():
+    """The concrete harm the precedence rule causes, stated in numbers.
+
+    OpenAI reports cached tokens as a SUBSET of prompt_tokens. Recording
+    prompt_tokens verbatim as `input_tokens` alongside `cache_read_tokens` means
+    anything summing the two counts the cached tokens twice: 2006 + 1920 = 3926
+    against a truth of 2006.
+    """
+    from unittest.mock import patch
+
+    from traigent.api import functions
+
+    with patch.object(functions, "get_trial_context", return_value={"trial": 1}):
+        result = functions.with_usage(
+            "answer",
+            total_cost=0.01,
+            input_tokens=2006,
+            provider_usage={
+                "prompt_tokens": 2006,
+                "prompt_tokens_details": {"cached_tokens": 1920},
+            },
+        )
+
+    meta = result["__traigent_meta__"]
+    recorded_input = meta["usage"]["input_tokens"]
+    cached = meta["cache_usage"]["cache_read_tokens"]
+
+    assert recorded_input == 86, "2006 total - 1920 cached = 86 fresh input tokens"
+    assert recorded_input + cached == 2006, (
+        "fresh + cached must reconstruct the provider total, not exceed it"
+    )
+
+
+class TestCoercionRefusesJunkInsteadOfInventingOrCrashing:
+    """`_coerce_count`'s docstring promises junk becomes None, not a number.
+
+    Two inputs broke that promise in opposite directions: a non-finite float
+    crashed the whole normalization, and a fractional value was silently truncated
+    into a precise-looking count.
+    """
+
+    @pytest.mark.parametrize(
+        "raw", [float("inf"), float("-inf")], ids=["inf", "negative_inf"]
+    )
+    def test_a_non_finite_float_is_unknown_rather_than_an_exception(self, raw):
+        """`int(inf)` raises OverflowError, which the handler did not catch.
+
+        `json.loads` accepts a bare `Infinity`, so a provider payload really can
+        carry one -- and the whole normalization died rather than reporting a gap.
+        """
+        from traigent.core.cache_usage import _coerce_count
+
+        assert _coerce_count(raw) is None
+
+    def test_nan_is_unknown(self):
+        from traigent.core.cache_usage import _coerce_count
+
+        assert _coerce_count(float("nan")) is None
+
+    def test_a_fractional_count_is_unknown_rather_than_truncated(self):
+        """4609.7 is not 4609 tokens; it is a broken input.
+
+        Truncating invents a precise number from junk, which is the coercion the
+        docstring refuses -- and the JS SDK already returns undefined here, so this
+        was also a cross-SDK divergence.
+        """
+        from traigent.core.cache_usage import _coerce_count
+
+        assert _coerce_count(4609.7) is None
+
+    def test_a_whole_valued_float_is_still_a_count(self):
+        """Non-vacuity: the fix must not reject a legitimate 4609.0."""
+        from traigent.core.cache_usage import _coerce_count
+
+        assert _coerce_count(4609.0) == 4609
+
+    def test_normalization_survives_a_payload_carrying_infinity(self):
+        """End-to-end: the crash took out normalize_cache_usage, not just the helper."""
+        from traigent.core.cache_usage import normalize_cache_usage
+
+        usage = normalize_cache_usage(
+            {"inputTokens": 6, "cacheReadInputTokens": float("inf")}
+        )
+
+        assert usage.cache_read_tokens is None
+        assert "cache_read_tokens" in usage.unreported_fields
