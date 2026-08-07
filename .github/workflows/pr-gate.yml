@@ -36,6 +36,12 @@ jobs:
     outputs:
       py_changed: ${{ steps.changed.outputs.py_changed }}
       code_changed: ${{ steps.changed.outputs.code_changed }}
+      # Total files touched by this diff range, independent of any path
+      # pattern. required-pr-gate's skip verification
+      # (scripts/ci/check_required_gate.py) trusts a downstream job's
+      # `false` gate ONLY when this is > 0 -- a range that produced ZERO
+      # files is a broken/empty range, not "nothing relevant changed".
+      changed_file_count: ${{ steps.changed.outputs.changed_file_count }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -61,6 +67,16 @@ jobs:
             range="${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
           fi
           changed_files="$(git diff --name-only --diff-filter=ACMRT "$range")"
+
+          # Emit the raw file count BEFORE any pattern filtering. Consumed by
+          # required-pr-gate's classifier-gated skip verification: a job may
+          # only treat its own `false` gate as trustworthy if this is > 0.
+          if [ -z "$changed_files" ]; then
+            changed_file_count=0
+          else
+            changed_file_count="$(printf '%s\n' "$changed_files" | wc -l)"
+          fi
+          echo "changed_file_count=${changed_file_count}" >> "$GITHUB_OUTPUT"
 
           has_match() {
             printf '%s\n' "$changed_files" | grep -Eq "$1"
@@ -263,28 +279,19 @@ jobs:
 
   required-pr-gate:
     name: required-pr-gate
+    # Single synthetic required check: the branch ruleset should require ONLY
+    # `required-pr-gate` instead of the individual job contexts. This fails
+    # closed on skip: `skipped` is accepted as a pass ONLY for the explicit
+    # allowlist in scripts/ci/check_required_gate.py (SKIP_OK), never as a
+    # blanket rule -- see that script's module docstring for the incident
+    # (in TraigentBackend's own classifier) that motivated tightening this.
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: [changes, schema-types, preflight, collection, unit, mcp-contract]
     if: ${{ !cancelled() }}
     steps:
+      - uses: actions/checkout@v7
       - name: Verify required gate jobs
-        shell: bash
-        run: |
-          set -euo pipefail
-          for result in \
-            "${{ needs.changes.result }}" \
-            "${{ needs.schema-types.result }}" \
-            "${{ needs.preflight.result }}" \
-            "${{ needs.collection.result }}" \
-            "${{ needs.unit.result }}" \
-            "${{ needs.mcp-contract.result }}"; do
-            case "$result" in
-              success|skipped) ;;
-              *)
-                echo "::error::Required dependency finished with ${result}"
-                exit 1
-                ;;
-            esac
-          done
-          echo "required-pr-gate passed"
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: python3 scripts/ci/check_required_gate.py
