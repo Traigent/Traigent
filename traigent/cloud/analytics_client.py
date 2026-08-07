@@ -190,8 +190,13 @@ _EXAMPLE_INSIGHT_RECOMMENDED_ACTIONS = frozenset(
         "increase_repetitions",
         "replace_or_rewrite",
         "keep_as_hard_case",
-        "remove_redundant",
         "inspect_evaluator",
+        # "remove_redundant" retired (Rule 0 / TraigentSchema PR #389): subtractive
+        # curation advice keyed to an observed signal biases the customer's own
+        # measurement if acted on (top-15-by-observed-discrimination pruning gave
+        # -0.202 vs a true -0.073, 2.77x biased; random pruning was unbiased). A
+        # stale/un-upgraded backend that still emits this value is now rejected
+        # fail-closed by the allowlist check below, not silently passed through.
     }
 )
 
