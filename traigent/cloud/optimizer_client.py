@@ -51,6 +51,10 @@ class OptimizerDirectClient:
         self._buffer_lock = asyncio.Lock()
         self._flush_interval = 5.0  # seconds
         self._batch_size = 100
+        # Upper bound on metrics kept buffered across failed flushes (#1922).
+        # Without a cap, a backend that stays down would grow this list until
+        # the process ran out of memory.
+        self._max_retained_metrics = 1000
         self._flush_task: asyncio.Task[None] | None = None
 
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:
@@ -240,6 +244,7 @@ class OptimizerDirectClient:
         # Submit each session's metrics
         results = []
         errors = []
+        retained: list[Any] = []
 
         for session_id, submissions in sessions.items():
             try:
@@ -262,9 +267,38 @@ class OptimizerDirectClient:
                         "metrics_count": len(submissions),
                     }
                 )
+                # Keep this session's metrics buffered for the next flush
+                # (#1922). Clearing the whole buffer here dropped the metrics
+                # of the session that just FAILED, so one transient 5xx or
+                # timeout silently discarded up to batch_size trials' worth of
+                # optimizer signal -- and the run still reported "completed",
+                # with the Pareto frontier computed from a silently truncated
+                # set. There is no re-POST here: the retained entries ride the
+                # next periodic flush or the final flush in __aexit__.
+                retained.extend((session_id, item) for item in submissions)
 
-        # Clear buffer
-        self._metric_buffer.clear()
+        # Replace, never clear: everything that was successfully submitted is
+        # dropped, everything that failed stays. Safe to rebuild the list
+        # wholesale because every caller of _flush_buffer holds _buffer_lock
+        # and asyncio.Lock is not reentrant, so no submit_metrics() append can
+        # interleave with the awaits above.
+        dropped = 0
+        if len(retained) > self._max_retained_metrics:
+            dropped = len(retained) - self._max_retained_metrics
+            # Oldest first: the newest signal is the most useful to the
+            # optimizer, and an unbounded buffer against a backend that is
+            # down would grow until the process died. Logged at ERROR because
+            # this IS metric loss -- just bounded, and no longer silent.
+            retained = retained[dropped:]
+            logger.error(
+                "Optimizer metric buffer exceeded its %d-entry retention cap "
+                "after repeated submission failures; discarded the %d oldest "
+                "buffered metrics. The optimizer's view of this run is now "
+                "incomplete.",
+                self._max_retained_metrics,
+                dropped,
+            )
+        self._metric_buffer[:] = retained
 
         # Return appropriate response
         if not errors:
@@ -283,6 +317,10 @@ class OptimizerDirectClient:
                 "failed": len(errors),
                 "results": results,
                 "errors": errors,
+                # #1922: so a caller can tell "will be retried on the next
+                # flush" from "gone for good".
+                "retained_for_retry": len(retained),
+                "dropped_over_cap": dropped,
             }
 
     async def _submit_single(
