@@ -31,7 +31,9 @@ def main() -> int:
     print("Traigent Installation Verification")
     print("=" * 50)
     print('Expected install path: pip install -e ".[recommended]"')
-    print('Equivalent uv path:    uv venv --python 3.11 && uv pip install -e ".[recommended]"')
+    print(
+        'Equivalent uv path:    uv venv --python 3.11 && uv pip install -e ".[recommended]"'
+    )
 
     all_ok = True
 
@@ -48,7 +50,6 @@ def main() -> int:
         ("langchain", "langchain"),
         ("langchain-community", "langchain_community"),
         ("langchain-openai", "langchain_openai"),
-        ("langchain-chroma", "langchain_chroma"),
         ("openai", "openai"),
         ("python-dotenv", "dotenv"),
         ("numpy", "numpy"),
@@ -76,7 +77,6 @@ def main() -> int:
     print("\nBasic Import Checks:")
     try:
         from dotenv import load_dotenv  # noqa: F401
-        from langchain_chroma import Chroma  # noqa: F401
         from langchain_openai import ChatOpenAI  # noqa: F401
 
         import traigent
