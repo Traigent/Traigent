@@ -1,0 +1,336 @@
+"""Issue #2047: a failed trial must reload as a failed trial, in BOTH formats.
+
+The nested twin of #2031. `OptimizationResult` got an explicit persistence
+manifest there; `TrialResult` was deliberately left out of scope, so both
+persisted formats rebuilt trials from a hand-written 8-of-10-field constructor
+call and dropped `error` and `score` on the way back.
+
+The two losses had different shapes, which is why both formats are tested here:
+
+* ``config_state`` dumps via ``asdict``, so both fields were always ON DISK;
+  only the decoder discarded them.
+* ``persistence`` wrote neither key, so the loss happened at write time.
+
+Either way a crashed trial reloaded indistinguishable from one that merely
+scored badly, and failure-rate or error-clustering analysis over reloaded
+results silently under-reported.
+
+Note that `error_message` is NOT part of this defect — both formats already
+round-tripped it (see the comment at `utils/persistence.py`, which records that
+earlier fix). Only `error` and `score` were lost.
+"""
+
+from __future__ import annotations
+
+import copy
+import dataclasses
+import gzip
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+
+from traigent.api.types import (
+    OptimizationResult,
+    TrialError,
+    TrialResult,
+    TrialStatus,
+)
+from traigent.core.config_state_manager import ConfigStateManager
+from traigent.utils.optimization_result_persistence import (
+    TRIAL_RESET,
+    TRIAL_RESTORE,
+    _SENTINELS,
+)
+from traigent.utils.persistence import PersistenceManager
+
+_TRIALS_JSON = "trials.json.gz"
+
+
+def _failed_trial() -> TrialResult:
+    """A trial that CRASHED, as distinct from one that scored badly.
+
+    ``score=None`` is the honest value for a crashed trial: there is no
+    objective value, and coercing it to 0.0 would enter selection as a
+    legitimate losing score.
+    """
+    return TrialResult(
+        trial_id="trial-2047-failed",
+        config={"model": "smart", "temperature": 0.7},
+        metrics={},
+        status=TrialStatus.FAILED,
+        duration=2.5,
+        timestamp=datetime(2026, 4, 1, 9, 15, 0, tzinfo=UTC),
+        error_message="provider refused the request",
+        metadata={"replicate": 2},
+        error=TrialError(
+            message="provider refused the request",
+            error_type="RuntimeError",
+            traceback="Traceback (most recent call last):\n  RuntimeError: provider refused",
+            timestamp=datetime(2026, 4, 1, 9, 15, 0, tzinfo=UTC),
+            config={"model": "smart"},
+        ),
+        score=None,
+    )
+
+
+def _scored_trial() -> TrialResult:
+    """A trial that succeeded and carries a non-default optimization signal."""
+    return TrialResult(
+        trial_id="trial-2047-scored",
+        config={"model": "cheap"},
+        metrics={"accuracy": 0.82, "score": 0.82},
+        status=TrialStatus.COMPLETED,
+        duration=1.25,
+        timestamp=datetime(2026, 4, 1, 9, 16, 0, tzinfo=UTC),
+        metadata={},
+        error=None,
+        score=0.82,
+    )
+
+
+def _result_with(trials: list[TrialResult]) -> OptimizationResult:
+    data = copy.deepcopy(_SENTINELS)
+    data["trials"] = trials
+    return OptimizationResult(**data)
+
+
+def _manager(tmp_path) -> ConfigStateManager:
+    def _fn(x):
+        return x
+
+    return ConfigStateManager(
+        func=_fn,
+        default_config={"model": "cheap"},
+        local_storage_path=str(tmp_path / "store"),
+        configuration_space={"model": ["cheap", "smart"]},
+        auto_load_best=False,
+        load_from=None,
+        setup_wrapper_callback=lambda: None,
+    )
+
+
+def _config_state_round_trip(tmp_path, trials: list[TrialResult]) -> OptimizationResult:
+    path = tmp_path / "results.json"
+    saver = _manager(tmp_path)
+    saver._optimization_results = _result_with(trials)
+    saver.save_optimization_results(str(path))
+
+    loader = _manager(tmp_path)
+    loader.load_optimization_results(str(path))
+    loaded = loader._optimization_results
+    assert loaded is not None
+    return loaded
+
+
+def _persistence_round_trip(tmp_path, trials: list[TrialResult]) -> OptimizationResult:
+    store = PersistenceManager(base_dir=tmp_path)
+    store.save_result(_result_with(trials), "round-trip")
+    return store.load_result("round-trip")
+
+
+# ---------------------------------------------------------------------------
+# The manifest itself
+# ---------------------------------------------------------------------------
+
+
+def test_trial_manifest_covers_every_field() -> None:
+    """Adding a TrialResult field without classifying it must fail here.
+
+    This is the guard the issue asks for: the manifest is derived from the
+    dataclass, so a new field is a test failure rather than a silent tenth
+    thing that quietly stops round-tripping.
+    """
+    declared = {f.name for f in dataclasses.fields(TrialResult)}
+    classified = TRIAL_RESTORE | TRIAL_RESET
+
+    unclassified = declared - classified
+    assert not unclassified, (
+        f"TrialResult field(s) {sorted(unclassified)} are in neither "
+        f"TRIAL_RESTORE nor TRIAL_RESET. Classify each one: restored because it "
+        f"is a durable fact about the trial, or reset with the reason why."
+    )
+
+    stale = classified - declared
+    assert not stale, (
+        f"The trial manifest names {sorted(stale)}, which TrialResult no longer "
+        f"declares. Remove them so the manifest cannot drift."
+    )
+
+
+def test_trial_manifest_partition_is_disjoint() -> None:
+    assert not (TRIAL_RESTORE & TRIAL_RESET)
+
+
+def test_error_and_score_are_classified_as_restored() -> None:
+    """The two fields this issue is about, pinned by name.
+
+    Without this, a future edit could satisfy the completeness guard above by
+    moving them into TRIAL_RESET and reintroducing the exact defect.
+    """
+    assert "error" in TRIAL_RESTORE
+    assert "score" in TRIAL_RESTORE
+
+
+# ---------------------------------------------------------------------------
+# Acceptance criterion 1 — a failed trial reloads carrying its error
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("round_trip", ["config_state", "persistence"])
+def test_failed_trial_reloads_carrying_its_error(tmp_path, round_trip) -> None:
+    """Both formats. Before #2047 `loaded.error` was None in each."""
+    trip = (
+        _config_state_round_trip
+        if round_trip == "config_state"
+        else _persistence_round_trip
+    )
+    loaded = trip(tmp_path, [_failed_trial()])
+
+    (trial,) = loaded.trials
+    assert trial.error is not None, (
+        f"{round_trip}: the crashed trial reloaded with error=None, so it is "
+        f"indistinguishable from a trial that merely scored badly."
+    )
+    assert trial.error.error_type == "RuntimeError"
+    assert trial.error.message == "provider refused the request"
+    assert "RuntimeError: provider refused" in trial.error.traceback
+    assert trial.error.timestamp == datetime(2026, 4, 1, 9, 15, 0, tzinfo=UTC)
+    assert trial.error.config == {"model": "smart"}
+    assert trial.status is TrialStatus.FAILED
+
+
+@pytest.mark.parametrize("round_trip", ["config_state", "persistence"])
+def test_score_survives_the_round_trip(tmp_path, round_trip) -> None:
+    """The optimization signal best_config argmaxes (#1845) must come back."""
+    trip = (
+        _config_state_round_trip
+        if round_trip == "config_state"
+        else _persistence_round_trip
+    )
+    loaded = trip(tmp_path, [_scored_trial(), _failed_trial()])
+
+    by_id = {t.trial_id: t for t in loaded.trials}
+    assert by_id["trial-2047-scored"].score == pytest.approx(0.82)
+    assert by_id["trial-2047-failed"].score is None, (
+        "a crashed trial has no objective value; None must not become 0.0, "
+        "which would enter selection as a legitimate losing score"
+    )
+
+
+@pytest.mark.parametrize("round_trip", ["config_state", "persistence"])
+def test_every_restored_trial_field_survives(tmp_path, round_trip) -> None:
+    """Driven off TRIAL_RESTORE so it cannot drift from the manifest."""
+    trip = (
+        _config_state_round_trip
+        if round_trip == "config_state"
+        else _persistence_round_trip
+    )
+    original = _failed_trial()
+    (loaded,) = trip(tmp_path, [original]).trials
+
+    for name in sorted(TRIAL_RESTORE):
+        assert getattr(loaded, name) == getattr(original, name), (
+            f"{round_trip}: TrialResult.{name} is in TRIAL_RESTORE but did not "
+            f"survive save -> load"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Acceptance criterion 4 — legacy payloads still load
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_persistence_payload_without_new_keys_still_loads(tmp_path) -> None:
+    """An artifact written before this format emitted error/score.
+
+    Those trials genuinely had no persisted error, so None is the correct
+    restored value -- not a load failure.
+    """
+    store = PersistenceManager(base_dir=tmp_path)
+    result_dir = Path(store.save_result(_result_with([_scored_trial()]), "legacy"))
+
+    trials_file = result_dir / _TRIALS_JSON
+    with gzip.open(trials_file, "rt") as handle:
+        trials_data = json.load(handle)
+    for trial in trials_data:
+        trial.pop("error", None)
+        trial.pop("score", None)
+    with gzip.open(trials_file, "wt") as handle:
+        json.dump(trials_data, handle)
+
+    (loaded,) = store.load_result("legacy").trials
+    assert loaded.error is None
+    assert loaded.score is None
+    assert loaded.trial_id == "trial-2047-scored"
+
+
+def test_legacy_config_state_payload_without_new_keys_still_loads(tmp_path) -> None:
+    path = tmp_path / "results.json"
+    saver = _manager(tmp_path)
+    saver._optimization_results = _result_with([_scored_trial()])
+    saver.save_optimization_results(str(path))
+
+    payload = json.loads(path.read_text())
+    for trial in payload["trials"]:
+        trial.pop("error", None)
+        trial.pop("score", None)
+    path.write_text(json.dumps(payload))
+
+    loader = _manager(tmp_path)
+    loader.load_optimization_results(str(path))
+    assert loader._optimization_results is not None
+    (loaded,) = loader._optimization_results.trials
+    assert loaded.error is None
+    assert loaded.score is None
+
+
+# ---------------------------------------------------------------------------
+# Present-but-corrupt must raise, not silently downgrade
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("corrupt", "expected"),
+    [
+        ("not-a-mapping", "must be a mapping"),
+        ({"message": "m"}, "is missing"),
+    ],
+)
+def test_corrupt_error_payload_raises_rather_than_downgrading(
+    tmp_path, corrupt, expected
+) -> None:
+    """A corrupt error block must not decode to None.
+
+    None would restore a crashed trial as an ordinary one -- the precise
+    silent downgrade this manifest exists to prevent -- so the loader fails
+    loudly instead.
+    """
+    store = PersistenceManager(base_dir=tmp_path)
+    result_dir = Path(store.save_result(_result_with([_failed_trial()]), "corrupt"))
+
+    trials_file = result_dir / _TRIALS_JSON
+    with gzip.open(trials_file, "rt") as handle:
+        trials_data = json.load(handle)
+    trials_data[0]["error"] = corrupt
+    with gzip.open(trials_file, "wt") as handle:
+        json.dump(trials_data, handle)
+
+    with pytest.raises(ValueError, match=expected):
+        store.load_result("corrupt")
+
+
+def test_corrupt_score_payload_raises(tmp_path) -> None:
+    store = PersistenceManager(base_dir=tmp_path)
+    result_dir = Path(store.save_result(_result_with([_scored_trial()]), "bad-score"))
+
+    trials_file = result_dir / _TRIALS_JSON
+    with gzip.open(trials_file, "rt") as handle:
+        trials_data = json.load(handle)
+    trials_data[0]["score"] = "not-a-number"
+    with gzip.open(trials_file, "wt") as handle:
+        json.dump(trials_data, handle)
+
+    with pytest.raises(ValueError, match="must be a number or null"):
+        store.load_result("bad-score")

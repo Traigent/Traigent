@@ -63,6 +63,7 @@ from traigent.api.types import (
     OptimizationResult,
     OptimizationStatus,
     PresetSelection,
+    TrialError,
     TrialResult,
     TrialStatus,
 )
@@ -166,6 +167,146 @@ _FIELDS: dict[str, dataclasses.Field[Any]] = {
 # Restored by the caller's own format-specific trial decoder, so the generic
 # field loop never reads or writes it.
 _CALLER_SUPPLIED = "trials"
+
+
+# ---------------------------------------------------------------------------
+# TrialResult manifest (#2047) — the nested twin of the result manifest above.
+# ---------------------------------------------------------------------------
+
+#: Every :class:`TrialResult` field that MUST survive a save -> load round trip.
+#:
+#: Both persisted formats reconstructed trials from a hand-written 8-field
+#: constructor call, so ``error`` and ``score`` were dropped on load: a crashed
+#: trial came back indistinguishable from one that merely scored badly, and any
+#: failure-rate or error-clustering analysis over reloaded results silently
+#: under-reported. The ``config_state`` writer had been putting both on disk all
+#: along (it dumps via ``asdict``); only the decoder threw them away.
+TRIAL_RESTORE: frozenset[str] = frozenset(
+    {
+        "trial_id",  # durable trial identity; winning_trial_ids (#1854) matches on it
+        "config",  # the configuration this trial actually ran
+        "metrics",  # measured per-trial metrics
+        "status",  # terminal outcome; FAILED must not decay to COMPLETED
+        "duration",  # measured wall clock
+        "timestamp",  # when the trial ran
+        "error_message",  # human-readable failure text
+        "metadata",  # verbatim; consumers read successful_examples/... from it
+        "error",  # structured diagnosis: the difference between "bad" and "crashed"
+        "score",  # the optimization signal best_config argmaxes (#1845)
+    }
+)
+
+#: Fields deliberately NOT restored. Empty — and the emptiness is the claim, not
+#: an oversight: unlike :class:`OptimizationResult` (which carries
+#: ``sync_session_id``, a handle into *this* machine's store, and a memoization
+#: cache), every :class:`TrialResult` field is a durable fact about a trial that
+#: already ran. Pinned by ``test_trial_manifest_covers_every_field``: a field
+#: added to the dataclass must be classified into one set or the other.
+TRIAL_RESET: frozenset[str] = frozenset()
+
+_TRIAL_FIELDS: dict[str, dataclasses.Field[Any]] = {
+    field.name: field for field in dataclasses.fields(TrialResult)
+}
+
+#: Keys of the :class:`TrialError` payload, in constructor order.
+_TRIAL_ERROR_KEYS = ("message", "error_type", "traceback", "timestamp", "config")
+
+
+def encode_trial_error(error: TrialError | None) -> dict[str, Any] | None:
+    """Render a :class:`TrialError` as a JSON-safe mapping.
+
+    ``timestamp`` goes out as ISO-8601 so the value survives a text round trip
+    with its timezone intact, rather than relying on ``json.dump(default=str)``
+    to stringify a ``datetime`` incidentally.
+    """
+    if error is None:
+        return None
+    return {
+        "message": error.message,
+        "error_type": error.error_type,
+        "traceback": error.traceback,
+        "timestamp": error.timestamp.isoformat() if error.timestamp else None,
+        "config": error.config,
+    }
+
+
+def decode_trial_error(raw: Any, *, artifact_name: str) -> TrialError | None:
+    """Rebuild a :class:`TrialError` from a persisted mapping.
+
+    Absent (``None``) means "this artifact predates error persistence, or the
+    trial did not fail" — both legitimate, both yield ``None``. Present but
+    malformed means the artifact is corrupt, and that raises: quietly returning
+    ``None`` would restore a crashed trial as an ordinary one, which is the
+    exact silent-downgrade this manifest exists to stop.
+
+    Accepts both ``datetime.isoformat()`` and the ``str(datetime)`` spelling the
+    legacy ``json.dump(default=str)`` writer produced; ``fromisoformat`` parses
+    both on Python 3.11+.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        msg = (
+            f"{artifact_name}: trial 'error' must be a mapping, got "
+            f"{type(raw).__name__}. Refusing to load a corrupt artifact as a "
+            f"trial that never failed."
+        )
+        raise ValueError(msg)
+
+    missing = [key for key in _TRIAL_ERROR_KEYS if key not in raw]
+    if missing:
+        msg = (
+            f"{artifact_name}: trial 'error' is missing {sorted(missing)}. Any "
+            f"artifact carrying an 'error' key was written with all of "
+            f"{list(_TRIAL_ERROR_KEYS)}, so a partial payload is corruption, "
+            f"not an older format."
+        )
+        raise ValueError(msg)
+
+    raw_timestamp = raw["timestamp"]
+    try:
+        timestamp = (
+            datetime.fromisoformat(raw_timestamp)
+            if isinstance(raw_timestamp, str)
+            else raw_timestamp
+        )
+    except ValueError as exc:
+        msg = f"{artifact_name}: trial 'error.timestamp' is not a parseable datetime: {raw_timestamp!r}"
+        raise ValueError(msg) from exc
+
+    if not isinstance(timestamp, datetime):
+        msg = (
+            f"{artifact_name}: trial 'error.timestamp' must be a datetime or an "
+            f"ISO-8601 string, got {type(timestamp).__name__}."
+        )
+        raise ValueError(msg)
+
+    return TrialError(
+        message=raw["message"],
+        error_type=raw["error_type"],
+        traceback=raw["traceback"],
+        timestamp=timestamp,
+        config=raw["config"] or {},
+    )
+
+
+def decode_trial_score(raw: Any, *, artifact_name: str) -> float | None:
+    """Rebuild a trial's optimization signal.
+
+    Absent or ``None`` is a real answer — a failed trial has no objective value
+    — so it is preserved rather than coerced to ``0.0``, which would enter
+    selection as a legitimate (and losing) score.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        msg = (
+            f"{artifact_name}: trial 'score' must be a number or null, got "
+            f"{type(raw).__name__}."
+        )
+        raise ValueError(msg)
+    return float(raw)
+
 
 #: The schema version in which each persisted field first appeared — **every**
 #: one of them, explicitly, including the version-1 fields.

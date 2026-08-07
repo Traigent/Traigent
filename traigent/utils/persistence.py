@@ -27,7 +27,10 @@ from ..utils.optimization_result_persistence import (
     RESULT_SCHEMA_VERSION,
     SCHEMA_VERSION_KEY,
     decode_result,
+    decode_trial_error,
+    decode_trial_score,
     encode_result_fields,
+    encode_trial_error,
     verify_envelope_version,
 )
 from ..utils.secure_path import safe_open, validate_path
@@ -432,6 +435,13 @@ class PersistenceManager:
                 # as trial_id above.
                 "error_message": getattr(trial, "error_message", None),
                 "metadata": serialized_metadata,
+                # #2047: this format wrote neither key, so `error` and `score`
+                # were lost at WRITE time here (the config_state format lost
+                # them at read time instead). Without them a reloaded run
+                # cannot tell a crashed trial from a badly-scoring one.
+                # getattr for the same duck-typing reason as trial_id above.
+                "error": encode_trial_error(getattr(trial, "error", None)),
+                "score": getattr(trial, "score", None),
             }
             trials_data.append(trial_dict)
 
@@ -518,6 +528,18 @@ class PersistenceManager:
                         ),
                         error_message=t.get("error_message"),
                         metadata=rehydrated_metadata,
+                        # #2047. Absent in every artifact written before this
+                        # format started emitting them, which decodes to None —
+                        # the same value those trials already had. This
+                        # loader's deliberate tolerance for missing keys
+                        # (above) is preserved; only a PRESENT-but-corrupt
+                        # payload raises.
+                        error=decode_trial_error(
+                            t.get("error"), artifact_name=str(validated_trials_file)
+                        ),
+                        score=decode_trial_score(
+                            t.get("score"), artifact_name=str(validated_trials_file)
+                        ),
                     )
                     trials.append(trial)
         elif pkl_file.exists():
