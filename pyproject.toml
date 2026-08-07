@@ -89,13 +89,6 @@ integrations = [
     "faiss-cpu>=1.7.0; sys_platform != 'win32'",  # RAG vector search (not available on Windows)
 ]
 
-# Chroma is explicit opt-in while chromadb has no patched release for
-# GHSA-f4j7-r4q5-qw2c / CVE-2026-45829. Do not add this to broad bundles until
-# the advisory publishes a first_patched_version and the lock resolves to it.
-chroma = [
-    "langchain-chroma>=0.2.5",
-]
-
 # DSPy prompt optimization integration
 dspy = [
     "dspy-ai>=2.5.0",
@@ -223,19 +216,16 @@ cloud = [
 
 # Recommended bundle for end users — everything needed to run optimizations
 # out of the box without dev/test/docs overhead
-# Excludes chroma until chromadb has a patched release for CVE-2026-45829.
 recommended = [
     "traigent[integrations,analytics,bayesian,visualization,hybrid,pydanticai]",
 ]
 
 # All optional features combined (playground/examples moved to TraigentDemo)
-# Excludes chroma until chromadb has a patched release for CVE-2026-45829.
 all = [
     "traigent[analytics,bayesian,integrations,pydanticai,security,visualization,test,tracing,hybrid]"
 ]
 
 # Enterprise bundle with all features (playground/examples moved to TraigentDemo)
-# Excludes chroma until chromadb has a patched release for CVE-2026-45829.
 enterprise = [
     "traigent[analytics,bayesian,integrations,security,visualization,test,tracing,ml,cloud,hybrid]",
 ]
