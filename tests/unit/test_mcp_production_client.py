@@ -191,10 +191,20 @@ class TestMCPClientConnectionManagement:
                     )
                     mock_session_instance.__aexit__ = AsyncMock(return_value=None)
 
-                    # Test connection establishment
+                    # Test connection establishment.
+                    #
+                    # connect() RAISES NotImplementedError on the real-MCP path now,
+                    # rather than swallowing it and returning False. That escape is
+                    # the point of #1777: a returned False read as an ordinary
+                    # connection failure and the caller fell back to a synthetic
+                    # success. Asserting the raise keeps this test on the lifecycle
+                    # it was written for instead of on the laundering.
                     connection_tested = False
                     if hasattr(self.client, "connect"):
-                        await self.client.connect()
+                        with pytest.raises(
+                            NotImplementedError, match="stdio transport"
+                        ):
+                            await self.client.connect()
                         connection_tested = True
 
                     # Test connection cleanup
@@ -276,8 +286,11 @@ class TestMCPRequestHandling:
             self.client._session = mock_session
 
             async def fake_execute_async(func):
-                res = await func()
-                return Mock(success=True, result=res, last_exception=None)
+                # execute_async UNWRAPS: it returns the callable's own value or
+                # RAISES. It does not return a RetryResult. These doubles used to
+                # model the wrapper shape, which is the contract bug this PR fixes
+                # in the production code (#1777).
+                return await func()
 
             self.client._retry_handler.execute_async = fake_execute_async
 
@@ -356,8 +369,11 @@ class TestMCPRequestHandling:
             self.client._session = mock_session
 
             async def fake_execute_async(func):
-                res = await func()
-                return Mock(success=True, result=res, last_exception=None)
+                # execute_async UNWRAPS: it returns the callable's own value or
+                # RAISES. It does not return a RetryResult. These doubles used to
+                # model the wrapper shape, which is the contract bug this PR fixes
+                # in the production code (#1777).
+                return await func()
 
             self.client._retry_handler.execute_async = fake_execute_async
 
@@ -398,24 +414,21 @@ class TestMCPRequestHandling:
                 mock_connected.return_value = True
                 self.client._session = mock_session
 
-                # Mock the retry handler to return a failed result with proper attribute
-                mock_retry_result = Mock()
-                mock_retry_result.success = False
-                mock_retry_result.last_exception = TimeoutError("MCP operation timeout")
-
+                # execute_async RAISES on exhausted retries; it does not return a
+                # failed RetryResult (see the note in call_tool).
                 async def mock_execute(func):
-                    return mock_retry_result
+                    raise TimeoutError("MCP operation timeout")
 
                 self.client._retry_handler.execute_async = mock_execute
 
                 # The client handles timeout gracefully - returns MCPResponse with success=False
                 result = await self.client.call_tool("test_tool", {})
-                assert (
-                    result.success is False
-                ), "Timeout should result in failed response"
-                assert (
-                    "timeout" in result.error_message.lower()
-                ), "Error message should mention timeout"
+                assert result.success is False, (
+                    "Timeout should result in failed response"
+                )
+                assert "timeout" in result.error_message.lower(), (
+                    "Error message should mention timeout"
+                )
 
 
 class TestMCPRetryMechanism:
@@ -462,14 +475,18 @@ class TestMCPRetryMechanism:
             self.client._session = mock_session
 
             async def fake_execute_async(func):
-                last_exc = None
+                # execute_async UNWRAPS: it returns the callable's own value or
+                # RAISES. It does not return a RetryResult. These doubles used to
+                # model the wrapper shape, which is the contract bug this PR fixes
+                # in the production code (#1777).
+                last_exc: Exception | None = None
                 for _ in range(3):
                     try:
-                        res = await func()
-                        return Mock(success=True, result=res, last_exception=None)
+                        return await func()
                     except Exception as exc:  # simulate the real retry loop
                         last_exc = exc
-                return Mock(success=False, result=None, last_exception=last_exc)
+                assert last_exc is not None
+                raise last_exc
 
             self.client._retry_handler.execute_async = fake_execute_async
 
@@ -716,8 +733,11 @@ class TestMCPIntegrationScenarios:
             self.client._session = mock_session
 
             async def fake_execute_async(func):
-                res = await func()
-                return Mock(success=True, result=res, last_exception=None)
+                # execute_async UNWRAPS: it returns the callable's own value or
+                # RAISES. It does not return a RetryResult. These doubles used to
+                # model the wrapper shape, which is the contract bug this PR fixes
+                # in the production code (#1777).
+                return await func()
 
             self.client._retry_handler.execute_async = fake_execute_async
 
@@ -799,8 +819,11 @@ class TestMCPIntegrationScenarios:
             self.client._session = mock_session
 
             async def fake_execute_async(func):
-                res = await func()
-                return Mock(success=True, result=res, last_exception=None)
+                # execute_async UNWRAPS: it returns the callable's own value or
+                # RAISES. It does not return a RetryResult. These doubles used to
+                # model the wrapper shape, which is the contract bug this PR fixes
+                # in the production code (#1777).
+                return await func()
 
             self.client._retry_handler.execute_async = fake_execute_async
 
@@ -1130,9 +1153,7 @@ class TestProductionMCPClientFallback:
         """Unknown-tool fallback failures keep the fallback marker at call_tool."""
 
         async def mock_execute(func):
-            return Mock(
-                success=False, last_exception=RuntimeError("server down"), result=None
-            )
+            raise RuntimeError("server down")
 
         self.client._retry_handler.execute_async = mock_execute
 
@@ -1558,7 +1579,19 @@ class TestCallToolExecution:
                 "traigent.cloud.production_mcp_client.RetryHandler"
             ) as mock_retry_handler:
                 mock_retry_config.return_value = Mock()
-                mock_retry_handler.return_value = Mock()
+                # A PLAIN Mock here makes `await execute_async(...)` raise
+                # TypeError. That used to be laundered into a synthetic fallback
+                # response -- which carried a request_id, so the assertions below
+                # passed for entirely the wrong reason. With the laundering removed
+                # the double has to honour the real contract: run the callable and
+                # return its value.
+                retry_handler = Mock()
+
+                async def _execute_async(func):
+                    return await func()
+
+                retry_handler.execute_async = _execute_async
+                mock_retry_handler.return_value = retry_handler
                 self.client = ProductionMCPClient(server_config)
 
     @pytest.mark.asyncio
@@ -1571,9 +1604,20 @@ class TestCallToolExecution:
 
     @pytest.mark.asyncio
     async def test_call_tool_with_operation_id(self):
-        """Test call_tool with custom operation_id."""
+        """Test call_tool with custom operation_id.
+
+        MCP_AVAILABLE is pinned False so this exercises the documented
+        MCP-not-installed fallback. Left unpinned it depended on whether ``mcp``
+        happens to be importable in the environment: with it installed, connect()
+        now raises NotImplementedError for the unported stdio transport (#1777)
+        and this returns nothing at all. A test whose path is decided by an
+        optional dependency is not testing the thing in its name.
+        """
         custom_op_id = "custom-op-123"
-        result = await self.client.call_tool("test_tool", {}, operation_id=custom_op_id)
+        with patch("traigent.cloud.production_mcp_client.MCP_AVAILABLE", False):
+            result = await self.client.call_tool(
+                "test_tool", {}, operation_id=custom_op_id
+            )
         # The operation result should be stored with this ID
         assert (
             custom_op_id in self.client._operation_results
@@ -2094,9 +2138,9 @@ class TestCreateAgent:
                 await self.client.create_agent(spec)
 
             _, arguments = mock_call_tool.call_args.args
-            assert (
-                "agent_id" not in arguments
-            ), f"create_agent must not forward agent_id (spec.id={spec.id!r})"
+            assert "agent_id" not in arguments, (
+                f"create_agent must not forward agent_id (spec.id={spec.id!r})"
+            )
 
 
 class TestUploadDataset:
@@ -2622,11 +2666,8 @@ class TestSessionUnavailableAfterConnect:
 
         # Mock retry handler to execute the function directly
         async def mock_execute(func):
-            try:
-                result = await func()
-                return Mock(success=True, result=result)
-            except Exception as e:
-                return Mock(success=False, last_exception=e, result=None)
+            # Unwrapping contract: pass the value through, let errors escape.
+            return await func()
 
         self.client._retry_handler.execute_async = mock_execute
 

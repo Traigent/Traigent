@@ -65,6 +65,12 @@ except ImportError as _exc:  # pragma: no cover - depends on optional extra
             # Stub: MCP package not available, this class is never used at runtime
             pass
 
+        async def close(self) -> None:
+            # `_cleanup_connection` awaits `.close()` on whatever `_transport`
+            # holds. Without this the stub is not substitutable for the real
+            # transport and mypy fails the build on the attribute.
+            return None
+
 
 from traigent.evaluators.base import Dataset
 from traigent.utils.exceptions import ValidationError as ValidationException
@@ -343,6 +349,15 @@ class ProductionMCPClient:
                 )
                 return True
 
+            except NotImplementedError:
+                # The "STOP HERE, LOUDLY" raise above is INSIDE this try, so the
+                # broad handler below used to swallow it and return False -- the
+                # connect() call then read as an ordinary connection failure and the
+                # caller fell back to a synthetic success. That is the precise
+                # laundering this PR exists to stop, in the one function that needed
+                # it. Cleanup still runs; the error still escapes.
+                await self._cleanup_connection()
+                raise
             except Exception as e:
                 logger.error(f"Failed to connect to MCP server: {e}")
                 await self._cleanup_connection()
@@ -452,13 +467,30 @@ class ProductionMCPClient:
                 # AttributeError waiting for the import bug above to be fixed, and one
                 # the broad handler would have laundered straight into synthetic
                 # fallback. Use execute_async_with_result if a RetryResult is wanted.
-                response = await self._retry_handler.execute_async(execute_tool_call)
+                # Annotated, not inferred. `RetryHandler.execute_async` is typed
+                # `Callable[..., T] -> T`, so for an `async def` callable T binds to
+                # the COROUTINE type even though the value returned is the awaited
+                # result. Without the annotation mypy fixes `response` as a
+                # Coroutine here and then rejects the MCPResponse assigned to the
+                # same name in the handlers below. (The underlying signature wants
+                # `Callable[..., Awaitable[T]] -> T`; changing a shared utility's
+                # public type is out of scope for this PR -- see the follow-up.)
+                response: MCPResponse = cast(
+                    MCPResponse,
+                    await self._retry_handler.execute_async(execute_tool_call),
+                )
                 self._operation_results[operation_id] = response
-                return cast(MCPResponse, response)
+                return response
 
             except asyncio.CancelledError:
                 raise
-            except (AttributeError, TypeError, NameError, ImportError) as e:
+            except (
+                AttributeError,
+                TypeError,
+                NameError,
+                ImportError,
+                NotImplementedError,
+            ) as e:
                 # PROGRAMMING errors, kept out of the fallback path below. That path
                 # returns MCPResponse(success=True, is_fallback=True) with a synthetic
                 # `fallback_*` id, so laundering a defect through it reports a fake
@@ -507,7 +539,7 @@ class ProductionMCPClient:
                     return fallback_response
 
                 self._operation_results[operation_id] = response
-                return response  # type: ignore[no-any-return]
+                return response
 
         finally:
             # Clean up operation tracking

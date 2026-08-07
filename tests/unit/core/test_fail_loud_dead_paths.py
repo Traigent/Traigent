@@ -16,6 +16,8 @@ undetectably, because the degraded result is a legitimate runtime outcome.
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
 
@@ -52,20 +54,38 @@ class TestMcpAvailabilityIsHonest:
         assert not hasattr(stdio, "StdioClientTransport")
         assert hasattr(stdio, "stdio_client"), "the real API this needs porting to"
 
-    def test_the_unported_transport_fails_loudly_rather_than_silently(self):
+    @pytest.mark.asyncio
+    async def test_the_unported_transport_fails_loudly_rather_than_silently(self):
         """Honest about scope: the transport port is NOT done here.
 
         What must not happen is a NameError, or a quiet return to "unavailable" now
         that MCP_AVAILABLE is True. It raises NotImplementedError naming the work.
+
+        This asserted the SOURCE TEXT of connect() until the behaviour it described
+        actually existed: the raise sat inside a try whose bottom handler was
+        `except Exception`, so it was swallowed and connect() still returned False.
+        A source-text assertion passes over exactly that -- it reads the raise and
+        cannot see the handler eating it. Now that the escape works, the assertion
+        is the behaviour.
         """
-        import inspect
+        import asyncio
 
         import traigent.cloud.production_mcp_client as mod
 
-        connect_source = inspect.getsource(mod.ProductionMCPClient.connect)
+        client = mod.ProductionMCPClient.__new__(mod.ProductionMCPClient)
+        client.server_config = mod.MCPServerConfig(server_path="python", server_args=[])
+        client._connection_lock = asyncio.Lock()
+        client._connected = False
+        client._session = None
+        client._transport = None
+        client._stats = {"connection_attempts": 0, "successful_connections": 0}
 
-        assert "NotImplementedError" in connect_source
-        assert "stdio_client" in connect_source, "the message must name the real API"
+        with patch("traigent.cloud.production_mcp_client.MCP_AVAILABLE", True):
+            with pytest.raises(NotImplementedError) as excinfo:
+                await client.connect()
+
+        # The message must name the real API so the port is actionable.
+        assert "stdio_client" in str(excinfo.value)
 
 
 class TestRetryContractIsUsedCorrectly:
@@ -95,19 +115,102 @@ class TestRetryContractIsUsedCorrectly:
             "moment the import bug was fixed (#1777)"
         )
 
-    def test_a_programming_error_is_not_absorbed_into_synthetic_fallback(self):
+    @pytest.mark.asyncio
+    async def test_a_programming_error_is_not_absorbed_into_synthetic_fallback(self):
         """The harm: fallback returns success=True with a fake `fallback_*` id.
 
         Laundering a defect through it reports a nonexistent backend resource as a
         successful creation.
+
+        This asserted the literal handler tuple in call_tool's SOURCE. That is
+        brittle in the obvious way -- extending the tuple broke it without any
+        behaviour changing -- and blind in the important one: it says nothing about
+        whether an error actually escapes. It now drives a real programming error
+        through call_tool and requires it to surface.
         """
-        import inspect
+        import asyncio
 
         import traigent.cloud.production_mcp_client as mod
 
-        source = inspect.getsource(mod.ProductionMCPClient.call_tool)
+        client = mod.ProductionMCPClient.__new__(mod.ProductionMCPClient)
+        client.server_config = mod.MCPServerConfig(server_path="python", server_args=[])
+        client._connection_lock = asyncio.Lock()
+        client._connected = True
+        client._session = object()  # not None, so call_tool proceeds
+        client._transport = None
+        client._stats = {
+            "total_requests": 0,
+            "successful_requests": 0,
+            "failed_requests": 0,
+        }
+        client._active_operations = {}
+        client._operation_results = {}
 
-        assert "except (AttributeError, TypeError, NameError, ImportError)" in source
+        async def _boom(_func):
+            # The shape of a real defect: a bad attribute read inside the call path.
+            raise AttributeError(
+                "'MCPResponse' object has no attribute 'last_exception'"
+            )
+
+        # NotImplementedError is covered by its own case below: it is the one this
+        # PR had to ADD to the narrow tuple, and the AttributeError case above
+        # passes with or without that change.
+
+        client._retry_handler = type("R", (), {"execute_async": staticmethod(_boom)})()
+
+        with patch.object(client, "is_connected", return_value=True):
+            with pytest.raises(AttributeError):
+                await client.call_tool("create_agent", {"name": "x"})
+
+        # And crucially: no synthetic success was recorded for it.
+        assert not any(
+            getattr(r, "is_fallback", False) for r in client._operation_results.values()
+        ), "a programming error must never be reported as a successful creation"
+
+    @pytest.mark.asyncio
+    async def test_an_unported_transport_is_not_absorbed_into_synthetic_fallback(self):
+        """The specific type this PR had to add to the narrow handler.
+
+        `connect()` letting NotImplementedError escape is only half the fix: the
+        caller's narrow programming-error handler did not list it, so it fell
+        through to `except Exception` and was laundered into
+        `success=True, is_fallback=True` with a synthetic `fallback_*` agent id --
+        a nonexistent backend resource reported as a successful creation.
+        """
+        import asyncio
+
+        import traigent.cloud.production_mcp_client as mod
+
+        client = mod.ProductionMCPClient.__new__(mod.ProductionMCPClient)
+        client.server_config = mod.MCPServerConfig(server_path="python", server_args=[])
+        client._connection_lock = asyncio.Lock()
+        client._connected = False
+        client._session = None
+        client._transport = None
+        client._stats = {
+            "total_requests": 0,
+            "successful_requests": 0,
+            "failed_requests": 0,
+            "connection_attempts": 0,
+            "successful_connections": 0,
+        }
+        client._active_operations = {}
+        client._operation_results = {}
+
+        async def _passthrough(func):
+            return await func()
+
+        client._retry_handler = type(
+            "R", (), {"execute_async": staticmethod(_passthrough)}
+        )()
+
+        with patch("traigent.cloud.production_mcp_client.MCP_AVAILABLE", True):
+            with pytest.raises(NotImplementedError):
+                await client.call_tool("create_agent", {"name": "x"})
+
+        assert not any(
+            getattr(r, "is_fallback", False) for r in client._operation_results.values()
+        ), "the unported transport must not surface as a successful agent creation"
 
 
 class TestCloudLicenseValidationIsLoud:
@@ -196,11 +299,35 @@ def test_no_silent_downgrade_paths_remain_unlabelled():
     assert "fallback, not a verdict" in source
 
 
-def test_unused_import_of_the_stub_class_is_gone():
-    """The stub only existed to satisfy the bad import; it must not linger as a trap."""
+def test_connect_never_builds_a_transport_from_the_stub():
+    """The stub must not be usable as a silent no-op transport.
+
+    The previous version of this test asserted
+    `not hasattr(mod, "StdioClientTransport") or not mod.MCP_AVAILABLE`, which is
+    true in every reachable state -- including a full revert of this PR -- so it
+    could never fail. Worse, deleting the symbol to satisfy it broke the module at
+    import and took ~106 tests out of collection while CI stayed green.
+
+    What actually matters is not whether the NAME exists but whether connect() can
+    reach a transport construction. It cannot: it raises before ever assigning
+    `_transport`.
+    """
+    import asyncio
+
     import traigent.cloud.production_mcp_client as mod
 
-    assert not hasattr(mod, "StdioClientTransport") or not mod.MCP_AVAILABLE, (
-        "a live StdioClientTransport stub alongside MCP_AVAILABLE=True would let "
-        "connect() build a no-op transport again"
-    )
+    client = mod.ProductionMCPClient.__new__(mod.ProductionMCPClient)
+    client.server_config = mod.MCPServerConfig(server_path="python", server_args=[])
+    client._connection_lock = asyncio.Lock()
+    client._connected = False
+    client._session = None
+    client._transport = None
+    client._stats = {"connection_attempts": 0, "successful_connections": 0}
+
+    async def _run():
+        with patch("traigent.cloud.production_mcp_client.MCP_AVAILABLE", True):
+            with pytest.raises(NotImplementedError):
+                await client.connect()
+
+    asyncio.run(_run())
+    assert client._transport is None, "connect() must not leave a stub transport behind"
