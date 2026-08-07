@@ -173,3 +173,137 @@ async def test_partial_failure_keeps_only_the_failed_session(monkeypatch) -> Non
     assert response["successful"] == 2
     assert response["failed"] == 1
     assert _buffered_sessions(client) == ["s2"]
+
+
+# ---------------------------------------------------------------------------
+# Through the REAL entry points (red-team: the tests above all call
+# _flush_buffer directly, which is exactly why the two regressions below
+# slipped through the first revision)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.backend_online  # goes through submit_metrics; transports still mocked
+async def test_a_backlog_does_not_re_arm_the_batch_size_trigger(monkeypatch) -> None:
+    """Retained metrics must not make every later trial re-POST synchronously.
+
+    The first revision left the buffer sitting at `batch_size` after a failed
+    flush, so `submit_metrics` fired a full flush on EVERY subsequent trial --
+    a growing payload, POSTed while holding the lock. With a 30s client
+    timeout that injects minutes of blocking into the hybrid trial loop.
+    """
+    client = _client()
+    client._batch_size = 10
+    posts = 0
+
+    async def fake(session_id, *args):
+        nonlocal posts
+        posts += 1
+        raise TimeoutError("backend down")
+
+    monkeypatch.setattr(client, "_submit_single", fake)
+    monkeypatch.setattr(client, "_submit_batch", fake)
+
+    for i in range(20):
+        await client.submit_metrics("s1", f"t{i}", {"a": 1.0}, 0.1)
+
+    assert posts == 2, (
+        f"expected one flush per full batch of 10 (2 total), got {posts} -- "
+        f"the retained backlog is re-triggering the size-based flush"
+    )
+    assert len(client._metric_buffer) == 20, "nothing should have been dropped"
+
+
+@pytest.mark.asyncio
+@pytest.mark.backend_online  # goes through submit_metrics; transports still mocked
+async def test_a_permanently_rejected_batch_does_not_poison_the_session(
+    monkeypatch,
+) -> None:
+    """A 4xx must be discarded, not retained.
+
+    `_submit_batch` is all-or-nothing and retained entries regroup with later
+    ones under the same session_id, so retaining a permanent rejection would
+    block every subsequent metric for that session forever -- losing strictly
+    more than the unconditional clear this fix replaced.
+    """
+    client = _client()
+    client._batch_size = 10
+    delivered: list[str] = []
+
+    async def fake_batch(session_id, submissions):
+        if any(s["trial_id"] == "poison" for s in submissions):
+            raise ValueError("422 unprocessable entity")
+        delivered.extend(s["trial_id"] for s in submissions)
+        return {"status": "ok"}
+
+    monkeypatch.setattr(client, "_submit_batch", fake_batch)
+    monkeypatch.setattr(client, "_submit_single", fake_batch)
+
+    await client.submit_metrics("s1", "poison", {"a": 1.0}, 0.1)
+    for i in range(20):
+        await client.submit_metrics("s1", f"g{i}", {"a": 1.0}, 0.1)
+
+    assert delivered, "the permanent rejection blocked every later metric"
+    assert "poison" not in delivered
+    assert len(client._metric_buffer) < 5, (
+        "the rejected batch is still buffered and will be retried forever"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("exc", "retryable"),
+    [
+        (TimeoutError("timeout"), True),
+        (ConnectionResetError("reset"), True),
+        (ValueError("403 forbidden: token expired"), False),
+        (RuntimeError("Session not initialized"), False),
+    ],
+    ids=["timeout", "conn-reset", "permanent-403", "permanent-runtime"],
+)
+async def test_only_retryable_failures_are_retained(
+    monkeypatch, exc, retryable
+) -> None:
+    client = _client()
+    client._metric_buffer = [("s1", {"trial_id": "t1"})]
+
+    async def fake_single(session_id, submission):
+        raise exc
+
+    monkeypatch.setattr(client, "_submit_single", fake_single)
+
+    response = await client._flush_buffer()
+
+    assert response["errors"][0]["retryable"] is retryable
+    assert bool(client._metric_buffer) is retryable
+    assert response["abandoned_permanent"] == (0 if retryable else 1)
+
+
+@pytest.mark.asyncio
+async def test_the_cap_drops_by_age_not_by_session_grouping(monkeypatch) -> None:
+    """The cap slices the buffer in chronological order.
+
+    Grouping by session happens before submission, so slicing the grouped
+    order would have discarded the newest metric in the buffer while keeping
+    older ones, and wiped whole sessions rather than trimming uniformly.
+    """
+    client = _client()
+    client._max_retained_metrics = 3
+    client._metric_buffer = [
+        ("s1", {"trial_id": "oldest"}),
+        ("s2", {"trial_id": "b"}),
+        ("s2", {"trial_id": "c"}),
+        ("s2", {"trial_id": "d"}),
+        ("s1", {"trial_id": "newest"}),
+    ]
+
+    async def fake(session_id, *args):
+        raise TimeoutError("down")
+
+    monkeypatch.setattr(client, "_submit_single", fake)
+    monkeypatch.setattr(client, "_submit_batch", fake)
+
+    await client._flush_buffer()
+
+    kept = [s["trial_id"] for _, s in client._metric_buffer]
+    assert kept == ["c", "d", "newest"], f"cap did not slice by age: {kept}"
