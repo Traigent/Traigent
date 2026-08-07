@@ -687,12 +687,8 @@ class ConfigStateManager:
                     timestamp=datetime.fromisoformat(trial_data["timestamp"]),
                     error_message=trial_data.get("error_message"),
                     metadata=trial_data.get("metadata", {}),
-                    error=decode_trial_error(
-                        trial_data.get("error"), artifact_name=str(input_path)
-                    ),
-                    score=decode_trial_score(
-                        trial_data.get("score"), artifact_name=str(input_path)
-                    ),
+                    error=decode_trial_error(trial_data.get("error")),
+                    score=decode_trial_score(trial_data.get("score")),
                 )
                 trials.append(trial)
 

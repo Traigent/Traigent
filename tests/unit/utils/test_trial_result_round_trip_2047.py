@@ -26,7 +26,9 @@ import copy
 import dataclasses
 import gzip
 import json
+import logging
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -42,6 +44,7 @@ from traigent.utils.optimization_result_persistence import (
     TRIAL_RESET,
     TRIAL_RESTORE,
     _SENTINELS,
+    _TRIAL_SENTINELS,
 )
 from traigent.utils.persistence import PersistenceManager
 
@@ -249,7 +252,7 @@ def test_legacy_persistence_payload_without_new_keys_still_loads(tmp_path) -> No
     restored value -- not a load failure.
     """
     store = PersistenceManager(base_dir=tmp_path)
-    result_dir = Path(store.save_result(_result_with([_scored_trial()]), "legacy"))
+    result_dir = Path(store.save_result(_result_with([_failed_trial()]), "legacy"))
 
     trials_file = result_dir / _TRIALS_JSON
     with gzip.open(trials_file, "rt") as handle:
@@ -263,13 +266,13 @@ def test_legacy_persistence_payload_without_new_keys_still_loads(tmp_path) -> No
     (loaded,) = store.load_result("legacy").trials
     assert loaded.error is None
     assert loaded.score is None
-    assert loaded.trial_id == "trial-2047-scored"
+    assert loaded.trial_id == "trial-2047-failed"
 
 
 def test_legacy_config_state_payload_without_new_keys_still_loads(tmp_path) -> None:
     path = tmp_path / "results.json"
     saver = _manager(tmp_path)
-    saver._optimization_results = _result_with([_scored_trial()])
+    saver._optimization_results = _result_with([_failed_trial()])
     saver.save_optimization_results(str(path))
 
     payload = json.loads(path.read_text())
@@ -287,28 +290,29 @@ def test_legacy_config_state_payload_without_new_keys_still_loads(tmp_path) -> N
 
 
 # ---------------------------------------------------------------------------
-# Present-but-corrupt must raise, not silently downgrade
+# Malformed payloads must not destroy the load (red-team findings 1-4)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    ("corrupt", "expected"),
-    [
-        ("not-a-mapping", "must be a mapping"),
-        ({"message": "m"}, "is missing"),
-    ],
+    "corrupt",
+    ["a-legacy-stringified-error", 42, ["not", "a", "mapping"]],
+    ids=["str", "int", "list"],
 )
-def test_corrupt_error_payload_raises_rather_than_downgrading(
-    tmp_path, corrupt, expected
+def test_non_mapping_error_payload_does_not_abort_the_whole_load(
+    tmp_path, corrupt, caplog
 ) -> None:
-    """A corrupt error block must not decode to None.
+    """`asdict` does not recurse into a duck-typed `trial.error`.
 
-    None would restore a crashed trial as an ordinary one -- the precise
-    silent downgrade this manifest exists to prevent -- so the loader fails
-    loudly instead.
+    The legacy `json.dump(default=str)` writer therefore stringified it, and
+    such artifacts are on disk today. An earlier revision of this fix raised on
+    them, which turned a recoverable missing-field into an unloadable run. The
+    trial still loads; the loss is logged rather than silent.
     """
     store = PersistenceManager(base_dir=tmp_path)
-    result_dir = Path(store.save_result(_result_with([_failed_trial()]), "corrupt"))
+    result_dir = Path(
+        store.save_result(_result_with([_failed_trial()]), "legacy-shape")
+    )
 
     trials_file = result_dir / _TRIALS_JSON
     with gzip.open(trials_file, "rt") as handle:
@@ -317,11 +321,17 @@ def test_corrupt_error_payload_raises_rather_than_downgrading(
     with gzip.open(trials_file, "wt") as handle:
         json.dump(trials_data, handle)
 
-    with pytest.raises(ValueError, match=expected):
-        store.load_result("corrupt")
+    with caplog.at_level(logging.WARNING):
+        (loaded,) = store.load_result("legacy-shape").trials
+
+    assert loaded.trial_id == "trial-2047-failed"
+    assert loaded.status is TrialStatus.FAILED
+    assert loaded.error_message == "provider refused the request"
+    assert loaded.error is None
+    assert "not a mapping" in caplog.text
 
 
-def test_corrupt_score_payload_raises(tmp_path) -> None:
+def test_non_numeric_score_does_not_abort_the_load(tmp_path, caplog) -> None:
     store = PersistenceManager(base_dir=tmp_path)
     result_dir = Path(store.save_result(_result_with([_scored_trial()]), "bad-score"))
 
@@ -332,5 +342,106 @@ def test_corrupt_score_payload_raises(tmp_path) -> None:
     with gzip.open(trials_file, "wt") as handle:
         json.dump(trials_data, handle)
 
-    with pytest.raises(ValueError, match="must be a number or null"):
-        store.load_result("bad-score")
+    with caplog.at_level(logging.WARNING):
+        (loaded,) = store.load_result("bad-score").trials
+
+    assert loaded.score is None, "a non-numeric score must not be guessed at"
+    assert "not a number" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Regression: persisting error/score must not be able to destroy a run
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("bad_config", "label"),
+    [
+        ({"tags": {"a", "b"}}, "set"),
+        ({"cutoff": datetime(2026, 4, 1, tzinfo=UTC)}, "datetime"),
+        ({"client": object()}, "opaque-object"),
+    ],
+)
+def test_a_non_json_primitive_error_config_still_saves(
+    tmp_path, bad_config, label
+) -> None:
+    """`_atomic_write_gzip_json` calls `json.dump` with no `default=`.
+
+    Writing `error.config` unhardened therefore raised mid-write and left the
+    run with only `metadata.json`, so `load_result` then failed outright --
+    destroying a completed optimization to avoid losing one field. Config
+    values of these shapes pass `validate_configuration_space`, so this is
+    reachable from the public API.
+    """
+    trial = _failed_trial()
+    trial.error.config = bad_config
+    trial.config = bad_config
+
+    store = PersistenceManager(base_dir=tmp_path)
+    result_dir = Path(store.save_result(_result_with([trial]), f"hardened-{label}"))
+
+    assert (result_dir / _TRIALS_JSON).exists(), (
+        f"{label}: the trials file was never written, so the whole run is gone"
+    )
+    (loaded,) = store.load_result(f"hardened-{label}").trials
+    assert loaded.status is TrialStatus.FAILED
+    assert loaded.error is not None
+
+
+def test_a_decimal_score_still_saves(tmp_path) -> None:
+    trial = _scored_trial()
+    trial.score = Decimal("0.5")
+
+    store = PersistenceManager(base_dir=tmp_path)
+    result_dir = Path(store.save_result(_result_with([trial]), "decimal-score"))
+    assert (result_dir / _TRIALS_JSON).exists()
+    (loaded,) = store.load_result("decimal-score").trials
+    assert loaded.score == pytest.approx(0.5)
+
+
+# ---------------------------------------------------------------------------
+# The completeness guard must be unsatisfiable by classification alone
+# ---------------------------------------------------------------------------
+
+
+def test_trial_sentinel_table_covers_every_restored_field() -> None:
+    """Classifying a field is not enough -- it needs a sentinel too.
+
+    Without this, a field could be added to TRIAL_RESTORE, pass the
+    completeness guard, and still be silently dropped by both formats, because
+    a hand-written fixture compares a new field's default against itself.
+    """
+    missing = TRIAL_RESTORE - set(_TRIAL_SENTINELS)
+    assert not missing, (
+        f"{sorted(missing)} are in TRIAL_RESTORE but have no entry in "
+        f"_TRIAL_SENTINELS, so no test proves they survive a round trip."
+    )
+    stale = set(_TRIAL_SENTINELS) - TRIAL_RESTORE
+    assert not stale, f"_TRIAL_SENTINELS names non-restored field(s) {sorted(stale)}"
+
+
+@pytest.mark.parametrize("round_trip", ["config_state", "persistence"])
+def test_every_sentinel_field_survives_the_round_trip(tmp_path, round_trip) -> None:
+    """Driven off the sentinel table, so a new field is actually exercised.
+
+    `error` is compared field-by-field: `to_dict()` redacts `message` and
+    `traceback` on the way out by that object's own contract, so the restored
+    text is deliberately not byte-equal to the original.
+    """
+    trip = (
+        _config_state_round_trip
+        if round_trip == "config_state"
+        else _persistence_round_trip
+    )
+    original = TrialResult(**copy.deepcopy(_TRIAL_SENTINELS))
+    (loaded,) = trip(tmp_path, [original]).trials
+
+    for name in sorted(TRIAL_RESTORE - {"error"}):
+        assert getattr(loaded, name) == getattr(original, name), (
+            f"{round_trip}: TrialResult.{name} has a sentinel but did not "
+            f"survive save -> load"
+        )
+
+    assert loaded.error is not None
+    assert loaded.error.error_type == original.error.error_type
+    assert loaded.error.timestamp == original.error.timestamp

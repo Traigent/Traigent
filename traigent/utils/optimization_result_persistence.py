@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -208,104 +209,93 @@ _TRIAL_FIELDS: dict[str, dataclasses.Field[Any]] = {
     field.name: field for field in dataclasses.fields(TrialResult)
 }
 
-#: Keys of the :class:`TrialError` payload, in constructor order.
-_TRIAL_ERROR_KEYS = ("message", "error_type", "traceback", "timestamp", "config")
+#: Reference value for every :data:`TRIAL_RESTORE` field: a non-default,
+#: round-trippable example. This is the manifest's proof-of-coverage table, and
+#: it is what makes the completeness guard real rather than clerical -- without
+#: it a new field could be added to :data:`TRIAL_RESTORE` and still be silently
+#: dropped by both formats while every test stayed green, because a hand-written
+#: fixture compares a new field's default against itself. Mirrors the role
+#: :data:`_SENTINELS` plays for the result manifest.
+_TRIAL_SENTINELS: dict[str, Any] = {
+    "trial_id": "trial-manifest-sentinel",
+    "config": {"model": "smart", "temperature": 0.7},
+    "metrics": {"accuracy": 0.61, "score": 0.61},
+    "status": TrialStatus.FAILED,
+    "duration": 3.25,
+    "timestamp": datetime(2026, 4, 1, 9, 15, 0, tzinfo=UTC),
+    "error_message": "provider refused the request",
+    "metadata": {"replicate": 2},
+    "error": TrialError(
+        message="provider refused the request",
+        error_type="RuntimeError",
+        traceback="Traceback (most recent call last):\n  RuntimeError: refused",
+        timestamp=datetime(2026, 4, 1, 9, 15, 0, tzinfo=UTC),
+        config={"model": "smart"},
+    ),
+    "score": 0.61,
+    # A field added to TRIAL_RESTORE without an entry here fails
+    # test_trial_sentinel_table_covers_every_restored_field.
+}
 
 
-def encode_trial_error(error: TrialError | None) -> dict[str, Any] | None:
-    """Render a :class:`TrialError` as a JSON-safe mapping.
+def decode_trial_error(raw: Any) -> TrialError | None:
+    """Rebuild a :class:`TrialError` from whatever a persisted artifact holds.
 
-    ``timestamp`` goes out as ISO-8601 so the value survives a text round trip
-    with its timezone intact, rather than relying on ``json.dump(default=str)``
-    to stringify a ``datetime`` incidentally.
-    """
-    if error is None:
-        return None
-    return {
-        "message": error.message,
-        "error_type": error.error_type,
-        "traceback": error.traceback,
-        "timestamp": error.timestamp.isoformat() if error.timestamp else None,
-        "config": error.config,
-    }
+    Delegates to :meth:`TrialError.from_dict`, which is the codebase's already
+    decided answer for this object rather than a second, stricter parallel one.
+    An earlier revision of this function hand-rolled its own strict decoder that
+    raised on any payload it did not recognise; that was wrong twice over. It
+    rejected artifacts already on disk -- ``asdict`` does not recurse into a
+    duck-typed ``trial.error``, so the legacy ``json.dump(default=str)`` writer
+    stringified it, and a whole otherwise-good run then failed to load. And it
+    applied a write-time contract retroactively to files written before that
+    contract existed.
 
-
-def decode_trial_error(raw: Any, *, artifact_name: str) -> TrialError | None:
-    """Rebuild a :class:`TrialError` from a persisted mapping.
-
-    Absent (``None``) means "this artifact predates error persistence, or the
-    trial did not fail" — both legitimate, both yield ``None``. Present but
-    malformed means the artifact is corrupt, and that raises: quietly returning
-    ``None`` would restore a crashed trial as an ordinary one, which is the
-    exact silent-downgrade this manifest exists to stop.
-
-    Accepts both ``datetime.isoformat()`` and the ``str(datetime)`` spelling the
-    legacy ``json.dump(default=str)`` writer produced; ``fromisoformat`` parses
-    both on Python 3.11+.
+    ``None`` (absent key, or a trial that did not fail) stays ``None``. A
+    non-mapping payload is a legacy artifact rather than a decodable error, and
+    is reported so the loss is visible in the log rather than silent.
     """
     if raw is None:
         return None
-    if not isinstance(raw, dict):
-        msg = (
-            f"{artifact_name}: trial 'error' must be a mapping, got "
-            f"{type(raw).__name__}. Refusing to load a corrupt artifact as a "
-            f"trial that never failed."
+    if not isinstance(raw, Mapping):
+        logger.warning(
+            "Trial 'error' payload is %s, not a mapping -- this artifact predates "
+            "structured error persistence. Restoring the trial without its "
+            "structured diagnosis; status and error_message are unaffected.",
+            type(raw).__name__,
         )
-        raise ValueError(msg)
-
-    missing = [key for key in _TRIAL_ERROR_KEYS if key not in raw]
-    if missing:
-        msg = (
-            f"{artifact_name}: trial 'error' is missing {sorted(missing)}. Any "
-            f"artifact carrying an 'error' key was written with all of "
-            f"{list(_TRIAL_ERROR_KEYS)}, so a partial payload is corruption, "
-            f"not an older format."
-        )
-        raise ValueError(msg)
-
-    raw_timestamp = raw["timestamp"]
-    try:
-        timestamp = (
-            datetime.fromisoformat(raw_timestamp)
-            if isinstance(raw_timestamp, str)
-            else raw_timestamp
-        )
-    except ValueError as exc:
-        msg = f"{artifact_name}: trial 'error.timestamp' is not a parseable datetime: {raw_timestamp!r}"
-        raise ValueError(msg) from exc
-
-    if not isinstance(timestamp, datetime):
-        msg = (
-            f"{artifact_name}: trial 'error.timestamp' must be a datetime or an "
-            f"ISO-8601 string, got {type(timestamp).__name__}."
-        )
-        raise ValueError(msg)
-
-    return TrialError(
-        message=raw["message"],
-        error_type=raw["error_type"],
-        traceback=raw["traceback"],
-        timestamp=timestamp,
-        config=raw["config"] or {},
-    )
+        return None
+    return TrialError.from_dict(raw)
 
 
-def decode_trial_score(raw: Any, *, artifact_name: str) -> float | None:
+def decode_trial_score(raw: Any) -> float | None:
     """Rebuild a trial's optimization signal.
 
-    Absent or ``None`` is a real answer — a failed trial has no objective value
-    — so it is preserved rather than coerced to ``0.0``, which would enter
-    selection as a legitimate (and losing) score.
+    Absent or ``None`` is a real answer -- a crashed trial has no objective
+    value -- so it is preserved rather than coerced to ``0.0``, which would
+    enter selection as a legitimate losing score.
     """
     if raw is None:
         return None
-    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
-        msg = (
-            f"{artifact_name}: trial 'score' must be a number or null, got "
-            f"{type(raw).__name__}."
-        )
-        raise ValueError(msg)
-    return float(raw)
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    if isinstance(raw, str):
+        # Our own writer produces this: `_safe_json_value` has no branch for
+        # Decimal (or any other non-primitive number), so it falls through to
+        # `str(value)`. Refusing the string here would discard a score this
+        # code path itself wrote.
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    logger.warning(
+        "Trial 'score' payload is %s, not a number; restoring it as None "
+        "rather than guessing a value that would enter selection.",
+        type(raw).__name__,
+    )
+    return None
 
 
 #: The schema version in which each persisted field first appeared — **every**

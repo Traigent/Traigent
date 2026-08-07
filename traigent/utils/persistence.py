@@ -30,7 +30,6 @@ from ..utils.optimization_result_persistence import (
     decode_trial_error,
     decode_trial_score,
     encode_result_fields,
-    encode_trial_error,
     verify_envelope_version,
 )
 from ..utils.secure_path import safe_open, validate_path
@@ -435,13 +434,21 @@ class PersistenceManager:
                 # as trial_id above.
                 "error_message": getattr(trial, "error_message", None),
                 "metadata": serialized_metadata,
-                # #2047: this format wrote neither key, so `error` and `score`
-                # were lost at WRITE time here (the config_state format lost
-                # them at read time instead). Without them a reloaded run
-                # cannot tell a crashed trial from a badly-scoring one.
-                # getattr for the same duck-typing reason as trial_id above.
-                "error": encode_trial_error(getattr(trial, "error", None)),
-                "score": getattr(trial, "score", None),
+                # #2047: this format's JSON sub-path wrote neither key, so a
+                # reloaded run could not tell a crashed trial from a
+                # badly-scoring one. (The pickle sub-path below always kept
+                # both, which is why the two disagreed.)
+                #
+                # Both go through _safe_json_value for the same reason the
+                # sibling `config` key above does: _atomic_write_gzip_json
+                # calls json.dump with no `default=`, so an un-hardened value
+                # raises mid-write and leaves the run with only metadata.json
+                # -- destroying a completed optimization instead of merely
+                # losing a field. _safe_json_value also routes TrialError
+                # through its own to_dict(), which applies the redaction that
+                # object already defines for itself.
+                "error": _safe_json_value(getattr(trial, "error", None)),
+                "score": _safe_json_value(getattr(trial, "score", None)),
             }
             trials_data.append(trial_dict)
 
@@ -534,12 +541,8 @@ class PersistenceManager:
                         # loader's deliberate tolerance for missing keys
                         # (above) is preserved; only a PRESENT-but-corrupt
                         # payload raises.
-                        error=decode_trial_error(
-                            t.get("error"), artifact_name=str(validated_trials_file)
-                        ),
-                        score=decode_trial_score(
-                            t.get("score"), artifact_name=str(validated_trials_file)
-                        ),
+                        error=decode_trial_error(t.get("error")),
+                        score=decode_trial_score(t.get("score")),
                     )
                     trials.append(trial)
         elif pkl_file.exists():
