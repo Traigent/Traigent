@@ -263,28 +263,19 @@ jobs:
 
   required-pr-gate:
     name: required-pr-gate
+    # Single synthetic required check: the branch ruleset should require ONLY
+    # `required-pr-gate` instead of the individual job contexts. This fails
+    # closed on skip: `skipped` is accepted as a pass ONLY for the explicit
+    # allowlist in scripts/ci/check_required_gate.py (SKIP_OK), never as a
+    # blanket rule -- see that script's module docstring for the incident
+    # (in TraigentBackend's own classifier) that motivated tightening this.
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: [changes, schema-types, preflight, collection, unit, mcp-contract]
     if: ${{ !cancelled() }}
     steps:
+      - uses: actions/checkout@v7
       - name: Verify required gate jobs
-        shell: bash
-        run: |
-          set -euo pipefail
-          for result in \
-            "${{ needs.changes.result }}" \
-            "${{ needs.schema-types.result }}" \
-            "${{ needs.preflight.result }}" \
-            "${{ needs.collection.result }}" \
-            "${{ needs.unit.result }}" \
-            "${{ needs.mcp-contract.result }}"; do
-            case "$result" in
-              success|skipped) ;;
-              *)
-                echo "::error::Required dependency finished with ${result}"
-                exit 1
-                ;;
-            esac
-          done
-          echo "required-pr-gate passed"
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: python3 scripts/ci/check_required_gate.py
