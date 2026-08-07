@@ -73,6 +73,41 @@ jobs:
           set_output_bool py_changed has_match '\.py$'
           set_output_bool code_changed has_match '^(traigent|traigent_validation|tests|scripts|walkthrough)/|^(pyproject\.toml|requirements[^/]*\.txt|\.github/workflows/pr-gate\.yml)'
 
+  schema-types:
+    name: schema-types
+    # The FIRST real gate (mirrors traigent-js's test:ci, where
+    # check:schema-types is literally the first command) — deliberately not
+    # gated on `changes` output or fork-safety like `unit`/`mcp-contract`:
+    # traigent/generated/schema_types.py can drift for reasons invisible to
+    # this repo's own diff (the pinned TraigentSchema commit moves, or someone
+    # hand-edits the committed file), so it always runs. It does need the
+    # SCHEMA_TOKEN secret to check out the private TraigentSchema repo, so
+    # (like `unit`) it only runs for same-repo PRs; fork PRs skip it and
+    # `required-pr-gate` treats skipped as passing (see that job's comment).
+    if: ${{ github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      # Pinned TraigentSchema revision this generator reads from. Bump this
+      # SHA deliberately (in the same PR that regenerates
+      # traigent/generated/schema_types.py) when TraigentSchema changes need
+      # to land here — never track a moving branch, or this gate becomes
+      # time-dependent (see tools/spine-trail memory on time-dependent gates).
+      - uses: actions/checkout@v7
+        with:
+          repository: Traigent/TraigentSchema
+          ref: 43b20f725f5c912501a852c21ff34ada3d40e6d1
+          path: TraigentSchema
+          token: ${{ secrets.TRAIGENT_JS_SDK_TOKEN || secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Check generated schema types are current
+        env:
+          TRAIGENT_SCHEMA_REPO: ${{ github.workspace }}/TraigentSchema
+        run: python scripts/generate_schema_types.py --check
+
   preflight:
     name: preflight
     runs-on: ubuntu-latest
@@ -230,7 +265,7 @@ jobs:
     name: required-pr-gate
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, preflight, collection, unit, mcp-contract]
+    needs: [changes, schema-types, preflight, collection, unit, mcp-contract]
     if: ${{ !cancelled() }}
     steps:
       - name: Verify required gate jobs
@@ -239,6 +274,7 @@ jobs:
           set -euo pipefail
           for result in \
             "${{ needs.changes.result }}" \
+            "${{ needs.schema-types.result }}" \
             "${{ needs.preflight.result }}" \
             "${{ needs.collection.result }}" \
             "${{ needs.unit.result }}" \

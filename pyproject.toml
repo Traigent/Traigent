@@ -306,6 +306,7 @@ extend-exclude = '''
   | examples/advanced/execution-modes
   | examples/advanced/results-analysis
   | examples/tvl/reusable_safety/run_demo\.py
+  | traigent/generated
 )/
 '''
 
@@ -318,12 +319,18 @@ known_third_party = [
     "matplotlib", "plotly", "scikit-learn", "langchain", "openai",
     "mlflow", "wandb", "pyjwt", "cryptography"
 ]
+# Machine-generated (scripts/generate_schema_types.py --check verifies it) —
+# do not reformat, see the [tool.ruff] exclude note on traigent/generated/**.
+skip_glob = ["traigent/generated/*"]
 
 [tool.mypy]
 python_version = "3.12"
 files = [
     "traigent/",
 ]
+# Machine-generated (scripts/generate_schema_types.py --check verifies it) —
+# see the [tool.ruff] exclude note on traigent/generated/**.
+exclude = ["^traigent/generated/"]
 ignore_missing_imports = true
 follow_imports = "skip"
 warn_return_any = true
@@ -446,6 +453,12 @@ exclude = [
     # NOTE: examples folder moved to TraigentDemo
     "docs/diagrams/**",
     "docs/generated/**",
+    # traigent/generated/schema_types.py is committed but machine-generated
+    # (scripts/generate_schema_types.py --check verifies it, not ruff/black).
+    # A tool reformatting it here would desync the checked-in artifact from a
+    # fresh regeneration and turn --check red for a reason unrelated to drift
+    # (see the trailing-whitespace lesson in the generator's module docstring).
+    "traigent/generated/**",
     "**/__pycache__/**",
     "**/node_modules/**",
     "**/.git/**",

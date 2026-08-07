@@ -9,6 +9,11 @@
 #
 # Runs (fast → slow):
 #   0. freshness preflight                 (origin/develop + origin/main)
+#   0.5 generated schema types drift       (traigent/generated/schema_types.py
+#                                            vs TraigentSchema; the FIRST real
+#                                            gate — skips locally with a warning
+#                                            when no TraigentSchema checkout is
+#                                            found, REQUIRED and fail-closed in CI)
 #   1. ruff check + ruff format --check    (mirrors the SDK Required PR Gate
 #                                            'preflight' job in pr-gate.yml)
 #   2. pytest smoke tier                   (bounded local pre-push unit smoke
@@ -127,6 +132,30 @@ freshness_preflight() {
 }
 
 if ! freshness_preflight; then FAIL=1; fi
+
+# ── 0.5. generated schema types drift (FIRST real gate, mirrors traigent-js's
+#         test:ci where check:schema-types runs before anything else) ───────
+if ! skip schema-types; then
+  section "generated schema types drift (traigent/generated/schema_types.py)"
+  schema_repo="${TRAIGENT_SCHEMA_REPO:-}"
+  if [[ -z "$schema_repo" ]]; then
+    default_schema_repo="$(cd "$REPO_ROOT/.." 2>/dev/null && pwd)/TraigentSchema"
+    [[ -d "$default_schema_repo" ]] && schema_repo="$default_schema_repo"
+  fi
+  if [[ -z "$schema_repo" || ! -d "$schema_repo" ]]; then
+    echo "  ⚠️  no TraigentSchema checkout found (set TRAIGENT_SCHEMA_REPO or place one at"
+    echo "     ../TraigentSchema); skipping locally. This check is REQUIRED and fail-closed in CI."
+  else
+    echo "  • TRAIGENT_SCHEMA_REPO=$schema_repo"
+    py_bin="python3"; [[ -x ".venv/bin/python" ]] && py_bin=".venv/bin/python"
+    if TRAIGENT_SCHEMA_REPO="$schema_repo" "$py_bin" scripts/generate_schema_types.py --check; then
+      echo "  ✅ generated schema types are current"
+    else
+      echo "  ❌ traigent/generated/schema_types.py is stale — run 'make generate-schema-types'"
+      FAIL=1
+    fi
+  fi
+fi
 
 # Collect the .py files THIS branch changes (committed vs merge-base) plus
 # staged/unstaged/untracked, so an about-to-be-pushed edit is covered.
