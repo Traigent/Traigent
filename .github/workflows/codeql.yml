@@ -1,0 +1,69 @@
+name: CodeQL
+
+# Restores CodeQL code scanning on this repository.
+#
+# Scanning previously ran via GitHub "default setup" and went dark on
+# 2026-07-11 when the org code-security configuration "Traigent-trial-fullscan"
+# (id 259257, description: "Code scanning OFF") set
+# code_scanning_default_setup=disabled. No workflow existed to take over, so the
+# repository has since reported "0 open alerts" — a false clean, not a clean.
+# CodeQL is free on public repositories, so this costs nothing to run.
+#
+# This workflow is deliberately GUARD-FREE. There is no availability probe, no
+# `continue-on-error`, and no conditional skip around init/analyze. A future
+# security-configuration change therefore cannot silently disable scanning
+# again; it can only make this job fail loudly. (A sibling repo's workflow
+# guarded on the admin-only code-scanning/default-setup API, always got HTTP 403
+# from GITHUB_TOKEN, and reported success while scanning nothing — do not
+# reintroduce that pattern.) See CLAUDE.md production-safety rule 1 (policy
+# surfaces fail closed) and rule 2 (no fake completion).
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+  schedule:
+    - cron: '23 3 * * 1'
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+concurrency:
+  # github.event_name is part of the key so a push never cancels the weekly
+  # security-extended scan (both run against refs/heads/main).
+  group: codeql-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: python
+            build-mode: none
+          - language: actions
+            build-mode: none
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          # Deep taint suite (security-extended) only on the weekly schedule so
+          # PR/push scans stay fast and low-noise on the default suite.
+          queries: ${{ github.event_name == 'schedule' && 'security-extended' || '' }}
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4
