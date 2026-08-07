@@ -11,14 +11,19 @@ repos:
     rev: 5.13.2
     hooks:
       - id: isort
+        exclude: ^traigent/generated/
 
   # Python code formatting
+  # traigent/generated/ is machine-generated (see scripts/generate_schema_types.py
+  # --check); reformatting it here would desync the checked-in artifact from a
+  # fresh regeneration (the trailing-whitespace lesson in that script's docstring).
   - repo: https://github.com/psf/black
     rev: 26.3.1
     hooks:
       - id: black
         language_version: python3.12
         files: ^traigent/
+        exclude: ^traigent/generated/
 
   # Python linting
   # Keep this rev in sync with the `ruff==` pin in pyproject.toml's `dev`
@@ -28,6 +33,7 @@ repos:
     hooks:
       - id: ruff
         args: [--fix]
+        exclude: ^traigent/generated/
         files: ^traigent/
 
   # Secret detection
@@ -58,7 +64,7 @@ repos:
     rev: 1.7.6
     hooks:
       - id: bandit
-        args: ["-ll", "-r", "traigent/"]
+        args: ["-ll", "-r", "traigent/", "-x", "traigent/generated"]
         pass_filenames: false
         exclude: ^tests/
 
