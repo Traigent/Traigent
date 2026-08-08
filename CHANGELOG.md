@@ -131,6 +131,28 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `invalid`. `metadata.total_examples` is now the INPUT row count in both modes.
 
   A dataset in which every row converts is unaffected.
+- **Breaking (narrow):** `TraigentClient(algorithm=..., no_egress=True)` now
+  raises `ConfigurationError` at **construction** for the managed algorithms —
+  `bayesian`, `optuna`, `tpe`, `cmaes`, `nsga2`. Previously the client
+  constructed and the run failed later, at `optimize()`. The combination can
+  never work: those algorithms require managed optimization, which requires
+  egress. Failing at construction reports it where it can be acted on, with the
+  algorithm named. Local algorithms (`grid`, `random`) are unaffected and still
+  construct with `no_egress=True`. Fallout of wiring `no_egress` into execution
+  intent (#1776); pinned by
+  `TestManagedAlgorithmsWithNoEgressIsABreakingChange`.
+- No behaviour change for `no_egress=True` combined with an explicit deprecated
+  `execution_mode="hybrid"`/`"cloud"`: the run still fails closed with
+  `CloudEgressBlockedError` and sends nothing. The `execution_mode` attribute
+  does read `hybrid` while the resolved policy reads `local_only, offline=True`,
+  which is confusing, but the transport guard — not that attribute — is what
+  stops the request, so the contradiction is cosmetic and is reported loudly
+  rather than silently resolved in either direction.
+- `traigent auth whoami` no longer guesses at a 403 it cannot attribute. It now
+  reports `forbidden_indeterminate` and says both causes are possible, instead
+  of defaulting to "the key lacks a required scope — grant the scope rather than
+  rotating the key", which was stated with full confidence for AWS WAF, Akamai
+  and API Gateway blocks that never reached Traigent (#1775).
 
 ### Fixed
 

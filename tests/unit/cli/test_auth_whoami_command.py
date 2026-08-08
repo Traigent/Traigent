@@ -20,10 +20,15 @@ class _FakeResponse:
         status: int,
         json_payload: dict[str, Any] | None = None,
         text_payload: str = "",
+        headers: dict[str, str] | None = None,
     ) -> None:
         self.status = status
         self._json_payload = json_payload or {}
         self._text_payload = text_payload
+        # Real aiohttp responses always carry headers, and the 403 classifier reads
+        # them (cf-ray/cf-mitigated are headers, not body text). A double without
+        # them cannot exercise that path.
+        self.headers = headers or {}
 
     async def __aenter__(self) -> _FakeResponse:
         return self
@@ -203,22 +208,71 @@ def test_whoami_accepts_backend_issued_prefixes(
     assert "✅ Valid" in result.output
 
 
-@pytest.mark.parametrize("status", [401, 403])
+# This test changed deliberately (#1775). It previously asserted that BOTH 401 and 403
+# print "Invalid or unauthorized API key" under category "authentication" -- i.e. it
+# pinned the exact collapse the issue reports. #1754 / PR #1762 split these on the
+# session path; the CLI kept the collapse, so an insufficient-scope 403 told the user
+# to rotate a perfectly valid key. The parametrisation now carries the EXPECTED
+# distinction rather than asserting the two are the same.
+#
+# The 403 body is now a realistic Traigent API error rather than the bare string
+# "unauthorized". That matters: review of PR #2107 found that classifying a 403 by
+# ruling OUT a Cloudflare-specific signal list defaulted every unrecognised body to
+# "authorization", whose remediation asserts the key is valid and a scope is
+# missing -- a confidently wrong instruction for an AWS WAF or Akamai block. The
+# classifier now keys on the POSITIVE Traigent signal, so the fixture has to be one.
+# `test_whoami_403_that_matches_nothing_is_reported_as_indeterminate` below covers
+# what the old fixture actually represented.
+@pytest.mark.parametrize(
+    "status,text_payload,expected_fragment,expected_category",
+    [
+        (401, "unauthorized", "Invalid or expired API key", "authentication"),
+        (
+            403,
+            '{"detail":"API key lacks scope experiment.write"}',
+            "lacks the required scope",
+            "authorization",
+        ),
+    ],
+)
 def test_whoami_auth_failures_classified(
-    monkeypatch: pytest.MonkeyPatch, status: int, plain: Callable[[str], str]
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    text_payload: str,
+    expected_fragment: str,
+    expected_category: str,
+    plain: Callable[[str], str],
 ) -> None:
     _install_fake_aiohttp(
         monkeypatch,
-        response=_FakeResponse(status=status, text_payload="unauthorized"),
+        response=_FakeResponse(status=status, text_payload=text_payload),
     )
 
     result = _run_whoami(monkeypatch)
     output = plain(result.output)
     assert result.exit_code == 1
-    assert "Invalid or unauthorized API key" in output
+    assert expected_fragment in output
     assert "Category:" in output
-    assert "authentication" in output
+    assert expected_category in output
     assert f"HTTP status: {status}" in output
+
+
+def test_whoami_403_from_the_edge_is_not_reported_as_a_scope_problem(
+    monkeypatch: pytest.MonkeyPatch, plain: Callable[[str], str]
+) -> None:
+    """A Cloudflare 403 never reached Traigent, so neither key nor scope is at fault."""
+    _install_fake_aiohttp(
+        monkeypatch,
+        response=_FakeResponse(
+            status=403,
+            text_payload="Attention Required! | Cloudflare (error code: 1010)",
+        ),
+    )
+
+    output = plain(_run_whoami(monkeypatch).output)
+
+    assert "edge" in output.lower()
+    assert "lacks the required scope" not in output
 
 
 def test_whoami_404_backend_mismatch(
@@ -297,3 +351,51 @@ def test_whoami_timeout_error(
     assert result.exit_code == 1
     assert "Cannot reach backend to validate API key" in output
     assert "connectivity_error" in output
+
+
+def test_whoami_403_that_matches_nothing_is_reported_as_indeterminate(
+    monkeypatch: pytest.MonkeyPatch,
+    plain: Callable[[str], str],
+) -> None:
+    """A 403 we cannot attribute must not claim the key merely lacks a scope.
+
+    This is what the old `text_payload="unauthorized"` fixture actually was: a body
+    matching neither the edge vocabulary nor a Traigent error shape. It used to fall
+    through to "authorization" and print "Grant the scope rather than rotating the
+    key" -- stated with full confidence about a request that may never have reached
+    Traigent at all.
+    """
+    _install_fake_aiohttp(
+        monkeypatch,
+        response=_FakeResponse(status=403, text_payload="unauthorized"),
+    )
+
+    result = _run_whoami(monkeypatch)
+    output = plain(result.output)
+
+    assert result.exit_code == 1
+    assert "forbidden_indeterminate" in output
+    assert "Grant the scope rather than rotating the key" not in output
+    # Rich wraps the hint across lines, so match a fragment that cannot straddle one.
+    assert "do not rotate" in output
+
+
+def test_whoami_403_with_a_cloudflare_header_is_an_edge_block(
+    monkeypatch: pytest.MonkeyPatch,
+    plain: Callable[[str], str],
+) -> None:
+    """cf-ray is a HEADER; it was previously only ever searched for in the body."""
+    _install_fake_aiohttp(
+        monkeypatch,
+        response=_FakeResponse(
+            status=403,
+            text_payload="<html>Attention Required</html>",
+            headers={"CF-RAY": "8abc123def456"},
+        ),
+    )
+
+    result = _run_whoami(monkeypatch)
+    output = plain(result.output)
+
+    assert "edge_blocked" in output
+    assert "did not reach Traigent" in output
