@@ -33,6 +33,22 @@ def _resolve_backend_url() -> str | None:
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.skip(
+    reason=(
+        "Traigent#2081: this smoke builds its payload with create_local_experiment(), "
+        "whose ExperimentDTO carries deliberate Edge-Analytics privacy placeholders "
+        "(agent_id='local-agent-001', evaluation_set_id='local-evalset-001', ...). "
+        "Posting that to a live backend gets 404 'Agent with ID local-agent-001 not "
+        "found' — correctly, because Edge Analytics never sends these DTOs to a "
+        "backend at all (traigent_client.py: 'everything runs locally without "
+        "backend'). The SDK defaults are right; the TEST is wrong, and making it real "
+        "means creating an agent/evalset first — a test-design change, not a quick fix. "
+        "Skipped rather than left red so the two suites that DO exercise the "
+        "SDK<->backend contract (test_sync_live_contract.py, test_hybrid_session_live.py, "
+        "both passing) keep guarding main. It never produced signal: the live-contract "
+        "lane had never executed, so this test had never run."
+    )
+)
 @pytest.mark.skipif(
     not os.getenv("TRAIGENT_BACKEND_LIVE"),
     reason=(
@@ -48,6 +64,19 @@ async def test_backend_api():
         pytest.skip(
             "Set TRAIGENT_API_URL (preferred) or TRAIGENT_BACKEND_URL for the live backend DTO smoke test"
         )
+
+    # This test posted to /experiments with NO credentials, so the backend
+    # (correctly) answered 401 AUTHENTICATION_REQUIRED. It went unnoticed because
+    # the live-contract lane never actually ran: LIVE_CONTRACT_CHECKOUT_TOKEN was
+    # unset, so every substantive step was skipped and the job reported success in
+    # 5-15s. The first real execution of that lane surfaced this immediately.
+    #
+    # Sibling live tests (test_hybrid_session_live.py) already take the key from
+    # the environment and skip without it; match that. Header name per
+    # traigent/cloud/auth.py: API-key auth emits X-API-Key, never Bearer.
+    api_key = os.getenv("TRAIGENT_API_KEY")
+    if not api_key:
+        pytest.skip("TRAIGENT_API_KEY must be set for the live backend DTO smoke test")
 
     # Create experiment DTO
     experiment_dto = create_local_experiment(
@@ -65,8 +94,8 @@ async def test_backend_api():
     # Validate DTO (optional) - skip if traigent_schemas not installed
     # The validate() method requires traigent_schemas package
     # In strict mode (default), it raises DTOSerializationError when unavailable
-    import os
-
+    # (`os` is imported at module scope; a redundant local `import os` here made
+    # the name function-local, so any earlier os.* use raised UnboundLocalError.)
     os.environ.setdefault("TRAIGENT_STRICT_VALIDATION", "false")
     if hasattr(experiment_dto, "validate"):
         try:
@@ -78,7 +107,9 @@ async def test_backend_api():
     # Convert to dict for API
     experiment_data = experiment_dto.to_dict()
 
-    async with aiohttp.ClientSession() as session:
+    # Default headers on the session, so every request in this smoke test is
+    # authenticated rather than only the first one someone remembers to fix.
+    async with aiohttp.ClientSession(headers={"X-API-Key": api_key}) as session:
         # 1. Create experiment
         print("\n1. Creating experiment...")
         url = f"{backend_url}/experiments"
