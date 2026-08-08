@@ -680,6 +680,23 @@ class TestCacheNoFileMode:
 class TestBaseDiscoveryAbstract:
     """Tests for base ModelDiscovery abstract methods."""
 
+    def test_default_prepared_hook_preserves_provider_fetch(self) -> None:
+        class DefaultDiscovery(ModelDiscovery):
+            PROVIDER = "default-hook"
+
+            def _fetch_models_from_sdk(self) -> list[str]:
+                return ["model-from-default-hook"]
+
+            def get_pattern(self) -> str | None:
+                return None
+
+        discovery = DefaultDiscovery(cache=ModelCache(enable_file_cache=False))
+        cache_key, fetch = discovery._prepare_model_fetch()
+
+        assert cache_key == "default-hook"
+        assert fetch() == ["model-from-default-hook"]
+        assert discovery.list_models() == ["model-from-default-hook"]
+
     def test_refresh_cache_calls_list_models(self) -> None:
         """refresh_cache should invalidate and re-fetch."""
         discovery = OpenAIDiscovery()
