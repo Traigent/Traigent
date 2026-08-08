@@ -3,7 +3,10 @@
 GitPython is not a direct Traigent dependency: published optional extras can
 reach it through multiple integrations, including ``wandb`` and
 ``mlflow-skinny``. Keep the resolved artifact at or above the version that
-fixes GHSA-3f7w-8rr8-f37f without changing the published dependency surface.
+fixes GHSA-jm78-9fvv-mhgr and GHSA-wvpp-8hx9-p66j without changing the
+published dependency surface. This floor covers the current Aikido GitPython
+issue group: 471288061, 471288073, 471288052, 471288025, 471288041, and
+471288082.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ from packaging.version import Version
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _LOCK_PATH = _REPO_ROOT / "uv.lock"
 _PYPROJECT_PATH = _REPO_ROOT / "pyproject.toml"
-_SECURITY_FLOOR = Version("3.1.57")
+_SECURITY_FLOOR = Version("3.1.58")
 
 
 def _resolved_gitpython_version() -> Version:
@@ -65,7 +68,8 @@ def test_gitpython_resolved_version_meets_security_floor() -> None:
     resolved = _resolved_gitpython_version()
     assert resolved >= _SECURITY_FLOOR, (
         f"uv.lock resolves GitPython {resolved}, below the required "
-        f"{_SECURITY_FLOOR} security floor for GHSA-3f7w-8rr8-f37f. "
+        f"{_SECURITY_FLOOR} security floor for GHSA-jm78-9fvv-mhgr and "
+        "GHSA-wvpp-8hx9-p66j. "
         "Refresh only the GitPython lock artifact; do not add it as a direct "
         "project dependency."
     )
@@ -86,8 +90,8 @@ def test_gitpython_is_not_a_direct_published_dependency() -> None:
 def test_direct_gitpython_requirement_probe_is_detected() -> None:
     """PEP 508 parsing detects direct specs with extras, markers, and URLs."""
     direct_locations = _direct_gitpython_locations(
-        ["GitPython @ https://example.test/GitPython-3.1.57.whl"],
-        {"integrations": ["GitPython[security]>=3.1.57; python_version >= '3.11'"]},
+        ["GitPython @ https://example.test/GitPython-3.1.58.whl"],
+        {"integrations": ["GitPython[security]>=3.1.58; python_version >= '3.11'"]},
     )
     assert direct_locations == [
         "project.dependencies",
