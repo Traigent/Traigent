@@ -127,6 +127,20 @@ class TestRetryContractIsUsedCorrectly:
         behaviour changing -- and blind in the important one: it says nothing about
         whether an error actually escapes. It now drives a real programming error
         through call_tool and requires it to surface.
+
+        ``enable_fallback`` MUST be True here. It is an ``__init__``-only
+        attribute with no class-level default, and this test builds the client
+        via ``__new__`` (bypassing ``__init__``), so leaving it unset made the
+        broad ``except Exception`` handler's own ``if self.enable_fallback:``
+        read raise a SECOND, unrelated ``AttributeError`` on the test double --
+        before the fallback path (the thing under test) was ever reached.
+        ``pytest.raises(AttributeError)`` checks type, not identity, so that
+        passed whether or not the production fix was present, and
+        ``_operation_results`` stayed empty either way, so the second assert
+        passed too. Set explicitly so the broad handler -- when reinstated --
+        genuinely reaches ``_fallback_operation`` and returns a fallback
+        response instead of raising, which is what makes this test fail when
+        the fix is reverted.
         """
         import asyncio
 
@@ -138,6 +152,7 @@ class TestRetryContractIsUsedCorrectly:
         client._connected = True
         client._session = object()  # not None, so call_tool proceeds
         client._transport = None
+        client.enable_fallback = True
         client._stats = {
             "total_requests": 0,
             "successful_requests": 0,
