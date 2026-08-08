@@ -18,13 +18,24 @@ from dataclasses import asdict, dataclass
 from typing import Any, cast
 
 # Optional dependencies
+# Traigent#1777: this block imported ``StdioClientTransport`` from
+# ``mcp.client.stdio``, a symbol that package has never exported (it exports
+# ``stdio_client`` / ``StdioServerParameters``). The ImportError therefore fired on
+# EVERY import, setting MCP_AVAILABLE=False even with ``mcp`` correctly installed, and
+# the real-MCP path has consequently never executed. The import is dropped so
+# MCP_AVAILABLE reflects whether ``mcp`` is actually importable; the transport wiring
+# that used the symbol is handled at its own site below.
 try:
     from mcp import ClientSession, McpError, StdioServerParameters
-    from mcp.client.stdio import StdioClientTransport
 
     MCP_AVAILABLE = True
-except ImportError:
+    _MCP_IMPORT_ERROR = None
+except ImportError as _exc:  # pragma: no cover - depends on optional extra
     MCP_AVAILABLE = False
+    # Kept so "MCP is off" can be distinguished from "MCP is off BECAUSE <reason>".
+    # #1777 was exactly that ambiguity: the flag said unavailable and the reason was
+    # a nonexistent symbol, not a missing package.
+    _MCP_IMPORT_ERROR = str(_exc)
 
     class McpError(Exception):  # type: ignore[no-redef]
         """Stub MCP error when the ``mcp`` package is not installed.
@@ -53,6 +64,12 @@ except ImportError:
         def __init__(self, *args, **kwargs) -> None:
             # Stub: MCP package not available, this class is never used at runtime
             pass
+
+        async def close(self) -> None:
+            # `_cleanup_connection` awaits `.close()` on whatever `_transport`
+            # holds. Without this the stub is not substitutable for the real
+            # transport and mypy fails the build on the attribute.
+            return None
 
 
 from traigent.evaluators.base import Dataset
@@ -280,15 +297,45 @@ class ProductionMCPClient:
             self._stats["connection_attempts"] += 1
 
             try:
-                # Create server parameters
-                server_params = StdioServerParameters(
+                # Built and immediately discarded: the transport that consumed it
+                # is unimplemented (see below). Kept rather than deleted so the port
+                # has the parameter construction already in place, and to keep
+                # StdioServerParameters a live import rather than a dangling one.
+                _server_params = StdioServerParameters(
                     command=self.server_config.server_path,
                     args=self.server_config.server_args or [],
                     env=None,
                 )
 
-                # Create transport and session
-                self._transport = StdioClientTransport(server_params)
+                # STOP HERE, LOUDLY (Traigent#1777, remaining half).
+                #
+                # This is where the real-MCP path was supposed to build a transport.
+                # It called ``StdioClientTransport(server_params)`` -- a class that
+                # does not exist in the ``mcp`` package, only as the stub defined in
+                # this file's own ImportError branch. Because that branch always fired
+                # (see the import block), the line was never reached and nobody found
+                # out.
+                #
+                # Now that MCP_AVAILABLE reflects reality, it WOULD be reached. The
+                # correct wiring is ``mcp.client.stdio.stdio_client``, which is an
+                # async context manager yielding a (read, write) stream pair rather
+                # than a transport object -- a different shape from what
+                # ``ClientSession(self._transport)`` expects here, so it is a real
+                # port, not a rename.
+                #
+                # Deliberately NOT guessed at: that port cannot be validated without a
+                # live MCP server, and shipping an unvalidated transport would put
+                # this path right back where it started -- present, plausible, and
+                # never actually executed. Failing here with an actionable message is
+                # strictly better than the previous silent disable, and strictly
+                # better than a NameError.
+                raise NotImplementedError(
+                    "ProductionMCPClient's stdio transport is not implemented. It "
+                    "referenced mcp.client.stdio.StdioClientTransport, which that "
+                    "package does not export; the real API is stdio_client() and has "
+                    "a different shape. Until it is ported, the real-MCP path is "
+                    "unavailable -- see Traigent#1777."
+                )
                 self._session = ClientSession(self._transport)
 
                 # Initialize connection
@@ -302,6 +349,15 @@ class ProductionMCPClient:
                 )
                 return True
 
+            except NotImplementedError:
+                # The "STOP HERE, LOUDLY" raise above is INSIDE this try, so the
+                # broad handler below used to swallow it and return False -- the
+                # connect() call then read as an ordinary connection failure and the
+                # caller fell back to a synthetic success. That is the precise
+                # laundering this PR exists to stop, in the one function that needed
+                # it. Cleanup still runs; the error still escapes.
+                await self._cleanup_connection()
+                raise
             except Exception as e:
                 logger.error(f"Failed to connect to MCP server: {e}")
                 await self._cleanup_connection()
@@ -403,19 +459,51 @@ class ProductionMCPClient:
 
             # Use retry handler for robust tool execution
             try:
-                result = await self._retry_handler.execute_async(execute_tool_call)
-
-                if result.success:
-                    response = result.result
-                    self._operation_results[operation_id] = response
-                    return cast(MCPResponse, response)
-                else:
-                    # All retry attempts failed
-                    raise result.last_exception or Exception(
-                        "Tool call failed after retries"
-                    )
+                # RetryHandler.execute_async UNWRAPS: it returns the callable's own
+                # return value (an MCPResponse here) or raises. It does NOT return a
+                # RetryResult. The previous code read `.success` (which happened to
+                # exist on MCPResponse, so it "worked" by luck), then `.result` and
+                # `.last_exception`, neither of which MCPResponse has -- an
+                # AttributeError waiting for the import bug above to be fixed, and one
+                # the broad handler would have laundered straight into synthetic
+                # fallback. Use execute_async_with_result if a RetryResult is wanted.
+                # Annotated, not inferred. `RetryHandler.execute_async` is typed
+                # `Callable[..., T] -> T`, so for an `async def` callable T binds to
+                # the COROUTINE type even though the value returned is the awaited
+                # result. Without the annotation mypy fixes `response` as a
+                # Coroutine here and then rejects the MCPResponse assigned to the
+                # same name in the handlers below. (The underlying signature wants
+                # `Callable[..., Awaitable[T]] -> T`; changing a shared utility's
+                # public type is out of scope for this PR -- see the follow-up.)
+                response: MCPResponse = cast(
+                    MCPResponse,
+                    await self._retry_handler.execute_async(execute_tool_call),
+                )
+                self._operation_results[operation_id] = response
+                return response
 
             except asyncio.CancelledError:
+                raise
+            except (
+                AttributeError,
+                TypeError,
+                NameError,
+                ImportError,
+                NotImplementedError,
+            ) as e:
+                # PROGRAMMING errors, kept out of the fallback path below. That path
+                # returns MCPResponse(success=True, is_fallback=True) with a synthetic
+                # `fallback_*` id, so laundering a defect through it reports a fake
+                # backend resource as a successful creation -- how #1777 stayed
+                # invisible. Re-raised so it surfaces where it can be fixed.
+                self._stats["failed_requests"] += 1
+                logger.error(
+                    "MCP tool call hit a PROGRAMMING error (not a transport "
+                    "failure): %s: %s. Not falling back to a synthetic response -- "
+                    "a fake success here would be indistinguishable from a real one.",
+                    type(e).__name__,
+                    e,
+                )
                 raise
             except Exception as e:
                 self._stats["failed_requests"] += 1
@@ -451,7 +539,7 @@ class ProductionMCPClient:
                     return fallback_response
 
                 self._operation_results[operation_id] = response
-                return response  # type: ignore[no-any-return]
+                return response
 
         finally:
             # Clean up operation tracking

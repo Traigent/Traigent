@@ -156,6 +156,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `ProductionMCPClient` no longer launders programming errors into benign
+  degradation (#1774, #1777). Two related, user-visible behavior changes ship
+  together:
+  - `MCP_AVAILABLE` now reflects whether the `mcp` package is actually
+    importable, rather than a nonexistent `mcp.client.stdio.StdioClientTransport`
+    symbol the import block reached for — so it flips `False` -> `True`
+    wherever `mcp` is installed. The stdio-transport path this newly exposes
+    is not yet ported: `connect()` now raises `NotImplementedError` naming the
+    real API (`stdio_client`) instead of quietly returning `False`.
+  - `call_tool()` now re-raises `AttributeError` / `TypeError` / `NameError` /
+    `ImportError` / `NotImplementedError` instead of routing them into the
+    local fallback path and returning a synthetic `success=True,
+    is_fallback=True` response with a fake `fallback_*` id. Genuine
+    transport/backend failures still fall back exactly as before; only
+    programming-error signatures are excluded from fallback.
+  Any caller relying on the previous silent-`False` / silent-fallback
+  contract for these specific failure modes should catch the new exceptions
+  explicitly.
+
 - `traigent sync` now explains what it wants when an id is not found: the old
   `Session <id> not found` gave no path forward for the common case of passing
   `optimization_id`, which `sync` does not accept (#2020).
