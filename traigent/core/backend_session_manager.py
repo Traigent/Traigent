@@ -1651,9 +1651,45 @@ class BackendSessionManager:
         tracking disabled / backend-closed-early (#1938) — so `traigent sync`
         sees a finished, sync-eligible session instead of one stuck at
         "pending". Best-effort: storage failures never break the run.
+
+        "Never break the run" covers the WHOLE method, not just the write
+        (#2048). Only ``storage.finalize_session`` used to be inside the
+        boundary; ``_egress_disabled()``, ``_remote_session_completed()`` and
+        ``_local_storage()`` all ran ahead of it unguarded, so a raise from any
+        of them propagated out of a method whose own docstring says it cannot --
+        and, because this runs on the failure path, it would REPLACE the
+        optimization error the caller was about to receive with an incidental
+        bookkeeping one. Same boundary the sibling
+        ``local_session_record_exists`` below already documents.
         """
         if not session_id:
             return
+        try:
+            self._finalize_local_session_unguarded(session_id, optimization_status)
+        except Exception as exc:
+            # Only Exception: a KeyboardInterrupt/SystemExit raised through here
+            # is the user or the interpreter asking to stop, and best-effort
+            # bookkeeping must not be the thing that swallows that.
+            #
+            # Imported inside the handler, not at module scope: orchestrator.py
+            # already imports THIS module, so a top-level import would close the
+            # cycle. Reused rather than re-implemented -- a third copy of
+            # "render an exception that may refuse to render" is how these
+            # variants drift apart.
+            from traigent.core.orchestrator import _safe_exception_text
+
+            logger.warning(
+                "Failed to finalize local session %s: %s",
+                session_id,
+                _safe_exception_text(exc),
+            )
+
+    def _finalize_local_session_unguarded(
+        self,
+        session_id: str,
+        optimization_status: OptimizationStatus,
+    ) -> None:
+        """Body of :meth:`finalize_local_session`; may raise, and is guarded there."""
         remote_finalize_owns_mirror = (
             self._backend_client is not None
             and self._backend_tracking_enabled
@@ -1671,15 +1707,7 @@ class BackendSessionManager:
             local_status = OptimizationStatus.CANCELLED.value
         else:
             local_status = OptimizationStatus.FAILED.value
-        try:
-            storage.finalize_session(session_id, local_status)
-        except Exception as exc:
-            logger.warning(
-                "Failed to finalize local session %s as %s: %s",
-                session_id,
-                local_status,
-                exc,
-            )
+        storage.finalize_session(session_id, local_status)
 
     def local_session_record_exists(self, session_id: str | None) -> bool:
         """Durability half of the #2020 predicate: does the local store the
