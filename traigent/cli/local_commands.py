@@ -187,12 +187,19 @@ def show_session(session_id: str, output_format: str) -> None:
             # ratio could only ever render "n/n" — a run that stopped after 3
             # of a declared 10 printed "3/3", which reads as a completed budget
             # and hides the early stop. "3/0" was obviously broken and ignored;
-            # "3/3" is plausible and would be believed. There is no honest
-            # denominator to put back: metadata["max_trials"] is fabricated
-            # upstream (backend_session_manager.py:1387 substitutes 10 when
-            # none was configured), so a real budget of 10 is indistinguishable
-            # from no budget at all. The summary view at :211 already prints
-            # the bare count.
+            # "3/3" is plausible and would be believed. The summary view at
+            # :211 already prints the bare count.
+            #
+            # The second reason this comment used to give — that
+            # metadata["max_trials"] is fabricated upstream, so a real budget of
+            # 10 is indistinguishable from no budget — no longer holds: #2049
+            # stopped `backend_session_manager` substituting 10, so the key is
+            # now present only when the caller actually set a budget. An honest
+            # denominator IS therefore available for sessions that have one.
+            # Restoring a ratio is still a display decision (it would have to
+            # read the metadata rather than total_trials, and say something
+            # sensible for the no-budget case), so it is deliberately NOT done
+            # here — only the stale justification is corrected.
             click.echo(f"Trials: {session.completed_trials}")
 
             if session.best_score is not None:
