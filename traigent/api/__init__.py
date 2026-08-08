@@ -44,6 +44,7 @@ __all__ = [
     "SafetyThreshold",
     "SafetyValidator",
     "get_available_safety_presets",
+    "TextDocument",
     "ExternalServiceEvaluator",
 ]
 
@@ -84,6 +85,7 @@ _EXPORT_MAP = {
         "traigent.api.safety",
         "get_available_safety_presets",
     ),
+    "TextDocument": ("traigent.api.parameter_ranges", "TextDocument"),
     "ExternalServiceEvaluator": (
         "traigent.api.decorators",
         "ExternalServiceEvaluator",
