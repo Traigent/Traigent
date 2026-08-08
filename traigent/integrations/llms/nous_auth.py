@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hmac
 import json
 import logging
 import os
@@ -80,6 +81,7 @@ _TOKEN_URL_ENV = "TRAIGENT_NOUS_TOKEN_URL"
 # resolves to an expiry already past (or within this epsilon of) ``now`` yields a
 # useless token; we fail loud rather than cache/serve an already-expired one.
 _MIN_TOKEN_LIFETIME_SECONDS = 1.0
+_TOKEN_BINDING_DOMAIN = b"traigent:nous-refresh-binding:v1"
 
 
 class NousAuthError(TraigentError):
@@ -97,6 +99,7 @@ class _TokenState:
 
     jwt: str
     expires_at: float
+    refresh_binding: str
 
 
 _state_lock = threading.Lock()
@@ -133,6 +136,40 @@ def has_nous_credentials() -> bool:
     if any(os.environ.get(name) for name in _REFRESH_TOKEN_ENVS):
         return True
     return _auth_file_path().exists()
+
+
+def _get_nous_cache_identity() -> tuple[str, str] | None:
+    """Return stable, non-network identity material for cache partitioning.
+
+    The source and credential content follow the same first-hit precedence as
+    :func:`get_nous_api_key`, but this helper never mints or refreshes a JWT.
+    """
+    static = os.environ.get(_STATIC_KEY_ENV)
+    if static:
+        if not _is_valid_identity_material(static):
+            return "invalid-auth-source-v1", "static"
+        return "static", static
+
+    for env_name in _REFRESH_TOKEN_ENVS:
+        value = os.environ.get(env_name)
+        if value:
+            if not _is_valid_identity_material(value):
+                return "invalid-auth-source-v1", env_name
+            return f"${env_name}", value
+
+    auth_path = _auth_file_path()
+    if auth_path.exists():
+        try:
+            identity_material = _read_refresh_token_from_file(auth_path)
+            if not _is_valid_identity_material(identity_material):
+                return "invalid-auth-file-v1", str(auth_path.resolve())
+            return str(auth_path.resolve()), identity_material
+        except NousAuthError:
+            # Cache-key construction runs before ModelDiscovery.list_models's
+            # fetch/fallback boundary. Keep malformed files on a distinct,
+            # non-secret partition so discovery can still use the catalog.
+            return "invalid-auth-file-v1", str(auth_path.resolve())
+    return None
 
 
 def clear_nous_auth_cache() -> None:
@@ -184,17 +221,36 @@ def get_nous_api_key(
 
     with _state_lock:
         global _token_state
-        if (
-            not force_refresh
-            and _token_state is not None
-            and _token_state.expires_at - _now() >= min_ttl_seconds
-        ):
-            return _token_state.jwt
-
         refresh_token, source = _resolve_refresh_token()
-        state = _mint_token(refresh_token, source)
-        _token_state = state
-        return state.jwt
+        return _get_nous_api_key_for_identity(
+            refresh_token,
+            source,
+            min_ttl_seconds=min_ttl_seconds,
+            force_refresh=force_refresh,
+        )
+
+
+def _get_nous_api_key_for_identity(
+    refresh_material: str,
+    source: str,
+    *,
+    min_ttl_seconds: int = 300,
+    force_refresh: bool = False,
+) -> str:
+    """Resolve a captured refresh identity while the caller holds the lock."""
+    global _token_state
+    refresh_binding = _refresh_token_binding(refresh_material, source)
+    if (
+        not force_refresh
+        and _token_state is not None
+        and _token_state.expires_at - _now() >= min_ttl_seconds
+        and hmac.compare_digest(_token_state.refresh_binding, refresh_binding)
+    ):
+        return _token_state.jwt
+
+    state = _mint_token(refresh_material, source, refresh_binding)
+    _token_state = state
+    return state.jwt
 
 
 def _resolve_refresh_token() -> tuple[str, str]:
@@ -206,7 +262,7 @@ def _resolve_refresh_token() -> tuple[str, str]:
 
     auth_path = _auth_file_path()
     if auth_path.exists():
-        return _read_refresh_token_from_file(auth_path), str(auth_path)
+        return _read_refresh_token_from_file(auth_path), str(auth_path.resolve())
 
     raise NousAuthError(
         "No Nous Portal credentials found. Set NOUS_API_KEY (a pre-minted "
@@ -244,11 +300,38 @@ def _read_refresh_token_from_file(path: Path) -> str:
     )
 
 
-def _mint_token(refresh_token: str, source: str) -> _TokenState:
+def _refresh_token_binding(identity_material: str, source: str) -> str:
+    """Return an opaque binding for the winning source and refresh material."""
+    if "\x00" in identity_material or "\x00" in source:
+        raise NousAuthError("Nous refresh credential contains an invalid NUL byte")
+    try:
+        key = identity_material.encode("utf-8")
+        message = _TOKEN_BINDING_DOMAIN + b"\x00" + source.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise NousAuthError(
+            "Nous refresh credential contains invalid Unicode material"
+        ) from exc
+    return hmac.new(key, message, "sha256").hexdigest()
+
+
+def _is_valid_identity_material(value: str) -> bool:
+    """Return whether identity material is safe for opaque HMAC partitioning."""
+    if "\x00" in value:
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _mint_token(
+    refresh_material: str, source: str, refresh_binding: str
+) -> _TokenState:
     """Exchange a refresh token for a JWT + expiry, or raise :class:`NousAuthError`."""
     token_url = _token_url()
     try:
-        payload = _request_new_token(refresh_token, token_url=token_url)
+        payload = _request_new_token(refresh_material, token_url=token_url)
     except NousAuthError:
         raise
     except Exception as exc:  # network / requests errors
@@ -265,7 +348,9 @@ def _mint_token(refresh_token: str, source: str) -> _TokenState:
         )
 
     expires_at = _expires_at_from_payload(payload, jwt_token)
-    return _TokenState(jwt=jwt_token, expires_at=expires_at)
+    return _TokenState(
+        jwt=jwt_token, expires_at=expires_at, refresh_binding=refresh_binding
+    )
 
 
 def _request_new_token(

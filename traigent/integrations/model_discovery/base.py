@@ -7,9 +7,11 @@ model discovery classes must implement.
 # Traceability: CONC-Layer-Integration FUNC-INTEGRATIONS REQ-INT-008
 
 import hashlib
+import hmac
 import logging
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 # Default config file path
 DEFAULT_CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "models.yaml"
+_CACHE_KEY_DOMAIN = b"traigent:model-discovery-cache:v1"
 
 
 class ModelDiscovery(ABC):
@@ -60,24 +63,38 @@ class ModelDiscovery(ABC):
         self._config: dict | None = None
 
     def _get_credential_fingerprint(self) -> str | None:
-        """Return a non-sensitive fingerprint of model-list context.
+        """Return an opaque credential-derived partition identifier.
 
         Providers whose visible model list depends on credentials, account
-        context, or an endpoint must override this method. The fingerprint is
-        used in the persistent cache key, so it must never contain raw secrets.
+        context, or an endpoint must override this method. The identifier is
+        used in the persistent cache key, so raw secrets must never enter it.
         """
         return None
 
     @staticmethod
     def _fingerprint(*parts: str | None) -> str:
-        """Build a short, filesystem-safe fingerprint without retaining secrets."""
-        material = "|".join(part or "" for part in parts)
-        return hashlib.sha256(material.encode("utf-8")).hexdigest()[:12]
+        """Build a filesystem-safe opaque credential-derived partition identifier.
+
+        NUL-delimited canonicalization keeps tuple boundaries unambiguous for
+        environment-derived values, which cannot contain NUL. HMAC keeps the
+        credential/context material out of a directly exposed raw hash; the
+        fixed domain message versions and separates this construction.
+        """
+        canonical_parts = tuple("" if part is None else part for part in parts)
+        if any("\x00" in part for part in canonical_parts):
+            raise ValueError("cache-key context parts must not contain NUL")
+
+        material = "\x00".join(canonical_parts).encode("utf-8")
+        return hmac.new(material, _CACHE_KEY_DOMAIN, hashlib.sha256).hexdigest()[:24]
 
     def _get_cache_key(self) -> str:
         """Return the provider cache key scoped to its model-list context."""
-        fingerprint = self._get_credential_fingerprint()
-        return f"{self.PROVIDER}-{fingerprint}" if fingerprint else self.PROVIDER
+        partition_id = self._get_credential_fingerprint()
+        return f"{self.PROVIDER}-{partition_id}" if partition_id else self.PROVIDER
+
+    def _prepare_model_fetch(self) -> tuple[str, Callable[[], list[str]]]:
+        """Prepare one cache context and the fetch bound to that context."""
+        return self._get_cache_key(), self._fetch_models_from_sdk
 
     def list_models(self, force_refresh: bool = False) -> list[str]:
         """List available models for this provider.
@@ -90,7 +107,7 @@ class ModelDiscovery(ABC):
         Returns:
             List of model names.
         """
-        cache_key = self._get_cache_key()
+        cache_key, fetch_models = self._prepare_model_fetch()
 
         # Try cache first (unless force_refresh)
         if not force_refresh:
@@ -100,7 +117,7 @@ class ModelDiscovery(ABC):
 
         # Try SDK-based discovery
         try:
-            models = self._fetch_models_from_sdk()
+            models = fetch_models()
             if models:
                 self._cache.set(cache_key, models, self._get_cache_ttl())
                 return models
