@@ -665,6 +665,17 @@ class ConfigStateManager:
 
             from traigent.api.types import TrialResult, TrialStatus
 
+            # error/score restored through the #2047 trial manifest. This
+            # writer dumps via `asdict`, so both have always been ON DISK here;
+            # only this decoder discarded them, which made a crashed trial
+            # reload as an ordinary low-scoring one. The required-key reads
+            # below stay required: a config_state artifact missing them is
+            # corrupt, and this loader fails loudly rather than defaulting.
+            from traigent.utils.optimization_result_persistence import (
+                decode_trial_error,
+                decode_trial_score,
+            )
+
             trials = []
             for trial_data in result_dict.get("trials", []):
                 trial = TrialResult(
@@ -676,6 +687,8 @@ class ConfigStateManager:
                     timestamp=datetime.fromisoformat(trial_data["timestamp"]),
                     error_message=trial_data.get("error_message"),
                     metadata=trial_data.get("metadata", {}),
+                    error=decode_trial_error(trial_data.get("error")),
+                    score=decode_trial_score(trial_data.get("score")),
                 )
                 trials.append(trial)
 
