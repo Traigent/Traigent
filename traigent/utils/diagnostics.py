@@ -117,7 +117,6 @@ class TraigentDiagnostics:
     ]
 
     OPTIONAL_PACKAGES: list[tuple[str, str, str | None]] = [
-        ("langchain_chroma", "LangChain Chroma", "traigent[chroma]"),
         ("mlflow", "MLflow", "mlflow"),
         ("wandb", "Weights & Biases", "wandb"),
         ("streamlit", "Streamlit", "streamlit"),
@@ -131,6 +130,13 @@ class TraigentDiagnostics:
         ("TRAIGENT_MOCK_LLM", "Mock LLM mode testing", False),
         ("TRAIGENT_OFFLINE_MODE", "Offline backend mode", False),
     ]
+
+    CHROMA_INTEGRATION_UNAVAILABLE = (
+        "The Traigent-provided Chroma packaging extra is temporarily withdrawn because "
+        "GHSA-f4j7-r4q5-qw2c affects the published chromadb dependency range. "
+        "Do not install traigent[chroma] until upstream publishes a patched release; "
+        "existing manually managed compatible environments are not changed."
+    )
 
     @classmethod
     def run_diagnostics(cls) -> DiagnosticReport:
@@ -148,6 +154,7 @@ class TraigentDiagnostics:
 
         # Check optional packages
         cls._check_packages(report, cls.OPTIONAL_PACKAGES, required=False)
+        cls._check_chroma_integration_availability(report)
 
         # Check environment variables
         cls._check_environment(report)
@@ -219,6 +226,11 @@ class TraigentDiagnostics:
                     report.add_warning(
                         "Dependencies", f"{display_name} is not installed (optional)"
                     )
+
+    @classmethod
+    def _check_chroma_integration_availability(cls, report: DiagnosticReport) -> None:
+        """Report the temporary security hold without suggesting an unsafe install."""
+        report.add_warning("Dependencies", cls.CHROMA_INTEGRATION_UNAVAILABLE)
 
     @classmethod
     def _check_environment(cls, report: DiagnosticReport) -> None:

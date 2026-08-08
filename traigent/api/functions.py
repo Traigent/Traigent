@@ -8,6 +8,7 @@ import warnings
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
+from traigent.core.cache_usage import normalize_cache_usage
 from traigent.api.types import OptimizationResult, StrategyConfig
 from traigent.config.api_keys import _API_KEY_MANAGER
 from traigent.config.context import get_applied_config
@@ -1013,6 +1014,7 @@ def with_usage(
     input_tokens: int | None = None,
     output_tokens: int | None = None,
     response_time_ms: float | None = None,
+    provider_usage: dict[str, Any] | None = None,
 ) -> str | dict[str, Any]:
     """Wrap a response with usage metadata if in optimization mode.
 
@@ -1134,7 +1136,7 @@ def with_usage(
         or output_tokens is not None
         or response_time_ms is not None
     ):
-        usage: dict[str, int | float] = {}
+        usage: dict[str, Any] = {}
         if input_tokens is not None:
             usage["input_tokens"] = int(input_tokens)
         if output_tokens is not None:
@@ -1142,6 +1144,33 @@ def with_usage(
         if response_time_ms is not None:
             usage["response_time_ms"] = float(response_time_ms)
         meta["usage"] = usage
+
+    # Prompt-cache dimensions (Traigent#2068). Passing the provider's raw usage
+    # payload is preferred over hand-extracting counts: normalize_cache_usage knows
+    # each provider's field names AND whether that provider counts cached tokens
+    # inside its input total, which is the part callers get wrong. It also keeps
+    # "the provider did not report this" distinct from "zero", so a cached workload
+    # is never silently priced as if it had no cache.
+    if provider_usage is not None:
+        cache_usage = normalize_cache_usage(provider_usage)
+        meta["cache_usage"] = cache_usage.as_metadata()
+        if cache_usage.input_tokens is not None:
+            # The NORMALIZED figure wins, even over an explicit caller value.
+            #
+            # TraigentSchema's contract defines input_tokens as EXCLUDING
+            # cache_read_tokens (the disjoint convention). A caller passing the
+            # provider's own number is usually passing a cache-INCLUSIVE one --
+            # OpenAI's prompt_tokens counts cached tokens inside it -- so storing
+            # that verbatim alongside cache_read_tokens double-counts: a natural
+            # OpenAI call recorded input_tokens=2006 next to cache_read_tokens=1920,
+            # and anything summing them got 3926 against a truth of 2006.
+            #
+            # Preferring the normalized value is also what the JS SDK does
+            # (integrations/shared.ts). The two SDKs previously disagreed on exactly
+            # the question this feature exists to settle, each with a green test
+            # asserting its own answer. Where a provider already reports disjointly
+            # (Bedrock), the two values are equal and this changes nothing.
+            meta.setdefault("usage", {})["input_tokens"] = cache_usage.input_tokens
 
     result["__traigent_meta__"] = meta
 

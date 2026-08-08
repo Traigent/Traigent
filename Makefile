@@ -1,7 +1,7 @@
 # Makefile for Traigent SDK Development
 # Run 'make help' to see available commands
 
-.PHONY: help install install-dev test test-unit test-integration test-coverage lint format format-ruff local-gate local-gate-full security security-check clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces sonar-scan sonar-local-start sonar-local-stop sonar-local-down sonar-local-clean sonar-local sonar-local-issues test-quality test-quality-ci test-quality-llm release-review-local release-build release-example-smoke release-check release-real-validation install-hooks
+.PHONY: help install install-dev test test-unit test-integration test-coverage lint format format-ruff local-gate local-gate-full security security-check clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces sonar-scan sonar-local-start sonar-local-stop sonar-local-down sonar-local-clean sonar-local sonar-local-issues test-quality test-quality-ci test-quality-llm release-review-local release-build release-example-smoke release-check release-real-validation install-hooks generate-schema-types check-schema-types
 
 # Variables
 PYTHON ?= .venv/bin/python
@@ -30,6 +30,12 @@ install:  ## Install package in production mode
 install-dev:  ## Install package with all development dependencies
 	$(PIP) install -e ".[all,dev,dspy,docs]"
 	$(PYTHON) -m pre_commit install
+
+generate-schema-types:  ## Regenerate traigent/generated/schema_types.py from TraigentSchema (needs TRAIGENT_SCHEMA_REPO or a sibling ../TraigentSchema checkout)
+	$(PYTHON) scripts/generate_schema_types.py
+
+check-schema-types:  ## Verify traigent/generated/schema_types.py is current (fails with a diff on drift) -- run this FIRST, mirrors traigent-js's check:schema-types
+	$(PYTHON) scripts/generate_schema_types.py --check
 
 test:  ## Run all tests (parallel with pytest-xdist)
 	$(PYTEST) $(TEST_DIR) -n auto --dist loadgroup
@@ -86,7 +92,7 @@ lint:  ## Run all linters (ruff, mypy, bandit)
 	@echo "Running MyPy..."
 	$(MYPY) $(SRC_DIR) $(VALIDATION_SRC_DIR) --install-types --non-interactive
 	@echo "Running Bandit..."
-	$(BANDIT) -r $(SRC_DIR) $(VALIDATION_SRC_DIR) -ll --skip B101,B601
+	$(BANDIT) -r $(SRC_DIR) $(VALIDATION_SRC_DIR) -ll --skip B101,B601 -x $(SRC_DIR)/generated
 
 format:  ## Format code with black and isort
 	@echo "Formatting with Black..."

@@ -137,12 +137,17 @@ class OptimizationSession:
     # reconciliation is how the invariant comes back apart.
     #
     # It is deliberately NOT the ``max_trials`` budget, and must never be
-    # populated from ``metadata["max_trials"]``: backend_session_manager.py:1387
-    # does ``max_trials_value = max_trials if max_trials is not None else 10``,
-    # so a connected run that never specified a budget carries a fabricated 10
-    # in its metadata. Copying that in would make a 24-config exhaustive grid
-    # persist ``total_trials: 10, completed_trials: 24`` and the CLI print
-    # "24/10" — and no guard can tell a user's real 10 from the SDK's default.
+    # populated from ``metadata["max_trials"]``. Copying a budget in would make a
+    # 24-config exhaustive grid persist ``total_trials: 10, completed_trials: 24``
+    # and the CLI print "24/10" — a recorded count and a budget are different
+    # quantities, so the rule stands regardless of how the budget is derived.
+    #
+    # The original reason given here was narrower and is now out of date: it said
+    # ``metadata["max_trials"]`` carries a *fabricated* 10 for a run that set no
+    # budget, so no guard could tell a user's real 10 from the SDK's default.
+    # #2049 removed that substitution, so the metadata value is now absent when
+    # no budget was set. The prohibition is unchanged — it never depended on the
+    # fabrication, only on the two quantities meaning different things.
     total_trials: int
     completed_trials: int
     best_config: dict[str, Any | None] | None = None

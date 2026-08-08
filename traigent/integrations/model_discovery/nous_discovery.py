@@ -17,9 +17,12 @@ back to the ``config/models.yaml`` known-model list.
 # Traceability: CONC-Layer-Integration FUNC-INTEGRATIONS REQ-INT-008
 
 import logging
+from collections.abc import Callable
 
+from traigent.integrations.llms import nous_auth
 from traigent.integrations.llms.nous_auth import (
     NOUS_BASE_URL,
+    _get_nous_cache_identity,
     get_nous_api_key,
     has_nous_credentials,
 )
@@ -42,6 +45,80 @@ class NousDiscovery(ModelDiscovery):
     PROVIDER = "nous"
     FRAMEWORK = Framework.NOUS
 
+    def _prepare_model_fetch(self) -> tuple[str, Callable[[], list[str]]]:
+        """Bind cache lookup and SDK fetch to one non-network auth snapshot."""
+        identity = _get_nous_cache_identity()
+        if identity is None:
+            return self.PROVIDER, lambda: []
+
+        source, identity_material = identity
+        cache_parts = (
+            (NOUS_BASE_URL, source)
+            if source == "invalid-auth-file-v1"
+            else (NOUS_BASE_URL, source, identity_material)
+        )
+        cache_key = f"{self.PROVIDER}-{self._fingerprint(*cache_parts)}"
+
+        return cache_key, lambda: self._fetch_models_from_identity(identity)
+
+    def _get_credential_fingerprint(self) -> str | None:
+        """Partition portal models by endpoint and winning credential source."""
+        identity = _get_nous_cache_identity()
+        if identity is None:
+            return None
+        source, identity_material = identity
+        if source == "invalid-auth-file-v1":
+            invalid_partition_id: str = ModelDiscovery._fingerprint(
+                NOUS_BASE_URL, source
+            )
+            return invalid_partition_id
+        valid_partition_id: str = ModelDiscovery._fingerprint(
+            NOUS_BASE_URL, source, identity_material
+        )
+        return valid_partition_id
+
+    def _fetch_models_from_identity(self, identity: tuple[str, str]) -> list[str]:
+        """Fetch using the already captured identity, without rereading sources."""
+        source, identity_material = identity
+        try:
+            if source in {"invalid-auth-file-v1", "invalid-auth-source-v1"}:
+                raise nous_auth.NousAuthError(
+                    "Nous credential identity is invalid; refusing authenticated discovery"
+                )
+            if source == "static":
+                bearer = identity_material
+            else:
+                with nous_auth._state_lock:
+                    bearer = nous_auth._get_nous_api_key_for_identity(
+                        identity_material, source
+                    )
+            return self._fetch_models_with_bearer(bearer)
+        except ImportError:
+            logger.debug("OpenAI SDK not installed")
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Nous credentials present but token mint/discovery failed "
+                "(%s: %s); falling back to the static model catalog",
+                type(exc).__name__,
+                exc,
+            )
+            raise
+
+    def _fetch_models_with_bearer(self, bearer: str) -> list[str]:
+        """Fetch portal models with a token selected by the caller."""
+        from openai import OpenAI
+
+        client_kwargs: dict[str, str] = {
+            "api_key": bearer,
+            "base_url": NOUS_BASE_URL,
+        }
+        client = OpenAI(**client_kwargs)
+        models = client.models.list()
+        model_ids = [model.id for model in models.data]
+        logger.info("Discovered %d Nous models via SDK", len(model_ids))
+        return sorted(model_ids)
+
     def _fetch_models_from_sdk(self) -> list[str]:
         """Fetch models from the Nous Portal ``/v1/models`` endpoint.
 
@@ -59,16 +136,9 @@ class NousDiscovery(ModelDiscovery):
             return []
 
         try:
-            from openai import OpenAI
-
             # base_url is REQUIRED here — without it the client hits
             # api.openai.com instead of the Nous inference API.
-            client = OpenAI(api_key=get_nous_api_key(), base_url=NOUS_BASE_URL)
-            models = client.models.list()
-
-            model_ids = [model.id for model in models.data]
-            logger.info("Discovered %d Nous models via SDK", len(model_ids))
-            return sorted(model_ids)
+            return self._fetch_models_with_bearer(get_nous_api_key())
 
         except ImportError:
             logger.debug("OpenAI SDK not installed")

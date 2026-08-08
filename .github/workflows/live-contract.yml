@@ -22,13 +22,17 @@ concurrency:
 
 jobs:
   sdk-backend-live-contract:
-    # A fork PR cannot read secrets, so the App token cannot be minted and this
-    # lane genuinely cannot run. Skip the whole JOB there — a skipped job is
-    # visibly skipped. It must never RUN and report success with its real steps
-    # skipped, which is what the previous per-step
-    # `if: env.LIVE_CONTRACT_CHECKOUT_TOKEN != ''` guards did: with the secret
-    # unset, all 14 substantive steps skipped and the job "succeeded" in 5-15s.
-    # It reported SUCCESS on the 0.26.0 promotion PR while checking nothing.
+    # A fork PR cannot read secrets, so the App token below can never be
+    # minted there and this lane genuinely cannot run. Skip the whole JOB in
+    # that one case -- a skipped job is visibly skipped in the checks UI.
+    # It must never RUN with its real steps individually skipped, which is
+    # what the old per-step `if: env.LIVE_CONTRACT_CHECKOUT_TOKEN != ''`
+    # guards did: with the secret unset, all 14 substantive steps no-opped
+    # and the job still reported success in 5-15s (it did so on the 0.26.0
+    # promotion PR, the one check answering "does SDK main match BE main",
+    # without ever looking). Every other trigger (schedule/dispatch/same-repo
+    # PR) always has the secrets, so for them a missing/broken credential
+    # remains a hard job failure below, never a skip.
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -43,18 +47,26 @@ jobs:
       CI_READ_APP_ID: ${{ secrets.CI_READ_APP_ID }}
 
     steps:
-      # Fail, do not skip. Past this point the job is running in a context that
-      # HAS secrets, so a missing credential is a misconfiguration, not an
-      # expected state — and a silent green here is the exact defect being fixed.
+      # Fail, don't skip. Past the fork-PR job-level guard above, this run is
+      # in a context that HAS secrets, so a missing App credential here is
+      # operator misconfiguration, not a legitimate skip -- reporting green
+      # for a contract that was never executed is exactly the defect this
+      # lane exists to avoid (see the job-level comment above).
       - name: Require the CI read App to be configured
         if: ${{ env.CI_READ_APP_ID == '' }}
         run: |
           echo "::error::CI_READ_APP_ID / CI_READ_APP_PRIVATE_KEY are not configured on this repo."
-          echo "::error::This lane checks out sibling private repos and cannot run without them."
-          echo "::error::Set them with tools/secret-ops/setup-ci-read-app.sh (see BROWSER-AGENT-ci-read-app.md)."
+          echo "::error::This lane checks out sibling private repos (TraigentBackend, TraigentSchema) and cannot run without them."
+          echo "::error::Provision them with tools/secret-ops/setup-ci-read-app.sh (see tools/secret-ops/BROWSER-AGENT-ci-read-app.md)."
           echo "::error::Refusing to report success for a contract that was never executed."
           exit 1
 
+      # actions/create-github-app-token pinned to the same SHA already used
+      # elsewhere in this repo for App-token minting (js-public-parity.yml,
+      # spine-trail-gate.yml, validation-g8-dispatch.yml,
+      # validation-spine-pr.yml). No continue-on-error: if the App isn't
+      # actually installed on these repos, or the stored key is stale/
+      # invalid, this step fails and the job stops here -- loud, not silent.
       - name: Mint CI read token
         id: ci-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -62,8 +74,9 @@ jobs:
           app-id: ${{ secrets.CI_READ_APP_ID }}
           private-key: ${{ secrets.CI_READ_APP_PRIVATE_KEY }}
           owner: Traigent
-          # Least privilege per workflow: only the two siblings this lane checks
-          # out. The installation itself is org-wide; this narrows the token.
+          # Least privilege per workflow: only the two siblings this lane
+          # checks out. The traigent-ci-read App installation itself is
+          # org-wide (Contents: Read-only); this narrows the minted token.
           repositories: TraigentBackend,TraigentSchema
 
       - name: Checkout SDK
@@ -80,8 +93,9 @@ jobs:
           repository: Traigent/TraigentBackend
           ref: develop
           path: TraigentBackend
-          # The repo GITHUB_TOKEN cannot read sibling private repos; use the
-          # short-lived traigent-ci-read App installation token instead.
+          # This repo's default GITHUB_TOKEN cannot read sibling private
+          # repos; use the short-lived traigent-ci-read App installation
+          # token minted above instead.
           token: ${{ steps.ci-token.outputs.token }}
           persist-credentials: false
 
@@ -91,8 +105,9 @@ jobs:
           repository: Traigent/TraigentSchema
           ref: develop
           path: TraigentSchema
-          # The repo GITHUB_TOKEN cannot read sibling private repos; use the
-          # short-lived traigent-ci-read App installation token instead.
+          # This repo's default GITHUB_TOKEN cannot read sibling private
+          # repos; use the short-lived traigent-ci-read App installation
+          # token minted above instead.
           token: ${{ steps.ci-token.outputs.token }}
           persist-credentials: false
 

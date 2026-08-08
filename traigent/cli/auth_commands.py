@@ -14,9 +14,13 @@ import re
 import secrets
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
+
+from traigent.core.backend_session_manager import (
+    EDGE_BLOCK_SIGNALS as _SESSION_EDGE_BLOCK_SIGNALS,
+)
 
 import click
 from rich.console import Console
@@ -1930,9 +1934,31 @@ def _print_valid_key_info(key_data: dict[str, Any]) -> None:
     console.print()
 
 
+#: Signals that a 403 came from the EDGE (Cloudflare/WAF) rather than from Traigent.
+#: Same vocabulary the session path classifies on (core/backend_session_manager,
+#: SessionCreationFailureClassification.EDGE_BLOCKED), kept in step deliberately --
+#: two different answers for one HTTP response is the defect #1754 fixed there and
+#: #1775 reports here.
+#:
+#: IMPORTED, not re-declared. The previous hand-synced copy meant `whoami` and a
+#: session-creation failure could give two different answers for one HTTP response
+#: -- the defect #1754 fixed on the session path and #1775 reports here. One list,
+#: so they cannot drift.
+#:
+#: These signals are now a best-effort IMPROVEMENT rather than a correctness
+#: dependency: anything unrecognised falls through to "indeterminate", which
+#: asserts no remediation. The original list was Cloudflare-specific AND
+#: load-bearing, so every other vendor fell through to a confident
+#: "grant the scope rather than rotating the key".
+_EDGE_BLOCK_SIGNALS: tuple[str, ...] = _SESSION_EDGE_BLOCK_SIGNALS
+
 _ERROR_STATUS_MAP: dict[int | str, tuple[str, str]] = {
-    401: ("[red]❌ Invalid or unauthorized API key[/red]", "authentication"),
-    403: ("[red]❌ Invalid or unauthorized API key[/red]", "authentication"),
+    # 401 and 403 used to share one message. #1754 (PR #1762) split them on the
+    # session path; #1775 is the same collapse still live on the CLI. A 403 is NOT a
+    # bad key -- it is a good key lacking a scope, or an edge block -- and telling the
+    # user to rotate a perfectly valid credential is the wrong remediation.
+    401: ("[red]❌ Invalid or expired API key[/red]", "authentication"),
+    403: ("[red]❌ API key lacks the required scope[/red]", "authorization"),
     404: ("[red]❌ Backend endpoint mismatch[/red]", "backend_endpoint_mismatch"),
     408: ("[red]❌ Backend request timed out[/red]", "timeout"),
     409: ("[red]❌ Backend reported a request conflict[/red]", "backend_conflict"),
@@ -1941,9 +1967,140 @@ _ERROR_STATUS_MAP: dict[int | str, tuple[str, str]] = {
 }
 
 
-def _print_error_status(status: int, body_preview: str) -> None:
-    """Print error details for a non-200 validation response."""
-    if status in _ERROR_STATUS_MAP:
+#: Response HEADERS that identify a Cloudflare-served response. These were
+#: originally searched for in the body, where they essentially never appear --
+#: `cf-ray` and `cf-mitigated` are headers, not page text.
+_EDGE_HEADER_NAMES: tuple[str, ...] = ("cf-ray", "cf-mitigated", "x-amzn-waf-action")
+
+#: A Traigent 403 is JSON from our own API. Rather than trying to enumerate every
+#: edge vendor on earth -- Cloudflare, AWS WAF, Akamai, API Gateway, Fastly, the
+#: next one -- classify on the POSITIVE signal we control and treat everything else
+#: as unknown. Enumerating the negative fails open onto a confident wrong answer.
+_TRAIGENT_ERROR_KEYS: frozenset[str] = frozenset(
+    {"detail", "error", "error_code", "message", "required_scope", "scopes"}
+)
+
+
+def _classify_403(body: str, headers: Mapping[str, str] | None = None) -> str:
+    """Classify a 403 as ``edge_blocked``, ``authorization`` or ``indeterminate``.
+
+    Three outcomes, not two. The two-outcome version defaulted everything it did not
+    recognise to "authorization", whose remediation is "grant the scope rather than
+    rotating the key" -- a *confidently wrong* instruction for an AWS WAF, Akamai or
+    API Gateway block, and strictly worse than the ambiguous message it replaced.
+    An honest "could not tell" is better than a confident wrong turn.
+
+    Order matters: a Cloudflare response header is decisive, because only the edge
+    can set it. Body text is weaker evidence -- a genuine Traigent 403 can *mention*
+    cloudflare (a link to /troubleshooting/cloudflare) or contain "waf" inside a
+    request id -- so a body that parses as a Traigent API error wins over body-text
+    signals.
+    """
+    try:
+        present = {str(key).lower() for key in (headers or {})}
+    except TypeError:
+        # A caller passed something that is not iterable. Diagnostics must never be
+        # the reason a command dies, so fall through to body classification.
+        present = set()
+    if present.intersection(_EDGE_HEADER_NAMES):
+        return "edge_blocked"
+
+    if _is_traigent_error_body(body):
+        return "authorization"
+
+    lowered = (body or "").lower()
+    if any(_edge_signal_present(signal, lowered) for signal in _EDGE_BLOCK_SIGNALS):
+        return "edge_blocked"
+
+    # Reached Traigent? Unknown. Say so rather than inventing a remediation.
+    return "indeterminate"
+
+
+def _edge_signal_present(signal: str, lowered_body: str) -> bool:
+    """Substring match, except for short tokens which need word boundaries.
+
+    ``"waf" in body`` is a 3-character substring with no boundary, so a request id
+    that happens to contain ``waf`` -- e.g. ``{"request_id": "Zx9wAFq1kP"}`` --
+    flipped a real scope problem into "check your proxy".
+    """
+    if len(signal) <= 4 and signal.isalnum():
+        return re.search(rf"\b{re.escape(signal)}\b", lowered_body) is not None
+    return signal in lowered_body
+
+
+def _is_traigent_error_body(body: str) -> bool:
+    """True when the body parses as a JSON object shaped like our own API error.
+
+    Deliberately narrow. A bare edge payload such as API Gateway's
+    ``{"message": "Forbidden"}`` is JSON with one of our keys, so a key match alone
+    is not enough -- it must also NOT read as a generic one-word denial.
+    """
+    try:
+        parsed = json.loads((body or "").strip())
+    except (ValueError, TypeError):  # silent-ok: a non-JSON body is not a
+        # Traigent error body -- that IS the answer this predicate returns, not a
+        # failure to report. Edge blocks are HTML precisely because they never
+        # reached our API.
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    if not _TRAIGENT_ERROR_KEYS.intersection(parsed):
+        return False
+
+    # API Gateway/ALB emit {"message": "Forbidden"} and nothing else. That is an
+    # edge denial wearing JSON, not a Traigent error.
+    if set(parsed) <= {"message"} and str(
+        parsed.get("message", "")
+    ).strip().lower() in {
+        "forbidden",
+        "access denied",
+        "unauthorized",
+    }:
+        return False
+    return True
+
+
+def _looks_edge_blocked(
+    body_preview: str, headers: Mapping[str, str] | None = None
+) -> bool:
+    """Back-compatible boolean wrapper over :func:`_classify_403`."""
+    return _classify_403(body_preview, headers) == "edge_blocked"
+
+
+def _print_error_status(
+    status: int,
+    body_preview: str,
+    headers: Mapping[str, str] | None = None,
+    full_body: str | None = None,
+) -> None:
+    """Print error details for a non-200 validation response.
+
+    ``full_body`` is classified on; ``body_preview`` is only displayed. They differ
+    because the preview is truncated to 220 characters, and an edge block's giveaway
+    (a Cloudflare ray id, an Akamai reference) routinely sits past that cut.
+    """
+    verdict = (
+        _classify_403(full_body if full_body is not None else body_preview, headers)
+        if status == 403
+        else None
+    )
+    if verdict == "edge_blocked":
+        # A Cloudflare/WAF 403 is neither a bad key nor a missing scope, and
+        # "request the missing scope" would send the user somewhere useless.
+        msg, category = (
+            "[red]❌ Blocked at the network edge before reaching Traigent[/red]",
+            "edge_blocked",
+        )
+    elif verdict == "indeterminate":
+        # Neither signature matched. Do NOT fall through to "authorization" -- its
+        # remediation asserts the key is fine and the scope is missing, which is a
+        # confident wrong turn for an unrecognised edge vendor.
+        msg, category = (
+            "[red]❌ Forbidden (403) — could not tell whether this came from "
+            "Traigent or from something in front of it[/red]",
+            "forbidden_indeterminate",
+        )
+    elif status in _ERROR_STATUS_MAP:
         msg, category = _ERROR_STATUS_MAP[status]
     elif 500 <= status <= 599:
         msg, category = _ERROR_STATUS_MAP["5xx"]
@@ -1956,6 +2113,23 @@ def _print_error_status(status: int, body_preview: str) -> None:
     if status == 404:
         console.print(
             "[yellow]Hint:[/yellow] Check TRAIGENT_BACKEND_URL / TRAIGENT_API_URL"
+        )
+    elif category == "authorization":
+        console.print(
+            "[yellow]Hint:[/yellow] The key is valid but lacks a required scope. "
+            "Grant the scope rather than rotating the key."
+        )
+    elif category == "edge_blocked":
+        console.print(
+            "[yellow]Hint:[/yellow] The request did not reach Traigent. Check for a "
+            "proxy, VPN or WAF between you and the backend; the key is unaffected."
+        )
+    elif category == "forbidden_indeterminate":
+        console.print(
+            "[yellow]Hint:[/yellow] Both are possible: the key may lack a required "
+            "scope, or a proxy/VPN/WAF may have blocked the request before it "
+            "reached Traigent. The response preview below is the best evidence — "
+            "do not rotate the key on the strength of this alone."
         )
     console.print(f"[yellow]HTTP status:[/yellow] {status}")
     if body_preview:
@@ -1997,8 +2171,16 @@ async def _check_api_key(backend_api_url: str, key: str) -> bool:
                 if response.status == 200:
                     return _handle_200_response(await _safe_parse_json(response))
 
-                body_preview = (await response.text()).strip().replace("\n", " ")[:220]
-                _print_error_status(response.status, body_preview)
+                # Classify on the WHOLE body, display only the preview: an edge
+                # block's giveaway often sits past the 220-character cut.
+                full_body = (await response.text()).strip().replace("\n", " ")
+                body_preview = full_body[:220]
+                _print_error_status(
+                    response.status,
+                    body_preview,
+                    headers=response.headers,
+                    full_body=full_body,
+                )
                 return False
     except (TimeoutError, aiohttp.ClientError) as exc:
         console.print("[red]❌ Cannot reach backend to validate API key[/red]")

@@ -45,11 +45,3 @@ traigent/integrations/observability/wandb.py:path-traversal
 
 # SecureString.clear() zeroes in-memory buffers (self._value[i] = 0); not credentials.
 traigent/security/credentials.py:generic
-
-# ============================================================
-# Open Source - Accepted risk (no upstream patch yet)
-# ============================================================
-
-# chromadb 1.5.9 / CVE-2026-45829: only pulled via optional [chroma] extra; no
-# first_patched_version published. Default install excludes chroma (pyproject.toml).
-uv.lock:CVE-2026-45829

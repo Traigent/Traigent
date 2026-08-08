@@ -9,6 +9,7 @@ from traigent.cloud.backend_bridges import BackendExperimentRequest, bridge
 from traigent.cloud.dataset_converter import converter
 from traigent.cloud.models import AgentSpecification, OptimizationRequest
 from traigent.evaluators.base import Dataset, EvaluationExample
+from traigent.utils.exceptions import ValidationError
 
 # SDK #2033: opt into the connected/backend code paths (see pyproject markers).
 pytestmark = pytest.mark.backend_online
@@ -362,7 +363,13 @@ class TestErrorHandling:
         # without a circular-reference signal is a regression.
         try:
             examples, metadata = converter.sdk_dataset_to_backend_examples(test_dataset)
-        except (ValueError, RecursionError) as e:
+        except (ValueError, RecursionError, ValidationError) as e:
+            # ValidationError joins the tuple for #1722: the converter now fails
+            # closed rather than dropping the offending row, so the "raise a
+            # typed error naming the condition" branch is the one taken. The
+            # message assertion below is unchanged and still does the work --
+            # ValidationError wraps and quotes the underlying cause.
+
             msg = str(e).lower()
             assert "circular" in msg or "recursion" in msg, (
                 f"Exception does not identify circular reference: {e!r}"

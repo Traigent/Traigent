@@ -27,6 +27,8 @@ from ..utils.optimization_result_persistence import (
     RESULT_SCHEMA_VERSION,
     SCHEMA_VERSION_KEY,
     decode_result,
+    decode_trial_error,
+    decode_trial_score,
     encode_result_fields,
     verify_envelope_version,
 )
@@ -432,6 +434,21 @@ class PersistenceManager:
                 # as trial_id above.
                 "error_message": getattr(trial, "error_message", None),
                 "metadata": serialized_metadata,
+                # #2047: this format's JSON sub-path wrote neither key, so a
+                # reloaded run could not tell a crashed trial from a
+                # badly-scoring one. (The pickle sub-path below always kept
+                # both, which is why the two disagreed.)
+                #
+                # Both go through _safe_json_value for the same reason the
+                # sibling `config` key above does: _atomic_write_gzip_json
+                # calls json.dump with no `default=`, so an un-hardened value
+                # raises mid-write and leaves the run with only metadata.json
+                # -- destroying a completed optimization instead of merely
+                # losing a field. _safe_json_value also routes TrialError
+                # through its own to_dict(), which applies the redaction that
+                # object already defines for itself.
+                "error": _safe_json_value(getattr(trial, "error", None)),
+                "score": _safe_json_value(getattr(trial, "score", None)),
             }
             trials_data.append(trial_dict)
 
@@ -518,6 +535,14 @@ class PersistenceManager:
                         ),
                         error_message=t.get("error_message"),
                         metadata=rehydrated_metadata,
+                        # #2047. Absent in every artifact written before this
+                        # format started emitting them, which decodes to None —
+                        # the same value those trials already had. This
+                        # loader's deliberate tolerance for missing keys
+                        # (above) is preserved; only a PRESENT-but-corrupt
+                        # payload raises.
+                        error=decode_trial_error(t.get("error")),
+                        score=decode_trial_score(t.get("score")),
                     )
                     trials.append(trial)
         elif pkl_file.exists():

@@ -9,7 +9,6 @@ requirements/
 ├── requirements.txt              # Core dependencies (required)
 ├── requirements-analytics.txt    # Analytics and intelligence features
 ├── requirements-integrations.txt # Framework integrations (LangChain, OpenAI, etc.)
-├── requirements-chroma.txt       # Chroma integration, explicit opt-in
 ├── requirements-security.txt     # Enterprise security features
 ├── requirements-test.txt         # Testing dependencies
 ├── requirements-dev.txt          # Development tools + all features
@@ -36,12 +35,12 @@ pip install -e ".[test,dev,integrations,analytics,bayesian,security]"
 # Install broad safe optional features
 pip install -e ".[all]"
 
-# Opt into Chroma explicitly
-pip install -e ".[chroma]"
 ```
 
-Chroma is not included in `integrations`, `recommended`, `all`, `enterprise`, or the broad
-requirements bundles while `chromadb` has no patched release for CVE-2026-45829.
+The Traigent-provided Chroma packaging extra is temporarily withdrawn. Do not install
+`traigent[chroma]` or add `langchain-chroma` through this SDK while
+[GHSA-f4j7-r4q5-qw2c](https://github.com/advisories/GHSA-f4j7-r4q5-qw2c) has no upstream
+patch. Existing manually managed integrations are not changed by this packaging removal.
 
 ## Recent Changes (2024-10-14)
 

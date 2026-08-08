@@ -23,6 +23,8 @@ Coverage map (mirrors the #1978 test plan):
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import threading
 
@@ -38,6 +40,33 @@ from traigent.integrations.llms.nous_auth import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_refresh_token_binding_uses_hmac_key_and_exact_message() -> None:
+    identity_material = "refresh-material-alpha"
+    source_label = "NOUS_REFRESH_TOKEN"
+    material_bytes = identity_material.encode("utf-8")
+    expected_message = (
+        nous_auth._TOKEN_BINDING_DOMAIN + b"\x00" + source_label.encode("utf-8")
+    )
+
+    binding = nous_auth._refresh_token_binding(identity_material, source_label)
+
+    assert (
+        binding
+        == hmac.new(material_bytes, expected_message, hashlib.sha256).hexdigest()
+    )
+    assert binding != hashlib.sha256(material_bytes + expected_message).hexdigest()
+    assert len(binding) == 64
+    assert binding == binding.lower()
+    assert identity_material not in binding
+    assert source_label not in binding
+    assert nous_auth._TOKEN_BINDING_DOMAIN.hex() not in binding
+    assert nous_auth._refresh_token_binding(identity_material, "file") != binding
+    assert (
+        nous_auth._refresh_token_binding("refresh-material-beta", source_label)
+        != binding
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -161,6 +190,25 @@ def test_refresh_token_env_mints_and_caches(monkeypatch):
     assert nous_auth._token_state.expires_at == pytest.approx(1000.0 + 3600)
 
 
+def test_refresh_credential_change_mints_again_and_unchanged_reuses(monkeypatch):
+    clock = _Clock(1000.0)
+    monkeypatch.setattr(nous_auth, "_now", clock)
+    monkeypatch.setenv("NOUS_REFRESH_TOKEN", "refresh-a")
+    seen: list[str] = []
+
+    def _mint(refresh_token, *, token_url, **_k):
+        seen.append(refresh_token)
+        return {"access_token": f"jwt-{refresh_token}", "expires_in": 3600}
+
+    monkeypatch.setattr(nous_auth, "_request_new_token", _mint)
+
+    assert get_nous_api_key() == "jwt-refresh-a"
+    monkeypatch.setenv("NOUS_REFRESH_TOKEN", "refresh-b")
+    assert get_nous_api_key() == "jwt-refresh-b"
+    assert get_nous_api_key() == "jwt-refresh-b"
+    assert seen == ["refresh-a", "refresh-b"]
+
+
 def test_refresh_token_env_order_prefers_primary(monkeypatch):
     # NOUS_REFRESH_TOKEN wins over the NOUS_PORTAL_REFRESH_TOKEN alias.
     monkeypatch.setenv("NOUS_REFRESH_TOKEN", "primary")  # pragma: allowlist secret
@@ -177,6 +225,23 @@ def test_refresh_token_env_order_prefers_primary(monkeypatch):
     )
     get_nous_api_key()
     assert seen == ["primary"]
+
+
+@pytest.mark.parametrize(
+    "env_name", ["NOUS_REFRESH_TOKEN", "NOUS_PORTAL_REFRESH_TOKEN"]
+)
+def test_cache_identity_and_refresh_resolution_share_env_source_label(
+    monkeypatch, env_name
+):
+    refresh_material = "refresh-source-label"
+    monkeypatch.setenv(env_name, refresh_material)
+
+    identity = nous_auth._get_nous_cache_identity()
+    resolved = nous_auth._resolve_refresh_token()
+
+    assert identity is not None
+    assert identity[0] == resolved[1] == f"${env_name}"
+    assert identity[1] == resolved[0] == refresh_material
 
 
 def test_portal_refresh_token_alias_is_accepted(monkeypatch):
@@ -262,6 +327,14 @@ def test_auth_file_missing_refresh_key_raises(monkeypatch, tmp_path):
         get_nous_api_key()
     assert "no refresh token" in str(exc.value)
     assert str(auth) in str(exc.value)
+
+
+@pytest.mark.parametrize("invalid_material", ["bad\x00material", "bad\ud800material"])
+def test_invalid_refresh_material_fails_as_nous_auth_error(
+    invalid_material,
+):
+    with pytest.raises(NousAuthError, match="invalid"):
+        nous_auth._refresh_token_binding(invalid_material, "$NOUS_REFRESH_TOKEN")
 
 
 # --------------------------------------------------------------------------- #

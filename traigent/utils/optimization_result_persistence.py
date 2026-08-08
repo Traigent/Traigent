@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -63,6 +64,7 @@ from traigent.api.types import (
     OptimizationResult,
     OptimizationStatus,
     PresetSelection,
+    TrialError,
     TrialResult,
     TrialStatus,
 )
@@ -166,6 +168,135 @@ _FIELDS: dict[str, dataclasses.Field[Any]] = {
 # Restored by the caller's own format-specific trial decoder, so the generic
 # field loop never reads or writes it.
 _CALLER_SUPPLIED = "trials"
+
+
+# ---------------------------------------------------------------------------
+# TrialResult manifest (#2047) — the nested twin of the result manifest above.
+# ---------------------------------------------------------------------------
+
+#: Every :class:`TrialResult` field that MUST survive a save -> load round trip.
+#:
+#: Both persisted formats reconstructed trials from a hand-written 8-field
+#: constructor call, so ``error`` and ``score`` were dropped on load: a crashed
+#: trial came back indistinguishable from one that merely scored badly, and any
+#: failure-rate or error-clustering analysis over reloaded results silently
+#: under-reported. The ``config_state`` writer had been putting both on disk all
+#: along (it dumps via ``asdict``); only the decoder threw them away.
+TRIAL_RESTORE: frozenset[str] = frozenset(
+    {
+        "trial_id",  # durable trial identity; winning_trial_ids (#1854) matches on it
+        "config",  # the configuration this trial actually ran
+        "metrics",  # measured per-trial metrics
+        "status",  # terminal outcome; FAILED must not decay to COMPLETED
+        "duration",  # measured wall clock
+        "timestamp",  # when the trial ran
+        "error_message",  # human-readable failure text
+        "metadata",  # verbatim; consumers read successful_examples/... from it
+        "error",  # structured diagnosis: the difference between "bad" and "crashed"
+        "score",  # the optimization signal best_config argmaxes (#1845)
+    }
+)
+
+#: Fields deliberately NOT restored. Empty — and the emptiness is the claim, not
+#: an oversight: unlike :class:`OptimizationResult` (which carries
+#: ``sync_session_id``, a handle into *this* machine's store, and a memoization
+#: cache), every :class:`TrialResult` field is a durable fact about a trial that
+#: already ran. Pinned by ``test_trial_manifest_covers_every_field``: a field
+#: added to the dataclass must be classified into one set or the other.
+TRIAL_RESET: frozenset[str] = frozenset()
+
+_TRIAL_FIELDS: dict[str, dataclasses.Field[Any]] = {
+    field.name: field for field in dataclasses.fields(TrialResult)
+}
+
+#: Reference value for every :data:`TRIAL_RESTORE` field: a non-default,
+#: round-trippable example. This is the manifest's proof-of-coverage table, and
+#: it is what makes the completeness guard real rather than clerical -- without
+#: it a new field could be added to :data:`TRIAL_RESTORE` and still be silently
+#: dropped by both formats while every test stayed green, because a hand-written
+#: fixture compares a new field's default against itself. Mirrors the role
+#: :data:`_SENTINELS` plays for the result manifest.
+_TRIAL_SENTINELS: dict[str, Any] = {
+    "trial_id": "trial-manifest-sentinel",
+    "config": {"model": "smart", "temperature": 0.7},
+    "metrics": {"accuracy": 0.61, "score": 0.61},
+    "status": TrialStatus.FAILED,
+    "duration": 3.25,
+    "timestamp": datetime(2026, 4, 1, 9, 15, 0, tzinfo=UTC),
+    "error_message": "provider refused the request",
+    "metadata": {"replicate": 2},
+    "error": TrialError(
+        message="provider refused the request",
+        error_type="RuntimeError",
+        traceback="Traceback (most recent call last):\n  RuntimeError: refused",
+        timestamp=datetime(2026, 4, 1, 9, 15, 0, tzinfo=UTC),
+        config={"model": "smart"},
+    ),
+    "score": 0.61,
+    # A field added to TRIAL_RESTORE without an entry here fails
+    # test_trial_sentinel_table_covers_every_restored_field.
+}
+
+
+def decode_trial_error(raw: Any) -> TrialError | None:
+    """Rebuild a :class:`TrialError` from whatever a persisted artifact holds.
+
+    Delegates to :meth:`TrialError.from_dict`, which is the codebase's already
+    decided answer for this object rather than a second, stricter parallel one.
+    An earlier revision of this function hand-rolled its own strict decoder that
+    raised on any payload it did not recognise; that was wrong twice over. It
+    rejected artifacts already on disk -- ``asdict`` does not recurse into a
+    duck-typed ``trial.error``, so the legacy ``json.dump(default=str)`` writer
+    stringified it, and a whole otherwise-good run then failed to load. And it
+    applied a write-time contract retroactively to files written before that
+    contract existed.
+
+    ``None`` (absent key, or a trial that did not fail) stays ``None``. A
+    non-mapping payload is a legacy artifact rather than a decodable error, and
+    is reported so the loss is visible in the log rather than silent.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        logger.warning(
+            "Trial 'error' payload is %s, not a mapping -- this artifact predates "
+            "structured error persistence. Restoring the trial without its "
+            "structured diagnosis; status and error_message are unaffected.",
+            type(raw).__name__,
+        )
+        return None
+    return TrialError.from_dict(raw)
+
+
+def decode_trial_score(raw: Any) -> float | None:
+    """Rebuild a trial's optimization signal.
+
+    Absent or ``None`` is a real answer -- a crashed trial has no objective
+    value -- so it is preserved rather than coerced to ``0.0``, which would
+    enter selection as a legitimate losing score.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    if isinstance(raw, str):
+        # Our own writer produces this: `_safe_json_value` has no branch for
+        # Decimal (or any other non-primitive number), so it falls through to
+        # `str(value)`. Refusing the string here would discard a score this
+        # code path itself wrote.
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    logger.warning(
+        "Trial 'score' payload is %s, not a number; restoring it as None "
+        "rather than guessing a value that would enter selection.",
+        type(raw).__name__,
+    )
+    return None
+
 
 #: The schema version in which each persisted field first appeared — **every**
 #: one of them, explicitly, including the version-1 fields.

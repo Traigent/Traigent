@@ -288,7 +288,68 @@ transmission of results to the backend.
     though the local record holds the trials that completed.~~ **Closed by
     #2029** (below): the id now rides on the raised exception.
 
+### Changed
+
+- **BREAKING (default behaviour):** `DatasetConverter.sdk_dataset_to_backend_examples`
+  and `upload_sdk_dataset_to_backend` now **fail closed** on a dataset row that
+  cannot be converted, raising `DatasetValidationError` instead of dropping the
+  row (#1722, `g6:dataset-row-drop`). Previously each failure was logged once and
+  counted into a local `error_count` that was discarded before any caller could
+  see it, while `ExampleSetMetadata.total_examples` reported the POST-drop count
+  — so an upload that silently lost rows reported `success=True, errors=[]`. A
+  shorter dataset changes what the optimization is measured against, and a
+  dropped row was indistinguishable from a row that was never there.
+
+  Escape hatch: pass `strict=False` (on either method) to accept the drop, and
+  `conversion_errors=[]` to the converter for the structured per-row records.
+  `upload_sdk_dataset_to_backend` now reports drops in `ConversionResult.errors`
+  and no longer returns `success=True` when the backend rejected examples as
+  `invalid`. `metadata.total_examples` is now the INPUT row count in both modes.
+
+  A dataset in which every row converts is unaffected.
+- **Breaking (narrow):** `TraigentClient(algorithm=..., no_egress=True)` now
+  raises `ConfigurationError` at **construction** for the managed algorithms —
+  `bayesian`, `optuna`, `tpe`, `cmaes`, `nsga2`. Previously the client
+  constructed and the run failed later, at `optimize()`. The combination can
+  never work: those algorithms require managed optimization, which requires
+  egress. Failing at construction reports it where it can be acted on, with the
+  algorithm named. Local algorithms (`grid`, `random`) are unaffected and still
+  construct with `no_egress=True`. Fallout of wiring `no_egress` into execution
+  intent (#1776); pinned by
+  `TestManagedAlgorithmsWithNoEgressIsABreakingChange`.
+- No behaviour change for `no_egress=True` combined with an explicit deprecated
+  `execution_mode="hybrid"`/`"cloud"`: the run still fails closed with
+  `CloudEgressBlockedError` and sends nothing. The `execution_mode` attribute
+  does read `hybrid` while the resolved policy reads `local_only, offline=True`,
+  which is confusing, but the transport guard — not that attribute — is what
+  stops the request, so the contradiction is cosmetic and is reported loudly
+  rather than silently resolved in either direction.
+- `traigent auth whoami` no longer guesses at a 403 it cannot attribute. It now
+  reports `forbidden_indeterminate` and says both causes are possible, instead
+  of defaulting to "the key lacks a required scope — grant the scope rather than
+  rotating the key", which was stated with full confidence for AWS WAF, Akamai
+  and API Gateway blocks that never reached Traigent (#1775).
+
 ### Fixed
+
+- `ProductionMCPClient` no longer launders programming errors into benign
+  degradation (#1774, #1777). Two related, user-visible behavior changes ship
+  together:
+  - `MCP_AVAILABLE` now reflects whether the `mcp` package is actually
+    importable, rather than a nonexistent `mcp.client.stdio.StdioClientTransport`
+    symbol the import block reached for — so it flips `False` -> `True`
+    wherever `mcp` is installed. The stdio-transport path this newly exposes
+    is not yet ported: `connect()` now raises `NotImplementedError` naming the
+    real API (`stdio_client`) instead of quietly returning `False`.
+  - `call_tool()` now re-raises `AttributeError` / `TypeError` / `NameError` /
+    `ImportError` / `NotImplementedError` instead of routing them into the
+    local fallback path and returning a synthetic `success=True,
+    is_fallback=True` response with a fake `fallback_*` id. Genuine
+    transport/backend failures still fall back exactly as before; only
+    programming-error signatures are excluded from fallback.
+  Any caller relying on the previous silent-`False` / silent-fallback
+  contract for these specific failure modes should catch the new exceptions
+  explicitly.
 
 - `traigent sync` now explains what it wants when an id is not found: the old
   `Session <id> not found` gave no path forward for the common case of passing

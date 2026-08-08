@@ -109,7 +109,6 @@ def verify_imports():
         ("traigent", "Traigent SDK"),
         ("langchain", "LangChain"),
         ("langchain_openai", "LangChain OpenAI"),
-        ("langchain_chroma", "LangChain Chroma"),
         ("openai", "OpenAI"),
         ("dotenv", "python-dotenv"),
         ("numpy", "NumPy"),

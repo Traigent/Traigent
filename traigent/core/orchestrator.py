@@ -3932,12 +3932,18 @@ class OptimizationOrchestrator:
         Called at each raise site rather than inside
         _finalize_failed_backend_session so the raise-site contract stays
         visible where the object is raised. Ordering note: that finalizer is
-        NOT wholly guarded — only its *backend* ``finalize_session`` sits in a
-        try/except, while ``finalize_local_session`` and the egress/tracking
-        pre-checks ahead of it are not — so "call it first, then attach" would
-        let a storage-handle failure skip the attach. Every call site therefore
-        pairs the two in ``try: finalize … finally: attach``, which is what
-        actually makes the attach unskippable. Attaching after the finalize (not
+        STILL not wholly guarded, so "call it first, then attach" would let a
+        failure skip the attach. Every call site therefore pairs the two in
+        ``try: finalize … finally: attach``, which is what actually makes the
+        attach unskippable.
+
+        What changed (#2048): ``finalize_local_session`` used to be part of the
+        unguarded surface and no longer is — it now guards its whole body, not
+        just its storage write. The remaining hole is the egress/tracking
+        pre-check block BETWEEN it and the backend ``finalize_session``
+        (``backend_tracking_enabled`` / ``backend_egress_disabled``), which is
+        still bare. So the ``try/finally`` here is not redundant; it is just
+        guarding a smaller surface than when this note was written. Attaching after the finalize (not
         before) is deliberate: the id must describe the run in its terminal
         state.
 
