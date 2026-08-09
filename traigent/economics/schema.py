@@ -20,8 +20,10 @@ There is no fail-open path and no dependence on a generic strict-validation
 toggle. Errors are payload-free (schema digests are public contract hashes, never
 request/response content).
 
-Bumping the fingerprint (only when the exact Git pin in ``pyproject.toml`` /
-``uv.lock`` changes): install the new pinned ``traigent-schema`` and recompute::
+Bumping the fingerprint (only when the exact Git pin in
+``scripts/ci/schema-pin.txt`` changes — it is not in ``pyproject.toml``, because
+PyPI rejects direct URL references in package metadata): install the new pinned
+``traigent-schema`` and recompute::
 
     python -c "from traigent.economics.schema import compute_economics_schema_fingerprint as f; print(f())"
 

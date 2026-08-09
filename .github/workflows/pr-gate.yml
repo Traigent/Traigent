@@ -204,14 +204,17 @@ jobs:
       - name: Install pinned economics Schema contract
         # The economics contract-drift tests (tests/unit/economics) hard-require
         # the exact TraigentSchema economics contract and must not silently
-        # skip. traigent-schema 5.0.0 is not on PyPI yet, so install it from
-        # the pinned Schema commit. Restamp the SHA when the Schema PR merges.
-        # Credential-free for the same reason as the checkout above: the Schema
-        # repo is public. Embedding a token in the pip URL also risked leaking
-        # it -- pip echoes the requirement string on failure and caches it -- so
-        # removing it is a small security improvement, not just a CI fix.
+        # skip. traigent-schema 5.0.0 is not on PyPI, so install it from the
+        # pinned commit in scripts/ci/schema-pin.txt -- the single source of
+        # truth, shared with publish.yml. Restamp the SHA in that file only.
+        #
+        # Credential-free on purpose: TraigentSchema is a PUBLIC repo, so no
+        # token is required to resolve this pin. Injecting one into the pip URL
+        # (as publish.yml still does) risked leaking it -- pip echoes the
+        # requirement string on failure and caches it -- and it broke every
+        # Dependabot PR, which never receives org secrets.
         run: |
-          pip install "traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@01f3e2a2bbc1ca7d1b1cc8dde94f82d73dbe822a"
+          pip install -r scripts/ci/schema-pin.txt
       - name: Run unit tests
         env:
           PYTHONPATH: .

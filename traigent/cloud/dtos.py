@@ -579,8 +579,12 @@ class ExperimentDTO:
 
         By default, validation is strict - failures raise exceptions.
         Set TRAIGENT_STRICT_VALIDATION=false to make validation non-blocking.
-        Internal environments that need schema validation should install
-        the optional ``internal_schema`` dependency bundle.
+        Internal environments that need schema validation install the pinned
+        ``traigent-schema`` build with
+        ``pip install -r scripts/ci/schema-pin.txt`` from a repository checkout.
+        There is no published extra for it: ``traigent-schema`` is private at
+        the pinned version, and PyPI rejects direct URL references in package
+        metadata.
 
         Returns:
             True if validation passed
@@ -604,8 +608,10 @@ class ExperimentDTO:
         except ImportError as e:
             message = (
                 "ExperimentDTO validation requires the internal "
-                "'traigent-schema' package. Install Traigent with the "
-                "'internal_schema' extra in internal environments."
+                "'traigent-schema' package, which is not published to PyPI at "
+                "the pinned version. In internal environments install it with "
+                "'pip install -r scripts/ci/schema-pin.txt' from a repository "
+                "checkout."
             )
             logger.warning(
                 "Optional TraigentSchema validator unavailable",
@@ -614,7 +620,7 @@ class ExperimentDTO:
                     "dto_id": self.id,
                     "error": str(e),
                     "strict_mode": strict_mode,
-                    "install_hint": "pip install -e '.[internal_schema]'",
+                    "install_hint": "pip install -r scripts/ci/schema-pin.txt",
                 },
             )
 
