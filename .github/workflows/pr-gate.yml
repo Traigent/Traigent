@@ -249,9 +249,9 @@ jobs:
       - name: Install test deps
         # NOTE: the pinned economics Schema is deliberately NOT installed here
         # (unlike the `unit` job). That is the point of this job: it reproduces
-        # the environment every local developer actually has — one without the
-        # private, token-gated traigent-schema git pin — and proves the whole
-        # suite still *collects* there. It also exercises the module-level skip
+        # the environment every local developer actually has — one where the
+        # traigent-schema git pin has not been installed (it is not on PyPI and
+        # not in any extra) — and proves the whole suite still *collects* there. It also exercises the module-level skip
         # in tests/unit/economics/test_schema.py, which would otherwise never run
         # in CI and could rot unnoticed. Do not add the schema install here.
         run: |

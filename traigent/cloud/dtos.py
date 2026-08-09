@@ -579,12 +579,12 @@ class ExperimentDTO:
 
         By default, validation is strict - failures raise exceptions.
         Set TRAIGENT_STRICT_VALIDATION=false to make validation non-blocking.
-        Internal environments that need schema validation install the pinned
+        Environments that need schema validation install the pinned
         ``traigent-schema`` build with
-        ``pip install -r scripts/ci/schema-pin.txt`` from a repository checkout.
-        There is no published extra for it: ``traigent-schema`` is private at
-        the pinned version, and PyPI rejects direct URL references in package
-        metadata.
+        ``pip install -r scripts/ci/schema-pin.txt`` from a repository checkout;
+        no credentials are required, as TraigentSchema is a public repository.
+        There is no published extra for it because PyPI rejects direct URL
+        references in package metadata, even inside an optional extra.
 
         Returns:
             True if validation passed
