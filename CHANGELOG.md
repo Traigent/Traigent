@@ -6,7 +6,183 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-07-30
+
+Security and correctness release. Hardens every egress path the SDK owns
+(cloud URLs, telemetry, tracing headers, dataset paths) to fail closed, and
+corrects the multi-objective and early-stopping machinery that decides which
+configuration wins.
+
+### Added
+
+- **Cumulative execution budgets.** `ExecutionBudget` (root-exported,
+  experimental) is shared across the evaluation and optimization phases of a
+  run, so a budget means the same thing whichever phase spends it (#1980).
+- **No-execution evaluation-compatibility contract.** `validate_evaluation_contract()`
+  statically checks an evaluator/dataset pair before any model call, reporting
+  typed `ContractFinding`s. New root exports: `validate_evaluation_contract`,
+  `EvaluationContractReport`, `ContractFinding`, `ContractCode`,
+  `EVALUATION_CONTRACT_VERSION`.
+- **Economics telemetry.** Contract-first telemetry emission with a sealed
+  prepared-batch identity and provenance. `EconomicsTelemetryClient` is now a
+  root export, matching the schema-owned Python/JS parity manifest; it stays
+  lazy, so `import traigent` does not pull in `traigent.economics`.
+- **Observability receipts.** Telemetry receipts plus a run-level zero-span
+  invariant, so a run that emitted nothing says so instead of looking healthy.
+  `SpanResult` is now root-exported.
+- **W3C trace context propagation.** When an OpenTelemetry span is active, the
+  SDK injects `traceparent` on backend, hybrid, analytics, and evaluation HTTP
+  calls, so backend spans join the caller's trace (#1882, #1893).
+- **Statistical ties on `best_config`.** Results now mark when the winner is not
+  significantly better than the runner-up, using a paired significance test with
+  confidence intervals and a multiplicity correction for post-hoc runner-up
+  selection (#1866).
+- **Syncable local session id.** `OptimizationResult` exposes the local session
+  id so an offline or partially-synced run can be reconciled later (#2020).
+- **Backend attribution block.** Guidance and decision surfaces accept and
+  surface the optional `attribution` block returned by the backend, with the
+  contract bounds enforced client-side (#2018).
+
+### Fixed
+
+- **Multi-objective selection was wrong in several ways.** Dominance and
+  hypervolume are now driven by the *configured* objective set rather than
+  whatever a trial happened to report; hypervolume handles the 1-D and
+  mixed-completeness cases; frontier trimming preserves completeness; and the
+  public no-arg hypervolume default is safe. NaN could previously leak through
+  scalarization (#1940, #1941, #1942, #1944, #1945).
+- **Early stopping stopped at the wrong time.** The plateau window is now
+  compared against a pre-window baseline instead of itself, thresholds are
+  derived from the configured orientation instead of being hardcoded, a declared
+  orientation is honored in every selection path, and an invalid
+  `early_stopping_min_delta` is rejected at the config boundary rather than
+  silently coerced. The `OptimizationStrategy` positional ABI is preserved.
+- **Retired model IDs.** Retired IDs are swept from `_KNOWN_MODELS` and the
+  model tables, with a runtime denylist and an assertion that every finite table
+  is complete (#1936, #1937).
+- **Cost constraints priced inconsistently.** `model_cost_constraint` now prices
+  canonical-first and falls back to litellm, matching the estimation path (#1958).
+- **Idempotency on retry.** A retried `/optimize` POST sends a stable
+  `Idempotency-Key`, so a network retry cannot create a second run.
+- **Local-fallback reporting.** When a run falls back to local search the SDK
+  says so in user terms and picks the remedy from the typed reason rather than
+  parsing backend prose (#2024). Non-fatal config-space warnings from
+  `@optimize` are surfaced, and a degenerate config space warns once instead of
+  once per pinned knob.
+- **Strict session-id contract in the CLI.** Whitespace-only and padded session
+  ids are rejected, and `sync --clean` requires the resolved id (#2030).
+- **Dataset path resolution.** A root-relative dataset path resolves against the
+  cwd when the root join misses, nested relative datasets pass an absolute path
+  to `safe_open`, and the evaluator's cwd retry no longer raises out of the
+  registry.
+- Submission attempts, not `result.trials`, drive the sync-id predicate (#2020).
+- `math.isnan` replaces a self-comparison NaN check in `ExecutionBudget`.
+- Runtime and CI are pinned to TraigentSchema 5.0.0.
+- Mock multi-objective walkthroughs now demonstrate the cost/latency trade-off,
+  and real-mode example summaries print latency in ms rather than seconds.
+
 ### Security
+
+- **Cloud URL SSRF guard hardened against IMDS and link-local egress.** The
+  guard now blocks the cloud-metadata endpoint and link-local ranges, including
+  IPv6-transition encodings of them (`::ffff:169.254.169.254` and friends). This
+  is the highest-severity fix in the release.
+- **Telemetry egress requires SDK auth.** The economics telemetry client sends
+  nothing without a credential — no anonymous egress path remains. Telemetry is
+  revalidated at the transport boundary, exact contracts are enforced, and
+  prepared-batch issuance is sealed with bound identity and provenance.
+- **No `tracestate` forwarding.** Only `traceparent` is propagated to the
+  backend; `tracestate` can carry third-party vendor data and is dropped.
+- **Repr/detail leaks closed** in the economics surfaces, with root-export
+  parity so an error's string form cannot expose payload contents.
+- **Dataset validation fails closed.** Relative dataset-path escapes are
+  rejected, resolution `OSError` fails closed against a concrete containment
+  base, and every dataset row is validated — not just the first five.
+
+### Dependencies
+
+- `pyasn1` 0.6.4 — CVE-2026-59884, CVE-2026-59885, CVE-2026-59886.
+- `gitpython` 3.1.54 — two GHSA advisories.
+- `pillow` 12.3.0.
+
+### Docs
+
+- `add_agent_span` documentation aligned with the `SpanResult` return value.
+
+## [0.25.0] - 2026-07-18
+
+Client-sequenced grid/sync release: online mode is the default and always
+supported for grid, random, and auto — local decision-making never blocks
+transmission of results to the backend.
+
+### Added
+
+- **Grid & random runs finish locally, then sync.** Connected `grid`/`random`
+  runs now enumerate every planned configuration even when the backend closes
+  the tracking session early — the run no longer truncates at ~4 configs. Such
+  a run completes locally, persists every trial, and is marked
+  `backend_tracking="partial"` / `persistence_status="degraded"` so you can tell
+  it was client-sequenced. `auto`/cloud-brain behavior is unchanged (#1938,
+  #1947).
+- **Offline runs are now syncable.** An offline optimization mints a local
+  session, mirrors every trial to `sessions/<id>.json`, and finalizes to a
+  sync-eligible status — so `traigent local list` shows it and
+  `traigent sync --all` uploads it once you reconnect. Local storage is no
+  longer coupled to backend connectivity (#1939, #1947).
+
+### Fixed
+
+- Hybrid MCP transport now classifies transport errors correctly and falls back
+  cleanly when a model has been retired; retired model IDs removed from the
+  provider tier tables (#1930, #1931, #1932, #1933, #1934).
+- `update_best` no longer errors when a run declares no objectives (#1909).
+- The optimizer meta-skill is no longer re-injected unbounded each epoch — its
+  injection is gated and capped (#1929).
+
+### Security
+
+- Skill-training input is hardened against invisible-character prompt injection:
+  default-ignorable Unicode (including non-`Cf` `Default_Ignorable_Code_Point`)
+  is stripped before the meta-skill injection scan (#1926, #1929).
+- MCP floor raised to `>=1.28.1,<2` to pick up CVE-2026-59950 (websocket
+  Host/Origin validation) and CVE-2026-52870 (task-handler session scoping)
+  (#1946).
+
+### Dependencies
+
+- `anyio>=4.14.2` (new floor; IDNA2008 TLS hostname certificate matching,
+  AIKIDO-2026-889297) and `mcp>=1.28.1,<2.0.0` in the `hybrid` and `mcp` extras
+  (#1943, #1946).
+
+### Docs
+
+- Examples and public docs use current-catalog model IDs, validated against
+  `models.yaml`; assorted public-doc accuracy fixes (#1903, #1909, #1917, #1921).
+
+## [0.24.0] - 2026-07-16
+
+### Added
+
+- **Eval-defect audit** (`result.eval_audit`, opt-in, zero-cost by default): a
+  per-example × per-config outcome matrix persisted with each run (#1838/#1889),
+  deterministic dataset-defect detectors — never-correct, token-leak,
+  cross-family consensus-on-wrong (#1880/#1897) — and a continuous 0-1 defect
+  score with percentile ranking per example via `result.eval_audit.scored`
+  (#1881/#1901). Pure functions of already-persisted run data: no LLM calls,
+  no network.
+- `setup_logging(logger_name=...)`: confine SDK logging to a scoped logger
+  instead of the root logger (opt-in; default behavior unchanged) (#1883/#1899).
+- `TRAIGENT_OPTIMIZATION_LOG_MAX_RUNS`: opt-in retention pruning of old local
+  run directories — never touches the active run, errs on keeping data
+  (#1884/#1899).
+
+### Security
+
+- Span error strings are scrubbed before OTLP export in both the core and
+  plugin tracing paths: exception messages/payloads are redacted of emails,
+  keys, and secrets before entering any trace backend (#1885/#1898).
+- The outcome-matrix loader refuses artifacts resolving outside the artifacts
+  directory (symlink containment).
 
 - `@observe` exception metadata now honors the content gate. `error_message`
   carries free-form content — exception strings routinely interpolate prompts,

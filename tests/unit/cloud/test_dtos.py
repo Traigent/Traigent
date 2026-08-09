@@ -744,7 +744,7 @@ class TestConfigurationRunDTO:
 
         assert exp.validate() is True
 
-    def test_experiment_validate_returns_false_without_internal_schema(
+    def test_experiment_validate_returns_false_without_traigent_schema(
         self, monkeypatch
     ):
         """Validation should become non-blocking when the optional package is absent."""
@@ -765,7 +765,7 @@ class TestConfigurationRunDTO:
 
         assert exp.validate() is False
 
-    def test_experiment_validate_raises_helpful_error_without_internal_schema(
+    def test_experiment_validate_raises_helpful_error_without_traigent_schema(
         self, monkeypatch
     ):
         """Strict validation should explain how to enable internal schema checks."""
@@ -784,7 +784,10 @@ class TestConfigurationRunDTO:
             description="Missing optional dependency",
         )
 
-        with pytest.raises(DTOSerializationError, match="internal_schema"):
+        # The actionable instruction, not the old `internal_schema` extra name:
+        # that extra was removed because PyPI rejects direct URL references in
+        # package metadata, so pointing users at it would be a dead end.
+        with pytest.raises(DTOSerializationError, match="schema-pin"):
             exp.validate()
 
     def test_trial_number_sequence(self):
