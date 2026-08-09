@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -19,37 +19,14 @@ import pandas as pd
 from traigent.utils.file_versioning import FileVersionManager
 from traigent.utils.logging import get_logger
 from traigent.utils.optimization_logger import OptimizationLogger
-from traigent.utils.secure_path import PathTraversalError, safe_open, validate_path
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    resolve_path_components,
+    safe_open,
+    validate_path,
+)
 
 logger = get_logger(__name__)
-
-
-def _resolve_run_path(base_path: Path, experiment_name: str, run_id: str) -> Path:
-    """Resolve a run path while keeping caller-provided names as components."""
-    for label, value in (("experiment name", experiment_name), ("run id", run_id)):
-        value_path = Path(value)
-        if (
-            not value
-            or value_path.is_absolute()
-            or "/" in value
-            or "\\" in value
-            or any(part in {".", ".."} for part in value_path.parts)
-        ):
-            raise PathTraversalError(
-                f"Invalid {label}: path components are not allowed"
-            )
-
-    base_root = Path(base_path).expanduser().resolve()
-    experiments_root = base_root / "experiments"
-    if experiments_root.is_symlink():
-        raise PathTraversalError("Optimization log experiments directory is a symlink")
-    return cast(
-        Path,
-        validate_path(
-            experiments_root / experiment_name / "runs" / run_id,
-            experiments_root,
-        ),
-    )
 
 
 class OptimizationAnalyzer:
@@ -346,7 +323,12 @@ class OptimizationAnalyzer:
         legacy_manager: FileVersionManager,
     ) -> dict[str, Any]:
         """Implementation of load_run."""
-        run_path = _resolve_run_path(base_path, experiment_name, run_id)
+        run_path = resolve_path_components(
+            Path(base_path).expanduser().resolve() / "experiments",
+            experiment_name,
+            "runs",
+            run_id,
+        )
 
         if not run_path.exists():
             logger.warning(f"Run not found: {experiment_name}/{run_id}")

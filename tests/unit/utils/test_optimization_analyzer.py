@@ -255,6 +255,8 @@ class TestOptimizationAnalyzer:
             ("/tmp/outside", "run_001"),
             ("../outside", "run_001"),
             ("test_exp", "../run_001"),
+            ("C:outside", "run_001"),
+            ("test_exp", "C:run_001"),
         ],
     )
     def test_load_run_rejects_path_components(

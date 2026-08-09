@@ -26,36 +26,29 @@ from traigent.core.objectives import ObjectiveSchema, normalize_objectives
 from traigent.utils.file_versioning import FileVersionManager, RunVersionInfo
 from traigent.utils.logging import get_logger
 from traigent.utils.objectives import is_minimization_objective
-from traigent.utils.secure_path import PathTraversalError, safe_open, validate_path
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    resolve_path_components,
+    safe_open,
+    validate_path,
+)
 
 logger = get_logger(__name__)
 
 
-def _resolve_run_path(base_path: Path, experiment_name: str, run_id: str) -> Path:
-    """Resolve a run path while keeping caller-provided names as components."""
-    for label, value in (("experiment name", experiment_name), ("run id", run_id)):
-        value_path = Path(value)
-        if (
-            not value
-            or value_path.is_absolute()
-            or "/" in value
-            or "\\" in value
-            or any(part in {".", ".."} for part in value_path.parts)
-        ):
-            raise PathTraversalError(
-                f"Invalid {label}: path components are not allowed"
-            )
-
-    base_root = Path(base_path).expanduser().resolve()
-    experiments_root = base_root / "experiments"
-    if experiments_root.is_symlink():
-        raise PathTraversalError("Optimization log experiments directory is a symlink")
+def _validate_run_child_dir(
+    run_path: Path,
+    child_name: str,
+    *,
+    must_exist: bool = False,
+) -> Path:
+    """Validate a known run subdirectory against the trusted run root."""
+    child_dir = run_path / child_name
+    if child_dir.is_symlink():
+        raise PathTraversalError(f"Run directory child is a symlink: {child_dir}")
     return cast(
         Path,
-        validate_path(
-            experiments_root / experiment_name / "runs" / run_id,
-            experiments_root,
-        ),
+        validate_path(child_dir, run_path, must_exist=must_exist),
     )
 
 
@@ -445,8 +438,11 @@ class OptimizationLogger:
         session_short = session_id[:8] if len(session_id) >= 8 else session_id
         self.run_id = f"{timestamp}_{session_short}"
 
-        self.run_path = _resolve_run_path(
-            self.base_path, self.experiment_name, self.run_id
+        self.run_path = resolve_path_components(
+            self.base_path / "experiments",
+            self.experiment_name,
+            "runs",
+            self.run_id,
         )
         self.experiment_path = self.run_path.parent.parent
 
@@ -459,6 +455,7 @@ class OptimizationLogger:
         self.start_time = datetime.now(UTC)
 
         self.file_manager = FileVersionManager(version="2")
+        _validate_run_child_dir(self.run_path, "meta", must_exist=True)
         self.version_info = RunVersionInfo(self.run_path)
         self.version_info.create_version_info(
             traigent_version=TRAIGENT_VERSION,
@@ -499,15 +496,15 @@ class OptimizationLogger:
         return name[:100]
 
     def _ensure_directories(self) -> None:
-        directories = [
-            self.run_path / "meta",
-            self.run_path / "trials",
-            self.run_path / "metrics",
-            self.run_path / "checkpoints",
-            self.run_path / "artifacts",
-            self.run_path / "logs",
-        ]
-        for directory in directories:
+        for child_name in (
+            "meta",
+            "trials",
+            "metrics",
+            "checkpoints",
+            "artifacts",
+            "logs",
+        ):
+            directory = _validate_run_child_dir(self.run_path, child_name)
             directory.mkdir(parents=True, exist_ok=True)
         self._write_log_dir_gitignore()
 
@@ -1190,8 +1187,14 @@ class OptimizationLogger:
         base_path: Path | None = None,
     ) -> dict[str, Any]:
         base_path = base_path or cls._resolve_default_base_path()
-        run_path = _resolve_run_path(base_path, experiment_name, run_id)
+        run_path = resolve_path_components(
+            Path(base_path).expanduser().resolve() / "experiments",
+            experiment_name,
+            "runs",
+            run_id,
+        )
 
+        _validate_run_child_dir(run_path, "meta")
         version_info = RunVersionInfo(run_path)
         compatibility = version_info.check_compatibility(TRAIGENT_VERSION)
         if not compatibility["compatible"]:
@@ -1201,14 +1204,14 @@ class OptimizationLogger:
         latest_file = (
             run_path / "checkpoints" / file_manager.get_filename("checkpoint_latest")
         )
-        checkpoints_dir = run_path / "checkpoints"
+        checkpoints_dir = _validate_run_child_dir(run_path, "checkpoints")
         if not latest_file.exists():
             raise FileNotFoundError(f"No checkpoint found for run {run_id}") from None
 
         validated_latest_file = validate_path(
             latest_file, checkpoints_dir, must_exist=True
         )
-        with safe_open(validated_latest_file, checkpoints_dir, mode="r") as handle:
+        with safe_open(validated_latest_file, run_path, mode="r") as handle:
             latest_data = json.load(handle)
 
         # Constrain the checkpoint reference to the run's checkpoints directory.
@@ -1222,7 +1225,7 @@ class OptimizationLogger:
             raise ValueError(
                 f"Invalid checkpoint reference in {latest_file}: {exc}"
             ) from exc
-        with safe_open(checkpoint_file, checkpoints_dir, mode="r") as handle:
+        with safe_open(checkpoint_file, run_path, mode="r") as handle:
             checkpoint_data = json.load(handle)
 
         history_file = (
@@ -1231,7 +1234,7 @@ class OptimizationLogger:
         validated_history_file = validate_path(
             history_file, checkpoints_dir, must_exist=True
         )
-        with safe_open(validated_history_file, checkpoints_dir, mode="r") as handle:
+        with safe_open(validated_history_file, run_path, mode="r") as handle:
             trial_history = json.load(handle)
 
         checkpoint_data["trial_history"] = trial_history

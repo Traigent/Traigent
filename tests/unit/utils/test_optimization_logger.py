@@ -407,6 +407,32 @@ class TestOptimizationLoggerInit:
         log = _make_logger(tmp_path, buffer_size=5)
         assert log.buffer_size == 5
 
+    @pytest.mark.parametrize(
+        "child_name",
+        ["meta", "trials", "metrics", "checkpoints", "artifacts", "logs"],
+    )
+    def test_rejects_preexisting_symlinked_run_child(
+        self, tmp_path: Path, child_name: str
+    ) -> None:
+        fixed_time = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+        run_path = (
+            tmp_path / "experiments" / "test_exp" / "runs" / "20260102_030405_sess1234"
+        )
+        run_path.mkdir(parents=True)
+        outside = tmp_path / f"outside-{child_name}"
+        outside.mkdir()
+        try:
+            (run_path / child_name).symlink_to(outside, target_is_directory=True)
+        except OSError:
+            pytest.skip("Symlink creation not supported on this platform")
+
+        with (
+            patch("traigent.utils.optimization_logger.datetime") as mock_datetime,
+            pytest.raises(PathTraversalError),
+        ):
+            mock_datetime.now.return_value = fixed_time
+            _make_logger(tmp_path)
+
 
 # ---------------------------------------------------------------------------
 # _resolve_default_base_path
@@ -686,6 +712,8 @@ class TestLoadCheckpoint:
             ("/tmp/outside", "run_001"),
             ("../outside", "run_001"),
             ("test_exp", "../run_001"),
+            ("C:outside", "run_001"),
+            ("test_exp", "C:run_001"),
         ],
     )
     def test_load_checkpoint_rejects_path_components(
@@ -706,6 +734,47 @@ class TestLoadCheckpoint:
 
         with pytest.raises(PathTraversalError):
             OptimizationLogger.load_checkpoint("escape", "run_001", tmp_path)
+
+    def test_load_checkpoint_rejects_checkpoint_directory_symlink(
+        self, tmp_path: Path
+    ) -> None:
+        run_path = tmp_path / "experiments" / "test_exp" / "runs" / "run_001"
+        (run_path / "meta").mkdir(parents=True)
+        outside = tmp_path / "outside-checkpoints"
+        outside.mkdir()
+        (outside / "latest_checkpoint_v2.json").write_text(
+            json.dumps({"checkpoint_file": "checkpoint_00005_v2.json"})
+        )
+        (outside / "checkpoint_00005_v2.json").write_text(
+            json.dumps({"trial_count": 5})
+        )
+        (outside / "trial_history_v2.json").write_text("[]")
+        try:
+            (run_path / "checkpoints").symlink_to(outside, target_is_directory=True)
+        except OSError:
+            pytest.skip("Symlink creation not supported on this platform")
+
+        with pytest.raises(PathTraversalError):
+            OptimizationLogger.load_checkpoint("test_exp", "run_001", tmp_path)
+
+    def test_load_checkpoint_rejects_meta_directory_symlink(
+        self, tmp_path: Path
+    ) -> None:
+        run_path = tmp_path / "experiments" / "test_exp" / "runs" / "run_001"
+        checkpoints = run_path / "checkpoints"
+        checkpoints.mkdir(parents=True)
+        outside = tmp_path / "outside-meta"
+        outside.mkdir()
+        (outside / "version_info.json").write_text(
+            json.dumps({"traigent_version": "0.23.0"})
+        )
+        try:
+            (run_path / "meta").symlink_to(outside, target_is_directory=True)
+        except OSError:
+            pytest.skip("Symlink creation not supported on this platform")
+
+        with pytest.raises(PathTraversalError):
+            OptimizationLogger.load_checkpoint("test_exp", "run_001", tmp_path)
 
 
 # ---------------------------------------------------------------------------
