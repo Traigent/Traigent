@@ -103,9 +103,10 @@ class TestCredentialSecurity:
             # Check file permissions (should be 0o600)
             if cache_file.exists():
                 file_mode = cache_file.stat().st_mode & 0o777
-                assert (
-                    file_mode == 0o600
-                ), f"Cache file has insecure permissions: {oct(file_mode)}"
+                if file_mode != 0o600:
+                    raise AssertionError(
+                        f"Cache file has insecure permissions: {oct(file_mode)}"
+                    )
 
     def test_weak_credential_encryption_detection(self):
         """Test detection of weak credential encryption."""
@@ -259,10 +260,8 @@ class TestCredentialSecurity:
 
                 # The real validator must reject malformed, unsigned, and forged JWTs.
                 result = asyncio.run(auth_manager._authenticate_jwt(credentials))
-                assert result.success is False, token[:50]
-                assert hasattr(
-                    result, "success"
-                ), f"Invalid result type for input: {token[:50]}..."
+                assert result.success is False
+                assert hasattr(result, "success")
 
     def test_session_fixation_prevention(self):
         """Test prevention of session fixation attacks."""

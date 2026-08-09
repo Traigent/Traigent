@@ -1822,8 +1822,4 @@ class TestSDK937_NoFabricatedPermissionGrants:
         assert info is not None
         assert info["name"] == "environment"
         # The honest empty answer:
-        # fmt: off
-        assert (
-            info["permissions"] == {}
-        ), f"env-keyed permissions must be {{}}, got {info['permissions']}"
-        # fmt: on
+        assert info["permissions"] == {}
