@@ -436,7 +436,11 @@ class TestDevelopmentValidation:
         result = self.validator._validate_development(self.test_token)
 
         assert result.valid is True
-        assert result.payload == expected_payload
+        assert result.payload == {
+            **expected_payload,
+            "_development_mode": True,
+            "_max_validity": self.validator.DEVELOPMENT_TOKEN_LIFETIME,
+        }
         assert result.expires_at == expected_payload["exp"]
         assert "DEVELOPMENT MODE" in result.warnings[0]
 
@@ -472,7 +476,11 @@ class TestDevelopmentValidation:
         result = self.validator._validate_development(self.test_token)
 
         assert result.valid is True
-        assert result.payload == payload_no_exp
+        assert result.payload == {
+            **payload_no_exp,
+            "_development_mode": True,
+            "_max_validity": self.validator.DEVELOPMENT_TOKEN_LIFETIME,
+        }
         assert result.expires_at is None
 
     @patch("traigent.security.jwt_validator.JWT_AVAILABLE", True)
@@ -668,7 +676,11 @@ class TestJWTValidatorIntegration:
                 result = validator.validate_token("test_jwt_token")
 
                 assert result.valid is True
-                assert result.payload == payload
+                assert result.payload == {
+                    **payload,
+                    "_development_mode": True,
+                    "_max_validity": validator.DEVELOPMENT_TOKEN_LIFETIME,
+                }
                 assert (
                     "DEVELOPMENT MODE: Limited to 5-minute token lifetime"
                     in result.warnings[0]
@@ -802,25 +814,14 @@ class TestJWTValidatorHelperMethods:
         assert result is None  # None means valid
 
     def test_mark_development_payload_with_valid_jwt(self):
-        """Test _mark_development_payload adds dev markers for valid JWT."""
+        """Test _mark_development_payload adds dev markers after verification."""
         validator = self._create_validator()
-        token = "header.payload.signature"
-        original_payload = {"sub": "user123"}
-        result = validator._mark_development_payload(token, original_payload)
+        verified_payload = {"sub": "user123"}
+        result = validator._mark_development_payload(verified_payload)
         assert "_development_mode" in result
         assert result["_development_mode"] is True
         assert "_max_validity" in result
         assert result["sub"] == "user123"
-
-    def test_mark_development_payload_without_valid_structure(self):
-        """Test _mark_development_payload without valid JWT structure."""
-        validator = self._create_validator()
-        token = "invalid"  # No dots
-        original_payload = {"sub": "user123"}
-        result = validator._mark_development_payload(token, original_payload)
-        # Should return original payload unchanged
-        assert result == original_payload
-        assert "_development_mode" not in result
 
 
 class TestTokenExpiredErrorConstant:

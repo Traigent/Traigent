@@ -18,6 +18,8 @@ from typing import Any
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
+from traigent.security.redaction import redact_sensitive_text
+
 try:
     import jwt
     from jwt import PyJWKClient
@@ -30,6 +32,18 @@ logger = logging.getLogger(__name__)
 
 # Error message constants
 _TOKEN_EXPIRED_ERROR = "Token has expired"
+
+
+def _safe_error_detail(error: object, token: str) -> str:
+    """Return parser detail without exposing a token or its leading bytes."""
+    detail = redact_sensitive_text(str(error)) or "validation error"
+    # Exceptions are not expected to echo the input token, but keep this
+    # boundary defensive: some parsers include the complete value or a short
+    # prefix in their diagnostic text.
+    for prefix_length in (len(token), 16, 12, 8):
+        if prefix_length <= len(token):
+            detail = detail.replace(token[:prefix_length], "[REDACTED]")
+    return detail
 
 
 class JWTValidationError(Exception):
@@ -182,11 +196,26 @@ class SecureJWTValidator:
                 raise JWTSecurityError(
                     "Audience required for production mode JWT validation"
                 )
-        elif self.validation_mode in [
-            ValidationMode.STAGING,
-            ValidationMode.DEVELOPMENT,
-        ]:
-            # For non-production modes, warn about missing configuration but don't fail
+        elif self.validation_mode == ValidationMode.STAGING:
+            # Staging is production-equivalent for trust decisions.  It may add
+            # diagnostics, but it must never accept a token without the same
+            # trust anchors and claim configuration as production.
+            if not self.jwks_url:
+                raise JWTSecurityError(
+                    "JWKS URL required for staging mode JWT validation"
+                )
+            if not self.issuer:
+                raise JWTSecurityError(
+                    "Issuer required for staging mode JWT validation"
+                )
+            if not self.audience:
+                raise JWTSecurityError(
+                    "Audience required for staging mode JWT validation"
+                )
+        elif self.validation_mode == ValidationMode.DEVELOPMENT:
+            # Development may relax issuer/audience requirements, but still
+            # requires a configured asymmetric verification key (or JWKS URL)
+            # at validation time.
             missing_configs = []
             if not self.jwks_url and not self.development_public_key:
                 missing_configs.append("JWKS URL or development public key")
@@ -363,11 +392,15 @@ class SecureJWTValidator:
         except JWTSecurityError as e:
             return JWTValidationResult(valid=False, error=str(e))
         except jwt.InvalidTokenError as e:
-            return JWTValidationResult(valid=False, error=f"Invalid token: {e}")
-        except Exception as e:
-            logger.error(f"Unexpected error in JWT validation: {e}")
             return JWTValidationResult(
-                valid=False, error=f"Token validation failed: {e}"
+                valid=False,
+                error=f"Invalid token: {_safe_error_detail(e, token)}",
+            )
+        except Exception as e:
+            detail = _safe_error_detail(e, token)
+            logger.error("Unexpected error in JWT validation: %s", detail)
+            return JWTValidationResult(
+                valid=False, error=f"Token validation failed: {detail}"
             )
 
     def _validate_staging(self, token: str) -> JWTValidationResult:
@@ -377,7 +410,9 @@ class SecureJWTValidator:
 
         # Extended logging for debugging
         if not result.valid:
-            logger.warning(f"Staging JWT validation failed: {result.error}")
+            # Keep failure diagnostics token-free.  The detailed result is
+            # still returned to the caller, but must not be copied to logs.
+            logger.warning("Staging JWT validation failed")
         else:
             logger.info("Staging JWT validation successful")
 
@@ -528,7 +563,7 @@ class SecureJWTValidator:
             if lifetime_error:
                 return lifetime_error
 
-            payload = self._mark_development_payload(token, payload)
+            payload = self._mark_development_payload(payload)
             exp = payload.get("exp")
 
             return JWTValidationResult(
@@ -546,19 +581,19 @@ class SecureJWTValidator:
 
         except Exception as e:
             return JWTValidationResult(
-                valid=False, error=f"Invalid development JWT: {e}", warnings=warnings
+                valid=False,
+                error=f"Invalid development JWT: {_safe_error_detail(e, token)}",
+                warnings=warnings,
             )
 
     def _mark_development_payload(
-        self, token: str, unverified_payload: dict[str, Any]
+        self, verified_payload: dict[str, Any]
     ) -> dict[str, Any]:
-        """Mark payload with development mode metadata if applicable."""
-        if token.count(".") >= 2:
-            payload = dict(unverified_payload)
-            payload["_development_mode"] = True
-            payload["_max_validity"] = self.DEVELOPMENT_TOKEN_LIFETIME
-            return payload
-        return unverified_payload
+        """Mark a verified development payload with mode metadata."""
+        payload = dict(verified_payload)
+        payload["_development_mode"] = True
+        payload["_max_validity"] = self.DEVELOPMENT_TOKEN_LIFETIME
+        return payload
 
     def _validate_strict(self, token: str) -> JWTValidationResult:
         """Strict validation - compatibility wrapper for production validation."""
@@ -645,10 +680,16 @@ def get_secure_jwt_validator(mode: ValidationMode | None = None) -> SecureJWTVal
             )
             mode = ValidationMode.PRODUCTION
 
-    # Log mode selection for development/staging
-    if mode in (ValidationMode.DEVELOPMENT, ValidationMode.STAGING):
+    # Log mode selection accurately: only development has the five-minute
+    # local token lifetime; staging is production-equivalent for lifetime and
+    # claim validation.
+    if mode == ValidationMode.DEVELOPMENT:
         logger.warning(
-            f"JWT validator in {mode.value.upper()} mode - tokens limited to 5 minutes"
+            "JWT validator in DEVELOPMENT mode - tokens limited to 5 minutes"
+        )
+    elif mode == ValidationMode.STAGING:
+        logger.warning(
+            "JWT validator in STAGING mode - production-equivalent token lifetime and claims"
         )
 
     # Get configuration

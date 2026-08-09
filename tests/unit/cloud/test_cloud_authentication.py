@@ -8,7 +8,10 @@ import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
+import jwt
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from traigent.cloud.auth import (
     APIKey,
@@ -645,6 +648,60 @@ class TestAuthenticationModes:
             "JWT validation" in result.error_message
             or "Invalid JWT" in result.error_message
         )
+
+    @pytest.mark.asyncio
+    async def test_authenticate_jwt_rejects_allowed_algorithm_signed_by_attacker_key(
+        self,
+    ):
+        """AuthManager must bind development JWTs to the configured public key."""
+        expected_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        attacker_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        expected_public_pem = expected_key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        attacker_private_pem = attacker_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        attacker_public_pem = attacker_key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        token = jwt.encode(
+            {
+                "sub": "attacker",
+                "iat": int(time.time()),
+                "exp": int(time.time()) + 60,
+            },
+            attacker_private_pem,
+            algorithm="RS256",
+        )
+
+        # Establish that this is a fresh, correctly signed RS256 token under
+        # the attacker's key; the old unbound development path would accept it.
+        assert jwt.decode(token, attacker_public_pem, algorithms=["RS256"])["sub"] == (
+            "attacker"
+        )
+
+        manager = AuthManager()
+        credentials = AuthCredentials(mode=AuthMode.JWT_TOKEN, jwt_token=token)
+        with patch.dict(
+            "os.environ",
+            {
+                "ENVIRONMENT": "development",
+                "TRAIGENT_DEV_JWT_PUBLIC_KEY": expected_public_pem.decode("ascii"),
+                "TRAIGENT_SKIP_DOTENV": "1",
+            },
+            clear=True,
+        ):
+            result = await manager._authenticate_jwt(credentials)
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert result.error_message == "JWT validation failed"
+        assert token[:16] not in result.error_message
 
     @pytest.mark.asyncio
     async def test_authenticate_jwt_missing_token(self):
@@ -1765,6 +1822,8 @@ class TestSDK937_NoFabricatedPermissionGrants:
         assert info is not None
         assert info["name"] == "environment"
         # The honest empty answer:
+        # fmt: off
         assert (
             info["permissions"] == {}
         ), f"env-keyed permissions must be {{}}, got {info['permissions']}"
+        # fmt: on

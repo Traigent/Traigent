@@ -3,6 +3,7 @@
 import os
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import jwt
@@ -79,6 +80,59 @@ class TestSecureJWTValidator(unittest.TestCase):
                 validation_mode=ValidationMode.PRODUCTION,
             )
         self.assertIn("Audience required", str(context.exception))
+
+    def test_staging_mode_requires_production_configuration(self):
+        """Staging must have all production trust and claim settings."""
+        for kwargs, expected_error in (
+            ({}, "JWKS URL required"),
+            ({"jwks_url": "https://example.com/jwks"}, "Issuer required"),
+            (
+                {
+                    "jwks_url": "https://example.com/jwks",
+                    "issuer": self.test_issuer,
+                },
+                "Audience required",
+            ),
+        ):
+            with self.assertRaises(JWTSecurityError) as context:
+                SecureJWTValidator(validation_mode=ValidationMode.STAGING, **kwargs)
+            self.assertIn(expected_error, str(context.exception))
+
+    def test_staging_signed_token_missing_claim_rejected(self):
+        """Real signed staging tokens still require issuer and audience."""
+        for missing_claim in ("iss", "aud"):
+            payload = {
+                "sub": "staging-user",
+                "iat": int(time.time()),
+                "exp": int(time.time()) + 60,
+                "nbf": int(time.time()),
+                "jti": f"staging-missing-{missing_claim}",
+                "iss": self.test_issuer,
+                "aud": self.test_audience,
+            }
+            payload.pop(missing_claim)
+            token = self.create_test_token(payload)
+            validator = SecureJWTValidator(
+                jwks_url="https://example.com/jwks",
+                issuer=self.test_issuer,
+                audience=self.test_audience,
+                validation_mode=ValidationMode.STAGING,
+            )
+            signing_key = SimpleNamespace(
+                key=_TEST_PUBLIC_PEM,
+                algorithm_name="RS256",
+                key_id="test-staging-key",
+            )
+
+            with patch.object(validator, "_get_jwks_client") as get_jwks_client:
+                get_jwks_client.return_value.get_signing_key_from_jwt.return_value = (
+                    signing_key
+                )
+                result = validator.validate_token(token)
+
+            assert result.valid is False
+            assert result.error
+            assert missing_claim in result.error.lower()
 
     def test_bypass_environment_variable_blocked(self):
         """Test that bypass environment variables are blocked."""

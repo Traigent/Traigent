@@ -1403,7 +1403,9 @@ class AuthManager:
                 return AuthResult(
                     success=False,
                     status=AuthStatus.INVALID,
-                    error_message=f"JWT validation failed: {result.error}",
+                    # Do not surface parser details: they may contain a raw
+                    # JWT or attacker-controlled token prefix.
+                    error_message="JWT validation failed",
                 )
 
             # Update expiration time from validated token
@@ -1428,11 +1430,11 @@ class AuthManager:
                 expires_in=expires_in,
             )
 
-        except Exception as e:
+        except Exception:
             return AuthResult(
                 success=False,
                 status=AuthStatus.INVALID,
-                error_message=f"Invalid JWT token: {e}",
+                error_message="Invalid JWT token",
             )
 
     async def _authenticate_oauth2(self, credentials: AuthCredentials) -> AuthResult:
