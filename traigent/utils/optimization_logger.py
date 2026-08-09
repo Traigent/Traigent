@@ -26,9 +26,37 @@ from traigent.core.objectives import ObjectiveSchema, normalize_objectives
 from traigent.utils.file_versioning import FileVersionManager, RunVersionInfo
 from traigent.utils.logging import get_logger
 from traigent.utils.objectives import is_minimization_objective
-from traigent.utils.secure_path import PathTraversalError, validate_path
+from traigent.utils.secure_path import PathTraversalError, safe_open, validate_path
 
 logger = get_logger(__name__)
+
+
+def _resolve_run_path(base_path: Path, experiment_name: str, run_id: str) -> Path:
+    """Resolve a run path while keeping caller-provided names as components."""
+    for label, value in (("experiment name", experiment_name), ("run id", run_id)):
+        value_path = Path(value)
+        if (
+            not value
+            or value_path.is_absolute()
+            or "/" in value
+            or "\\" in value
+            or any(part in {".", ".."} for part in value_path.parts)
+        ):
+            raise PathTraversalError(
+                f"Invalid {label}: path components are not allowed"
+            )
+
+    base_root = Path(base_path).expanduser().resolve()
+    experiments_root = base_root / "experiments"
+    if experiments_root.is_symlink():
+        raise PathTraversalError("Optimization log experiments directory is a symlink")
+    return cast(
+        Path,
+        validate_path(
+            experiments_root / experiment_name / "runs" / run_id,
+            experiments_root,
+        ),
+    )
 
 
 _SENSITIVE_KEYWORDS = {
@@ -400,7 +428,9 @@ class OptimizationLogger:
         self.execution_mode_enum = resolve_execution_mode(execution_mode)
         self.execution_mode = self.execution_mode_enum.value
         self.base_path = (
-            Path(base_path) if base_path else self._resolve_default_base_path()
+            Path(base_path).expanduser().resolve()
+            if base_path
+            else self._resolve_default_base_path()
         )
         self.buffer_size = buffer_size
         # Persist per-example query/response/expected content to disk? Defaults to
@@ -415,8 +445,10 @@ class OptimizationLogger:
         session_short = session_id[:8] if len(session_id) >= 8 else session_id
         self.run_id = f"{timestamp}_{session_short}"
 
-        self.experiment_path = self.base_path / "experiments" / self.experiment_name
-        self.run_path = self.experiment_path / "runs" / self.run_id
+        self.run_path = _resolve_run_path(
+            self.base_path, self.experiment_name, self.run_id
+        )
+        self.experiment_path = self.run_path.parent.parent
 
         self._file_locks: dict[Path, threading.Lock] = {}
         self._trial_buffer: list[TrialResult] = []
@@ -1158,7 +1190,7 @@ class OptimizationLogger:
         base_path: Path | None = None,
     ) -> dict[str, Any]:
         base_path = base_path or cls._resolve_default_base_path()
-        run_path = base_path / "experiments" / experiment_name / "runs" / run_id
+        run_path = _resolve_run_path(base_path, experiment_name, run_id)
 
         version_info = RunVersionInfo(run_path)
         compatibility = version_info.check_compatibility(TRAIGENT_VERSION)
@@ -1169,16 +1201,19 @@ class OptimizationLogger:
         latest_file = (
             run_path / "checkpoints" / file_manager.get_filename("checkpoint_latest")
         )
+        checkpoints_dir = run_path / "checkpoints"
         if not latest_file.exists():
             raise FileNotFoundError(f"No checkpoint found for run {run_id}") from None
 
-        with open(latest_file) as handle:
+        validated_latest_file = validate_path(
+            latest_file, checkpoints_dir, must_exist=True
+        )
+        with safe_open(validated_latest_file, checkpoints_dir, mode="r") as handle:
             latest_data = json.load(handle)
 
         # Constrain the checkpoint reference to the run's checkpoints directory.
         # The filename comes from latest.json on disk; a tampered manifest
         # could otherwise traverse out of run_path via "../" segments.
-        checkpoints_dir = run_path / "checkpoints"
         try:
             checkpoint_file = validate_path(
                 latest_data["checkpoint_file"], checkpoints_dir, must_exist=True
@@ -1187,13 +1222,16 @@ class OptimizationLogger:
             raise ValueError(
                 f"Invalid checkpoint reference in {latest_file}: {exc}"
             ) from exc
-        with open(checkpoint_file) as handle:
+        with safe_open(checkpoint_file, checkpoints_dir, mode="r") as handle:
             checkpoint_data = json.load(handle)
 
         history_file = (
             run_path / "checkpoints" / file_manager.get_filename("trial_history")
         )
-        with open(history_file) as handle:
+        validated_history_file = validate_path(
+            history_file, checkpoints_dir, must_exist=True
+        )
+        with safe_open(validated_history_file, checkpoints_dir, mode="r") as handle:
             trial_history = json.load(handle)
 
         checkpoint_data["trial_history"] = trial_history

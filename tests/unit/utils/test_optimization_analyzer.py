@@ -18,6 +18,7 @@ import pytest
 
 from traigent.utils.file_versioning import FileVersionManager
 from traigent.utils.optimization_analyzer import OptimizationAnalyzer
+from traigent.utils.secure_path import PathTraversalError
 
 try:
     import matplotlib.pyplot  # noqa: F401
@@ -247,6 +248,38 @@ class TestOptimizationAnalyzer:
         """Test load_run with nonexistent run."""
         data = analyzer.load_run("nonexistent_exp", "run_999")
         assert data == {}
+
+    @pytest.mark.parametrize(
+        "experiment_name,run_id",
+        [
+            ("/tmp/outside", "run_001"),
+            ("../outside", "run_001"),
+            ("test_exp", "../run_001"),
+        ],
+    )
+    def test_load_run_rejects_path_components(
+        self,
+        analyzer: OptimizationAnalyzer,
+        experiment_name: str,
+        run_id: str,
+    ) -> None:
+        with pytest.raises(PathTraversalError):
+            analyzer.load_run(experiment_name, run_id)
+
+    def test_load_run_rejects_symlink_escape(
+        self, analyzer: OptimizationAnalyzer, temp_base_path: Path
+    ) -> None:
+        outside = temp_base_path / "outside"
+        outside.mkdir()
+        try:
+            link = temp_base_path / "experiments" / "escape"
+            link.parent.mkdir(parents=True)
+            link.symlink_to(outside, target_is_directory=True)
+        except OSError:
+            pytest.skip("Symlink creation not supported on this platform")
+
+        with pytest.raises(PathTraversalError):
+            analyzer.load_run("escape", "run_001")
 
     def test_load_run_missing_files(
         self, analyzer: OptimizationAnalyzer, temp_base_path: Path

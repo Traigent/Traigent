@@ -30,6 +30,7 @@ from traigent.utils.optimization_logger import (
     _serialize_example_result,
     sanitize_for_logging,
 )
+from traigent.utils.secure_path import PathTraversalError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -678,6 +679,33 @@ class TestLoadCheckpoint:
         (run_path / "meta").mkdir()
         with pytest.raises(FileNotFoundError):
             OptimizationLogger.load_checkpoint("nope", "run_001", tmp_path)
+
+    @pytest.mark.parametrize(
+        "experiment_name,run_id",
+        [
+            ("/tmp/outside", "run_001"),
+            ("../outside", "run_001"),
+            ("test_exp", "../run_001"),
+        ],
+    )
+    def test_load_checkpoint_rejects_path_components(
+        self, tmp_path: Path, experiment_name: str, run_id: str
+    ) -> None:
+        with pytest.raises(PathTraversalError):
+            OptimizationLogger.load_checkpoint(experiment_name, run_id, tmp_path)
+
+    def test_load_checkpoint_rejects_symlink_escape(self, tmp_path: Path) -> None:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        try:
+            link = tmp_path / "experiments" / "escape"
+            link.parent.mkdir(parents=True)
+            link.symlink_to(outside, target_is_directory=True)
+        except OSError:
+            pytest.skip("Symlink creation not supported on this platform")
+
+        with pytest.raises(PathTraversalError):
+            OptimizationLogger.load_checkpoint("escape", "run_001", tmp_path)
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -19,9 +19,37 @@ import pandas as pd
 from traigent.utils.file_versioning import FileVersionManager
 from traigent.utils.logging import get_logger
 from traigent.utils.optimization_logger import OptimizationLogger
-from traigent.utils.secure_path import safe_open, validate_path
+from traigent.utils.secure_path import PathTraversalError, safe_open, validate_path
 
 logger = get_logger(__name__)
+
+
+def _resolve_run_path(base_path: Path, experiment_name: str, run_id: str) -> Path:
+    """Resolve a run path while keeping caller-provided names as components."""
+    for label, value in (("experiment name", experiment_name), ("run id", run_id)):
+        value_path = Path(value)
+        if (
+            not value
+            or value_path.is_absolute()
+            or "/" in value
+            or "\\" in value
+            or any(part in {".", ".."} for part in value_path.parts)
+        ):
+            raise PathTraversalError(
+                f"Invalid {label}: path components are not allowed"
+            )
+
+    base_root = Path(base_path).expanduser().resolve()
+    experiments_root = base_root / "experiments"
+    if experiments_root.is_symlink():
+        raise PathTraversalError("Optimization log experiments directory is a symlink")
+    return cast(
+        Path,
+        validate_path(
+            experiments_root / experiment_name / "runs" / run_id,
+            experiments_root,
+        ),
+    )
 
 
 class OptimizationAnalyzer:
@@ -240,6 +268,11 @@ class OptimizationAnalyzer:
 
         if not experiments_dir.exists():
             return pd.DataFrame()
+        if experiments_dir.is_symlink():
+            logger.warning(
+                "Skipping symlinked optimization log root: %s", experiments_dir
+            )
+            return pd.DataFrame()
 
         for exp_dir in experiments_dir.iterdir():
             if not exp_dir.is_dir():
@@ -253,8 +286,18 @@ class OptimizationAnalyzer:
                 if not run_dir.is_dir():
                     continue
 
+                try:
+                    validated_run_dir = validate_path(
+                        run_dir, experiments_dir, must_exist=True
+                    )
+                except PathTraversalError:
+                    logger.warning(
+                        "Skipping run outside optimization log root: %s", run_dir
+                    )
+                    continue
+
                 session_data = OptimizationAnalyzer._load_json_file(
-                    run_dir,
+                    validated_run_dir,
                     "meta",
                     "session",
                     file_manager,
@@ -271,7 +314,7 @@ class OptimizationAnalyzer:
                         "session_id": session_data.get("session_id", "unknown"),
                         "timestamp": session_data.get("start_time", ""),
                         "execution_mode": session_data.get("execution_mode", "unknown"),
-                        "path": str(run_dir),
+                        "path": str(validated_run_dir),
                         "status": session_data.get("status", "unknown"),
                     }
                 )
@@ -303,7 +346,7 @@ class OptimizationAnalyzer:
         legacy_manager: FileVersionManager,
     ) -> dict[str, Any]:
         """Implementation of load_run."""
-        run_path = base_path / "experiments" / experiment_name / "runs" / run_id
+        run_path = _resolve_run_path(base_path, experiment_name, run_id)
 
         if not run_path.exists():
             logger.warning(f"Run not found: {experiment_name}/{run_id}")
