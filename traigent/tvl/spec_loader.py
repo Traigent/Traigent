@@ -2084,7 +2084,31 @@ def _resolve_algorithm(optimization_section: Any) -> str | None:
     if not isinstance(strategy, str):
         return None
 
+    # A retired strategy-preset name is refused by name here, exactly as at a
+    # call site. Without this the name survives loading as an "algorithm" and
+    # the run fails much later with "Unknown optimizer '<preset>'" — after the
+    # session exists — on the one route where a retired name is most likely to
+    # be checked into a repo rather than typed at a call site. Imported inside
+    # the function because traigent.core.optimized_function imports this module.
+    #
+    # Checked against the *normalized* value, unlike a call site. The call-site
+    # helper refuses only the exact spelling because a case variant there can be
+    # a legitimately registered optimizer name (see its docstring); that reason
+    # does not hold on this route, because this function lowercases every
+    # strategy it resolves, so no casing from a spec can ever reach a
+    # differently-cased registration. Refusing the literal value only would let
+    # ``strategy: PARETO_FRONTIER`` load clean and die mid-run — the exact
+    # failure this check exists to prevent. The message names the spelling the
+    # spec actually used, so it can be found in the file.
+    from traigent.core.optimized_function import (
+        _REMOVED_STRATEGY_PRESETS,
+        _removed_strategy_preset_message,
+    )
+
     normalized = strategy.lower()
+    if normalized in _REMOVED_STRATEGY_PRESETS:
+        raise TypeError(_removed_strategy_preset_message(strategy))
+
     mapping = {
         "pareto_optimal": "nsga2",
         "nsga2": "nsga2",

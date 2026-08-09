@@ -181,6 +181,37 @@ class TestOptimization:
             await opt_func.optimize(strategy_params={"floor": 0.8})
 
     @pytest.mark.asyncio
+    async def test_runtime_strategy_without_params_remains_deprecated_algorithm_alias(
+        self, monkeypatch, simple_function, sample_config_space, sample_dataset
+    ):
+        """``strategy="grid"`` is still the deprecated alias for ``algorithm``.
+
+        The preset removal shares this parameter, so the pre-existing and
+        unrelated alias needs its own guard against collateral deletion.
+        ``pyproject.toml`` ignores DeprecationWarning, hence pytest.warns
+        rather than a filter.
+        """
+        opt_func = OptimizedFunction(
+            func=simple_function,
+            configuration_space=sample_config_space,
+            eval_dataset=sample_dataset,
+            max_trials=3,
+        )
+
+        captured: dict[str, object] = {}
+
+        async def fake_execute(**kwargs):
+            captured.update(kwargs)
+            return Mock(spec=OptimizationResult)
+
+        monkeypatch.setattr(opt_func, "_execute_optimization", fake_execute)
+
+        with pytest.warns(DeprecationWarning, match="use 'algorithm' instead"):
+            await opt_func.optimize(strategy="grid")
+
+        require(captured["algorithm"] == "grid")
+
+    @pytest.mark.asyncio
     async def test_optimization_with_custom_evaluator(
         self, simple_function, sample_config_space, sample_dataset
     ):
