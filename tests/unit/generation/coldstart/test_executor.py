@@ -67,8 +67,19 @@ def test_builder_rejects_malformed_response(response: Mapping[str, Any]) -> None
         build_cold_start_eval_set({}, transport=lambda payload: response)
 
 
+def test_coldstart_survives_generation_package_edits() -> None:
+    """coldstart must stay exported from traigent.generation.
+
+    Regression guard: restoring guided generation (revert of 114d9386) rewrote
+    traigent/generation/__init__.py wholesale and dropped coldstart from both the
+    imports and __all__. The subpackage stayed importable by path, so nothing
+    failed loudly -- it simply vanished from the package's public surface.
+    """
+    assert "coldstart" in generation.__all__
+    assert generation.coldstart is coldstart
+
+
 def test_exports_are_closed() -> None:
-    assert generation.__all__ == ["coldstart"]
     assert coldstart.__all__ == [
         "ColdStartResult",
         "DiscoveryGap",
@@ -76,30 +87,6 @@ def test_exports_are_closed() -> None:
         "build_cold_start_eval_set",
     ]
     assert not hasattr(traigent, "build_cold_start_eval_set")
-
-
-def test_only_coldstart_source_remains() -> None:
-    package = Path(generation.__file__).parent
-    source_files = {
-        path.relative_to(package).as_posix() for path in package.rglob("*.py")
-    }
-
-    assert source_files == {
-        "__init__.py",
-        "coldstart/__init__.py",
-        "coldstart/executor.py",
-        "coldstart/models.py",
-    }
-
-    forbidden_exports = {
-        "BackendGuidanceProvider",
-        "ExampleSynthesizer",
-        "GuidanceLoop",
-        "PromptRewriter",
-        "SkillTrainOptions",
-        "SkillTrainer",
-    }
-    assert not {name for name in forbidden_exports if hasattr(generation, name)}
 
 
 def test_implementation_has_no_forbidden_markers() -> None:
