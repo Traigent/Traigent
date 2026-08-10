@@ -8,13 +8,13 @@
       
       
       
-        <link rel="canonical" href="https://docs.traigent.ai/contributing/test-quality-guide/">
+        <link rel="canonical" href="https://docs.traigent.ai/concepts/guided-generation/">
       
       
-        <link rel="prev" href="../code_review_instructions/">
+        <link rel="prev" href="../../getting-started/portal-dev-laptop-agent/">
       
       
-        <link rel="next" href="../CODE_OF_CONDUCT/">
+        <link rel="next" href="../composite-knob-ir/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>Test Quality Guide - Traigent</title>
+        <title>Guided Generation - Traigent</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#test-quality-guide" class="md-skip">
+        <a href="#guided-generation" class="md-skip">
           Skip to content
         </a>
       
@@ -110,7 +110,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Test Quality Guide
+              Guided Generation
             
           </span>
         </div>
@@ -279,11 +279,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../../concepts/guided-generation/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="./" class="md-tabs__link">
           
   
   
@@ -429,13 +431,11 @@
   
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../contributing/" class="md-tabs__link">
           
   
   
@@ -777,26 +777,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
         
           
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
             
   
   
@@ -814,7 +819,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -829,10 +834,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../concepts/guided-generation/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guided Generation
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -848,6 +880,92 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-ip-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The IP boundary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-privacy-mode-protects-and-what-it-does-not" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What privacy mode protects (and what it does not)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-it-python-sdk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using it (Python SDK)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-it-typescript-sdk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using it (TypeScript SDK)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#required-by-design" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Required-by-design
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -860,7 +978,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../concepts/composite-knob-ir/" class="md-nav__link">
+      <a href="../composite-knob-ir/" class="md-nav__link">
         
   
   
@@ -888,7 +1006,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../concepts/composite-knobs/" class="md-nav__link">
+      <a href="../composite-knobs/" class="md-nav__link">
         
   
   
@@ -3051,7 +3169,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../SECURITY/" class="md-nav__link">
+      <a href="../../contributing/SECURITY/" class="md-nav__link">
         
   
   
@@ -3135,7 +3253,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../aikido_triage/" class="md-nav__link">
+      <a href="../../contributing/aikido_triage/" class="md-nav__link">
         
   
   
@@ -3422,31 +3540,26 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_11" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_11" >
         
           
-          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="">
+          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="0">
             
   
   
@@ -3464,7 +3577,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_11">
             <span class="md-nav__icon md-icon"></span>
             
@@ -3482,7 +3595,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../contributing/" class="md-nav__link">
         
   
   
@@ -3510,7 +3623,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../CONTRIBUTING/" class="md-nav__link">
+      <a href="../../contributing/CONTRIBUTING/" class="md-nav__link">
         
   
   
@@ -3538,7 +3651,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../ADDING_NEW_INTEGRATIONS/" class="md-nav__link">
+      <a href="../../contributing/ADDING_NEW_INTEGRATIONS/" class="md-nav__link">
         
   
   
@@ -3566,7 +3679,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../code_review_instructions/" class="md-nav__link">
+      <a href="../../contributing/code_review_instructions/" class="md-nav__link">
         
   
   
@@ -3591,37 +3704,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Test Quality Guide
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../contributing/test-quality-guide/" class="md-nav__link">
         
   
   
@@ -3637,248 +3723,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#quick-reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Quick Reference
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Quick Reference">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#critical-anti-patterns-to-avoid" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Critical Anti-Patterns to Avoid
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#anti-pattern-examples" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Anti-Pattern Examples
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Anti-Pattern Examples">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#it-vro-validator-reliance-only" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        IT-VRO: Validator Reliance Only
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#it-vta-vacuous-truth-assertions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        IT-VTA: Vacuous Truth Assertions
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#it-cbm-condition-behavior-mismatch" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        IT-CBM: Condition-Behavior Mismatch
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#test-writing-checklist" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Test Writing Checklist
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#validation-tools" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Validation Tools
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Validation Tools">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-static-analysis-test-weakness-analyzer" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Static Analysis - Test Weakness Analyzer
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-assertion-lint-ci-integration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Assertion Lint - CI Integration
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-mutation-testing-oracle-strength" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Mutation Testing - Oracle Strength
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#test-structure-templates" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Test Structure Templates
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Test Structure Templates">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#unit-test-template" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Unit Test Template
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#async-integration-test-template" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Async Integration Test Template
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#running-tests" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Running Tests
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#common-mistakes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Common Mistakes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#reference-documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Reference Documentation
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Summary
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -3891,7 +3735,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../CODE_OF_CONDUCT/" class="md-nav__link">
+      <a href="../../contributing/CODE_OF_CONDUCT/" class="md-nav__link">
         
   
   
@@ -3919,7 +3763,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../EXAMPLE_TEMPLATE/" class="md-nav__link">
+      <a href="../../contributing/EXAMPLE_TEMPLATE/" class="md-nav__link">
         
   
   
@@ -3974,88 +3818,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#quick-reference" class="md-nav__link">
+  <a href="#the-ip-boundary" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Quick Reference
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Quick Reference">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#critical-anti-patterns-to-avoid" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Critical Anti-Patterns to Avoid
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#anti-pattern-examples" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Anti-Pattern Examples
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Anti-Pattern Examples">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#it-vro-validator-reliance-only" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        IT-VRO: Validator Reliance Only
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#it-vta-vacuous-truth-assertions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        IT-VTA: Vacuous Truth Assertions
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#it-cbm-condition-behavior-mismatch" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        IT-CBM: Condition-Behavior Mismatch
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#test-writing-checklist" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Test Writing Checklist
+        The IP boundary
       
     </span>
   </a>
@@ -4063,99 +3829,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#validation-tools" class="md-nav__link">
+  <a href="#what-privacy-mode-protects-and-what-it-does-not" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Validation Tools
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Validation Tools">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-static-analysis-test-weakness-analyzer" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Static Analysis - Test Weakness Analyzer
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-assertion-lint-ci-integration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Assertion Lint - CI Integration
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-mutation-testing-oracle-strength" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Mutation Testing - Oracle Strength
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#test-structure-templates" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Test Structure Templates
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Test Structure Templates">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#unit-test-template" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Unit Test Template
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#async-integration-test-template" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Async Integration Test Template
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#running-tests" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Running Tests
+        What privacy mode protects (and what it does not)
       
     </span>
   </a>
@@ -4163,10 +3840,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#common-mistakes" class="md-nav__link">
+  <a href="#using-it-python-sdk" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Common Mistakes
+        Using it (Python SDK)
       
     </span>
   </a>
@@ -4174,10 +3851,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#reference-documentation" class="md-nav__link">
+  <a href="#using-it-typescript-sdk" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Reference Documentation
+        Using it (TypeScript SDK)
       
     </span>
   </a>
@@ -4185,10 +3862,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
+  <a href="#required-by-design" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Summary
+        Required-by-design
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
       
     </span>
   </a>
@@ -4215,331 +3903,105 @@
   
 
 
-<h1 id="test-quality-guide">Test Quality Guide<a class="headerlink" href="#test-quality-guide" title="Permanent link">&para;</a></h1>
-<p>This guide documents test quality best practices and anti-patterns identified through meta-analysis of the Traigent test suite. It provides actionable guidance for writing high-quality tests.</p>
-<h2 id="quick-reference">Quick Reference<a class="headerlink" href="#quick-reference" title="Permanent link">&para;</a></h2>
-<h3 id="critical-anti-patterns-to-avoid">Critical Anti-Patterns to Avoid<a class="headerlink" href="#critical-anti-patterns-to-avoid" title="Permanent link">&para;</a></h3>
+<h1 id="guided-generation">Guided Generation<a class="headerlink" href="#guided-generation" title="Permanent link">&para;</a></h1>
+<p>Guided generation lets Traigent create <strong>new tuning material</strong> — improved prompt
+candidates and new evaluation examples — guided by the backend's proprietary
+tuning signals, while the generation itself runs on <strong>your own LLM</strong> so prompt
+text and example content never leave your environment.</p>
+<p>Two capabilities, one contract:</p>
 <table>
 <thead>
 <tr>
-<th>Code</th>
-<th>Name</th>
-<th>Description</th>
-<th>Severity</th>
+<th>Capability</th>
+<th>What it produces</th>
+<th>How it's used</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>IT-VRO</td>
-<td>Validator Reliance Only</td>
-<td>Relying solely on a validator abstraction without explicit assertions</td>
-<td>HIGH</td>
+<td><strong>Prompt rewrite</strong></td>
+<td>New prompt variants aimed at measured weak spots</td>
+<td>Folded into the config space as new <code>Choices</code> the optimizer searches</td>
 </tr>
 <tr>
-<td>IT-VTA</td>
-<td>Vacuous Truth Assertions</td>
-<td>Assertions that are always true (e.g., <code>len(x) &gt;= 0</code>)</td>
-<td>MEDIUM</td>
-</tr>
-<tr>
-<td>IT-CBM</td>
-<td>Condition-Behavior Mismatch</td>
-<td>Test setup doesn't trigger the intended behavior</td>
-<td>HIGH</td>
-</tr>
-<tr>
-<td>IT-NTV</td>
-<td>No Trial Verification</td>
-<td>Tests that don't verify trial content</td>
-<td>MEDIUM</td>
-</tr>
-<tr>
-<td>IT-NSR</td>
-<td>No Stop Reason Check</td>
-<td>Tests named for stop conditions that don't verify stop_reason</td>
-<td>MEDIUM</td>
+<td><strong>Benchmark guide generation</strong></td>
+<td>New evaluation examples near the informative/difficult frontier</td>
+<td>Added to your dataset (<code>metadata.synthetic</code>)</td>
 </tr>
 </tbody>
 </table>
-<h2 id="anti-pattern-examples">Anti-Pattern Examples<a class="headerlink" href="#anti-pattern-examples" title="Permanent link">&para;</a></h2>
-<h3 id="it-vro-validator-reliance-only">IT-VRO: Validator Reliance Only<a class="headerlink" href="#it-vro-validator-reliance-only" title="Permanent link">&para;</a></h3>
-<p><strong>Problem</strong>: Relying solely on a validator abstraction hides what's being tested and can mask bugs.</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># BAD - Only checks validator</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_optimization_completes</span><span class="p">(</span><span class="n">scenario_runner</span><span class="p">,</span> <span class="n">result_validator</span><span class="p">):</span>
-    <span class="n">scenario</span> <span class="o">=</span> <span class="n">TestScenario</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-    <span class="n">func</span><span class="p">,</span> <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">scenario_runner</span><span class="p">(</span><span class="n">scenario</span><span class="p">)</span>
-    <span class="n">validation</span> <span class="o">=</span> <span class="n">result_validator</span><span class="p">(</span><span class="n">scenario</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>
-    <span class="k">assert</span> <span class="n">validation</span><span class="o">.</span><span class="n">passed</span>  <span class="c1"># What is actually being tested?</span>
+<h2 id="the-ip-boundary">The IP boundary<a class="headerlink" href="#the-ip-boundary" title="Permanent link">&para;</a></h2>
+<p>The differentiating asset is Traigent's <strong>tuning signals</strong> (informativeness,
+difficulty, discriminative power, uniqueness, …) and the <strong>selection policy</strong> that
+acts on them. These never cross the client boundary. Instead, the backend returns
+an opaque <strong><code>GuidancePlan</code></strong>:</p>
+<div class="highlight"><pre><span></span><code>GuidancePlan
+├── plan_id, policy_version, plan_token (opaque, signed), expires_at
+├── plan_budget.total_generations          # client-requested, server-capped
+└── items: [ { seed_ref, action, coarse_priority } ]
+                 │         │            └── high | medium | low (ordinal only)
+                 │         └── generate_similar | generate_harder |
+                 │            diversify_around | rewrite_prompt
+                 └── a reference the CLIENT owns and resolves locally
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="c1"># GOOD - Explicit assertions THEN validator</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_optimization_completes</span><span class="p">(</span><span class="n">scenario_runner</span><span class="p">,</span> <span class="n">result_validator</span><span class="p">):</span>
-    <span class="n">scenario</span> <span class="o">=</span> <span class="n">TestScenario</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-    <span class="n">func</span><span class="p">,</span> <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">scenario_runner</span><span class="p">(</span><span class="n">scenario</span><span class="p">)</span>
-
-    <span class="c1"># EXPLICIT ASSERTIONS - clearly document what we&#39;re testing</span>
-    <span class="k">assert</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="ne">Exception</span><span class="p">),</span> <span class="sa">f</span><span class="s2">&quot;Unexpected error: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span>
-    <span class="k">assert</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="s2">&quot;trials&quot;</span><span class="p">),</span> <span class="s2">&quot;Result should have trials attribute&quot;</span>
-    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;Should complete at least one trial&quot;</span>
-    <span class="k">for</span> <span class="n">trial</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">:</span>
-        <span class="k">assert</span> <span class="n">trial</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s2">&quot;Each trial should have a config&quot;</span>
-
-    <span class="c1"># Validator AFTER explicit checks for additional coverage</span>
-    <span class="n">validation</span> <span class="o">=</span> <span class="n">result_validator</span><span class="p">(</span><span class="n">scenario</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>
-    <span class="k">assert</span> <span class="n">validation</span><span class="o">.</span><span class="n">passed</span><span class="p">,</span> <span class="n">validation</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>
-</code></pre></div>
-<h3 id="it-vta-vacuous-truth-assertions">IT-VTA: Vacuous Truth Assertions<a class="headerlink" href="#it-vta-vacuous-truth-assertions" title="Permanent link">&para;</a></h3>
-<p><strong>Problem</strong>: Assertions that are mathematically always true provide no test value.</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># BAD - These assertions can never fail</span>
-<span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mi">0</span>  <span class="c1"># len() is always &gt;= 0</span>
-<span class="k">assert</span> <span class="kc">True</span>
-<span class="k">assert</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="ne">Exception</span><span class="p">)</span>  <span class="c1"># Weak - any non-exception passes</span>
-<span class="k">assert</span> <span class="n">result</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">result</span> <span class="ow">is</span> <span class="kc">None</span>  <span class="c1"># Tautology</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="c1"># GOOD - Meaningful assertions with specific bounds</span>
-<span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;Should have at least one trial&quot;</span>
-<span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">)</span> <span class="o">==</span> <span class="n">expected_count</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;Expected </span><span class="si">{</span><span class="n">expected_count</span><span class="si">}</span><span class="s2"> trials&quot;</span>
-<span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">stop_reason</span> <span class="o">==</span> <span class="s2">&quot;max_trials&quot;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;Wrong stop reason: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">stop_reason</span><span class="si">}</span><span class="s2">&quot;</span>
-<span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">error</span><span class="p">,</span> <span class="ne">ValueError</span><span class="p">),</span> <span class="sa">f</span><span class="s2">&quot;Expected ValueError, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">error</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
-</code></pre></div>
-<h3 id="it-cbm-condition-behavior-mismatch">IT-CBM: Condition-Behavior Mismatch<a class="headerlink" href="#it-cbm-condition-behavior-mismatch" title="Permanent link">&para;</a></h3>
-<p><strong>Problem</strong>: Test setup doesn't actually trigger the behavior being tested.</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># BAD - max_trials can never trigger (config space exhausts first)</span>
-<span class="n">scenario</span> <span class="o">=</span> <span class="n">TestScenario</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;test_max_trials_stops&quot;</span><span class="p">,</span>
-    <span class="n">max_trials</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
-    <span class="n">config_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;a&quot;</span><span class="p">,</span> <span class="s2">&quot;b&quot;</span><span class="p">]}</span>  <span class="c1"># Only 2 combinations!</span>
-<span class="p">)</span>
-<span class="c1"># Grid search will exhaust after 2 trials, not 10</span>
-<span class="c1"># Test name suggests max_trials but it never triggers</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="c1"># GOOD - Config space larger than max_trials</span>
-<span class="n">scenario</span> <span class="o">=</span> <span class="n">TestScenario</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;test_max_trials_stops&quot;</span><span class="p">,</span>
-    <span class="n">max_trials</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
-    <span class="n">config_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;a&quot;</span><span class="p">,</span> <span class="s2">&quot;b&quot;</span><span class="p">,</span> <span class="s2">&quot;c&quot;</span><span class="p">,</span> <span class="s2">&quot;d&quot;</span><span class="p">,</span> <span class="s2">&quot;e&quot;</span><span class="p">]}</span>  <span class="c1"># 5 &gt; 3</span>
-<span class="p">)</span>
-<span class="c1"># Now max_trials will actually trigger at trial 3</span>
-<span class="c1"># Also verify the stop reason!</span>
-<span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">stop_reason</span> <span class="o">==</span> <span class="s2">&quot;max_trials&quot;</span>
-</code></pre></div>
-<h2 id="test-writing-checklist">Test Writing Checklist<a class="headerlink" href="#test-writing-checklist" title="Permanent link">&para;</a></h2>
-<p>Before writing any test, answer these questions:</p>
-<ol>
-<li><strong>What specific behavior am I testing?</strong></li>
-<li>
-<p>Can you state it in one sentence?</p>
-</li>
-<li>
-<p><strong>What explicit assertions verify this behavior?</strong></p>
-</li>
-<li>
-<p>List the specific assertions, not just "it passes"</p>
-</li>
-<li>
-<p><strong>Does my test setup actually trigger this behavior?</strong></p>
-</li>
-<li>For stop conditions: is the config space large enough?</li>
-<li>
-<p>For failures: does the input actually cause the failure?</p>
-</li>
-<li>
-<p><strong>Would this test fail if the behavior was broken?</strong></p>
-</li>
-<li>If you removed the feature, would the test catch it?</li>
-</ol>
-<h2 id="validation-tools">Validation Tools<a class="headerlink" href="#validation-tools" title="Permanent link">&para;</a></h2>
-<h3 id="1-static-analysis-test-weakness-analyzer">1. Static Analysis - Test Weakness Analyzer<a class="headerlink" href="#1-static-analysis-test-weakness-analyzer" title="Permanent link">&para;</a></h3>
-<p>Detects anti-patterns through AST analysis:</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># Analyze optimizer validation tests</span>
-python<span class="w"> </span>-m<span class="w"> </span>tests.optimizer_validation.tools.test_weakness_analyzer
-
-<span class="c1"># Analyze specific directory</span>
-python<span class="w"> </span>-m<span class="w"> </span>tests.optimizer_validation.tools.test_weakness_analyzer<span class="w"> </span>-d<span class="w"> </span>tests/unit/
-
-<span class="c1"># JSON output for CI integration</span>
-python<span class="w"> </span>-m<span class="w"> </span>tests.optimizer_validation.tools.test_weakness_analyzer<span class="w"> </span>--output<span class="w"> </span>json
-</code></pre></div>
-<h3 id="2-assertion-lint-ci-integration">2. Assertion Lint - CI Integration<a class="headerlink" href="#2-assertion-lint-ci-integration" title="Permanent link">&para;</a></h3>
-<p>Lightweight linter suitable for CI pipelines:</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># Run lint checks</span>
-python<span class="w"> </span>-m<span class="w"> </span>tests.optimizer_validation.tools.lint_test_assertions
-
-<span class="c1"># Strict mode (fail on warnings)</span>
-python<span class="w"> </span>-m<span class="w"> </span>tests.optimizer_validation.tools.lint_test_assertions<span class="w"> </span>--strict
-
-<span class="c1"># GitHub Actions annotation format</span>
-python<span class="w"> </span>-m<span class="w"> </span>tests.optimizer_validation.tools.lint_test_assertions<span class="w"> </span>--format<span class="w"> </span>github
-</code></pre></div>
-<p><strong>Lint Rules:</strong>
-- <code>T001</code>: result_validator called without asserting validation.passed (ERROR)
-- <code>T002</code>: No explicit behavior assertions (WARNING)
-- <code>T003</code>: Vacuous assertion detected (ERROR/WARNING)</p>
-<h3 id="3-mutation-testing-oracle-strength">3. Mutation Testing - Oracle Strength<a class="headerlink" href="#3-mutation-testing-oracle-strength" title="Permanent link">&para;</a></h3>
-<p>Tests whether your test suite catches semantic bugs:</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># Run all mutation operators</span>
-python<span class="w"> </span>-m<span class="w"> </span>tests.optimizer_validation.tools.mutation_oracle
-
-<span class="c1"># Run specific mutant</span>
-python<span class="w"> </span>-m<span class="w"> </span>tests.optimizer_validation.tools.mutation_oracle<span class="w"> </span>--mutant<span class="w"> </span>MUT-SKIP-TRIALS
-
-<span class="c1"># Save detailed report</span>
-python<span class="w"> </span>-m<span class="w"> </span>tests.optimizer_validation.tools.mutation_oracle<span class="w"> </span>--report<span class="w"> </span>mutation_report.json
-</code></pre></div>
-<p><strong>Mutation Operators:</strong>
-| Operator | Description | Catches |
-|----------|-------------|---------|
-| MUT-SKIP-TRIALS | Returns empty trials | Tests without trial verification |
-| MUT-IGNORE-MAX | Ignores max_trials | Tests without stop condition checks |
-| MUT-SWAP-DIRECTION | Swaps maximize/minimize | Tests without score validation |
-| MUT-DROP-METRICS | Removes metrics | Tests that don't validate metrics |
-| MUT-FORCE-VALIDATOR | Validator always passes | Validator-only tests |
-| MUT-WRONG-STOP-REASON | Returns wrong stop_reason | Tests without stop_reason checks |</p>
-<h2 id="test-structure-templates">Test Structure Templates<a class="headerlink" href="#test-structure-templates" title="Permanent link">&para;</a></h2>
-<h3 id="unit-test-template">Unit Test Template<a class="headerlink" href="#unit-test-template" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;Unit tests for {module_name}.</span>
-
-<span class="sd">Tests cover:</span>
-<span class="sd">- Basic functionality</span>
-<span class="sd">- Edge cases</span>
-<span class="sd">- Error handling</span>
-<span class="sd">- Type validation</span>
-<span class="sd">&quot;&quot;&quot;</span>
-
-<span class="kn">import</span><span class="w"> </span><span class="nn">pytest</span>
-<span class="kn">from</span><span class="w"> </span><span class="p">{</span><span class="n">module</span><span class="p">}</span> <span class="kn">import</span><span class="w"> </span><span class="p">{</span><span class="n">ClassName</span><span class="p">}</span>
-
-
-<span class="k">class</span><span class="w"> </span><span class="nc">Test</span><span class="p">{</span><span class="n">ClassName</span><span class="p">}:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Tests for {ClassName}.&quot;&quot;&quot;</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">test_basic_functionality</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Test {specific behavior being tested}.&quot;&quot;&quot;</span>
-        <span class="c1"># ARRANGE - set up test data</span>
-        <span class="n">obj</span> <span class="o">=</span> <span class="n">ClassName</span><span class="p">(</span><span class="n">param</span><span class="o">=</span><span class="s2">&quot;value&quot;</span><span class="p">)</span>
-        <span class="n">expected</span> <span class="o">=</span> <span class="s2">&quot;expected_result&quot;</span>
-
-        <span class="c1"># ACT - perform the action</span>
-        <span class="n">result</span> <span class="o">=</span> <span class="n">obj</span><span class="o">.</span><span class="n">method</span><span class="p">()</span>
-
-        <span class="c1"># ASSERT - verify explicit outcomes</span>
-        <span class="k">assert</span> <span class="n">result</span> <span class="o">==</span> <span class="n">expected</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;Expected </span><span class="si">{</span><span class="n">expected</span><span class="si">}</span><span class="s2">, got </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span>
-        <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="nb">str</span><span class="p">),</span> <span class="sa">f</span><span class="s2">&quot;Expected str, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">result</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">test_edge_case_empty_input</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Test behavior with empty input.&quot;&quot;&quot;</span>
-        <span class="n">obj</span> <span class="o">=</span> <span class="n">ClassName</span><span class="p">()</span>
-
-        <span class="n">result</span> <span class="o">=</span> <span class="n">obj</span><span class="o">.</span><span class="n">method</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
-
-        <span class="c1"># Don&#39;t just check it doesn&#39;t error - verify specific behavior</span>
-        <span class="k">assert</span> <span class="n">result</span> <span class="o">==</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="s2">&quot;Empty input should return empty output&quot;</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">test_error_on_invalid_input</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Test that invalid input raises appropriate error.&quot;&quot;&quot;</span>
-        <span class="n">obj</span> <span class="o">=</span> <span class="n">ClassName</span><span class="p">()</span>
-
-        <span class="k">with</span> <span class="n">pytest</span><span class="o">.</span><span class="n">raises</span><span class="p">(</span><span class="ne">ValueError</span><span class="p">,</span> <span class="n">match</span><span class="o">=</span><span class="s2">&quot;must be positive&quot;</span><span class="p">):</span>
-            <span class="n">obj</span><span class="o">.</span><span class="n">method</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="async-integration-test-template">Async Integration Test Template<a class="headerlink" href="#async-integration-test-template" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;Integration tests for {feature}.</span>
-
-<span class="sd">Tests cover:</span>
-<span class="sd">- End-to-end workflow</span>
-<span class="sd">- Component interaction</span>
-<span class="sd">- State transitions</span>
-<span class="sd">&quot;&quot;&quot;</span>
-
-<span class="kn">import</span><span class="w"> </span><span class="nn">pytest</span>
-
-
-<span class="k">class</span><span class="w"> </span><span class="nc">TestIntegration</span><span class="p">{</span><span class="n">Feature</span><span class="p">}:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Integration tests for {feature}.&quot;&quot;&quot;</span>
-
-    <span class="nd">@pytest</span><span class="o">.</span><span class="n">mark</span><span class="o">.</span><span class="n">asyncio</span>
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_complete_workflow</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Test complete workflow from input to output.&quot;&quot;&quot;</span>
-        <span class="c1"># ARRANGE</span>
-        <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;param&quot;</span><span class="p">:</span> <span class="s2">&quot;value&quot;</span><span class="p">}</span>
-        <span class="n">expected_trials</span> <span class="o">=</span> <span class="mi">3</span>
-
-        <span class="c1"># ACT</span>
-        <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">run_workflow</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
-
-        <span class="c1"># ASSERT - verify all important aspects</span>
-        <span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">&quot;completed&quot;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;Wrong status: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">status</span><span class="si">}</span><span class="s2">&quot;</span>
-        <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">)</span> <span class="o">==</span> <span class="n">expected_trials</span>
-        <span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">best_config</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
-        <span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">stop_reason</span> <span class="o">==</span> <span class="s2">&quot;max_trials&quot;</span>
-
-        <span class="c1"># Verify trial structure</span>
-        <span class="k">for</span> <span class="n">trial</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">:</span>
-            <span class="k">assert</span> <span class="n">trial</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s2">&quot;Trial missing config&quot;</span>
-            <span class="k">assert</span> <span class="s2">&quot;accuracy&quot;</span> <span class="ow">in</span> <span class="n">trial</span><span class="o">.</span><span class="n">metrics</span><span class="p">,</span> <span class="s2">&quot;Trial missing accuracy metric&quot;</span>
-</code></pre></div>
-<h2 id="running-tests">Running Tests<a class="headerlink" href="#running-tests" title="Permanent link">&para;</a></h2>
-<p>Always use mock mode for local development:</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># Run all tests with mock mode</span>
-<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span>pytest<span class="w"> </span>tests/
-
-<span class="c1"># Run with coverage report</span>
-<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span>pytest<span class="w"> </span>tests/<span class="w"> </span>--cov<span class="o">=</span>traigent<span class="w"> </span>--cov-report<span class="o">=</span>term-missing
-
-<span class="c1"># Run specific test file with verbose output</span>
-<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span>pytest<span class="w"> </span>tests/unit/api/test_decorators.py<span class="w"> </span>-v
-
-<span class="c1"># Run tests matching pattern</span>
-<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span>pytest<span class="w"> </span>-k<span class="w"> </span><span class="s2">&quot;test_constraint&quot;</span><span class="w"> </span>-v
-</code></pre></div>
-<h2 id="common-mistakes">Common Mistakes<a class="headerlink" href="#common-mistakes" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>Trusting mock mode alone</strong></li>
-<li>
-<p>Mock mode is lenient; add explicit assertions</p>
-</li>
-<li>
-<p><strong>Skipping validators entirely</strong></p>
-</li>
-<li>
-<p>Use validators, but add explicit assertions BEFORE them</p>
-</li>
-<li>
-<p><strong>Testing only happy path</strong></p>
-</li>
-<li>
-<p>Include edge cases and error conditions</p>
-</li>
-<li>
-<p><strong>Ignoring test names</strong></p>
-</li>
-<li>
-<p>If test is <code>test_timeout_stops</code>, verify <code>stop_reason == "timeout"</code></p>
-</li>
-<li>
-<p><strong>Using vacuous checks</strong></p>
-</li>
-<li>
-<p>Every assertion should be capable of failing</p>
-</li>
-<li>
-<p><strong>Forgetting type annotations</strong></p>
-</li>
-<li>Add <code>-&gt; None</code> return type to test methods</li>
-</ol>
-<h2 id="reference-documentation">Reference Documentation<a class="headerlink" href="#reference-documentation" title="Permanent link">&para;</a></h2>
-<p>For detailed analysis and methodology:</p>
+<p>A plan carries <strong>selection only</strong> — no signal names, no values, no formulas, and
+no per-seed count. It is a deliberately lossy, many-to-one projection of the
+signals (≈12 signals → one action verb + one of three buckets per seed). This is
+<strong>oracle-hardening</strong>, not information-theoretic secrecy: deterministic
+per-(run, policy_version) plans, per-seed-independent buckets, minimum cohort
+sizes, rate limits, and policy-version rotation raise the cost of treating the
+endpoint as a black-box oracle. The defensible asset is the <em>recipe</em>, not the
+<em>decision</em>.</p>
+<h2 id="what-privacy-mode-protects-and-what-it-does-not">What privacy mode protects (and what it does not)<a class="headerlink" href="#what-privacy-mode-protects-and-what-it-does-not" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Meta-Analysis Report</strong>: <code>tests/optimizer_validation/META_ANALYSIS_REPORT.md</code></li>
-<li><strong>Independent Analysis</strong>: <code>tests/optimizer_validation/INDEPENDENT_META_ANALYSIS.md</code></li>
-<li><strong>Tools README</strong>: <code>tests/optimizer_validation/tools/README.md</code></li>
+<li><strong>Protects:</strong> customer content — prompt text, example inputs/outputs, and any
+  synthesized content — never leaves the client; generation runs on the user's
+  own LLM credentials.</li>
+<li><strong>Does not change:</strong> the per-example <em>numeric</em> metrics (score, latency, tokens)
+  keyed by stable <code>ex_{hash}_{index}</code> IDs still flow to the backend (that is the
+  substrate the signals are computed from). The IP we protect is <em>our</em> signal
+  definitions and policy — not the raw metrics the customer already owns.</li>
 </ul>
-<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Write tests that:
-- Have <strong>explicit assertions</strong> for the specific behavior under test
-- Use <strong>meaningful bounds</strong> (not <code>&gt;= 0</code>)
-- <strong>Match setup to intent</strong> (stop conditions should be triggerable)
-- <strong>Validate oracle strength</strong> using mutation testing
-- Follow the <strong>AAA pattern</strong>: Arrange, Act, Assert</p>
+<h2 id="using-it-python-sdk">Using it (Python SDK)<a class="headerlink" href="#using-it-python-sdk" title="Permanent link">&para;</a></h2>
+<p>The reachable entry point is <code>OptimizedFunction.optimize_with_guidance</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.generation</span><span class="w"> </span><span class="kn">import</span> <span class="n">BackendGuidanceProvider</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">my_llm</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>                     <span class="c1"># your own model + creds</span>
+    <span class="k">return</span> <span class="n">client</span><span class="o">.</span><span class="n">responses</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">,</span> <span class="nb">input</span><span class="o">=</span><span class="n">prompt</span><span class="p">)</span><span class="o">.</span><span class="n">output_text</span>
+
+<span class="n">provider</span> <span class="o">=</span> <span class="n">BackendGuidanceProvider</span><span class="o">.</span><span class="n">from_async_post</span><span class="p">(</span><span class="n">session_id</span><span class="p">,</span> <span class="n">my_authed_post</span><span class="p">)</span>
+
+<span class="n">best</span> <span class="o">=</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize_with_guidance</span><span class="p">(</span>
+    <span class="n">provider</span><span class="p">,</span>
+    <span class="n">plan_kind</span><span class="o">=</span><span class="s2">&quot;prompt_rewrite&quot;</span><span class="p">,</span>                     <span class="c1"># or &quot;benchmark_guide&quot;</span>
+    <span class="n">rewrite_llm</span><span class="o">=</span><span class="n">my_llm</span><span class="p">,</span>
+    <span class="n">prompt_param</span><span class="o">=</span><span class="s2">&quot;prompt_template&quot;</span><span class="p">,</span>
+    <span class="n">prompt_rewrite</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;rounds&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span> <span class="s2">&quot;candidates_per_round&quot;</span><span class="p">:</span> <span class="mi">3</span><span class="p">},</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Or configure at decoration time:</p>
+<div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">eval_dataset</span><span class="o">=...</span><span class="p">,</span> <span class="n">prompt_rewrite</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;rounds&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">})</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">my_agent</span><span class="p">(</span><span class="o">...</span><span class="p">):</span> <span class="o">...</span>
+</code></pre></div>
+<p>The building blocks are also usable directly: <code>PromptRewriter</code>,
+<code>ExampleSynthesizer</code>, <code>merge_prompt_candidates</code>, <code>GuidanceLoop</code>, and
+<code>GuidancePlan</code>/<code>GuidancePlanItem</code>/<code>GuidanceAction</code> (all exported from
+<code>traigent.generation</code>). Each engine accepts a <code>RewriteLLM</code>, a constructed client
+with <code>.complete()</code>, or a bare <code>fn(prompt) -&gt; str</code>. A missing provider fails
+closed (raises) — it never fabricates candidates or builds a client from ambient
+env keys.</p>
+<h2 id="using-it-typescript-sdk">Using it (TypeScript SDK)<a class="headerlink" href="#using-it-typescript-sdk" title="Permanent link">&para;</a></h2>
+<p>Native TypeScript SDK support exists in the internal <code>traigent-js</code> repo; npm
+publication for <code>@traigent/sdk</code> is pending.</p>
+<h2 id="required-by-design">Required-by-design<a class="headerlink" href="#required-by-design" title="Permanent link">&para;</a></h2>
+<p>There is <strong>no offline fallback</strong> that reconstructs guidance locally. If the
+backend plan can't be fetched, generation is refused rather than fabricated — the
+compass is essential, and that keeps the signals protected.</p>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Runnable offline example: <code>examples/core/guided-generation/</code> in the source repository</li>
+<li>Contract: <code>TraigentSchema/traigent_schema/schemas/guidance/</code></li>
+</ul>
 
 
 
