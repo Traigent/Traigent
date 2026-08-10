@@ -85,6 +85,7 @@ def _build(tmp_path: Path, provenance: str):
         verifier=_verifier_claiming(provenance),
         transport=_transport,
         output_dir=tmp_path,
+        generation_capabilities=("customer_llm",),
     )
 
 

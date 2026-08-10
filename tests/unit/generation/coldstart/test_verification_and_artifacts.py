@@ -138,6 +138,7 @@ def test_row_with_no_verifier_evidence_never_reaches_the_jsonl(tmp_path: Path) -
         verifier=_RejectingVerifier(),
         transport=_transport(),
         output_dir=tmp_path,
+        generation_capabilities=("customer_llm",),
     )
     assert result.outcome is ColdStartOutcome.DISCOVERY_ONLY
     assert result.gap.reason == "no_verified_candidates"
@@ -151,6 +152,7 @@ def test_row_that_fails_verification_never_reaches_the_jsonl(tmp_path: Path) -> 
         verifier=_FailingVerifier(),
         transport=_transport(),
         output_dir=tmp_path,
+        generation_capabilities=("customer_llm",),
     )
     assert result.outcome is ColdStartOutcome.DISCOVERY_ONLY
     assert result.gap.reason == "no_verified_candidates"
@@ -164,6 +166,7 @@ def test_verifier_reporting_a_mismatched_kind_is_rejected(tmp_path: Path) -> Non
         verifier=_LyingKindVerifier(),
         transport=_transport(),
         output_dir=tmp_path,
+        generation_capabilities=("customer_llm",),
     )
     assert result.outcome is ColdStartOutcome.DISCOVERY_ONLY
     assert result.gap.reason == "no_verified_candidates"
@@ -203,6 +206,7 @@ def test_mixed_batch_only_writes_rows_with_passing_receipts(tmp_path: Path) -> N
         transport=_transport(candidate_limit=100),
         output_dir=tmp_path,
         requested_candidate_limit=100,
+        generation_capabilities=("customer_llm",),
     )
     assert result.outcome is ColdStartOutcome.EVAL_SET_BUILT
     # indices 2,5,8 are the only "passed" rows out of 9
@@ -227,6 +231,7 @@ def test_duplicate_inputs_are_deduplicated(tmp_path: Path) -> None:
         transport=_transport(candidate_limit=100),
         output_dir=tmp_path,
         requested_candidate_limit=100,
+        generation_capabilities=("customer_llm",),
     )
     assert result.outcome is ColdStartOutcome.EVAL_SET_BUILT
     assert result.row_count == 2
@@ -255,6 +260,7 @@ def test_oracle_returned_provenance_is_preserved_verbatim_never_upgraded(
         verifier=_OracleOnlyVerifier(),
         transport=_transport(),
         output_dir=tmp_path,
+        generation_capabilities=("customer_llm",),
     )
     assert result.outcome is ColdStartOutcome.EVAL_SET_BUILT
     for receipt in result.receipts:
@@ -287,6 +293,7 @@ def test_synthetic_rows_are_never_marked_as_holdout(tmp_path: Path) -> None:
         verifier=_EvidenceClaimsHoldoutVerifier(),
         transport=_transport(),
         output_dir=tmp_path,
+        generation_capabilities=("customer_llm",),
     )
     assert result.outcome is ColdStartOutcome.EVAL_SET_BUILT
     rows = [json.loads(line) for line in result.eval_set_path.read_text().splitlines()]

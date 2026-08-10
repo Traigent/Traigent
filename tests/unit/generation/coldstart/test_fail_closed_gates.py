@@ -64,6 +64,7 @@ def _valid_body(
 
 
 def _run(transport, tmp_path: Path, **kwargs):
+    kwargs.setdefault("generation_capabilities", ("customer_llm",))
     return build_cold_start_eval_set(
         target,
         generator=_generator,
@@ -171,6 +172,7 @@ def test_expired_plan_is_rejected_before_generating(tmp_path: Path) -> None:
         verifier=_Verifier(),
         transport=transport,
         output_dir=tmp_path,
+        generation_capabilities=("customer_llm",),
     )
     _assert_failed_closed(result, tmp_path, "plan_expired")
     assert calls == []  # generation must never run against an expired plan
@@ -217,5 +219,6 @@ def test_no_verified_candidates_fails_closed(tmp_path: Path) -> None:
         verifier=_Verifier(),
         transport=transport,
         output_dir=tmp_path,
+        generation_capabilities=("customer_llm",),
     )
     _assert_failed_closed(result, tmp_path, "no_verified_candidates")

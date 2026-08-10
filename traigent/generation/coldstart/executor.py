@@ -51,8 +51,6 @@ from ._plan import (
 )
 from .models import ColdStartOutcome, ColdStartResult, DiscoveryGap, LocalVerifier
 
-_DEFAULT_GENERATION_CAPABILITIES: tuple[str, ...] = ("customer_llm",)
-
 
 def build_cold_start_eval_set(
     func: Callable[..., Any],
@@ -63,7 +61,7 @@ def build_cold_start_eval_set(
     output_dir: str | Path,
     dataset_name: str = "cold_start",
     requested_candidate_limit: int = 12,
-    generation_capabilities: Sequence[str] = _DEFAULT_GENERATION_CAPABILITIES,
+    generation_capabilities: Sequence[str],
     containment_root: str | Path | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> ColdStartResult:
@@ -88,10 +86,16 @@ def build_cold_start_eval_set(
         requested_candidate_limit: Upper bound this call asks for; the
             backend's grant (``Plan.candidate_limit``) may be lower and
             always wins.
-        generation_capabilities: What the supplied ``generator`` represents,
-            drawn from the backend's ``generation_capabilities`` enum.
-            Defaults to ``("customer_llm",)`` -- true for any arbitrary
-            caller-supplied generator by construction.
+        generation_capabilities: What the supplied ``generator`` actually
+            is, drawn from the backend's ``generation_capabilities`` enum
+            (``deterministic_contract`` or ``customer_llm``). Required, with
+            NO default: this executor has no way to know whether a
+            caller-supplied generator is backed by an LLM call or a
+            deterministic contract -- reading hand-authored rows from a
+            file is neither -- so it does not guess on the caller's behalf.
+            A generator that is not truly an LLM must not be described as
+            ``customer_llm`` merely because that used to be this
+            parameter's default; state what it is.
         containment_root: Optional root ``output_dir`` must stay under.
         clock: Injectable now() for expiry checks; defaults to real UTC now.
 

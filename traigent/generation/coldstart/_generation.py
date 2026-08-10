@@ -6,10 +6,22 @@ generator and ``LocalVerifier`` ever see real inputs/outputs. This module
 only screens (structural sanity), dedups, caps at the granted
 ``candidate_limit``, and calls the verifier -- it never fabricates a
 verdict of its own.
+
+Every candidate is snapshotted with ``copy.deepcopy`` the instant it is
+pulled off the generator -- before screening, before dedup, before the
+verifier ever sees it. A caller-supplied generator is a live Python
+iterator: its body can hold a mutable object (e.g. the ``output`` half of
+an already-yielded pair) and go on mutating it after the executor pulls the
+NEXT candidate. Without an independent snapshot taken at the moment of the
+pull, a row already accepted -- and the ``ScoreReceipt`` already earned for
+it -- can end up describing different content than what this module later
+writes. A candidate whose inputs or output cannot be deep-copied is
+rejected outright (fail closed), never raised.
 """
 
 from __future__ import annotations
 
+import copy
 import inspect
 import json
 from collections.abc import Callable, Iterable, Mapping
@@ -26,6 +38,17 @@ GeneratorFn = Callable[[int], Iterable[tuple[Mapping[str, Any], Any]]]
 #: output, and the ScoreReceipt that earned it a place in the eval set.
 VerifiedRow = tuple[Mapping[str, Any], Any, ScoreReceipt]
 
+# How many raw candidates this loop will PULL from `generator` while chasing
+# one granted `candidate_limit`'s worth of ACCEPTED rows. Screening, dedup,
+# and verifier rejection all consume candidates without accepting them, so a
+# generator with an imperfect hit rate legitimately needs to be pulled more
+# times than `candidate_limit` to fill it -- but a generator that never
+# produces an acceptable row (or simply never terminates) must not be able
+# to pull this executor into an unbounded, caller-hanging loop. This is a
+# bound on THIS LOOP's own resource use, not a generation or verification
+# technique, and it is not caller-configurable.
+_MAX_PULLS_PER_ACCEPTED = 50
+
 
 def generate_and_score(
     generator: GeneratorFn,
@@ -36,39 +59,77 @@ def generate_and_score(
 ) -> list[VerifiedRow]:
     """Pull candidates from ``generator``, verify, dedup, and cap.
 
-    A candidate is written only if all of the following hold: it is
-    structurally well-formed, its input keys can actually call ``func``
-    (checked against ``func``'s real signature -- ``func`` itself is never
-    called), its inputs are not a duplicate of one already accepted, the
-    verifier actually returned a real ``ScoreReceipt`` (not ``None`` and not
-    a duck-typed lookalike), the receipt's fields are well-formed, the
-    receipt's ``verifier_kind`` matches the verifier's own declared ``kind``
-    (a verifier can't score under a kind it didn't declare), and the receipt
-    says ``passed is True`` exactly.
+    A candidate is written only if all of the following hold: its inputs
+    and output can be independently snapshotted (``copy.deepcopy``) the
+    moment they are pulled, the snapshot is structurally well-formed, the
+    output snapshot is itself JSON-serializable (so a row this executor
+    could never write is never accepted in the first place), its input
+    keys can actually call ``func`` (checked against ``func``'s real
+    signature -- ``func`` itself is never called), its inputs are not a
+    duplicate of one already ACCEPTED (a candidate a verifier rejected
+    does not block a later, differently-scored candidate with the same
+    inputs), the verifier actually returned a real ``ScoreReceipt`` (not
+    ``None`` and not a duck-typed lookalike), the receipt's fields are
+    well-formed, the receipt's ``verifier_kind`` matches the verifier's own
+    declared ``kind`` (a verifier can't score under a kind it didn't
+    declare), and the receipt says ``passed is True`` exactly.
+
+    Pulling from ``generator`` is bounded two ways: this loop checks
+    whether ``candidate_limit`` accepted rows have already been reached
+    BEFORE each pull, so it never pulls one candidate more than necessary
+    once the limit is filled; and it never pulls more than
+    ``candidate_limit * _MAX_PULLS_PER_ACCEPTED`` candidates in total even
+    when the limit is never filled, so a generator that never yields an
+    acceptable row cannot hang the caller.
     """
     target_signature = inspect.signature(func)
     accepted: list[VerifiedRow] = []
     seen: set[str] = set()
-    for candidate in generator(candidate_limit):
-        if len(accepted) >= candidate_limit:
+    max_pulls = candidate_limit * _MAX_PULLS_PER_ACCEPTED
+    pulls = 0
+    iterator = iter(generator(candidate_limit))
+    while len(accepted) < candidate_limit and pulls < max_pulls:
+        try:
+            candidate = next(iterator)
+        except StopIteration:
             break
-        inputs, output = candidate
-        if not _well_formed(inputs):
+        pulls += 1
+
+        raw_inputs, raw_output = candidate
+        # Snapshot BOTH halves independently, right now, before anything
+        # else runs -- this is the only point at which the executor still
+        # shares the generator's own (possibly still-mutable) objects.
+        inputs_snapshot, ok = _safe_deepcopy(raw_inputs)
+        if not ok:
             continue
-        if not _callable_with(target_signature, inputs):
+        output_snapshot, ok = _safe_deepcopy(raw_output)
+        if not ok:
+            continue
+
+        if not _well_formed(inputs_snapshot):
+            continue
+        if not _json_serializable(output_snapshot):
+            # A candidate whose output can never be written to the JSONL
+            # is rejected here -- before a verifier spends any effort on
+            # it, and long before json.dumps() would raise inside the
+            # artifact writer.
+            continue
+        if not _callable_with(target_signature, inputs_snapshot):
             # The candidate's input keys don't bind against func's real
             # signature (missing a required parameter, or an unexpected
             # keyword func can't accept) -- it would raise if ever called
             # against the target, so it is not a usable eval-set row.
             continue
-        dedup_key = _canonical_key(inputs)
+        dedup_key = _canonical_key(inputs_snapshot)
         if dedup_key in seen:
             continue
-        seen.add(dedup_key)
 
-        receipt = verifier.verify(inputs=inputs, output=output)
+        receipt = verifier.verify(inputs=inputs_snapshot, output=output_snapshot)
         if receipt is None:
-            # No verifier evidence -> this row is never written.
+            # No verifier evidence -> this row is never written. Its
+            # inputs must NOT be added to `seen`: dedup is only against
+            # inputs already ACCEPTED, so a later candidate with the same
+            # inputs still gets a real chance at verification.
             continue
         if not _is_valid_receipt(receipt):
             # Not a real ScoreReceipt, or one with a malformed field -- a
@@ -82,8 +143,10 @@ def generate_and_score(
             # Exact identity, not truthiness: a non-empty string like
             # "false" is truthy but is not a pass.
             continue
-        accepted.append((dict(inputs), output, receipt))
-    return accepted[:candidate_limit]
+
+        seen.add(dedup_key)
+        accepted.append((dict(inputs_snapshot), output_snapshot, receipt))
+    return accepted
 
 
 def _callable_with(signature: inspect.Signature, inputs: Mapping[str, Any]) -> bool:
@@ -135,11 +198,39 @@ def _is_valid_receipt(receipt: Any) -> bool:
 def _well_formed(inputs: Any) -> bool:
     if not isinstance(inputs, Mapping):
         return False
+    return _json_serializable(inputs)
+
+
+def _json_serializable(value: Any) -> bool:
+    """Would ``json.dumps(value)`` succeed?
+
+    Screens a candidate's output BEFORE it can be accepted -- the artifact
+    writer (``_artifacts.write_eval_set``) calls ``json.dumps`` on every
+    accepted row's output with no further check of its own, so a candidate
+    that fails this here would otherwise surface as an uncaught exception
+    from deep inside the writer instead of a typed, fail-closed result.
+    """
     try:
-        json.dumps(inputs, sort_keys=True)
+        json.dumps(value, sort_keys=True)
     except (TypeError, ValueError):
         return False
     return True
+
+
+def _safe_deepcopy(value: Any) -> tuple[Any, bool]:
+    """``copy.deepcopy(value)``, but fail closed instead of raising.
+
+    Some objects a generator might yield (a lock, a file handle, a
+    self-referential structure ``copy`` can't handle, ...) cannot be
+    deep-copied at all. Rather than letting that raise out of the whole
+    executor, the candidate is simply not usable -- return ``ok=False`` so
+    the caller can reject the row the same way it rejects any other
+    malformed candidate.
+    """
+    try:
+        return copy.deepcopy(value), True
+    except Exception:
+        return None, False
 
 
 def _canonical_key(inputs: Mapping[str, Any]) -> str:

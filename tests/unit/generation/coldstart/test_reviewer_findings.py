@@ -102,6 +102,7 @@ def test_f1_instance_level_kind_mutation_never_reaches_the_network(
         verifier=verifier,
         transport=transport,
         output_dir=tmp_path,
+        generation_capabilities=("customer_llm",),
     )
 
     assert transport.requests == [], (
@@ -138,6 +139,7 @@ def test_f2_truthy_non_bool_passed_value_is_not_accepted(tmp_path: Path) -> None
         verifier=_StringPassedVerifier(),
         transport=_transport(),
         output_dir=tmp_path,
+        generation_capabilities=("customer_llm",),
     )
 
     assert result.outcome is ColdStartOutcome.DISCOVERY_ONLY
@@ -174,6 +176,7 @@ def test_f3_duck_typed_receipt_lookalike_is_not_accepted(tmp_path: Path) -> None
         verifier=_DuckTypedVerifier(),  # type: ignore[arg-type]
         transport=_transport(),
         output_dir=tmp_path,
+        generation_capabilities=("customer_llm",),
     )
 
     assert result.outcome is ColdStartOutcome.DISCOVERY_ONLY
@@ -243,6 +246,7 @@ def test_f5_inputs_that_cannot_call_the_target_are_rejected(tmp_path: Path) -> N
         verifier=_AcceptingVerifier(),
         transport=_transport(),
         output_dir=tmp_path,
+        generation_capabilities=("customer_llm",),
     )
 
     assert result.outcome is ColdStartOutcome.DISCOVERY_ONLY
@@ -273,6 +277,7 @@ def test_f5_positive_control_defaults_keyword_only_and_kwargs_still_accepted(
         transport=_transport(candidate_limit=100),
         output_dir=tmp_path,
         requested_candidate_limit=100,
+        generation_capabilities=("customer_llm",),
     )
 
     assert result.outcome is ColdStartOutcome.EVAL_SET_BUILT
@@ -313,6 +318,7 @@ def test_f6_naive_clock_fails_closed_instead_of_raising(tmp_path: Path) -> None:
         transport=transport,
         output_dir=tmp_path,
         clock=naive_clock,
+        generation_capabilities=("customer_llm",),
     )
 
     assert result.outcome is ColdStartOutcome.DISCOVERY_ONLY
@@ -341,6 +347,7 @@ def test_f7_bool_requested_candidate_limit_is_rejected(tmp_path: Path) -> None:
             transport=transport,
             output_dir=tmp_path,
             requested_candidate_limit=True,
+            generation_capabilities=("customer_llm",),
         )
 
     assert transport.requests == [], (

@@ -5,10 +5,13 @@ containment-rooted write pattern. This module is reached ONLY on the
 EVAL_SET_BUILT path with at least one verified row already in hand -- a
 fail-closed DISCOVERY_ONLY gap never calls into this module, so a gap can
 never leave a partial file behind. Everything is built in memory first, then
-the JSONL and the manifest are written and put into place together: both
-land, or neither does. See ``_write_pair_atomically`` -- a caller must never
-observe a JSONL without its manifest, even if the manifest write fails
-partway through (e.g. its path is already a directory).
+the JSONL and the manifest are written and put into place. See
+``_write_pair_atomically`` for exactly what that does and does not
+guarantee: if writing either file raises within this call, both are rolled
+back so the directory is left as if this call had never run. That is
+rollback-on-exception, not crash-atomicity -- it says nothing about a
+process killed, or a concurrent reader polling the directory, in the narrow
+window between the JSONL's ``os.replace`` and the manifest's.
 """
 
 from __future__ import annotations
@@ -119,17 +122,33 @@ def _write_pair_atomically(
     manifest_path: Path,
     manifest_text: str,
 ) -> None:
-    """Put the JSONL and its manifest into place together, or neither at all.
+    """Put the JSONL and its manifest into place, rolling both back on failure.
 
     Each file is first written to a temporary sibling (same directory, so
-    the follow-up rename is a same-filesystem, effectively-atomic
+    each individual rename is a same-filesystem, effectively-atomic
     ``os.replace``), then the two temporaries are moved into their final
-    paths. If anything raises -- including the second rename, e.g. because
-    ``manifest_path`` already exists as a directory (``IsADirectoryError``)
-    -- any temporary already written and any final path already put in
-    place by this call are removed before the exception propagates. A
-    caller must never observe the JSONL at its final path without a
-    manifest alongside it.
+    paths, JSONL first. If anything raises within this call -- including
+    the second rename, e.g. because ``manifest_path`` already exists as a
+    directory (``IsADirectoryError``) -- any temporary already written and
+    any final path already put in place BY THIS CALL are removed before the
+    exception propagates, so a caller who inspects the directory only after
+    ``write_eval_set`` has returned (successfully or by raising) never finds
+    a JSONL that a raised exception here left behind on its own.
+
+    What this does NOT guarantee:
+
+    * Crash-atomicity. There is a real window between the JSONL's
+      ``os.replace`` and the manifest's. A process killed in that window
+      leaves the JSONL in place with no manifest -- the rollback above only
+      runs as ordinary Python exception handling, so it cannot run if the
+      process itself dies first. Two separate files cannot be swapped into
+      place as one atomic unit on POSIX; that would need a different
+      on-disk format (e.g. a single file, or renaming an already-complete
+      directory), which this function deliberately does not attempt.
+    * Isolation from a concurrent observer. Something else polling this
+      directory during that same window can observe the JSONL before the
+      manifest exists. This function does not lock the directory and does
+      not hide that intermediate state from another process.
     """
     temp_eval_set = _sibling_temp_path(eval_set_path)
     temp_manifest = _sibling_temp_path(manifest_path)

@@ -66,6 +66,7 @@ def test_outbound_payload_excludes_names_annotations_docstrings_paths_and_defaul
         verifier=_PassthroughVerifier(),
         transport=transport,
         output_dir=tmp_path,
+        generation_capabilities=("customer_llm",),
     )
 
     assert len(transport.requests) == 1
@@ -107,6 +108,7 @@ def test_no_network_call_when_generator_is_missing(tmp_path: Path) -> None:
         verifier=_PassthroughVerifier(),
         transport=transport,
         output_dir=tmp_path,
+        generation_capabilities=("customer_llm",),
     )
 
     assert transport.requests == []
@@ -125,6 +127,7 @@ def test_no_network_call_when_verifier_is_missing(tmp_path: Path) -> None:
         verifier=None,
         transport=transport,
         output_dir=tmp_path,
+        generation_capabilities=("customer_llm",),
     )
 
     assert transport.requests == []
