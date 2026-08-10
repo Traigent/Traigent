@@ -71,7 +71,9 @@ from traigent.api.parameter_ranges import (
     normalize_configuration_space,
 )
 from traigent.api.types import AgentDefinition
-from traigent.cloud.smart_pruning import SmartPruningOptions
+from traigent.cloud.smart_pruning import (
+    SmartPruningOptions,
+)
 from traigent.cloud.smart_pruning import (
     normalize_smart_pruning_options as _normalize_smart_pruning_options,
 )
@@ -95,7 +97,10 @@ from traigent.core.objectives import (
     create_default_objectives,
     normalize_objectives,
 )
-from traigent.core.optimized_function import OptimizedFunction
+from traigent.core.optimized_function import (
+    OptimizedFunction,
+    _reject_removed_strategy_preset,
+)
 from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.tvl.options import TVLOptions
@@ -2669,6 +2674,7 @@ def optimize(  # NOSONAR(S107)
         for key, value in legacy_args.iter_known_values():
             record_option(key, value, "legacy arguments")
 
+    _reject_removed_strategy_preset(strategy)
     if strategy is not None or strategy_params is not None:
         raise TypeError(
             "strategy presets are no longer supported; use algorithm or objectives."
