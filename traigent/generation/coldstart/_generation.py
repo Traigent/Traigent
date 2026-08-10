@@ -106,24 +106,6 @@ def generate_and_score(
         if not ok:
             continue
 
-        if not _well_formed(inputs_snapshot):
-            continue
-        if not _json_serializable(output_snapshot):
-            # A candidate whose output can never be written to the JSONL
-            # is rejected here -- before a verifier spends any effort on
-            # it, and long before json.dumps() would raise inside the
-            # artifact writer.
-            continue
-        if not _callable_with(target_signature, inputs_snapshot):
-            # The candidate's input keys don't bind against func's real
-            # signature (missing a required parameter, or an unexpected
-            # keyword func can't accept) -- it would raise if ever called
-            # against the target, so it is not a usable eval-set row.
-            continue
-        dedup_key = _canonical_key(inputs_snapshot)
-        if dedup_key in seen:
-            continue
-
         # FREEZE what will be written, through JSON, before the verifier ever
         # sees the candidate.
         #
@@ -157,6 +139,33 @@ def generate_and_score(
             inputs_snapshot, output_snapshot
         )
         if not ok:
+            # Also subsumes the old separate serializability screen: a
+            # candidate that cannot survive the round-trip could never have
+            # been written, and is rejected before a verifier spends effort.
+            continue
+
+        # EVERY gate below runs on the FROZEN value, never on the snapshot.
+        #
+        # Validating the snapshot and writing the frozen value is the same
+        # bug as certifying one value and writing another: a caller-supplied
+        # object may answer differently on each read, so a shape that binds
+        # to the target on read 1 can be a shape that does not on read 3.
+        # Reproduced on the merged code before this change -- a row was
+        # written whose only key was one the target cannot accept, having
+        # passed the bind check moments earlier.
+        #
+        # Gating the bytes we are about to write makes "what was checked"
+        # and "what was written" the same value by construction.
+        if not _well_formed(frozen_inputs):
+            continue
+        if not _callable_with(target_signature, frozen_inputs):
+            # The row's input keys don't bind against func's real signature
+            # (missing a required parameter, or an unexpected keyword func
+            # can't accept) -- it would raise if ever called against the
+            # target, so it is not a usable eval-set row.
+            continue
+        dedup_key = _canonical_key(frozen_inputs)
+        if dedup_key in seen:
             continue
         # The verifier's copy is derived from the ALREADY-FROZEN value, never
         # from the caller's object a second time. Freezing twice from the
