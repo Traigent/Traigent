@@ -417,6 +417,9 @@ class TestDevelopmentValidation:
             jwks_url="https://example.com/.well-known/jwks.json",
             validation_mode=ValidationMode.DEVELOPMENT,
         )
+        self.validator._resolve_development_verification_key = Mock(
+            return_value=("test_key", "RS256")
+        )
         self.test_token = "jwt_token_placeholder"
 
     @patch("traigent.security.jwt_validator.JWT_AVAILABLE", True)
@@ -433,9 +436,13 @@ class TestDevelopmentValidation:
         result = self.validator._validate_development(self.test_token)
 
         assert result.valid is True
-        assert result.payload == expected_payload
+        assert result.payload == {
+            **expected_payload,
+            "_development_mode": True,
+            "_max_validity": self.validator.DEVELOPMENT_TOKEN_LIFETIME,
+        }
         assert result.expires_at == expected_payload["exp"]
-        assert "Development mode" in result.warnings[0]
+        assert "DEVELOPMENT MODE" in result.warnings[0]
 
     @patch("traigent.security.jwt_validator.JWT_AVAILABLE", True)
     @patch("traigent.security.jwt_validator.jwt")
@@ -457,7 +464,7 @@ class TestDevelopmentValidation:
 
         assert result.valid is False
         assert result.error == "Token has expired"
-        assert "Development mode" in result.warnings[0]
+        assert "DEVELOPMENT MODE" in result.warnings[0]
 
     @patch("traigent.security.jwt_validator.JWT_AVAILABLE", True)
     @patch("traigent.security.jwt_validator.jwt")
@@ -469,7 +476,11 @@ class TestDevelopmentValidation:
         result = self.validator._validate_development(self.test_token)
 
         assert result.valid is True
-        assert result.payload == payload_no_exp
+        assert result.payload == {
+            **payload_no_exp,
+            "_development_mode": True,
+            "_max_validity": self.validator.DEVELOPMENT_TOKEN_LIFETIME,
+        }
         assert result.expires_at is None
 
     @patch("traigent.security.jwt_validator.JWT_AVAILABLE", True)
@@ -484,7 +495,7 @@ class TestDevelopmentValidation:
 
         assert result.valid is False
         assert "Invalid format" in result.error
-        assert "Development mode" in result.warnings[0]
+        assert "DEVELOPMENT MODE" in result.warnings[0]
 
 
 class TestConstantTimeValidation:
@@ -659,10 +670,17 @@ class TestJWTValidatorIntegration:
                 }
                 mock_jwt.decode.return_value = payload
 
+                validator._resolve_development_verification_key = Mock(
+                    return_value=("test_key", "RS256")
+                )
                 result = validator.validate_token("test_jwt_token")
 
                 assert result.valid is True
-                assert result.payload == payload
+                assert result.payload == {
+                    **payload,
+                    "_development_mode": True,
+                    "_max_validity": validator.DEVELOPMENT_TOKEN_LIFETIME,
+                }
                 assert (
                     "DEVELOPMENT MODE: Limited to 5-minute token lifetime"
                     in result.warnings[0]
@@ -754,91 +772,6 @@ class TestJWTValidatorHelperMethods:
         assert any("DEVELOPMENT MODE" in w for w in warnings)
         assert any("NOT suitable for production" in w for w in warnings)
 
-    def test_extract_header_algorithm_valid_jwt(self):
-        """Test _extract_header_algorithm with valid JWT structure."""
-        validator = self._create_validator()
-        # Valid JWT with HS256 algorithm (structure: header.payload.signature)
-        # Header: {"alg": "HS256", "typ": "JWT"} base64url encoded
-        valid_jwt = (
-            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sig"
-        )
-
-        with patch("traigent.security.jwt_validator.jwt") as mock_jwt:
-            mock_jwt.get_unverified_header = Mock(return_value={"alg": "HS256"})
-            result = validator._extract_header_algorithm(valid_jwt)
-            assert result == "HS256"
-
-    def test_extract_header_algorithm_invalid_structure(self):
-        """Test _extract_header_algorithm with invalid JWT structure."""
-        validator = self._create_validator()
-        # Token with fewer than 2 dots is invalid
-        invalid_jwt = "not.a.valid"
-        result = validator._extract_header_algorithm(invalid_jwt)
-        # With fewer than 2 dots, should return None without calling jwt
-        assert result is None or result == "a"  # Depends on jwt mock
-
-    def test_extract_header_algorithm_no_dots(self):
-        """Test _extract_header_algorithm with no dots in token."""
-        validator = self._create_validator()
-        result = validator._extract_header_algorithm("notavalidtoken")
-        assert result is None
-
-    def test_extract_header_algorithm_exception_handling(self):
-        """Test _extract_header_algorithm handles exceptions gracefully."""
-        validator = self._create_validator()
-        valid_jwt = "a.b.c"
-
-        with patch("traigent.security.jwt_validator.jwt") as mock_jwt:
-            mock_jwt.get_unverified_header = Mock(side_effect=Exception("Parse error"))
-            result = validator._extract_header_algorithm(valid_jwt)
-            assert result is None
-
-    def test_validate_algorithm_none_not_allowed(self):
-        """Test _validate_algorithm rejects 'none' algorithm."""
-        validator = self._create_validator()
-        warnings: list[str] = []
-        result = validator._validate_algorithm("none", warnings)
-        assert result is not None
-        assert result.valid is False
-        assert "none" in result.error.lower()
-
-    def test_validate_algorithm_none_case_insensitive(self):
-        """Test _validate_algorithm rejects 'NONE' algorithm (case insensitive)."""
-        validator = self._create_validator()
-        warnings: list[str] = []
-        result = validator._validate_algorithm("NONE", warnings)
-        assert result is not None
-        assert result.valid is False
-
-    def test_validate_algorithm_allowed_algorithms(self):
-        """Test _validate_algorithm accepts allowed algorithms."""
-        validator = self._create_validator()
-        warnings: list[str] = []
-
-        # RS256 should be allowed (in ALLOWED_ALGORITHMS)
-        result = validator._validate_algorithm("RS256", warnings)
-        assert result is None  # None means valid
-
-        # HS256 should be allowed in development
-        result = validator._validate_algorithm("HS256", warnings)
-        assert result is None
-
-    def test_validate_algorithm_unsupported(self):
-        """Test _validate_algorithm rejects unsupported algorithms."""
-        validator = self._create_validator()
-        warnings: list[str] = []
-        result = validator._validate_algorithm("XYZ999", warnings)
-        assert result is not None
-        assert result.valid is False
-        assert "Unsupported algorithm" in result.error
-
-    def test_validate_algorithm_none_value(self):
-        """Test _validate_algorithm with None header_alg."""
-        validator = self._create_validator()
-        warnings: list[str] = []
-        result = validator._validate_algorithm(None, warnings)
-        assert result is None  # None header_alg is valid (skip check)
-
     def test_check_token_lifetime_missing_iat(self):
         """Test _check_token_lifetime with missing iat claim."""
         validator = self._create_validator()
@@ -881,25 +814,14 @@ class TestJWTValidatorHelperMethods:
         assert result is None  # None means valid
 
     def test_mark_development_payload_with_valid_jwt(self):
-        """Test _mark_development_payload adds dev markers for valid JWT."""
+        """Test _mark_development_payload adds dev markers after verification."""
         validator = self._create_validator()
-        token = "header.payload.signature"
-        original_payload = {"sub": "user123"}
-        result = validator._mark_development_payload(token, original_payload)
+        verified_payload = {"sub": "user123"}
+        result = validator._mark_development_payload(verified_payload)
         assert "_development_mode" in result
         assert result["_development_mode"] is True
         assert "_max_validity" in result
         assert result["sub"] == "user123"
-
-    def test_mark_development_payload_without_valid_structure(self):
-        """Test _mark_development_payload without valid JWT structure."""
-        validator = self._create_validator()
-        token = "invalid"  # No dots
-        original_payload = {"sub": "user123"}
-        result = validator._mark_development_payload(token, original_payload)
-        # Should return original payload unchanged
-        assert result == original_payload
-        assert "_development_mode" not in result
 
 
 class TestTokenExpiredErrorConstant:

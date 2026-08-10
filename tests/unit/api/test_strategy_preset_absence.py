@@ -77,9 +77,8 @@ def assert_names_the_removal(message: str, preset_name: str) -> None:
 
 def test_strategy_presets_module_is_not_importable() -> None:
     for module_name in REMOVED_MODULES:
-        assert importlib.util.find_spec(module_name) is None, (
-            f"{module_name} is still importable"
-        )
+        module_message = f"{module_name} is still importable"
+        assert importlib.util.find_spec(module_name) is None, module_message
 
     with pytest.raises(ModuleNotFoundError):
         importlib.import_module("traigent.api.strategy_presets")
@@ -87,18 +86,14 @@ def test_strategy_presets_module_is_not_importable() -> None:
 
 def test_no_preset_symbol_is_exported_from_traigent_or_traigent_api() -> None:
     for export_name in REMOVED_ROOT_AND_API_EXPORTS:
-        assert export_name not in traigent.__all__, (
-            f"{export_name} is still in traigent.__all__"
-        )
-        assert export_name not in traigent.api.__all__, (
-            f"{export_name} is still in traigent.api.__all__"
-        )
-        assert not hasattr(traigent, export_name), (
-            f"traigent still has attribute {export_name}"
-        )
-        assert not hasattr(traigent.api, export_name), (
-            f"traigent.api still has attribute {export_name}"
-        )
+        root_export_message = f"{export_name} is still in traigent.__all__"
+        assert export_name not in traigent.__all__, root_export_message
+        api_export_message = f"{export_name} is still in traigent.api.__all__"
+        assert export_name not in traigent.api.__all__, api_export_message
+        root_attribute_message = f"traigent still has attribute {export_name}"
+        assert not hasattr(traigent, export_name), root_attribute_message
+        api_attribute_message = f"traigent.api still has attribute {export_name}"
+        assert not hasattr(traigent.api, export_name), api_attribute_message
 
 
 @pytest.mark.parametrize("preset_name", REMOVED_PRESET_NAMES)
@@ -241,9 +236,10 @@ def test_a_registered_optimizer_named_like_a_preset_still_runs(
     # The trials exist and they came from the registered optimizer, not from
     # whatever the default would have been.
     assert len(result.trials) == 2
-    assert registered_uppercase_pareto_optimizer, (
+    optimizer_message = (
         "the registered PARETO_FRONTIER optimizer never suggested a trial"
     )
+    assert registered_uppercase_pareto_optimizer, optimizer_message
     assert [trial.config for trial in result.trials] == (
         registered_uppercase_pareto_optimizer
     )

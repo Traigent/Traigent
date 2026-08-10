@@ -198,9 +198,11 @@ class TestOptimizeDecorator:
             return x
 
         assert isinstance(sample_function, OptimizedFunction)
-        assert sample_function.max_trials == 10, (
-            f"max_trials should be 10 (from decorator), got {sample_function.max_trials}"
+        max_trials_message = (
+            "max_trials should be 10 (from decorator), got "
+            f"{sample_function.max_trials}"
         )
+        assert sample_function.max_trials == 10, max_trials_message
 
     def test_decorator_omitted_max_trials_uses_sdk_default(self):
         """Omitting max_trials on the decorator should use the shared default."""
@@ -1109,9 +1111,10 @@ class TestExperimentName:
             return x
 
         name = my_pipeline.experiment_name
-        assert name.startswith("my_pipeline["), (
+        default_name_message = (
             f"Expected name to start with 'my_pipeline[', got {name!r}"
         )
+        assert name.startswith("my_pipeline["), default_name_message
         assert "accuracy" in name, f"Expected 'accuracy' in name, got {name!r}"
         assert "x" in name, f"Expected knob 'x' in name, got {name!r}"
 
@@ -1161,9 +1164,8 @@ class TestExperimentName:
             return x
 
         name = my_pipeline.experiment_name
-        assert name.startswith("my_pipeline["), (
-            f"Expected self-describing default, got {name!r}"
-        )
+        cleared_env_name_message = f"Expected self-describing default, got {name!r}"
+        assert name.startswith("my_pipeline["), cleared_env_name_message
 
     def test_experiment_name_stored_on_optimized_function(self):
         """_experiment_name is stored on the OptimizedFunction instance."""
@@ -1191,9 +1193,11 @@ class TestExperimentName:
             return x
 
         # _experiment_name must be None — only explicit decorator values go here.
-        assert my_func._experiment_name is None, (
-            f"Expected _experiment_name=None for implicit default, got {my_func._experiment_name!r}"
+        experiment_name_message = (
+            "Expected _experiment_name=None for implicit default, got "
+            f"{my_func._experiment_name!r}"
         )
+        assert my_func._experiment_name is None, experiment_name_message
         # The self-describing default lives in _default_experiment_name.
         assert my_func._default_experiment_name is not None
         assert my_func._default_experiment_name.startswith("my_func["), (
@@ -1218,21 +1222,27 @@ class TestExperimentName:
             return x
 
         # No env var yet → self-describing default wins.
-        assert my_func.experiment_name.startswith("my_func["), (
-            f"Without env var, expected self-describing default, got {my_func.experiment_name!r}"
+        no_env_name_message = (
+            "Without env var, expected self-describing default, got "
+            f"{my_func.experiment_name!r}"
         )
+        assert my_func.experiment_name.startswith("my_func["), no_env_name_message
 
         # Set env var AFTER decoration — must now win over the precomputed default.
         monkeypatch.setenv("TRAIGENT_EXPERIMENT_NAME", "env_set_post_decoration")
-        assert my_func.experiment_name == "env_set_post_decoration", (
+        env_override_message = (
             f"Expected env var to win after decoration, got {my_func.experiment_name!r}"
         )
+        env_override_matches = my_func.experiment_name == "env_set_post_decoration"
+        assert env_override_matches, env_override_message
 
         # Clear env var again — self-describing default resumes.
         monkeypatch.delenv("TRAIGENT_EXPERIMENT_NAME")
-        assert my_func.experiment_name.startswith("my_func["), (
-            f"After clearing env var, expected self-describing default, got {my_func.experiment_name!r}"
+        cleared_env_message = (
+            "After clearing env var, expected self-describing default, got "
+            f"{my_func.experiment_name!r}"
         )
+        assert my_func.experiment_name.startswith("my_func["), cleared_env_message
 
     # ------------------------------------------------------------------ #
     # New tests for self-describing default experiment name (#1422).      #
@@ -1260,9 +1270,8 @@ class TestExperimentName:
         assert "accuracy" in name, f"'accuracy' missing from {name!r}"
         assert "latency" in name, f"'latency' missing from {name!r}"
         # Must include at least one tuned-variable name
-        assert "model" in name or "temperature" in name, (
-            f"Expected at least one knob name in {name!r}"
-        )
+        knob_name_message = f"Expected at least one knob name in {name!r}"
+        assert "model" in name or "temperature" in name, knob_name_message
         # Must not be just the bare function name
         assert name != "my_agent", "Default name must not be just the function name"
 
@@ -1300,9 +1309,11 @@ class TestExperimentName:
 
         fn1 = make_func()
         fn2 = make_func()
-        assert fn1.experiment_name == fn2.experiment_name, (
-            f"Default name is non-deterministic: {fn1.experiment_name!r} != {fn2.experiment_name!r}"
+        deterministic_name_message = (
+            "Default name is non-deterministic: "
+            f"{fn1.experiment_name!r} != {fn2.experiment_name!r}"
         )
+        assert fn1.experiment_name == fn2.experiment_name, deterministic_name_message
 
     def test_long_func_name_preserves_objectives_and_knobs(self):
         """A 130-char function name must never evict objectives or knob names.
@@ -1328,9 +1339,8 @@ class TestExperimentName:
         assert "accuracy" in name, f"'accuracy' missing from {name!r}"
         assert "latency" in name, f"'latency' missing from {name!r}"
         # At least one knob name must survive.
-        assert "model" in name or "temperature" in name, (
-            f"Expected at least one knob name in {name!r}"
-        )
+        long_name_message = f"Expected at least one knob name in {name!r}"
+        assert "model" in name or "temperature" in name, long_name_message
         # Must still respect the hard length cap.
         assert len(name) <= 120, f"Name exceeds max length: {len(name)} > 120"
 

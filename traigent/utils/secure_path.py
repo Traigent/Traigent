@@ -22,7 +22,7 @@ Usage:
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import IO, Any
 
 
@@ -141,6 +141,47 @@ def validate_path(
         raise FileNotFoundError(f"Path does not exist: {resolved}")
 
     return resolved
+
+
+def resolve_path_components(
+    allowed_base: str | Path,
+    *components: str,
+) -> Path:
+    """Resolve single-name components beneath a non-symlinked directory root.
+
+    Each component must be a single name, not a path. This
+    rejects POSIX/Windows separators, traversal markers, absolute paths, and
+    Windows drive-relative values such as ``C:outside`` before containment is
+    checked against ``allowed_base``.
+    """
+    lexical_base = Path(allowed_base).expanduser()
+    if lexical_base.is_symlink():
+        raise PathTraversalError(f"Allowed base directory is a symlink: {allowed_base}")
+
+    validated_components: list[str] = []
+    for component in components:
+        component_path = Path(component)
+        windows_path = PureWindowsPath(component)
+        if (
+            not component
+            or component in {".", ".."}
+            or component_path.is_absolute()
+            or windows_path.is_absolute()
+            or bool(windows_path.drive)
+            or "/" in component
+            or "\\" in component
+            or any(part in {".", ".."} for part in component_path.parts)
+        ):
+            raise PathTraversalError(
+                f"Invalid path component: {component!r} is not an accepted name"
+            )
+        validated_components.append(component)
+
+    resolved_base = lexical_base.resolve()
+    return _resolve_path_in_base(
+        resolved_base.joinpath(*validated_components),
+        resolved_base,
+    )
 
 
 def safe_open(

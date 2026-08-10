@@ -27,11 +27,11 @@ from traigent.api.types import (
 )
 from traigent.utils import optimization_result_persistence as manifest
 from traigent.utils.optimization_result_persistence import (
+    _SENTINELS,
     RESULT_RESET,
     RESULT_RESTORE,
     RESULT_SCHEMA_VERSION,
     SCHEMA_VERSION_KEY,
-    _SENTINELS,
 )
 from traigent.utils.persistence import (
     PersistenceManager,
@@ -386,9 +386,8 @@ def test_save_load_restores_every_field_in_the_manifest(tmp_path) -> None:
     loaded = persistence.load_result("full-fidelity")
 
     for name in sorted(RESULT_RESTORE - {"trials"}):
-        assert getattr(loaded, name) == _SENTINELS[name], (
-            f"{name} was not restored by PersistenceManager.load_result"
-        )
+        restore_message = f"{name} was not restored by PersistenceManager.load_result"
+        assert getattr(loaded, name) == _SENTINELS[name], restore_message
     assert [trial.trial_id for trial in loaded.trials] == ["trial-sentinel-0"]
 
 

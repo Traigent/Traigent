@@ -19,7 +19,12 @@ import pandas as pd
 from traigent.utils.file_versioning import FileVersionManager
 from traigent.utils.logging import get_logger
 from traigent.utils.optimization_logger import OptimizationLogger
-from traigent.utils.secure_path import safe_open, validate_path
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    resolve_path_components,
+    safe_open,
+    validate_path,
+)
 
 logger = get_logger(__name__)
 
@@ -240,6 +245,11 @@ class OptimizationAnalyzer:
 
         if not experiments_dir.exists():
             return pd.DataFrame()
+        if experiments_dir.is_symlink():
+            logger.warning(
+                "Skipping symlinked optimization log root: %s", experiments_dir
+            )
+            return pd.DataFrame()
 
         for exp_dir in experiments_dir.iterdir():
             if not exp_dir.is_dir():
@@ -253,8 +263,18 @@ class OptimizationAnalyzer:
                 if not run_dir.is_dir():
                     continue
 
+                try:
+                    validated_run_dir = validate_path(
+                        run_dir, experiments_dir, must_exist=True
+                    )
+                except PathTraversalError:
+                    logger.warning(
+                        "Skipping run outside optimization log root: %s", run_dir
+                    )
+                    continue
+
                 session_data = OptimizationAnalyzer._load_json_file(
-                    run_dir,
+                    validated_run_dir,
                     "meta",
                     "session",
                     file_manager,
@@ -271,7 +291,7 @@ class OptimizationAnalyzer:
                         "session_id": session_data.get("session_id", "unknown"),
                         "timestamp": session_data.get("start_time", ""),
                         "execution_mode": session_data.get("execution_mode", "unknown"),
-                        "path": str(run_dir),
+                        "path": str(validated_run_dir),
                         "status": session_data.get("status", "unknown"),
                     }
                 )
@@ -303,7 +323,12 @@ class OptimizationAnalyzer:
         legacy_manager: FileVersionManager,
     ) -> dict[str, Any]:
         """Implementation of load_run."""
-        run_path = base_path / "experiments" / experiment_name / "runs" / run_id
+        run_path = resolve_path_components(
+            Path(base_path).expanduser().resolve() / "experiments",
+            experiment_name,
+            "runs",
+            run_id,
+        )
 
         if not run_path.exists():
             logger.warning(f"Run not found: {experiment_name}/{run_id}")

@@ -96,9 +96,13 @@ jobs:
     # gated on `changes` output or fork-safety like `unit`/`mcp-contract`:
     # traigent/generated/schema_types.py can drift for reasons invisible to
     # this repo's own diff (the pinned TraigentSchema commit moves, or someone
-    # hand-edits the committed file), so it always runs. It does need the
-    # SCHEMA_TOKEN secret to check out the private TraigentSchema repo, so
-    # (like `unit`) it only runs for same-repo PRs; fork PRs skip it and
+    # hand-edits the committed file), so it always runs.
+    #
+    # The same-repo condition below is now stricter than this job needs:
+    # TraigentSchema is PUBLIC and the checkout is credential-free, so nothing
+    # here requires a secret. The condition is left in place because relaxing it
+    # would start running this job on fork PRs, which is a separate decision
+    # about fork CI rather than part of this fix. Fork PRs skip it and
     # `required-pr-gate` treats skipped as passing (see that job's comment).
     if: ${{ github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
@@ -115,7 +119,18 @@ jobs:
           repository: Traigent/TraigentSchema
           ref: 43b20f725f5c912501a852c21ff34ada3d40e6d1
           path: TraigentSchema
-          token: ${{ secrets.TRAIGENT_JS_SDK_TOKEN || secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
+          # No `token:` here on purpose. Traigent/TraigentSchema is PUBLIC, so
+          # this clone needs no credential -- verified with an anonymous
+          # `git ls-remote` against it. Passing a secret that resolves to an
+          # empty string is strictly worse than passing nothing: actions/checkout
+          # treats a declared-but-empty input as a hard error ("Input required
+          # and not supplied: token") instead of falling back to the default.
+          #
+          # That is exactly what broke every Dependabot PR in this repo.
+          # Dependabot runs read from a SEPARATE secret store, so the
+          # TRAIGENT_* names -- which live only in the Actions store -- resolved
+          # to empty, checkout refused to start, schema-types failed, and
+          # required-pr-gate (an aggregator) failed with it.
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -190,37 +205,16 @@ jobs:
         # The economics contract-drift tests (tests/unit/economics) hard-require
         # the exact TraigentSchema economics contract and must not silently
         # skip. traigent-schema 5.0.0 is not on PyPI, so install it from the
-        # pinned commit in scripts/ci/schema-pin.txt — the single source of
+        # pinned commit in scripts/ci/schema-pin.txt -- the single source of
         # truth, shared with publish.yml. Restamp the SHA in that file only.
-        env:
-          SCHEMA_TOKEN: ${{ secrets.TRAIGENT_JS_SDK_TOKEN || secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
+        #
+        # Credential-free on purpose: TraigentSchema is a PUBLIC repo, so no
+        # token is required to resolve this pin. Injecting one into the pip URL
+        # (as publish.yml still does) risked leaking it -- pip echoes the
+        # requirement string on failure and caches it -- and it broke every
+        # Dependabot PR, which never receives org secrets.
         run: |
-          # The rendered file carries the token, so mktemp + trap guarantees it
-          # is removed even when pip fails.
-          req_file="$(mktemp)"
-          trap 'rm -f "$req_file"' EXIT
-          python - <<'PY' > "$req_file"
-          import os
-
-          token = os.environ["SCHEMA_TOKEN"]
-          found = False
-
-          with open("scripts/ci/schema-pin.txt", encoding="utf-8") as handle:
-              for line in handle:
-                  line = line.strip()
-                  if not line or line.startswith("#"):
-                      continue
-                  # The token is injected here and never echoed to the log.
-                  print(line.replace(
-                      "https://github.com/",
-                      f"https://x-access-token:{token}@github.com/",
-                  ))
-                  found = True
-
-          if not found:
-              raise SystemExit("scripts/ci/schema-pin.txt has no requirement lines")
-          PY
-          pip install -r "$req_file"
+          pip install -r scripts/ci/schema-pin.txt
       - name: Run unit tests
         env:
           PYTHONPATH: .
@@ -255,9 +249,9 @@ jobs:
       - name: Install test deps
         # NOTE: the pinned economics Schema is deliberately NOT installed here
         # (unlike the `unit` job). That is the point of this job: it reproduces
-        # the environment every local developer actually has — one without the
-        # private, token-gated traigent-schema git pin — and proves the whole
-        # suite still *collects* there. It also exercises the module-level skip
+        # the environment every local developer actually has — one where the
+        # traigent-schema git pin has not been installed (it is not on PyPI and
+        # not in any extra) — and proves the whole suite still *collects* there. It also exercises the module-level skip
         # in tests/unit/economics/test_schema.py, which would otherwise never run
         # in CI and could rot unnoticed. Do not add the schema install here.
         run: |

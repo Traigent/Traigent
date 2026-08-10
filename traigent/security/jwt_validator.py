@@ -15,6 +15,11 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
+
+from traigent.security.redaction import redact_sensitive_text
+
 try:
     import jwt
     from jwt import PyJWKClient
@@ -27,6 +32,18 @@ logger = logging.getLogger(__name__)
 
 # Error message constants
 _TOKEN_EXPIRED_ERROR = "Token has expired"
+
+
+def _safe_error_detail(error: object, token: str) -> str:
+    """Return parser detail without exposing a token or its leading bytes."""
+    detail = redact_sensitive_text(str(error)) or "validation error"
+    # Exceptions are not expected to echo the input token, but keep this
+    # boundary defensive: some parsers include the complete value or a short
+    # prefix in their diagnostic text.
+    for prefix_length in (len(token), 16, 12, 8):
+        if prefix_length <= len(token):
+            detail = detail.replace(token[:prefix_length], "[REDACTED]")
+    return detail
 
 
 class JWTValidationError(Exception):
@@ -54,7 +71,7 @@ class ValidationMode(Enum):
 
     PRODUCTION = "production"  # Full verification, no bypass allowed
     STAGING = "staging"  # Full verification with extended logging
-    DEVELOPMENT = "development"  # Time-limited tokens with warnings
+    DEVELOPMENT = "development"  # Verified with configured key; relaxed claims
 
 
 @dataclass
@@ -125,7 +142,9 @@ class SecureJWTValidator:
             require_nbf: Require 'not before' claim
             require_jti: Require JWT ID for replay protection
             max_clock_skew: Maximum allowed clock skew in seconds
-            development_public_key: Optional PEM public key for development validation
+            development_public_key: Optional PEM public key for development validation.
+                Development validation fails closed when neither this key nor a JWKS
+                URL is configured; signatures are always verified.
         """
         self.jwks_url = jwks_url
         self.issuer = issuer
@@ -177,14 +196,29 @@ class SecureJWTValidator:
                 raise JWTSecurityError(
                     "Audience required for production mode JWT validation"
                 )
-        elif self.validation_mode in [
-            ValidationMode.STAGING,
-            ValidationMode.DEVELOPMENT,
-        ]:
-            # For non-production modes, warn about missing configuration but don't fail
-            missing_configs = []
+        elif self.validation_mode == ValidationMode.STAGING:
+            # Staging is production-equivalent for trust decisions.  It may add
+            # diagnostics, but it must never accept a token without the same
+            # trust anchors and claim configuration as production.
             if not self.jwks_url:
-                missing_configs.append("JWKS URL")
+                raise JWTSecurityError(
+                    "JWKS URL required for staging mode JWT validation"
+                )
+            if not self.issuer:
+                raise JWTSecurityError(
+                    "Issuer required for staging mode JWT validation"
+                )
+            if not self.audience:
+                raise JWTSecurityError(
+                    "Audience required for staging mode JWT validation"
+                )
+        elif self.validation_mode == ValidationMode.DEVELOPMENT:
+            # Development may relax issuer/audience requirements, but still
+            # requires a configured asymmetric verification key (or JWKS URL)
+            # at validation time.
+            missing_configs = []
+            if not self.jwks_url and not self.development_public_key:
+                missing_configs.append("JWKS URL or development public key")
             if not self.issuer:
                 missing_configs.append("issuer")
             if not self.audience:
@@ -358,11 +392,15 @@ class SecureJWTValidator:
         except JWTSecurityError as e:
             return JWTValidationResult(valid=False, error=str(e))
         except jwt.InvalidTokenError as e:
-            return JWTValidationResult(valid=False, error=f"Invalid token: {e}")
-        except Exception as e:
-            logger.error(f"Unexpected error in JWT validation: {e}")
             return JWTValidationResult(
-                valid=False, error=f"Token validation failed: {e}"
+                valid=False,
+                error=f"Invalid token: {_safe_error_detail(e, token)}",
+            )
+        except Exception as e:
+            detail = _safe_error_detail(e, token)
+            logger.error("Unexpected error in JWT validation: %s", detail)
+            return JWTValidationResult(
+                valid=False, error=f"Token validation failed: {detail}"
             )
 
     def _validate_staging(self, token: str) -> JWTValidationResult:
@@ -372,7 +410,9 @@ class SecureJWTValidator:
 
         # Extended logging for debugging
         if not result.valid:
-            logger.warning(f"Staging JWT validation failed: {result.error}")
+            # Keep failure diagnostics token-free.  The detailed result is
+            # still returned to the caller, but must not be copied to logs.
+            logger.warning("Staging JWT validation failed")
         else:
             logger.info("Staging JWT validation successful")
 
@@ -384,43 +424,65 @@ class SecureJWTValidator:
         return [
             "DEVELOPMENT MODE: Limited to 5-minute token lifetime (Development mode only)",
             "NOT suitable for production use",
-            "Security validations relaxed but not disabled",
+            "Claim requirements may be relaxed; signature and time checks remain enforced",
         ]
 
-    def _extract_header_algorithm(self, token: str) -> str | None:
-        """Extract algorithm from JWT header safely."""
-        header_reader = getattr(jwt, "get_unverified_header", None)
-        if token.count(".") < 2 or not callable(header_reader):
+    @staticmethod
+    def _load_development_public_key(key: Any) -> Any:
+        """Load an explicitly configured PEM public key without accepting private keys."""
+        if isinstance(key, str):
+            key = key.encode("utf-8")
+        if isinstance(key, bytes):
+            return serialization.load_pem_public_key(key)
+        return key
+
+    @staticmethod
+    def _algorithm_for_key(key: Any) -> str | None:
+        """Derive the only permitted JWT algorithm from a configured key type."""
+        if isinstance(key, rsa.RSAPublicKey):
+            return "RS256"
+        if isinstance(key, ec.EllipticCurvePublicKey) and key.curve.name == "secp256r1":
+            return "ES256"
+        return None
+
+    def _resolve_development_verification_key(
+        self, jwt_value: str
+    ) -> tuple[Any, str] | None:
+        """Resolve a configured verification key and algorithm for development JWTs.
+
+        The algorithm is derived from the configured key (or trusted JWK metadata),
+        never from the unverified JWT header.  Development intentionally has no
+        symmetric-secret contract, so HS* algorithms are not accepted here.
+        """
+        key: Any
+        configured_algorithm: str | None = None
+
+        if self.development_public_key:
+            key = self._load_development_public_key(self.development_public_key)
+        else:
+            jwks_client = self._get_jwks_client()
+            if jwks_client is None:
+                return None
+            signing_key = jwks_client.get_signing_key_from_jwt(jwt_value)
+            key = signing_key.key
+            configured_algorithm = getattr(signing_key, "algorithm_name", None)
+
+        derived_algorithm = self._algorithm_for_key(key)
+        algorithm = derived_algorithm or configured_algorithm
+        if algorithm not in self.ALLOWED_ALGORITHMS:
             return None
-        try:
-            header = header_reader(token)
-            alg: str | None = header.get("alg")
-            return alg
-        except Exception as exc:
-            logger.debug(
-                "Failed to parse JWT header in development validation: %s", exc
-            )
+        if (
+            configured_algorithm
+            and derived_algorithm
+            and configured_algorithm != derived_algorithm
+        ):
             return None
 
-    def _validate_algorithm(
-        self, header_alg: str | None, warnings: list[str]
-    ) -> JWTValidationResult | None:
-        """Validate algorithm is allowed. Returns error result or None if valid."""
-        if isinstance(header_alg, str) and header_alg.lower() == "none":
-            return JWTValidationResult(
-                valid=False,
-                error="Algorithm 'none' is not allowed",
-                warnings=warnings,
-            )
-        if header_alg:
-            allowed_algs = set(self.ALLOWED_ALGORITHMS + ["HS256"])
-            if header_alg not in allowed_algs:
-                return JWTValidationResult(
-                    valid=False,
-                    error=f"Unsupported algorithm: {header_alg}",
-                    warnings=warnings,
-                )
-        return None
+        if hasattr(key, "key_size"):
+            minimum = self.MIN_KEY_SIZES.get(algorithm)
+            if minimum is not None and key.key_size < minimum:
+                return None
+        return key, algorithm
 
     def _check_token_lifetime(
         self, payload: dict[str, Any], warnings: list[str]
@@ -429,10 +491,17 @@ class SecureJWTValidator:
         iat = payload.get("iat")
         current_time = time.time()
 
-        if not isinstance(iat, (int, float)):
+        if isinstance(iat, bool) or not isinstance(iat, (int, float)):
             return JWTValidationResult(
                 valid=False,
                 error="Development tokens must include an iat claim",
+                warnings=warnings,
+            )
+
+        if iat - current_time > self.max_clock_skew:
+            return JWTValidationResult(
+                valid=False,
+                error="Development token iat is in the future",
                 warnings=warnings,
             )
 
@@ -459,32 +528,43 @@ class SecureJWTValidator:
             )
 
         try:
-            header_alg = self._extract_header_algorithm(token)
+            resolved_key = self._resolve_development_verification_key(token)
+            if resolved_key is None:
+                return JWTValidationResult(
+                    valid=False,
+                    error="Development JWT signature verification key is not configured or supported",
+                    warnings=warnings,
+                )
+            verification_key, algorithm = resolved_key
 
-            alg_error = self._validate_algorithm(header_alg, warnings)
-            if alg_error:
-                return alg_error
-
-            decode_options = {
-                "verify_signature": False,
-                "verify_exp": False,
-                "verify_iat": False,
-                "verify_nbf": False,
-            }
-            decode_kwargs: dict[str, Any] = {"options": decode_options}
-            if header_alg:
-                decode_kwargs["algorithms"] = [header_alg]
-
-            unverified_payload = jwt.decode(
-                token, self.development_public_key or "", **decode_kwargs
+            payload = jwt.decode(
+                token,
+                verification_key,
+                algorithms=[algorithm],
+                leeway=self.max_clock_skew,
+                options={
+                    "verify_signature": True,
+                    "verify_exp": True,
+                    "verify_iat": True,
+                    "verify_nbf": True,
+                    # Issuer/audience remain optional in development; if present,
+                    # their integrity is still protected by the verified signature.
+                    "verify_iss": False,
+                    "verify_aud": False,
+                    # Development may omit optional claims, but never bypasses
+                    # integrity or validation of any supplied time claim.
+                    "require_exp": False,
+                    "require_iat": False,
+                    "require_nbf": False,
+                },
             )
 
-            lifetime_error = self._check_token_lifetime(unverified_payload, warnings)
+            lifetime_error = self._check_token_lifetime(payload, warnings)
             if lifetime_error:
                 return lifetime_error
 
-            payload = self._mark_development_payload(token, unverified_payload)
-            exp = unverified_payload.get("exp")
+            payload = self._mark_development_payload(payload)
+            exp = payload.get("exp")
 
             return JWTValidationResult(
                 valid=True,
@@ -493,26 +573,27 @@ class SecureJWTValidator:
                 warnings=warnings,
                 security_metadata={
                     "mode": "development",
+                    "algorithm": algorithm,
                     "validated_at": time.time(),
                     "max_lifetime": self.DEVELOPMENT_TOKEN_LIFETIME,
                 },
             )
 
-        except jwt.InvalidTokenError as e:
+        except Exception as e:
             return JWTValidationResult(
-                valid=False, error=f"Invalid token structure: {e}", warnings=warnings
+                valid=False,
+                error=f"Invalid development JWT: {_safe_error_detail(e, token)}",
+                warnings=warnings,
             )
 
     def _mark_development_payload(
-        self, token: str, unverified_payload: dict[str, Any]
+        self, verified_payload: dict[str, Any]
     ) -> dict[str, Any]:
-        """Mark payload with development mode metadata if applicable."""
-        if token.count(".") >= 2:
-            payload = dict(unverified_payload)
-            payload["_development_mode"] = True
-            payload["_max_validity"] = self.DEVELOPMENT_TOKEN_LIFETIME
-            return payload
-        return unverified_payload
+        """Mark a verified development payload with mode metadata."""
+        payload = dict(verified_payload)
+        payload["_development_mode"] = True
+        payload["_max_validity"] = self.DEVELOPMENT_TOKEN_LIFETIME
+        return payload
 
     def _validate_strict(self, token: str) -> JWTValidationResult:
         """Strict validation - compatibility wrapper for production validation."""
@@ -521,21 +602,6 @@ class SecureJWTValidator:
     def _validate_development(self, token: str) -> JWTValidationResult:
         """Development validation - legacy compatibility wrapper."""
         return self._validate_development_secure(token)
-
-    def _get_development_signing_key(self, token: str) -> Any | None:
-        """Resolve a signing key for development validation."""
-        if self.development_public_key:
-            return self.development_public_key
-
-        jwks_client = self._get_jwks_client()
-        if jwks_client is None:
-            return None
-        try:
-            signing_key = jwks_client.get_signing_key_from_jwt(token)
-        except Exception as exc:
-            logger.warning("Failed to resolve JWKS signing key: %s", exc)
-            return None
-        return signing_key.key
 
     def _perform_security_checks(self, payload: dict[str, Any]) -> None:
         """Perform additional security checks on token payload."""
@@ -614,10 +680,16 @@ def get_secure_jwt_validator(mode: ValidationMode | None = None) -> SecureJWTVal
             )
             mode = ValidationMode.PRODUCTION
 
-    # Log mode selection for development/staging
-    if mode in (ValidationMode.DEVELOPMENT, ValidationMode.STAGING):
+    # Log mode selection accurately: only development has the five-minute
+    # local token lifetime; staging is production-equivalent for lifetime and
+    # claim validation.
+    if mode == ValidationMode.DEVELOPMENT:
         logger.warning(
-            f"JWT validator in {mode.value.upper()} mode - tokens limited to 5 minutes"
+            "JWT validator in DEVELOPMENT mode - tokens limited to 5 minutes"
+        )
+    elif mode == ValidationMode.STAGING:
+        logger.warning(
+            "JWT validator in STAGING mode - production-equivalent token lifetime and claims"
         )
 
     # Get configuration

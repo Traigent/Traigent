@@ -1652,8 +1652,7 @@ REMOVED_PRESET_NAMES = (
 def _spec_with_strategy(tmp_path: Path, strategy: str) -> Path:
     """A minimal, otherwise-valid legacy spec whose only oddity is ``strategy``."""
     spec_file = tmp_path / "test.tvl.yml"
-    spec_file.write_text(
-        f"""
+    spec_file.write_text(f"""
 tvars:
   - name: model
     type: enum[str]
@@ -1665,8 +1664,7 @@ objectives:
 
 optimization:
   strategy: {strategy}
-"""
-    )
+""")
     return spec_file
 
 
