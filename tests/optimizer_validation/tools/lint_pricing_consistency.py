@@ -91,7 +91,7 @@ _PRICING_VAR_RE = re.compile(
 
 def _is_numeric_node(node: ast.expr) -> bool:
     """Check if an AST node represents a numeric literal or container of numerics."""
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+    if _is_price_like_constant(node):
         return True
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
         return _is_numeric_node(node.operand)
@@ -106,9 +106,31 @@ def _is_numeric_node(node: ast.expr) -> bool:
     return False
 
 
+def _is_price_like_constant(node: ast.expr) -> bool:
+    """A numeric literal that could plausibly be a price.
+
+    ``bool`` is excluded deliberately. In Python ``isinstance(True, int)`` is
+    True, so a plain ``(int, float)`` check counts ``True``/``False`` as
+    numeric -- and any dict pairing the keys "input"/"output" with boolean
+    flags then looks like a pricing table. That is how this rule fired on an
+    evaluation-dataset row (``{"input": ..., "output": ..., "holdout": False,
+    "synthetic": True}``), where "input"/"output" are the documented JSONL
+    dataset keys, not model pricing.
+
+    No real pricing table prices a token at ``True``, so excluding bool makes
+    this rule strictly MORE precise: it removes a class of false positives
+    without weakening detection of any actual hardcoded price.
+    """
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, (int, float))
+        and not isinstance(node.value, bool)
+    )
+
+
 def _is_numeric_leaf(node: ast.expr) -> bool:
     """Check if a single AST node is a numeric literal (not recursive into containers)."""
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+    if _is_price_like_constant(node):
         return True
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
         return _is_numeric_leaf(node.operand)
