@@ -4,14 +4,18 @@ Mirrors ``traigent/generation/skill_train/artifacts.py``'s symlink-safe,
 containment-rooted write pattern. This module is reached ONLY on the
 EVAL_SET_BUILT path with at least one verified row already in hand -- a
 fail-closed DISCOVERY_ONLY gap never calls into this module, so a gap can
-never leave a partial file behind. Everything is built in memory first and
-written in one call per file, so even a build with rows can't leave a
-half-written file if something downstream goes wrong mid-loop.
+never leave a partial file behind. Everything is built in memory first, then
+the JSONL and the manifest are written and put into place together: both
+land, or neither does. See ``_write_pair_atomically`` -- a caller must never
+observe a JSONL without its manifest, even if the manifest write fails
+partway through (e.g. its path is already a directory).
 """
 
 from __future__ import annotations
 
 import json
+import os
+import uuid
 from collections.abc import Mapping, Sequence
 from datetime import datetime, UTC
 from pathlib import Path
@@ -105,9 +109,50 @@ def write_eval_set(
     eval_set_text = "\n".join(jsonl_lines) + ("\n" if jsonl_lines else "")
     manifest_text = json.dumps(manifest, indent=2, sort_keys=True)
 
-    eval_set_path.write_text(eval_set_text, encoding="utf-8")
-    manifest_path.write_text(manifest_text, encoding="utf-8")
+    _write_pair_atomically(eval_set_path, eval_set_text, manifest_path, manifest_text)
     return eval_set_path, manifest_path
+
+
+def _write_pair_atomically(
+    eval_set_path: Path,
+    eval_set_text: str,
+    manifest_path: Path,
+    manifest_text: str,
+) -> None:
+    """Put the JSONL and its manifest into place together, or neither at all.
+
+    Each file is first written to a temporary sibling (same directory, so
+    the follow-up rename is a same-filesystem, effectively-atomic
+    ``os.replace``), then the two temporaries are moved into their final
+    paths. If anything raises -- including the second rename, e.g. because
+    ``manifest_path`` already exists as a directory (``IsADirectoryError``)
+    -- any temporary already written and any final path already put in
+    place by this call are removed before the exception propagates. A
+    caller must never observe the JSONL at its final path without a
+    manifest alongside it.
+    """
+    temp_eval_set = _sibling_temp_path(eval_set_path)
+    temp_manifest = _sibling_temp_path(manifest_path)
+    placed: list[Path] = []
+    try:
+        temp_eval_set.write_text(eval_set_text, encoding="utf-8")
+        temp_manifest.write_text(manifest_text, encoding="utf-8")
+
+        os.replace(temp_eval_set, eval_set_path)
+        placed.append(eval_set_path)
+        os.replace(temp_manifest, manifest_path)
+        placed.append(manifest_path)
+    except BaseException:
+        for path in placed:
+            path.unlink(missing_ok=True)
+        raise
+    finally:
+        temp_eval_set.unlink(missing_ok=True)
+        temp_manifest.unlink(missing_ok=True)
+
+
+def _sibling_temp_path(target: Path) -> Path:
+    return target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
 
 
 def _resolve_directory(

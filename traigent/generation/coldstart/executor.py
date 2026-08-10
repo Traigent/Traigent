@@ -32,7 +32,12 @@ from pathlib import Path
 from typing import Any
 
 from ._artifacts import write_eval_set
-from ._contract import GENERATION_CAPABILITIES, MAX_CANDIDATE_LIMIT, MIN_CANDIDATE_LIMIT
+from ._contract import (
+    GENERATION_CAPABILITIES,
+    MAX_CANDIDATE_LIMIT,
+    MIN_CANDIDATE_LIMIT,
+    VERIFIER_KINDS,
+)
 from ._descriptor import build_descriptor
 from ._generation import GeneratorFn, generate_and_score
 from ._plan import (
@@ -96,6 +101,17 @@ def build_cold_start_eval_set(
         ``outcome=DISCOVERY_ONLY`` with ``optimizer_eligible=False`` and a
         populated ``gap``, and NO artifacts written.
     """
+    # bool is an int subclass, so `True`/`False` would otherwise sail through
+    # the numeric range check below and end up serialized as a JSON boolean
+    # (`"candidate_limit": true`) -- the same shape the response parser
+    # already refuses to accept coming back. Reject it symmetrically here.
+    if isinstance(requested_candidate_limit, bool) or not isinstance(
+        requested_candidate_limit, int
+    ):
+        raise ValueError(
+            f"requested_candidate_limit must be an int, got "
+            f"{type(requested_candidate_limit).__name__}"
+        )
     if not (MIN_CANDIDATE_LIMIT <= requested_candidate_limit <= MAX_CANDIDATE_LIMIT):
         raise ValueError(
             f"requested_candidate_limit must be within "
@@ -121,6 +137,24 @@ def build_cold_start_eval_set(
         )
 
     resolved_capabilities = _validate_generation_capabilities(generation_capabilities)
+
+    # Defense in depth: __init_subclass__ only validates `kind` against the
+    # enum at CLASS-definition time. `kind` is a plain instance attribute,
+    # so a caller can still overwrite it on an instance
+    # (`v = MyVerifier(); v.kind = "<anything>"`) after the class check has
+    # already run. Re-validate the INSTANCE value here, at the point where
+    # it is actually read and placed on the wire, and fail closed if it has
+    # drifted from the enum -- never send an unvalidated string.
+    if verifier.kind not in VERIFIER_KINDS:
+        return _discovery_only(
+            DiscoveryGap(
+                reason="invalid_verifier_kind",
+                detail=(
+                    f"verifier.kind must be one of {sorted(VERIFIER_KINDS)}; "
+                    f"got {verifier.kind!r}"
+                ),
+            )
+        )
 
     # Requirement 4: verifier_kinds is derived from the verifier object
     # actually supplied (its declared, class-bound `kind`), never a
@@ -161,9 +195,10 @@ def build_cold_start_eval_set(
     granted_limit = min(plan.candidate_limit, requested_candidate_limit)
 
     # Requirement 9: only rows a LocalVerifier actually scored (dedup +
-    # screening happen here too) ever become candidates for writing.
+    # screening -- including a signature-callability check against `func` --
+    # happen here too) ever become candidates for writing.
     accepted_rows = generate_and_score(
-        generator, verifier, candidate_limit=granted_limit
+        generator, verifier, candidate_limit=granted_limit, func=func
     )
     if not accepted_rows:
         return _discovery_only(

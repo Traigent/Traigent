@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Any
 
 from ._contract import (
@@ -196,6 +196,20 @@ def check_digest(descriptor: Mapping[str, Any], plan: Plan) -> DiscoveryGap | No
 
 
 def check_not_expired(plan: Plan, *, now: datetime) -> DiscoveryGap | None:
+    """Fail-closed expiry check -- must never raise on a naive ``now``.
+
+    ``plan.expires_at`` is always timezone-aware (``_parse_timestamp``
+    enforces that). A caller-injected ``clock`` is not required to return a
+    timezone-aware value -- e.g. ``lambda: datetime.utcnow()`` -- and
+    comparing an aware and a naive datetime raises ``TypeError`` rather than
+    returning a result, which would escape this fail-closed check as an
+    uncaught exception instead of a proper ``DiscoveryGap``. Normalize a
+    naive ``now`` to UTC deterministically (matching the historical
+    ``datetime.utcnow()`` convention the docstring's default -- real UTC
+    now -- also follows) instead.
+    """
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
     if plan.expires_at <= now:
         return DiscoveryGap(
             reason="plan_expired",
