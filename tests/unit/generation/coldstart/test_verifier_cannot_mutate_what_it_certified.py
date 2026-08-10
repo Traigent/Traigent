@@ -211,3 +211,75 @@ def test_the_written_row_is_a_plain_json_container() -> None:
         text = Path(result.eval_set_path).read_text(encoding="utf-8")
 
     assert '"answer": "4"' in text
+
+
+class _AliasShiftingDict(dict):
+    """Defeats copying AND serializes differently on each read.
+
+    Both traits are needed, which is why a simpler version of this test was
+    worthless: ``deepcopy`` of an ordinary shifting subclass produces a fresh
+    object whose reads restart, so the snapshot alone neutralised it and the
+    test passed with the fix reverted. Only when ``__deepcopy__`` returns self
+    AND ``items()`` shifts does freezing twice from the caller actually split
+    the certified value from the written one.
+
+    (``json.dumps(..., sort_keys=True)`` reads ``items()``, not ``keys()`` --
+    overriding the wrong one also produces a test that cannot fail. Three
+    separate versions of this test passed with the fix reverted before this
+    one; each was verified by sabotage rather than assumed.)
+    """
+
+    def __init__(self) -> None:
+        super().__init__(answer="4")
+        self._reads = 0
+
+    def __deepcopy__(self, memo: Any) -> _AliasShiftingDict:
+        return self
+
+    def __copy__(self) -> _AliasShiftingDict:
+        return self
+
+    def items(self):  # noqa: ANN201 - dict protocol
+        # A DISTINCT value per read. A two-valued version cannot fail: the
+        # executor already serializes once to screen serializability, so reads
+        # 2 and 3 would both return the "after" value and the certified and
+        # written copies would agree by accident.
+        self._reads += 1
+        return [("answer", f"read{self._reads}")]
+
+
+def _alias_shifting_generator(limit: int):
+    yield ({"question": "2+2"}, _AliasShiftingDict())
+
+
+def test_an_object_that_serializes_differently_each_time_cannot_split_the_row() -> None:
+    """What the verifier certified must be byte-identical to what was written."""
+    certified: dict[str, Any] = {}
+
+    class _Recording(LocalVerifier):
+        kind = "executable_property"
+
+        def verify(self, *, inputs: Any, output: Any) -> ScoreReceipt | None:
+            certified["output"] = json.loads(json.dumps(output, sort_keys=True))
+            return ScoreReceipt(
+                verifier_id="v1",
+                verifier_kind=self.kind,
+                passed=True,
+                provenance="independently_verified",
+            )
+
+    with tempfile.TemporaryDirectory() as directory:
+        result = build_cold_start_eval_set(
+            target,
+            generator=_alias_shifting_generator,
+            verifier=_Recording(),
+            transport=_transport,
+            output_dir=directory,
+            generation_capabilities=("deterministic_contract",),
+        )
+        assert result.outcome is ColdStartOutcome.EVAL_SET_BUILT
+        written = json.loads(
+            Path(result.eval_set_path).read_text(encoding="utf-8").splitlines()[0]
+        )["output"]
+
+    assert certified["output"] == written

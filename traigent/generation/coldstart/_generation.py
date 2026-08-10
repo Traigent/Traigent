@@ -158,8 +158,16 @@ def generate_and_score(
         )
         if not ok:
             continue
+        # The verifier's copy is derived from the ALREADY-FROZEN value, never
+        # from the caller's object a second time. Freezing twice from the
+        # caller would re-serialize it, and an object is free to serialize
+        # differently on each call (a dict subclass whose keys()/items()
+        # returns different data on successive reads does exactly that --
+        # confirmed, not theoretical). The verifier would then certify one
+        # value while a different one was written. frozen_* are plain JSON
+        # containers, so this round-trip is deterministic by construction.
         verifier_inputs, verifier_output, ok = _freeze_through_json(
-            inputs_snapshot, output_snapshot
+            frozen_inputs, frozen_output
         )
         if not ok:
             continue
