@@ -124,7 +124,26 @@ def generate_and_score(
         if dedup_key in seen:
             continue
 
-        receipt = verifier.verify(inputs=inputs_snapshot, output=output_snapshot)
+        # Hand the verifier its OWN copy and keep ours untouched. Snapshotting
+        # against the generator is not sufficient on its own: verify() receives
+        # live references, so a verifier that checks a value and THEN mutates it
+        # --
+        #     assert output["answer"] == "4"
+        #     output["answer"] = "5"
+        #     return ScoreReceipt(passed=True, ...)
+        #
+        # -- would otherwise have its mutation land on the very object we write,
+        # producing a row whose receipt was earned for different content. Whether
+        # that is malice or a verifier that normalises in place does not matter;
+        # the receipt must describe exactly what gets written.
+        verifier_inputs, ok = _safe_deepcopy(inputs_snapshot)
+        if not ok:
+            continue
+        verifier_output, ok = _safe_deepcopy(output_snapshot)
+        if not ok:
+            continue
+
+        receipt = verifier.verify(inputs=verifier_inputs, output=verifier_output)
         if receipt is None:
             # No verifier evidence -> this row is never written. Its
             # inputs must NOT be added to `seen`: dedup is only against
