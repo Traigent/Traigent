@@ -15,6 +15,7 @@ import json
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
+from ._contract import PROVENANCE_KINDS
 from .models import LocalVerifier, ScoreReceipt
 
 #: Caller-supplied generator: given the granted candidate_limit, yield
@@ -119,7 +120,14 @@ def _is_valid_receipt(receipt: Any) -> bool:
         return False
     if not isinstance(receipt.verifier_kind, str) or not receipt.verifier_kind:
         return False
-    if not isinstance(receipt.provenance, str) or not receipt.provenance:
+    # provenance is a CLOSED vocabulary, not free text. The oracle_returned vs
+    # independently_verified distinction is the reason receipts exist: the first
+    # says "this came out of the generation path", the second says "something
+    # separate confirmed it". Left as a free string, a verifier could assert any
+    # claim it liked and put arbitrary text into the local manifest. The SDK
+    # cannot prove a claim of independence is honest -- only the caller knows --
+    # but it can refuse to record a claim it does not recognise.
+    if receipt.provenance not in PROVENANCE_KINDS:
         return False
     return True
 

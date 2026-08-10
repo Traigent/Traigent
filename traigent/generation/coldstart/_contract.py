@@ -35,6 +35,25 @@ VERIFIER_KINDS = frozenset(
 # generation_capabilities enum.
 GENERATION_CAPABILITIES = frozenset({"deterministic_contract", "customer_llm"})
 
+# Closed vocabulary for ScoreReceipt.provenance. The distinction is the whole
+# reason receipts exist, so it must not be a free string:
+#
+#   oracle_returned        -- the expected output came out of the generation
+#                             path itself. A candidate output, NOT verified
+#                             truth, however obviously correct it looks.
+#   independently_verified -- an authority SEPARATE from generation (a property
+#                             check, a reference oracle, a human) confirmed it.
+#
+# A free-text field here would let a verifier assert any claim it liked, and
+# would let arbitrary text into the local manifest. The SDK cannot prove a
+# claim of independence is honest -- only the caller knows -- but it can refuse
+# to record a claim outside this vocabulary.
+PROVENANCE_ORACLE_RETURNED = "oracle_returned"
+PROVENANCE_INDEPENDENTLY_VERIFIED = "independently_verified"
+PROVENANCE_KINDS = frozenset(
+    {PROVENANCE_ORACLE_RETURNED, PROVENANCE_INDEPENDENTLY_VERIFIED}
+)
+
 MIN_CANDIDATE_LIMIT = 1
 MAX_CANDIDATE_LIMIT = 1000
 
