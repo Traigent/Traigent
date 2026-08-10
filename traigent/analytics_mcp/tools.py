@@ -820,8 +820,11 @@ async def analytics_get_example_insights_tool(
     """Fetch the backend's privacy-bounded example insights for one run.
 
     This is a pass-through surface for the backend payload. Responses may
-    include coarse "examples to review" rows with opaque refs and enum-only
-    review metadata, but never raw signal values or scores.
+    include coarse "examples to review" rows with opaque refs, enum-only
+    review metadata, and — when the backend can resolve the row — the
+    client-owned ``example_id`` as submitted in the evaluation dataset
+    (identity only, for a local content join), but never raw signal values
+    or scores.
     """
     try:
         pid = _require_identifier(project_id, field="project_id")
