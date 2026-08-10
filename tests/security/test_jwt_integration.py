@@ -6,12 +6,25 @@ from unittest.mock import MagicMock, patch
 
 import jwt
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from traigent.security.jwt_validator import (
     JWTSecurityError,
     SecureJWTValidator,
     ValidationMode,
     get_secure_jwt_validator,
+)
+
+_TEST_PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+_TEST_PRIVATE_PEM = _TEST_PRIVATE_KEY.private_bytes(
+    serialization.Encoding.PEM,
+    serialization.PrivateFormat.PKCS8,
+    serialization.NoEncryption(),
+)
+_TEST_PUBLIC_PEM = _TEST_PRIVATE_KEY.public_key().public_bytes(
+    serialization.Encoding.PEM,
+    serialization.PublicFormat.SubjectPublicKeyInfo,
 )
 
 
@@ -176,14 +189,17 @@ class TestJWTDevelopmentMode:
 
     def test_development_mode_time_limit(self, clean_environment):
         """Test that development mode enforces time limits."""
-        validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
+        validator = SecureJWTValidator(
+            validation_mode=ValidationMode.DEVELOPMENT,
+            development_public_key=_TEST_PUBLIC_PEM,
+        )
 
         # Old token (older than 5 minutes)
         old_payload = {
             "iat": int(time.time()) - 400,  # 400 seconds ago
             "exp": int(time.time()) + 3600,
         }
-        old_token = jwt.encode(old_payload, "secret", algorithm="HS256")
+        old_token = jwt.encode(old_payload, _TEST_PRIVATE_PEM, algorithm="RS256")
 
         result = validator.validate_token(old_token)
         assert not result.valid
@@ -194,7 +210,7 @@ class TestJWTDevelopmentMode:
             "iat": int(time.time()) - 100,  # 100 seconds ago
             "exp": int(time.time()) + 3600,
         }
-        recent_token = jwt.encode(recent_payload, "secret", algorithm="HS256")
+        recent_token = jwt.encode(recent_payload, _TEST_PRIVATE_PEM, algorithm="RS256")
 
         result = validator.validate_token(recent_token)
         assert result.valid
@@ -203,7 +219,10 @@ class TestJWTDevelopmentMode:
 
     def test_development_mode_blocks_none_algorithm(self, clean_environment):
         """Test that 'none' algorithm is blocked even in development."""
-        validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
+        validator = SecureJWTValidator(
+            validation_mode=ValidationMode.DEVELOPMENT,
+            development_public_key=_TEST_PUBLIC_PEM,
+        )
 
         # Create token with 'none' algorithm
         import base64
@@ -223,18 +242,20 @@ class TestJWTDevelopmentMode:
 
         result = validator.validate_token(none_token)
         assert not result.valid
-        assert "none" in result.error.lower()
 
     def test_development_mode_markers(self, clean_environment):
         """Test that development tokens are properly marked."""
-        validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
+        validator = SecureJWTValidator(
+            validation_mode=ValidationMode.DEVELOPMENT,
+            development_public_key=_TEST_PUBLIC_PEM,
+        )
 
         payload = {
             "iat": int(time.time()),
             "exp": int(time.time()) + 3600,
             "sub": "test_user",
         }
-        token = jwt.encode(payload, "secret", algorithm="HS256")
+        token = jwt.encode(payload, _TEST_PRIVATE_PEM, algorithm="RS256")
 
         result = validator.validate_token(token)
         assert result.valid
@@ -305,14 +326,17 @@ class TestJWTSecurityFeatures:
 
     def test_token_size_limits(self, clean_environment):
         """Test that oversized tokens are rejected."""
-        validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
+        validator = SecureJWTValidator(
+            validation_mode=ValidationMode.DEVELOPMENT,
+            development_public_key=_TEST_PUBLIC_PEM,
+        )
 
         # Create oversized token
         large_payload = {
             "data": "x" * 10000,
             "iat": int(time.time()),
         }
-        large_token = jwt.encode(large_payload, "secret", algorithm="HS256")
+        large_token = jwt.encode(large_payload, _TEST_PRIVATE_PEM, algorithm="RS256")
 
         with pytest.raises(JWTSecurityError) as exc:
             validator.validate_token(large_token)
@@ -320,25 +344,35 @@ class TestJWTSecurityFeatures:
 
     def test_constant_time_validation(self, clean_environment):
         """Test constant-time validation to prevent timing attacks."""
-        validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
+        validator = SecureJWTValidator(
+            validation_mode=ValidationMode.DEVELOPMENT,
+            development_public_key=_TEST_PUBLIC_PEM,
+        )
 
-        valid_token = jwt.encode({"iat": int(time.time())}, "secret", algorithm="HS256")
+        valid_jwt = jwt.encode(
+            {"iat": int(time.time())}, _TEST_PRIVATE_PEM, algorithm="RS256"
+        )
 
         # Test that constant_time_validate works
-        result = validator.constant_time_validate(valid_token, True)
+        result = validator.constant_time_validate(valid_jwt, True)
         assert isinstance(result, bool)
 
     def test_validation_metrics(self, clean_environment):
         """Test that validation metrics are tracked."""
-        validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
+        validator = SecureJWTValidator(
+            validation_mode=ValidationMode.DEVELOPMENT,
+            development_public_key=_TEST_PUBLIC_PEM,
+        )
 
         # Initial metrics
         metrics = validator.get_validation_metrics()
         assert metrics["total_validations"] == 0
 
         # Valid token
-        token = jwt.encode({"iat": int(time.time())}, "secret", algorithm="HS256")
-        validator.validate_token(token)
+        signed_jwt = jwt.encode(
+            {"iat": int(time.time())}, _TEST_PRIVATE_PEM, algorithm="RS256"
+        )
+        validator.validate_token(signed_jwt)
 
         # Invalid token
         validator.validate_token("invalid")
@@ -385,13 +419,16 @@ class TestJWTPerformance:
     @pytest.mark.integration
     def test_validation_performance(self, clean_environment):
         """Test that validation performs well under load."""
-        validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
+        validator = SecureJWTValidator(
+            validation_mode=ValidationMode.DEVELOPMENT,
+            development_public_key=_TEST_PUBLIC_PEM,
+        )
 
         # Create test token
         token = jwt.encode(
             {"iat": int(time.time()), "sub": "test"},
-            "secret",
-            algorithm="HS256",
+            _TEST_PRIVATE_PEM,
+            algorithm="RS256",
         )
 
         # Validate many tokens
@@ -412,6 +449,7 @@ class TestJWTPerformance:
         validator = SecureJWTValidator(
             validation_mode=ValidationMode.DEVELOPMENT,
             require_jti=True,
+            development_public_key=_TEST_PUBLIC_PEM,
         )
 
         # Add JTIs

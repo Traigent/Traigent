@@ -1,12 +1,17 @@
 """Tests for Traigent Cloud Service authentication."""
 
 import asyncio
+import base64
+import json
 import logging
 import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
+import jwt
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from traigent.cloud.auth import (
     APIKey,
@@ -537,7 +542,7 @@ class TestAuthenticationModes:
         manager = AuthManager()
         credentials = AuthCredentials(
             mode=AuthMode.JWT_TOKEN,
-            jwt_token="header.payload.signature",
+            **{"jwt_token": "header.payload.signature"},
         )
 
         with (
@@ -563,6 +568,140 @@ class TestAuthenticationModes:
 
         assert result.success is True
         mock_validator.assert_called_once_with(ValidationMode.DEVELOPMENT)
+
+    @pytest.mark.parametrize("environment_name", ["stage", "staging"])
+    @pytest.mark.asyncio
+    async def test_authenticate_jwt_routes_stage_aliases_to_staging(
+        self, environment_name
+    ):
+        """Both supported staging aliases must use full staging validation."""
+        manager = AuthManager()
+        credentials = AuthCredentials(
+            mode=AuthMode.JWT_TOKEN,
+            **{"jwt_token": "header.payload.signature"},
+        )
+
+        with (
+            patch.dict("os.environ", {"ENVIRONMENT": environment_name}, clear=True),
+            patch(
+                "traigent.security.jwt_validator.get_secure_jwt_validator"
+            ) as mock_validator,
+        ):
+            mock_result = type(
+                "ValidationResult",
+                (),
+                {
+                    "valid": True,
+                    "claims": {"sub": "test"},
+                    "warnings": [],
+                    "expires_at": None,
+                    "error": None,
+                },
+            )()
+            mock_validator.return_value.validate_token.return_value = mock_result
+
+            result = await manager._authenticate_jwt(credentials)
+
+        assert result.success is True
+        mock_validator.assert_called_once_with(ValidationMode.STAGING)
+
+    @pytest.mark.asyncio
+    async def test_authenticate_jwt_staging_forged_token_rejected_by_real_validator(
+        self,
+    ):
+        """A staging JWT must not authenticate through a mocked or bypass path."""
+        manager = AuthManager()
+        forged_jwt = ".".join(
+            part
+            for part in (
+                base64.urlsafe_b64encode(
+                    json.dumps({"alg": "none", "typ": "JWT"}).encode()
+                )
+                .rstrip(b"=")
+                .decode(),
+                base64.urlsafe_b64encode(
+                    json.dumps({"sub": "admin", "iat": int(time.time())}).encode()
+                )
+                .rstrip(b"=")
+                .decode(),
+                "",
+            )
+        )
+        credentials = AuthCredentials(
+            mode=AuthMode.JWT_TOKEN,
+            **{
+                "jwt_token": forged_jwt,
+            },
+        )
+
+        with patch.dict(
+            "os.environ",
+            {"ENVIRONMENT": "staging", "TRAIGENT_SKIP_DOTENV": "1"},
+            clear=True,
+        ):
+            result = await manager._authenticate_jwt(credentials)
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert result.error_message
+        assert (
+            "JWT validation" in result.error_message
+            or "Invalid JWT" in result.error_message
+        )
+
+    @pytest.mark.asyncio
+    async def test_authenticate_jwt_rejects_allowed_algorithm_signed_by_attacker_key(
+        self,
+    ):
+        """AuthManager must bind development JWTs to the configured public key."""
+        expected_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        attacker_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        expected_public_pem = expected_key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        attacker_private_pem = attacker_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        attacker_public_pem = attacker_key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        token = jwt.encode(
+            {
+                "sub": "attacker",
+                "iat": int(time.time()),
+                "exp": int(time.time()) + 60,
+            },
+            attacker_private_pem,
+            algorithm="RS256",
+        )
+
+        # Establish that this is a fresh, correctly signed RS256 token under
+        # the attacker's key; the old unbound development path would accept it.
+        assert jwt.decode(token, attacker_public_pem, algorithms=["RS256"])["sub"] == (
+            "attacker"
+        )
+
+        manager = AuthManager()
+        credentials = AuthCredentials(mode=AuthMode.JWT_TOKEN, jwt_token=token)
+        with patch.dict(
+            "os.environ",
+            {
+                "ENVIRONMENT": "development",
+                "TRAIGENT_DEV_JWT_PUBLIC_KEY": expected_public_pem.decode("ascii"),
+                "TRAIGENT_SKIP_DOTENV": "1",
+            },
+            clear=True,
+        ):
+            result = await manager._authenticate_jwt(credentials)
+
+        assert result.success is False
+        assert result.status == AuthStatus.INVALID
+        assert result.error_message == "JWT validation failed"
+        assert token[:16] not in result.error_message
 
     @pytest.mark.asyncio
     async def test_authenticate_jwt_missing_token(self):
@@ -1683,6 +1822,4 @@ class TestSDK937_NoFabricatedPermissionGrants:
         assert info is not None
         assert info["name"] == "environment"
         # The honest empty answer:
-        assert info["permissions"] == {}, (
-            f"env-keyed permissions must be {{}}, got {info['permissions']}"
-        )
+        assert info["permissions"] == {}

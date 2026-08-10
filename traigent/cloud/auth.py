@@ -1378,13 +1378,18 @@ class AuthManager:
                 ValidationMode,
                 get_secure_jwt_validator,
             )
-            from traigent.utils.env_config import treat_as_production_policy
-
-            validation_mode = (
-                ValidationMode.PRODUCTION
-                if treat_as_production_policy()
-                else ValidationMode.DEVELOPMENT
+            from traigent.utils.env_config import (
+                resolve_environment_name,
+                treat_as_production_policy,
             )
+
+            environment_name = resolve_environment_name(default=None)
+            if treat_as_production_policy():
+                validation_mode = ValidationMode.PRODUCTION
+            elif environment_name in {"stage", "staging"}:
+                validation_mode = ValidationMode.STAGING
+            else:
+                validation_mode = ValidationMode.DEVELOPMENT
 
             validator = get_secure_jwt_validator(validation_mode)
             result = validator.validate_token(credentials.jwt_token)
@@ -1398,7 +1403,9 @@ class AuthManager:
                 return AuthResult(
                     success=False,
                     status=AuthStatus.INVALID,
-                    error_message=f"JWT validation failed: {result.error}",
+                    # Do not surface parser details: they may contain a raw
+                    # JWT or attacker-controlled token prefix.
+                    error_message="JWT validation failed",
                 )
 
             # Update expiration time from validated token
@@ -1423,11 +1430,11 @@ class AuthManager:
                 expires_in=expires_in,
             )
 
-        except Exception as e:
+        except Exception:
             return AuthResult(
                 success=False,
                 status=AuthStatus.INVALID,
-                error_message=f"Invalid JWT token: {e}",
+                error_message="Invalid JWT token",
             )
 
     async def _authenticate_oauth2(self, credentials: AuthCredentials) -> AuthResult:

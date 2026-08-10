@@ -3,10 +3,13 @@
 import os
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import jwt
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from traigent.security.jwt_validator import (
     JWTSecurityError,
@@ -15,13 +18,23 @@ from traigent.security.jwt_validator import (
     get_secure_jwt_validator,
 )
 
+_TEST_PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+_TEST_PRIVATE_PEM = _TEST_PRIVATE_KEY.private_bytes(
+    serialization.Encoding.PEM,
+    serialization.PrivateFormat.PKCS8,
+    serialization.NoEncryption(),
+)
+_TEST_PUBLIC_PEM = _TEST_PRIVATE_KEY.public_key().public_bytes(
+    serialization.Encoding.PEM,
+    serialization.PublicFormat.SubjectPublicKeyInfo,
+)
+
 
 class TestSecureJWTValidator(unittest.TestCase):
     """Test secure JWT validator implementation."""
 
     def setUp(self):
         """Set up test fixtures."""
-        self.test_secret = "test_secret_key_for_testing_only"
         self.test_issuer = "test_issuer"
         self.test_audience = "test_audience"
 
@@ -36,12 +49,12 @@ class TestSecureJWTValidator(unittest.TestCase):
             "aud": self.test_audience,
         }
 
-    def create_test_token(self, payload=None, algorithm="HS256", secret=None):
+    def create_test_token(self, payload=None, algorithm="RS256", secret=None):
         """Helper to create test tokens."""
         if payload is None:
             payload = self.valid_payload.copy()
         if secret is None:
-            secret = self.test_secret
+            secret = _TEST_PRIVATE_PEM
         return jwt.encode(payload, secret, algorithm=algorithm)
 
     def test_production_mode_requires_configuration(self):
@@ -68,6 +81,59 @@ class TestSecureJWTValidator(unittest.TestCase):
             )
         self.assertIn("Audience required", str(context.exception))
 
+    def test_staging_mode_requires_production_configuration(self):
+        """Staging must have all production trust and claim settings."""
+        for kwargs, expected_error in (
+            ({}, "JWKS URL required"),
+            ({"jwks_url": "https://example.com/jwks"}, "Issuer required"),
+            (
+                {
+                    "jwks_url": "https://example.com/jwks",
+                    "issuer": self.test_issuer,
+                },
+                "Audience required",
+            ),
+        ):
+            with self.assertRaises(JWTSecurityError) as context:
+                SecureJWTValidator(validation_mode=ValidationMode.STAGING, **kwargs)
+            self.assertIn(expected_error, str(context.exception))
+
+    def test_staging_signed_token_missing_claim_rejected(self):
+        """Real signed staging tokens still require issuer and audience."""
+        for missing_claim in ("iss", "aud"):
+            payload = {
+                "sub": "staging-user",
+                "iat": int(time.time()),
+                "exp": int(time.time()) + 60,
+                "nbf": int(time.time()),
+                "jti": f"staging-missing-{missing_claim}",
+                "iss": self.test_issuer,
+                "aud": self.test_audience,
+            }
+            payload.pop(missing_claim)
+            token = self.create_test_token(payload)
+            validator = SecureJWTValidator(
+                jwks_url="https://example.com/jwks",
+                issuer=self.test_issuer,
+                audience=self.test_audience,
+                validation_mode=ValidationMode.STAGING,
+            )
+            signing_key = SimpleNamespace(
+                key=_TEST_PUBLIC_PEM,
+                algorithm_name="RS256",
+                key_id="test-staging-key",
+            )
+
+            with patch.object(validator, "_get_jwks_client") as get_jwks_client:
+                get_jwks_client.return_value.get_signing_key_from_jwt.return_value = (
+                    signing_key
+                )
+                result = validator.validate_token(token)
+
+            assert result.valid is False
+            assert result.error
+            assert missing_claim in result.error.lower()
+
     def test_bypass_environment_variable_blocked(self):
         """Test that bypass environment variables are blocked."""
         with patch.dict(os.environ, {"TRAIGENT_JWT_BYPASS": "true"}):
@@ -82,7 +148,10 @@ class TestSecureJWTValidator(unittest.TestCase):
 
     def test_development_mode_time_limit(self):
         """Test that development mode enforces time limits."""
-        validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
+        validator = SecureJWTValidator(
+            validation_mode=ValidationMode.DEVELOPMENT,
+            development_public_key=_TEST_PUBLIC_PEM,
+        )
 
         # Create token with old timestamp
         old_payload = self.valid_payload.copy()
@@ -104,7 +173,10 @@ class TestSecureJWTValidator(unittest.TestCase):
 
     def test_algorithm_none_blocked(self):
         """Test that 'none' algorithm is blocked even in development."""
-        validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
+        validator = SecureJWTValidator(
+            validation_mode=ValidationMode.DEVELOPMENT,
+            development_public_key=_TEST_PUBLIC_PEM,
+        )
 
         # Create token with 'none' algorithm
         header = {"alg": "none", "typ": "JWT"}
@@ -125,11 +197,13 @@ class TestSecureJWTValidator(unittest.TestCase):
 
         result = validator.validate_token(none_token)
         self.assertFalse(result.valid)
-        self.assertIn("none", result.error.lower())
 
     def test_token_size_limit(self):
         """Test that oversized tokens are rejected."""
-        validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
+        validator = SecureJWTValidator(
+            validation_mode=ValidationMode.DEVELOPMENT,
+            development_public_key=_TEST_PUBLIC_PEM,
+        )
 
         # Create oversized token
         oversized_payload = self.valid_payload.copy()
@@ -146,6 +220,7 @@ class TestSecureJWTValidator(unittest.TestCase):
         validator = SecureJWTValidator(
             validation_mode=ValidationMode.DEVELOPMENT,
             require_jti=True,
+            development_public_key=_TEST_PUBLIC_PEM,
         )
 
         # Create token with JTI
@@ -171,7 +246,10 @@ class TestSecureJWTValidator(unittest.TestCase):
 
     def test_constant_time_validation(self):
         """Test constant-time validation to prevent timing attacks."""
-        validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
+        validator = SecureJWTValidator(
+            validation_mode=ValidationMode.DEVELOPMENT,
+            development_public_key=_TEST_PUBLIC_PEM,
+        )
 
         valid_token = self.create_test_token()
         invalid_token = "invalid.token.here"
@@ -198,7 +276,10 @@ class TestSecureJWTValidator(unittest.TestCase):
 
     def test_validation_metrics(self):
         """Test validation metrics tracking."""
-        validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
+        validator = SecureJWTValidator(
+            validation_mode=ValidationMode.DEVELOPMENT,
+            development_public_key=_TEST_PUBLIC_PEM,
+        )
 
         # Initial metrics
         metrics = validator.get_validation_metrics()
@@ -219,7 +300,10 @@ class TestSecureJWTValidator(unittest.TestCase):
 
     def test_security_metadata_included(self):
         """Test that security metadata is included in results."""
-        validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
+        validator = SecureJWTValidator(
+            validation_mode=ValidationMode.DEVELOPMENT,
+            development_public_key=_TEST_PUBLIC_PEM,
+        )
 
         token = self.create_test_token()
         result = validator.validate_token(token)
@@ -231,7 +315,10 @@ class TestSecureJWTValidator(unittest.TestCase):
 
     def test_development_mode_marker(self):
         """Test that development tokens are marked."""
-        validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
+        validator = SecureJWTValidator(
+            validation_mode=ValidationMode.DEVELOPMENT,
+            development_public_key=_TEST_PUBLIC_PEM,
+        )
 
         token = self.create_test_token()
         result = validator.validate_token(token)
@@ -245,7 +332,10 @@ class TestSecureJWTValidator(unittest.TestCase):
 
     def test_suspicious_claims_detection(self):
         """Test detection of suspicious claims."""
-        validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
+        validator = SecureJWTValidator(
+            validation_mode=ValidationMode.DEVELOPMENT,
+            development_public_key=_TEST_PUBLIC_PEM,
+        )
 
         # Create token with suspicious claims
         suspicious_payload = self.valid_payload.copy()
@@ -317,6 +407,7 @@ class TestSecureJWTValidator(unittest.TestCase):
         validator = SecureJWTValidator(
             validation_mode=ValidationMode.DEVELOPMENT,
             require_jti=True,
+            development_public_key=_TEST_PUBLIC_PEM,
         )
 
         # Add some JTIs
@@ -333,6 +424,70 @@ class TestSecureJWTValidator(unittest.TestCase):
 class TestJWTValidationIntegration(unittest.TestCase):
     """Integration tests for JWT validation."""
 
+    def _development_validator(self, public_key: bytes = _TEST_PUBLIC_PEM):
+        return SecureJWTValidator(
+            validation_mode=ValidationMode.DEVELOPMENT,
+            development_public_key=public_key,
+        )
+
+    def test_development_wrong_signature_rejected(self):
+        """A token signed by another RSA key must fail in development."""
+        other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        other_private = other_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        signed_jwt = jwt.encode(
+            {"iat": int(time.time()), "exp": int(time.time()) + 60},
+            other_private,
+            algorithm="RS256",
+        )
+
+        result = self._development_validator().validate_token(signed_jwt)
+
+        self.assertFalse(result.valid)
+
+    def test_development_rsa_garbage_signature_rejected(self):
+        """A structurally valid RS256 token with garbage signature must fail."""
+        signed_jwt = jwt.encode(
+            {"iat": int(time.time()), "exp": int(time.time()) + 60},
+            _TEST_PRIVATE_PEM,
+            algorithm="RS256",
+        )
+        header, payload, _signature = signed_jwt.split(".")
+        garbage_jwt = f"{header}.{payload}.garbage"
+
+        result = self._development_validator().validate_token(garbage_jwt)
+
+        self.assertFalse(result.valid)
+
+    def test_development_no_key_fails_closed_without_exception(self):
+        """Development validation without a configured key must fail closed."""
+        signed_jwt = jwt.encode(
+            {"iat": int(time.time()), "exp": int(time.time()) + 60},
+            _TEST_PRIVATE_PEM,
+            algorithm="RS256",
+        )
+        validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
+
+        result = validator.validate_token(signed_jwt)
+
+        self.assertFalse(result.valid)
+        self.assertIn("verification key", result.error)
+
+    def test_development_rsa_hs_algorithm_confusion_rejected(self):
+        """An HS256 token cannot be verified with an RSA public key."""
+        signed_jwt = jwt.encode(
+            {"iat": int(time.time()), "exp": int(time.time()) + 60},
+            "hmac-key-for-test",
+            algorithm="HS256",
+        )
+
+        result = self._development_validator().validate_token(signed_jwt)
+
+        self.assertFalse(result.valid)
+
     @pytest.mark.integration
     def test_end_to_end_validation_flow(self):
         """Test complete validation flow without a real JWKS endpoint.
@@ -346,7 +501,10 @@ class TestJWTValidationIntegration(unittest.TestCase):
         Previously this test unconditionally skipped, which silently masked
         regressions in any of the three paths.
         """
-        validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
+        validator = SecureJWTValidator(
+            validation_mode=ValidationMode.DEVELOPMENT,
+            development_public_key=_TEST_PUBLIC_PEM,
+        )
         now = int(time.time())
 
         # 1. Well-formed, fresh token must validate.
@@ -356,7 +514,11 @@ class TestJWTValidationIntegration(unittest.TestCase):
             "exp": now + 60,
             "jti": "e2e-jti-1",
         }
-        good_token = jwt.encode(good_payload, "any-dev-secret", algorithm="HS256")
+        good_token = jwt.encode(good_payload, _TEST_PRIVATE_PEM, algorithm="RS256")
+        validator = SecureJWTValidator(
+            validation_mode=ValidationMode.DEVELOPMENT,
+            development_public_key=_TEST_PUBLIC_PEM,
+        )
         good_result = validator.validate_token(good_token)
         self.assertTrue(
             good_result.valid,
@@ -381,7 +543,7 @@ class TestJWTValidationIntegration(unittest.TestCase):
             "exp": old_iat + validator.DEVELOPMENT_TOKEN_LIFETIME + 30,
             "jti": "e2e-jti-2",
         }
-        stale_token = jwt.encode(stale_payload, "any-dev-secret", algorithm="HS256")
+        stale_token = jwt.encode(stale_payload, _TEST_PRIVATE_PEM, algorithm="RS256")
         stale_result = validator.validate_token(stale_token)
         self.assertFalse(
             stale_result.valid,
@@ -391,7 +553,10 @@ class TestJWTValidationIntegration(unittest.TestCase):
     @pytest.mark.integration
     def test_performance_under_load(self):
         """Test validator performance under load."""
-        validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
+        validator = SecureJWTValidator(
+            validation_mode=ValidationMode.DEVELOPMENT,
+            development_public_key=_TEST_PUBLIC_PEM,
+        )
 
         # Create test token
         token = jwt.encode(
@@ -400,8 +565,8 @@ class TestJWTValidationIntegration(unittest.TestCase):
                 "iat": int(time.time()),
                 "exp": int(time.time()) + 3600,
             },
-            "secret",
-            algorithm="HS256",
+            _TEST_PRIVATE_PEM,
+            algorithm="RS256",
         )
 
         # Validate many tokens
