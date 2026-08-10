@@ -54,6 +54,10 @@ _TEXTUAL_KIND_HINTS: tuple[tuple[str, str], ...] = (
 
 _UNION_ORIGINS = (typing.Union, types.UnionType)
 
+# Decorator stacks are shallow in practice; this only exists so a pathological
+# or self-referential wrapper chain cannot spin here.
+_MAX_UNWRAP_DEPTH = 8
+
 
 def build_descriptor(
     func: Callable[..., Any],
@@ -66,7 +70,13 @@ def build_descriptor(
     Never inspects/serializes parameter names, docstrings, module paths, or
     default values -- only the callable's coarse arity and per-parameter /
     return coarse type classes.
+
+    The callable is unwrapped first (see ``_unwrap_target``) because the
+    documented entry point is "pass your decorated function", and inspecting
+    the wrapper instead of the wrapped function silently produces a WRONG but
+    well-formed descriptor rather than an error.
     """
+    func = _unwrap_target(func)
     signature = inspect.signature(func)
     resolved = _resolve_annotations(func)
 
@@ -92,6 +102,41 @@ def build_descriptor(
         "verifier_kinds": list(verifier_kinds),
         "generation_capabilities": list(generation_capabilities),
     }
+
+
+def _unwrap_target(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Find the real function behind a decorator wrapper.
+
+    ``@traigent.optimize`` returns an ``OptimizedFunction`` whose ``__call__``
+    is declared ``(*args, **kwargs)`` and which sets no ``__wrapped__``. Passing
+    the decorated function -- the documented entry point for this whole feature
+    -- therefore yields ``input_arity: 0, input_kinds: [], output_kind:
+    "unknown"``.
+
+    That is the worst possible failure mode: it is WELL-FORMED. The backend
+    validates it, issues a plan for a zero-argument target, and candidates get
+    generated against a shape the real function does not have. Nothing errors;
+    the result is just wrong. Requiring callers to remember ``.func`` would
+    push a silent-corruption trap onto every user of the feature.
+
+    Unwrapping is bounded and conservative: follow ``__wrapped__`` (the stdlib
+    convention ``functools.wraps`` sets) or Traigent's ``.func``, at most a few
+    levels, and only ever to another callable. If nothing unwraps, the original
+    is returned unchanged.
+    """
+    seen: set[int] = set()
+    current = func
+    for _ in range(_MAX_UNWRAP_DEPTH):
+        if id(current) in seen:
+            break
+        seen.add(id(current))
+        nxt = getattr(current, "__wrapped__", None)
+        if nxt is None:
+            nxt = getattr(current, "func", None)
+        if nxt is None or not callable(nxt) or nxt is current:
+            break
+        current = nxt
+    return current
 
 
 def _resolve_annotations(func: Callable[..., Any]) -> dict[str, Any]:
