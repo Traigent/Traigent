@@ -52,9 +52,13 @@ UNCONDITIONAL_SKIP_OK (below) is unchanged from the first pass: `changes`/
 and `preflight` because their skip conditions depend solely on unforgeable
 GitHub event facts (draft-PR status), never on classifier output.
 `schema-types` because it carries NO `needs:` on `changes` at all -- its only
-skip vector is a fork PR (no `SCHEMA_TOKEN` secret access), an unforgeable
-event fact structurally immune to a classifier bug, unlike `unit`/
-`collection`/`mcp-contract` which are also gated on `code_changed`.
+skip vector is a fork PR, an unforgeable event fact structurally immune to a
+classifier bug, unlike `unit`/`collection`/`mcp-contract` which are also gated
+on `code_changed`. (That skip used to be justified by fork PRs lacking secret
+access. It no longer is: TraigentSchema is PUBLIC and the job's checkout is
+credential-free. The fork condition stays because running this job on fork PRs
+is a separate fork-CI decision -- but the reason is now policy, not a missing
+token.)
 
 Extracted out of the workflow YAML (instead of an inline heredoc) specifically
 so it has unit tests -- see tests/ci/test_check_required_gate.py.
@@ -92,10 +96,12 @@ UNCONDITIONAL_SKIP_OK: dict[str, str] = {
         "== github.repository` -- it has NO `needs:` on `changes` at all "
         "(see its own workflow comment: 'deliberately not gated on changes "
         "output'), so it cannot skip because the content classifier "
-        "under-reported anything. Its ONLY skip vector is a fork PR (no "
-        "access to the SCHEMA_TOKEN secret), an unforgeable GitHub event "
-        "fact, structurally immune to a classifier bug -- unlike `unit`/"
-        "`collection`/`mcp-contract`, which are ALSO gated on `code_changed`."
+        "under-reported anything. Its ONLY skip vector is a fork PR -- an "
+        "unforgeable GitHub event fact, structurally immune to a classifier "
+        "bug -- unlike `unit`/`collection`/`mcp-contract`, which are ALSO "
+        "gated on `code_changed`. (Forks are excluded by fork-CI policy, not "
+        "by a missing secret: TraigentSchema is public and that job's "
+        "checkout is credential-free.)"
     ),
 }
 

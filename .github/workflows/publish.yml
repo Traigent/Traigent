@@ -111,49 +111,27 @@ jobs:
       # tests/unit/economics hard-requires the exact traigent-schema economics
       # contract (traigent/economics/schema.py fingerprints it and fails closed
       # with EconomicsSchemaUnavailable when it is absent). traigent-schema
-      # 5.0.0 is not on PyPI — the newest published there is 4.8.0 — and the
-      # `internal_schema` extra is NOT part of `all`, so the install above
-      # leaves it out and every economics test fails. pr-gate.yml installs it
-      # explicitly for exactly this reason; the publish lane must match, or
-      # main stays green on PRs and red here. That gap is what blocked v0.26.0,
-      # the first release to ship traigent/economics/.
+      # 5.0.0 is not on PyPI — the newest published there is 4.8.0 — so it must
+      # come from the pinned commit, and `pip install -e ".[dev,all]"` above does
+      # not bring it in. pr-gate.yml installs it explicitly for the same reason;
+      # the publish lane must match, or main stays green on PRs and red here.
+      # That gap is what blocked v0.26.0, the first release to ship
+      # traigent/economics/.
       #
-      # The requirement is read out of pyproject.toml rather than hardcoded, so
-      # the pin can never drift from what the package itself declares.
-      env:
-        SCHEMA_TOKEN: ${{ secrets.TRAIGENT_JS_SDK_TOKEN || secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
+      # The pin lives in scripts/ci/schema-pin.txt rather than pyproject.toml,
+      # because PyPI rejects direct URL references in package metadata even
+      # inside an optional extra — see that file's header for the full history.
+      #
+      # Credential-free: TraigentSchema is a PUBLIC repository, so this pin needs
+      # no token. The previous version required one and hard-failed the release
+      # without it ("TraigentSchema is private..."), which was false — and a
+      # release lane that refuses to run on a missing secret it does not actually
+      # need is an outage waiting for the day that secret expires. Injecting a
+      # token into the pip URL was also a small leak risk: pip echoes the
+      # requirement string on failure and caches it. pr-gate.yml made the same
+      # change and its `unit` job passes against this exact pin.
       run: |
-        if [ -z "${SCHEMA_TOKEN:-}" ]; then
-          echo "::error::No schema token available (TRAIGENT_JS_SDK_TOKEN / TRAIGENT_PRIVATE_DEPS_TOKEN)."
-          echo "::error::TraigentSchema is private and traigent-schema 5.0.0 is not on PyPI, so the"
-          echo "::error::economics contract tests cannot run. Refusing to publish on a partial test gate."
-          exit 1
-        fi
-        # The requirements file carries the token in its VCS URL, so it is
-        # created via mktemp and removed by a trap — `pip install` failing must
-        # not leave a token-bearing file behind for the rest of the job.
-        req_file="$(mktemp)"
-        trap 'rm -f "$req_file"' EXIT
-        python - <<'PY' > "$req_file"
-        import os
-        import tomllib
-
-        token = os.environ["SCHEMA_TOKEN"]
-        with open("pyproject.toml", "rb") as handle:
-            extras = tomllib.load(handle)["project"]["optional-dependencies"]
-
-        for spec in extras.get("internal_schema", []):
-            if spec.startswith("traigent-schema @"):
-                # The token is injected here and never echoed to the log.
-                print(spec.replace(
-                    "https://github.com/",
-                    f"https://x-access-token:{token}@github.com/",
-                ))
-                break
-        else:
-            raise SystemExit("no traigent-schema requirement in [internal_schema]")
-        PY
-        pip install -r "$req_file"
+        pip install -r scripts/ci/schema-pin.txt
         # Fail here with one clear message rather than as ~80 opaque test errors.
         python -c "import traigent_schema; print('traigent_schema is importable')"
 

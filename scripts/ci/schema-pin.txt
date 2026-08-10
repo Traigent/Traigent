@@ -1,0 +1,40 @@
+# Pinned TraigentSchema build for internal lanes (CI + internal development).
+#
+# WHY THIS IS NOT IN pyproject.toml
+# ---------------------------------
+# PyPI rejects any distribution whose core metadata contains a direct URL
+# reference (PEP 508 `name @ url`), and it rejects it even when the reference
+# sits inside an optional extra. Uploading traigent 0.26.0 with this pin in an
+# `internal_schema` extra failed with:
+#
+#     400 Can't have direct dependency: traigent-schema @
+#     git+https://github.com/Traigent/TraigentSchema.git@01f3e2a2...
+#     ; extra == "internal-schema"
+#
+# This is the second time that rule has bitten the SDK: #1152 (9010ad36,
+# 2026-06-06) replaced an identical git pin with `traigent-schema==4.7.1`, and
+# the economics telemetry work (23e171a3, 2026-07-18) reintroduced it.
+# Keeping the pin in a requirements file that is NOT shipped in the sdist
+# (scripts/ is absent from MANIFEST.in) makes the regression structurally hard
+# to repeat: pyproject.toml carries no direct reference to reintroduce.
+#
+# WHY A COMMIT PIN AND NOT A VERSION
+# ----------------------------------
+# traigent/economics/schema.py fingerprints the exact economics contract, so the
+# SDK needs one specific TraigentSchema build. 5.0.0 is not on PyPI (the newest
+# published traigent-schema is 4.8.0), and the newer 5.4.0 on TraigentSchema
+# main is NOT interchangeable — the SDK's economics suite fails 73 tests against
+# it. Until 5.0.0 (or a reconciled newer contract) is published to PyPI, the
+# exact commit is the only correct source.
+#
+# HOW IT IS CONSUMED
+# ------------------
+#   pip install -r scripts/ci/schema-pin.txt
+#
+# No credentials are needed: TraigentSchema is a PUBLIC repository, so both
+# .github/workflows/pr-gate.yml and .github/workflows/publish.yml install this
+# file directly. Do not reintroduce a token in the URL — pip echoes the
+# requirement string on failure and caches it, and Dependabot PRs never receive
+# org secrets, so a token here breaks them. This file is the single source of
+# truth for the pin — update it here only, and keep uv.lock in step.
+traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@01f3e2a2bbc1ca7d1b1cc8dde94f82d73dbe822a

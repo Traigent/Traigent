@@ -1,18 +1,26 @@
 name: Skill Contract
 
-# Advisory upstream gate: when a PR changes the SDK's public surface, validate the
-# traigent-skills contract against THIS PR's build, so SDK changes that would break a
-# published skill surface in-PR (instead of being caught nightly in the skills repo).
-# Self-contained + secret-gated: skips cleanly (green no-op) until SKILLS_REPO_TOKEN
-# (read-only access to Traigent/traigent-skills) is provisioned. Keep advisory (not a
-# required check) until it has been green across a few PRs.
-
-# Moved off `pull_request` to a nightly schedule (CI-rationalization plan):
-# this gate is advisory (not a required check) and secret-gated on
-# SKILLS_REPO_TOKEN — it skips cleanly (green no-op) until the token is
-# provisioned, so it produces no real PR verdict. It now runs nightly + on
-# demand; promote back to PR-time once it has been green and armed across a
-# few PRs.
+# Advisory upstream gate: validates the traigent-skills contract against this SDK
+# build, so SDK changes that would break a published skill surface are caught here
+# rather than downstream in the skills repo. Runs nightly + on demand (it was moved
+# off `pull_request` by the CI-rationalization plan); promote back to PR-time once
+# it has been green across a few runs.
+#
+# 2026-08-02 — CREDENTIAL AND FAILURE MODE BOTH CHANGED.
+#
+# Was: gated on the SKILLS_REPO_TOKEN PAT, and "skips cleanly (green no-op)" when
+# the token was absent. Two problems, one of which hid the other:
+#   * the PAT died ~2026-07-15 ("Bad credentials"), and the org's 2026-07-24 SAML
+#     enforcement revokes PAT SSO authorization, so replacing it in kind would
+#     just fail again at the next SSO change;
+#   * the skip-to-green behaviour meant a dead credential could not be
+#     distinguished from a passing contract.
+#
+# Now: mints a short-lived installation token from the `traigent-ci-read` GitHub
+# App (belongs to no person, not subject to per-user SAML authorization), and
+# FAILS LOUDLY when that App is not configured. This lane is schedule- and
+# dispatch-only, so it always runs where secrets exist — a missing credential is a
+# misconfiguration, never an expected state. See tools/secret-ops/README-ci-github-app.md.
 on:
   schedule:
     - cron: "40 6 * * *"
@@ -31,44 +39,52 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Guard - require skills token
-        id: guard
+      # Fail, do not skip. This lane is scheduled + workflow_dispatch only, so it
+      # always runs in a context that HAS secrets: a missing credential is a
+      # misconfiguration. The previous "armed=false" path turned that into a
+      # green no-op, which is how a dead credential stayed invisible.
+      - name: Require the CI read App to be configured
         env:
-          SKILLS_TOKEN: ${{ secrets.SKILLS_REPO_TOKEN }}
+          CI_READ_APP_ID: ${{ secrets.CI_READ_APP_ID }}
         run: |
-          if [ -z "${SKILLS_TOKEN:-}" ]; then
-            echo "SKILLS_REPO_TOKEN not set - skipping skill contract (gate not yet armed)."
-            echo "armed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "armed=true" >> "$GITHUB_OUTPUT"
+          if [ -z "${CI_READ_APP_ID:-}" ]; then
+            echo "::error::CI_READ_APP_ID / CI_READ_APP_PRIVATE_KEY are not configured on this repo."
+            echo "::error::Set them with tools/secret-ops/setup-ci-read-app.sh (see BROWSER-AGENT-ci-read-app.md)."
+            echo "::error::Refusing to report success for a contract that was never executed."
+            exit 1
           fi
 
+      - name: Mint CI read token
+        id: ci-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.CI_READ_APP_ID }}
+          private-key: ${{ secrets.CI_READ_APP_PRIVATE_KEY }}
+          owner: Traigent
+          # Least privilege per workflow: only the repo this lane checks out.
+          repositories: traigent-skills
+
       - name: Checkout SDK PR
-        if: steps.guard.outputs.armed == 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
 
       - name: Checkout skills contract harness
-        if: steps.guard.outputs.armed == 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
         with:
           repository: Traigent/traigent-skills
-          token: ${{ secrets.SKILLS_REPO_TOKEN }}
+          token: ${{ steps.ci-token.outputs.token }}
           path: _skills
 
       - name: Set up Python
-        if: steps.guard.outputs.armed == 'true'
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
       - name: Install the PR SDK + harness deps
-        if: steps.guard.outputs.armed == 'true'
         run: |
           python -m pip install pytest pyyaml packaging
           python -m pip install .
 
       - name: Run the skill contract against this PR's SDK
-        if: steps.guard.outputs.armed == 'true'
         run: |
           # Run from the SDK repo root so pytest resolves the SDK's pyproject as
           # rootdir, but override addopts to empty: the repo's test addopts pin

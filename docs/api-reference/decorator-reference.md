@@ -69,6 +69,10 @@ def optimize(
     best_config_stale_ok_ttl_seconds: int | None = None,
     enable_auto_load_dev_logs: bool | None = None,
 
+    # Guided generation
+    prompt_rewrite: dict[str, Any] | None = None,
+    grow_dataset: dict[str, Any] | None = None,
+
     # Legacy compatibility
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
 

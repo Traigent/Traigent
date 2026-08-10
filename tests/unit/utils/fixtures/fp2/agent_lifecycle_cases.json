@@ -1,0 +1,331 @@
+{
+  "spec": "fp2-agent-lifecycle-parity",
+  "story": "ALR-1103",
+  "note": "Extends the pinned tests/data/fp2_conformance.json corpus with full manifest-shaped afp2/dfp2o/efp2/cfp2 cases scoped to fp2's cross-runtime parity contract (docs/fingerprints/fp2.md: 'Comparability scope'). dfp2o/cfp2 carry no runtime field and MUST canonicalize identically regardless of input construction order (scope=cross_runtime). afp2/efp2 carry a mandatory runtime discriminator and are deterministic only WITHIN one runtime (scope=within_runtime_only): same-family cases with different 'runtime' values share source/bound content but MUST NOT digest equal -- asserting otherwise is this story's named failure mutation (PART1_CONTRACT_FREEZE_DRAFT.md:1148, mutation row 10). scope=preserve_unknown demonstrates the canonicalizer keeps a field none of the four fp2 algorithms name, rather than silently dropping it. scope=fail_closed demonstrates the opposite half: a value fp2 cannot represent fails the whole manifest closed. Markers @@NAN@@/@@LONE_SURROGATE@@ are substituted with the language's native unsupported value by each harness, matching tests/data/fp2_conformance.json. The top-level 'shared' section below names two kinds of content that is byte-identical across two or more cases purely incidentally to what each case tests -- never the part a case's name says it varies. A case references a shared fragment two ways, both resolved by the test loader (tests/test_fp2_agent_lifecycle_parity.py:_cases()) before anything touches the corpus: (1) inside 'value', a nested object of exactly {\"$shared\": \"<name>\"} is replaced with a deep copy of shared['<name>']; (2) at the case level, 'expected_ref': '<name>' replaces literal 'canonical'/'digest' fields with shared['<name>'].canonical / .digest. Every case that still carries 'value'/'canonical'/'digest' inline does so because that content is the actual point of the case, not boilerplate.",
+  "shared": {
+    "bound_state_basic": {
+      "partial_args": [
+        "gpt-4o-mini"
+      ],
+      "partial_kwargs": {
+        "temperature": 0.2
+      },
+      "closure": {
+        "threshold": 0.5
+      }
+    },
+    "dataset_convergence_expected": {
+      "canonical": "{\"kind\":\"dfp2o\",\"rows\":[{\"expected\":\"4\",\"input\":\"what is 2+2\"},{\"expected\":\"paris\",\"input\":\"capital of france\"}]}",
+      "digest": "sha256:37c14267b3eb3603a7c7ce2b6ad06005dda25ca89e5e5a23dc02eb9bf6435c30"
+    },
+    "evaluator_external_basic": {
+      "kind": "http_judge",
+      "revision": "rev-2026-08-01"
+    },
+    "config_convergence_expected": {
+      "canonical": "{\"kind\":\"cfp2\",\"space\":{\"model\":[\"gpt-4o-mini\",\"gpt-4o\"],\"temperature\":[0.1,0.9]}}",
+      "digest": "sha256:91f8e528cc0784a438d8fe98004b522889d3653becb9bdfbecb42011901f70c7"
+    }
+  },
+  "cases": [
+    {
+      "name": "afp2_agent_basic_python",
+      "kind": "afp2",
+      "scope": "within_runtime_only",
+      "family": "agent_basic",
+      "runtime": "python",
+      "value": {
+        "kind": "afp2",
+        "runtime": "python",
+        "source": "def score(example):\n    return 1.0"
+      },
+      "expect": "ok",
+      "canonical": "{\"kind\":\"afp2\",\"runtime\":\"python\",\"source\":\"def score(example):\\n    return 1.0\"}",
+      "digest": "sha256:9654c465e8ec06bfa7d0c27d7ed47500275ef52f50769cbb728e842077b30157"
+    },
+    {
+      "name": "afp2_agent_basic_javascript",
+      "kind": "afp2",
+      "scope": "within_runtime_only",
+      "family": "agent_basic",
+      "runtime": "javascript",
+      "value": {
+        "kind": "afp2",
+        "runtime": "javascript",
+        "source": "def score(example):\n    return 1.0"
+      },
+      "expect": "ok",
+      "canonical": "{\"kind\":\"afp2\",\"runtime\":\"javascript\",\"source\":\"def score(example):\\n    return 1.0\"}",
+      "digest": "sha256:687e49cbc28d3898a369e982ae5afb53bf249cae13ed708a26fd415570b8bc57"
+    },
+    {
+      "name": "afp2_agent_bound_state_python",
+      "kind": "afp2",
+      "scope": "within_runtime_only",
+      "family": "agent_bound_state",
+      "runtime": "python",
+      "value": {
+        "kind": "afp2",
+        "runtime": "python",
+        "source": "def score(example, threshold):\n    return example >= threshold",
+        "bound": {"$shared": "bound_state_basic"}
+      },
+      "expect": "ok",
+      "canonical": "{\"bound\":{\"closure\":{\"threshold\":0.5},\"partial_args\":[\"gpt-4o-mini\"],\"partial_kwargs\":{\"temperature\":0.2}},\"kind\":\"afp2\",\"runtime\":\"python\",\"source\":\"def score(example, threshold):\\n    return example >= threshold\"}",
+      "digest": "sha256:7badfed389192fe200c4c4e8b030485724fc639bc0fdd3b93f5e4d68d5c341eb"
+    },
+    {
+      "name": "afp2_agent_bound_state_javascript",
+      "kind": "afp2",
+      "scope": "within_runtime_only",
+      "family": "agent_bound_state",
+      "runtime": "javascript",
+      "value": {
+        "kind": "afp2",
+        "runtime": "javascript",
+        "source": "def score(example, threshold):\n    return example >= threshold",
+        "bound": {"$shared": "bound_state_basic"}
+      },
+      "expect": "ok",
+      "canonical": "{\"bound\":{\"closure\":{\"threshold\":0.5},\"partial_args\":[\"gpt-4o-mini\"],\"partial_kwargs\":{\"temperature\":0.2}},\"kind\":\"afp2\",\"runtime\":\"javascript\",\"source\":\"def score(example, threshold):\\n    return example >= threshold\"}",
+      "digest": "sha256:3f92ee7cc1ac7bce85a29905d0c0b2289cf216c4049016c695c1fe7fc071d2e0"
+    },
+    {
+      "name": "efp2_evaluator_source_python",
+      "kind": "efp2",
+      "scope": "within_runtime_only",
+      "family": "evaluator_source",
+      "runtime": "python",
+      "value": {
+        "kind": "efp2",
+        "runtime": "python",
+        "source": "def evaluate(prediction, expected):\n    return prediction == expected"
+      },
+      "expect": "ok",
+      "canonical": "{\"kind\":\"efp2\",\"runtime\":\"python\",\"source\":\"def evaluate(prediction, expected):\\n    return prediction == expected\"}",
+      "digest": "sha256:bed72b63345b3e36a63b8189a1ad643bb44a8dbce111e40e71c1fddaf079a83a"
+    },
+    {
+      "name": "efp2_evaluator_source_javascript",
+      "kind": "efp2",
+      "scope": "within_runtime_only",
+      "family": "evaluator_source",
+      "runtime": "javascript",
+      "value": {
+        "kind": "efp2",
+        "runtime": "javascript",
+        "source": "def evaluate(prediction, expected):\n    return prediction == expected"
+      },
+      "expect": "ok",
+      "canonical": "{\"kind\":\"efp2\",\"runtime\":\"javascript\",\"source\":\"def evaluate(prediction, expected):\\n    return prediction == expected\"}",
+      "digest": "sha256:c8e19ddca4d0de06f6cca37fe3f9b8fac32065eb20945c8c395d92e49075d7c9"
+    },
+    {
+      "name": "efp2_evaluator_external_python",
+      "kind": "efp2",
+      "scope": "within_runtime_only",
+      "family": "evaluator_external",
+      "runtime": "python",
+      "value": {
+        "kind": "efp2",
+        "runtime": "python",
+        "external": {"$shared": "evaluator_external_basic"}
+      },
+      "expect": "ok",
+      "canonical": "{\"external\":{\"kind\":\"http_judge\",\"revision\":\"rev-2026-08-01\"},\"kind\":\"efp2\",\"runtime\":\"python\"}",
+      "digest": "sha256:30450b57ed7897c2748a91379e5e968c23351701e5b88481d2f8b27e0b7c2bf0"
+    },
+    {
+      "name": "efp2_evaluator_external_javascript",
+      "kind": "efp2",
+      "scope": "within_runtime_only",
+      "family": "evaluator_external",
+      "runtime": "javascript",
+      "value": {
+        "kind": "efp2",
+        "runtime": "javascript",
+        "external": {"$shared": "evaluator_external_basic"}
+      },
+      "expect": "ok",
+      "canonical": "{\"external\":{\"kind\":\"http_judge\",\"revision\":\"rev-2026-08-01\"},\"kind\":\"efp2\",\"runtime\":\"javascript\"}",
+      "digest": "sha256:613ca29444b81fc9b8c84eb114323a5a81ca437d11c426a5c32cea0c4e568de0"
+    },
+    {
+      "name": "dfp2o_dataset_convergence_input_first",
+      "kind": "dfp2o",
+      "scope": "cross_runtime",
+      "family": "dataset_convergence",
+      "value": {
+        "kind": "dfp2o",
+        "rows": [
+          {
+            "input": "what is 2+2",
+            "expected": "4"
+          },
+          {
+            "input": "capital of france",
+            "expected": "paris"
+          }
+        ]
+      },
+      "expect": "ok",
+      "expected_ref": "dataset_convergence_expected"
+    },
+    {
+      "name": "dfp2o_dataset_convergence_expected_first",
+      "kind": "dfp2o",
+      "scope": "cross_runtime",
+      "family": "dataset_convergence",
+      "value": {
+        "kind": "dfp2o",
+        "rows": [
+          {
+            "expected": "4",
+            "input": "what is 2+2"
+          },
+          {
+            "expected": "paris",
+            "input": "capital of france"
+          }
+        ]
+      },
+      "expect": "ok",
+      "expected_ref": "dataset_convergence_expected"
+    },
+    {
+      "name": "dfp2o_dataset_row_order_reversed_differs",
+      "kind": "dfp2o",
+      "scope": "cross_runtime",
+      "value": {
+        "kind": "dfp2o",
+        "rows": [
+          {
+            "input": "capital of france",
+            "expected": "paris"
+          },
+          {
+            "input": "what is 2+2",
+            "expected": "4"
+          }
+        ]
+      },
+      "expect": "ok",
+      "canonical": "{\"kind\":\"dfp2o\",\"rows\":[{\"expected\":\"paris\",\"input\":\"capital of france\"},{\"expected\":\"4\",\"input\":\"what is 2+2\"}]}",
+      "digest": "sha256:0710194fc1abe0b249c662aa296d364ca3e400c4bfa062a10a37e7e7dbdcf0e2"
+    },
+    {
+      "name": "cfp2_config_convergence_model_first",
+      "kind": "cfp2",
+      "scope": "cross_runtime",
+      "family": "config_convergence",
+      "value": {
+        "kind": "cfp2",
+        "space": {
+          "model": [
+            "gpt-4o-mini",
+            "gpt-4o"
+          ],
+          "temperature": [
+            0.1,
+            0.9
+          ]
+        }
+      },
+      "expect": "ok",
+      "expected_ref": "config_convergence_expected"
+    },
+    {
+      "name": "cfp2_config_convergence_temperature_first",
+      "kind": "cfp2",
+      "scope": "cross_runtime",
+      "family": "config_convergence",
+      "value": {
+        "kind": "cfp2",
+        "space": {
+          "temperature": [
+            0.1,
+            0.9
+          ],
+          "model": [
+            "gpt-4o-mini",
+            "gpt-4o"
+          ]
+        }
+      },
+      "expect": "ok",
+      "expected_ref": "config_convergence_expected"
+    },
+    {
+      "name": "afp2_unknown_field_is_preserved",
+      "kind": "afp2",
+      "scope": "preserve_unknown",
+      "runtime": "python",
+      "value": {
+        "kind": "afp2",
+        "runtime": "python",
+        "source": "def score(x):\n    return x",
+        "manifest_note": "future-metadata-not-yet-specified"
+      },
+      "expect": "ok",
+      "canonical": "{\"kind\":\"afp2\",\"manifest_note\":\"future-metadata-not-yet-specified\",\"runtime\":\"python\",\"source\":\"def score(x):\\n    return x\"}",
+      "digest": "sha256:84bf10d1fc512ebf70f41d0b0061a65dd9653a93b409cc3795c93323f4712dd9"
+    },
+    {
+      "name": "afp2_bound_state_with_nan_fails_closed",
+      "kind": "afp2",
+      "scope": "fail_closed",
+      "value": {
+        "kind": "afp2",
+        "runtime": "python",
+        "source": "def f(x):\n    return x",
+        "bound": {
+          "closure": {
+            "threshold": "@@NAN@@"
+          }
+        }
+      },
+      "expect": "unsupported"
+    },
+    {
+      "name": "efp2_external_revision_with_lone_surrogate_fails_closed",
+      "kind": "efp2",
+      "scope": "fail_closed",
+      "value": {
+        "kind": "efp2",
+        "runtime": "python",
+        "external": {
+          "kind": "http_judge",
+          "revision": "@@LONE_SURROGATE@@"
+        }
+      },
+      "expect": "unsupported"
+    },
+    {
+      "name": "dfp2o_row_with_nan_expected_fails_closed",
+      "kind": "dfp2o",
+      "scope": "fail_closed",
+      "value": {
+        "kind": "dfp2o",
+        "rows": [
+          {
+            "input": "a",
+            "expected": "@@NAN@@"
+          }
+        ]
+      },
+      "expect": "unsupported"
+    },
+    {
+      "name": "cfp2_space_with_lone_surrogate_fails_closed",
+      "kind": "cfp2",
+      "scope": "fail_closed",
+      "value": {
+        "kind": "cfp2",
+        "space": {
+          "label": "@@LONE_SURROGATE@@"
+        }
+      },
+      "expect": "unsupported"
+    }
+  ]
+}

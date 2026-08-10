@@ -62,15 +62,17 @@ if tsv is None and os.getenv(REQUIRE_SCHEMA_ENV):  # pragma: no cover - CI-only
     )
 
 # Visible test-level skip (names the cause and the remedy) for the normal local
-# state: no token, so no private git pin.
+# state: the pinned build simply is not installed.
 pytestmark = pytest.mark.skipif(
     tsv is None,
     reason=(
         "traigent_schema is not installed, so the economics contract cannot be "
-        "validated. It is pinned to a private TraigentSchema git commit (see "
-        "pyproject.toml) and is not on PyPI, so it is not part of the 'dev' "
-        "extra and needs a token to install. CI installs it in the 'unit' job "
-        f"and sets {REQUIRE_SCHEMA_ENV}=1, which turns this skip into a hard "
+        "validated. It is pinned to a TraigentSchema git commit (see "
+        "scripts/ci/schema-pin.txt) and is not on PyPI, so it is not part of "
+        "the 'dev' extra. Install it with "
+        "`pip install -r scripts/ci/schema-pin.txt` — no token needed, the repo "
+        f"is public. CI installs it in the 'unit' job and sets {REQUIRE_SCHEMA_ENV}=1, "
+        "which turns this skip into a hard "
         "failure so a broken install step cannot pass silently."
     ),
 )
