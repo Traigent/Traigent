@@ -18,6 +18,7 @@ from unittest.mock import Mock, patch
 import pytest
 from click.testing import CliRunner
 
+from traigent.api.types import PresetSelection
 from traigent.cli.main import (
     _build_comparison_summary_table,
     _format_best_score,
@@ -209,6 +210,39 @@ class TestResultsShow:
 
             assert result.exit_code == 0
             assert "All Trials" in result.output
+
+    def test_results_show_displays_persisted_preset_selection(
+        self, runner, mock_result, plain
+    ):
+        """A ``preset_selection`` saved by an older SDK build still renders.
+
+        Nothing in this build can populate the field, so this is the only test
+        keeping the deliberately-retained read/display path honest.
+        """
+        mock_result.preset_selection = PresetSelection.from_dict(
+            {
+                "preset_name": "balanced",
+                "params": {"epsilon": 0.02},
+                "selection_grade": "advisory",
+                "selection_rationale": "cheapest within tolerance of the best",
+                "status": "selected",
+                "selected_config": {"model": "gpt-3.5"},
+                "selected_trial_indices": [1],
+            }
+        )
+
+        with patch("traigent.cli.main.PersistenceManager") as mock_persistence_class:
+            mock_persistence = Mock()
+            mock_persistence_class.return_value = mock_persistence
+            mock_persistence.load_result.return_value = mock_result
+
+            result = runner.invoke(cli, ["results", "show", "test_run"])
+
+        output = plain(result.output)
+        assert result.exit_code == 0
+        assert "Preset Selection" in output
+        assert "balanced" in output
+        assert "advisory selection" in output
 
     def test_results_show_not_found(self, runner):
         """Test showing non-existent result."""
