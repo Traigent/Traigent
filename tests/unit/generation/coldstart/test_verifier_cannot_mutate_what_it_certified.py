@@ -155,3 +155,59 @@ def test_the_verifier_still_sees_the_real_content() -> None:
 
     assert seen == [({"question": "2+2"}, {"answer": "4"})]
     assert (row["input"], row["output"]) == seen[0]
+
+
+class _AliasDict(dict):
+    """JSON-serializable, mutable, and ``deepcopy`` returns the SAME object.
+
+    This is why the write path freezes through JSON instead of copying.
+    ``copy.deepcopy`` honours ``__deepcopy__``, so a caller-supplied dict
+    subclass can legally hand back itself and defeat copy-based isolation
+    entirely. A deepcopy-based fix passed every plain-dict test and still
+    wrote mutated content for this type.
+    """
+
+    def __deepcopy__(self, memo: Any) -> _AliasDict:
+        return self
+
+    def __copy__(self) -> _AliasDict:
+        return self
+
+
+def _alias_generator(limit: int):
+    yield (_AliasDict(question="2+2"), _AliasDict(answer="4"))
+
+
+def test_a_deepcopy_defeating_subclass_still_cannot_change_the_written_row() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        result = build_cold_start_eval_set(
+            target,
+            generator=_alias_generator,
+            verifier=_MutatesOutputAfterChecking(),
+            transport=_transport,
+            output_dir=directory,
+            generation_capabilities=("deterministic_contract",),
+        )
+        assert result.outcome is ColdStartOutcome.EVAL_SET_BUILT
+        assert result.eval_set_path is not None
+        row = json.loads(
+            Path(result.eval_set_path).read_text(encoding="utf-8").splitlines()[0]
+        )
+
+    assert row["output"] == {"answer": "4"}
+
+
+def test_the_written_row_is_a_plain_json_container() -> None:
+    """Freezing must actually produce plain types, not the caller's subclass."""
+    with tempfile.TemporaryDirectory() as directory:
+        result = build_cold_start_eval_set(
+            target,
+            generator=_alias_generator,
+            verifier=_MutatesOutputAfterChecking(),
+            transport=_transport,
+            output_dir=directory,
+            generation_capabilities=("deterministic_contract",),
+        )
+        text = Path(result.eval_set_path).read_text(encoding="utf-8")
+
+    assert '"answer": "4"' in text

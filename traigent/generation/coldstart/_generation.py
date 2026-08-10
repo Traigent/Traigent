@@ -124,22 +124,43 @@ def generate_and_score(
         if dedup_key in seen:
             continue
 
-        # Hand the verifier its OWN copy and keep ours untouched. Snapshotting
-        # against the generator is not sufficient on its own: verify() receives
-        # live references, so a verifier that checks a value and THEN mutates it
-        # --
+        # FREEZE what will be written, through JSON, before the verifier ever
+        # sees the candidate.
+        #
+        # Copying is not enough here. A verifier that checks a value and then
+        # mutates it --
+        #
         #     assert output["answer"] == "4"
         #     output["answer"] = "5"
         #     return ScoreReceipt(passed=True, ...)
         #
-        # -- would otherwise have its mutation land on the very object we write,
-        # producing a row whose receipt was earned for different content. Whether
-        # that is malice or a verifier that normalises in place does not matter;
-        # the receipt must describe exactly what gets written.
-        verifier_inputs, ok = _safe_deepcopy(inputs_snapshot)
+        # -- lands its mutation on whatever object we later write, producing a
+        # row whose receipt was earned for different content. Handing it a
+        # deepcopy closes that for plain dicts and lists, but NOT in general:
+        # copy.deepcopy returns whatever __deepcopy__ says it should, so a
+        # JSON-serializable dict subclass whose __deepcopy__ returns self is
+        # handed the very object we are about to write, and the mismatch is
+        # back. Object identity is not something this executor can rely on when
+        # the object comes from the caller.
+        #
+        # A JSON round-trip does not have that weakness. json.loads always
+        # builds fresh plain containers, so the frozen pair is provably
+        # independent of anything the caller controls -- and it is exactly the
+        # bytes the artifact writer will serialize, so "what was verified" and
+        # "what was written" are the same value by construction rather than by
+        # a chain of copies each of which has to be trusted.
+        #
+        # Whether the mutation is malice or a verifier normalising in place
+        # (trimming whitespace, coercing a type) does not matter: the receipt
+        # must describe the row it is attached to.
+        frozen_inputs, frozen_output, ok = _freeze_through_json(
+            inputs_snapshot, output_snapshot
+        )
         if not ok:
             continue
-        verifier_output, ok = _safe_deepcopy(output_snapshot)
+        verifier_inputs, verifier_output, ok = _freeze_through_json(
+            inputs_snapshot, output_snapshot
+        )
         if not ok:
             continue
 
@@ -164,7 +185,7 @@ def generate_and_score(
             continue
 
         seen.add(dedup_key)
-        accepted.append((dict(inputs_snapshot), output_snapshot, receipt))
+        accepted.append((frozen_inputs, frozen_output, receipt))
     return accepted
 
 
@@ -234,6 +255,27 @@ def _json_serializable(value: Any) -> bool:
     except (TypeError, ValueError):
         return False
     return True
+
+
+def _freeze_through_json(inputs: Any, output: Any) -> tuple[dict[str, Any], Any, bool]:
+    """Rebuild both halves as fresh plain JSON containers.
+
+    Returns ``(inputs, output, ok)``; ``ok`` is False when either half cannot
+    survive the round-trip, in which case the row is dropped.
+
+    Why not ``copy.deepcopy``: deepcopy honours ``__deepcopy__``, so a
+    caller-supplied JSON-serializable ``dict`` subclass can legally return
+    itself and defeat the isolation entirely. ``json.loads`` cannot do that --
+    it only ever constructs new dicts, lists and scalars.
+    """
+    try:
+        return (
+            json.loads(json.dumps(inputs, sort_keys=True)),
+            json.loads(json.dumps(output, sort_keys=True)),
+            True,
+        )
+    except (TypeError, ValueError, RecursionError):
+        return {}, None, False
 
 
 def _safe_deepcopy(value: Any) -> tuple[Any, bool]:
