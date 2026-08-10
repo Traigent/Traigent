@@ -121,42 +121,17 @@ jobs:
       # The pin lives in scripts/ci/schema-pin.txt rather than pyproject.toml,
       # because PyPI rejects direct URL references in package metadata even
       # inside an optional extra — see that file's header for the full history.
-      env:
-        SCHEMA_TOKEN: ${{ secrets.TRAIGENT_JS_SDK_TOKEN || secrets.TRAIGENT_PRIVATE_DEPS_TOKEN }}
+      #
+      # Credential-free: TraigentSchema is a PUBLIC repository, so this pin needs
+      # no token. The previous version required one and hard-failed the release
+      # without it ("TraigentSchema is private..."), which was false — and a
+      # release lane that refuses to run on a missing secret it does not actually
+      # need is an outage waiting for the day that secret expires. Injecting a
+      # token into the pip URL was also a small leak risk: pip echoes the
+      # requirement string on failure and caches it. pr-gate.yml made the same
+      # change and its `unit` job passes against this exact pin.
       run: |
-        if [ -z "${SCHEMA_TOKEN:-}" ]; then
-          echo "::error::No schema token available (TRAIGENT_JS_SDK_TOKEN / TRAIGENT_PRIVATE_DEPS_TOKEN)."
-          echo "::error::TraigentSchema is private and traigent-schema 5.0.0 is not on PyPI, so the"
-          echo "::error::economics contract tests cannot run. Refusing to publish on a partial test gate."
-          exit 1
-        fi
-        # The rendered requirements file carries the token in its VCS URL, so it
-        # is created via mktemp and removed by a trap — `pip install` failing
-        # must not leave a token-bearing file behind for the rest of the job.
-        req_file="$(mktemp)"
-        trap 'rm -f "$req_file"' EXIT
-        python - <<'PY' > "$req_file"
-        import os
-
-        token = os.environ["SCHEMA_TOKEN"]
-        found = False
-
-        with open("scripts/ci/schema-pin.txt", encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                # The token is injected here and never echoed to the log.
-                print(line.replace(
-                    "https://github.com/",
-                    f"https://x-access-token:{token}@github.com/",
-                ))
-                found = True
-
-        if not found:
-            raise SystemExit("scripts/ci/schema-pin.txt has no requirement lines")
-        PY
-        pip install -r "$req_file"
+        pip install -r scripts/ci/schema-pin.txt
         # Fail here with one clear message rather than as ~80 opaque test errors.
         python -c "import traigent_schema; print('traigent_schema is importable')"
 

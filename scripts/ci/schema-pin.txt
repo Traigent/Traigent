@@ -31,8 +31,10 @@
 # ------------------
 #   pip install -r scripts/ci/schema-pin.txt
 #
-# CI injects a token into the URL host for the private repo; see
-# .github/workflows/publish.yml and .github/workflows/pr-gate.yml. This file is
-# the single source of truth for the pin — update it here only, and keep uv.lock
-# in step.
+# No credentials are needed: TraigentSchema is a PUBLIC repository, so both
+# .github/workflows/pr-gate.yml and .github/workflows/publish.yml install this
+# file directly. Do not reintroduce a token in the URL — pip echoes the
+# requirement string on failure and caches it, and Dependabot PRs never receive
+# org secrets, so a token here breaks them. This file is the single source of
+# truth for the pin — update it here only, and keep uv.lock in step.
 traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@01f3e2a2bbc1ca7d1b1cc8dde94f82d73dbe822a

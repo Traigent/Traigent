@@ -374,8 +374,10 @@ class TestCliEndToEnd:
 
     def test_schema_types_skipped_fork_pr_passes_unconditionally(self) -> None:
         # schema-types is the one job whose skip is allowlisted despite
-        # gating real behaviour, because its only skip vector (fork PR, no
-        # SCHEMA_TOKEN) can never be produced by a classifier bug.
+        # gating real behaviour, because its only skip vector (a fork PR) can
+        # never be produced by a classifier bug. Forks are excluded by fork-CI
+        # policy, not by a missing secret -- TraigentSchema is public and that
+        # job's checkout is credential-free.
         needs = self._full_needs(unit_result="success", schema_types_result="skipped")
         proc = _run_cli(needs)
         assert proc.returncode == 0, proc.stdout
