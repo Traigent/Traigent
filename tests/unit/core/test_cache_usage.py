@@ -69,12 +69,39 @@ def test_bedrock_converse_shape_is_the_probe_from_the_issue():
     assert usage.billable_input_tokens == 4615
 
 
-def test_gemini_shape():
-    usage = normalize_cache_usage({"input_tokens": 900, "cachedContentTokenCount": 300})
+def test_gemini_shape_is_the_real_usage_metadata_payload_from_the_issue():
+    """Traigent#2111: the old fixture here was INVENTED (Gemini never emits an
+    ``input_tokens`` key) and never asserted ``billable_input_tokens`` -- which is
+    exactly why the disjoint-vs-inclusive defect went undetected. This is Google's
+    own published example: prompt_token_count=696219, cached_content_token_count=
+    696190 (cached is a SUBSET of prompt, not disjoint from it).
+    """
+    usage = normalize_cache_usage(
+        {"promptTokenCount": 696219, "cachedContentTokenCount": 696190}
+    )
+
+    assert usage.provider_shape == "gemini"
+    assert usage.cache_read_tokens == 696190
+    assert usage.cache_creation_tokens is None
+    # cachedContentTokenCount is INCLUSIVE of promptTokenCount, so fresh input is
+    # the remainder -- 29, not 696219.
+    assert usage.input_tokens == 29
+    # The load-bearing assertion the old test omitted: get this wrong and billable
+    # input is 1,392,409 (a 2x overcount) instead of the true 696,219.
+    assert usage.billable_input_tokens == 696219
+
+
+def test_gemini_input_is_unknown_when_only_the_legacy_unrecognized_key_is_sent():
+    """A payload using a key the reader does not recognize still yields an honest
+    gap rather than a wrong number -- the pre-fix masking behaviour, preserved as a
+    deliberate absent-is-not-zero guarantee rather than an accident.
+    """
+    usage = normalize_cache_usage({"cachedContentTokenCount": 300})
 
     assert usage.provider_shape == "gemini"
     assert usage.cache_read_tokens == 300
-    assert usage.cache_creation_tokens is None
+    assert usage.input_tokens is None
+    assert usage.billable_input_tokens is None
 
 
 # ---------------------------------------------------------------------------
