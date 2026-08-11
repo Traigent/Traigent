@@ -505,9 +505,15 @@ class MetricsTracker:
 
         response_times = [m.response.response_time_ms for m in successful_metrics]
 
-        input_costs = [m.cost.input_cost for m in successful_metrics]
-        output_costs = [m.cost.output_cost for m in successful_metrics]
-        total_costs = [m.cost.total_cost for m in successful_metrics]
+        # Cost is aggregated over EVERY example with a cost measurement, not
+        # successful examples only (Traigent#1964): a provider call that
+        # ERRORED can still have burned real, billable tokens before failing
+        # (the LLM call itself succeeded and incurred cost; something
+        # downstream raised afterward). Restricting to `successful_metrics`
+        # silently dropped that real spend from the trial's cost stats.
+        input_costs = [m.cost.input_cost for m in self.example_metrics]
+        output_costs = [m.cost.output_cost for m in self.example_metrics]
+        total_costs = [m.cost.total_cost for m in self.example_metrics]
 
         # Calculate statistics for each metric
         aggregated = {
@@ -650,11 +656,17 @@ class MetricsTracker:
         # ``cost`` now reconciles with ``total_cost`` instead of diverging by ~N.
         # The per-example mean is still useful and is preserved verbatim under the
         # distinct ``cost_per_example_mean`` key — ``cost`` is never overloaded.
+        #
+        # Summed over EVERY tracked example, not successful examples only
+        # (Traigent#1964): a provider call that ERRORED can still have burned
+        # real, billable tokens before failing, and a trial where every single
+        # example errored may still have spent real money -- silently
+        # reporting 0.0 cost for such a trial would be a bigger, blunter
+        # version of the same under-count this fix closes for the mixed case.
         cost_per_example_mean = safe_get(aggregated, "total_cost", "mean")
-        successful_metrics = [m for m in self.example_metrics if m.success]
         cost_total: float | None
-        if successful_metrics:
-            cost_total = sum(float(m.cost.total_cost) for m in successful_metrics)
+        if self.example_metrics:
+            cost_total = sum(float(m.cost.total_cost) for m in self.example_metrics)
         else:
             # Nothing to sum: mirror the mean's null/zero default so the strict-
             # nulls contract (None) and the normal contract (0.0) are preserved.
