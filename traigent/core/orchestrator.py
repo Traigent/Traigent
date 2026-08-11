@@ -3729,11 +3729,32 @@ class OptimizationOrchestrator:
                 "reps": len(scores),
                 "mean": statistics.fmean(scores),
             }
+            # SAMPLE standard deviation (ddof=1), shown whenever it is
+            # computable — per the C3/C5 rulings there is NO small-replicate
+            # suppression (it is undefined for a single replicate, the only
+            # case where it is omitted); small-sample values are descriptive
+            # only, with the note logged adjacent to the measurement.
             if len(scores) >= 2:
                 block["std"] = statistics.stdev(scores)
+                if len(scores) < 5:
+                    logger.info(
+                        "winner_stability: sample SD computed from only %d "
+                        "replicate(s); descriptive only.",
+                        len(scores),
+                    )
+            else:
+                logger.info(
+                    "winner_stability: sample SD is undefined for a single "
+                    "replicate; recording mean and the one score only."
+                )
             block["scores"] = list(scores)
             block["config_hash"] = self._get_config_hash(result.best_config)
             block["evaluated_at"] = datetime.now(UTC).isoformat()
+            # Measured-only wiring (C3/C5): this block must never feed
+            # contrast selection or any noise floor. Its consumer is the S2
+            # verdict path — absent stability evidence the affected metric
+            # verdict is INDETERMINATE; a single execution may still be
+            # reported descriptively.
             result.metadata["winner_stability"] = block
         except Exception:
             logger.warning(

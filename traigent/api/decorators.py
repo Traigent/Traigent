@@ -296,11 +296,15 @@ class ExecutionOptions(BaseModel):
             completes the winning config is re-executed that many times on the
             same evaluation set through the normal trial execution path, and a
             ``winner_stability`` block (reps, mean, std, scores, config_hash,
-            evaluated_at) is attached to the result metadata. Measured evidence
-            only — the rerun never changes which config wins, adds no gating,
-            and carries no stability guarantee. Distinct from the
-            enterprise-gated ``reps_per_trial`` (which repeats every trial
-            during search); this reruns only the already-selected winner.
+            evaluated_at) is attached to the result metadata. The count you
+            choose is a cost choice, not an evidence-derived default; ``3`` is
+            accepted only as a low-cost descriptive rerun, and no replicate
+            count establishes stability. Measured evidence only — the rerun
+            never changes which config wins, adds no gating, must not feed
+            contrast selection or any noise floor, and carries no stability
+            guarantee. Distinct from the enterprise-gated ``reps_per_trial``
+            (which repeats every trial during search); this reruns only the
+            already-selected winner.
     """
 
     model_config = ConfigDict(
