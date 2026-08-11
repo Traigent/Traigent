@@ -492,25 +492,36 @@ class MetricsTracker:
         if not self.example_metrics:
             return self._empty_aggregated_metrics()
 
-        # Filter successful examples for metrics calculation
+        # ``successful_metrics`` is used ONLY for the success-count/rate
+        # summary fields below -- NOT for the token/response-time/cost value
+        # lists. A trial where every example errored must still surface those
+        # measurements (see the comment on `input_costs` below); an early
+        # `if not successful_metrics: return empty` here would silently
+        # re-drop the exact data #1964 fixed cost for, for every OTHER
+        # metric, and for cost itself whenever a trial has zero successes.
         successful_metrics = [m for m in self.example_metrics if m.success]
 
-        if not successful_metrics:
-            return self._empty_aggregated_metrics()
+        # Token, response-time, and cost stats are aggregated over EVERY
+        # example with a measurement, not successful examples only
+        # (Traigent#1964): a provider call that ERRORED can still have
+        # burned real, billable tokens and taken real wall-clock time before
+        # failing (the LLM call itself succeeded and incurred cost/latency;
+        # something downstream raised afterward). Restricting any of these
+        # to `successful_metrics` silently dropped that real spend/latency
+        # from the trial's stats -- this was fixed for cost but NOT for
+        # tokens/response-time here, a sibling instance of the identical bug
+        # found during the #1963/#1964/#1965/#2111 pre-merge re-review of
+        # PR #2160 (this function feeds the LIVE `input_tokens`,
+        # `output_tokens`, `total_tokens`, `response_time_ms`, and
+        # `tokens_per_second` keys via `format_for_backend()`, which
+        # unconditionally overwrites `LocalEvaluator.evaluate()`'s
+        # aggregated metrics -- see `_merge_comprehensive_metrics`).
+        input_tokens = [m.tokens.input_tokens for m in self.example_metrics]
+        output_tokens = [m.tokens.output_tokens for m in self.example_metrics]
+        total_tokens = [m.tokens.total_tokens for m in self.example_metrics]
 
-        # Extract values for each metric type
-        input_tokens = [m.tokens.input_tokens for m in successful_metrics]
-        output_tokens = [m.tokens.output_tokens for m in successful_metrics]
-        total_tokens = [m.tokens.total_tokens for m in successful_metrics]
+        response_times = [m.response.response_time_ms for m in self.example_metrics]
 
-        response_times = [m.response.response_time_ms for m in successful_metrics]
-
-        # Cost is aggregated over EVERY example with a cost measurement, not
-        # successful examples only (Traigent#1964): a provider call that
-        # ERRORED can still have burned real, billable tokens before failing
-        # (the LLM call itself succeeded and incurred cost; something
-        # downstream raised afterward). Restricting to `successful_metrics`
-        # silently dropped that real spend from the trial's cost stats.
         input_costs = [m.cost.input_cost for m in self.example_metrics]
         output_costs = [m.cost.output_cost for m in self.example_metrics]
         total_costs = [m.cost.total_cost for m in self.example_metrics]
@@ -538,10 +549,12 @@ class MetricsTracker:
             "duration": self.get_duration(),
         }
 
-        # Add tokens per second if available
+        # Add tokens per second if available. Same every-example scope as the
+        # metrics above -- an errored-downstream example can still report a
+        # real per-call token rate before it failed.
         tps_values = [
             m.response.tokens_per_second
-            for m in successful_metrics
+            for m in self.example_metrics
             if m.response.tokens_per_second is not None
         ]
         if tps_values:

@@ -23,17 +23,36 @@ post-processing exception, a timeout after the model already responded):
 ``test_compute_accuracy_matching_output_with_error_earns_no_numerator_credit``
 and ``TestLocalEvaluatorAccuracyAggregated
 .test_matching_output_with_error_earns_no_numerator_credit`` cover that case
-directly, and are the tests that actually go RED if either evaluator's
-numerator guard is removed. ``TestMissingExpectedOutputSemanticsAgree`` covers
-a related but separate discrepancy: the two paths must exclude the SAME set of
+directly, and are the tests that actually go RED if the HELPER's numerator
+guard is removed. ``TestMissingExpectedOutputSemanticsAgree`` covers a
+related but separate discrepancy: the two paths must exclude the SAME set of
 "missing expected output" rows from the denominator, not just agree on
 error-counting.
+
+Neither the direct-call tests above nor
+``test_local_evaluator_evaluate_reports_the_honest_accuracy_with_errors``
+(the one end-to-end test that exists) actually proves the LIVE call site in
+``LocalEvaluator.evaluate()`` -- ``self._compute_accuracy_aggregated(outputs,
+dataset, errors)`` -- forwards ``errors`` at all: the direct-call tests build
+``errors`` themselves and hand it straight to the helper (bypassing the call
+site entirely), and the end-to-end fixture's errored rows come from
+``maybe_error`` raising BEFORE returning anything, so those rows have
+``actual_output=None`` -- no output there to (wrongly) match, so accuracy
+comes out the same whether the call site passes ``errors`` or not.
+``test_local_evaluator_evaluate_denies_numerator_credit_for_downstream_failure_after_matching_output``
+below closes that gap: it goes through the real ``evaluate()`` path with a
+row that gets a MATCHING output before erroring downstream (via
+``custom_eval_func``, the real, public way to reach that shape end-to-end),
+so deleting ``errors=`` from the live call site turns it RED.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
+from traigent.api.types import ExampleResult
 from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationExample
 from traigent.evaluators.local import LocalEvaluator
 
@@ -267,5 +286,92 @@ async def test_local_evaluator_evaluate_reports_the_honest_accuracy_with_errors(
     result = await evaluator.evaluate(maybe_error, {}, dataset)
 
     # 2 of 4 error; the other 2 match. Old: 2/2 = 1.0. Fixed: 2/4 = 0.5.
+    assert result.metrics["accuracy"] == pytest.approx(0.5)
+    assert result.metrics["accuracy"] != pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
+async def test_local_evaluator_evaluate_denies_numerator_credit_for_downstream_failure_after_matching_output():
+    """End-to-end through the real ``evaluate()`` path, hitting the LIVE
+    call site (``LocalEvaluator.evaluate`` -> ``self._compute_accuracy_
+    aggregated(outputs, dataset, errors)``) that the fixture above cannot
+    reach: ``maybe_error`` above raises BEFORE returning anything, so its
+    errored rows carry ``actual_output=None`` -- there is no output there to
+    (wrongly) match. That leaves the realistic failure mode -- a call whose
+    output ALREADY MATCHED before something downstream (parsing, a scoring
+    step, a timeout after the model already responded) raised -- completely
+    unexercised end-to-end. The direct-call tests above
+    (``test_matching_output_with_error_earns_no_numerator_credit`` et al.)
+    prove the HELPER handles that shape correctly, but they call
+    ``_compute_accuracy_aggregated`` directly with a hand-built ``errors``
+    list, so they say nothing about whether the live call site actually
+    threads ``errors`` through.
+
+    A ``custom_eval_func`` is the real, public, supported way to reach this
+    shape through ``evaluate()``: the SDK's own ``_execute_function`` always
+    nulls ``actual_output`` when it records an error (an exception in the
+    user's agent call itself can never produce a matching output alongside
+    a non-null error), but a custom evaluator returns a fully caller-built
+    ``ExampleResult`` -- exactly modeling a user's own wrapper that calls
+    the agent (gets a matching answer), then fails in ITS OWN downstream
+    post-processing and reports that failure while still recording the
+    output it already had.
+
+    NEGATIVE CONTROL: deleting the ``errors=`` argument from the
+    ``_compute_accuracy_aggregated(outputs, dataset, errors)`` call at
+    ``local.py``'s live call site (leaving the helper itself untouched)
+    must turn this test RED. See the worker report for the executed
+    negative control.
+    """
+
+    async def agent(input_data: dict) -> str:
+        return "match"
+
+    async def custom_eval(
+        func: Any, config: dict[str, Any], example: EvaluationExample
+    ) -> ExampleResult:
+        output = await func(example.input_data)
+        if example.input_data["idx"] == 0:
+            # Downstream failure AFTER the agent call already produced a
+            # matching output -- e.g. a post-processing step blew up. The
+            # output is real and matches; the row must still count as a
+            # miss, not a hit.
+            return ExampleResult(
+                example_id=f"example_{example.input_data['idx']}",
+                input_data=example.input_data,
+                expected_output=example.expected_output,
+                actual_output=output,
+                metrics={},
+                execution_time=0.01,
+                success=False,
+                error_message="downstream post-processing exploded",
+            )
+        return ExampleResult(
+            example_id=f"example_{example.input_data['idx']}",
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output=output,
+            metrics={},
+            execution_time=0.01,
+            success=True,
+        )
+
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"], detailed=True, custom_eval_func=custom_eval
+    )
+    dataset = Dataset(
+        [
+            EvaluationExample({"idx": 0}, "match"),
+            EvaluationExample({"idx": 1}, "match"),
+        ],
+        name="downstream_failure_after_matching_output_e2e",
+    )
+
+    result = await evaluator.evaluate(agent, {}, dataset)
+
+    # Denominator = 2 (both have a real expected output). Numerator = 1
+    # (only example 1: no error). Example 0 matched but errored downstream,
+    # so it must NOT earn numerator credit: if the live call site dropped
+    # `errors`, both rows would look error-free and accuracy would read 1.0.
     assert result.metrics["accuracy"] == pytest.approx(0.5)
     assert result.metrics["accuracy"] != pytest.approx(1.0)
