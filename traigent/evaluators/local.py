@@ -1601,32 +1601,51 @@ class LocalEvaluator(BaseEvaluator):
         self,
         outputs: list[Any],
         dataset: Dataset,
+        errors: list[str | None] | None = None,
     ) -> tuple[float | None, int]:
         """Compute aggregated accuracy across outputs.
+
+        This is the accuracy path that actually reaches users of the default
+        (local) evaluator: its result overwrites ``aggregated_metrics["accuracy"]``
+        set by ``BaseEvaluator._compute_accuracy`` below. It must therefore share
+        that method's denominator semantics rather than silently disagreeing with
+        it (Traigent#1963) -- an errored example still counts against the
+        denominator; only the missing-expected-output exclusion drops an example
+        entirely.
 
         Args:
             outputs: List of outputs
             dataset: Evaluation dataset
+            errors: Per-example error messages aligned with ``outputs`` (None for
+                a successful call). Omitted (``None``) treats every example as
+                successful, which keeps existing direct callers that pre-date
+                error-awareness unchanged.
 
         Returns:
             Tuple of (accuracy value or None, total count)
         """
         total = 0
         correct = 0
+        error_list = errors if errors is not None else [None] * len(outputs)
 
-        for raw_output, example in zip(outputs, dataset.examples, strict=False):
+        for raw_output, example, error in zip(
+            outputs, dataset.examples, error_list, strict=False
+        ):
             expected = example.expected_output
             if expected is None:
+                continue
+
+            # An errored example is a real attempt with a real (missing)
+            # answer, not a non-event -- it counts against the denominator
+            # even though it can never count as correct.
+            total += 1
+            if error is not None:
                 continue
 
             value = (
                 raw_output.get("text") if isinstance(raw_output, dict) else raw_output
             )
-            if value is None:
-                continue
-
-            total += 1
-            if _accuracy_values_match(value, expected):
+            if value is not None and _accuracy_values_match(value, expected):
                 correct += 1
 
         if total > 0:
@@ -1923,7 +1942,9 @@ class LocalEvaluator(BaseEvaluator):
         )
 
         if "accuracy" in self.metrics:
-            accuracy_value, _ = self._compute_accuracy_aggregated(outputs, dataset)
+            accuracy_value, _ = self._compute_accuracy_aggregated(
+                outputs, dataset, errors
+            )
             if accuracy_value is not None:
                 if accuracy_is_custom_objective:
                     # Keep the default exact-match value as a labelled
