@@ -9,6 +9,7 @@ The rerun never enters ``result.trials`` and never changes which config wins.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any
 from collections.abc import Callable
@@ -17,6 +18,7 @@ import pytest
 
 from traigent.api.types import OptimizationStatus, TrialResult
 from traigent.config.types import TraigentConfig
+from traigent.core.execution_budget import ExecutionBudget
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import (
     BaseEvaluator,
@@ -25,7 +27,7 @@ from traigent.evaluators.base import (
     EvaluationResult,
 )
 from traigent.optimizers.base import BaseOptimizer
-from traigent.utils.exceptions import OptimizationError
+from traigent.utils.exceptions import OptimizationError, VendorPauseError
 
 
 class StabilityOptimizer(BaseOptimizer):
@@ -97,6 +99,24 @@ class StabilityEvaluator(BaseEvaluator):
         )
         result.sample_budget_exhausted = False
         result.examples_consumed = processed
+        return result
+
+
+class AccountingStabilityEvaluator(StabilityEvaluator):
+    """Stability evaluator that exposes a deterministic per-trial cost."""
+
+    def __init__(self, *, cost: float = 0.25, **kwargs):
+        super().__init__(**kwargs)
+        self.cost = cost
+        self.fail_on_calls: set[int] = set()
+
+    async def evaluate(self, *args: Any, **kwargs: Any) -> EvaluationResult:
+        if self.evaluation_count + 1 in self.fail_on_calls:
+            self.evaluation_count += 1
+            raise OptimizationError("deterministic stability rerun failure")
+        result = await super().evaluate(*args, **kwargs)
+        result.metrics["total_cost"] = self.cost
+        result.aggregated_metrics["total_cost"] = self.cost
         return result
 
 
@@ -189,6 +209,191 @@ class TestWinnerStabilityRerun:
         assert result.best_config.get("param1") == 2
         assert result.best_score == pytest.approx(0.7)
         assert result.metadata["winner_stability"]["reps"] == 2
+
+    @pytest.mark.asyncio
+    async def test_reruns_use_permits_and_are_included_in_total_cost(
+        self, sample_dataset, mock_function
+    ):
+        """Rerun spend is tracked without adding reruns to selection history."""
+        evaluator = AccountingStabilityEvaluator()
+        orchestrator = _build_orchestrator(
+            evaluator,
+            winner_stability_reps=2,
+            cost_limit=10,
+            cost_approved=True,
+        )
+
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        status = orchestrator.cost_enforcer.get_status()
+        assert status.trial_count == 5
+        assert status.accumulated_cost_usd == pytest.approx(1.25)
+        assert status.in_flight_count == 0
+        assert result.total_cost == pytest.approx(1.25)
+        assert result.metrics["total_cost"] == pytest.approx(1.25)
+        assert len(result.trials) == 3
+
+    @pytest.mark.asyncio
+    async def test_reruns_debit_execution_budget_cost_trials_and_samples(
+        self, sample_dataset, mock_function
+    ):
+        """Shared budget accounting includes stability reruns, not their history."""
+        evaluator = AccountingStabilityEvaluator()
+        orchestrator = _build_orchestrator(
+            evaluator,
+            winner_stability_reps=2,
+            max_total_examples=20,
+            cost_limit=10,
+            cost_approved=True,
+        )
+        budget = ExecutionBudget(max_cost_usd=10, max_examples=20)
+        orchestrator.execution_budget = budget
+
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        snapshot = budget.snapshot()
+        assert snapshot.trials == 5
+        assert snapshot.consumed_cost == pytest.approx(1.25)
+        assert snapshot.consumed_examples == 10
+        assert snapshot.cost_tracking == "complete"
+        assert len(result.trials) == 3
+
+    @pytest.mark.asyncio
+    async def test_reruns_respect_sample_budget(self, sample_dataset, mock_function):
+        """Stability reruns consume the shared sample pool without overspending it."""
+        evaluator = AccountingStabilityEvaluator()
+        orchestrator = _build_orchestrator(
+            evaluator,
+            winner_stability_reps=2,
+            max_total_examples=8,
+        )
+
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.status == OptimizationStatus.COMPLETED
+        assert orchestrator._sample_budget_manager is not None
+        assert orchestrator._sample_budget_manager.consumed() == 8
+        assert orchestrator._sample_budget_manager.remaining() == 0
+        assert len(result.trials) == 3
+
+    @pytest.mark.asyncio
+    async def test_partial_reruns_still_account_failed_attempts(
+        self, sample_dataset, mock_function
+    ):
+        """A failed measured rerun counts spend but does not create stability evidence."""
+        evaluator = AccountingStabilityEvaluator()
+        evaluator.fail_on_calls = {4}
+        orchestrator = _build_orchestrator(
+            evaluator,
+            winner_stability_reps=2,
+            cost_limit=10,
+            cost_approved=True,
+        )
+        budget = ExecutionBudget(max_cost_usd=10, max_examples=20)
+        orchestrator.execution_budget = budget
+
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.metadata["winner_stability"]["reps"] == 1
+        assert evaluator.evaluation_count == 5
+        status = orchestrator.cost_enforcer.get_status()
+        assert status.trial_count == 5
+        assert status.accumulated_cost_usd == pytest.approx(1.0)
+        snapshot = budget.snapshot()
+        assert snapshot.trials == 5
+        assert snapshot.cost_tracking == "partial"
+        assert result.total_cost == pytest.approx(1.0)
+        assert len(result.trials) == 3
+
+    @pytest.mark.asyncio
+    async def test_shared_execution_budget_stops_before_second_rerun(
+        self, sample_dataset, mock_function
+    ):
+        """A stability rerun cannot start after the shared cost cap is spent."""
+        evaluator = AccountingStabilityEvaluator()
+        orchestrator = _build_orchestrator(
+            evaluator,
+            winner_stability_reps=2,
+            cost_limit=10,
+            cost_approved=True,
+        )
+        budget = ExecutionBudget(max_cost_usd=1.0, max_examples=20)
+        orchestrator.execution_budget = budget
+
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert evaluator.evaluation_count == 4
+        assert [c.get("param1") for c in evaluator.evaluated_configs[3:]] == [2]
+        assert result.metadata["winner_stability"]["reps"] == 1
+        assert len(result.trials) == 3
+        assert budget.snapshot().trials == 4
+
+    @pytest.mark.asyncio
+    async def test_rethrown_vendor_failure_is_accounted_as_untracked_attempt(
+        self, sample_dataset, mock_function
+    ):
+        """A lifecycle vendor pause consumes a trial slot without fake cost."""
+        evaluator = AccountingStabilityEvaluator()
+        orchestrator = _build_orchestrator(
+            evaluator,
+            winner_stability_reps=2,
+            cost_limit=10,
+            cost_approved=True,
+        )
+        budget = ExecutionBudget(max_cost_usd=10, max_examples=20)
+        orchestrator.execution_budget = budget
+        original_run_trial = orchestrator._trial_lifecycle.run_trial
+
+        async def pause_after_search(*args: Any, **kwargs: Any):
+            if evaluator.evaluation_count >= 3:
+                raise VendorPauseError("provider rate limit")
+            return await original_run_trial(*args, **kwargs)
+
+        orchestrator._trial_lifecycle.run_trial = pause_after_search
+
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.status == OptimizationStatus.COMPLETED
+        assert "winner_stability" not in result.metadata
+        assert len(result.trials) == 3
+        status = orchestrator.cost_enforcer.get_status()
+        assert status.trial_count == 4
+        assert status.accumulated_cost_usd == pytest.approx(0.75)
+        assert status.unknown_cost_mode is True
+        snapshot = budget.snapshot()
+        assert snapshot.trials == 4
+        assert snapshot.untracked_trials == 1
+        assert snapshot.consumed_cost == pytest.approx(0.75)
+        assert snapshot.cost_tracking == "partial"
+
+    @pytest.mark.asyncio
+    async def test_cancellation_releases_stability_permit(
+        self, sample_dataset, mock_function
+    ):
+        """Cancellation clears the stability reservation and remains observable."""
+        evaluator = StabilityEvaluator()
+        orchestrator = _build_orchestrator(
+            evaluator,
+            winner_stability_reps=2,
+            cost_limit=10,
+            cost_approved=True,
+        )
+        original_run_trial = orchestrator._trial_lifecycle.run_trial
+
+        async def cancel_after_search(*args: Any, **kwargs: Any):
+            if evaluator.evaluation_count >= 3:
+                raise asyncio.CancelledError
+            return await original_run_trial(*args, **kwargs)
+
+        orchestrator._trial_lifecycle.run_trial = cancel_after_search
+
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.status == OptimizationStatus.CANCELLED
+        status = orchestrator.cost_enforcer.get_status()
+        assert status.in_flight_count == 0
+        assert status.reserved_cost_usd == pytest.approx(0.0)
+        assert len(result.trials) == 3
 
     @pytest.mark.asyncio
     async def test_no_winner_skips_the_rerun(self, sample_dataset, mock_function):
