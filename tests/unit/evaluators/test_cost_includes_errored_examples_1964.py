@@ -21,6 +21,19 @@ example with a recorded positive ``execution_time`` regardless of error
 status -- only its docstring was stale, claiming "successful examples" when
 the actual filter was time-based. This file exists to prove ``cost`` now
 agrees with that behaviour instead of disagreeing with it.
+
+A fourth site sharing the identical bug was found during the pre-merge
+review of this fix (a knowingly-omitted "tertiary insights" path flagged as
+DO_NOT_MERGE): ``MetricsTracker.format_as_summary_stats`` -- the
+pandas.describe()-compatible payload generated for privacy-preserving /
+hybrid submission mode -- filtered ``input_cost``/``output_cost``/
+``total_cost`` (and token/response-time stats) to ``m.success`` examples
+only, silently dropping the same real, billable spend from an errored-but-
+costly example that the other three sites were fixed to include.
+``LocalEvaluator._extract_llm_metrics_for_output`` populates cost/tokens on
+every ``ExampleMetrics`` from the actual output BEFORE ``example_metric.
+success`` is set from the error, so an errored-downstream example genuinely
+does carry real cost/token data that a success-only filter throws away.
 """
 
 from __future__ import annotations
@@ -147,3 +160,31 @@ def test_cost_and_latency_now_agree_on_which_examples_exist():
     # example only, the old behaviour that disagreed with latency).
     assert cost == pytest.approx(0.015)
     assert cost != pytest.approx(0.01)
+
+
+def test_format_as_summary_stats_includes_cost_from_errored_examples():
+    """The 4th aggregation site found during pre-merge review: the
+    privacy-mode/hybrid-submission summary_stats payload must not silently
+    drop cost/tokens from an example that errored AFTER the provider call
+    already burned real, billable tokens.
+    """
+    tracker = _mixed_tracker()
+
+    summary_stats = tracker.format_as_summary_stats()
+
+    total_cost_stats = summary_stats["metrics"]["total_cost"]
+    input_tokens_stats = summary_stats["metrics"]["input_tokens"]
+
+    # 4 examples total (2 success + 2 errored, one of which burned 0.03).
+    # Old (buggy): filtered to the 2 successful examples -> count=2,
+    # sum=0.02, mean=0.01 -- the $0.03 burned by the errored call at index 2
+    # is invisible.
+    # Fixed: count=4, sum=0.05, mean=0.0125 -- the true spend.
+    assert total_cost_stats["count"] == 4
+    assert total_cost_stats["mean"] == pytest.approx(0.0125)
+    assert total_cost_stats["mean"] != pytest.approx(0.01)
+
+    # Token counts must agree: all 4 examples counted, not just the 2
+    # successful ones (every ExampleMetrics here has 0 tokens recorded, so
+    # this asserts on count/shape rather than a nonzero mean).
+    assert input_tokens_stats["count"] == 4

@@ -766,17 +766,29 @@ class MetricsTracker:
         This format is used for privacy-preserving mode where individual
         results are not transmitted, only aggregated statistics.
 
+        Token/cost/response-time stats are computed over EVERY example, not
+        just ``m.success`` ones (Traigent#1964 sibling path found during the
+        #1963/#1964/#1965/#2111 pre-merge review): an example whose provider
+        call ERRORED can still have burned real, billable tokens before
+        failing downstream (output parsing, a scoring function, the eval
+        harness). ``LocalEvaluator._extract_llm_metrics_for_output`` extracts
+        those token/cost/response-time figures from the output BEFORE
+        ``example_metric.success`` is set from the error, so they are already
+        genuinely recorded on every ``ExampleMetrics`` -- filtering to
+        ``m.success`` here silently dropped them, understating summary-stats
+        cost/token totals the exact same way the three sites fixed in
+        ``format_for_backend``/``aggregate_metrics``/``BaseEvaluator.
+        _compute_cost`` were understating theirs. An example with no real
+        measurement (call never returned an output) simply carries zeros, so
+        including it is harmless.
+
         Returns:
             Dictionary with summary_stats structure matching pandas.describe()
         """
         if not self.example_metrics:
             return self._empty_summary_stats()
 
-        # Filter successful examples for metrics calculation
-        successful_metrics = [m for m in self.example_metrics if m.success]
-
-        if not successful_metrics:
-            return self._empty_summary_stats()
+        all_metrics = self.example_metrics
 
         # Extract values for each metric type
         # For accuracy, use custom metrics when available; otherwise derive from success flags
@@ -789,21 +801,19 @@ class MetricsTracker:
 
         metrics_data: dict[str, list[int | float]] = {
             "accuracy": accuracy_values,
-            "input_tokens": [m.tokens.input_tokens for m in successful_metrics],
-            "output_tokens": [m.tokens.output_tokens for m in successful_metrics],
-            "total_tokens": [m.tokens.total_tokens for m in successful_metrics],
-            "response_time_ms": [
-                m.response.response_time_ms for m in successful_metrics
-            ],
-            "input_cost": [m.cost.input_cost for m in successful_metrics],
-            "output_cost": [m.cost.output_cost for m in successful_metrics],
-            "total_cost": [m.cost.total_cost for m in successful_metrics],
+            "input_tokens": [m.tokens.input_tokens for m in all_metrics],
+            "output_tokens": [m.tokens.output_tokens for m in all_metrics],
+            "total_tokens": [m.tokens.total_tokens for m in all_metrics],
+            "response_time_ms": [m.response.response_time_ms for m in all_metrics],
+            "input_cost": [m.cost.input_cost for m in all_metrics],
+            "output_cost": [m.cost.output_cost for m in all_metrics],
+            "total_cost": [m.cost.total_cost for m in all_metrics],
         }
 
         # Add tokens per second if available
         tps_values = [
             m.response.tokens_per_second
-            for m in successful_metrics
+            for m in all_metrics
             if m.response.tokens_per_second is not None
         ]
         if tps_values:

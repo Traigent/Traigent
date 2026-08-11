@@ -104,6 +104,33 @@ def test_gemini_input_is_unknown_when_only_the_legacy_unrecognized_key_is_sent()
     assert usage.billable_input_tokens is None
 
 
+def test_gemini_cache_field_renamed_away_withholds_the_discount_not_the_total():
+    """Traigent#2160 pre-merge review: what happens if Google renames (or drops)
+    ONLY ``cachedContentTokenCount`` while ``promptTokenCount`` is unchanged --
+    the mirror image of the unrecognized-key case above, and the direction that
+    actually matters for billing (that one loses visibility; this one still
+    prices something).
+
+    No provider shape matches (every shape requires ITS OWN cache field to be
+    present at all before it is even considered), so no disjoint-vs-inclusive
+    subtraction is attempted. ``input_tokens`` therefore keeps the raw, cache-
+    INCLUSIVE ``promptTokenCount`` value untouched -- which is exactly Google's
+    true total billable count, so the token total stays correct. What is lost is
+    only the cache-READ visibility: ``cache_read_tokens`` is ``None``, so nothing
+    downstream can apply the ~10x cache-read discount to any part of that total.
+    The failure is conservative (the full total gets priced at the un-discounted
+    rate -- an over-estimate), never a silent UNDER-count.
+    """
+    usage = normalize_cache_usage({"promptTokenCount": 696219})
+
+    assert usage.provider_shape is None
+    assert usage.cache_read_tokens is None
+    assert usage.is_complete is False
+    # The total is right; only the (now unappliable) cache discount is lost.
+    assert usage.input_tokens == 696219
+    assert usage.billable_input_tokens == 696219
+
+
 # ---------------------------------------------------------------------------
 # The disjointness normalization -- the subtlety that makes cost provider-dependent
 # ---------------------------------------------------------------------------

@@ -22,6 +22,7 @@ from traigent.evaluators.base import (
     EvaluationResult,
     _accuracy_values_match,
     _example_correlation_key,
+    _is_empty_expected_output,
 )
 from traigent.evaluators.metrics_tracker import (
     EMPTY_OUTPUT_RATE_WARNING_THRESHOLD,
@@ -1611,7 +1612,12 @@ class LocalEvaluator(BaseEvaluator):
         that method's denominator semantics rather than silently disagreeing with
         it (Traigent#1963) -- an errored example still counts against the
         denominator; only the missing-expected-output exclusion drops an example
-        entirely.
+        entirely. That exclusion uses ``_is_empty_expected_output`` (None, or an
+        empty/whitespace-only string), the SAME predicate ``BaseEvaluator.
+        _compute_accuracy`` uses -- a plain ``expected is None`` check here would
+        leave an empty-string expected output counted as a real (near-certain)
+        miss on this path while ``_compute_accuracy`` excludes it entirely,
+        disagreeing about which rows even enter the denominator.
 
         Args:
             outputs: List of outputs
@@ -1632,7 +1638,7 @@ class LocalEvaluator(BaseEvaluator):
             outputs, dataset.examples, error_list, strict=False
         ):
             expected = example.expected_output
-            if expected is None:
+            if _is_empty_expected_output(expected):
                 continue
 
             # An errored example is a real attempt with a real (missing)
