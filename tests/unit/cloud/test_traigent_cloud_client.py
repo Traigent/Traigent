@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from traigent.cloud.auth import AuthManager
+import traigent.cloud.client as cloud_client_module
+from traigent.cloud.auth import AuthManager, UnifiedAuthConfig
 from traigent.cloud.client import (
     CloudOptimizationResult,
     CloudServiceError,
@@ -82,6 +83,37 @@ class TestTraigentCloudClient:
         assert client.max_retries == 5
         assert client.timeout == 60.0
 
+    def test_custom_base_url_configures_auth_validation_endpoint(self):
+        """Authentication must validate API keys against the selected backend."""
+        custom_base_url = "https://api-dev.traigent.ai"
+
+        with (
+            patch.object(
+                cloud_client_module,
+                "validate_cloud_base_url",
+                return_value=custom_base_url,
+            ) as validate_base_url,
+            patch.object(cloud_client_module, "AuthManager") as auth_manager,
+        ):
+            client = TraigentCloudClient(
+                base_url=custom_base_url,
+                no_egress=True,
+            )
+
+        validate_base_url.assert_called_once_with(
+            custom_base_url,
+            purpose="cloud client",
+        )
+        auth_manager.assert_called_once()
+        auth_kwargs = auth_manager.call_args.kwargs
+        assert auth_kwargs["api_key"] is None
+        assert auth_kwargs["no_egress"] is True
+        assert isinstance(auth_kwargs["config"], UnifiedAuthConfig)
+        assert auth_kwargs["config"].backend_base_url == custom_base_url
+        assert auth_kwargs["config"].cloud_base_url == custom_base_url
+        assert client.auth is auth_manager.return_value
+        assert client.auth_manager is auth_manager.return_value
+
     def test_client_default_initialization(self, monkeypatch):
         """Test client initialization with defaults."""
         # Ensure backend resolution does not depend on external environment configuration
@@ -92,18 +124,35 @@ class TestTraigentCloudClient:
         ]:
             monkeypatch.delenv(var, raising=False)
 
-        with patch(
-            "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
-            return_value=None,
+        with (
+            patch(
+                "traigent.cloud.credential_manager.CredentialManager.get_stored_backend_url",
+                return_value=None,
+            ),
+            patch.object(
+                cloud_client_module,
+                "validate_cloud_base_url",
+                return_value=BackendConfig.DEFAULT_PROD_URL,
+            ) as validate_base_url,
+            patch.object(cloud_client_module, "AuthManager") as auth_manager,
         ):
             monkeypatch.setenv("TRAIGENT_ENV", "production")
             client = TraigentCloudClient()
 
+        validate_base_url.assert_called_once_with(
+            BackendConfig.DEFAULT_PROD_URL,
+            purpose="cloud client",
+        )
         assert client.base_url == BackendConfig.DEFAULT_PROD_URL
         assert client.api_base_url == BackendConfig.get_cloud_api_url()
         assert client.enable_fallback is True
         assert client.max_retries == 3
         assert client.timeout == 30.0
+        auth_manager.assert_called_once()
+        auth_kwargs = auth_manager.call_args.kwargs
+        assert auth_kwargs["no_egress"] is False
+        assert auth_kwargs["config"].backend_base_url == BackendConfig.DEFAULT_PROD_URL
+        assert auth_kwargs["config"].cloud_base_url == BackendConfig.DEFAULT_PROD_URL
 
     def test_context_manager(self, mock_cloud_client):
         """Test async context manager functionality."""
