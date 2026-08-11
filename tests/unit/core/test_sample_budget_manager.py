@@ -157,7 +157,9 @@ def test_efficiency_bounded_formula_does_not_reduce_to_naive_ratio():
     (and the fix) would be vacuous.
     """
     metrics = BudgetMetrics(total_budget=5, consumed=2, wasted=3)
-    naive_unbounded_formula = max(metrics.consumed - metrics.wasted, 0) / metrics.consumed
+    naive_unbounded_formula = (
+        max(metrics.consumed - metrics.wasted, 0) / metrics.consumed
+    )
     assert metrics.efficiency != pytest.approx(naive_unbounded_formula)
     assert naive_unbounded_formula == 0.0
     assert metrics.efficiency == pytest.approx(2 / 5)
