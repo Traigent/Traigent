@@ -82,6 +82,20 @@ class TestTraigentCloudClient:
         assert client.max_retries == 5
         assert client.timeout == 60.0
 
+    def test_custom_base_url_configures_auth_validation_endpoint(self):
+        """Authentication must validate API keys against the selected backend."""
+        custom_base_url = "https://api-dev.traigent.ai"
+
+        with patch.object(
+            BackendConfig,
+            "get_cloud_backend_url",
+            return_value=BackendConfig.DEFAULT_PROD_URL,
+        ):
+            client = TraigentCloudClient(base_url=custom_base_url)
+
+        assert client.auth.config.backend_base_url == custom_base_url
+        assert client.auth.config.cloud_base_url == custom_base_url
+
     def test_client_default_initialization(self, monkeypatch):
         """Test client initialization with defaults."""
         # Ensure backend resolution does not depend on external environment configuration

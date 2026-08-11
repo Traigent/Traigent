@@ -46,7 +46,12 @@ from traigent.utils.logging import get_logger
 from traigent.utils.retry import NetworkError, RateLimitError, retry_http_request
 from traigent.utils.validation import CoreValidators, validate_or_raise
 
-from .auth import AuthenticationError, AuthManager, _strip_trace_context_headers
+from .auth import (
+    AuthenticationError,
+    AuthManager,
+    UnifiedAuthConfig,
+    _strip_trace_context_headers,
+)
 from .billing import UsageTracker
 from .models import (
     AgentExecutionRequest,
@@ -807,7 +812,15 @@ class TraigentCloudClient(BaseTraigentClient):
         self.no_egress = bool(no_egress)
 
         # Initialize components
-        self.auth = AuthManager(api_key=api_key, no_egress=self.no_egress)
+        auth_config = UnifiedAuthConfig(
+            backend_base_url=self.base_url,
+            cloud_base_url=self.base_url,
+        )
+        self.auth = AuthManager(
+            api_key=api_key,
+            config=auth_config,
+            no_egress=self.no_egress,
+        )
         self.auth_manager = self.auth
         self.usage_tracker = UsageTracker()
         self.subset_selector = SmartSubsetSelector()
