@@ -244,6 +244,22 @@ class ExternalServiceEvaluator(BaseModel):
     hybrid_api: HybridAPIOptions = Field(default_factory=HybridAPIOptions)
 
 
+def _coerce_winner_stability_reps(value: Any) -> int:
+    """Validate the opt-in post-selection winner rerun count (0 = off).
+
+    Shared by the ``ExecutionOptions`` field validator and the direct
+    ``@optimize(winner_stability_reps=...)`` path so both spellings enforce the
+    same bounds. Bounded to the same ceiling as the TraigentSchema
+    ``winner_stability`` contract so a recorded block always fits the wire
+    shape.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("winner_stability_reps must be an int")
+    if value < 0 or value > 1000:
+        raise ValueError("winner_stability_reps must be between 0 (off) and 1000")
+    return value
+
+
 class ExecutionOptions(BaseModel):
     """Execution and orchestration preferences for optimization runs.
 
@@ -275,6 +291,16 @@ class ExecutionOptions(BaseModel):
             value raises ``pydantic.ValidationError`` at
             construction time. Per-configuration repetition aggregation
             requires Traigent Enterprise (contact ``sales@traigent.ai``).
+        winner_stability_reps: Opt-in post-selection rerun count for the winning
+            configuration. ``0`` (default) is off. When ``> 0``, after selection
+            completes the winning config is re-executed that many times on the
+            same evaluation set through the normal trial execution path, and a
+            ``winner_stability`` block (reps, mean, std, scores, config_hash,
+            evaluated_at) is attached to the result metadata. Measured evidence
+            only — the rerun never changes which config wins, adds no gating,
+            and carries no stability guarantee. Distinct from the
+            enterprise-gated ``reps_per_trial`` (which repeats every trial
+            during search); this reruns only the already-selected winner.
     """
 
     model_config = ConfigDict(
@@ -307,6 +333,7 @@ class ExecutionOptions(BaseModel):
     smart_pruning: SmartPruningOptions | dict[str, Any] | None = None
     reps_per_trial: int = 1
     reps_aggregation: str = "mean"
+    winner_stability_reps: int = 0
 
     @model_validator(mode="wrap")
     @classmethod
@@ -385,6 +412,15 @@ class ExecutionOptions(BaseModel):
                 "require Traigent Enterprise. Contact sales@traigent.ai."
             )
         return v
+
+    @field_validator("winner_stability_reps")
+    @classmethod
+    def _validate_winner_stability_reps(cls, v: int) -> int:
+        # Post-selection winner rerun count. 0 = off (default). NOT
+        # enterprise-gated: unlike reps_per_trial (per-trial repetition during
+        # search), this reruns only the already-selected winner and never
+        # affects selection.
+        return _coerce_winner_stability_reps(v)
 
     @field_validator("algorithm")
     @classmethod
@@ -826,6 +862,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "parallel_config": None,
     "max_total_examples": None,
     "samples_include_pruned": True,
+    "winner_stability_reps": 0,
     "smart_pruning": None,
     "mock_mode_config": None,
     "custom_evaluator": None,
@@ -1032,6 +1069,7 @@ class LegacyOptimizeArgs:
     privacy_enabled: bool | None = None
     max_total_examples: int | None = None
     samples_include_pruned: bool | None = None
+    winner_stability_reps: int | None = None
     mock_mode_config: dict[str, Any] | None = None
     custom_evaluator: Callable[..., Any] | None = None
     scoring_function: Callable[..., Any] | None = None
@@ -1125,6 +1163,7 @@ class LegacyOptimizeArgs:
             ("privacy_enabled", self.privacy_enabled),
             ("max_total_examples", self.max_total_examples),
             ("samples_include_pruned", self.samples_include_pruned),
+            ("winner_stability_reps", self.winner_stability_reps),
             ("mock_mode_config", self.mock_mode_config),
             ("custom_evaluator", self.custom_evaluator),
             ("scoring_function", self.scoring_function),
@@ -1494,6 +1533,7 @@ class ResolvedExecutionOptions:
     max_total_examples: Any
     samples_include_pruned: Any
     smart_pruning: Any
+    winner_stability_reps: int = 0
     legacy_options: dict[str, Any] = field(default_factory=dict)
 
 
@@ -1592,6 +1632,12 @@ def _resolve_execution_bundle_options(
             "smart_pruning",
             base_options.smart_pruning,
             execution_bundle.smart_pruning,
+            defaults,
+        ),
+        winner_stability_reps=_resolve_option(
+            "winner_stability_reps",
+            base_options.winner_stability_reps,
+            execution_bundle.winner_stability_reps,
             defaults,
         ),
         legacy_options=legacy_options,
@@ -2794,6 +2840,9 @@ def optimize(  # NOSONAR(S107)
     parallel_config = combined_settings["parallel_config"]
     max_total_examples = combined_settings["max_total_examples"]
     samples_include_pruned = combined_settings["samples_include_pruned"]
+    winner_stability_reps = _coerce_winner_stability_reps(
+        combined_settings["winner_stability_reps"]
+    )
     smart_pruning_value = combined_settings["smart_pruning"]
     mock_mode_config = combined_settings["mock_mode_config"]
     custom_evaluator = combined_settings["custom_evaluator"]
@@ -2942,6 +2991,7 @@ def optimize(  # NOSONAR(S107)
         max_total_examples=max_total_examples,
         samples_include_pruned=samples_include_pruned,
         smart_pruning=smart_pruning_value,
+        winner_stability_reps=winner_stability_reps,
         legacy_options=legacy_execution_options,
     )
     resolved_execution = _resolve_execution_bundle_options(
@@ -2960,6 +3010,7 @@ def optimize(  # NOSONAR(S107)
     max_total_examples = resolved_execution.max_total_examples
     samples_include_pruned = resolved_execution.samples_include_pruned
     smart_pruning_value = resolved_execution.smart_pruning
+    winner_stability_reps_value = resolved_execution.winner_stability_reps
     legacy_execution_options = resolved_execution.legacy_options
     smart_pruning_config = _normalize_smart_pruning_options(smart_pruning_value)
     external_service_evaluator = _resolve_external_service_evaluator(
@@ -3198,6 +3249,7 @@ def optimize(  # NOSONAR(S107)
             minimal_logging=minimal_logging,
             max_total_examples=max_total_examples,
             samples_include_pruned=samples_include_pruned,
+            winner_stability_reps=winner_stability_reps_value,
             smart_pruning=smart_pruning_config,
             parallel_config=combined_parallel_config,
             mock_mode_config=mock_mode_config,

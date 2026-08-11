@@ -851,6 +851,11 @@ class OptimizedFunction(Generic[_P, _R]):
         self.samples_include_pruned = self._store_optional_param(
             kwargs, sentinel, "samples_include_pruned", True, as_bool=True
         )
+        # Opt-in post-selection winner rerun count (0 = off). Validated at
+        # ExecutionOptions construction; measured-only — never affects selection.
+        self.winner_stability_reps = self._store_optional_param(
+            kwargs, sentinel, "winner_stability_reps", 0
+        )
         self.smart_pruning = self._store_optional_param(
             kwargs, sentinel, "smart_pruning", None
         )
@@ -904,6 +909,7 @@ class OptimizedFunction(Generic[_P, _R]):
             "mock_mode_config",
             "max_total_examples",
             "samples_include_pruned",
+            "winner_stability_reps",
             "smart_pruning",
             # Multi-agent configuration
             "agents",
@@ -1214,6 +1220,7 @@ class OptimizedFunction(Generic[_P, _R]):
             "best_config_stale_ok_ttl_seconds",
             "enable_auto_load_dev_logs",
             "smart_pruning",
+            "winner_stability_reps",
             "mock_mode_config",
             "evaluator",
             "local_storage_path",
@@ -2052,6 +2059,12 @@ class OptimizedFunction(Generic[_P, _R]):
             run_description=self._run_description,
         )
         orchestrator_kwargs["requested_algorithm"] = requested_algorithm
+        # Opt-in post-selection winner rerun (0 = off). Read by the
+        # orchestrator from its config dict after selection completes;
+        # measured-only, never consulted by selection.
+        orchestrator_kwargs["winner_stability_reps"] = int(
+            getattr(self, "winner_stability_reps", 0) or 0
+        )
 
         # Auto-initialize workflow traces tracker if backend is configured
         workflow_traces_tracker = create_workflow_traces_tracker(traigent_config)

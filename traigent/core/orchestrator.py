@@ -9,6 +9,7 @@ import copy
 import inspect
 import math
 import os
+import statistics
 import sys
 import time
 import uuid
@@ -3622,6 +3623,124 @@ class OptimizationOrchestrator:
         decision = await self._handle_vendor_pause(exc)
         return decision == "break"
 
+    async def _maybe_run_winner_stability(
+        self,
+        result: OptimizationResult,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        session_id: str | None,
+    ) -> None:
+        """Opt-in post-selection rerun of the winning configuration.
+
+        When ``winner_stability_reps`` (``ExecutionOptions``) is > 0, re-execute
+        the already-selected winner that many times on the same evaluation set
+        through the normal trial execution path (``TrialLifecycle.run_trial``)
+        and attach a ``winner_stability`` block — ``{reps, mean, std, scores,
+        config_hash, evaluated_at}`` — to ``result.metadata``, mirroring the
+        TraigentSchema best-config ``validation.winner_stability`` contract.
+
+        Measured evidence only: this runs strictly AFTER selection, its rerun
+        trials are never appended to ``self._trials`` or ``result.trials``, and
+        nothing here re-ranks, gates, or qualifies the winner. Guarded like the
+        significance post-processing: a rerun failure must not fail the run.
+        """
+        try:
+            reps = int(self.config.get("winner_stability_reps", 0) or 0)
+        except (TypeError, ValueError):
+            return
+        if reps <= 0:
+            return
+        if not result.best_config:
+            logger.info(
+                "winner_stability_reps=%d requested but the run selected no "
+                "winner; skipping the stability rerun.",
+                reps,
+            )
+            return
+        primary_objective = (
+            self.optimizer.objectives[0] if self.optimizer.objectives else None
+        )
+        if not primary_objective:
+            logger.warning(
+                "winner_stability_reps=%d requested but the run declares no "
+                "primary objective to measure; skipping the stability rerun.",
+                reps,
+            )
+            return
+
+        try:
+            scores: list[float] = []
+            for index in range(reps):
+                try:
+                    rerun_trial = await self._trial_lifecycle.run_trial(
+                        func=func,
+                        config=copy.deepcopy(result.best_config),
+                        dataset=dataset,
+                        trial_number=len(self._trials) + index + 1,
+                        session_id=session_id,
+                    )
+                except Exception:
+                    # Hard execution failure (e.g. missing API key mid-rerun):
+                    # keep whatever was already measured, stop spending.
+                    logger.warning(
+                        "Winner-stability rerun %d/%d failed to execute; "
+                        "stopping the rerun with %d measured score(s). "
+                        "Optimization results are unaffected.",
+                        index + 1,
+                        reps,
+                        len(scores),
+                        exc_info=True,
+                    )
+                    break
+                score = (
+                    coerce_finite_objective_score(
+                        rerun_trial.get_metric(primary_objective)
+                    )
+                    if rerun_trial.is_successful
+                    else None
+                )
+                if score is None:
+                    logger.warning(
+                        "Winner-stability rerun %d/%d produced no finite "
+                        "'%s' score; skipping it.",
+                        index + 1,
+                        reps,
+                        primary_objective,
+                    )
+                    continue
+                scores.append(float(score))
+
+            if not scores:
+                logger.warning(
+                    "Winner-stability rerun measured no scores in %d "
+                    "attempt(s); no winner_stability block recorded.",
+                    reps,
+                )
+                return
+            if len(scores) < reps:
+                logger.warning(
+                    "Winner-stability rerun measured %d of the %d requested "
+                    "replicate(s); recording the measured subset only.",
+                    len(scores),
+                    reps,
+                )
+
+            block: dict[str, Any] = {
+                "reps": len(scores),
+                "mean": statistics.fmean(scores),
+            }
+            if len(scores) >= 2:
+                block["std"] = statistics.stdev(scores)
+            block["scores"] = list(scores)
+            block["config_hash"] = self._get_config_hash(result.best_config)
+            block["evaluated_at"] = datetime.now(UTC).isoformat()
+            result.metadata["winner_stability"] = block
+        except Exception:
+            logger.warning(
+                "Winner-stability rerun failed; optimization results are unaffected",
+                exc_info=True,
+            )
+
     async def _finalize_optimization(
         self,
         result: OptimizationResult,
@@ -4165,6 +4284,11 @@ class OptimizationOrchestrator:
             )
 
             result = self._create_optimization_result()
+            # Opt-in measured winner rerun (winner_stability_reps > 0). Runs
+            # only on this normally-completed path — never after a
+            # cancellation, timeout, or failure — and before finalize so the
+            # recorded block rides the same persistence pass as the result.
+            await self._maybe_run_winner_stability(result, func, dataset, session_id)
             await self._finalize_optimization(result, session_id, session_span)
             return result
 
