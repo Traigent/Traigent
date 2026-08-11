@@ -15,9 +15,11 @@ Design under test: `UNCONDITIONAL_SKIP_OK` jobs (`changes`, `preflight`,
 unforgeable GitHub event facts. `CLASSIFIER_GATED` jobs (`unit`, `collection`,
 `mcp-contract`) may skip ONLY when `verify_classifier_gated_skip` proves it
 safe: `changes` succeeded, `code_changed` is literally `'false'`, and the
-classifier saw a non-zero changed-file count. Anything else -- `cancelled`,
-an empty/missing output, a zero file count, an unsuccessful `changes` run --
-fails the gate.
+classifier saw a non-zero changed-file count. The sole zero-file exception is
+an explicitly verified ancestry-only topology, reported as the literal
+`ancestry_only='true'`; anything else -- `cancelled`, an empty/missing output,
+a zero file count without that proof, an unsuccessful `changes` run -- fails
+the gate.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ import json
 import os
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -220,6 +223,51 @@ class TestClassifierGatedSkipVerification:
         assert not result.ok
         assert any("zero changed files" in p for p in result.problems)
 
+    def test_verified_ancestry_only_zero_file_count_passes(self) -> None:
+        needs = self._needs(
+            changes_outputs={
+                "py_changed": "false",
+                "code_changed": "false",
+                "changed_file_count": "0",
+                "ancestry_only": "true",
+            }
+        )
+        result = gate.evaluate(
+            needs, unconditional_skip_ok={}, classifier_gated=self.GATED
+        )
+        assert result.ok, result.problems
+        assert any("ancestry-only" in j for j in result.justifications)
+
+    def test_false_ancestry_only_does_not_weaken_zero_file_rejection(self) -> None:
+        needs = self._needs(
+            changes_outputs={
+                "py_changed": "false",
+                "code_changed": "false",
+                "changed_file_count": "0",
+                "ancestry_only": "false",
+            }
+        )
+        result = gate.evaluate(
+            needs, unconditional_skip_ok={}, classifier_gated=self.GATED
+        )
+        assert not result.ok
+        assert any("zero changed files" in p for p in result.problems)
+
+    def test_ancestry_only_zero_file_exception_requires_py_changed_false(self) -> None:
+        needs = self._needs(
+            changes_outputs={
+                "py_changed": "true",
+                "code_changed": "false",
+                "changed_file_count": "0",
+                "ancestry_only": "true",
+            }
+        )
+        result = gate.evaluate(
+            needs, unconditional_skip_ok={}, classifier_gated=self.GATED
+        )
+        assert not result.ok
+        assert any("py_changed" in p for p in result.problems)
+
     def test_negative_file_count_fails(self) -> None:
         needs = self._needs(
             changes_outputs={"code_changed": "false", "changed_file_count": "-1"}
@@ -307,6 +355,303 @@ class TestRealConfig:
         real_changes_outputs = {"py_changed", "code_changed", "changed_file_count"}
         assert set(gate.CLASSIFIER_GATED.values()) <= real_changes_outputs
 
+    def test_workflow_declares_a_fail_closed_ancestry_only_verifier(self) -> None:
+        workflow = (REPO_ROOT / ".github" / "workflows" / "pr-gate.yml").read_text()
+
+        required_fragments = (
+            "ancestry_only: ${{ steps.changed.outputs.ancestry_only }}",
+            'echo "ancestry_only=false" >> "$GITHUB_OUTPUT"',
+            'if [ "$EVENT_NAME" = "pull_request" ]; then',
+            'base_sha="$PULL_REQUEST_BASE_SHA"',
+            'head_sha="$PULL_REQUEST_HEAD_SHA"',
+            'if [ "$head_repo" != "$REPOSITORY" ]; then',
+            "git fetch --no-tags origin main",
+            'git merge-base --is-ancestor "$base_sha" "$declared_head"',
+            "Traigent-Ancestry-Only: true",
+            'if [ "${#head_parents[@]}" -ne 2 ]',
+            'if [ "${head_parents[0]}" != "$base_sha" ]',
+            'if [ "${head_parents[1]}" != "$expected_main_sha" ]',
+            'if [ "$declared_tree" != "$base_tree" ]',
+            'if [ "$EVENT_NAME" = "merge_group" ]; then',
+            'if [ "${#candidate_parents[@]}" -ne 2 ]',
+            'if [ "${candidate_parents[0]}" != "$base_sha" ]',
+            'if [ "$candidate_tree" != "$base_tree" ]',
+            'if [ "$pr_head_tree" != "$base_tree" ]',
+        )
+        for fragment in required_fragments:
+            assert fragment in workflow, fragment
+
+    def test_ancestry_only_requires_main_tree_to_match_base(self) -> None:
+        workflow = (REPO_ROOT / ".github" / "workflows" / "pr-gate.yml").read_text()
+        assert (
+            'expected_main_tree="$(git rev-parse "${expected_main_sha}^{tree}")"'
+            in workflow
+        )
+        assert 'if [ "$expected_main_tree" != "$base_tree" ]; then' in workflow
+
+    def test_merge_group_requires_a_same_repo_pr_attribution(self) -> None:
+        workflow = (REPO_ROOT / ".github" / "workflows" / "pr-gate.yml").read_text()
+        assert "pull-requests: read" in workflow
+        assert (
+            "MERGE_GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}" in workflow
+        )
+        assert 'merge_group_ref="$MERGE_GROUP_HEAD_REF"' in workflow
+        assert (
+            'merge_group_ref="${{ github.event.merge_group.head_ref }}"' not in workflow
+        )
+        assert "gh-readonly-queue/develop/pr-([1-9][0-9]*)-" in workflow
+        assert (
+            'gh api --method GET "repos/${REPOSITORY}/pulls/${pr_number}"' in workflow
+        )
+        assert '"$pr_head_repo" != "$REPOSITORY"' in workflow
+
+    def test_merge_group_rejects_mismatched_or_ambiguous_pr_metadata(self) -> None:
+        workflow = (REPO_ROOT / ".github" / "workflows" / "pr-gate.yml").read_text()
+        assert '"$pr_base_ref" != "develop"' in workflow
+        assert '"$pr_base_sha" != "$base_sha"' in workflow
+        assert '"$pr_head_sha_api" != "$pr_head_sha"' in workflow
+        assert "merge-queue head_ref is not one exact develop PR reference" in workflow
+
+    def test_merge_group_fails_closed_when_pr_lookup_fails(self) -> None:
+        workflow = (REPO_ROOT / ".github" / "workflows" / "pr-gate.yml").read_text()
+        assert "could not fetch merge-queue PR metadata" in workflow
+
+    def test_run_blocks_do_not_interpolate_event_data_as_shell_source(self) -> None:
+        workflow = (REPO_ROOT / ".github" / "workflows" / "pr-gate.yml").read_text()
+        run_lines: list[str] = []
+        in_run_block = False
+        run_indent = 0
+        for line in workflow.splitlines():
+            stripped = line.lstrip()
+            indent = len(line) - len(stripped)
+            if stripped == "run: |":
+                in_run_block = True
+                run_indent = indent
+                continue
+            if in_run_block and stripped and indent <= run_indent:
+                in_run_block = False
+            if in_run_block:
+                run_lines.append(line)
+
+        assert run_lines
+        assert all("${{ github.event" not in line for line in run_lines)
+
+
+class TestMergeQueueTopologyReplay:
+    """Execute the workflow classifier against a synthetic merge-queue graph."""
+
+    @staticmethod
+    def _git(repo: Path, *args: str, input_text: str | None = None) -> str:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            input=input_text,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+        return completed.stdout.strip()
+
+    def _make_graph(self, tmp_path: Path) -> dict[str, str | Path]:
+        remote = tmp_path / "remote.git"
+        repo = tmp_path / "repo"
+        remote.mkdir()
+        repo.mkdir()
+        self._git(remote, "init", "--bare")
+        self._git(repo, "init")
+        self._git(repo, "config", "user.email", "ci@example.test")
+        self._git(repo, "config", "user.name", "CI")
+        self._git(repo, "remote", "add", "origin", str(remote))
+
+        (repo / "payload.txt").write_text("stable\n")
+        self._git(repo, "add", "payload.txt")
+        self._git(repo, "commit", "-m", "base")
+        self._git(repo, "branch", "-M", "develop")
+        base_sha = self._git(repo, "rev-parse", "HEAD")
+
+        self._git(repo, "branch", "main")
+        self._git(repo, "checkout", "main")
+        self._git(repo, "commit", "--allow-empty", "-m", "main")
+        main_sha = self._git(repo, "rev-parse", "HEAD")
+        self._git(repo, "push", "origin", "develop", "main")
+
+        self._git(repo, "checkout", "develop")
+        self._git(
+            repo,
+            "merge",
+            "--no-ff",
+            "main",
+            "-m",
+            "ancestry sync\n\nTraigent-Ancestry-Only: true",
+        )
+        declared_head_sha = self._git(repo, "rev-parse", "HEAD")
+
+        self._git(repo, "checkout", "--detach", base_sha)
+        self._git(repo, "merge", "--no-ff", declared_head_sha, "-m", "candidate")
+        candidate_sha = self._git(repo, "rev-parse", "HEAD")
+        return {
+            "repo": repo,
+            "base_sha": base_sha,
+            "main_sha": main_sha,
+            "declared_head_sha": declared_head_sha,
+            "candidate_sha": candidate_sha,
+        }
+
+    @staticmethod
+    def _render_changes_script(destination: Path, event_values: dict[str, str]) -> None:
+        workflow = (REPO_ROOT / ".github" / "workflows" / "pr-gate.yml").read_text()
+        start = workflow.index("        run: |\n", workflow.index("id: changed"))
+        start += len("        run: |\n")
+        end = workflow.index("\n\n  schema-types:", start)
+        script = textwrap.dedent(workflow[start:end]) + "\n"
+        # Compatibility with the pre-fix workflow is intentional: it turns
+        # the injection-shaped test case into a born-red regression test.
+        for expression, value in event_values.items():
+            script = script.replace(expression, value)
+        destination.write_text(script)
+
+    def _run_changes(
+        self,
+        tmp_path: Path,
+        graph: dict[str, str | Path],
+        *,
+        api_mode: str,
+        api_json: dict[str, object] | None,
+        head_ref: str,
+    ) -> tuple[subprocess.CompletedProcess[str], dict[str, str], Path]:
+        repo = graph["repo"]
+        assert isinstance(repo, Path)
+        base_sha = str(graph["base_sha"])
+        candidate_sha = str(graph["candidate_sha"])
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        gh = bin_dir / "gh"
+        gh.write_text(
+            "#!/usr/bin/env bash\n"
+            'if [ "$GH_STUB_MODE" = failure ]; then exit 1; fi\n'
+            "printf '%s\\n' \"$GH_STUB_JSON\"\n"
+        )
+        gh.chmod(0o755)
+
+        script = tmp_path / "changes.sh"
+        event_values = {
+            "${{ github.event_name }}": "merge_group",
+            "${{ github.event.merge_group.base_sha }}": base_sha,
+            "${{ github.event.merge_group.head_sha }}": candidate_sha,
+            "${{ github.event.merge_group.head_ref }}": head_ref,
+            "${{ github.event.pull_request.base.sha }}": "",
+            "${{ github.event.pull_request.head.sha }}": "",
+            "${{ github.event.pull_request.head.repo.full_name }}": "",
+            "${{ github.repository }}": "Traigent/Traigent",
+        }
+        self._render_changes_script(script, event_values)
+
+        output = tmp_path / "github-output"
+        env = {
+            **os.environ,
+            "EVENT_NAME": "merge_group",
+            "MERGE_GROUP_BASE_SHA": base_sha,
+            "MERGE_GROUP_HEAD_SHA": candidate_sha,
+            "MERGE_GROUP_HEAD_REF": head_ref,
+            "PULL_REQUEST_BASE_SHA": "",
+            "PULL_REQUEST_HEAD_SHA": "",
+            "PULL_REQUEST_HEAD_REPO": "",
+            "REPOSITORY": "Traigent/Traigent",
+            "GH_STUB_MODE": api_mode,
+            "GH_STUB_JSON": json.dumps(api_json or {}),
+            "GITHUB_OUTPUT": str(output),
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        }
+        completed = subprocess.run(
+            ["bash", str(script)],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        outputs = dict(
+            line.split("=", 1)
+            for line in output.read_text().splitlines()
+            if "=" in line
+        )
+        return completed, outputs, tmp_path / "injected"
+
+    def test_merge_group_provenance_replay_is_fail_closed(self, tmp_path: Path) -> None:
+        graph = self._make_graph(tmp_path)
+        base_sha = str(graph["base_sha"])
+        declared_head_sha = str(graph["declared_head_sha"])
+        valid_ref = f"gh-readonly-queue/develop/pr-2163-{'a' * 40}"
+
+        valid_api = {
+            "base": {"ref": "develop", "sha": base_sha},
+            "head": {
+                "sha": declared_head_sha,
+                "repo": {"full_name": "Traigent/Traigent"},
+            },
+        }
+        cases = (
+            ("valid", "success", valid_api, valid_ref, True),
+            (
+                "fork",
+                "success",
+                {
+                    **valid_api,
+                    "head": {
+                        "sha": declared_head_sha,
+                        "repo": {"full_name": "attacker/Traigent"},
+                    },
+                },
+                valid_ref,
+                False,
+            ),
+            (
+                "mismatched-head",
+                "success",
+                {
+                    **valid_api,
+                    "head": {
+                        "sha": "0" * 40,
+                        "repo": {"full_name": "Traigent/Traigent"},
+                    },
+                },
+                valid_ref,
+                False,
+            ),
+            ("api-failure", "failure", None, valid_ref, False),
+            ("missing-fields", "success", {}, valid_ref, False),
+            (
+                "stale-base",
+                "success",
+                {**valid_api, "base": {"ref": "develop", "sha": "0" * 40}},
+                valid_ref,
+                False,
+            ),
+            (
+                "injection-shaped-ref",
+                "success",
+                valid_api,
+                f'{valid_ref}"; touch {tmp_path / "injected"}; #',
+                False,
+            ),
+        )
+
+        for name, api_mode, api_json, head_ref, expected in cases:
+            case_dir = tmp_path / name
+            case_dir.mkdir()
+            completed, outputs, injected = self._run_changes(
+                case_dir,
+                graph,
+                api_mode=api_mode,
+                api_json=api_json,
+                head_ref=head_ref,
+            )
+            assert completed.returncode == 0, completed.stderr
+            assert outputs["ancestry_only"] == str(expected).lower()
+            assert not injected.exists(), name
+
 
 class TestCliEndToEnd:
     """Runs the actual script subprocess, mirroring the workflow's invocation."""
@@ -321,6 +666,7 @@ class TestCliEndToEnd:
             "py_changed": "false",
             "code_changed": "false",
             "changed_file_count": "1",
+            "ancestry_only": "false",
         }
         base_outputs.update(changes_outputs)
         return {
@@ -358,6 +704,16 @@ class TestCliEndToEnd:
         needs = self._full_needs(unit_result="skipped", changed_file_count="0")
         proc = _run_cli(needs)
         assert proc.returncode == 1, proc.stdout
+
+    def test_declared_ancestry_only_zero_file_count_with_skips_passes(self) -> None:
+        needs = self._full_needs(
+            unit_result="skipped",
+            changed_file_count="0",
+            ancestry_only="true",
+        )
+        proc = _run_cli(needs)
+        assert proc.returncode == 0, proc.stdout
+        assert "ancestry-only" in proc.stdout
 
     def test_changes_failed_with_downstream_skips_fails(self) -> None:
         needs = self._full_needs(unit_result="skipped")
