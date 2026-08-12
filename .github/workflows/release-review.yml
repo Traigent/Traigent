@@ -44,7 +44,7 @@ jobs:
       gate_status: ${{ steps.lint_type_status.outputs.status }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.LINT_PYTHON_VERSION }}
       - name: Install lint and type tooling
@@ -79,7 +79,7 @@ jobs:
       gate_status: ${{ steps.tests_unit_status.outputs.status }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install test deps
@@ -111,7 +111,7 @@ jobs:
       gate_status: ${{ steps.tests_integration_status.outputs.status }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install test deps
@@ -143,7 +143,7 @@ jobs:
       gate_status: ${{ steps.security_status.outputs.status }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install security tooling
@@ -180,7 +180,7 @@ jobs:
         id: dependency_review_pr
         if: github.event_name == 'pull_request'
         uses: actions/dependency-review-action@v5.0.0
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         if: github.event_name != 'pull_request'
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -241,7 +241,7 @@ jobs:
       - name: Initialize CodeQL
         id: codeql_init
         continue-on-error: true
-        uses: github/codeql-action/init@v4.36.2
+        uses: github/codeql-action/init@v4.37.6
         with:
           languages: python
           # security-extended adds CodeQL's deeper data-flow/taint queries on
@@ -251,7 +251,7 @@ jobs:
       - name: Perform CodeQL analysis
         id: codeql_analyze
         continue-on-error: true
-        uses: github/codeql-action/analyze@v4.36.2
+        uses: github/codeql-action/analyze@v4.37.6
       - name: Capture CodeQL status
         id: codeql_status
         if: always()
@@ -278,7 +278,7 @@ jobs:
       - codeql
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Detect release-review automation
@@ -417,7 +417,7 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Validate required emergency fields
