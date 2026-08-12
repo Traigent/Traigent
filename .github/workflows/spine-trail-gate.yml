@@ -176,7 +176,7 @@ jobs:
         id: spine_checkout
         if: ${{ steps.classify.outputs.need_checkout == 'true' }}
         continue-on-error: true
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: Traigent/traigent-validation-spine
           ref: ${{ steps.classify.outputs.spine_commit }}
@@ -189,7 +189,7 @@ jobs:
         id: setup_python
         if: ${{ steps.classify.outputs.need_checkout == 'true' && steps.spine_checkout.outcome == 'success' }}
         continue-on-error: true
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
