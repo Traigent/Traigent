@@ -39,7 +39,9 @@ below), a `skipped` result is accepted ONLY when all three hold:
   3. `changes` reports a NON-ZERO total changed-file count
      (`changed_file_count`), independent of any path pattern. A diff range
      that produced zero files is a broken/empty range, not a "nothing
-     relevant changed" verdict.
+     relevant changed" verdict -- except when the trusted `changes` job
+     proves the narrowly-defined, explicitly declared ancestry-only topology
+     and emits the literal `ancestry_only='true'`.
 
 Any of those failing -> the gate fails, naming which condition broke. All
 three holding -> the gate passes, and the log states the output value that
@@ -119,6 +121,11 @@ CHANGES_JOB = "changes"
 # `changes` output carrying the raw file count for the diff range, BEFORE any
 # path-pattern filtering. See the module docstring, condition 3.
 FILE_COUNT_OUTPUT = "changed_file_count"
+# A literal `true` is emitted only by pr-gate.yml after it verifies exact
+# same-repo PR / merge-queue topology, the immutable commit trailer, and equal
+# trees. It is deliberately not a general-purpose "zero diff is OK" flag.
+ANCESTRY_ONLY_OUTPUT = "ancestry_only"
+PY_CHANGED_OUTPUT = "py_changed"
 
 
 @dataclass
@@ -175,12 +182,40 @@ def verify_classifier_gated_skip(
             f"{job}=skipped, but '{CHANGES_JOB}.outputs.{FILE_COUNT_OUTPUT}'="
             f"{count_raw!r} is not a valid integer"
         )
-    if count <= 0:
+    if count < 0:
         return False, (
             f"{job}=skipped, and '{CHANGES_JOB}.outputs.{FILE_COUNT_OUTPUT}'="
-            f"{count} -- the classifier saw zero changed files, which is a "
-            "broken/empty diff range, not a legitimate 'nothing relevant "
-            "changed' verdict"
+            f"{count} -- the classifier saw a negative changed-file count, "
+            "which is invalid"
+        )
+    if count == 0:
+        ancestry_only = outputs.get(ANCESTRY_ONLY_OUTPUT)
+        if ancestry_only != "true":
+            return False, (
+                f"{job}=skipped, and '{CHANGES_JOB}.outputs.{FILE_COUNT_OUTPUT}'="
+                f"{count} -- the classifier saw zero changed files, which is a "
+                "broken/empty diff range, not a legitimate 'nothing relevant "
+                "changed' verdict"
+            )
+        py_changed = outputs.get(PY_CHANGED_OUTPUT)
+        if py_changed != "false":
+            return False, (
+                f"{job}=skipped, and '{CHANGES_JOB}.outputs.{ANCESTRY_ONLY_OUTPUT}'="
+                "'true', but "
+                f"'{CHANGES_JOB}.outputs.{PY_CHANGED_OUTPUT}'={py_changed!r}, "
+                "expected the literal string 'false'"
+            )
+        return True, (
+            f"{job}: skip verified safe for declared ancestry-only topology "
+            f"({CHANGES_JOB}.outputs.{ANCESTRY_ONLY_OUTPUT}='true', "
+            f"{CHANGES_JOB}.outputs.{FILE_COUNT_OUTPUT}=0)"
+        )
+
+    ancestry_only = outputs.get(ANCESTRY_ONLY_OUTPUT)
+    if ancestry_only not in (None, "false"):
+        return False, (
+            f"{job}=skipped, but '{CHANGES_JOB}.outputs.{ANCESTRY_ONLY_OUTPUT}'="
+            f"{ancestry_only!r} with a non-zero changed-file count"
         )
 
     return True, (

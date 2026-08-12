@@ -592,13 +592,33 @@ def _project_example_insight_row(row: Any, *, index: int) -> dict[str, Any]:
             f"{', '.join(sorted(_EXAMPLE_INSIGHT_RECOMMENDED_ACTIONS))}."
         )
 
-    return {
+    # Optional client-owned example identifier (TraigentSchema 5.6.0): the id
+    # the caller submitted in the evaluation dataset, enabling a local content
+    # join. Identity only — the same identity already crosses on /scores keys
+    # and GuidancePlan seed_ref. Shape-checked fail-closed: anything but a
+    # non-empty string of at most 255 chars (e.g. a number, which could be a
+    # covert signal channel) is rejected, not passed through.
+    example_id = row.get("example_id")
+    if example_id is not None and (
+        not isinstance(example_id, str)
+        or not example_id.strip()
+        or len(example_id) > 255
+    ):
+        raise AnalyticsClientError(
+            f"{prefix}.example_id must be a non-empty string of at most "
+            "255 characters when present."
+        )
+
+    projected: dict[str, Any] = {
         "safe_example_ref": safe_example_ref,
         "review_priority": review_priority,
         "difficulty_bucket": difficulty_bucket,
         "suspicious_flags": list(suspicious_flags),
         "recommended_action": recommended_action,
     }
+    if example_id is not None:
+        projected["example_id"] = example_id
+    return projected
 
 
 def _project_aggregate(data: Any, keys: frozenset[str], *, what: str) -> dict[str, Any]:
@@ -2392,7 +2412,10 @@ class BackendAnalyticsClient:
         The payload is freshly constructed after validating the stable top-level
         contract. ``example_rows`` is the only per-example surface and is rebuilt
         from projected safe fields so raw signals cannot pass through even on a
-        backend regression. ``summary``, ``cohorts``, ``recommendations``, and
+        backend regression. Each row may carry the optional client-owned
+        ``example_id`` (TraigentSchema 5.6.0) — identity the caller already owns,
+        shape-checked so a non-string value cannot ride the field as a covert
+        signal channel. ``summary``, ``cohorts``, ``recommendations``, and
         ``redactions`` are backend-redacted, templated, canary-enforced safe
         aggregate guidance, projected by key allowlist. ``summary.dataset_quality``
         and ``cohorts[].safe_example_refs`` additionally get per-value shape

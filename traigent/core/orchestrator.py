@@ -1887,6 +1887,76 @@ class OptimizationOrchestrator:
             "traigent_config": traigent_config,
         }
 
+    async def _account_trial_spend(
+        self,
+        trial_result: TrialResult,
+        *,
+        permit: Permit | None = None,
+    ) -> float | None:
+        """Account one trial's spend without changing selection or history.
+
+        Winner-stability reruns are deliberately measured after selection and
+        must not become optimizer trials.  They still consumed provider spend,
+        examples, and (when attached) shared ExecutionBudget trial slots, so
+        those ledgers are updated through the same accounting path as ordinary
+        trials.
+        """
+        effective_permit = permit or Permit(id=0, amount=0.0, active=True)
+        trial_cost = self._extract_trial_cost(trial_result)
+
+        if self.cost_enforcer is not None:
+            if trial_result.status == TrialStatus.CANCELLED:
+                if trial_cost is not None:
+                    await self.cost_enforcer.track_cost_async(
+                        cost=trial_cost,
+                        permit=effective_permit,
+                        trial_failed=True,
+                        trial_id=trial_result.trial_id,
+                    )
+            else:
+                await self.cost_enforcer.track_cost_async(
+                    cost=trial_cost,
+                    permit=effective_permit,
+                    trial_failed=trial_result.status == TrialStatus.FAILED,
+                    trial_id=trial_result.trial_id,
+                )
+
+        if (budget := getattr(self, "execution_budget", None)) is not None:
+            budget.debit_trial(
+                cost=trial_cost,
+                examples=self._examples_of(trial_result),
+                untracked=trial_cost is None,
+                trial_id=trial_result.trial_id,
+            )
+
+        return trial_cost
+
+    async def _account_untracked_trial_attempt(
+        self,
+        *,
+        trial_id: str,
+        permit: Permit | None,
+    ) -> None:
+        """Record a lifecycle attempt whose provider cost was not observable.
+
+        A lifecycle exception can escape before it produces a ``TrialResult``
+        (for example, a vendor pause rethrown from ``RateLimitError``).  Such
+        an attempt must still consume shared trial accounting and make the
+        monetary ledger a lower bound; inventing a zero-dollar result would
+        falsely preserve complete cost tracking.
+        """
+        if (budget := getattr(self, "execution_budget", None)) is not None:
+            budget.debit_trial(cost=None, trial_id=trial_id, untracked=True)
+
+        if self.cost_enforcer is not None:
+            effective_permit = permit or Permit(id=0, amount=0.0, active=True)
+            await self.cost_enforcer.track_cost_async(
+                cost=None,
+                permit=effective_permit,
+                trial_failed=True,
+                trial_id=trial_id,
+            )
+
     async def _handle_trial_result(
         self,
         trial_result: TrialResult,
@@ -1921,60 +1991,12 @@ class OptimizationOrchestrator:
             )
             self._log_trial(trial_result)
 
-            # Track cost for cost limit enforcement
-            # Create a default permit if none provided (for sequential trials without permit system)
-            effective_permit = permit or Permit(id=0, amount=0.0, active=True)
-
-            if trial_result.status == TrialStatus.CANCELLED:
-                # For cancelled trials, check if they have cost data
-                # (e.g., partial API calls before cancellation)
-                trial_cost = self._extract_trial_cost(trial_result)
-                if trial_cost is not None:
-                    # Track actual cost incurred before cancellation
-                    await self.cost_enforcer.track_cost_async(
-                        cost=trial_cost,
-                        permit=effective_permit,
-                        trial_failed=True,
-                        trial_id=trial_result.trial_id,
-                    )
-                # Debit the shared cumulative ExecutionBudget (issue #1980) even
-                # when the cancelled trial had NO observable cost: the examples it
-                # attempted and the trial itself must still count against the shared
-                # budget (cost=None -> untracked=True), matching the success/failed
-                # path. Debiting here rather than inside the ``trial_cost is not
-                # None`` guard fixes the #1980 accounting gap where a
-                # cancelled-with-no-cost trial debited neither examples nor a trial
-                # (and ``untracked`` was dead, always False). Absent budget -> no-op
-                # -> byte-identical.
-                if (budget := getattr(self, "execution_budget", None)) is not None:
-                    budget.debit_trial(
-                        cost=trial_cost,
-                        examples=self._examples_of(trial_result),
-                        untracked=trial_cost is None,
-                        trial_id=trial_result.trial_id,
-                    )
-                # Note: For cost-limit cancellations, no permit was acquired so
-                # nothing to release. For other cancellations (exceptions),
-                # the parallel execution manager handles permit release.
-            else:
-                # For success/failed trials, track cost (which releases reservation)
-                trial_cost = self._extract_trial_cost(trial_result)
-                await self.cost_enforcer.track_cost_async(
-                    cost=trial_cost,
-                    permit=effective_permit,
-                    trial_failed=trial_result.status == TrialStatus.FAILED,
-                    trial_id=trial_result.trial_id,
-                )
-                # Debit the shared cumulative ExecutionBudget (issue #1980).
-                # ``trial_cost is None`` marks the trial untracked (cost was not
-                # observable). Absent budget -> no-op -> byte-identical.
-                if (budget := getattr(self, "execution_budget", None)) is not None:
-                    budget.debit_trial(
-                        cost=trial_cost,
-                        examples=self._examples_of(trial_result),
-                        untracked=trial_cost is None,
-                        trial_id=trial_result.trial_id,
-                    )
+            # Track cost and cumulative budget spend without changing the
+            # selection/history semantics of the ordinary trial path.
+            await self._account_trial_spend(trial_result, permit=permit)
+            # Keep the shared sample counter mutation under the same lock as
+            # the rest of the ordinary trial state update.
+            self._register_examples_attempted(trial_result)
 
             if trial_result.is_successful:
                 self._successful_trials += 1
@@ -1985,9 +2007,6 @@ class OptimizationOrchestrator:
 
             self._notify_optimizer_of_result(trial_result, optuna_trial_id)
 
-            # Track consumed examples inside lock to prevent race conditions
-            # on _consumed_examples during parallel trial execution
-            self._register_examples_attempted(trial_result)
             self._record_provider_failure_signal(trial_result)
 
         submission_outcome: Any = None
@@ -3670,8 +3689,45 @@ class OptimizationOrchestrator:
 
         try:
             scores: list[float] = []
+            stability_cost = 0.0
             for index in range(reps):
+                permit: Permit | None = None
+                rerun_trial: TrialResult | None = None
+                lifecycle_started = False
                 try:
+                    if (budget := getattr(self, "execution_budget", None)) is not None:
+                        snapshot = budget.snapshot()
+                        exhausted_dimension = snapshot.exhausted_dimension
+                        if (
+                            exhausted_dimension is None
+                            and self.cost_enforcer is not None
+                            and snapshot.remaining_cost
+                            < self.cost_enforcer.get_status().estimated_cost_per_trial
+                        ):
+                            exhausted_dimension = "cost"
+                        if exhausted_dimension is not None:
+                            logger.info(
+                                "Winner-stability rerun %d/%d denied by the "
+                                "shared execution budget (%s); stopping with "
+                                "%d measured score(s).",
+                                index + 1,
+                                reps,
+                                exhausted_dimension,
+                                len(scores),
+                            )
+                            break
+                    if self.cost_enforcer is not None:
+                        permit = await self.cost_enforcer.acquire_permit_async()
+                        if not permit.is_granted:
+                            logger.info(
+                                "Winner-stability rerun %d/%d denied by the "
+                                "cost limit; stopping with %d measured score(s).",
+                                index + 1,
+                                reps,
+                                len(scores),
+                            )
+                            break
+                    lifecycle_started = True
                     rerun_trial = await self._trial_lifecycle.run_trial(
                         func=func,
                         config=copy.deepcopy(result.best_config),
@@ -3679,9 +3735,39 @@ class OptimizationOrchestrator:
                         trial_number=len(self._trials) + index + 1,
                         session_id=session_id,
                     )
+                    async with self._state_lock:
+                        trial_cost = await self._account_trial_spend(
+                            rerun_trial,
+                            permit=permit,
+                        )
+                        # Stability reruns are excluded from optimizer history,
+                        # but their sample accounting is still serialized.
+                        self._register_examples_attempted(rerun_trial)
+                    if trial_cost is not None:
+                        stability_cost += trial_cost
                 except Exception:
-                    # Hard execution failure (e.g. missing API key mid-rerun):
-                    # keep whatever was already measured, stop spending.
+                    # Hard execution failure (e.g. a vendor pause rethrown
+                    # before a TrialResult exists): keep whatever was already
+                    # measured, stop spending, and record the attempt as an
+                    # untracked lower bound rather than inventing zero cost.
+                    if lifecycle_started and rerun_trial is None:
+                        try:
+                            async with self._state_lock:
+                                await self._account_untracked_trial_attempt(
+                                    trial_id=(
+                                        f"winner_stability_{self._optimization_id}_"
+                                        f"{index + 1}"
+                                    ),
+                                    permit=permit,
+                                )
+                        except Exception:
+                            logger.warning(
+                                "Failed to account the untracked winner-stability "
+                                "attempt %d/%d.",
+                                index + 1,
+                                reps,
+                                exc_info=True,
+                            )
                     logger.warning(
                         "Winner-stability rerun %d/%d failed to execute; "
                         "stopping the rerun with %d measured score(s). "
@@ -3692,6 +3778,18 @@ class OptimizationOrchestrator:
                         exc_info=True,
                     )
                     break
+                finally:
+                    # This is intentionally synchronous: cancellation can
+                    # interrupt an await in this block, while release_permit
+                    # mutates the reservation under the same lock immediately.
+                    if (
+                        permit is not None
+                        and permit.active
+                        and self.cost_enforcer is not None
+                    ):
+                        self.cost_enforcer.release_permit(permit)
+                if rerun_trial is None:
+                    continue
                 score = (
                     coerce_finite_objective_score(
                         rerun_trial.get_metric(primary_objective)
@@ -3709,6 +3807,17 @@ class OptimizationOrchestrator:
                     )
                     continue
                 scores.append(float(score))
+
+            if stability_cost > 0:
+                prior_total_cost = result.total_cost or 0.0
+                result.total_cost = prior_total_cost + stability_cost
+                prior_metric_cost = result.metrics.get("total_cost", prior_total_cost)
+                try:
+                    result.metrics["total_cost"] = (
+                        float(prior_metric_cost) + stability_cost
+                    )
+                except (TypeError, ValueError):
+                    result.metrics["total_cost"] = result.total_cost
 
             if not scores:
                 logger.warning(
