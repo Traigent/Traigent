@@ -183,7 +183,7 @@ dev = [
     "types-requests>=2.31.0",
     "types-bleach>=6.0.0",
     "pre-commit>=3.0.0",
-    "ruff==0.15.12",  # Exact pin (issue #1550): CI preflight installs this exact
+    "ruff==0.16.1",  # Exact pin (issue #1550): CI preflight installs this exact
     # version so an unrelated ruff release can't retroactively fail PRs on
     # pre-existing lint debt. Bump deliberately, in the same PR as any fix-up.
     "bandit>=1.7.0",
@@ -456,6 +456,16 @@ exclude = [
     # fresh regeneration and turn --check red for a reason unrelated to drift
     # (see the trailing-whitespace lesson in the generator's module docstring).
     "traigent/generated/**",
+    # ruff 0.16 added Markdown support: `ruff format` now reformats Python code
+    # blocks inside *.md. Every gate and helper in this repo treats ruff as a
+    # Python-only tool -- the REQUIRED pr-gate 'preflight' job format-checks
+    # `git diff -- '*.py'` only, while `make format-ruff` passes whole
+    # directories and would silently rewrite 26 checked-in Markdown files
+    # (including the user-facing traigent/skills/**/SKILL.md docs), breaking
+    # that target's documented "matches the REQUIRED 'preflight' CI check"
+    # contract. Excluding *.md preserves the exact pre-0.16 scope; adopting
+    # Markdown formatting is a separate, deliberate decision.
+    "**/*.md",
     "**/__pycache__/**",
     "**/node_modules/**",
     "**/.git/**",
