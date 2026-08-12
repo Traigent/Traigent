@@ -958,6 +958,10 @@ class OptimizationOrchestrator:
 
     def _initialize_runtime_state(self) -> None:
         self._trials: list[TrialResult] = []
+        # Known spend from opt-in winner-stability reruns. These reruns are
+        # intentionally excluded from ``_trials`` and must therefore be carried
+        # into both normal and cancellation result construction explicitly.
+        self._winner_stability_accounted_cost = 0.0
         # The backend session id for the active run. Read by the
         # certified-selection report guard to verify the incumbent's trial id
         # was backend-acknowledged before attesting a winner.
@@ -1957,6 +1961,54 @@ class OptimizationOrchestrator:
                 trial_id=trial_id,
             )
 
+    async def _account_winner_stability_rerun_attempt(
+        self,
+        *,
+        rerun_trial: TrialResult | None,
+        rerun_dispatched: bool,
+        permit: Permit | None,
+        trial_id: str,
+    ) -> float | None:
+        """Account one dispatched winner-stability rerun under the state lock.
+
+        The caller creates at most one task for this small critical section and
+        shields only that task while preserving task cancellation at the public
+        optimization boundary. A pre-dispatch cancellation has neither a trial
+        result nor ``rerun_dispatched`` and therefore deliberately has no debit.
+        """
+        async with self._state_lock:
+            if rerun_trial is not None:
+                trial_cost = await self._account_trial_spend(
+                    rerun_trial,
+                    permit=permit,
+                )
+                # Stability reruns are excluded from optimizer history, but
+                # their sample accounting is still serialized.
+                self._register_examples_attempted(rerun_trial)
+                return trial_cost
+            if rerun_dispatched:
+                await self._account_untracked_trial_attempt(
+                    trial_id=trial_id,
+                    permit=permit,
+                )
+            return None
+
+    @staticmethod
+    def _add_winner_stability_cost_to_result(
+        result: OptimizationResult,
+        stability_cost: float,
+    ) -> None:
+        """Reconcile known stability-rerun spend into an outward result."""
+        if stability_cost <= 0:
+            return
+        prior_total_cost = result.total_cost or 0.0
+        result.total_cost = prior_total_cost + stability_cost
+        prior_metric_cost = result.metrics.get("total_cost", prior_total_cost)
+        try:
+            result.metrics["total_cost"] = float(prior_metric_cost) + stability_cost
+        except (TypeError, ValueError):
+            result.metrics["total_cost"] = result.total_cost
+
     async def _handle_trial_result(
         self,
         trial_result: TrialResult,
@@ -2759,6 +2811,7 @@ class OptimizationOrchestrator:
         self._best_trial_cached = None
         self._strict_withheld_promotions = []
         self._certified_promotions = 0
+        self._winner_stability_accounted_cost = 0.0
 
         # Reset stop conditions for fresh optimization run
         self._stop_condition_manager.reset()
@@ -3689,11 +3742,31 @@ class OptimizationOrchestrator:
 
         try:
             scores: list[float] = []
-            stability_cost = 0.0
             for index in range(reps):
                 permit: Permit | None = None
                 rerun_trial: TrialResult | None = None
-                lifecycle_started = False
+                rerun_dispatched = False
+                rerun_accounted = False
+                accounting_task: asyncio.Task[float | None] | None = None
+                rerun_trial_id = f"winner_stability_{self._optimization_id}_{index + 1}"
+
+                def mark_rerun_dispatched() -> None:
+                    """Record the lifecycle's actual evaluator-dispatch boundary."""
+                    nonlocal rerun_dispatched
+                    rerun_dispatched = True
+
+                async def finish_accounting_after_cancellation(
+                    task: asyncio.Task[float | None],
+                ) -> float | None:
+                    """Drain only the accounting task before preserving cancellation."""
+                    while True:
+                        try:
+                            return await asyncio.shield(task)
+                        except asyncio.CancelledError:
+                            # A repeated cancellation must not strand a paid or
+                            # unknown attempt after the lifecycle has dispatched it.
+                            continue
+
                 try:
                     if (budget := getattr(self, "execution_budget", None)) is not None:
                         snapshot = budget.snapshot()
@@ -3727,39 +3800,91 @@ class OptimizationOrchestrator:
                                 len(scores),
                             )
                             break
-                    lifecycle_started = True
                     rerun_trial = await self._trial_lifecycle.run_trial(
                         func=func,
                         config=copy.deepcopy(result.best_config),
                         dataset=dataset,
                         trial_number=len(self._trials) + index + 1,
                         session_id=session_id,
+                        on_evaluation_dispatch=mark_rerun_dispatched,
                     )
-                    async with self._state_lock:
-                        trial_cost = await self._account_trial_spend(
-                            rerun_trial,
+                    accounting_task = asyncio.create_task(
+                        self._account_winner_stability_rerun_attempt(
+                            rerun_trial=rerun_trial,
+                            rerun_dispatched=rerun_dispatched,
                             permit=permit,
+                            trial_id=rerun_trial_id,
                         )
-                        # Stability reruns are excluded from optimizer history,
-                        # but their sample accounting is still serialized.
-                        self._register_examples_attempted(rerun_trial)
+                    )
+                    trial_cost = await asyncio.shield(accounting_task)
+                    rerun_accounted = True
                     if trial_cost is not None:
-                        stability_cost += trial_cost
+                        self._winner_stability_accounted_cost += trial_cost
+                except asyncio.CancelledError:
+                    # Cancellation is a control-flow signal and must reach the
+                    # outer optimize() handler. Once the lifecycle reached the
+                    # evaluator-dispatch seam, account the attempt before
+                    # propagating; pre-dispatch cancellation only releases its
+                    # reservation and never invents an attempt.
+                    if (
+                        not rerun_accounted
+                        and accounting_task is None
+                        and (rerun_trial is not None or rerun_dispatched)
+                    ):
+                        accounting_task = asyncio.create_task(
+                            self._account_winner_stability_rerun_attempt(
+                                rerun_trial=rerun_trial,
+                                rerun_dispatched=rerun_dispatched,
+                                permit=permit,
+                                trial_id=rerun_trial_id,
+                            )
+                        )
+                    if accounting_task is not None:
+                        try:
+                            trial_cost = await finish_accounting_after_cancellation(
+                                accounting_task
+                            )
+                            rerun_accounted = True
+                            if trial_cost is not None:
+                                self._winner_stability_accounted_cost += trial_cost
+                                # The outer cancellation handler constructs a
+                                # fresh result, but keep this in-flight result
+                                # consistent too before propagating control flow.
+                                self._add_winner_stability_cost_to_result(
+                                    result,
+                                    self._winner_stability_accounted_cost,
+                                )
+                        except Exception:
+                            logger.warning(
+                                "Failed to account the cancelled winner-stability "
+                                "attempt %d/%d.",
+                                index + 1,
+                                reps,
+                                exc_info=True,
+                            )
+                    raise
                 except Exception:
                     # Hard execution failure (e.g. a vendor pause rethrown
                     # before a TrialResult exists): keep whatever was already
                     # measured, stop spending, and record the attempt as an
                     # untracked lower bound rather than inventing zero cost.
-                    if lifecycle_started and rerun_trial is None:
+                    if (
+                        not rerun_accounted
+                        and accounting_task is None
+                        and (rerun_trial is not None or rerun_dispatched)
+                    ):
+                        accounting_task = asyncio.create_task(
+                            self._account_winner_stability_rerun_attempt(
+                                rerun_trial=rerun_trial,
+                                rerun_dispatched=rerun_dispatched,
+                                permit=permit,
+                                trial_id=rerun_trial_id,
+                            )
+                        )
+                    if accounting_task is not None:
                         try:
-                            async with self._state_lock:
-                                await self._account_untracked_trial_attempt(
-                                    trial_id=(
-                                        f"winner_stability_{self._optimization_id}_"
-                                        f"{index + 1}"
-                                    ),
-                                    permit=permit,
-                                )
+                            await asyncio.shield(accounting_task)
+                            rerun_accounted = True
                         except Exception:
                             logger.warning(
                                 "Failed to account the untracked winner-stability "
@@ -3808,16 +3933,10 @@ class OptimizationOrchestrator:
                     continue
                 scores.append(float(score))
 
-            if stability_cost > 0:
-                prior_total_cost = result.total_cost or 0.0
-                result.total_cost = prior_total_cost + stability_cost
-                prior_metric_cost = result.metrics.get("total_cost", prior_total_cost)
-                try:
-                    result.metrics["total_cost"] = (
-                        float(prior_metric_cost) + stability_cost
-                    )
-                except (TypeError, ValueError):
-                    result.metrics["total_cost"] = result.total_cost
+            self._add_winner_stability_cost_to_result(
+                result,
+                self._winner_stability_accounted_cost,
+            )
 
             if not scores:
                 logger.warning(
@@ -4265,6 +4384,10 @@ class OptimizationOrchestrator:
             len(self._trials),
         )
         result = self._create_optimization_result()
+        self._add_winner_stability_cost_to_result(
+            result,
+            self._winner_stability_accounted_cost,
+        )
         try:
             await self._finalize_optimization(result, session_id, session_span)
         except Exception as finalize_error:
