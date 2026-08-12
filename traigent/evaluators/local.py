@@ -1495,6 +1495,13 @@ class LocalEvaluator(BaseEvaluator):
             if index < len(dataset.examples)
             else None
         )
+        # Thread expected-output eligibility to tracker formatters. The
+        # built-in exact-match denominator excludes blank expected values, but
+        # keeps all real attempts (including errors); custom accuracy metric
+        # functions receive their own explicit provenance at aggregation time.
+        example_metric.accuracy_eligible = not _is_empty_expected_output(
+            expected_output
+        )
         actual_value = output.get("text") if isinstance(output, dict) else output
         accuracy_value = self._calculate_example_accuracy(actual_value, expected_output)
         if accuracy_value is not None:
@@ -1707,6 +1714,19 @@ class LocalEvaluator(BaseEvaluator):
 
         for key, value in comprehensive_metrics.items():
             if value is None:
+                continue
+            if (
+                key == "score"
+                and preserve_authoritative_accuracy
+                and "accuracy" in aggregated_metrics
+                and key not in aggregated_metrics
+            ):
+                # A built-in accuracy can be a real 0.0 while its sibling
+                # score key is absent (for example every expected output is
+                # blank). Keep the public score alias aligned with that
+                # authoritative result instead of accepting the tracker's
+                # unrelated fallback score.
+                aggregated_metrics[key] = aggregated_metrics["accuracy"]
                 continue
             if (
                 key in {"accuracy", "score"}
@@ -1970,6 +1990,7 @@ class LocalEvaluator(BaseEvaluator):
         accuracy_is_custom_objective = (
             "accuracy" in self.metrics and "accuracy" in self.metric_functions
         )
+        accuracy_is_user_metric = "accuracy" in self.metric_functions
 
         if "accuracy" in self.metrics:
             accuracy_value, _ = self._compute_accuracy_aggregated(
@@ -2004,7 +2025,8 @@ class LocalEvaluator(BaseEvaluator):
         # user tuple key cannot overwrite an evaluator-computed value during the
         # tracker's user-metric aggregation pass.
         comprehensive_metrics = metrics_tracker.format_for_backend(
-            extra_reserved=self._evaluator_computable_metric_names()
+            extra_reserved=self._evaluator_computable_metric_names(),
+            user_supplied_accuracy=accuracy_is_user_metric,
         )
         self._merge_comprehensive_metrics(
             aggregated_metrics,
@@ -2038,7 +2060,9 @@ class LocalEvaluator(BaseEvaluator):
         # Generate summary_stats (needed for insights)
         summary_stats = None
         if self.execution_mode_enum:
-            summary_stats = metrics_tracker.format_as_summary_stats()
+            summary_stats = metrics_tracker.format_as_summary_stats(
+                user_supplied_accuracy=accuracy_is_user_metric
+            )
             logger.debug(f"Generated summary_stats for {self.execution_mode} mode")
 
         # Calculate success statistics

@@ -417,6 +417,13 @@ class ExampleMetrics:
     success: bool = True
     error: str | None = None
     custom_metrics: dict[str, Any] = field(default_factory=dict)
+    # ``LocalEvaluator`` sets this from the dataset's expected-output contract.
+    # A false value means the built-in exact-match accuracy is not meaningful
+    # for this row (for example, the expected output is blank), so formatter
+    # aggregations must not put it in the built-in accuracy denominator. It
+    # defaults to true for tracker callers that do not have dataset context;
+    # that preserves their established success/error fallback semantics.
+    accuracy_eligible: bool = True
     # True (the default) when ``tokens``/``cost``/``response`` were actually
     # extracted or estimated from a real provider response. False marks an
     # example whose zeros are the ABSENCE of a measurement, not a measured
@@ -641,7 +648,10 @@ class MetricsTracker:
         }
 
     def format_for_backend(
-        self, extra_reserved: frozenset[str] = frozenset()
+        self,
+        extra_reserved: frozenset[str] = frozenset(),
+        *,
+        user_supplied_accuracy: bool = False,
     ) -> dict[str, Any]:
         """Format aggregated metrics for backend submission.
 
@@ -649,6 +659,11 @@ class MetricsTracker:
         computable metric names (registered custom metrics + RAGAS names) so
         user-supplied tuple keys cannot overwrite an evaluator-computed value
         during the user-metric aggregation pass below.
+
+        ``user_supplied_accuracy`` is explicit provenance from the owning
+        evaluator: a configured ``metric_functions["accuracy"]`` owns that
+        objective and its scores must not be reinterpreted as built-in
+        exact-match results when an example execution fails.
         """
         try:
             aggregated = self.aggregate_metrics()
@@ -683,18 +698,13 @@ class MetricsTracker:
         # Since measures now contain per-example data and summary_stats contain
         # the statistical aggregations, we only need the primary metrics here
 
-        # Calculate accuracy from custom metrics if available
+        # Calculate accuracy from the shared formatter helper so this backend
+        # payload and privacy summary_stats use the same denominator.
         accuracy_value: float | None = None
         if self.example_metrics:
-            accuracy_scores = [
-                # An errored row remains in the accuracy denominator, but
-                # cannot receive credit even if it retained a matching output
-                # before a downstream failure.
-                m.custom_metrics["accuracy"] if m.success else 0.0
-                for m in self.example_metrics
-                if "accuracy" in m.custom_metrics
-                and m.custom_metrics["accuracy"] is not None
-            ]
+            accuracy_scores = self._accuracy_values_for_formatters(
+                user_supplied_accuracy=user_supplied_accuracy
+            )
             if accuracy_scores:
                 accuracy_value = sum(accuracy_scores) / len(accuracy_scores)
         else:
@@ -789,6 +799,44 @@ class MetricsTracker:
 
         return formatted
 
+    def _accuracy_values_for_formatters(
+        self, *, user_supplied_accuracy: bool
+    ) -> list[float]:
+        """Return the one accuracy denominator shared by tracker formatters.
+
+        Built-in exact-match accuracy counts every eligible execution attempt;
+        an error is therefore a zero, even if a retained output happens to
+        match. A user ``metric_functions["accuracy"]`` score is a different
+        contract: its author owns its error semantics, so the tracker preserves
+        the value the metric function returned. This explicit provenance avoids
+        guessing from a score value such as ``0.0`` or ``1.0``.
+        """
+        values: list[float] = []
+        for metric in self.example_metrics:
+            raw_accuracy = metric.custom_metrics.get("accuracy")
+
+            if user_supplied_accuracy:
+                # Objective metric-function failures fail closed before this
+                # point. A missing value is still a real attempted row, so it
+                # is a zero rather than a silently removed denominator entry.
+                values.append(float(raw_accuracy) if raw_accuracy is not None else 0.0)
+                continue
+
+            if not metric.accuracy_eligible:
+                continue
+
+            if metric.success:
+                # Existing tracker-only callers may not have emitted a
+                # per-example exact-match value. Preserve their established
+                # success fallback while making it identical in both formats.
+                values.append(float(raw_accuracy) if raw_accuracy is not None else 1.0)
+            else:
+                # Built-in exact match: an error is an attempted miss, never
+                # numerator credit from a retained matching output.
+                values.append(0.0)
+
+        return values
+
     def _aggregate_user_custom_metrics(
         self, formatted: dict[str, Any], extra_reserved: frozenset[str] = frozenset()
     ) -> None:
@@ -837,7 +885,9 @@ class MetricsTracker:
             "successful_examples": 0,
         }
 
-    def format_as_summary_stats(self) -> dict[str, Any]:
+    def format_as_summary_stats(
+        self, *, user_supplied_accuracy: bool = False
+    ) -> dict[str, Any]:
         """Format metrics as pandas.describe()-compatible summary statistics.
 
         This format is used for privacy-preserving mode where individual
@@ -877,17 +927,13 @@ class MetricsTracker:
         all_metrics = self.example_metrics
         measured_metrics = [m for m in all_metrics if m.measured]
 
-        # Extract values for each metric type
-        # For accuracy, use custom metrics when available; otherwise derive from success flags
-        # (accuracy is scoped over EVERY example, measured or not -- #1963's
-        # denominator fix is orthogonal to whether the call left a
-        # cost/token measurement behind).
-        accuracy_values = []
-        for metric in self.example_metrics:
-            if "accuracy" in metric.custom_metrics:
-                accuracy_values.append(metric.custom_metrics["accuracy"] or 0.0)
-            else:
-                accuracy_values.append(1.0 if metric.success else 0.0)
+        # Accuracy uses the same provenance-aware denominator as
+        # ``format_for_backend``. It intentionally remains independent of
+        # ``measured``: missing cost/token telemetry does not erase an
+        # execution attempt from an accuracy objective.
+        accuracy_values = self._accuracy_values_for_formatters(
+            user_supplied_accuracy=user_supplied_accuracy
+        )
 
         metrics_data: dict[str, list[int | float]] = {
             "accuracy": accuracy_values,

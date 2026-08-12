@@ -396,6 +396,111 @@ def test_format_for_backend_counts_errored_accuracy_rows_as_zero():
     assert formatted["score"] == 0.0
 
 
+def test_tracker_formatters_share_the_builtin_accuracy_denominator():
+    """Backend and summary formats both count failed eligible rows as misses."""
+    tracker = MetricsTracker()
+    tracker.add_example_metrics(
+        ExampleMetrics(success=True, custom_metrics={"accuracy": 1.0})
+    )
+    tracker.add_example_metrics(
+        ExampleMetrics(success=False, error="downstream processing failed")
+    )
+    tracker.add_example_metrics(
+        ExampleMetrics(success=False, error="downstream processing failed")
+    )
+
+    backend = tracker.format_for_backend()
+    summary = tracker.format_as_summary_stats()
+
+    assert backend["accuracy"] == pytest.approx(1 / 3)
+    assert summary["metrics"]["accuracy"]["mean"] == pytest.approx(1 / 3)
+
+
+def test_merge_keeps_authoritative_empty_expected_accuracy_zero():
+    """A positive tracker fallback must not replace a real zero score.
+
+    The built-in scorer excludes blank expected outputs and therefore returns
+    0.0. This direct merge exercise deliberately supplies the tracker's
+    positive per-example fallback so deleting ``preserve_authoritative_accuracy``
+    makes the assertion fail.
+    """
+    evaluator = LocalEvaluator(metrics=["accuracy"])
+    authoritative = evaluator.compute_metrics([""], [""], [None])
+    tracker = MetricsTracker()
+    tracker.add_example_metrics(
+        ExampleMetrics(success=True, custom_metrics={"accuracy": 1.0})
+    )
+    tracker_metrics = tracker.format_for_backend()
+
+    assert authoritative["accuracy"] == 0.0
+    assert tracker_metrics["accuracy"] == 1.0
+
+    evaluator._merge_comprehensive_metrics(
+        authoritative,
+        tracker_metrics,
+        preserve_authoritative_accuracy=True,
+    )
+
+    assert authoritative["accuracy"] == 0.0
+    assert authoritative["score"] == 0.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detailed", [True, False])
+async def test_custom_accuracy_metric_preserves_its_error_semantics_in_every_mode(
+    detailed: bool,
+):
+    """A user-owned accuracy scorer is not built-in exact-match accuracy."""
+
+    async def agent(input_data: dict[str, int]) -> str:
+        if input_data["idx"]:
+            raise RuntimeError("downstream processing failed")
+        return "match"
+
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"],
+        detailed=detailed,
+        execution_mode="local",
+        metric_functions={"accuracy": lambda _output, _expected: 0.9},
+    )
+    dataset = Dataset(
+        [EvaluationExample({"idx": i}, "match") for i in range(3)],
+        name="custom_accuracy_error_semantics_2160",
+    )
+
+    result = await evaluator.evaluate(agent, {}, dataset)
+
+    assert result.metrics["exact_match_default"] == pytest.approx(1 / 3)
+    assert result.metrics["accuracy"] == pytest.approx(0.9)
+    assert result.metrics["score"] == pytest.approx(0.9)
+    assert result.summary_stats["metrics"]["accuracy"]["mean"] == pytest.approx(0.9)
+
+
+@pytest.mark.asyncio
+async def test_local_summary_stats_excludes_blank_expected_outputs_from_accuracy():
+    """The tracker receives the same blank-expected exclusion as the scorer."""
+
+    async def agent(input_data: dict[str, int]) -> str:
+        return "" if input_data["idx"] == 0 else "match"
+
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"], detailed=False, execution_mode="local"
+    )
+    dataset = Dataset(
+        [
+            EvaluationExample({"idx": 0}, ""),
+            EvaluationExample({"idx": 1}, "match"),
+        ],
+        name="blank_expected_accuracy_summary_2160",
+    )
+
+    result = await evaluator.evaluate(agent, {}, dataset)
+
+    assert result.metrics["accuracy"] == pytest.approx(1.0)
+    assert result.summary_stats["metrics"]["accuracy"]["count"] == 1.0
+    assert result.summary_stats["metrics"]["accuracy"]["mean"] == pytest.approx(1.0)
+
+
 @pytest.mark.asyncio
 async def test_local_evaluator_preserves_honest_zero_accuracy_through_tracker_merge():
     """End-to-end: the tracker must not overwrite an all-error score with 2/3."""
