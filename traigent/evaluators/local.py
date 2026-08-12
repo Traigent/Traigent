@@ -1153,6 +1153,18 @@ class LocalEvaluator(BaseEvaluator):
         example_metric = ExampleMetrics()
 
         if output is None:
+            # The decorated function raised before producing any output at
+            # all (or a custom evaluator explicitly returned no output) --
+            # nothing was ever extracted, so every field below stays a
+            # placeholder default. Mark `measured=False` so aggregation
+            # (`MetricsTracker.aggregate_metrics`/`format_for_backend`/
+            # `format_as_summary_stats`, `BaseEvaluator._compute_cost`)
+            # excludes this row's zeros from MEAN/median/std cost, token, and
+            # response-time statistics instead of averaging them in as if
+            # they were a real (measured) zero -- see
+            # `ExampleMetrics.measured` for the full rationale (Traigent#2160
+            # sol re-review, third DO_NOT_MERGE round).
+            example_metric.measured = False
             return example_metric
 
         model_name = config.get("model") or config.get("model_name")
@@ -1662,6 +1674,8 @@ class LocalEvaluator(BaseEvaluator):
         self,
         aggregated_metrics: dict[str, float],
         comprehensive_metrics: dict[str, Any],
+        *,
+        preserve_authoritative_accuracy: bool,
     ) -> None:
         """Merge comprehensive metrics into aggregated metrics.
 
@@ -1697,8 +1711,18 @@ class LocalEvaluator(BaseEvaluator):
             if (
                 key in {"accuracy", "score"}
                 and key in aggregated_metrics
-                and aggregated_metrics[key] not in (None, 0.0)
+                and (
+                    preserve_authoritative_accuracy
+                    or aggregated_metrics[key] not in (None, 0.0)
+                )
             ):
+                # ``compute_metrics`` / ``_compute_accuracy_aggregated`` is
+                # authoritative for these objectives. In particular, 0.0 is
+                # an honest score, not a missing value for the tracker to
+                # replace with per-example metadata. A custom scorer is the
+                # exception: in non-detailed mode its aggregate is supplied
+                # by the tracker, so retain the established fallback for that
+                # explicit custom-objective contract.
                 continue
             aggregated_metrics[key] = value
 
@@ -1982,7 +2006,11 @@ class LocalEvaluator(BaseEvaluator):
         comprehensive_metrics = metrics_tracker.format_for_backend(
             extra_reserved=self._evaluator_computable_metric_names()
         )
-        self._merge_comprehensive_metrics(aggregated_metrics, comprehensive_metrics)
+        self._merge_comprehensive_metrics(
+            aggregated_metrics,
+            comprehensive_metrics,
+            preserve_authoritative_accuracy=not accuracy_is_custom_objective,
+        )
 
         aggregated_metrics.setdefault("examples_attempted", len(outputs))
 

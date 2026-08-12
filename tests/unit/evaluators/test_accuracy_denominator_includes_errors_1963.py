@@ -55,6 +55,7 @@ import pytest
 from traigent.api.types import ExampleResult
 from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationExample
 from traigent.evaluators.local import LocalEvaluator
+from traigent.evaluators.metrics_tracker import ExampleMetrics, MetricsTracker
 
 
 class _DummyEvaluator(BaseEvaluator):
@@ -375,3 +376,61 @@ async def test_local_evaluator_evaluate_denies_numerator_credit_for_downstream_f
     # `errors`, both rows would look error-free and accuracy would read 1.0.
     assert result.metrics["accuracy"] == pytest.approx(0.5)
     assert result.metrics["accuracy"] != pytest.approx(1.0)
+
+
+def test_format_for_backend_counts_errored_accuracy_rows_as_zero():
+    """A retained matching output must not earn accuracy after an error."""
+    tracker = MetricsTracker()
+    for accuracy in (1.0, 1.0, 0.0):
+        tracker.add_example_metrics(
+            ExampleMetrics(
+                success=False,
+                error="downstream processing failed",
+                custom_metrics={"accuracy": accuracy},
+            )
+        )
+
+    formatted = tracker.format_for_backend()
+
+    assert formatted["accuracy"] == 0.0
+    assert formatted["score"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_local_evaluator_preserves_honest_zero_accuracy_through_tracker_merge():
+    """End-to-end: the tracker must not overwrite an all-error score with 2/3."""
+
+    async def agent(_input: dict[str, int]) -> str:
+        return "match"
+
+    async def custom_eval(
+        func: Any, config: dict[str, Any], example: EvaluationExample
+    ) -> ExampleResult:
+        output = await func(example.input_data)
+        if example.input_data["idx"] == 2:
+            output = "nope"
+        return ExampleResult(
+            example_id=f"example_{example.input_data['idx']}",
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output=output,
+            metrics={},
+            execution_time=0.01,
+            success=False,
+            error_message="downstream processing failed",
+        )
+
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"], detailed=True, custom_eval_func=custom_eval
+    )
+    dataset = Dataset(
+        [EvaluationExample({"idx": i}, "match") for i in range(3)],
+        name="honest_zero_accuracy_tracker_merge_2160",
+    )
+
+    result = await evaluator.evaluate(agent, {}, dataset)
+
+    # Before the fix, the tracker read retained outputs as [1, 1, 0] and
+    # replaced the authoritative all-error 0.0 with 2/3.
+    assert result.metrics["accuracy"] == 0.0
+    assert result.metrics["score"] == 0.0

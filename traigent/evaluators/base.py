@@ -1670,16 +1670,33 @@ class BaseEvaluator(ABC):
     ) -> float:
         """Default cost metric - extracts average per-example cost from context.
 
-        Averaged over every example with a recorded cost measurement, NOT over
-        successful examples only (Traigent#1964). A provider call that ERRORED
-        can still have burned real, billable tokens before failing -- the LLM
-        call itself succeeded and incurred cost; something downstream (output
-        parsing, a scoring function, the eval harness) raised afterward.
-        Excluding those examples from both the numerator and denominator
-        understated the trial's true cost, and disagreed with
+        Averaged over every example with a recorded cost MEASUREMENT
+        (``ExampleMetrics.measured``, Traigent#2160 sol re-review) -- NOT
+        "successful examples only" (the original Traigent#1964 bug) and NOT
+        "every example, period" (a regression introduced while fixing
+        #1964: ``hasattr(metrics, "cost")`` is true for every
+        ``ExampleMetrics``, measured or not, since ``cost`` is a dataclass
+        field with a zero default -- so that check counted unmeasured rows
+        too). A provider call that ERRORED can still have burned real,
+        billable tokens before failing -- the LLM call itself succeeded and
+        incurred cost; something downstream (output parsing, a scoring
+        function, the eval harness) raised afterward -- and such a row IS
+        ``measured=True``, so it stays counted (the #1964 fix). But a row
+        whose call raised before producing any output at all
+        (``LocalEvaluator._extract_llm_metrics_for_output``'s ``output is
+        None`` guard) never had anything extracted; its zero cost is the
+        ABSENCE of a measurement, not a real zero, and averaging it in drags
+        the mean down for every trial with such a row -- zero is not neutral
+        in a mean. Excluding genuinely-measured errored examples from both
+        the numerator and denominator understated the trial's true cost (the
+        original #1964 bug); including genuinely-unmeasured ones does the
+        same in the opposite direction. Both disagreed with
         ``_compute_latency`` below about which examples exist in the same
-        trial (latency already counts any example with a recorded positive
-        ``execution_time`` regardless of error status).
+        trial. See ``ExampleMetrics.measured`` and the reconciliation note on
+        ``_compute_latency`` below for why the two functions use different
+        (but equivalent-in-intent) "was this measured" predicates -- they
+        operate on different data structures (``ExampleMetrics`` vs.
+        ``ExampleResult``).
         """
         # Extract cost information from context (set by metrics tracker)
         if "example_metrics" in context:
@@ -1688,7 +1705,11 @@ class BaseEvaluator(ABC):
                 total_cost = 0.0
                 count = 0
                 for metrics in example_metrics:
-                    if metrics and hasattr(metrics, "cost"):
+                    if (
+                        metrics
+                        and hasattr(metrics, "cost")
+                        and getattr(metrics, "measured", True)
+                    ):
                         total_cost += metrics.cost.total_cost
                         count += 1
                 return total_cost / count if count > 0 else 0.0
@@ -1730,6 +1751,36 @@ class BaseEvaluator(ABC):
         that time was genuinely spent. ``_compute_cost`` above uses the same
         "did we get a real measurement" gate rather than an error-based one,
         so the two per-trial metrics now agree on which examples exist.
+
+        RECONCILIATION (Traigent#2160 sol re-review): this function and
+        ``_compute_cost`` above use two DIFFERENT-LOOKING "was this
+        measured" predicates -- ``execution_time > 0`` here vs. the explicit
+        ``ExampleMetrics.measured`` flag there -- but they express the SAME
+        intent on two DIFFERENT data structures, and neither is a
+        magnitude-based heuristic pretending to substitute for the other:
+
+        * This function reads ``ExampleResult.execution_time`` (wall-clock
+          time to run the example, set REGARDLESS of whether the call
+          succeeded). The only zero-producing constructors are the
+          ``_create_failed_example_result`` methods on ``BaseEvaluator`` and
+          ``SimpleScoringEvaluator`` (a top-level concurrent-batch exception
+          caught OUTSIDE the per-example timer), which hardcode
+          ``execution_time=0.0`` specifically to mean "never timed" -- every
+          other constructor passes a real, measured ``time.time() -
+          start_time`` delta, which is essentially always positive. So
+          ``execution_time > 0`` reliably means "this example was actually
+          timed" for this data structure; it is not approximating anything.
+        * ``_compute_cost`` reads ``ExampleMetrics.cost``, where a magnitude
+          check would be WRONG: a genuinely free/self-hosted model can
+          legitimately cost exactly ``0.0`` after a real measurement, so
+          "cost > 0" would misclassify a true zero as unmeasured. Hence the
+          explicit ``measured`` boolean instead of inferring it from
+          magnitude.
+
+        Both predicates answer "did we get a real measurement for this
+        example," each in the way its own data model actually supports --
+        which is exactly what keeps the two per-trial metrics agreeing on
+        which examples exist, the property Traigent#1964 established.
         """
         if "example_results" in context:
             example_results = context["example_results"]
