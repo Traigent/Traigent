@@ -10,6 +10,7 @@ The rerun never enters ``result.trials`` and never changes which config wins.
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime
 from typing import Any
 from collections.abc import Callable
@@ -27,7 +28,10 @@ from traigent.evaluators.base import (
     EvaluationResult,
 )
 from traigent.optimizers.base import BaseOptimizer
-from traigent.utils.exceptions import OptimizationError, VendorPauseError
+from traigent.utils.exceptions import (
+    OptimizationError,
+    RateLimitError,
+)
 
 
 class StabilityOptimizer(BaseOptimizer):
@@ -342,20 +346,22 @@ class TestWinnerStabilityRerun:
         )
         budget = ExecutionBudget(max_cost_usd=10, max_examples=20)
         orchestrator.execution_budget = budget
-        original_run_trial = orchestrator._trial_lifecycle.run_trial
+        original_evaluate = evaluator.evaluate
 
-        async def pause_after_search(*args: Any, **kwargs: Any):
+        async def pause_after_dispatch(*args: Any, **kwargs: Any):
             if evaluator.evaluation_count >= 3:
-                raise VendorPauseError("provider rate limit")
-            return await original_run_trial(*args, **kwargs)
+                evaluator.evaluation_count += 1
+                raise RateLimitError("provider rate limit")
+            return await original_evaluate(*args, **kwargs)
 
-        orchestrator._trial_lifecycle.run_trial = pause_after_search
+        evaluator.evaluate = pause_after_dispatch  # type: ignore[method-assign]
 
         result = await orchestrator.optimize(mock_function, sample_dataset)
 
         assert result.status == OptimizationStatus.COMPLETED
         assert "winner_stability" not in result.metadata
         assert len(result.trials) == 3
+        assert evaluator.evaluation_count == 4
         status = orchestrator.cost_enforcer.get_status()
         assert status.trial_count == 4
         assert status.accumulated_cost_usd == pytest.approx(0.75)
@@ -370,14 +376,16 @@ class TestWinnerStabilityRerun:
     async def test_cancellation_releases_stability_permit(
         self, sample_dataset, mock_function
     ):
-        """Cancellation clears the stability reservation and remains observable."""
-        evaluator = StabilityEvaluator()
+        """Pre-dispatch cancellation releases its permit without an attempt debit."""
+        evaluator = AccountingStabilityEvaluator()
         orchestrator = _build_orchestrator(
             evaluator,
             winner_stability_reps=2,
             cost_limit=10,
             cost_approved=True,
         )
+        budget = ExecutionBudget(max_cost_usd=10, max_examples=20)
+        orchestrator.execution_budget = budget
         original_run_trial = orchestrator._trial_lifecycle.run_trial
 
         async def cancel_after_search(*args: Any, **kwargs: Any):
@@ -391,9 +399,173 @@ class TestWinnerStabilityRerun:
 
         assert result.status == OptimizationStatus.CANCELLED
         status = orchestrator.cost_enforcer.get_status()
+        # The wrapper cancels before the real lifecycle/evaluator dispatch, so
+        # no provider attempt exists to account for.
+        assert evaluator.evaluation_count == 3
+        assert status.trial_count == 3
+        assert status.unknown_cost_mode is False
         assert status.in_flight_count == 0
         assert status.reserved_cost_usd == pytest.approx(0.0)
+        snapshot = budget.snapshot()
+        assert snapshot.trials == 3
+        assert snapshot.untracked_trials == 0
+        assert snapshot.cost_tracking == "complete"
         assert len(result.trials) == 3
+
+    @pytest.mark.asyncio
+    async def test_post_dispatch_cancellation_accounts_untracked_stability_attempt(
+        self, sample_dataset, mock_function
+    ):
+        """Cancellation from the evaluator accounts the dispatched rerun once."""
+        evaluator = AccountingStabilityEvaluator()
+        orchestrator = _build_orchestrator(
+            evaluator,
+            winner_stability_reps=2,
+            cost_limit=10,
+            cost_approved=True,
+        )
+        budget = ExecutionBudget(max_cost_usd=10, max_examples=20)
+        orchestrator.execution_budget = budget
+        original_evaluate = evaluator.evaluate
+
+        async def cancel_from_dispatched_evaluator(*args: Any, **kwargs: Any):
+            if evaluator.evaluation_count >= 3:
+                evaluator.evaluation_count += 1
+                raise asyncio.CancelledError
+            return await original_evaluate(*args, **kwargs)
+
+        evaluator.evaluate = cancel_from_dispatched_evaluator  # type: ignore[method-assign]
+
+        result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert result.status == OptimizationStatus.CANCELLED
+        assert evaluator.evaluation_count == 4
+        status = orchestrator.cost_enforcer.get_status()
+        assert status.trial_count == 4
+        assert status.unknown_cost_mode is True
+        assert status.in_flight_count == 0
+        assert status.reserved_cost_usd == pytest.approx(0.0)
+        snapshot = budget.snapshot()
+        assert snapshot.trials == 4
+        assert snapshot.untracked_trials == 1
+        assert snapshot.cost_tracking == "partial"
+        assert len(result.trials) == 3
+
+    @pytest.mark.asyncio
+    async def test_cancellation_waiting_for_rerun_accounting_debits_once(
+        self, sample_dataset, mock_function
+    ):
+        """A completed rerun is debited even when cancellation interrupts lock wait."""
+        evaluator = AccountingStabilityEvaluator()
+        orchestrator = _build_orchestrator(
+            evaluator,
+            winner_stability_reps=2,
+            cost_limit=10,
+            cost_approved=True,
+        )
+        budget = ExecutionBudget(max_cost_usd=10, max_examples=20)
+        orchestrator.execution_budget = budget
+        original_run_trial = orchestrator._trial_lifecycle.run_trial
+        release_accounting = asyncio.Event()
+
+        class TrackingLock:
+            """Expose the second lock entrant without changing lock semantics."""
+
+            def __init__(self) -> None:
+                self._lock = asyncio.Lock()
+                self.entry_attempted = asyncio.Event()
+
+            async def __aenter__(self) -> TrackingLock:
+                self.entry_attempted.set()
+                await self._lock.acquire()
+                return self
+
+            async def __aexit__(self, *args: Any) -> None:
+                self._lock.release()
+
+        async def return_rerun_while_accounting_lock_is_held(
+            *args: Any, **kwargs: Any
+        ) -> TrialResult:
+            rerun_trial = await original_run_trial(*args, **kwargs)
+            if evaluator.evaluation_count == 4:
+                tracking_lock = TrackingLock()
+                orchestrator._state_lock = tracking_lock
+
+                async def hold_accounting_lock() -> None:
+                    async with tracking_lock:
+                        await release_accounting.wait()
+
+                holder = asyncio.create_task(hold_accounting_lock())
+                await tracking_lock.entry_attempted.wait()
+                tracking_lock.entry_attempted.clear()
+                orchestrator._winner_stability_test_holder = holder
+            return rerun_trial
+
+        orchestrator._trial_lifecycle.run_trial = (  # type: ignore[method-assign]
+            return_rerun_while_accounting_lock_is_held
+        )
+        optimization_task = asyncio.create_task(
+            orchestrator.optimize(mock_function, sample_dataset)
+        )
+
+        try:
+            while not hasattr(orchestrator, "_winner_stability_test_holder"):
+                await asyncio.sleep(0)
+            tracking_lock = orchestrator._state_lock
+            await tracking_lock.entry_attempted.wait()
+            optimization_task.cancel()
+            await asyncio.sleep(0)
+            assert not optimization_task.done()
+            release_accounting.set()
+            result = await optimization_task
+        finally:
+            release_accounting.set()
+            holder = getattr(orchestrator, "_winner_stability_test_holder", None)
+            if holder is not None:
+                await holder
+
+        assert result.status == OptimizationStatus.CANCELLED
+        status = orchestrator.cost_enforcer.get_status()
+        assert status.trial_count == 4
+        assert status.accumulated_cost_usd == pytest.approx(1.0)
+        assert status.unknown_cost_mode is False
+        assert status.in_flight_count == 0
+        assert status.reserved_cost_usd == pytest.approx(0.0)
+        snapshot = budget.snapshot()
+        assert snapshot.trials == 4
+        assert snapshot.consumed_cost == pytest.approx(1.0)
+        assert snapshot.untracked_trials == 0
+        assert snapshot.cost_tracking == "complete"
+        assert result.total_cost == pytest.approx(status.accumulated_cost_usd)
+        assert result.metrics["total_cost"] == pytest.approx(
+            status.accumulated_cost_usd
+        )
+        assert len(result.trials) == 3
+
+    @pytest.mark.asyncio
+    async def test_tracing_helper_accepts_legacy_direct_call_without_dispatch_callback(
+        self, sample_dataset, mock_function
+    ):
+        """The internal tracing helper keeps its optional callback default."""
+        evaluator = StabilityEvaluator()
+        orchestrator = _build_orchestrator(evaluator)
+
+        trial = await orchestrator._trial_lifecycle._execute_trial_with_tracing(
+            func=mock_function,
+            dataset=sample_dataset,
+            trial_id="legacy-direct-tracing-call",
+            backend_trial_id=None,
+            evaluation_config={"param1": 0},
+            start_time=time.time(),
+            optuna_trial_id=None,
+            progress_callback=None,
+            progress_state=None,
+            lease=None,
+            span=None,
+        )
+
+        assert trial.is_successful
+        assert evaluator.evaluation_count == 1
 
     @pytest.mark.asyncio
     async def test_no_winner_skips_the_rerun(self, sample_dataset, mock_function):
