@@ -61,8 +61,13 @@ _PROVIDER_SHAPES: tuple[
     # Bedrock Converse — camelCase, disjoint. Verified empirically for both
     # Anthropic-on-Bedrock and Amazon Nova.
     ("bedrock", ("cacheReadInputTokens",), ("cacheWriteInputTokens",), False),
-    # Google Gemini — cached content, no cache-write count.
-    ("gemini", ("cachedContentTokenCount",), None, False),
+    # Google Gemini — cachedContentTokenCount is a SUBSET of promptTokenCount, not
+    # disjoint from it (Traigent#2111). Google's own example:
+    # promptTokenCount=696219, cachedContentTokenCount=696190 -- the cached count is
+    # smaller than and contained in the prompt count. Treating this as disjoint (the
+    # historical, wrong setting) double-counts every cached token once the input key
+    # is read at all, producing exactly a 2x overcount of billable input.
+    ("gemini", ("cachedContentTokenCount",), None, True),
 )
 
 # Anthropic reports the cache-write TTL split; a single request may contain both.
@@ -167,7 +172,7 @@ def _coerce_count(raw: Any) -> int | None:
 
 
 def _read_input_tokens(payload: dict[str, Any]) -> int | None:
-    for key in ("input_tokens", "inputTokens", "prompt_tokens"):
+    for key in ("input_tokens", "inputTokens", "prompt_tokens", "promptTokenCount"):
         if key in payload:
             return _coerce_count(payload[key])
     return None

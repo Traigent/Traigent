@@ -1,6 +1,8 @@
 import math
 
-from traigent.core.sample_budget import LeaseClosure, SampleBudgetManager
+import pytest
+
+from traigent.core.sample_budget import BudgetMetrics, LeaseClosure, SampleBudgetManager
 
 
 def test_remaining_unbounded():
@@ -87,6 +89,12 @@ def test_finalizing_twice_is_idempotent():
 
 
 def test_efficiency_accounts_for_wasted_samples():
+    """Traigent#1965: the original assertion here was ``0 < efficiency < 1``,
+    an interval loose enough that it passed on BOTH the pre-fix buggy value
+    (0.5, from double-subtracting the rollback) and the correct value
+    (2/3) -- it could not have caught the regression it was meant to guard.
+    Tightened to the exact, hand-computed value.
+    """
     manager = SampleBudgetManager(total_budget=5)
     lease = manager.create_lease("trial-waste")
 
@@ -99,7 +107,59 @@ def test_efficiency_accounts_for_wasted_samples():
     metrics = manager.snapshot()
     assert metrics.consumed == 2
     assert metrics.wasted == 1
-    assert 0 < metrics.efficiency < 1
+    # Bounded mode: `consumed` (2) is already NET of the 1 rolled-back sample,
+    # so the true gross-attempted count is consumed + wasted = 3, of which 2
+    # were productive: 2/3, NOT max(2-1,0)/2 = 0.5 (the pre-fix value, which
+    # double-subtracted the same rollback that already shrank `consumed`).
+    assert metrics.efficiency == pytest.approx(2 / 3)
+    assert metrics.efficiency != pytest.approx(0.5)
 
     closure = lease.finalize()
     assert closure.wasted == 1
+
+
+def test_efficiency_unbounded_mode_subtracts_wasted_from_gross_consumed():
+    """Unbounded mode is the one case where subtracting `wasted` from
+    `consumed` IS correct, because `_consumed` stays GROSS across rollbacks
+    (never decremented) -- unlike bounded mode above. Same try_take/rollback
+    shape as the bounded test, different manager mode, different correct
+    answer: this is the asymmetry #1965 is about.
+    """
+    manager = SampleBudgetManager(total_budget=None)
+    lease = manager.create_lease("trial-waste-unbounded")
+
+    assert lease.try_take(1)
+    assert lease.try_take(1)
+    assert lease.try_take(1)
+
+    lease.rollback(1)
+
+    metrics = manager.snapshot()
+    # Unbounded: `consumed` never shrinks on rollback -- it stays the gross
+    # count of every successful try_take.
+    assert metrics.consumed == 3
+    assert metrics.wasted == 1
+    assert metrics.efficiency == pytest.approx(2 / 3)
+
+
+def test_efficiency_bounded_full_rollback_is_zero_not_negative_clamped():
+    """Every taken sample is later rolled back: 0 productive out of the 3
+    gross-attempted, not a division artifact.
+    """
+    metrics = BudgetMetrics(total_budget=5, consumed=0, wasted=3)
+    assert metrics.efficiency == 0.0
+
+
+def test_efficiency_bounded_formula_does_not_reduce_to_naive_ratio():
+    """Sanity check pinning the exact formula shape: applying the UNBOUNDED
+    formula (`max(consumed - wasted, 0) / consumed`) to a bounded snapshot
+    must NOT reproduce the correct bounded answer -- otherwise this test
+    (and the fix) would be vacuous.
+    """
+    metrics = BudgetMetrics(total_budget=5, consumed=2, wasted=3)
+    naive_unbounded_formula = (
+        max(metrics.consumed - metrics.wasted, 0) / metrics.consumed
+    )
+    assert metrics.efficiency != pytest.approx(naive_unbounded_formula)
+    assert naive_unbounded_formula == 0.0
+    assert metrics.efficiency == pytest.approx(2 / 5)

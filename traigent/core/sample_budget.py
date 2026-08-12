@@ -39,10 +39,38 @@ class BudgetMetrics:
 
     @property
     def efficiency(self) -> float:
+        """Fraction of gross-attempted samples that were productive.
+
+        ``SampleBudgetManager._release`` gives ``consumed`` a DIFFERENT meaning
+        depending on ``total_budget`` (Traigent#1965), so this cannot be one
+        formula applied uniformly:
+
+        * Bounded mode (``total_budget`` set): each rollback decrements
+          ``_consumed`` AND increments ``_wasted``, so ``consumed`` is already
+          NET of every rollback. ``consumed + wasted`` reconstructs the true
+          gross-attempted count; ``consumed`` alone is already the productive
+          count, so it must NOT be subtracted from again.
+        * Unbounded mode (``total_budget`` is ``None``): ``_consumed`` is
+          never decremented, so it stays GROSS across every rollback, and
+          ``wasted`` must be subtracted from it to find the productive count.
+
+        Applying the unbounded formula (``consumed - wasted``) to the bounded
+        case double-subtracts the rollback: try_take(5) + rollback(3) leaves
+        consumed=2, wasted=3, and ``max(2-3, 0)/2`` clamps to 0.0 even though
+        2 of the 5 attempted samples were genuinely productive (should be
+        2/5 = 0.4). Applying the bounded formula (``consumed / (consumed +
+        wasted)``) to the unbounded case is equally wrong the other way:
+        consumed=5 (gross), wasted=3 would give 5/8 instead of the true 2/5.
+        """
         if self.consumed <= 0:
             return 0.0
-        used = max(self.consumed - self.wasted, 0)
-        return max(0.0, min(1.0, used / self.consumed))
+        if self.total_budget is not None:
+            used = self.consumed
+            denominator = self.consumed + self.wasted
+        else:
+            used = max(self.consumed - self.wasted, 0)
+            denominator = self.consumed
+        return max(0.0, min(1.0, used / denominator))
 
 
 class SampleBudgetLease:
