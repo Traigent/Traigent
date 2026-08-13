@@ -1,6 +1,6 @@
 # Traigent SDK API Reference
 
-Authoritative reference for Traigent SDK **0.12.0**.
+Authoritative reference for the current Traigent SDK release.
 
 ## Quick Navigation
 
@@ -454,7 +454,7 @@ def override_config(
 def get_available_strategies() -> dict[str, Any]
 ```
 
-### CLI surfaces in 0.12.0
+### CLI surfaces
 
 The local CLI includes these onboarding entry points:
 
@@ -807,4 +807,4 @@ def my_function(input_text: str) -> str:
 
 ---
 
-This documentation reflects Traigent SDK 0.12.0.
+This documentation reflects the current Traigent SDK release.

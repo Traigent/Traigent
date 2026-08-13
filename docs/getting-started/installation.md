@@ -25,7 +25,7 @@ uv pip install "traigent[recommended]"    # Same recommended bundle as the pip p
 
 ### PyPI vs source installs
 
-For Traigent SDK 0.12.0, prefer the published PyPI package: `pip install "traigent[recommended]"`. Use a source checkout only for development or when validating unreleased changes.
+Prefer the published PyPI package: `pip install "traigent[recommended]"`. Use a source checkout only for development or when validating unreleased changes.
 
 License: Traigent SDK is dual-licensed under AGPL-3.0-only OR LicenseRef-Traigent-Commercial.
 
