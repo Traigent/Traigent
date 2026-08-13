@@ -947,6 +947,14 @@ work correctly or fail loudly.
   content isn't accidentally committed, and `docs/api-reference/telemetry.md` documents the
   default location, what is persisted, and that on-disk redaction covers structured PII only.
 
+- **Onboarding CLI** — `traigent onboard`, `traigent auth device-login`, `traigent quickstart`,
+  and `traigent first-prompt --agent claude|cursor|codex`. (Backfilled 2026-08-14; previously
+  recorded only as a "New in 0.12.0" note in the getting-started guide.)
+- **Stdio MCP server** — `traigent mcp serve` exposes the SDK's MCP server to coding agents over
+  stdio. (Backfilled 2026-08-14, same provenance.)
+- **Agent workflow spans** — `add_agent_span()` records user-defined agent spans; see
+  `docs/api-reference/telemetry.md`. (Backfilled 2026-08-14, same provenance.)
+
 ### Removed
 - **Breaking in 0.12.0:** removed Python-orchestrated JavaScript optimization through the temporary JS bridge. `ExecutionOptions.runtime`, all `ExecutionOptions.js_*` fields, `traigent.bridges.*`, and `traigent.evaluators.JSEvaluator` are no longer available. JavaScript/TypeScript users should migrate to native `@traigent/sdk` optimization with `optimize(spec)(agentFn)` and `await wrapped.optimize(...)`; see https://github.com/Traigent/traigent-js/blob/main/docs/getting-started/minimal-integration.md and https://github.com/Traigent/traigent-js/blob/main/docs/MIGRATION_FROM_PYTHON.md.
 
