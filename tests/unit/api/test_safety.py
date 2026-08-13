@@ -915,10 +915,10 @@ class TestSafetyValidatorAdvanced:
     def test_validator_multiple_constraints(self) -> None:
         """Test validator can track multiple constraints separately."""
         m1 = MetricKeyMetric(name="accuracy", metric_key="accuracy")
-        m2 = MetricKeyMetric(name="latency", metric_key="latency")
+        m2 = MetricKeyMetric(name="error_rate", metric_key="error_rate")
 
         c1 = m1.above(0.9)
-        c2 = m2.below(100)
+        c2 = m2.below(0.15)
 
         validator = SafetyValidator()
 
@@ -928,7 +928,7 @@ class TestSafetyValidatorAdvanced:
 
         # Record results for c2
         for _ in range(5):
-            validator.record_result(c2, {}, {"latency": 50})
+            validator.record_result(c2, {}, {"error_rate": 0.1})
 
         # Validate each separately
         result1 = validator.validate(c1)
@@ -938,12 +938,11 @@ class TestSafetyValidatorAdvanced:
         assert result1.sample_count == 10
         assert result2.sample_count == 5
         assert result1.metric_name == "accuracy"
-        assert result2.metric_name == "latency"
+        assert result2.metric_name == "error_rate"
 
-        # Neither is satisfied, and that is correct: 10 and 5 clean samples are far too
-        # few to certify these bars once the exact lower bound is applied (10/10 gives a
-        # 95% lower bound of ~0.69, well under the 0.9 threshold). This assertion used to
-        # read `satisfied is True` because the validator compared raw observed rates.
+        # c1 (accuracy >= 0.9): 10/10 pass, but 95% lower bound ~0.69 < 0.9, so fails
+        # c2 (error_rate <= 0.15): 5/5 pass, but 95% upper bound ~1.0 > 0.15, so fails
+        # Both fail due to insufficient samples to certify with statistical confidence.
         assert result1.satisfied is False
         assert result2.satisfied is False
         assert result1.lower_bound < result1.observed_rate
@@ -1184,3 +1183,75 @@ class TestConfidenceIsMandatory:
         cc = constraint.to_chance_constraint()
         assert cc.confidence == DEFAULT_SAFETY_CONFIDENCE
         assert cc.threshold == 0.9
+
+
+class TestBelowConstraintOperatorAwareness:
+    """Regression tests for operator-aware SafetyValidator (issue #2108).
+
+    Previously, SafetyValidator.validate() always checked `lower_bound >= threshold`
+    regardless of the constraint operator. For `<= (below)` constraints, this was wrong:
+    a mostly-bad dataset with a low but non-negligible good fraction would incorrectly
+    pass under the old check but should fail under the fix (using upper_bound <= threshold).
+
+    Example from the issue:
+    - 20/100 trials meet threshold (success rate = 0.2)
+    - 95% Clopper-Pearson lower bound on 20/100 ≈ 0.133
+    - Threshold = 0.1 (below constraint)
+    - Old (broken): lower_bound (0.133) >= 0.1 → True (incorrectly passed)
+    - Fixed: upper_bound (~0.275) <= 0.1 → False (correctly failed)
+    """
+
+    def test_below_constraint_uses_upper_bound_regression(self) -> None:
+        """Regression test for issue #2108: below() constraints use upper bound.
+
+        This test reproduces the exact scenario from the issue where the old
+        validator incorrectly passed due to only checking the lower bound.
+        """
+        metric = MetricKeyMetric(name="score", metric_key="score")
+        # Constraint: score <= 0.1 (low threshold; want most trials below it)
+        constraint = metric.below(0.1, confidence=0.95)
+        validator = SafetyValidator()
+
+        # Record 20 passing (score <= 0.1) and 80 failing (score > 0.1)
+        # This is a mostly-bad dataset with only 20% passing the constraint
+        for _ in range(20):
+            validator.record_result(constraint, {}, {"score": 0.09})
+        for _ in range(80):
+            validator.record_result(constraint, {}, {"score": 0.11})
+
+        result = validator.validate(constraint)
+
+        # Observed rate is 20% (only 20/100 trials pass the constraint)
+        assert result.observed_rate == 0.2
+        assert result.sample_count == 100
+
+        # The 95% Clopper-Pearson upper bound on 20/100 is ~0.275
+        # Check: upper_bound (~0.275) <= threshold (0.1)? NO → constraint FAILS
+        # (Before fix: lower_bound (~0.133) >= 0.1? YES → incorrectly PASSED)
+        assert result.satisfied is False, (
+            "below() constraint incorrectly passed - regressed to old behavior "
+            "that only checked lower_bound >= threshold"
+        )
+
+    def test_above_constraint_still_uses_lower_bound(self) -> None:
+        """Verify that above() constraints continue to use lower bound correctly."""
+        metric = MetricKeyMetric(name="accuracy", metric_key="accuracy")
+        # Constraint: accuracy >= 0.75
+        constraint = metric.above(0.75, confidence=0.95)
+        validator = SafetyValidator()
+
+        # Record 90 passing and 10 failing trials (90% pass rate)
+        for _ in range(90):
+            validator.record_result(constraint, {}, {"accuracy": 0.95})
+        for _ in range(10):
+            validator.record_result(constraint, {}, {"accuracy": 0.65})
+
+        result = validator.validate(constraint)
+
+        # Observed rate is 90%
+        assert result.observed_rate == 0.9
+        assert result.sample_count == 100
+        # For >= constraint: check lower_bound >= threshold (0.75)
+        # With 90% observed and 95% CI, lower bound should be well above 0.75
+        assert result.lower_bound > 0.75
+        assert result.satisfied is True

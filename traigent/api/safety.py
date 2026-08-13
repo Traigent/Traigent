@@ -759,9 +759,12 @@ class SafetyValidator:
     def validate(self, constraint: SafetyConstraint) -> SafetyValidationResult:
         """Validate a safety constraint with statistical analysis.
 
-        Always uses a Clopper-Pearson exact lower bound on the pass rate; there is
-        no point-estimate path. Too few samples therefore yields a loose bound and
-        the constraint fails, rather than passing on an unsupported observed rate.
+        Uses Clopper-Pearson exact confidence intervals. For >= (above) constraints,
+        checks that the lower bound meets the threshold. For <= (below) constraints,
+        checks that the upper bound meets the threshold.
+
+        Too few samples yields a loose bound and the constraint fails, rather than
+        passing on an unsupported observed rate.
 
         Args:
             constraint: The safety constraint to validate.
@@ -791,7 +794,7 @@ class SafetyValidator:
         observed_rate = n_passed / n_samples
 
         # Statistical validation with Clopper-Pearson
-        from traigent.tvl.statistics import clopper_pearson_lower_bound
+        from traigent.tvl.statistics import clopper_pearson_lower_bound, _beta_quantile_approx
 
         lower_bound = clopper_pearson_lower_bound(
             successes=n_passed,
@@ -799,7 +802,28 @@ class SafetyValidator:
             confidence=constraint.threshold.confidence,
         )
 
-        satisfied = lower_bound >= constraint.threshold.value
+        # For <= (below) constraints, compute upper bound instead of lower bound
+        operator = constraint.threshold.operator
+        if operator == "<=":
+            # Upper bound: _beta_quantile_approx(1 - alpha/2, k+1, n-k)
+            # Edge case: if all trials passed (n-k=0), upper bound is 1.0
+            if n_samples - n_passed == 0:
+                upper_bound = 1.0
+            else:
+                alpha = 1 - constraint.threshold.confidence
+                upper_bound = _beta_quantile_approx(
+                    1 - alpha / 2,
+                    n_passed + 1,
+                    n_samples - n_passed,
+                )
+            satisfied = upper_bound <= constraint.threshold.value
+            bound_used = upper_bound
+            bound_name = "upper bound"
+        else:
+            # For >= (above) and other operators, use lower bound
+            satisfied = lower_bound >= constraint.threshold.value
+            bound_used = lower_bound
+            bound_name = "lower bound"
 
         return SafetyValidationResult(
             metric_name=key,
@@ -811,7 +835,7 @@ class SafetyValidator:
             sample_count=n_samples,
             message=(
                 f"{key}: observed {observed_rate:.2%}, "
-                f"{constraint.threshold.confidence:.0%} CI lower bound {lower_bound:.2%} "
+                f"{constraint.threshold.confidence:.0%} CI {bound_name} {bound_used:.2%} "
                 f"{'meets' if satisfied else 'fails'} "
                 f"{constraint.threshold.value:.2%} threshold"
             ),
