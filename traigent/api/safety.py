@@ -138,7 +138,7 @@ class SafetyThreshold:
                 f"on small samples. Pass an explicit level (e.g. confidence=0.95) or "
                 f"omit the argument to use the default of {DEFAULT_SAFETY_CONFIDENCE}."
             )
-        if not 0 < self.confidence < 1:
+        if self.confidence <= 0 or self.confidence >= 1:
             raise ValueError(f"confidence must be in (0, 1), got {self.confidence}")
         if self.min_samples < 1:
             raise ValueError(f"min_samples must be >= 1, got {self.min_samples}")
