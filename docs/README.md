@@ -6,7 +6,7 @@
 
 ## 🚀 Quick Start
 
-Current release: Traigent SDK 0.12.0. Install with
+Install the current Traigent SDK release with
 `pip install "traigent[recommended]"`, then run `traigent onboard`,
 `traigent auth device-login`, `traigent quickstart`,
 `traigent first-prompt --agent claude|cursor|codex`, or `traigent mcp serve`.

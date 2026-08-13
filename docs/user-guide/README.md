@@ -25,8 +25,10 @@ Comprehensive guides for using Traigent SDK features and capabilities.
 
 **Evaluation**: Use [Evaluation Guide](evaluation_guide.md) to measure success
 
-## New in 0.12.0
+## CLI & Observability Tools
 
 - Onboarding: `traigent onboard`, browser `traigent auth device-login`, `traigent quickstart`, and `traigent first-prompt --agent claude|cursor|codex`.
 - Local MCP: `traigent mcp serve` provides the stdio MCP server for coding agents.
 - Observability: `add_agent_span()` adds user-defined agent workflow spans; see [telemetry](../api-reference/telemetry.md).
+
+See [CHANGELOG.md](../../CHANGELOG.md) for what's new in each release.

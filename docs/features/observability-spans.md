@@ -1,6 +1,6 @@
 # Agent Observability Spans
 
-Traigent 0.12.0 exposes `add_agent_span(...)` as a public API for recording
+Traigent exposes `add_agent_span(...)` as a public API for recording
 agent workflow spans inside active optimization trials.
 
 ## Public API

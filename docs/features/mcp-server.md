@@ -1,6 +1,6 @@
 # Local MCP Server
 
-Traigent 0.12.0 includes a local stdio MCP server for coding agents.
+Traigent includes a local stdio MCP server for coding agents.
 
 ```bash
 python3 -m pip install "traigent[mcp]"
