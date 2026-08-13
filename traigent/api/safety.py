@@ -794,7 +794,10 @@ class SafetyValidator:
         observed_rate = n_passed / n_samples
 
         # Statistical validation with Clopper-Pearson
-        from traigent.tvl.statistics import clopper_pearson_lower_bound, _beta_quantile_approx
+        from traigent.tvl.statistics import (
+            clopper_pearson_lower_bound,
+            _beta_quantile_approx,
+        )
 
         lower_bound = clopper_pearson_lower_bound(
             successes=n_passed,
