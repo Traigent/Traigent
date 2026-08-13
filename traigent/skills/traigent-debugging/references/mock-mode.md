@@ -142,8 +142,8 @@ jobs:
       TRAIGENT_MOCK_LLM: "true"
       TRAIGENT_OFFLINE_MODE: "true"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - run: pip install traigent[dev]
