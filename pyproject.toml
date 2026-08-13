@@ -41,7 +41,7 @@ dependencies = [
     "anyio>=4.14.2",  # AIKIDO-2026-889297 / anyio#1208 IDNA2008 TLS hostname cert-matching (fixed 4.14.2; transitive via httpx/anthropic/mcp)
     "requests>=2.33.0",  # Required by Langfuse integration sync fallback; CVE-2026-25645 / GHSA-9hjg-9r4m-mvj7 fix
     "jsonschema>=4.0.0",
-    "cryptography>=46.0.7",  # CVE-2026-26007 + 3 more fixed in 46.0.7 (see #709)
+    "cryptography>=49.0.0",  # CVE-2026-26007 + 3 more fixed in 46.0.7 (see #709); CVE-2026-69249/GHSA-jwv3-5hgf-82ww (High, cert-chain DoS) + CVE-2026-69248/GHSA-m2h6-j472-rp4c (Moderate, wildcard-DNS name-constraint escape) fixed in 49.0.0. CVE-2026-69247/GHSA-g6cj-pr64-35w5 (High, PKCS#7 Bleichenbacher oracle) needs >=50.0.0 but mlflow<=3.15.1 (latest) pins cryptography<50 -- see #2183; cannot close until mlflow unblocks or is decoupled.
     "PyJWT[crypto]>=2.13.0,<3.0.0",  # >=2.13.0: Dependabot alerts — DoS, SSRF via JWKClient, HS256 forgery, alg bypass, kid DoS
     "backoff>=2.2.0",
     "litellm>=1.87.1,<2",  # Floor: 1.84+ escaped the 1.83.x python-dotenv==1.0.1 and openai==2.24.0 exact sub-pins; 1.87.1 is the first stable release verified against this SDK. Upper bound <2 guards against a future breaking major. The demo (TraigentDemo) requires 1.88.0; this range admits it. Only the public API surface (completion, acompletion, cost_per_token, token_counter, model_cost, ModelResponse) is used — stable across the 1.x line.
