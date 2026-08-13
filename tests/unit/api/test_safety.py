@@ -1255,3 +1255,63 @@ class TestBelowConstraintOperatorAwareness:
         # With 90% observed and 95% CI, lower bound should be well above 0.75
         assert result.lower_bound > 0.75
         assert result.satisfied is True
+
+    def test_less_than_operator_uses_upper_bound(self) -> None:
+        """Regression test: < operator must use upper_bound like <=.
+
+        Issue #2108 fix covered <=, but < has same semantics and must also
+        use upper_bound for correct statistical validation.
+        """
+        metric = MetricKeyMetric(name="error_rate", metric_key="error_rate")
+        # Create constraint with < operator (no factory method for <)
+        from traigent.api.safety import SafetyConstraint, SafetyThreshold
+
+        threshold = SafetyThreshold(
+            metric_name="error_rate",
+            operator="<",
+            value=0.15,
+            confidence=0.95,
+        )
+        constraint = SafetyConstraint(metric=metric, threshold=threshold)
+        validator = SafetyValidator()
+
+        # Record 20 passing (error_rate < 0.15) and 80 failing (error_rate >= 0.15)
+        for _ in range(20):
+            validator.record_result(constraint, {}, {"error_rate": 0.1})
+        for _ in range(80):
+            validator.record_result(constraint, {}, {"error_rate": 0.2})
+
+        result = validator.validate(constraint)
+
+        # Observed rate is 20%
+        assert result.observed_rate == 0.2
+        # The constraint should fail (upper_bound ~0.275 is not <= 0.15)
+        assert result.satisfied is False
+
+    def test_greater_than_operator_uses_lower_bound(self) -> None:
+        """Verify > operator uses lower_bound like >=."""
+        metric = MetricKeyMetric(name="success_rate", metric_key="success_rate")
+        from traigent.api.safety import SafetyConstraint, SafetyThreshold
+
+        threshold = SafetyThreshold(
+            metric_name="success_rate",
+            operator=">",
+            value=0.7,
+            confidence=0.95,
+        )
+        constraint = SafetyConstraint(metric=metric, threshold=threshold)
+        validator = SafetyValidator()
+
+        # Record 85 passing and 15 failing
+        for _ in range(85):
+            validator.record_result(constraint, {}, {"success_rate": 0.8})
+        for _ in range(15):
+            validator.record_result(constraint, {}, {"success_rate": 0.6})
+
+        result = validator.validate(constraint)
+
+        # Observed rate is 85%
+        assert result.observed_rate == 0.85
+        # With 85% observed, lower_bound should be > 0.7, so constraint passes
+        assert result.lower_bound > 0.7
+        assert result.satisfied is True

@@ -805,9 +805,10 @@ class SafetyValidator:
             confidence=constraint.threshold.confidence,
         )
 
-        # For <= (below) constraints, compute upper bound instead of lower bound
+        # For <= and < (below) constraints, compute upper bound instead of lower bound.
+        # For >= and > (above) constraints, use lower bound.
         operator = constraint.threshold.operator
-        if operator == "<=":
+        if operator in ("<=", "<"):
             # Upper bound: _beta_quantile_approx(1 - alpha/2, k+1, n-k)
             # Edge case: if all trials passed (n-k=0), upper bound is 1.0
             if n_samples - n_passed == 0:
@@ -822,11 +823,17 @@ class SafetyValidator:
             satisfied = upper_bound <= constraint.threshold.value
             bound_used = upper_bound
             bound_name = "upper bound"
-        else:
-            # For >= (above) and other operators, use lower bound
+        elif operator in (">=", ">"):
+            # For >= and > (above) constraints, use lower bound
             satisfied = lower_bound >= constraint.threshold.value
             bound_used = lower_bound
             bound_name = "lower bound"
+        else:
+            # Unsupported operator (e.g., "=="). Fail closed.
+            raise ValueError(
+                f"SafetyValidator does not support operator {operator!r} "
+                f"for statistical validation. Supported operators: '>=', '>', '<=', '<'"
+            )
 
         return SafetyValidationResult(
             metric_name=key,
