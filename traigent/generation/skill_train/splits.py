@@ -34,7 +34,10 @@ def split_dataset(
     test_count = int(total * test_fraction)
     if selection_count < 5:
         raise ValueError(
-            f"selection split requires at least 5 examples, got {selection_count}"
+            f"selection split requires at least 5 examples; got {selection_count} from "
+            f"total={total} × selection_fraction={selection_fraction}. Provide at least "
+            f"{int(5 / selection_fraction) if selection_fraction > 0 else 5} examples or "
+            f"increase selection_fraction."
         )
     if selection_count < 10:
         logger.warning(
