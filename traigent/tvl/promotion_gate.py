@@ -120,11 +120,14 @@ def clopper_pearson_upper_bound(
         # reject. A chance constraint is policy-like and must never fail open,
         # so refuse to produce a verdict instead of trusting the approximation
         # (canonical require_scipy(), promotion.py:285-302).
+        # Message deliberately states the dependency, the fail-closed behaviour
+        # and the fix -- but not which bound is computed. See the internal
+        # comment above for the method rationale.
         raise ImportError(
-            "Chance-constraint evaluation requires scipy for the exact beta "
-            "Clopper-Pearson upper bound; the pure-python approximation is not "
-            "reliable enough for a fail-closed policy gate. Install the optional "
-            "extra to enable chance constraints: pip install 'traigent[bayesian]'."
+            "Chance-constraint evaluation requires scipy; the pure-python "
+            "fallback is not accurate enough for a fail-closed policy gate, so "
+            "no verdict is produced. Install the optional extra to enable "
+            "chance constraints: pip install 'traigent[bayesian]'."
         )
     return float(_scipy_stats.beta.ppf(confidence, k + 1, n - k))
 
