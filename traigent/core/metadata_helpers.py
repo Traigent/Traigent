@@ -12,6 +12,7 @@ from traigent.api.types import OptimizationResult, TrialResult
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.utils.example_id import compute_dataset_hash, generate_stable_example_id
 from traigent.utils.logging import get_logger
+from traigent.utils.outcome_signals import build_example_signals
 
 logger = get_logger(__name__)
 
@@ -589,7 +590,11 @@ def _build_single_measure_full(
         logger.debug("Skipping measure %s because it has no numeric metrics", idx)
         return None
 
-    measure_result = {"example_id": example_id, "metrics": metrics_dict}
+    measure_result = {
+        "example_id": example_id,
+        "metrics": metrics_dict,
+        **build_example_signals(example_result),
+    }
     _validate_measure_dict(measure_result, idx)
     logger.debug("Measure %s being sent: %s", idx, measure_result)
     return measure_result
@@ -687,7 +692,15 @@ def _build_single_measure_privacy(
         )
         return None
 
-    measure_result = {"example_id": example_id, "metrics": metrics_dict}
+    # Digests and the match bit are one-way and content-free -- the same
+    # privacy reasoning already applied to surrogate_score above -- so they ride
+    # in privacy mode too. Without them a privacy-mode run could never have its
+    # evaluator assessed, which is precisely when that assurance matters most.
+    measure_result = {
+        "example_id": example_id,
+        "metrics": metrics_dict,
+        **build_example_signals(example_result),
+    }
     _validate_measure_dict(measure_result, idx)
     return measure_result
 
