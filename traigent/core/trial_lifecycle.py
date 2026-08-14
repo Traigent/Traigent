@@ -438,6 +438,7 @@ class TrialLifecycle:
         session_id: str | None = None,
         optuna_trial_id: int | None = None,
         sample_ceiling: int | None = None,
+        on_evaluation_dispatch: Callable[[], None] | None = None,
     ) -> TrialResult:
         """Run a single optimization trial.
 
@@ -456,6 +457,8 @@ class TrialLifecycle:
             session_id: Session ID for hash generation (optional)
             optuna_trial_id: Optuna trial ID for pruning integration
             sample_ceiling: Optional per-trial budget ceiling (for parallel allocation)
+            on_evaluation_dispatch: Internal callback invoked immediately before
+                the evaluator is dispatched. ``None`` preserves normal behavior.
 
         Returns:
             TrialResult with evaluation results
@@ -501,6 +504,7 @@ class TrialLifecycle:
                 progress_state=progress_state,
                 lease=lease,
                 span=span,
+                on_evaluation_dispatch=on_evaluation_dispatch,
             )
 
     async def _execute_trial_with_tracing(
@@ -516,6 +520,7 @@ class TrialLifecycle:
         progress_state: Any,
         lease: SampleBudgetLease | None,
         span: Any,
+        on_evaluation_dispatch: Callable[[], None] | None = None,
     ) -> TrialResult:
         """Execute trial with tracing span active."""
         orchestrator = self._orchestrator
@@ -543,6 +548,8 @@ class TrialLifecycle:
                     }
                 ),
             ):
+                if on_evaluation_dispatch is not None:
+                    on_evaluation_dispatch()
                 eval_result = await orchestrator.evaluator.evaluate(
                     func, evaluation_config, dataset, **evaluate_kwargs
                 )

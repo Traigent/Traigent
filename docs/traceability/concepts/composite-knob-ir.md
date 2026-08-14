@@ -1,6 +1,6 @@
 # Composite-Knob IR
 
-Traigent 0.12.0 includes the RFC 0002 P5 composite-knob intermediate
+Traigent includes the RFC 0002 P5 composite-knob intermediate
 representation in `traigent.knobs.composites` and catalog factories in
 `traigent.knobs.patterns`.
 

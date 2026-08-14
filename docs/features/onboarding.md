@@ -1,6 +1,6 @@
 # Onboarding & CLI
 
-Traigent 0.12.0 adds guided CLI surfaces for getting a Python project from
+Traigent provides guided CLI surfaces for getting a Python project from
 install to a safe first run.
 
 ## Commands

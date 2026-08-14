@@ -156,7 +156,7 @@ migrate to `TRAIGENT_TRACE_ENABLED`.
 
 ### Agent Workflow Spans
 
-0.12.0 exposes a public helper for adding sanitized agent/node spans to the
+Traigent exposes a public helper for adding sanitized agent/node spans to the
 active optimization workflow trace:
 
 ```python

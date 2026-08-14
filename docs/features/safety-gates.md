@@ -1,6 +1,6 @@
 # Safety Gates
 
-Traigent 0.12.0 adds several fail-closed or explicit-opt-in gates around real
+Traigent includes several fail-closed or explicit-opt-in gates around real
 optimization, CI runs, dataset paths, backend validation, and persisted example
 content.
 

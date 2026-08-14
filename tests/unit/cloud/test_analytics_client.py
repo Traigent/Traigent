@@ -618,6 +618,7 @@ class TestWave2SingleRunAnalytics:
             "example_rows": [
                 {
                     "safe_example_ref": "exref_0123456789abcdef",
+                    "example_id": "ex_a3f4b2c8_17",
                     "review_priority": "high",
                     "difficulty_bucket": "medium",
                     "suspicious_flags": ["possible_mislabel"],
@@ -766,11 +767,16 @@ class TestWave2SingleRunAnalytics:
         assert isinstance(rows, list)
         assert set(rows[0]) == {
             "safe_example_ref",
+            "example_id",
             "review_priority",
             "difficulty_bucket",
             "suspicious_flags",
             "recommended_action",
         }
+        # The client-owned identity passes through verbatim (TraigentSchema
+        # 5.6.0): it enables the caller's local content join and carries no
+        # signal values.
+        assert rows[0]["example_id"] == "ex_a3f4b2c8_17"
         mock_response.raise_for_status.assert_called_once()
         mock_http.get.assert_called_once_with(
             "/api/v1/analytics/runs/run%20123/example-insights",
@@ -805,6 +811,7 @@ class TestWave2SingleRunAnalytics:
         assert isinstance(row, dict)
         assert set(row) == {
             "safe_example_ref",
+            "example_id",
             "review_priority",
             "difficulty_bucket",
             "suspicious_flags",
@@ -812,7 +819,30 @@ class TestWave2SingleRunAnalytics:
         }
         assert "composite_score" not in row
         assert "success_rate" not in row
-        assert "example_id" not in row
+        # example_id is an allowlisted identity field (TraigentSchema 5.6.0),
+        # not a raw signal: it passes through while unknown fields are dropped.
+        assert row["example_id"] == "raw-123"
+
+    @pytest.mark.asyncio
+    async def test_get_example_insights_accepts_row_without_example_id(
+        self, example_insights_payload: dict[str, object]
+    ) -> None:
+        """example_id is optional: unresolved rows stay exref_-only and pass."""
+        client = _make_client()
+        payload = dict(example_insights_payload)
+        rows = example_insights_payload["example_rows"]
+        assert isinstance(rows, list)
+        assert isinstance(rows[0], dict)
+        legacy_row = {k: v for k, v in rows[0].items() if k != "example_id"}
+        payload["example_rows"] = [legacy_row]
+        _mock_get_response(client, payload)
+
+        result = await client.get_example_insights("proj_abc", "run_123")
+
+        result_rows = result["example_rows"]
+        assert isinstance(result_rows, list)
+        assert isinstance(result_rows[0], dict)
+        assert "example_id" not in result_rows[0]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -823,6 +853,12 @@ class TestWave2SingleRunAnalytics:
             ("recommended_action", "review_before_promotion", "recommended_action"),
             ("suspicious_flags", ["format_drift"], "suspicious_flags"),
             ("safe_example_ref", "exref_bad", "safe_example_ref"),
+            # example_id is identity-only: a number here would be a covert
+            # signal channel, and empty/oversized values are off-contract.
+            ("example_id", 0.91, "example_id"),
+            ("example_id", 17, "example_id"),
+            ("example_id", "", "example_id"),
+            ("example_id", "x" * 256, "example_id"),
         ],
     )
     async def test_get_example_insights_rejects_invalid_row_fields(

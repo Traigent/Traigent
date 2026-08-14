@@ -22,6 +22,7 @@ from traigent.evaluators.base import (
     EvaluationResult,
     _accuracy_values_match,
     _example_correlation_key,
+    _is_empty_expected_output,
 )
 from traigent.evaluators.metrics_tracker import (
     EMPTY_OUTPUT_RATE_WARNING_THRESHOLD,
@@ -1152,6 +1153,18 @@ class LocalEvaluator(BaseEvaluator):
         example_metric = ExampleMetrics()
 
         if output is None:
+            # The decorated function raised before producing any output at
+            # all (or a custom evaluator explicitly returned no output) --
+            # nothing was ever extracted, so every field below stays a
+            # placeholder default. Mark `measured=False` so aggregation
+            # (`MetricsTracker.aggregate_metrics`/`format_for_backend`/
+            # `format_as_summary_stats`, `BaseEvaluator._compute_cost`)
+            # excludes this row's zeros from MEAN/median/std cost, token, and
+            # response-time statistics instead of averaging them in as if
+            # they were a real (measured) zero -- see
+            # `ExampleMetrics.measured` for the full rationale (Traigent#2160
+            # sol re-review, third DO_NOT_MERGE round).
+            example_metric.measured = False
             return example_metric
 
         model_name = config.get("model") or config.get("model_name")
@@ -1482,6 +1495,13 @@ class LocalEvaluator(BaseEvaluator):
             if index < len(dataset.examples)
             else None
         )
+        # Thread expected-output eligibility to tracker formatters. The
+        # built-in exact-match denominator excludes blank expected values, but
+        # keeps all real attempts (including errors); custom accuracy metric
+        # functions receive their own explicit provenance at aggregation time.
+        example_metric.accuracy_eligible = not _is_empty_expected_output(
+            expected_output
+        )
         actual_value = output.get("text") if isinstance(output, dict) else output
         accuracy_value = self._calculate_example_accuracy(actual_value, expected_output)
         if accuracy_value is not None:
@@ -1601,32 +1621,56 @@ class LocalEvaluator(BaseEvaluator):
         self,
         outputs: list[Any],
         dataset: Dataset,
+        errors: list[str | None] | None = None,
     ) -> tuple[float | None, int]:
         """Compute aggregated accuracy across outputs.
+
+        This is the accuracy path that actually reaches users of the default
+        (local) evaluator: its result overwrites ``aggregated_metrics["accuracy"]``
+        set by ``BaseEvaluator._compute_accuracy`` below. It must therefore share
+        that method's denominator semantics rather than silently disagreeing with
+        it (Traigent#1963) -- an errored example still counts against the
+        denominator; only the missing-expected-output exclusion drops an example
+        entirely. That exclusion uses ``_is_empty_expected_output`` (None, or an
+        empty/whitespace-only string), the SAME predicate ``BaseEvaluator.
+        _compute_accuracy`` uses -- a plain ``expected is None`` check here would
+        leave an empty-string expected output counted as a real (near-certain)
+        miss on this path while ``_compute_accuracy`` excludes it entirely,
+        disagreeing about which rows even enter the denominator.
 
         Args:
             outputs: List of outputs
             dataset: Evaluation dataset
+            errors: Per-example error messages aligned with ``outputs`` (None for
+                a successful call). Omitted (``None``) treats every example as
+                successful, which keeps existing direct callers that pre-date
+                error-awareness unchanged.
 
         Returns:
             Tuple of (accuracy value or None, total count)
         """
         total = 0
         correct = 0
+        error_list = errors if errors is not None else [None] * len(outputs)
 
-        for raw_output, example in zip(outputs, dataset.examples, strict=False):
+        for raw_output, example, error in zip(
+            outputs, dataset.examples, error_list, strict=False
+        ):
             expected = example.expected_output
-            if expected is None:
+            if _is_empty_expected_output(expected):
+                continue
+
+            # An errored example is a real attempt with a real (missing)
+            # answer, not a non-event -- it counts against the denominator
+            # even though it can never count as correct.
+            total += 1
+            if error is not None:
                 continue
 
             value = (
                 raw_output.get("text") if isinstance(raw_output, dict) else raw_output
             )
-            if value is None:
-                continue
-
-            total += 1
-            if _accuracy_values_match(value, expected):
+            if value is not None and _accuracy_values_match(value, expected):
                 correct += 1
 
         if total > 0:
@@ -1637,6 +1681,8 @@ class LocalEvaluator(BaseEvaluator):
         self,
         aggregated_metrics: dict[str, float],
         comprehensive_metrics: dict[str, Any],
+        *,
+        preserve_authoritative_accuracy: bool,
     ) -> None:
         """Merge comprehensive metrics into aggregated metrics.
 
@@ -1670,10 +1716,33 @@ class LocalEvaluator(BaseEvaluator):
             if value is None:
                 continue
             if (
+                key == "score"
+                and preserve_authoritative_accuracy
+                and "accuracy" in aggregated_metrics
+                and key not in aggregated_metrics
+            ):
+                # A built-in accuracy can be a real 0.0 while its sibling
+                # score key is absent (for example every expected output is
+                # blank). Keep the public score alias aligned with that
+                # authoritative result instead of accepting the tracker's
+                # unrelated fallback score.
+                aggregated_metrics[key] = aggregated_metrics["accuracy"]
+                continue
+            if (
                 key in {"accuracy", "score"}
                 and key in aggregated_metrics
-                and aggregated_metrics[key] not in (None, 0.0)
+                and (
+                    preserve_authoritative_accuracy
+                    or aggregated_metrics[key] not in (None, 0.0)
+                )
             ):
+                # ``compute_metrics`` / ``_compute_accuracy_aggregated`` is
+                # authoritative for these objectives. In particular, 0.0 is
+                # an honest score, not a missing value for the tracker to
+                # replace with per-example metadata. A custom scorer is the
+                # exception: in non-detailed mode its aggregate is supplied
+                # by the tracker, so retain the established fallback for that
+                # explicit custom-objective contract.
                 continue
             aggregated_metrics[key] = value
 
@@ -1921,9 +1990,12 @@ class LocalEvaluator(BaseEvaluator):
         accuracy_is_custom_objective = (
             "accuracy" in self.metrics and "accuracy" in self.metric_functions
         )
+        accuracy_is_user_metric = "accuracy" in self.metric_functions
 
         if "accuracy" in self.metrics:
-            accuracy_value, _ = self._compute_accuracy_aggregated(outputs, dataset)
+            accuracy_value, _ = self._compute_accuracy_aggregated(
+                outputs, dataset, errors
+            )
             if accuracy_value is not None:
                 if accuracy_is_custom_objective:
                     # Keep the default exact-match value as a labelled
@@ -1953,9 +2025,14 @@ class LocalEvaluator(BaseEvaluator):
         # user tuple key cannot overwrite an evaluator-computed value during the
         # tracker's user-metric aggregation pass.
         comprehensive_metrics = metrics_tracker.format_for_backend(
-            extra_reserved=self._evaluator_computable_metric_names()
+            extra_reserved=self._evaluator_computable_metric_names(),
+            user_supplied_accuracy=accuracy_is_user_metric,
         )
-        self._merge_comprehensive_metrics(aggregated_metrics, comprehensive_metrics)
+        self._merge_comprehensive_metrics(
+            aggregated_metrics,
+            comprehensive_metrics,
+            preserve_authoritative_accuracy=not accuracy_is_custom_objective,
+        )
 
         aggregated_metrics.setdefault("examples_attempted", len(outputs))
 
@@ -1983,7 +2060,9 @@ class LocalEvaluator(BaseEvaluator):
         # Generate summary_stats (needed for insights)
         summary_stats = None
         if self.execution_mode_enum:
-            summary_stats = metrics_tracker.format_as_summary_stats()
+            summary_stats = metrics_tracker.format_as_summary_stats(
+                user_supplied_accuracy=accuracy_is_user_metric
+            )
             logger.debug(f"Generated summary_stats for {self.execution_mode} mode")
 
         # Calculate success statistics

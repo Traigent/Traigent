@@ -994,8 +994,9 @@ def prepare_call_arguments(
     input_data: Any,
     *,
     injection_mode: Any = "context",
-    should_expand: Callable[[Callable[..., Any], CollectionsMapping[str, Any]], bool]
-    | None = None,
+    should_expand: (
+        Callable[[Callable[..., Any], CollectionsMapping[str, Any]], bool] | None
+    ) = None,
 ) -> tuple[tuple[Any, ...], dict[str, Any]]:
     """Determine positional/keyword call arguments for ``func`` WITHOUT calling it.
 
@@ -1442,6 +1443,13 @@ class BaseEvaluator(ABC):
         are treated as missing (equivalent to None) and excluded from accuracy
         computation. This prevents misleading metrics when datasets lack proper
         expected outputs.
+
+        An example whose provider call ERRORED still counts against the
+        denominator (Traigent#1963): it is a real attempt with a real (missing)
+        expected output, not a non-event. Excluding errored examples from BOTH
+        numerator and denominator let a config that fails on half its inputs
+        report a perfect score computed only over the surviving half -- exactly
+        the number users optimize against.
         """
         if not expected:
             return 0.0
@@ -1450,11 +1458,13 @@ class BaseEvaluator(ABC):
         total = 0
 
         for output, exp, error in zip(outputs, expected, errors, strict=False):
-            # Skip if error occurred or expected output is missing/empty
-            if error is None and not _is_empty_expected_output(exp):
-                if _accuracy_values_match(output, exp):
-                    correct += 1
-                total += 1
+            # Skip only when the expected output itself is missing/empty --
+            # an error is not a reason to drop the example from the count.
+            if _is_empty_expected_output(exp):
+                continue
+            total += 1
+            if error is None and _accuracy_values_match(output, exp):
+                correct += 1
 
         return correct / total if total > 0 else 0.0
 
@@ -1659,18 +1669,48 @@ class BaseEvaluator(ABC):
         errors: list[str | None],
         **context,
     ) -> float:
-        """Default cost metric - extracts total cost from evaluation context."""
+        """Default cost metric - extracts average per-example cost from context.
+
+        Averaged over every example with a recorded cost MEASUREMENT
+        (``ExampleMetrics.measured``, Traigent#2160 sol re-review) -- NOT
+        "successful examples only" (the original Traigent#1964 bug) and NOT
+        "every example, period" (a regression introduced while fixing
+        #1964: ``hasattr(metrics, "cost")`` is true for every
+        ``ExampleMetrics``, measured or not, since ``cost`` is a dataclass
+        field with a zero default -- so that check counted unmeasured rows
+        too). A provider call that ERRORED can still have burned real,
+        billable tokens before failing -- the LLM call itself succeeded and
+        incurred cost; something downstream (output parsing, a scoring
+        function, the eval harness) raised afterward -- and such a row IS
+        ``measured=True``, so it stays counted (the #1964 fix). But a row
+        whose call raised before producing any output at all
+        (``LocalEvaluator._extract_llm_metrics_for_output``'s ``output is
+        None`` guard) never had anything extracted; its zero cost is the
+        ABSENCE of a measurement, not a real zero, and averaging it in drags
+        the mean down for every trial with such a row -- zero is not neutral
+        in a mean. Excluding genuinely-measured errored examples from both
+        the numerator and denominator understated the trial's true cost (the
+        original #1964 bug); including genuinely-unmeasured ones does the
+        same in the opposite direction. Both disagreed with
+        ``_compute_latency`` below about which examples exist in the same
+        trial. See ``ExampleMetrics.measured`` and the reconciliation note on
+        ``_compute_latency`` below for why the two functions use different
+        (but equivalent-in-intent) "was this measured" predicates -- they
+        operate on different data structures (``ExampleMetrics`` vs.
+        ``ExampleResult``).
+        """
         # Extract cost information from context (set by metrics tracker)
         if "example_metrics" in context:
             example_metrics = context["example_metrics"]
             if example_metrics:
-                # Calculate average cost from successful examples
                 total_cost = 0.0
                 count = 0
-                for _i, (error, metrics) in enumerate(
-                    zip(errors, example_metrics, strict=False)
-                ):
-                    if error is None and metrics and hasattr(metrics, "cost"):
+                for metrics in example_metrics:
+                    if (
+                        metrics
+                        and hasattr(metrics, "cost")
+                        and getattr(metrics, "measured", True)
+                    ):
                         total_cost += metrics.cost.total_cost
                         count += 1
                 return total_cost / count if count > 0 else 0.0
@@ -1692,17 +1732,56 @@ class BaseEvaluator(ABC):
     ) -> float:
         """Compute average latency (response time) in MILLISECONDS.
 
-        Returns the average execution time across all successful examples,
-        converted to ms — the canonical unit for the bare ``latency`` metric
-        on EVERY lane (#1855): the hybrid lane already aggregates per-result
-        ``latency_ms`` into ``metrics["latency"]`` and mirrors it to
-        ``response_time_ms`` (hybrid_api.py), and the schema timing
-        vocabulary treats ``_ms`` names as canonical. Before #1855 this
-        builtin returned SECONDS, so a local run and a hybrid run disagreed
-        1000x under the same metric key and the results table could not
-        label the unit truthfully. All inputs below are wall-clock seconds
-        (``execution_time``; ``avg_response_time`` per
+        Returns the average execution time across every example with a
+        recorded, positive ``execution_time`` -- converted to ms, the
+        canonical unit for the bare ``latency`` metric on EVERY lane (#1855):
+        the hybrid lane already aggregates per-result ``latency_ms`` into
+        ``metrics["latency"]`` and mirrors it to ``response_time_ms``
+        (hybrid_api.py), and the schema timing vocabulary treats ``_ms`` names
+        as canonical. Before #1855 this builtin returned SECONDS, so a local
+        run and a hybrid run disagreed 1000x under the same metric key and the
+        results table could not label the unit truthfully. All inputs below
+        are wall-clock seconds (``execution_time``; ``avg_response_time`` per
         ``avg_response_time_seconds``), hence the uniform conversion.
+
+        NOTE (Traigent#1964): despite the name, this filter is NOT "successful
+        examples" -- it is ``execution_time > 0``, independent of error status.
+        An example that errored after real wall-clock time elapsed (e.g. the
+        provider call itself succeeded and only a later step failed) still
+        contributes its measured time, which is the behaviour actually wanted:
+        that time was genuinely spent. ``_compute_cost`` above uses the same
+        "did we get a real measurement" gate rather than an error-based one,
+        so the two per-trial metrics now agree on which examples exist.
+
+        RECONCILIATION (Traigent#2160 sol re-review): this function and
+        ``_compute_cost`` above use two DIFFERENT-LOOKING "was this
+        measured" predicates -- ``execution_time > 0`` here vs. the explicit
+        ``ExampleMetrics.measured`` flag there -- but they express the SAME
+        intent on two DIFFERENT data structures, and neither is a
+        magnitude-based heuristic pretending to substitute for the other:
+
+        * This function reads ``ExampleResult.execution_time`` (wall-clock
+          time to run the example, set REGARDLESS of whether the call
+          succeeded). The only zero-producing constructors are the
+          ``_create_failed_example_result`` methods on ``BaseEvaluator`` and
+          ``SimpleScoringEvaluator`` (a top-level concurrent-batch exception
+          caught OUTSIDE the per-example timer), which hardcode
+          ``execution_time=0.0`` specifically to mean "never timed" -- every
+          other constructor passes a real, measured ``time.time() -
+          start_time`` delta, which is essentially always positive. So
+          ``execution_time > 0`` reliably means "this example was actually
+          timed" for this data structure; it is not approximating anything.
+        * ``_compute_cost`` reads ``ExampleMetrics.cost``, where a magnitude
+          check would be WRONG: a genuinely free/self-hosted model can
+          legitimately cost exactly ``0.0`` after a real measurement, so
+          "cost > 0" would misclassify a true zero as unmeasured. Hence the
+          explicit ``measured`` boolean instead of inferring it from
+          magnitude.
+
+        Both predicates answer "did we get a real measurement for this
+        example," each in the way its own data model actually supports --
+        which is exactly what keeps the two per-trial metrics agreeing on
+        which examples exist, the property Traigent#1964 established.
         """
         if "example_results" in context:
             example_results = context["example_results"]

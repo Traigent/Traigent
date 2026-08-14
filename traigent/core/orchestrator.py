@@ -9,6 +9,7 @@ import copy
 import inspect
 import math
 import os
+import statistics
 import sys
 import time
 import uuid
@@ -64,8 +65,8 @@ from traigent.core.execution_policy_runtime import (
     SOURCE_CLOUD_BRAIN,
     SOURCE_LOCAL_FALLBACK,
     CloudBrainUnavailableError,
-    backend_optimization_strategy_for_algorithm,
     backend_egress_disabled,
+    backend_optimization_strategy_for_algorithm,
     is_offline_requested,
     policy_from_config,
     policy_is_cloud_brain,
@@ -957,6 +958,10 @@ class OptimizationOrchestrator:
 
     def _initialize_runtime_state(self) -> None:
         self._trials: list[TrialResult] = []
+        # Known spend from opt-in winner-stability reruns. These reruns are
+        # intentionally excluded from ``_trials`` and must therefore be carried
+        # into both normal and cancellation result construction explicitly.
+        self._winner_stability_accounted_cost = 0.0
         # The backend session id for the active run. Read by the
         # certified-selection report guard to verify the incumbent's trial id
         # was backend-acknowledged before attesting a winner.
@@ -1886,6 +1891,124 @@ class OptimizationOrchestrator:
             "traigent_config": traigent_config,
         }
 
+    async def _account_trial_spend(
+        self,
+        trial_result: TrialResult,
+        *,
+        permit: Permit | None = None,
+    ) -> float | None:
+        """Account one trial's spend without changing selection or history.
+
+        Winner-stability reruns are deliberately measured after selection and
+        must not become optimizer trials.  They still consumed provider spend,
+        examples, and (when attached) shared ExecutionBudget trial slots, so
+        those ledgers are updated through the same accounting path as ordinary
+        trials.
+        """
+        effective_permit = permit or Permit(id=0, amount=0.0, active=True)
+        trial_cost = self._extract_trial_cost(trial_result)
+
+        if self.cost_enforcer is not None:
+            if trial_result.status == TrialStatus.CANCELLED:
+                if trial_cost is not None:
+                    await self.cost_enforcer.track_cost_async(
+                        cost=trial_cost,
+                        permit=effective_permit,
+                        trial_failed=True,
+                        trial_id=trial_result.trial_id,
+                    )
+            else:
+                await self.cost_enforcer.track_cost_async(
+                    cost=trial_cost,
+                    permit=effective_permit,
+                    trial_failed=trial_result.status == TrialStatus.FAILED,
+                    trial_id=trial_result.trial_id,
+                )
+
+        if (budget := getattr(self, "execution_budget", None)) is not None:
+            budget.debit_trial(
+                cost=trial_cost,
+                examples=self._examples_of(trial_result),
+                untracked=trial_cost is None,
+                trial_id=trial_result.trial_id,
+            )
+
+        return trial_cost
+
+    async def _account_untracked_trial_attempt(
+        self,
+        *,
+        trial_id: str,
+        permit: Permit | None,
+    ) -> None:
+        """Record a lifecycle attempt whose provider cost was not observable.
+
+        A lifecycle exception can escape before it produces a ``TrialResult``
+        (for example, a vendor pause rethrown from ``RateLimitError``).  Such
+        an attempt must still consume shared trial accounting and make the
+        monetary ledger a lower bound; inventing a zero-dollar result would
+        falsely preserve complete cost tracking.
+        """
+        if (budget := getattr(self, "execution_budget", None)) is not None:
+            budget.debit_trial(cost=None, trial_id=trial_id, untracked=True)
+
+        if self.cost_enforcer is not None:
+            effective_permit = permit or Permit(id=0, amount=0.0, active=True)
+            await self.cost_enforcer.track_cost_async(
+                cost=None,
+                permit=effective_permit,
+                trial_failed=True,
+                trial_id=trial_id,
+            )
+
+    async def _account_winner_stability_rerun_attempt(
+        self,
+        *,
+        rerun_trial: TrialResult | None,
+        rerun_dispatched: bool,
+        permit: Permit | None,
+        trial_id: str,
+    ) -> float | None:
+        """Account one dispatched winner-stability rerun under the state lock.
+
+        The caller creates at most one task for this small critical section and
+        shields only that task while preserving task cancellation at the public
+        optimization boundary. A pre-dispatch cancellation has neither a trial
+        result nor ``rerun_dispatched`` and therefore deliberately has no debit.
+        """
+        async with self._state_lock:
+            if rerun_trial is not None:
+                trial_cost = await self._account_trial_spend(
+                    rerun_trial,
+                    permit=permit,
+                )
+                # Stability reruns are excluded from optimizer history, but
+                # their sample accounting is still serialized.
+                self._register_examples_attempted(rerun_trial)
+                return trial_cost
+            if rerun_dispatched:
+                await self._account_untracked_trial_attempt(
+                    trial_id=trial_id,
+                    permit=permit,
+                )
+            return None
+
+    @staticmethod
+    def _add_winner_stability_cost_to_result(
+        result: OptimizationResult,
+        stability_cost: float,
+    ) -> None:
+        """Reconcile known stability-rerun spend into an outward result."""
+        if stability_cost <= 0:
+            return
+        prior_total_cost = result.total_cost or 0.0
+        result.total_cost = prior_total_cost + stability_cost
+        prior_metric_cost = result.metrics.get("total_cost", prior_total_cost)
+        try:
+            result.metrics["total_cost"] = float(prior_metric_cost) + stability_cost
+        except (TypeError, ValueError):
+            result.metrics["total_cost"] = result.total_cost
+
     async def _handle_trial_result(
         self,
         trial_result: TrialResult,
@@ -1920,60 +2043,12 @@ class OptimizationOrchestrator:
             )
             self._log_trial(trial_result)
 
-            # Track cost for cost limit enforcement
-            # Create a default permit if none provided (for sequential trials without permit system)
-            effective_permit = permit or Permit(id=0, amount=0.0, active=True)
-
-            if trial_result.status == TrialStatus.CANCELLED:
-                # For cancelled trials, check if they have cost data
-                # (e.g., partial API calls before cancellation)
-                trial_cost = self._extract_trial_cost(trial_result)
-                if trial_cost is not None:
-                    # Track actual cost incurred before cancellation
-                    await self.cost_enforcer.track_cost_async(
-                        cost=trial_cost,
-                        permit=effective_permit,
-                        trial_failed=True,
-                        trial_id=trial_result.trial_id,
-                    )
-                # Debit the shared cumulative ExecutionBudget (issue #1980) even
-                # when the cancelled trial had NO observable cost: the examples it
-                # attempted and the trial itself must still count against the shared
-                # budget (cost=None -> untracked=True), matching the success/failed
-                # path. Debiting here rather than inside the ``trial_cost is not
-                # None`` guard fixes the #1980 accounting gap where a
-                # cancelled-with-no-cost trial debited neither examples nor a trial
-                # (and ``untracked`` was dead, always False). Absent budget -> no-op
-                # -> byte-identical.
-                if (budget := getattr(self, "execution_budget", None)) is not None:
-                    budget.debit_trial(
-                        cost=trial_cost,
-                        examples=self._examples_of(trial_result),
-                        untracked=trial_cost is None,
-                        trial_id=trial_result.trial_id,
-                    )
-                # Note: For cost-limit cancellations, no permit was acquired so
-                # nothing to release. For other cancellations (exceptions),
-                # the parallel execution manager handles permit release.
-            else:
-                # For success/failed trials, track cost (which releases reservation)
-                trial_cost = self._extract_trial_cost(trial_result)
-                await self.cost_enforcer.track_cost_async(
-                    cost=trial_cost,
-                    permit=effective_permit,
-                    trial_failed=trial_result.status == TrialStatus.FAILED,
-                    trial_id=trial_result.trial_id,
-                )
-                # Debit the shared cumulative ExecutionBudget (issue #1980).
-                # ``trial_cost is None`` marks the trial untracked (cost was not
-                # observable). Absent budget -> no-op -> byte-identical.
-                if (budget := getattr(self, "execution_budget", None)) is not None:
-                    budget.debit_trial(
-                        cost=trial_cost,
-                        examples=self._examples_of(trial_result),
-                        untracked=trial_cost is None,
-                        trial_id=trial_result.trial_id,
-                    )
+            # Track cost and cumulative budget spend without changing the
+            # selection/history semantics of the ordinary trial path.
+            await self._account_trial_spend(trial_result, permit=permit)
+            # Keep the shared sample counter mutation under the same lock as
+            # the rest of the ordinary trial state update.
+            self._register_examples_attempted(trial_result)
 
             if trial_result.is_successful:
                 self._successful_trials += 1
@@ -1984,9 +2059,6 @@ class OptimizationOrchestrator:
 
             self._notify_optimizer_of_result(trial_result, optuna_trial_id)
 
-            # Track consumed examples inside lock to prevent race conditions
-            # on _consumed_examples during parallel trial execution
-            self._register_examples_attempted(trial_result)
             self._record_provider_failure_signal(trial_result)
 
         submission_outcome: Any = None
@@ -2739,6 +2811,7 @@ class OptimizationOrchestrator:
         self._best_trial_cached = None
         self._strict_withheld_promotions = []
         self._certified_promotions = 0
+        self._winner_stability_accounted_cost = 0.0
 
         # Reset stop conditions for fresh optimization run
         self._stop_condition_manager.reset()
@@ -3622,6 +3695,303 @@ class OptimizationOrchestrator:
         decision = await self._handle_vendor_pause(exc)
         return decision == "break"
 
+    async def _maybe_run_winner_stability(
+        self,
+        result: OptimizationResult,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        session_id: str | None,
+    ) -> None:
+        """Opt-in post-selection rerun of the winning configuration.
+
+        When ``winner_stability_reps`` (``ExecutionOptions``) is > 0, re-execute
+        the already-selected winner that many times on the same evaluation set
+        through the normal trial execution path (``TrialLifecycle.run_trial``)
+        and attach a ``winner_stability`` block — ``{reps, mean, std, scores,
+        config_hash, evaluated_at}`` — to ``result.metadata``, mirroring the
+        TraigentSchema best-config ``validation.winner_stability`` contract.
+
+        Measured evidence only: this runs strictly AFTER selection, its rerun
+        trials are never appended to ``self._trials`` or ``result.trials``, and
+        nothing here re-ranks, gates, or qualifies the winner. Guarded like the
+        significance post-processing: a rerun failure must not fail the run.
+        """
+        try:
+            reps = int(self.config.get("winner_stability_reps", 0) or 0)
+        except (TypeError, ValueError):
+            return
+        if reps <= 0:
+            return
+        if not result.best_config:
+            logger.info(
+                "winner_stability_reps=%d requested but the run selected no "
+                "winner; skipping the stability rerun.",
+                reps,
+            )
+            return
+        primary_objective = (
+            self.optimizer.objectives[0] if self.optimizer.objectives else None
+        )
+        if not primary_objective:
+            logger.warning(
+                "winner_stability_reps=%d requested but the run declares no "
+                "primary objective to measure; skipping the stability rerun.",
+                reps,
+            )
+            return
+
+        try:
+            scores: list[float] = []
+            for index in range(reps):
+                permit: Permit | None = None
+                rerun_trial: TrialResult | None = None
+                rerun_dispatched = False
+                rerun_accounted = False
+                accounting_task: asyncio.Task[float | None] | None = None
+                rerun_trial_id = f"winner_stability_{self._optimization_id}_{index + 1}"
+
+                def mark_rerun_dispatched() -> None:
+                    """Record the lifecycle's actual evaluator-dispatch boundary."""
+                    nonlocal rerun_dispatched
+                    rerun_dispatched = True
+
+                async def finish_accounting_after_cancellation(
+                    task: asyncio.Task[float | None],
+                ) -> float | None:
+                    """Drain only the accounting task before preserving cancellation."""
+                    while True:
+                        try:
+                            return await asyncio.shield(task)
+                        except asyncio.CancelledError:  # NOSONAR
+                            # A repeated cancellation must not strand a paid or
+                            # unknown attempt after the lifecycle has dispatched it.
+                            # The enclosing handler always re-raises the original
+                            # cancellation after this accounting task finishes.
+                            continue
+
+                try:
+                    if (budget := getattr(self, "execution_budget", None)) is not None:
+                        snapshot = budget.snapshot()
+                        exhausted_dimension = snapshot.exhausted_dimension
+                        if (
+                            exhausted_dimension is None
+                            and self.cost_enforcer is not None
+                            and snapshot.remaining_cost
+                            < self.cost_enforcer.get_status().estimated_cost_per_trial
+                        ):
+                            exhausted_dimension = "cost"
+                        if exhausted_dimension is not None:
+                            logger.info(
+                                "Winner-stability rerun %d/%d denied by the "
+                                "shared execution budget (%s); stopping with "
+                                "%d measured score(s).",
+                                index + 1,
+                                reps,
+                                exhausted_dimension,
+                                len(scores),
+                            )
+                            break
+                    if self.cost_enforcer is not None:
+                        permit = await self.cost_enforcer.acquire_permit_async()
+                        if not permit.is_granted:
+                            logger.info(
+                                "Winner-stability rerun %d/%d denied by the "
+                                "cost limit; stopping with %d measured score(s).",
+                                index + 1,
+                                reps,
+                                len(scores),
+                            )
+                            break
+                    rerun_trial = await self._trial_lifecycle.run_trial(
+                        func=func,
+                        config=copy.deepcopy(result.best_config),
+                        dataset=dataset,
+                        trial_number=len(self._trials) + index + 1,
+                        session_id=session_id,
+                        on_evaluation_dispatch=mark_rerun_dispatched,
+                    )
+                    accounting_task = asyncio.create_task(
+                        self._account_winner_stability_rerun_attempt(
+                            rerun_trial=rerun_trial,
+                            rerun_dispatched=rerun_dispatched,
+                            permit=permit,
+                            trial_id=rerun_trial_id,
+                        )
+                    )
+                    trial_cost = await asyncio.shield(accounting_task)
+                    rerun_accounted = True
+                    if trial_cost is not None:
+                        self._winner_stability_accounted_cost += trial_cost
+                except asyncio.CancelledError:
+                    # Cancellation is a control-flow signal and must reach the
+                    # outer optimize() handler. Once the lifecycle reached the
+                    # evaluator-dispatch seam, account the attempt before
+                    # propagating; pre-dispatch cancellation only releases its
+                    # reservation and never invents an attempt.
+                    if (
+                        not rerun_accounted
+                        and accounting_task is None
+                        and (rerun_trial is not None or rerun_dispatched)
+                    ):
+                        accounting_task = asyncio.create_task(
+                            self._account_winner_stability_rerun_attempt(
+                                rerun_trial=rerun_trial,
+                                rerun_dispatched=rerun_dispatched,
+                                permit=permit,
+                                trial_id=rerun_trial_id,
+                            )
+                        )
+                    if accounting_task is not None:
+                        try:
+                            trial_cost = await finish_accounting_after_cancellation(
+                                accounting_task
+                            )
+                            rerun_accounted = True
+                            if trial_cost is not None:
+                                self._winner_stability_accounted_cost += trial_cost
+                                # The outer cancellation handler constructs a
+                                # fresh result, but keep this in-flight result
+                                # consistent too before propagating control flow.
+                                self._add_winner_stability_cost_to_result(
+                                    result,
+                                    self._winner_stability_accounted_cost,
+                                )
+                        except Exception:
+                            logger.warning(
+                                "Failed to account the cancelled winner-stability "
+                                "attempt %d/%d.",
+                                index + 1,
+                                reps,
+                                exc_info=True,
+                            )
+                    raise
+                except Exception:
+                    # Hard execution failure (e.g. a vendor pause rethrown
+                    # before a TrialResult exists): keep whatever was already
+                    # measured, stop spending, and record the attempt as an
+                    # untracked lower bound rather than inventing zero cost.
+                    if (
+                        not rerun_accounted
+                        and accounting_task is None
+                        and (rerun_trial is not None or rerun_dispatched)
+                    ):
+                        accounting_task = asyncio.create_task(
+                            self._account_winner_stability_rerun_attempt(
+                                rerun_trial=rerun_trial,
+                                rerun_dispatched=rerun_dispatched,
+                                permit=permit,
+                                trial_id=rerun_trial_id,
+                            )
+                        )
+                    if accounting_task is not None:
+                        try:
+                            await asyncio.shield(accounting_task)
+                            rerun_accounted = True
+                        except Exception:
+                            logger.warning(
+                                "Failed to account the untracked winner-stability "
+                                "attempt %d/%d.",
+                                index + 1,
+                                reps,
+                                exc_info=True,
+                            )
+                    logger.warning(
+                        "Winner-stability rerun %d/%d failed to execute; "
+                        "stopping the rerun with %d measured score(s). "
+                        "Optimization results are unaffected.",
+                        index + 1,
+                        reps,
+                        len(scores),
+                        exc_info=True,
+                    )
+                    break
+                finally:
+                    # This is intentionally synchronous: cancellation can
+                    # interrupt an await in this block, while release_permit
+                    # mutates the reservation under the same lock immediately.
+                    if (
+                        permit is not None
+                        and permit.active
+                        and self.cost_enforcer is not None
+                    ):
+                        self.cost_enforcer.release_permit(permit)
+                if rerun_trial is None:
+                    continue
+                score = (
+                    coerce_finite_objective_score(
+                        rerun_trial.get_metric(primary_objective)
+                    )
+                    if rerun_trial.is_successful
+                    else None
+                )
+                if score is None:
+                    logger.warning(
+                        "Winner-stability rerun %d/%d produced no finite "
+                        "'%s' score; skipping it.",
+                        index + 1,
+                        reps,
+                        primary_objective,
+                    )
+                    continue
+                scores.append(float(score))
+
+            self._add_winner_stability_cost_to_result(
+                result,
+                self._winner_stability_accounted_cost,
+            )
+
+            if not scores:
+                logger.warning(
+                    "Winner-stability rerun measured no scores in %d "
+                    "attempt(s); no winner_stability block recorded.",
+                    reps,
+                )
+                return
+            if len(scores) < reps:
+                logger.warning(
+                    "Winner-stability rerun measured %d of the %d requested "
+                    "replicate(s); recording the measured subset only.",
+                    len(scores),
+                    reps,
+                )
+
+            block: dict[str, Any] = {
+                "reps": len(scores),
+                "mean": statistics.fmean(scores),
+            }
+            # SAMPLE standard deviation (ddof=1), shown whenever it is
+            # computable — per the C3/C5 rulings there is NO small-replicate
+            # suppression (it is undefined for a single replicate, the only
+            # case where it is omitted); small-sample values are descriptive
+            # only, with the note logged adjacent to the measurement.
+            if len(scores) >= 2:
+                block["std"] = statistics.stdev(scores)
+                if len(scores) < 5:
+                    logger.info(
+                        "winner_stability: sample SD computed from only %d "
+                        "replicate(s); descriptive only.",
+                        len(scores),
+                    )
+            else:
+                logger.info(
+                    "winner_stability: sample SD is undefined for a single "
+                    "replicate; recording mean and the one score only."
+                )
+            block["scores"] = list(scores)
+            block["config_hash"] = self._get_config_hash(result.best_config)
+            block["evaluated_at"] = datetime.now(UTC).isoformat()
+            # Measured-only wiring (C3/C5): this block must never feed
+            # contrast selection or any noise floor. Its consumer is the S2
+            # verdict path — absent stability evidence the affected metric
+            # verdict is INDETERMINATE; a single execution may still be
+            # reported descriptively.
+            result.metadata["winner_stability"] = block
+        except Exception:
+            logger.warning(
+                "Winner-stability rerun failed; optimization results are unaffected",
+                exc_info=True,
+            )
+
     async def _finalize_optimization(
         self,
         result: OptimizationResult,
@@ -4016,6 +4386,10 @@ class OptimizationOrchestrator:
             len(self._trials),
         )
         result = self._create_optimization_result()
+        self._add_winner_stability_cost_to_result(
+            result,
+            self._winner_stability_accounted_cost,
+        )
         try:
             await self._finalize_optimization(result, session_id, session_span)
         except Exception as finalize_error:
@@ -4165,6 +4539,11 @@ class OptimizationOrchestrator:
             )
 
             result = self._create_optimization_result()
+            # Opt-in measured winner rerun (winner_stability_reps > 0). Runs
+            # only on this normally-completed path — never after a
+            # cancellation, timeout, or failure — and before finalize so the
+            # recorded block rides the same persistence pass as the result.
+            await self._maybe_run_winner_stability(result, func, dataset, session_id)
             await self._finalize_optimization(result, session_id, session_span)
             return result
 

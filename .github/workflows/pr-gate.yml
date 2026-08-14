@@ -17,6 +17,9 @@ on:
 
 permissions:
   contents: read
+  # Merge-queue attribution below reads one exact PR record. This is not used
+  # on ordinary pull_request events and deliberately grants no write scope.
+  pull-requests: read
 
 concurrency:
   group: sdk-pr-gate-${{ github.event.pull_request.number || github.ref }}
@@ -40,8 +43,10 @@ jobs:
       # pattern. required-pr-gate's skip verification
       # (scripts/ci/check_required_gate.py) trusts a downstream job's
       # `false` gate ONLY when this is > 0 -- a range that produced ZERO
-      # files is a broken/empty range, not "nothing relevant changed".
+      # files is a broken/empty range, not "nothing relevant changed", unless
+      # the strict ancestry-only verifier below proves the exceptional topology.
       changed_file_count: ${{ steps.changed.outputs.changed_file_count }}
+      ancestry_only: ${{ steps.changed.outputs.ancestry_only }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -49,22 +54,40 @@ jobs:
       - name: Classify changed files
         id: changed
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Event fields are data, not shell source. The runner materializes
+          # these values before bash starts; every use below remains quoted.
+          EVENT_NAME: ${{ github.event_name }}
+          PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PULL_REQUEST_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          MERGE_GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           # Three-dot (merge-base) range: classify only what THIS PR changes.
           # For merge_group events, classify what the queue candidate changes
           # on the base branch; FAIL CLOSED on missing shas (an empty range
           # would classify everything unchanged -> untested silent-green merge).
-          if [ "${{ github.event_name }}" = "merge_group" ]; then
-            base_sha="${{ github.event.merge_group.base_sha }}"
-            head_sha="${{ github.event.merge_group.head_sha }}"
+          if [ "$EVENT_NAME" = "merge_group" ]; then
+            base_sha="$MERGE_GROUP_BASE_SHA"
+            head_sha="$MERGE_GROUP_HEAD_SHA"
             if [ -z "$base_sha" ] || [ -z "$head_sha" ]; then
               echo "::error::merge_group event missing base/head sha; refusing to classify"
               exit 1
             fi
             range="${base_sha}...${head_sha}"
           else
-            range="${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
+            base_sha="$PULL_REQUEST_BASE_SHA"
+            head_sha="$PULL_REQUEST_HEAD_SHA"
+            if [ -z "$base_sha" ] || [ -z "$head_sha" ]; then
+              echo "::error::pull_request event missing base/head sha; refusing to classify"
+              exit 1
+            fi
+            range="${base_sha}...${head_sha}"
           fi
           changed_files="$(git diff --name-only --diff-filter=ACMRT "$range")"
 
@@ -77,6 +100,9 @@ jobs:
             changed_file_count="$(printf '%s\n' "$changed_files" | wc -l)"
           fi
           echo "changed_file_count=${changed_file_count}" >> "$GITHUB_OUTPUT"
+          # Default deny: this is flipped only after every topology, tree,
+          # same-repository, and immutable-declaration check succeeds.
+          echo "ancestry_only=false" >> "$GITHUB_OUTPUT"
 
           has_match() {
             printf '%s\n' "$changed_files" | grep -Eq "$1"
@@ -88,6 +114,108 @@ jobs:
 
           set_output_bool py_changed has_match '\.py$'
           set_output_bool code_changed has_match '^(traigent|traigent_validation|tests|scripts|walkthrough)/|^(pyproject\.toml|requirements[^/]*\.txt|\.github/workflows/pr-gate\.yml)'
+
+          # A release ancestry-sync has no content diff by design, but it must
+          # never turn the normal zero-diff detector into a blanket allowlist.
+          # The declaration lives in the exact PR-head commit trailer rather
+          # than mutable PR text. For merge-queue candidates, the candidate's
+          # second parent cryptographically identifies that declared head.
+          verify_declared_ancestry_head() {
+            local declared_head="$1"
+            local declared_tree
+            local -a head_parents
+
+            if ! git merge-base --is-ancestor "$base_sha" "$declared_head"; then
+              echo "::notice::ancestry-only denied: base is not an ancestor of declared head"
+              return 1
+            fi
+            read -r -a head_parents <<< "$(git show -s --format=%P "$declared_head")"
+            if [ "${#head_parents[@]}" -ne 2 ]; then
+              echo "::notice::ancestry-only denied: declared head does not have exactly two parents"
+              return 1
+            fi
+            if [ "${head_parents[0]}" != "$base_sha" ]; then
+              echo "::notice::ancestry-only denied: declared head first parent is not the exact event base"
+              return 1
+            fi
+            if [ "${head_parents[1]}" != "$expected_main_sha" ]; then
+              echo "::notice::ancestry-only denied: declared head second parent is not freshly fetched origin/main"
+              return 1
+            fi
+            declared_tree="$(git rev-parse "${declared_head}^{tree}")"
+            if [ "$declared_tree" != "$base_tree" ]; then
+              echo "::notice::ancestry-only denied: declared head tree differs from event base"
+              return 1
+            fi
+            if [ "$expected_main_tree" != "$base_tree" ]; then
+              echo "::notice::ancestry-only denied: freshly fetched origin/main tree differs from event base"
+              return 1
+            fi
+            if ! git show -s --format=%B "$declared_head" | git interpret-trailers --parse | grep -Fxq 'Traigent-Ancestry-Only: true'; then
+              echo "::notice::ancestry-only denied: declared head lacks exact Traigent-Ancestry-Only trailer"
+              return 1
+            fi
+          }
+
+          base_tree="$(git rev-parse "${base_sha}^{tree}")"
+          if ! git fetch --no-tags origin main; then
+            echo "::notice::ancestry-only denied: could not fetch origin/main"
+          else
+            expected_main_sha="$(git rev-parse FETCH_HEAD)"
+            expected_main_tree="$(git rev-parse "${expected_main_sha}^{tree}")"
+            if [ "$EVENT_NAME" = "pull_request" ]; then
+              head_repo="$PULL_REQUEST_HEAD_REPO"
+              if [ "$head_repo" != "$REPOSITORY" ]; then
+                echo "::notice::ancestry-only denied: fork pull request"
+              elif verify_declared_ancestry_head "$head_sha"; then
+                echo "ancestry_only=true" >> "$GITHUB_OUTPUT"
+              fi
+            elif [ "$EVENT_NAME" = "merge_group" ]; then
+              candidate_tree="$(git rev-parse "${head_sha}^{tree}")"
+              read -r -a candidate_parents <<< "$(git show -s --format=%P "$head_sha")"
+              if [ "${#candidate_parents[@]}" -ne 2 ]; then
+                echo "::notice::ancestry-only denied: merge-queue candidate does not have exactly two parents"
+              elif [ "${candidate_parents[0]}" != "$base_sha" ]; then
+                echo "::notice::ancestry-only denied: merge-queue candidate first parent is not the exact event base"
+              elif [ "$candidate_tree" != "$base_tree" ]; then
+                echo "::notice::ancestry-only denied: merge-queue candidate tree differs from event base"
+              else
+                pr_head_sha="${candidate_parents[1]}"
+                pr_head_tree="$(git rev-parse "${pr_head_sha}^{tree}")"
+                if [ "$pr_head_tree" != "$base_tree" ]; then
+                  echo "::notice::ancestry-only denied: candidate, declared head, and base trees must all match"
+                else
+                  # A queue candidate has no pull_request event payload. Its
+                  # head_ref is the immutable GitHub-generated queue ref; use
+                  # its one PR number to fetch and bind the API record to the
+                  # candidate's second parent. Never consult mutable PR text.
+                  merge_group_ref="$MERGE_GROUP_HEAD_REF"
+                  if [[ ! "$merge_group_ref" =~ ^gh-readonly-queue/develop/pr-([1-9][0-9]*)-[0-9a-f]{40}$ ]]; then
+                    echo "::notice::ancestry-only denied: merge-queue head_ref is not one exact develop PR reference"
+                  else
+                    pr_number="${BASH_REMATCH[1]}"
+                    if ! pr_json="$(gh api --method GET "repos/${REPOSITORY}/pulls/${pr_number}")"; then
+                      echo "::notice::ancestry-only denied: could not fetch merge-queue PR metadata"
+                    elif ! pr_base_ref="$(jq -er '.base.ref' <<< "$pr_json")" || \
+                        ! pr_base_sha="$(jq -er '.base.sha' <<< "$pr_json")" || \
+                        ! pr_head_sha_api="$(jq -er '.head.sha' <<< "$pr_json")" || \
+                        ! pr_head_repo="$(jq -er '.head.repo.full_name' <<< "$pr_json")"; then
+                      echo "::notice::ancestry-only denied: merge-queue PR metadata is incomplete"
+                    elif [ "$pr_base_ref" != "develop" ] || \
+                        [ "$pr_base_sha" != "$base_sha" ] || \
+                        [ "$pr_head_sha_api" != "$pr_head_sha" ] || \
+                        [ "$pr_head_repo" != "$REPOSITORY" ]; then
+                      echo "::notice::ancestry-only denied: merge-queue PR metadata does not exactly match candidate"
+                    elif verify_declared_ancestry_head "$pr_head_sha"; then
+                      echo "ancestry_only=true" >> "$GITHUB_OUTPUT"
+                    fi
+                  fi
+                fi
+              fi
+            else
+              echo "::notice::ancestry-only denied: unsupported event"
+            fi
+          fi
 
   schema-types:
     name: schema-types
@@ -131,7 +259,7 @@ jobs:
           # TRAIGENT_* names -- which live only in the Actions store -- resolved
           # to empty, checkout refused to start, schema-types failed, and
           # required-pr-gate (an aggregator) failed with it.
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Check generated schema types are current
@@ -148,7 +276,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install ruff
@@ -164,16 +292,23 @@ jobs:
           pip install "ruff==${ruff_version}"
       - name: Run changed-file Ruff checks
         shell: bash
+        env:
+          PY_CHANGED: ${{ needs.changes.outputs.py_changed }}
+          EVENT_NAME: ${{ github.event_name }}
+          PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
-          if [ "${{ needs.changes.outputs.py_changed }}" != "true" ]; then
+          if [ "$PY_CHANGED" != "true" ]; then
             echo "No Python files changed; skipping Ruff preflight."
             exit 0
           fi
-          if [ "${{ github.event_name }}" = "merge_group" ]; then
-            range="${{ github.event.merge_group.base_sha }}...${{ github.event.merge_group.head_sha }}"
+          if [ "$EVENT_NAME" = "merge_group" ]; then
+            range="${MERGE_GROUP_BASE_SHA}...${MERGE_GROUP_HEAD_SHA}"
           else
-            range="${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
+            range="${PULL_REQUEST_BASE_SHA}...${PULL_REQUEST_HEAD_SHA}"
           fi
           changed_py="$(git diff --name-only --diff-filter=ACMRT "$range" -- '*.py')"
           printf '%s\n' "$changed_py" | xargs -r ruff check --output-format=github
@@ -187,7 +322,7 @@ jobs:
     needs: [changes, preflight]
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Cache pip dependencies
@@ -243,7 +378,7 @@ jobs:
     needs: [changes, preflight]
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install test deps
@@ -284,7 +419,7 @@ jobs:
     needs: [changes, preflight]
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install MCP contract dependencies
