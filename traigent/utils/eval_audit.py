@@ -12,19 +12,22 @@ This module implements that computation as a **pure function of the matrix**
 (plus, for D7, the per-cell ``predicted`` answer the matrix now carries). It is
 the consumer half of #1838.
 
-On top of #1880's binary detectors it also ships #1881's **continuous defect
-score**: a per-item heuristic suspicion score plus a dataset-relative percentile,
-so a reviewer gets a ranked worklist over ALL scored items rather than an
-unordered flag set. The score is a logistic function over three per-item
-telemetry features (``mean_wrong`` / ``never_correct`` / ``instability``). The
-shipped ``DEFECT_SCORE_*`` coefficients are **illustrative defaults, hand-chosen
-for sensible ordering — NOT a calibrated model**; the trustworthy default output
-is the dataset-relative ``defect_percentile`` (rank), while the absolute
-``defect_score`` becomes a calibrated probability only after you refit the
-coefficients on your own labeled subset (see :func:`compute_defect_scores` and
-the ``DEFECT_SCORE_*`` constants). The binary flags then become expressible as
-``defect_score >= threshold``. This layer reuses the same per-cell primitives
-(:func:`cell_is_correct`) and stays a pure, deterministic function of the matrix.
+On top of #1880's binary detectors it also ships #1881's **ranked worklist**: a
+per-item heuristic suspicion score is computed internally and each item is then
+reported in a coarse review tier, so a reviewer works an ordered list over ALL
+scored items rather than an unordered flag set. The shipped ``DEFECT_SCORE_*``
+coefficients are **illustrative defaults, hand-chosen for sensible ordering —
+NOT a calibrated model**; the trustworthy output is therefore the *rank*, which
+is why the public surface reports a within-run tier and not an absolute score
+(the score would read as a probability it has not earned). This layer reuses the
+same per-cell primitives (:func:`cell_is_correct`) and stays a pure,
+deterministic function of the matrix.
+
+**Disclosure boundary.** :func:`compute_defect_scores` returns the internal
+representation — coefficients, per-feature values, and the additive
+decomposition. :func:`project_defect_scores` rebuilds a coarse public row from an
+allowlist, and :func:`compute_eval_audit` applies it before anything leaves this
+module. Callers get the worklist; they do not get the estimator.
 
 Detectors
 ---------
@@ -92,16 +95,50 @@ from __future__ import annotations
 import bisect
 import json
 import math
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from traigent.api.types import (
-        DefectSignal,
         DetectorStat,
         EvalAudit,
         EvalAuditFlag,
         ItemDefectScore,
     )
+
+
+# ---------------------------------------------------------------------------
+# Internal scoring representation
+#
+# These carry the full model -- coefficients, per-feature values, and the
+# additive decomposition -- because the scorer needs them and its tests assert
+# on them. They are deliberately PRIVATE: publishing the weights and the logit
+# terms hands a reader the estimator itself, which is not something a caller
+# needs in order to decide which examples to review. The public projection is
+# ``traigent.api.types.ItemDefectScore``; see ``project_defect_scores``.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _Signal:
+    """One feature's ``weight * value`` term in an item's defect logit."""
+
+    feature: str
+    value: float
+    weight: float
+    contribution: float
+
+
+@dataclass
+class _ScoredItem:
+    """An item's continuous defect score and the terms that produced it."""
+
+    example_id: str
+    defect_score: float
+    defect_percentile: float
+    features: dict[str, float] = field(default_factory=dict)
+    contributing_signals: list[_Signal] = field(default_factory=list)
+
 
 #: Default per-cell success threshold: a cell's scoring signal at or above this
 #: counts as correct. Benchmark signals here are typically 0/1, so 0.5 is a clean
@@ -357,8 +394,12 @@ def compute_defect_scores(
     success_threshold: float = DEFAULT_SUCCESS_THRESHOLD,
     intercept: float = DEFECT_SCORE_INTERCEPT,
     weights: dict[str, float] | None = None,
-) -> list[ItemDefectScore]:
+) -> list[_ScoredItem]:
     """Continuous per-item defect scores over an outcome matrix (issue #1881).
+
+    Returns the INTERNAL representation, carrying the coefficients and the
+    additive decomposition. Callers outside this module should use the coarse
+    public projection built by :func:`project_defect_scores`.
 
     Pure, deterministic function of the matrix — no LLM calls, no network. For
     each item that ran (with a determinable outcome) in ``>=2`` configs, computes
@@ -395,8 +436,6 @@ def compute_defect_scores(
         counted by ``<=``); a single-item run yields ``1.0``. Percentile is
         therefore monotonic non-decreasing in ``defect_score``.
     """
-    from traigent.api.types import ItemDefectScore
-
     coeffs = DEFECT_SCORE_WEIGHTS if weights is None else weights
     if not matrix:
         return []
@@ -430,11 +469,11 @@ def compute_defect_scores(
     sorted_scores = sorted(score for _, score, _ in raw)
     total = len(sorted_scores)
 
-    scored: list[ItemDefectScore] = []
+    scored: list[_ScoredItem] = []
     for example_id, score, features in raw:
         percentile = bisect.bisect_right(sorted_scores, score) / total
         scored.append(
-            ItemDefectScore(
+            _ScoredItem(
                 example_id=example_id,
                 defect_score=score,
                 defect_percentile=percentile,
@@ -448,9 +487,63 @@ def compute_defect_scores(
     return scored
 
 
+#: Percentile at or above which an item is reported as ``"high"`` review tier —
+#: the top 5% of this run's scored items. This is a presentation cut on the rank,
+#: not a property of the scorer.
+REVIEW_TIER_HIGH_PERCENTILE = 0.95
+
+#: Percentile at or above which an item is reported as ``"elevated"``.
+REVIEW_TIER_ELEVATED_PERCENTILE = 0.80
+
+
+def _review_tier(percentile: float) -> str:
+    """Map a within-run percentile onto the coarse public tier."""
+    if percentile >= REVIEW_TIER_HIGH_PERCENTILE:
+        return "high"
+    if percentile >= REVIEW_TIER_ELEVATED_PERCENTILE:
+        return "elevated"
+    return "normal"
+
+
+def project_defect_scores(scored: list[_ScoredItem]) -> list[ItemDefectScore]:
+    """Project internal scores onto the coarse public worklist.
+
+    Rebuilds each row from an allowlist rather than trimming the internal object,
+    so a new internal field cannot leak by being forgotten here — the same
+    contract as the example-insight projection in
+    ``traigent.cloud.analytics_client``.
+
+    What survives is what a reviewer acts on: the example, how strongly it stands
+    out **within this run**, and the observation that drove it. What does not is
+    the model behind the decision — the continuous score, the exact percentile,
+    the raw feature values, the coefficients, and the additive contributions.
+
+    Rank order is preserved by list order, so "work the top of the list" still
+    works without publishing a score to sort by.
+    """
+    from traigent.api.types import ItemDefectScore
+
+    return [
+        ItemDefectScore(
+            example_id=item.example_id,
+            review_tier=_review_tier(item.defect_percentile),
+            # The dominant signal is already first: _build_signals ranks by
+            # |contribution|. Its NAME describes the user's own data ("never
+            # answered correctly"), which is why it is kept while its weight and
+            # value are not.
+            primary_reason=(
+                item.contributing_signals[0].feature
+                if item.contributing_signals
+                else None
+            ),
+        )
+        for item in scored
+    ]
+
+
 def _build_signals(
     features: dict[str, float], weights: dict[str, float]
-) -> list[DefectSignal]:
+) -> list[_Signal]:
     """Per-feature ``weight * value`` contributions that drove the item's score.
 
     Selection is **scale-aware and sign-honest** so it stays correct under an
@@ -471,8 +564,6 @@ def _build_signals(
     non-negative, so magnitude-ranking equals descending-value ranking and the
     default output is unchanged.
     """
-    from traigent.api.types import DefectSignal
-
     contributions = [
         (name, features.get(name, 0.0), weights.get(name, 0.0))
         for name in DEFECT_SCORE_FEATURES
@@ -487,12 +578,12 @@ def _build_signals(
         DEFECT_SIGNAL_ZERO_EPS, DEFECT_SIGNAL_RELATIVE_KEEP * max_magnitude
     )
 
-    signals: list[DefectSignal] = []
+    signals: list[_Signal] = []
     for name, value, weight in contributions:
         contribution = weight * value
         if abs(contribution) >= keep_floor:
             signals.append(
-                DefectSignal(
+                _Signal(
                     feature=name,
                     value=value,
                     weight=weight,
@@ -764,7 +855,11 @@ def compute_eval_audit(
         intercept=defect_score_intercept,
         weights=defect_score_weights,
     )
-    return EvalAudit(flagged=flagged, summary=summary, scored=scored)
+    # Project before it leaves this module: the caller gets the ranked worklist,
+    # not the scorer that produced it.
+    return EvalAudit(
+        flagged=flagged, summary=summary, scored=project_defect_scores(scored)
+    )
 
 
 def _enrichment_lift(

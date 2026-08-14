@@ -11,11 +11,17 @@ function of the outcome matrix (#1838):
 - the refit hook (custom intercept/weights) flows through;
 - end-to-end through ``OptimizationResult.eval_audit`` and ``to_dict``.
 
+The scorer above is INTERNAL. A final section pins the public projection --
+``example_id`` + ``review_tier`` + ``primary_reason`` -- which is the disclosure
+boundary: the coefficients, the per-feature values and the additive
+contributions must not cross it.
+
 No LLM calls: matrices are built in memory / from real ExampleResult shapes.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -33,10 +39,15 @@ from traigent.api.types import (
 from traigent.utils.eval_audit import (
     DEFECT_SCORE_INTERCEPT,
     DEFECT_SCORE_WEIGHTS,
+    REVIEW_TIER_ELEVATED_PERCENTILE,
+    REVIEW_TIER_HIGH_PERCENTILE,
     _item_defect_features,
     _logistic,
+    _ScoredItem,
+    _Signal,
     compute_defect_scores,
     compute_eval_audit,
+    project_defect_scores,
 )
 
 # ---------------------------------------------------------------------------
@@ -332,18 +343,26 @@ def test_refit_weights_change_scores() -> None:
 
 
 def test_compute_eval_audit_passes_defect_coefficients() -> None:
+    """Custom coefficients reach the scorer.
+
+    Asserted on the INTERNAL scorer, because the public audit deliberately no
+    longer exposes the score the coefficients produce. The flattening refit makes
+    every item score identically, so every item lands in the same tier -- which is
+    the observable public consequence.
+    """
     matrix = _matrix(_grid(2), [_row("a", [True, False]), _row("b", [False, False])])
+    flat_weights = {"mean_wrong": 0.0, "never_correct": 0.0, "instability": 0.0}
+    internal = compute_defect_scores(matrix, intercept=0.0, weights=flat_weights)
+    assert internal, "expected scorable items"
+    assert all(s.defect_score == 0.5 for s in internal)
+
     audit = compute_eval_audit(
         matrix,
         defect_score_intercept=0.0,
-        defect_score_weights={
-            "mean_wrong": 0.0,
-            "never_correct": 0.0,
-            "instability": 0.0,
-        },
+        defect_score_weights=flat_weights,
     )
     assert audit is not None
-    assert all(s.defect_score == 0.5 for s in audit.scored)
+    assert {s.review_tier for s in audit.scored} == {"high"}
 
 
 # ---------------------------------------------------------------------------
@@ -527,11 +546,116 @@ def test_eval_audit_property_populates_scored_and_to_dict() -> None:
     d = audit.to_dict()
     assert [s["example_id"] for s in d["scored"]] == ["ex-never", "ex-always"]
     top = d["scored"][0]
-    assert set(top) == {
+    # EXACT key set: this is the disclosure boundary. If a future change adds a
+    # key here, that key ships to every caller -- so this assertion is meant to
+    # fail rather than be widened without a deliberate decision.
+    assert set(top) == {"example_id", "review_tier", "primary_reason"}
+    assert top["review_tier"] == "high"
+    assert top["primary_reason"] == "mean_wrong"
+
+
+# ---------------------------------------------------------------------------
+# Public projection: what leaves the SDK
+#
+# The scorer keeps its coefficients and per-feature decomposition internally.
+# These tests pin what a CALLER can see, which is the disclosure boundary.
+# ---------------------------------------------------------------------------
+
+
+def _internal(example_id: str, percentile: float, *, signals: list[str]) -> _ScoredItem:
+    """An internal scored item with a chosen percentile and dominant signal order."""
+    return _ScoredItem(
+        example_id=example_id,
+        defect_score=0.5,
+        defect_percentile=percentile,
+        features={"mean_wrong": 1.0},
+        contributing_signals=[
+            _Signal(
+                feature=name,
+                value=1.0,
+                weight=float(len(signals) - i),
+                contribution=float(len(signals) - i),
+            )
+            for i, name in enumerate(signals)
+        ],
+    )
+
+
+def test_projection_exposes_only_the_allowlisted_fields() -> None:
+    """A new internal field must NOT reach the caller by being forgotten."""
+    projected = project_defect_scores([_internal("ex", 1.0, signals=["mean_wrong"])])
+    assert list(projected[0].__dataclass_fields__) == [
         "example_id",
+        "review_tier",
+        "primary_reason",
+    ]
+    assert set(projected[0].to_dict()) == {
+        "example_id",
+        "review_tier",
+        "primary_reason",
+    }
+
+
+def test_projection_drops_score_percentile_features_and_weights() -> None:
+    payload = project_defect_scores([_internal("ex", 1.0, signals=["mean_wrong"])])[
+        0
+    ].to_dict()
+    serialized = json.dumps(payload)
+    for leaked in (
         "defect_score",
         "defect_percentile",
         "features",
-        "contributing_signals",
-    }
-    assert top["contributing_signals"][0]["feature"] == "mean_wrong"
+        "weight",
+        "contribution",
+    ):
+        assert leaked not in serialized, f"{leaked} reached the public payload"
+
+
+@pytest.mark.parametrize(
+    ("percentile", "expected"),
+    [
+        (1.0, "high"),
+        (REVIEW_TIER_HIGH_PERCENTILE, "high"),
+        (REVIEW_TIER_HIGH_PERCENTILE - 1e-9, "elevated"),
+        (REVIEW_TIER_ELEVATED_PERCENTILE, "elevated"),
+        (REVIEW_TIER_ELEVATED_PERCENTILE - 1e-9, "normal"),
+        (0.0, "normal"),
+    ],
+)
+def test_review_tier_boundaries_are_inclusive_at_the_floor(
+    percentile: float, expected: str
+) -> None:
+    projected = project_defect_scores(
+        [_internal("ex", percentile, signals=["mean_wrong"])]
+    )
+    assert projected[0].review_tier == expected
+
+
+def test_primary_reason_is_the_dominant_signal() -> None:
+    projected = project_defect_scores(
+        [_internal("ex", 1.0, signals=["never_correct", "instability"])]
+    )
+    assert projected[0].primary_reason == "never_correct"
+
+
+def test_primary_reason_is_none_when_nothing_fired() -> None:
+    projected = project_defect_scores([_internal("ex", 0.1, signals=[])])
+    assert projected[0].primary_reason is None
+
+
+def test_projection_preserves_rank_order() -> None:
+    """Order IS the ranking, now that no score is published to sort by."""
+    matrix = _matrix(
+        _grid(2),
+        [
+            _row("ex-always", [True, True]),
+            _row("ex-never", [False, False]),
+            _row("ex-split", [True, False]),
+        ],
+    )
+    internal = compute_defect_scores(matrix)
+    projected = project_defect_scores(internal)
+    assert [p.example_id for p in projected] == [i.example_id for i in internal]
+    assert [i.defect_score for i in internal] == sorted(
+        (i.defect_score for i in internal), reverse=True
+    )
