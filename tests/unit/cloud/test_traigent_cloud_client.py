@@ -477,9 +477,10 @@ class TestTraigentCloudClient:
             # (a) the header is present on every POST, and
             # (b) it is IDENTICAL across the retry.
             assert all(keys), "Idempotency-Key header missing on a POST attempt"
-            assert keys[0] == keys[1], (
+            retry_message = (
                 "Idempotency-Key changed between retries; backend dedup would fail"
             )
+            assert keys[0] == keys[1], retry_message
 
         asyncio.run(run_test())
 
@@ -514,9 +515,10 @@ class TestTraigentCloudClient:
             key_a = session_a.post.call_args.kwargs["headers"]["Idempotency-Key"]
             key_b = session_b.post.call_args.kwargs["headers"]["Idempotency-Key"]
             assert key_a and key_b
-            assert key_a != key_b, (
+            distinct_call_message = (
                 "Distinct logical calls must not share an Idempotency-Key"
             )
+            assert key_a != key_b, distinct_call_message
 
         asyncio.run(run_test())
 

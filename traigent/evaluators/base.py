@@ -994,8 +994,9 @@ def prepare_call_arguments(
     input_data: Any,
     *,
     injection_mode: Any = "context",
-    should_expand: Callable[[Callable[..., Any], CollectionsMapping[str, Any]], bool]
-    | None = None,
+    should_expand: (
+        Callable[[Callable[..., Any], CollectionsMapping[str, Any]], bool] | None
+    ) = None,
 ) -> tuple[tuple[Any, ...], dict[str, Any]]:
     """Determine positional/keyword call arguments for ``func`` WITHOUT calling it.
 
