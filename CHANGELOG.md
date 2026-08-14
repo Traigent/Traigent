@@ -89,7 +89,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   key is no longer written to session or trial metadata, and is no longer reconstructed
   when reading a pre-#2031 legacy artifact (such artifacts still load).
 
-## [0.26.0] - 2026-07-30
+## [0.26.0] - 2026-08-02
 
 Security and correctness release. Hardens every egress path the SDK owns
 (cloud URLs, telemetry, tracing headers, dataset paths) to fail closed, and
@@ -557,7 +557,45 @@ Weighted-selection contract release (backfilled entry; tag `v0.22.0`).
 - Declare `tenacity` as a dependency so litellm's retry helpers
   (`completion_with_retries`) work on a clean install (#1824).
 
-## [0.21.0] - 2026-07-07
+## [0.21.2] - 2026-07-09
+
+### Fixed
+
+- **Backend session now finalizes on every failed exit path in the
+  orchestrator, not just on success.** Previously a run that raised
+  mid-optimization could leave its backend-tracked session open; finalize is
+  now reached on every exit path (#1765, #1819).
+
+## [0.21.1] - 2026-07-08
+
+Session-aggregation and egress-hardening release: closes the finalize-path
+gap left by 0.21.0's `@observe` metadata-only default and folds session
+result submission into a single, sanitized path.
+
+### Added
+
+- Live-contract CI lane: schedule/dispatch runs are gated until prerequisites
+  (a minted key, read from a private file rather than stdout) are met, and
+  the lane validates `session_aggregation` payloads against a real backend
+  before merge (#1815, #1817).
+
+### Changed
+
+- **`session_aggregation` rollup folded into `finalize`, replacing the dead
+  `submit_result` shim.** Session objectives and cost now flow through one
+  path instead of two (#1811).
+- Budget cost backfill is now limited to completed trials, matching typed
+  session objective/cost metrics (#1814, #1816).
+
+### Fixed
+
+- **SDK egress boundary hardened for `session_aggregation`.** `sdk_version`
+  is bounded against a malformed override, scalar label fields and
+  content-free map keys in the aggregation builder are bounded, label
+  matching uses `fullmatch` (rejecting a trailing newline), and
+  `statistical_significance` is sanitized before it leaves the SDK.
+
+## [0.21.0] - 2026-07-08
 
 Observability hardening release. Enterprise-grade privacy posture for the
 `@observe` instrumentation plus latency/usage accuracy fixes across the
@@ -908,6 +946,14 @@ work correctly or fail loudly.
   (`*`) into the log root (`./.traigent/optimization_logs/` by default) so prompt/response
   content isn't accidentally committed, and `docs/api-reference/telemetry.md` documents the
   default location, what is persisted, and that on-disk redaction covers structured PII only.
+
+- **Onboarding CLI** — `traigent onboard`, `traigent auth device-login`, `traigent quickstart`,
+  and `traigent first-prompt --agent claude|cursor|codex`. (Backfilled 2026-08-14; previously
+  recorded only as a "New in 0.12.0" note in the getting-started guide.)
+- **Stdio MCP server** — `traigent mcp serve` exposes the SDK's MCP server to coding agents over
+  stdio. (Backfilled 2026-08-14, same provenance.)
+- **Agent workflow spans** — `add_agent_span()` records user-defined agent spans; see
+  `docs/api-reference/telemetry.md`. (Backfilled 2026-08-14, same provenance.)
 
 ### Removed
 - **Breaking in 0.12.0:** removed Python-orchestrated JavaScript optimization through the temporary JS bridge. `ExecutionOptions.runtime`, all `ExecutionOptions.js_*` fields, `traigent.bridges.*`, and `traigent.evaluators.JSEvaluator` are no longer available. JavaScript/TypeScript users should migrate to native `@traigent/sdk` optimization with `optimize(spec)(agentFn)` and `await wrapped.optimize(...)`; see https://github.com/Traigent/traigent-js/blob/main/docs/getting-started/minimal-integration.md and https://github.com/Traigent/traigent-js/blob/main/docs/MIGRATION_FROM_PYTHON.md.
