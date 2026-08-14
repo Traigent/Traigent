@@ -13,7 +13,6 @@ import pytest
 
 from traigent.core.cache_usage import CacheUsage, normalize_cache_usage
 
-
 # ---------------------------------------------------------------------------
 # Provider shapes
 # ---------------------------------------------------------------------------
@@ -371,9 +370,10 @@ def test_an_openai_style_call_does_not_double_count_its_cached_tokens():
     cached = meta["cache_usage"]["cache_read_tokens"]
 
     assert recorded_input == 86, "2006 total - 1920 cached = 86 fresh input tokens"
-    assert recorded_input + cached == 2006, (
+    reconstruction_message = (
         "fresh + cached must reconstruct the provider total, not exceed it"
     )
+    assert recorded_input + cached == 2006, reconstruction_message
 
 
 class TestCoercionRefusesJunkInsteadOfInventingOrCrashing:

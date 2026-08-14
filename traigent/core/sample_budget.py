@@ -236,7 +236,9 @@ class SampleBudgetManager:
             if self._total_budget is not None and self._consumed >= self._total_budget:
                 return False
 
-            if lease._ceiling is not None and lease._consumed + count > lease._ceiling:  # noqa: SLF001
+            ceiling = lease._ceiling  # noqa: SLF001
+            consumed = lease._consumed  # noqa: SLF001
+            if ceiling is not None and consumed + count > ceiling:
                 return False
 
             if self._total_budget is not None:
