@@ -65,8 +65,8 @@ from traigent.core.execution_policy_runtime import (
     SOURCE_CLOUD_BRAIN,
     SOURCE_LOCAL_FALLBACK,
     CloudBrainUnavailableError,
-    backend_optimization_strategy_for_algorithm,
     backend_egress_disabled,
+    backend_optimization_strategy_for_algorithm,
     is_offline_requested,
     policy_from_config,
     policy_is_cloud_brain,
@@ -3762,9 +3762,11 @@ class OptimizationOrchestrator:
                     while True:
                         try:
                             return await asyncio.shield(task)
-                        except asyncio.CancelledError:
+                        except asyncio.CancelledError:  # NOSONAR
                             # A repeated cancellation must not strand a paid or
                             # unknown attempt after the lifecycle has dispatched it.
+                            # The enclosing handler always re-raises the original
+                            # cancellation after this accounting task finishes.
                             continue
 
                 try:

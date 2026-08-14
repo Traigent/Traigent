@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
-from collections.abc import Callable
 
 import pytest
 
@@ -455,7 +455,7 @@ class TestWinnerStabilityRerun:
     async def test_cancellation_waiting_for_rerun_accounting_debits_once(
         self, sample_dataset, mock_function
     ):
-        """A completed rerun is debited even when cancellation interrupts lock wait."""
+        """Repeated cancellation still drains and debits a completed rerun once."""
         evaluator = AccountingStabilityEvaluator()
         orchestrator = _build_orchestrator(
             evaluator,
@@ -513,6 +513,9 @@ class TestWinnerStabilityRerun:
                 await asyncio.sleep(0)
             tracking_lock = orchestrator._state_lock
             await tracking_lock.entry_attempted.wait()
+            optimization_task.cancel()
+            await asyncio.sleep(0)
+            assert not optimization_task.done()
             optimization_task.cancel()
             await asyncio.sleep(0)
             assert not optimization_task.done()
