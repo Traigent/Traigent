@@ -107,12 +107,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   **the list order is the ranking**, so "work the top of the list" behaves exactly as
   before. `flagged` and `summary` are untouched.
 
-  The scorer itself is unchanged and still refittable via `defect_score_intercept` /
-  `defect_score_weights` on `compute_eval_audit`; it simply no longer reports its
-  internals to the caller. Code reading `item.defect_score` or `item.defect_percentile`
-  should switch to `item.review_tier`, and code reading `item.contributing_signals[0]
-  .feature` to `item.primary_reason`. Code that only iterated `scored` in order needs no
-  change.
+  The scorer itself is unchanged in behaviour and still refittable via
+  `defect_score_intercept` / `defect_score_weights` on `compute_eval_audit` — pass a dict
+  fitted on your own labeled subset to calibrate the ranking to your data. It is now
+  **private**, along with everything that carries the model: `compute_defect_scores`,
+  `DEFECT_SCORE_WEIGHTS`, `DEFECT_SCORE_INTERCEPT` and `DEFECT_SCORE_FEATURES` are renamed
+  with a leading underscore, and the two refit parameters default to `None` rather than to
+  the shipped coefficients, so the signature does not publish them either. A projection is
+  only a boundary if there is no supported way around it.
+
+  Code reading `item.defect_score` or `item.defect_percentile` should switch to
+  `item.review_tier`, and code reading `item.contributing_signals[0].feature` to
+  `item.primary_reason`. Code that only iterated `scored` in order needs no change. Code
+  importing `compute_defect_scores` or the `DEFECT_SCORE_*` constants directly was reading
+  the estimator and has no replacement; use `compute_eval_audit` and the refit parameters.
 
 ## [0.26.0] - 2026-08-02
 

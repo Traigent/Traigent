@@ -839,15 +839,17 @@ class ItemDefectScore:
     Attributes:
         example_id: The scored example's id (matrix row key).
         review_tier: How strongly this item stands out **within this run** —
-            ``"high"`` (top 5%), ``"elevated"`` (top 20%), or ``"normal"``. It is
-            relative to the run, not an absolute probability of defect: a run whose
-            examples are all fine still has a top tier, so treat the tier as "look
-            here first", not as "this is broken".
-        primary_reason: The observation that most drove the tier, or ``None`` when
-            nothing stood out. One of ``"never_correct"`` (no configuration ever
-            answered it correctly), ``"mean_wrong"`` (wrong far more often than
-            right), or ``"instability"`` (configurations disagreed with each
-            other on it).
+            ``"high"`` (at or above the 95th percentile), ``"elevated"`` (at or
+            above the 80th), or ``"normal"``. It is relative to the run, not an
+            absolute probability of defect: a run whose examples are all fine
+            still has a top tier, so treat the tier as "look here first", not as
+            "this is broken". It is a rank band, not a quota — on small runs, and
+            wherever items tie, more than 5% of items can land in ``"high"``.
+        primary_reason: The observation that most **raised** this item's
+            standing-out, or ``None`` when nothing did. One of
+            ``"never_correct"`` (no configuration ever answered it correctly),
+            ``"mean_wrong"`` (wrong far more often than right), or
+            ``"instability"`` (configurations disagreed with each other on it).
     """
 
     example_id: str

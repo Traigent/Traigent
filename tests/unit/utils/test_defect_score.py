@@ -37,15 +37,15 @@ from traigent.api.types import (
     TrialStatus,
 )
 from traigent.utils.eval_audit import (
-    DEFECT_SCORE_INTERCEPT,
-    DEFECT_SCORE_WEIGHTS,
+    _DEFECT_SCORE_INTERCEPT,
+    _DEFECT_SCORE_WEIGHTS,
     REVIEW_TIER_ELEVATED_PERCENTILE,
     REVIEW_TIER_HIGH_PERCENTILE,
     _item_defect_features,
     _logistic,
     _ScoredItem,
     _Signal,
-    compute_defect_scores,
+    _compute_defect_scores,
     compute_eval_audit,
     project_defect_scores,
 )
@@ -121,7 +121,7 @@ def test_score_ordering_never_gt_mixed_gt_always() -> None:
             _row("ex-always", [True, True, True, True]),
         ],
     )
-    scored = compute_defect_scores(matrix)
+    scored = _compute_defect_scores(matrix)
     by_id = {s.example_id: s.defect_score for s in scored}
     assert by_id["ex-never"] > by_id["ex-mixed"] > by_id["ex-always"]
     # sane calibration: never-correct high, always-correct low
@@ -138,7 +138,7 @@ def test_scored_sorted_by_score_descending() -> None:
             _row("ex-mixed", [True, False, True, False]),
         ],
     )
-    scored = compute_defect_scores(matrix)
+    scored = _compute_defect_scores(matrix)
     ids = [s.example_id for s in scored]
     assert ids == ["ex-never", "ex-mixed", "ex-always"]
     scores = [s.defect_score for s in scored]
@@ -167,7 +167,7 @@ def test_all_defect_scores_in_unit_interval() -> None:
             _row("d", [True, True, True]),
         ],
     )
-    for s in compute_defect_scores(matrix):
+    for s in _compute_defect_scores(matrix):
         assert 0.0 <= s.defect_score <= 1.0
         assert 0.0 <= s.defect_percentile <= 1.0
 
@@ -187,7 +187,7 @@ def test_percentile_monotonic_in_score() -> None:
             _row("ex-always", [True, True, True, True]),
         ],
     )
-    scored = compute_defect_scores(matrix)
+    scored = _compute_defect_scores(matrix)
     # sorted by score desc; percentile must be non-increasing down that order
     percentiles = [s.defect_percentile for s in scored]
     assert percentiles == sorted(percentiles, reverse=True)
@@ -206,7 +206,7 @@ def test_percentile_ties_share_value() -> None:
             _row("low", [True, True]),
         ],
     )
-    scored = compute_defect_scores(matrix)
+    scored = _compute_defect_scores(matrix)
     by_id = {s.example_id: s for s in scored}
     assert by_id["tie-a"].defect_score == by_id["tie-b"].defect_score
     assert by_id["tie-a"].defect_percentile == by_id["tie-b"].defect_percentile
@@ -218,7 +218,7 @@ def test_percentile_ties_share_value() -> None:
 
 def test_percentile_single_item_run_is_one() -> None:
     matrix = _matrix(_grid(2), [_row("only", [True, False])])
-    scored = compute_defect_scores(matrix)
+    scored = _compute_defect_scores(matrix)
     assert len(scored) == 1
     assert scored[0].defect_percentile == 1.0
 
@@ -230,12 +230,12 @@ def test_percentile_single_item_run_is_one() -> None:
 
 def test_contributing_signals_dominant_feature_is_mean_wrong() -> None:
     matrix = _matrix(_grid(4), [_row("ex-never", [False, False, False, False])])
-    scored = compute_defect_scores(matrix)
+    scored = _compute_defect_scores(matrix)
     signals = scored[0].contributing_signals
     assert signals, "never-correct item must have contributing signals"
     # sorted by contribution desc -> mean_wrong (weight 6.0 * value 1.0) leads
     assert signals[0].feature == "mean_wrong"
-    assert signals[0].contribution == DEFECT_SCORE_WEIGHTS["mean_wrong"]
+    assert signals[0].contribution == _DEFECT_SCORE_WEIGHTS["mean_wrong"]
     features = {s.feature for s in signals}
     assert "never_correct" in features  # also contributed (weight 1.5 * 1.0)
     # every reported contribution equals weight * value
@@ -251,7 +251,7 @@ def test_contributing_signals_empty_for_always_correct() -> None:
             _row("ex-never", [False, False, False, False]),
         ],
     )
-    scored = compute_defect_scores(matrix)
+    scored = _compute_defect_scores(matrix)
     by_id = {s.example_id: s for s in scored}
     # nothing drove an always-correct item's score up
     assert by_id["ex-always"].contributing_signals == []
@@ -259,7 +259,7 @@ def test_contributing_signals_empty_for_always_correct() -> None:
 
 def test_instability_surfaces_for_split_item() -> None:
     matrix = _matrix(_grid(2), [_row("ex-split", [True, False])])
-    scored = compute_defect_scores(matrix)
+    scored = _compute_defect_scores(matrix)
     signals = {s.feature for s in scored[0].contributing_signals}
     # a 1/2 split: mean_wrong=0.5 (contrib 3.0) and instability=0.5 (contrib 0.5)
     assert "mean_wrong" in signals
@@ -280,7 +280,7 @@ def test_sparse_single_config_item_excluded() -> None:
             _row("ex-real", [False, False]),
         ],
     )
-    scored = compute_defect_scores(matrix)
+    scored = _compute_defect_scores(matrix)
     ids = {s.example_id for s in scored}
     assert ids == {"ex-real"}
 
@@ -290,9 +290,9 @@ def test_no_scorable_items_returns_empty() -> None:
         _grid(2),
         [{"example_id": "ex", "cells": {"t0": _cell(correct=True)}}],
     )
-    assert compute_defect_scores(matrix) == []
-    assert compute_defect_scores(None) == []
-    assert compute_defect_scores({}) == []
+    assert _compute_defect_scores(matrix) == []
+    assert _compute_defect_scores(None) == []
+    assert _compute_defect_scores({}) == []
 
 
 # ---------------------------------------------------------------------------
@@ -331,9 +331,9 @@ def test_item_features_values() -> None:
 
 def test_refit_weights_change_scores() -> None:
     matrix = _matrix(_grid(2), [_row("ex", [True, False])])
-    default = compute_defect_scores(matrix)[0].defect_score
+    default = _compute_defect_scores(matrix)[0].defect_score
     # a refit that zeroes every feature -> score is sigmoid(intercept) for all
-    flat = compute_defect_scores(
+    flat = _compute_defect_scores(
         matrix,
         intercept=0.0,
         weights={"mean_wrong": 0.0, "never_correct": 0.0, "instability": 0.0},
@@ -352,7 +352,7 @@ def test_compute_eval_audit_passes_defect_coefficients() -> None:
     """
     matrix = _matrix(_grid(2), [_row("a", [True, False]), _row("b", [False, False])])
     flat_weights = {"mean_wrong": 0.0, "never_correct": 0.0, "instability": 0.0}
-    internal = compute_defect_scores(matrix, intercept=0.0, weights=flat_weights)
+    internal = _compute_defect_scores(matrix, intercept=0.0, weights=flat_weights)
     assert internal, "expected scorable items"
     assert all(s.defect_score == 0.5 for s in internal)
 
@@ -391,9 +391,9 @@ def test_eval_audit_scored_covers_all_items_not_just_flagged() -> None:
 
 
 def test_default_constants_are_documented_values() -> None:
-    assert DEFECT_SCORE_INTERCEPT == -4.0
-    assert DEFECT_SCORE_WEIGHTS["mean_wrong"] > DEFECT_SCORE_WEIGHTS["never_correct"]
-    assert DEFECT_SCORE_WEIGHTS["never_correct"] > DEFECT_SCORE_WEIGHTS["instability"]
+    assert _DEFECT_SCORE_INTERCEPT == -4.0
+    assert _DEFECT_SCORE_WEIGHTS["mean_wrong"] > _DEFECT_SCORE_WEIGHTS["never_correct"]
+    assert _DEFECT_SCORE_WEIGHTS["never_correct"] > _DEFECT_SCORE_WEIGHTS["instability"]
 
 
 # ---------------------------------------------------------------------------
@@ -443,7 +443,7 @@ def test_documented_default_score_values_are_pinned() -> None:
             _row("always", [True, True]),  # mean_wrong=0, never=0, inst=0
         ],
     )
-    by_id = {s.example_id: s.defect_score for s in compute_defect_scores(matrix)}
+    by_id = {s.example_id: s.defect_score for s in _compute_defect_scores(matrix)}
     assert by_id["never"] == pytest.approx(0.971, abs=1e-3)
     assert by_id["always"] == pytest.approx(0.018, abs=1e-3)
     assert by_id["split"] == pytest.approx(0.378, abs=1e-3)
@@ -463,7 +463,7 @@ def test_percentile_exact_fractions_for_distinct_scores() -> None:
             _row("always", [True, True, True]),  # mean_wrong=0.0 (lowest)
         ],
     )
-    by_id = {s.example_id: s.defect_percentile for s in compute_defect_scores(matrix)}
+    by_id = {s.example_id: s.defect_percentile for s in _compute_defect_scores(matrix)}
     # percentile = fraction of scored items with score <= this one's
     assert by_id["always"] == pytest.approx(1 / 3)
     assert by_id["mostly-wrong"] == pytest.approx(2 / 3)
@@ -480,7 +480,7 @@ def test_small_refit_weights_still_yield_signals() -> None:
     the explanation. Scale-aware selection keeps the drivers regardless of scale."""
     matrix = _matrix(_grid(2), [_row("never", [False, False])])
     tiny = {"mean_wrong": 0.01, "never_correct": 0.01, "instability": 0.01}
-    scored = compute_defect_scores(matrix, intercept=-0.02, weights=tiny)
+    scored = _compute_defect_scores(matrix, intercept=-0.02, weights=tiny)
     signals = scored[0].contributing_signals
     assert signals, "a max-suspicion item must still explain itself under tiny weights"
     features = {s.feature for s in signals}
@@ -502,7 +502,7 @@ def test_negative_refit_weight_signal_lowers_suspicion() -> None:
     # never_correct gets a negative weight -> it should pull suspicion DOWN, and
     # its signal must carry that (negative contribution), not read as a driver up.
     weights = {"mean_wrong": 6.0, "never_correct": -2.0, "instability": 1.0}
-    scored = compute_defect_scores(matrix, weights=weights)
+    scored = _compute_defect_scores(matrix, weights=weights)
     by_feature = {s.feature: s for s in scored[0].contributing_signals}
     assert "never_correct" in by_feature
     nc = by_feature["never_correct"]
@@ -653,9 +653,76 @@ def test_projection_preserves_rank_order() -> None:
             _row("ex-split", [True, False]),
         ],
     )
-    internal = compute_defect_scores(matrix)
+    internal = _compute_defect_scores(matrix)
     projected = project_defect_scores(internal)
     assert [p.example_id for p in projected] == [i.example_id for i in internal]
     assert [i.defect_score for i in internal] == sorted(
         (i.defect_score for i in internal), reverse=True
     )
+
+
+def test_primary_reason_ignores_a_signal_that_lowered_suspicion() -> None:
+    """A negative contribution must never be published as the reason.
+
+    ``_build_signals`` ranks by |contribution|, and a refit with a negative weight
+    can make a suspicion-LOWERING signal the largest by magnitude. Publishing it
+    would tell the reviewer an item stands out *because* of the very thing that
+    pushed it down -- and the projection has already stripped the sign that would
+    have revealed the error.
+    """
+    item = _ScoredItem(
+        example_id="ex",
+        defect_score=0.5,
+        defect_percentile=1.0,
+        features={},
+        contributing_signals=[
+            # largest magnitude, but it LOWERED the score
+            _Signal(feature="instability", value=1.0, weight=-9.0, contribution=-9.0),
+            _Signal(feature="mean_wrong", value=1.0, weight=2.0, contribution=2.0),
+        ],
+    )
+    assert project_defect_scores([item])[0].primary_reason == "mean_wrong"
+
+
+def test_primary_reason_is_none_when_every_signal_lowered_suspicion() -> None:
+    item = _ScoredItem(
+        example_id="ex",
+        defect_score=0.1,
+        defect_percentile=0.1,
+        features={},
+        contributing_signals=[
+            _Signal(feature="mean_wrong", value=1.0, weight=-1.0, contribution=-1.0),
+        ],
+    )
+    assert project_defect_scores([item])[0].primary_reason is None
+
+
+def test_scorer_and_coefficients_are_not_public_api() -> None:
+    """The estimator must not be reachable by a supported import.
+
+    The projection is only a boundary if there is no way around it. Everything
+    that carries the model -- the scorer entry point, its coefficients, the
+    feature vector, and the rich row type -- is private by name.
+    """
+    import traigent.utils.eval_audit as m
+
+    for public_name in (
+        "compute_defect_scores",
+        "DEFECT_SCORE_WEIGHTS",
+        "DEFECT_SCORE_INTERCEPT",
+        "DEFECT_SCORE_FEATURES",
+        "ItemDefectScore",
+        "DefectSignal",
+    ):
+        assert not hasattr(m, public_name), (
+            f"{public_name} is importable from traigent.utils.eval_audit -- "
+            "it carries the scoring model and must stay private"
+        )
+
+    # The public entry point must not publish the shipped coefficients through
+    # its own signature defaults either.
+    import inspect
+
+    params = inspect.signature(compute_eval_audit).parameters
+    assert params["defect_score_intercept"].default is None
+    assert params["defect_score_weights"].default is None
