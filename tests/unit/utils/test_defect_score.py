@@ -701,8 +701,15 @@ def test_scorer_and_coefficients_are_not_public_api() -> None:
     """The estimator must not be reachable by a supported import.
 
     The projection is only a boundary if there is no way around it. Everything
-    that carries the model -- the scorer entry point, its coefficients, the
-    feature vector, and the rich row type -- is private by name.
+    that carries the model -- the scorer entry point, its coefficients, and the
+    feature vector -- is private by name.
+
+    Deliberately NOT asserted here: ``ItemDefectScore``. It is the coarse public
+    DTO the projection produces, so it carries no model and it is fine for it to
+    be importable from anywhere. Asserting its absence would also be brittle --
+    it holds today only because ``project_defect_scores`` imports it inside the
+    function body, so moving that to a module-level import (a harmless refactor)
+    would fail the test for no security reason.
     """
     import traigent.utils.eval_audit as m
 
@@ -711,7 +718,6 @@ def test_scorer_and_coefficients_are_not_public_api() -> None:
         "DEFECT_SCORE_WEIGHTS",
         "DEFECT_SCORE_INTERCEPT",
         "DEFECT_SCORE_FEATURES",
-        "ItemDefectScore",
         "DefectSignal",
     ):
         assert not hasattr(m, public_name), (
