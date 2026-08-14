@@ -824,83 +824,44 @@ class EvalAuditSummary:
 
 
 @dataclass
-class DefectSignal:
-    """One feature's contribution to an item's continuous defect score (#1881).
-
-    The score is a logistic function ``sigmoid(b0 + Σ wi·xi)`` over per-item
-    telemetry features. This records one term of that sum for explainability, so a
-    reviewer can see *which* signal moved an item's suspicion, and in which
-    direction. Signals are ranked by ``|contribution|`` (strongest driver first).
-
-    Attributes:
-        feature: Feature name (``mean_wrong`` / ``never_correct`` / ``instability``).
-        value: The feature's value for this item (``xi``).
-        weight: The model coefficient applied to the feature (``wi``).
-        contribution: ``weight * value`` — the feature's additive push on the
-            score's logit. The SIGN is the direction: a positive contribution
-            RAISED suspicion, a negative one (possible only under a negative refit
-            weight) LOWERED it. Magnitude is how strongly it moved the score.
-    """
-
-    feature: str
-    value: float
-    weight: float
-    contribution: float
-
-    def to_dict(self) -> dict[str, Any]:
-        """JSON-serializable view."""
-        return {
-            "feature": self.feature,
-            "value": self.value,
-            "weight": self.weight,
-            "contribution": self.contribution,
-        }
-
-
-@dataclass
 class ItemDefectScore:
-    """Continuous per-item defect score + dataset-relative rank (issue #1881).
+    """One example's place in a run's review worklist (issue #1881).
 
     The continuous layer on top of #1880's binary flags: instead of a yes/no,
-    each scored item carries a suspicion score plus its rank within this run, so a
-    reviewer gets a sorted worklist and can start at the worst items and stop when
-    the signal thins out. Computed as a pure, deterministic function of the
-    outcome matrix (#1838) — no LLM calls.
+    every scored item is placed in a review tier, so a reviewer gets a sorted
+    worklist and can start at the worst items and stop when the tier drops.
+    Computed as a pure, deterministic function of the outcome matrix (#1838) —
+    no LLM calls, no network.
+
+    Items arrive **already ranked**, most in need of review first; the list order
+    is the ranking.
 
     Attributes:
         example_id: The scored example's id (matrix row key).
-        defect_score: Heuristic suspicion score in [0, 1] —
-            ``sigmoid(b0 + Σ wi·xi)`` over the telemetry features. With the
-            DEFAULT (illustrative, hand-chosen) coefficients this is NOT a
-            calibrated probability; it is calibrated only if you refit the
-            coefficients on your own labeled subset. Use ``defect_percentile`` to
-            RANK items by default.
-        defect_percentile: The item's rank within THIS run's scored items —
-            the fraction of scored items with a score <= this item's (so the most
-            suspicious item is 1.0). This is the trustworthy default output: "top
-            5% most suspicious" (percentile >= 0.95) works regardless of absolute
-            calibration.
-        features: The raw telemetry features that fed the score
-            (``never_correct``, ``mean_wrong``, ``instability``).
-        contributing_signals: Per-feature ``weight * value`` contributions above
-            a small threshold, sorted by contribution descending — the
-            explainability view of which signal drove the score.
+        review_tier: How strongly this item stands out **within this run** —
+            ``"high"`` (at or above the 95th percentile), ``"elevated"`` (at or
+            above the 80th), or ``"normal"``. It is relative to the run, not an
+            absolute probability of defect: a run whose examples are all fine
+            still has a top tier, so treat the tier as "look here first", not as
+            "this is broken". It is a rank band, not a quota — on small runs, and
+            wherever items tie, more than 5% of items can land in ``"high"``.
+        primary_reason: The observation that most **raised** this item's
+            standing-out, or ``None`` when nothing did. One of
+            ``"never_correct"`` (no configuration ever answered it correctly),
+            ``"mean_wrong"`` (wrong far more often than right), or
+            ``"instability"`` (configurations disagreed with each other on it).
     """
 
     example_id: str
-    defect_score: float
-    defect_percentile: float
-    features: dict[str, float] = field(default_factory=dict)
-    contributing_signals: list[DefectSignal] = field(default_factory=list)
+    review_tier: str
+    primary_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-serializable view."""
         return {
             "example_id": self.example_id,
-            "defect_score": self.defect_score,
-            "defect_percentile": self.defect_percentile,
-            "features": dict(self.features),
-            "contributing_signals": [s.to_dict() for s in self.contributing_signals],
+            "review_tier": self.review_tier,
+            "primary_reason": self.primary_reason,
         }
 
 
@@ -917,10 +878,10 @@ class EvalAudit:
             sorted by id.
         summary: Per-detector counts + lift so the user knows how many flags to
             expect and how concentrated they are versus chance.
-        scored: The continuous layer (#1881): every scored item (ran in >=2
-            configs) with its ``defect_score`` + ``defect_percentile`` +
-            ``contributing_signals``, sorted by score descending — a ranked
-            worklist over ALL scored items, not just the flagged ones.
+        scored: The ranked layer (#1881): every scored item (ran in >=2 configs)
+            with its ``review_tier`` and ``primary_reason``, most in need of
+            review first — a ranked worklist over ALL scored items, not just the
+            flagged ones.
     """
 
     flagged: list[EvalAuditFlag] = field(default_factory=list)
