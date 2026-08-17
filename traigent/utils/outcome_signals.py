@@ -14,16 +14,32 @@ number.
 What leaves the client per example:
 
 ============================  =========================================================
-``example_digest``            64-hex digest of (input, expected output)
-``output_digest``             64-hex digest of the produced output
+``example_digest``            64-hex keyed digest of (input, expected output)
+``output_digest``             64-hex keyed digest of the produced output
 ``verified_match``            ``1.0`` / ``0.0`` -- did the output match the expected
                               answer under the SDK's own comparison? Omitted entirely
                               when the example has no usable expected answer.
+``signal_key_id``             12-hex tag identifying which key version the two digests
+                              above were computed under (see "Keying", below).
 ============================  =========================================================
 
-A digest is one-way: it identifies an example across runs so the same example can be
-recognised, and reveals nothing about its content. Two runs over the same dataset
-produce the same digests; a changed prompt produces a different one.
+**Keying, and what it does and does not claim.** The digests are HMAC-SHA256, not bare
+SHA-256, keyed with material derived from the project's own API key
+(:func:`traigent.config.backend_config.BackendConfig.get_api_key`). This is an identity
+mechanism, not a secrecy guarantee: a bare digest over a short, low-entropy value (a
+"4", a class label, "yes") is a confirmation oracle -- anyone holding the wire payload
+can hash every plausible candidate and see which one matches, recovering the gold label
+without ever seeing it directly. Keying closes that off for anyone who does NOT hold the
+project's key material: they cannot enumerate candidates against a digest they cannot
+reproduce. It does NOT close it off for Traigent itself -- Traigent holds the project key
+and could, in principle, recompute a candidate digest and compare. Two runs over the same
+dataset under the same key produce the same digests; a changed prompt, or a rotated key,
+produces a different one. ``signal_key_id`` lets the backend tell those two causes apart
+(new example vs. rotated key) without itself revealing the key -- it is a one-way tag of
+the key material, not the key or a way to derive it.
+
+Every one of the four keys is fail-closed on missing key material: if no project API key
+is configured, this module emits NONE of them, never an unkeyed digest.
 
 **The comparison is deliberately not a new one.** ``verified_match`` reuses
 :func:`~traigent.evaluators.base._accuracy_values_match`, the same predicate the
@@ -39,6 +55,7 @@ as a reference point for assessing the evaluator itself.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import re
 import threading
@@ -54,11 +71,18 @@ logger = get_logger(__name__)
 _EXAMPLE_DOMAIN = "traigent.example.v1"
 _OUTPUT_DOMAIN = "traigent.output.v1"
 
+#: Domain separators for deriving the HMAC key and the non-reversible key-id tag from
+#: the project API key. Distinct from each other and from the two digest domains above
+#: so none of these four derivations can ever collide on identical input bytes.
+_KEY_DERIVATION_DOMAIN = "traigent.signal.key.v1"
+_KEY_ID_DOMAIN = "traigent.signal.keyid.v1"
+
 #: Sibling keys attached to a per-example record. Neutral, outcome-shaped names: they
 #: describe the user's own data, not how the platform uses them.
 EXAMPLE_DIGEST_KEY = "example_digest"
 OUTPUT_DIGEST_KEY = "output_digest"
 VERIFIED_MATCH_KEY = "verified_match"
+SIGNAL_KEY_ID_KEY = "signal_key_id"
 
 #: The default ``object.__repr__`` embeds the object's memory address
 #: (``<Foo object at 0x7f...>``), which differs across processes and even across
@@ -154,26 +178,76 @@ def _canonical(value: Any) -> str | None:
         return None
 
 
-def _digest(domain: str, value: Any) -> str | None:
+def _digest(domain: str, value: Any, hmac_key: bytes) -> str | None:
     canonical = _canonical(value)
     if canonical is None:
         return None
     payload = f"{domain}\x00{canonical}".encode()
-    return hashlib.sha256(payload).hexdigest()
+    return hmac.new(hmac_key, payload, hashlib.sha256).hexdigest()
 
 
-def example_digest(input_data: Any, expected_output: Any) -> str | None:
+def example_digest(
+    input_data: Any, expected_output: Any, hmac_key: bytes
+) -> str | None:
     """Stable identity for an example, from its input and expected answer.
+
+    ``hmac_key`` is REQUIRED -- see :func:`_resolve_signal_key`. There is no
+    unkeyed fallback: a bare digest over short, low-entropy content (a "4", a
+    class label) is a confirmation oracle, so a digest with no key is not a
+    degraded-but-safe result, it is the exact thing this keying exists to
+    prevent.
 
     ``None`` when no deterministic digest exists for this content (see
     :func:`_canonical`) -- never an unstable one.
     """
-    return _digest(_EXAMPLE_DOMAIN, {"input": input_data, "expected": expected_output})
+    return _digest(
+        _EXAMPLE_DOMAIN, {"input": input_data, "expected": expected_output}, hmac_key
+    )
 
 
-def output_digest(actual_output: Any) -> str | None:
-    """Stable identity for a produced output. ``None`` if it can't be made stable."""
-    return _digest(_OUTPUT_DOMAIN, actual_output)
+def output_digest(actual_output: Any, hmac_key: bytes) -> str | None:
+    """Stable identity for a produced output. ``None`` if it can't be made stable.
+
+    ``hmac_key`` is REQUIRED; see :func:`example_digest` for why there is no
+    unkeyed fallback.
+    """
+    return _digest(_OUTPUT_DOMAIN, actual_output, hmac_key)
+
+
+def _derive_signal_key(api_key: str) -> bytes:
+    """Derive HMAC key material from the project API key. Never the raw key
+    itself -- a derived value so this module never handles (or could leak) the
+    key used to authenticate to the backend."""
+    return hashlib.sha256(f"{_KEY_DERIVATION_DOMAIN}\x00{api_key}".encode()).digest()
+
+
+def _signal_key_id(api_key: str) -> str:
+    """Non-reversible tag for the current key version.
+
+    A distinct domain from :func:`_derive_signal_key` so the id can never be
+    used to reconstruct the HMAC key, or vice versa. Truncated to 12 hex chars
+    -- enough to distinguish key versions for a single project, not an
+    independent secret.
+    """
+    digest = hashlib.sha256(f"{_KEY_ID_DOMAIN}\x00{api_key}".encode()).hexdigest()
+    return digest[:12]
+
+
+def _resolve_signal_key() -> tuple[bytes, str] | None:
+    """The current (HMAC key, key id) pair, or ``None`` if unavailable.
+
+    ``None`` means "no project API key is configured" -- every caller in this
+    module must treat that as fail-closed: omit every signal, never fall back
+    to an unkeyed digest. A silent downgrade to the unkeyed construction would
+    quietly reintroduce the confirmation-oracle problem the keying exists to
+    close.
+    """
+    from traigent.config.backend_config import BackendConfig
+
+    api_key = BackendConfig.get_api_key()
+    if not api_key:
+        return None
+    return _derive_signal_key(api_key), _signal_key_id(api_key)
 
 
 def verified_match(
@@ -236,32 +310,47 @@ def _note_signal_failure(exc: Exception) -> None:
 def build_example_signals(example_result: Any) -> dict[str, Any]:
     """The signal sibling keys for one example result.
 
-    Returns only keys that are meaningful for this example: ``verified_match`` is
-    absent when there is no usable expected answer, and either digest is absent
-    when its content has no deterministic canonical form (see ``_canonical``).
-    Never raises -- a signal that cannot be computed is omitted, because failing
-    to describe an example must not fail the run that produced it. A failure is
-    still recorded (content-free) via ``_note_signal_failure`` so a systemic
-    failure is visible rather than indistinguishable from "no expected outputs".
+    Fail-closed on key material: if no project API key is configured (see
+    :func:`_resolve_signal_key`), this returns ``{}`` -- NONE of
+    ``example_digest``/``output_digest``/``verified_match``/``signal_key_id`` are
+    emitted. There is no unkeyed fallback; see the module docstring for why an
+    unkeyed digest is a confirmation oracle, not a degraded-but-safe signal.
+
+    Otherwise returns only keys that are meaningful for this example:
+    ``verified_match`` is absent when there is no usable expected answer, and
+    either digest is absent when its content has no deterministic canonical form
+    (see ``_canonical``). Never raises -- a signal that cannot be computed is
+    omitted, because failing to describe an example must not fail the run that
+    produced it. A failure is still recorded (content-free) via
+    ``_note_signal_failure`` so a systemic failure is visible rather than
+    indistinguishable from "no expected outputs".
     """
     signals: dict[str, Any] = {}
     try:
+        key_material = _resolve_signal_key()
+        if key_material is None:
+            return {}
+        hmac_key, key_id = key_material
+
         input_data = _example_field(example_result, "input_data")
         expected = _example_field(example_result, "expected_output")
         actual = _example_field(example_result, "actual_output")
         errored = _example_field(example_result, "error_message") is not None
 
-        digest = example_digest(input_data, expected)
+        digest = example_digest(input_data, expected, hmac_key)
         if digest is not None:
             signals[EXAMPLE_DIGEST_KEY] = digest
 
-        out_digest = output_digest(actual)
+        out_digest = output_digest(actual, hmac_key)
         if out_digest is not None:
             signals[OUTPUT_DIGEST_KEY] = out_digest
 
         match = verified_match(actual, expected, errored=errored)
         if match is not None:
             signals[VERIFIED_MATCH_KEY] = match
+
+        if signals:
+            signals[SIGNAL_KEY_ID_KEY] = key_id
     except Exception as exc:  # noqa: BLE001 - signals are diagnostic, never load-bearing
         _note_signal_failure(exc)
         return {}

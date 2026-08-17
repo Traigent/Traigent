@@ -20,11 +20,25 @@ from __future__ import annotations
 
 from unittest.mock import Mock
 
+import pytest
+
 from traigent.api.types import ExampleResult
+from traigent.config.backend_config import BackendConfig
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.trial_result_factory import build_success_result
 from traigent.utils.outcome_signals import build_example_signals
+
+
+@pytest.fixture(autouse=True)
+def _project_api_key(monkeypatch: pytest.MonkeyPatch):
+    """The signals are fail-closed on a missing project API key (FIX 5) --
+    give the real pipeline one so these tests exercise the signal-emitting
+    path, not the (separately tested) fail-closed path.
+    """
+    monkeypatch.setattr(
+        BackendConfig, "get_api_key", classmethod(lambda cls: "wiring-test-project-key")
+    )
 
 
 def _example(idx: int, *, question: str, answer: str, output: str) -> ExampleResult:

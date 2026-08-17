@@ -15,6 +15,7 @@ from traigent.utils.logging import get_logger
 from traigent.utils.outcome_signals import (
     EXAMPLE_DIGEST_KEY,
     OUTPUT_DIGEST_KEY,
+    SIGNAL_KEY_ID_KEY,
     VERIFIED_MATCH_KEY,
     _example_field,
     build_example_signals,
@@ -469,7 +470,12 @@ def _extract_score_from_metrics(
     return None
 
 
-_SIGNAL_KEYS = (EXAMPLE_DIGEST_KEY, OUTPUT_DIGEST_KEY, VERIFIED_MATCH_KEY)
+_SIGNAL_KEYS = (
+    EXAMPLE_DIGEST_KEY,
+    OUTPUT_DIGEST_KEY,
+    VERIFIED_MATCH_KEY,
+    SIGNAL_KEY_ID_KEY,
+)
 
 
 def _example_signals(example_result: Any) -> dict[str, Any]:
