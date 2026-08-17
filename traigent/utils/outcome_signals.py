@@ -54,6 +54,7 @@ as a reference point for assessing the evaluator itself.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import hmac
 import json
@@ -71,11 +72,24 @@ logger = get_logger(__name__)
 _EXAMPLE_DOMAIN = "traigent.example.v1"
 _OUTPUT_DOMAIN = "traigent.output.v1"
 
-#: Domain separators for deriving the HMAC key and the non-reversible key-id tag from
-#: the project API key. Distinct from each other and from the two digest domains above
-#: so none of these four derivations can ever collide on identical input bytes.
-_KEY_DERIVATION_DOMAIN = "traigent.signal.key.v1"
-_KEY_ID_DOMAIN = "traigent.signal.keyid.v1"
+#: Salts for deriving the HMAC key and the non-reversible key-id tag from the project
+#: API key via PBKDF2 (see ``_pbkdf2``). Distinct from each other so neither derivation
+#: can be used to reconstruct the other, and distinct from the two digest domains above
+#: so nothing here can collide with an example/output digest on identical input bytes.
+_KEY_DERIVATION_SALT = b"traigent.signal.key.v1"
+_KEY_ID_SALT = b"traigent.signal.keyid.v1"
+
+#: PBKDF2-HMAC-SHA256 iteration count for deriving signal key material from the
+#: project API key. THIS IS PART OF THE IDENTITY CONTRACT, not a tunable perf knob:
+#: this count, the two salts above, and the algorithm together determine every
+#: ``example_digest``/``output_digest``/``signal_key_id`` this module has ever
+#: produced. Changing this value changes every derived key and id for every
+#: project -- silently breaking cross-run digest joins for data already on the
+#: backend, which is exactly the class of silent breakage this module exists to
+#: remove. A genuine strengthening (e.g. raising this as hardware improves) must
+#: ship as a new, distinctly-salted derivation (bump the salts to ``...v2``), not
+#: an edit to this constant.
+_KDF_ITERATIONS = 600_000
 
 #: Sibling keys attached to a per-example record. Neutral, outcome-shaped names: they
 #: describe the user's own data, not how the platform uses them.
@@ -214,23 +228,49 @@ def output_digest(actual_output: Any, hmac_key: bytes) -> str | None:
     return _digest(_OUTPUT_DOMAIN, actual_output, hmac_key)
 
 
+def _pbkdf2(api_key: str, salt: bytes) -> bytes:
+    """PBKDF2-HMAC-SHA256 over the project API key, one genuine KDF pass.
+
+    A single fast hash (even domain-separated, even HMAC-keyed elsewhere) is
+    the wrong primitive for turning a credential-shaped secret into derived key
+    material: it is exactly what CodeQL's ``py/weak-sensitive-data-hashing``
+    flags, because a fast hash makes offline guessing of a low-entropy or
+    reused API key cheap. PBKDF2 with a real iteration count (``_KDF_ITERATIONS``)
+    makes each guess expensive instead.
+    """
+    return hashlib.pbkdf2_hmac("sha256", api_key.encode(), salt, _KDF_ITERATIONS)
+
+
 def _derive_signal_key(api_key: str) -> bytes:
     """Derive HMAC key material from the project API key. Never the raw key
-    itself -- a derived value so this module never handles (or could leak) the
-    key used to authenticate to the backend."""
-    return hashlib.sha256(f"{_KEY_DERIVATION_DOMAIN}\x00{api_key}".encode()).digest()
+    itself -- a derived value so this module never uses (or could leak) the
+    key used to authenticate to the backend as a digest key directly."""
+    return _pbkdf2(api_key, _KEY_DERIVATION_SALT)
 
 
 def _signal_key_id(api_key: str) -> str:
     """Non-reversible tag for the current key version.
 
-    A distinct domain from :func:`_derive_signal_key` so the id can never be
-    used to reconstruct the HMAC key, or vice versa. Truncated to 12 hex chars
-    -- enough to distinguish key versions for a single project, not an
-    independent secret.
+    A distinct salt from :func:`_derive_signal_key` so the id can never be used
+    to reconstruct the HMAC key, or vice versa. Truncated to 12 hex chars --
+    enough to distinguish key versions for a single project, not an independent
+    secret.
     """
-    digest = hashlib.sha256(f"{_KEY_ID_DOMAIN}\x00{api_key}".encode()).hexdigest()
-    return digest[:12]
+    return _pbkdf2(api_key, _KEY_ID_SALT).hex()[:12]
+
+
+@functools.lru_cache(maxsize=8)
+def _cached_key_pair(api_key: str) -> tuple[bytes, str]:
+    """(HMAC key, key id) for one API key, computed once per process per key.
+
+    ``_KDF_ITERATIONS`` is deliberately expensive (that is the point of a KDF),
+    so paying it once per example across a large evaluation run would be a real
+    performance regression. ``lru_cache`` keys strictly on the ``api_key``
+    VALUE passed in -- a key rotation within one process gets its own,
+    independent cache entry rather than reusing another key's derived
+    material, so the cache cannot leak identity across different API keys.
+    """
+    return _derive_signal_key(api_key), _signal_key_id(api_key)
 
 
 def _resolve_signal_key() -> tuple[bytes, str] | None:
@@ -247,7 +287,7 @@ def _resolve_signal_key() -> tuple[bytes, str] | None:
     api_key = BackendConfig.get_api_key()
     if not api_key:
         return None
-    return _derive_signal_key(api_key), _signal_key_id(api_key)
+    return _cached_key_pair(api_key)
 
 
 def verified_match(

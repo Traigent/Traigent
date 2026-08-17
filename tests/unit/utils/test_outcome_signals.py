@@ -307,6 +307,42 @@ def test_different_api_keys_give_different_digests_for_identical_content(
     assert signals_alpha["signal_key_id"] != signals_beta["signal_key_id"]
 
 
+def test_key_derivation_is_stable_across_calls_and_a_fresh_cache_for_the_same_key() -> (
+    None
+):
+    """The KDF-derived key/id for a given API key must be reproducible --
+    within a process (repeated calls, the lru_cache hit path) and starting from
+    a fresh, empty cache (the lru_cache miss path, e.g. process restart) --
+    while a different key still produces different material. Exercises the
+    real derivation directly (not mocked), since this is exactly the KDF-cost
+    contract ``_cached_key_pair`` exists to pay only once per key.
+    """
+    from traigent.utils.outcome_signals import _cached_key_pair, _derive_signal_key
+
+    # Within-process stability, including repeated hits on the same cache entry.
+    first_call = _cached_key_pair("stability-test-key")
+    second_call = _cached_key_pair("stability-test-key")
+    assert first_call == second_call
+
+    # Stability is a property of the DERIVATION, not of the cache holding onto
+    # an object: clearing the cache and recomputing from scratch (the
+    # fresh-cache / cold-process case) must reproduce the identical key/id.
+    _cached_key_pair.cache_clear()
+    after_clear = _cached_key_pair("stability-test-key")
+    assert after_clear == first_call
+
+    # A different key must diverge -- the cache must not be leaking material
+    # across distinct API key values.
+    different_key_pair = _cached_key_pair("a-completely-different-key")
+    assert different_key_pair != first_call
+    assert different_key_pair[0] != first_call[0]
+    assert different_key_pair[1] != first_call[1]
+
+    # And the uncached derivation function agrees with the cached wrapper --
+    # the cache is a pure memoization, not an alternate code path.
+    assert _derive_signal_key("stability-test-key") == first_call[0]
+
+
 def test_signal_key_id_is_not_the_api_key_or_derived_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
