@@ -141,3 +141,90 @@ def test_a_broken_example_result_yields_no_signals_rather_than_raising() -> None
             raise RuntimeError("boom")
 
     assert build_example_signals(Exploding()) == {}
+
+
+# --- canonicalisation must be stable across processes ---------------------
+
+
+def test_default_object_repr_does_not_produce_an_unstable_digest() -> None:
+    """An object with NO custom ``__repr__`` renders as
+    ``<ClassName object at 0x...>`` -- the address differs across processes (and
+    across runs within one process, under ASLR), so the SAME logical example
+    would digest differently every time. That must never happen: the signal is
+    omitted, not emitted unstably.
+    """
+
+    class NoCustomRepr:
+        pass
+
+    address_bearing_repr = repr(NoCustomRepr())
+    assert "0x" in address_bearing_repr  # sanity: this really is address-bearing
+
+    signals = build_example_signals(_result(actual_output=NoCustomRepr()))
+    assert "output_digest" not in signals
+
+
+def test_a_deterministic_custom_repr_still_yields_a_stable_digest() -> None:
+    """Not every non-JSON object is unstable -- one with a content-based
+    ``__repr__`` (no address) must still get a real, reproducible digest."""
+
+    class Deterministic:
+        def __repr__(self) -> str:
+            return "<deterministic-marker>"
+
+    first = output_digest(Deterministic())
+    second = output_digest(Deterministic())
+    assert first is not None
+    assert first == second
+
+
+def test_set_member_order_does_not_change_the_digest() -> None:
+    """Set iteration order depends on hash randomisation and is not guaranteed
+    stable across processes; the digest must not depend on it."""
+    a = output_digest({"x", "y", "z"})
+    b = output_digest({"z", "y", "x"})
+    assert a is not None
+    assert a == b
+
+
+# --- signals read plain dicts, the actual wire form -----------------------
+
+
+def test_build_example_signals_reads_a_plain_dict_not_just_an_object() -> None:
+    """Trial metadata stores example results as redacted ``to_dict()`` payloads
+    (plain dicts), not ``ExampleResult`` objects. ``getattr``-based reads return
+    ``None`` for every field on a dict, collapsing every example to the same
+    digest -- this is the production bug the signals exist to prevent.
+    """
+    payload = {
+        "input_data": {"q": "2+2?"},
+        "expected_output": "4",
+        "actual_output": "4",
+        "error_message": None,
+    }
+    signals = build_example_signals(payload)
+    assert signals["example_digest"] == example_digest({"q": "2+2?"}, "4")
+    assert signals["verified_match"] == 1.0
+
+
+# --- a systemic failure must be observable, without leaking content -------
+
+
+def test_a_signal_build_failure_logs_no_content(caplog) -> None:
+    import logging
+
+    secret = "CANARY-OBSERVABILITY-CONTENT-DO-NOT-LOG"
+
+    class Exploding:
+        @property
+        def input_data(self):
+            raise RuntimeError(secret)
+
+    with caplog.at_level(logging.WARNING, logger="traigent.utils.outcome_signals"):
+        result = build_example_signals(Exploding())
+
+    assert result == {}
+    log_text = caplog.text
+    assert secret not in log_text
+    # The failure must be observable (not merely silent), but content-free.
+    assert "RuntimeError" in log_text
