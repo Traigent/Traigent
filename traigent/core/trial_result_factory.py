@@ -22,8 +22,35 @@ from traigent.security.redaction import redact_sensitive_data, redact_sensitive_
 from traigent.utils.exceptions import TrialPrunedError
 from traigent.utils.logging import get_logger
 from traigent.utils.objectives import classify_objective
+from traigent.utils.outcome_signals import build_example_signals
 
 logger = get_logger(__name__)
+
+
+def _redact_example_results_with_signals(raw_example_results: list[Any]) -> list[Any]:
+    """Redact example results for wire metadata, with signals attached pre-redaction.
+
+    The per-example signals (``example_digest``/``output_digest``/``verified_match``,
+    see ``traigent.utils.outcome_signals``) must identify the example's ACTUAL
+    content, not its redacted form: redaction can rewrite two DIFFERENT examples
+    to the same placeholder text (e.g. two distinct emails both become
+    ``[REDACTED_EMAIL]``), which would collapse their digests to the same value.
+    So signals are computed here, from the raw ``ExampleResult`` objects, before
+    ``to_dict()``/redaction runs -- then attached onto the redacted dict payload
+    that actually reaches the wire. Payload and raw list stay index-aligned:
+    both are built from the same ``raw_example_results`` list without filtering.
+    """
+    redacted_payloads = redact_sensitive_data(
+        _to_redactable_payloads(raw_example_results)
+    )
+    if not isinstance(redacted_payloads, list):
+        return redacted_payloads
+    for payload, raw_example in zip(
+        redacted_payloads, raw_example_results, strict=False
+    ):
+        if isinstance(payload, dict):
+            payload.update(build_example_signals(raw_example))
+    return redacted_payloads
 
 
 def _to_redactable_payload(value: Any) -> Any:
@@ -264,8 +291,8 @@ def _build_success_trial_metadata(
 
     example_results = getattr(eval_result, "example_results", None)
     if isinstance(example_results, list) and example_results:
-        trial_metadata["example_results"] = redact_sensitive_data(
-            _to_redactable_payloads(example_results)
+        trial_metadata["example_results"] = _redact_example_results_with_signals(
+            example_results
         )
 
     if examples_attempted is not None:
@@ -675,8 +702,8 @@ def build_pruned_result(
     # Include partial example_results from the pruned trial
     # These are captured by the evaluator before raising TrialPrunedError
     if prune_error.example_results:
-        metadata["example_results"] = redact_sensitive_data(
-            _to_redactable_payloads(list(prune_error.example_results))
+        metadata["example_results"] = _redact_example_results_with_signals(
+            list(prune_error.example_results)
         )
         logger.info(
             "📊 Captured %d partial example results for pruned trial %s",
