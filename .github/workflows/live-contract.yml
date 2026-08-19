@@ -131,7 +131,10 @@ jobs:
       - name: Install uv
         run: python -m pip install --upgrade pip "uv==0.8.13"
 
+      # This lane checks out three repos into sibling directories, so the
+      # workspace root has no pyproject.toml -- the check must name the SDK.
       - name: Verify uv.lock is current
+        working-directory: ${{ env.SDK_DIR }}
         run: uv lock --check
 
       - name: Prepare compose environment
