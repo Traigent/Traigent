@@ -16,7 +16,7 @@ Features:
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from traigent.utils.secure_path import safe_read_text, safe_write_text, validate_path
 
@@ -27,7 +27,7 @@ class OptimizationStorage:
     STORAGE_VERSION = "1.0"
     RESULTS_DIR = "optimization_results"
 
-    def __init__(self, base_path: Optional[Path] = None):
+    def __init__(self, base_path: Path | None = None):
         """
         Initialize the storage handler.
 
@@ -91,7 +91,7 @@ class OptimizationStorage:
         problem_dir = self.get_problem_directory(problem_name)
         return validate_path(problem_dir / f"{run_id}.json", self.base_path)
 
-    def save_optimization_result(self, result: Dict[str, Any]) -> str:
+    def save_optimization_result(self, result: dict[str, Any]) -> str:
         """
         Save an optimization result to disk.
 
@@ -139,7 +139,7 @@ class OptimizationStorage:
 
     def load_optimization_result(
         self, problem_name: str, run_id: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Load a specific optimization result.
 
@@ -160,7 +160,7 @@ class OptimizationStorage:
             print(f"Error loading result {run_id}: {str(e)}")
             return None
 
-    def load_problem_results(self, problem_name: str) -> List[Dict[str, Any]]:
+    def load_problem_results(self, problem_name: str) -> list[dict[str, Any]]:
         """
         Load all optimization results for a specific problem.
 
@@ -178,10 +178,10 @@ class OptimizationStorage:
         for file_path in problem_dir.glob("run_*.json"):
             try:
                 result = json.loads(safe_read_text(file_path, self.base_path))
-                    # Ensure run_id is present
-                    if "run_id" not in result:
-                        result["run_id"] = file_path.stem
-                    results.append(result)
+                # Ensure run_id is present
+                if "run_id" not in result:
+                    result["run_id"] = file_path.stem
+                results.append(result)
             except Exception as e:
                 print(f"Error loading {file_path}: {str(e)}")
                 continue
@@ -190,7 +190,7 @@ class OptimizationStorage:
         results.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
         return results
 
-    def load_all_results(self) -> List[Dict[str, Any]]:
+    def load_all_results(self) -> list[dict[str, Any]]:
         """
         Load all optimization results across all problems.
 
@@ -248,7 +248,7 @@ class OptimizationStorage:
                 return False
         return False
 
-    def get_storage_stats(self) -> Dict[str, Any]:
+    def get_storage_stats(self) -> dict[str, Any]:
         """
         Get storage statistics.
 
@@ -287,21 +287,21 @@ class OptimizationStorage:
 storage = OptimizationStorage()
 
 
-def save_optimization_result(result: Dict[str, Any]) -> str:
+def save_optimization_result(result: dict[str, Any]) -> str:
     """Save an optimization result."""
     return storage.save_optimization_result(result)
 
 
-def load_optimization_results(problem_name: str) -> List[Dict[str, Any]]:
+def load_optimization_results(problem_name: str) -> list[dict[str, Any]]:
     """Load all results for a problem."""
     return storage.load_problem_results(problem_name)
 
 
-def load_all_optimization_results() -> List[Dict[str, Any]]:
+def load_all_optimization_results() -> list[dict[str, Any]]:
     """Load all optimization results."""
     return storage.load_all_results()
 
 
-def get_storage_stats() -> Dict[str, Any]:
+def get_storage_stats() -> dict[str, Any]:
     """Get storage statistics."""
     return storage.get_storage_stats()

@@ -314,6 +314,17 @@ jobs:
           printf '%s\n' "$changed_py" | xargs -r ruff check --output-format=github
           printf '%s\n' "$changed_py" | xargs -r ruff format --check
 
+      # Whole-repo syntax check. The style lint above is diff-scoped and the
+      # workflow-level `ruff check` runs cover only traigent/ and
+      # traigent_validation/, so a file outside those trees that nobody edits
+      # is linted by nothing -- which is how a plain IndentationError sat in
+      # plugins/traigent-ui/traigent_ui/optimization_storage.py on both
+      # develop and main. E9 is syntax/IO errors only: it adds no style
+      # pressure and cannot be tripped by the 900+ pre-existing style
+      # findings under plugins/.
+      - name: Syntax check (whole repo)
+        run: ruff check . --select E9 --no-cache --output-format=github
+
   unit:
     name: unit
     if: ${{ !cancelled() && needs.changes.outputs.code_changed == 'true' && needs.preflight.result == 'success' && (github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) }}
