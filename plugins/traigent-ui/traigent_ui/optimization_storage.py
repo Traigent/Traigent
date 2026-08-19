@@ -178,10 +178,10 @@ class OptimizationStorage:
         for file_path in problem_dir.glob("run_*.json"):
             try:
                 result = json.loads(safe_read_text(file_path, self.base_path))
-                    # Ensure run_id is present
-                    if "run_id" not in result:
-                        result["run_id"] = file_path.stem
-                    results.append(result)
+                # Ensure run_id is present
+                if "run_id" not in result:
+                    result["run_id"] = file_path.stem
+                results.append(result)
             except Exception as e:
                 print(f"Error loading {file_path}: {str(e)}")
                 continue
