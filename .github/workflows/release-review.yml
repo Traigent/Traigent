@@ -107,6 +107,16 @@ jobs:
   tests_integration:
     name: tests-integration
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     outputs:
       gate_status: ${{ steps.tests_integration_status.outputs.status }}
     steps:
@@ -117,12 +127,18 @@ jobs:
       - name: Install test deps
         run: |
           bash scripts/ci/install_sdk_requirements.sh -e ".[all,dev]"
+          pip install "redis>=8,<9"
+      - name: Verify redis-py 8
+        run: |
+          python -c 'import redis; major = int(redis.__version__.split(".", 1)[0]); print(f"redis-py {redis.__version__} (major {major})"); assert major == 8, redis.__version__'
       - name: Run integration tests
         id: tests_integration_run
         continue-on-error: true
         env:
           PYTHONPATH: .
-        run: pytest tests/integration -q --tb=short
+        run: |
+          TRAIGENT_TEST_REDIS_URL="redis://localhost:6379/15" \
+            pytest tests/integration -q --tb=short
       - name: Capture integration-test status
         id: tests_integration_status
         if: always()
