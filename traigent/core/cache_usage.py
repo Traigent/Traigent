@@ -67,6 +67,8 @@ _PROVIDER_SHAPES: tuple[
     # historical, wrong setting) double-counts every cached token once the input key
     # is read at all, producing exactly a 2x overcount of billable input.
     ("gemini", ("cachedContentTokenCount",), None, True),
+    # The Google Python client exposes this same usage metadata in snake_case.
+    ("gemini", ("cached_content_token_count",), None, True),
 )
 
 # Anthropic reports the cache-write TTL split; a single request may contain both.
@@ -171,7 +173,13 @@ def _coerce_count(raw: Any) -> int | None:
 
 
 def _read_input_tokens(payload: dict[str, Any]) -> int | None:
-    for key in ("input_tokens", "inputTokens", "prompt_tokens", "promptTokenCount"):
+    for key in (
+        "input_tokens",
+        "inputTokens",
+        "prompt_tokens",
+        "promptTokenCount",
+        "prompt_token_count",
+    ):
         if key in payload:
             return _coerce_count(payload[key])
     return None
