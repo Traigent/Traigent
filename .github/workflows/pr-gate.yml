@@ -331,6 +331,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: [changes, preflight]
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -347,6 +357,10 @@ jobs:
       - name: Install test deps
         run: |
           bash scripts/ci/install_sdk_requirements.sh -e ".[all,dev]"
+          pip install "redis>=8,<9"
+      - name: Verify redis-py 8
+        run: |
+          python -c 'import redis; major = int(redis.__version__.split(".", 1)[0]); print(f"redis-py {redis.__version__} (major {major})"); assert major == 8, redis.__version__'
       - name: Install pinned economics Schema contract
         # The economics contract-drift tests (tests/unit/economics) hard-require
         # the exact TraigentSchema economics contract and must not silently
@@ -374,6 +388,11 @@ jobs:
           TRAIGENT_REQUIRE_ECONOMICS_SCHEMA: "1"
         # pyproject addopts already include -n auto --dist loadgroup (xdist).
         run: pytest tests/unit -q --tb=short
+      - name: Run live Redis session test
+        env:
+          PYTHONPATH: .
+          TRAIGENT_TEST_REDIS_URL: redis://localhost:6379/15
+        run: pytest tests/integration/test_session_manager_live_redis.py -q --tb=short
 
   collection:
     name: collection
