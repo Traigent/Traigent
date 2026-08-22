@@ -187,9 +187,12 @@ class TestInteractiveOptimizer:
 
         with pytest.raises(
             OptimizationError,
+            # Asserts the actionable content -- unavailable, no local fallback --
+            # deliberately NOT the name of any search algorithm. Naming an
+            # engine here would re-introduce the disclosure this message drops.
             match=(
                 "Cloud optimizer service did not become available.*"
-                "Bayesian.*backend optimizer service"
+                "cannot fall back to the local SDK"
             ),
         ):
             await optimizer.get_next_suggestion(dataset_size=1000)

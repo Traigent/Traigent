@@ -155,6 +155,11 @@ jobs:
         if: env.SPINE_AVAILABLE == 'true'
         run: pip install --upgrade pip "uv==0.8.13"
 
+      - name: Verify spine uv.lock is current
+        if: env.SPINE_AVAILABLE == 'true'
+        working-directory: .spine
+        run: uv lock --check
+
       - name: Install spine
         if: env.SPINE_AVAILABLE == 'true'
         working-directory: .spine

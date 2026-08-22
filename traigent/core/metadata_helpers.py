@@ -12,6 +12,14 @@ from traigent.api.types import OptimizationResult, TrialResult
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.utils.example_id import compute_dataset_hash, generate_stable_example_id
 from traigent.utils.logging import get_logger
+from traigent.utils.outcome_signals import (
+    EXAMPLE_DIGEST_KEY,
+    OUTPUT_DIGEST_KEY,
+    SIGNAL_KEY_ID_KEY,
+    VERIFIED_MATCH_KEY,
+    _example_field,
+    build_example_signals,
+)
 
 logger = get_logger(__name__)
 
@@ -462,16 +470,33 @@ def _extract_score_from_metrics(
     return None
 
 
-def _example_field(example_result: Any, name: str, default: Any = None) -> Any:
-    """Read a field from an example result object OR its dict payload form.
+_SIGNAL_KEYS = (
+    EXAMPLE_DIGEST_KEY,
+    OUTPUT_DIGEST_KEY,
+    VERIFIED_MATCH_KEY,
+    SIGNAL_KEY_ID_KEY,
+)
 
-    Trial metadata stores example results as redacted ``to_dict()`` payloads
-    (see ``trial_result_factory._to_redactable_payloads``), so the measure
-    builders must read plain dicts as well as ``ExampleResult`` objects.
+
+def _example_signals(example_result: Any) -> dict[str, Any]:
+    """The signal sibling keys for one example result.
+
+    Trial-result construction (``trial_result_factory``) computes these from the
+    raw ``ExampleResult`` *before* ``to_dict()``/redaction and attaches them onto
+    the redacted dict payload, so example identity does not depend on redaction
+    rewriting the content. When the payload already carries them, reuse those
+    values rather than recomputing from (possibly redacted) fields. Falls back to
+    computing here for callers that hand the measure builders an
+    ``ExampleResult`` (or other non-mapping object) directly, bypassing
+    ``trial_result_factory``.
     """
     if isinstance(example_result, Mapping):
-        return example_result.get(name, default)
-    return getattr(example_result, name, default)
+        existing = {
+            key: example_result[key] for key in _SIGNAL_KEYS if key in example_result
+        }
+        if EXAMPLE_DIGEST_KEY in existing:
+            return existing
+    return build_example_signals(example_result)
 
 
 def _calculate_fallback_score(example_result: Any) -> float | None:
@@ -589,7 +614,11 @@ def _build_single_measure_full(
         logger.debug("Skipping measure %s because it has no numeric metrics", idx)
         return None
 
-    measure_result = {"example_id": example_id, "metrics": metrics_dict}
+    measure_result = {
+        "example_id": example_id,
+        "metrics": metrics_dict,
+        **_example_signals(example_result),
+    }
     _validate_measure_dict(measure_result, idx)
     logger.debug("Measure %s being sent: %s", idx, measure_result)
     return measure_result
@@ -687,7 +716,19 @@ def _build_single_measure_privacy(
         )
         return None
 
-    measure_result = {"example_id": example_id, "metrics": metrics_dict}
+    # NOT widened with the digest/match signals that `_build_single_measure_full`
+    # carries: the privacy-mode per-example ``measures`` array they would ride
+    # in never reaches the backend. `_log_trial_to_backend`
+    # (backend_session_manager.py:2325-2333) returns early -- before any
+    # submission -- whenever `privacy_enabled` is set, and the privacy path's
+    # own remote-tracking route, `submit_summary_stats`
+    # (trial_operations.py:1162-1182), sends only `metrics`/`summary_stats`,
+    # never a `measures` key. Content-free or not, adding fields here has no
+    # destination and is pure downside (payload size, validation surface).
+    measure_result = {
+        "example_id": example_id,
+        "metrics": metrics_dict,
+    }
     _validate_measure_dict(measure_result, idx)
     return measure_result
 

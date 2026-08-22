@@ -959,6 +959,26 @@ class TestBuildMeasuresPrivacy:
 
         assert measures[0]["metrics"]["score"] == 1.0
 
+    def test_signal_keys_absent_in_privacy_mode(self, example_result):
+        """example_digest/output_digest/verified_match must NOT appear here.
+
+        The privacy-mode per-example ``measures`` array they would ride in never
+        reaches the backend: ``_log_trial_to_backend`` returns early for
+        privacy-enabled sessions (before any submission), and the privacy path's
+        remote-tracking route (``submit_summary_stats``) sends only
+        metrics/summary_stats, never a ``measures`` key. Adding these fields
+        here would be a widening with no destination -- pure downside.
+        """
+        example_result.metrics = {"accuracy": 0.9}
+        example_result.expected_output = "4"
+        example_result.actual_output = "4"
+
+        measures = _build_measures_privacy([example_result], "accuracy")
+
+        assert "example_digest" not in measures[0]
+        assert "output_digest" not in measures[0]
+        assert "verified_match" not in measures[0]
+
 
 class TestBuildBackendMetadataIntegration:
     """Test integration scenarios for build_backend_metadata."""

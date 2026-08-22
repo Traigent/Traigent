@@ -259,7 +259,7 @@ def multi_provider_agent(question: str) -> str:
 | Feature | Description |
 |---------|-------------|
 | **Zero-code integration** | Add `@traigent.optimize()` to existing code — no refactoring |
-| **Multi-algorithm** | Random and Grid locally; Bayesian (TPE, NSGA-II, CMA-ES) via the Traigent cloud |
+| **Multi-algorithm** | Random and Grid locally; managed search algorithms via the Traigent cloud |
 | **Multi-objective** | Optimize accuracy, latency, cost, and custom metrics simultaneously |
 | **Framework support** | LangChain, OpenAI SDK, Anthropic, LiteLLM, and any LLM provider |
 | **Cost tracking** | Integrated tokencost library with 500+ model pricing |

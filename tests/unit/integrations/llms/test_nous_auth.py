@@ -27,6 +27,7 @@ import hashlib
 import hmac
 import json
 import threading
+from urllib.parse import urlparse
 
 import pytest
 
@@ -140,8 +141,13 @@ def _isolate_nous_env(monkeypatch, tmp_path):
 def test_base_url_is_the_nous_inference_v1_surface():
     # The single source of the base_url shared by discovery + the example.
     assert NOUS_BASE_URL == nous_auth._DEFAULT_NOUS_BASE_URL
-    assert NOUS_BASE_URL.endswith("/v1")
-    assert "nousresearch.com" in NOUS_BASE_URL
+    parsed = urlparse(NOUS_BASE_URL)
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "inference-api.nousresearch.com"
+    assert parsed.path == "/v1"
+    assert parsed.params == ""
+    assert parsed.query == ""
+    assert parsed.fragment == ""
 
 
 # --------------------------------------------------------------------------- #

@@ -1184,3 +1184,21 @@ class TestConfidenceIsMandatory:
         cc = constraint.to_chance_constraint()
         assert cc.confidence == DEFAULT_SAFETY_CONFIDENCE
         assert cc.threshold == 0.9
+
+    def test_nan_confidence_is_rejected(self) -> None:
+        """NaN must not slip past the (0, 1) guard.
+
+        The guard is written as the chained ``not 0 < c < 1`` rather than
+        ``c <= 0 or c >= 1``. The two look equivalent but are not: every
+        comparison against NaN is False, so the disjunction form silently
+        accepts ``float("nan")`` and builds a threshold whose confidence
+        level is meaningless. Rewriting this guard to appease Sonar S2583
+        would reintroduce that fail-open, so pin the behaviour here.
+        """
+        with pytest.raises(ValueError, match="confidence must be in"):
+            SafetyThreshold(
+                metric_name="safety_score",
+                operator=">=",
+                value=0.9,
+                confidence=float("nan"),
+            )

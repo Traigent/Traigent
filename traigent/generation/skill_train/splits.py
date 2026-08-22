@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from traigent.evaluators.base import Dataset
 from traigent.utils.logging import get_logger
 
@@ -33,8 +35,17 @@ def split_dataset(
     selection_count = int(total * selection_fraction)
     test_count = int(total * test_fraction)
     if selection_count < 5:
+        # Show the arithmetic. The caller controls `total`, not
+        # `selection_count`, so reporting only the derived number leaves them
+        # guessing at which input to change and by how much.
+        min_examples = (
+            math.ceil(5 / selection_fraction) if selection_fraction > 0 else 5
+        )
         raise ValueError(
-            f"selection split requires at least 5 examples, got {selection_count}"
+            f"selection split requires at least 5 examples; got {selection_count} "
+            f"from total={total} x selection_fraction={selection_fraction}. "
+            f"Provide at least {min_examples} examples or increase "
+            f"selection_fraction."
         )
     if selection_count < 10:
         logger.warning(
