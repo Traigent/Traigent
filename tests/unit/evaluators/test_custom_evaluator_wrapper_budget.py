@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from traigent.api.types import ExampleResult
@@ -92,3 +94,79 @@ async def test_custom_evaluator_wrapper_respects_execution_budget() -> None:
     assert snapshot.trials == 1
     assert snapshot.consumed_examples == 2
     assert snapshot.exhausted_dimension == "examples"
+
+
+@pytest.mark.asyncio
+async def test_custom_evaluator_wrapper_concurrent_budget_admission_is_atomic() -> None:
+    dataset = Dataset(
+        examples=[
+            EvaluationExample(input_data={"value": i}, expected_output=i)
+            for i in range(2)
+        ],
+        name="custom-concurrent-execution-budget-test",
+    )
+    first_example_barrier = asyncio.Barrier(2)
+
+    async def identity(value: int) -> int:
+        return value
+
+    async def custom_evaluator(func, config, example):
+        await first_example_barrier.wait()
+        output = await func(**example.input_data)
+        return ExampleResult(
+            example_id=example.metadata.get("example_id", "example"),
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output=output,
+            metrics={"accuracy": 1.0},
+            execution_time=0.0,
+            success=True,
+            error_message=None,
+            metadata=example.metadata.copy() if example.metadata else {},
+        )
+
+    budget = ExecutionBudget(max_examples=2)
+    evaluator = CustomEvaluatorWrapper(custom_evaluator, metrics=["accuracy"])
+    results = await asyncio.gather(
+        evaluator.evaluate(identity, {}, dataset, budget=budget),
+        evaluator.evaluate(identity, {}, dataset, budget=budget),
+    )
+
+    snapshot = budget.snapshot()
+    assert sorted(result.examples_consumed for result in results) == [1, 1]
+    assert sum(result.examples_consumed for result in results) == 2
+    assert snapshot.consumed_examples == 2
+    assert snapshot.trials == 2
+
+
+@pytest.mark.asyncio
+async def test_custom_evaluator_wrapper_cancellation_refunds_admitted_examples() -> (
+    None
+):
+    dataset = Dataset(
+        examples=[EvaluationExample(input_data={"value": 1}, expected_output=1)],
+        name="custom-cancellation-execution-budget-test",
+    )
+    started = asyncio.Event()
+
+    async def identity(value: int) -> int:
+        return value
+
+    async def custom_evaluator(func, config, example):
+        started.set()
+        await asyncio.Event().wait()
+
+    budget = ExecutionBudget(max_examples=1)
+    evaluator = CustomEvaluatorWrapper(custom_evaluator, metrics=["accuracy"])
+    evaluation = asyncio.create_task(
+        evaluator.evaluate(identity, {}, dataset, budget=budget)
+    )
+    await started.wait()
+    evaluation.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await evaluation
+
+    snapshot = budget.snapshot()
+    assert snapshot.consumed_examples == 0
+    assert snapshot.trials == 0

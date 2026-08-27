@@ -421,6 +421,25 @@ class CustomEvaluatorWrapper(BaseEvaluator):
 
         return aggregated
 
+    @staticmethod
+    def _raise_for_interface_mismatch(error: Exception) -> None:
+        """Raise the legacy custom-evaluator guidance error when signatures mismatch."""
+        error_str = str(error).lower()
+        if not (
+            "has no attribute 'get'" in error_str
+            or "'function' object" in error_str
+            or "got multiple values for argument" in error_str
+            or ("takes" in error_str and "positional argument" in error_str)
+        ):
+            return
+        raise ValueError(
+            f"custom_evaluator interface mismatch detected.\n\n"
+            f"Expected signature: custom_evaluator(func, config, example) -> ExampleResult\n"
+            f"But your evaluator appears to expect: (prediction, expected, input_data) -> dict\n\n"
+            f"Did you mean to use metric_functions instead of custom_evaluator?\n"
+            f"Original error: {error}"
+        ) from error
+
     async def evaluate(
         self,
         func: Callable[..., Any],
@@ -493,20 +512,26 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 with _maybe_restore_trial_context(trial_ctx):
                     with ConfigurationContext(config):
                         per_example_start = time.time()
-                        if is_coroutine_callable(self.custom_evaluator):
-                            example_result = await self.custom_evaluator(
-                                func, config, example
+                        try:
+                            if is_coroutine_callable(self.custom_evaluator):
+                                example_result = await self.custom_evaluator(
+                                    func, config, example
+                                )
+                            else:
+                                # Run blocking custom evaluators off the main event loop so
+                                # concurrent async tasks (progress callbacks, heartbeats)
+                                # are not starved while long-running per-example work runs.
+                                example_result = await asyncio.to_thread(
+                                    self.custom_evaluator,
+                                    func,
+                                    config,
+                                    example,
+                                )
+                        except asyncio.CancelledError:
+                            self._abort_execution_budget_evaluation(
+                                execution_budget_lease
                             )
-                        else:
-                            # Run blocking custom evaluators off the main event loop so
-                            # concurrent async tasks (progress callbacks, heartbeats)
-                            # are not starved while long-running per-example work runs.
-                            example_result = await asyncio.to_thread(
-                                self.custom_evaluator,
-                                func,
-                                config,
-                                example,
-                            )
+                            raise
                         per_example_duration = time.time() - per_example_start
 
                 # Ensure we got an ExampleResult
@@ -545,21 +570,11 @@ class CustomEvaluatorWrapper(BaseEvaluator):
 
             except Exception as e:
                 # Check for signature mismatch errors (fail fast with helpful message)
-                error_str = str(e).lower()
-                if (
-                    "has no attribute 'get'" in error_str
-                    or "'function' object" in error_str
-                    or "got multiple values for argument" in error_str
-                    or "takes" in error_str
-                    and "positional argument" in error_str
-                ):
-                    raise ValueError(
-                        f"custom_evaluator interface mismatch detected.\n\n"
-                        f"Expected signature: custom_evaluator(func, config, example) -> ExampleResult\n"
-                        f"But your evaluator appears to expect: (prediction, expected, input_data) -> dict\n\n"
-                        f"Did you mean to use metric_functions instead of custom_evaluator?\n"
-                        f"Original error: {e}"
-                    ) from e
+                try:
+                    self._raise_for_interface_mismatch(e)
+                except ValueError:
+                    self._abort_execution_budget_evaluation(execution_budget_lease)
+                    raise
 
                 logger.warning(f"Custom evaluation failed for example {i}: {e}")
                 failed_result = self._create_failed_example_result(example, i, e)

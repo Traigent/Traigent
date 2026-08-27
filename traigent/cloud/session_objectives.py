@@ -36,6 +36,24 @@ def session_objective_to_wire(
     )
 
 
+def _score_objective_direction(
+    objective: Any,
+) -> tuple[dict[str, Any], str] | None:
+    """Return a score objective and direction when the wire value is valid."""
+    if not isinstance(objective, dict):
+        return None
+    metric = objective.get("metric")
+    direction: Any = objective.get("direction")
+    if (
+        isinstance(metric, str)
+        and metric == "score"
+        and isinstance(direction, str)
+        and direction.lower() in _DIRECTION_OBJECTIVES
+    ):
+        return objective, direction.lower()
+    return None
+
+
 def normalize_typed_objectives(objectives: Any) -> list[Any]:
     """Normalize typed objective shorthands without changing legacy semantics.
 
@@ -55,19 +73,10 @@ def normalize_typed_objectives(objectives: Any) -> list[Any]:
             if direction in _DIRECTION_OBJECTIVES:
                 objective = {"metric": "score", "direction": direction}
 
-        score_direction = None
-        if isinstance(objective, dict):
-            metric = objective.get("metric")
-            objective_direction: Any = objective.get("direction")
-            if (
-                isinstance(metric, str)
-                and metric == "score"
-                and isinstance(objective_direction, str)
-                and objective_direction.lower() in _DIRECTION_OBJECTIVES
-            ):
-                score_direction = objective_direction.lower()
+        score_objective = _score_objective_direction(objective)
 
-        if score_direction is not None and isinstance(objective, dict):
+        if score_objective is not None:
+            objective, score_direction = score_objective
             if score_direction in seen_score_directions:
                 continue
             seen_score_directions.add(score_direction)

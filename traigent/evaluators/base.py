@@ -1150,14 +1150,23 @@ class BaseEvaluator(ABC):
         if snapshot.remaining_examples == float("inf"):
             return None, None
 
-        # A fresh lease gives standalone Local/Hybrid evaluators the same hard
-        # example admission that optimize() gets from its sample budget manager.
+        # The budget owns admission so concurrent direct evaluator calls cannot
+        # each snapshot and spend the same remaining example pool independently.
         # Do not layer a second lease over an orchestrator-owned one; the
         # orchestrator already clamps that pool from this same budget.
-        from traigent.core.sample_budget import SampleBudgetManager
+        return budget.create_example_lease(), None
 
-        manager = SampleBudgetManager(int(snapshot.remaining_examples))
-        return manager.create_lease("execution-budget-evaluation"), None
+    @staticmethod
+    def _abort_execution_budget_evaluation(
+        execution_budget_lease: SampleBudgetLease | None,
+    ) -> None:
+        """Refund admitted examples when a direct evaluation is cancelled."""
+        if execution_budget_lease is None:
+            return
+        consumed = execution_budget_lease.consumed
+        if consumed:
+            execution_budget_lease.rollback(consumed)
+        execution_budget_lease.finalize()
 
     @staticmethod
     def _execution_budget_cost(result: EvaluationResult) -> float | None:
@@ -1183,9 +1192,14 @@ class BaseEvaluator(ABC):
             return result
 
         cost = BaseEvaluator._execution_budget_cost(result)
+        # An execution-budget lease accounts examples atomically at admission;
+        # only externally supplied sample leases need the result debit here.
+        examples = result.examples_consumed
+        if execution_budget_lease is not None and execution_budget_lease.consumed:
+            examples = 0
         budget.debit_trial(
             cost=cost,
-            examples=result.examples_consumed,
+            examples=examples,
             untracked=cost is None,
         )
         snapshot = budget.snapshot()

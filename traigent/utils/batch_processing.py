@@ -541,7 +541,9 @@ async def process_with_retry_and_recovery(
     try:
         result = await retry_handler.execute_async_with_result(process_missing_items)
 
-        if result.success and result.result:
+        if not result.success:
+            logger.error(f"Batch processing failed after {result.attempts} attempts")
+        elif result.result:
             logger.info("Batch processing completed successfully")
         else:
             logger.warning(
