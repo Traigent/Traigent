@@ -11,7 +11,7 @@ import os
 import re
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 from urllib.parse import quote, urlencode
 
 import requests  # Always needed for synchronous operations
@@ -753,6 +753,19 @@ class SyncManager:
             experiment_run_id = create_result["experiment_run_id"]
             project_id = create_result.get("project_id")
             tenant_id = create_result.get("tenant_id")
+
+        # A resumed state can predate the persisted experiment id. Normalize the
+        # session id before using it and apply the same session-id fallback as
+        # _sync_create_session; never build a successful URL with ``/None``.
+        session_cloud_id = self._optional_context_id(session_cloud_id)
+        if session_cloud_id is None:
+            sync_result["status"] = "error"
+            sync_result["errors"].append(
+                "Session sync cannot continue without a non-empty session_id"
+            )
+            return
+        experiment_id = self._optional_context_id(experiment_id) or session_cloud_id
+        experiment_run_id = self._optional_context_id(experiment_run_id)
         sync_result["cloud_session_id"] = session_cloud_id
         sync_result["cloud_experiment_id"] = experiment_id
         sync_result["cloud_experiment_run_id"] = experiment_run_id
@@ -857,7 +870,7 @@ class SyncManager:
             sync_result["status"] = "success"
             sync_result["cloud_url"] = build_experiment_url(
                 BackendConfig.get_cloud_web_url(),
-                cast(str, experiment_id),
+                experiment_id,
                 run_id=experiment_run_id,
                 project_id=project_id,
                 tenant_id=tenant_id,

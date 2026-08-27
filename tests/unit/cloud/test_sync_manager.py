@@ -285,16 +285,19 @@ class TestSyncManager:
 
         measures = results[0]["measures"]
         # Real accuracy from evaluator — must NOT be clobbered by composite score
-        assert measures["accuracy"] == 0.85, (
-            f"accuracy should be 0.85 (real metric), got {measures['accuracy']}"
+        accuracy_matches = measures["accuracy"] == 0.85
+        assert accuracy_matches, "accuracy should be 0.85 (real metric), got {}".format(
+            measures["accuracy"]
         )
         # Latency should be synced as a first-class measure
-        assert measures["latency"] == 120.0, (
-            f"latency should be 120.0, got {measures.get('latency')}"
+        latency_matches = measures["latency"] == 120.0
+        assert latency_matches, "latency should be 120.0, got {}".format(
+            measures.get("latency")
         )
         # Composite score is preserved for backward compatibility
-        assert measures["score"] == 0.7, (
-            f"composite score should be 0.7, got {measures['score']}"
+        score_matches = measures["score"] == 0.7
+        assert score_matches, "composite score should be 0.7, got {}".format(
+            measures["score"]
         )
 
     # Initialization Tests
@@ -1267,9 +1270,11 @@ class TestSyncManager:
         assert f"{base}/sessions" not in post_urls
         # No-duplicate guard: exactly ONE result POST (the remaining cfg_2).
         result_posts = [url for url in post_urls if url.endswith("/results")]
-        assert result_posts == [f"{base}/sessions/session-id/results"], (
+        expected_result_posts = [f"{base}/sessions/session-id/results"]
+        result_posts_error = (
             "resume must POST only the not-yet-synced result, never re-post synced ones"
         )
+        assert result_posts == expected_result_posts, result_posts_error
         # Finalized exactly once.
         finalize_posts = [url for url in post_urls if url.endswith("/finalize")]
         assert finalize_posts == [f"{base}/sessions/session-id/finalize"]
@@ -1405,6 +1410,43 @@ class TestSyncManager:
         # Session finalized exactly once (only after the clean resume).
         finalize_posts = [url for url in post_urls if url.endswith("/finalize")]
         assert finalize_posts == [f"{base}/sessions/session-id/finalize"]
+
+    def test_sync_resume_missing_experiment_id_uses_session_id_fallback(
+        self, sync_manager: SyncManager, sample_session: OptimizationSession
+    ) -> None:
+        """A legacy resume state never reports success with a ``/None`` URL."""
+        payload_hash = sync_manager._compute_payload_hash(
+            sync_manager.convert_session_to_traigent_format(sample_session)
+        )
+        sample_session.sync_state = {
+            "status": "partial",
+            "payload_hash": payload_hash,
+            "cloud_session_id": "session-id",
+            "cloud_experiment_run_id": "experiment-run-id",
+            "trials": {
+                "cfg_0": {"status": "synced"},
+                "cfg_1": {"status": "synced"},
+                "cfg_2": {"status": "synced"},
+            },
+        }
+        sync_manager.storage.load_session.return_value = sample_session
+        sync_manager._session.post.return_value = backend_response(
+            status_code=200, payload={"status": "finalized"}
+        )
+
+        with patch(
+            "traigent.cloud.sync_manager.BackendConfig.get_cloud_web_url",
+            return_value="https://portal.traigent.ai/",
+        ):
+            result = sync_manager.sync_session_to_cloud("test_session_123")
+
+        assert result["status"] == "success"
+        assert result["cloud_experiment_id"] == "session-id"
+        assert "/None" not in result["cloud_url"]
+        assert result["cloud_url"] == (
+            "https://portal.traigent.ai/experiments/view/session-id"
+            "?run_id=experiment-run-id"
+        )
 
     # Sync All Sessions Tests
 

@@ -444,6 +444,14 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         Raises:
             EvaluationError: If evaluation fails
         """
+        execution_budget_lease, blocked_result = (
+            self._prepare_execution_budget_evaluation(budget, config)
+        )
+        if blocked_result is not None:
+            return blocked_result
+        if sample_lease is None:
+            sample_lease = execution_budget_lease
+
         logger.info(
             "Starting custom evaluation with %d examples, config: %s",
             len(dataset.examples),
@@ -592,7 +600,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             f"duration: {duration:.2f}s, metrics: {aggregated_metrics}"
         )
 
-        return EvaluationResult(
+        result = EvaluationResult(
             config=config,
             example_results=example_results,
             aggregated_metrics=aggregated_metrics,
@@ -604,4 +612,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             metrics=aggregated_metrics,
             outputs=outputs,
             errors=errors,
+        )
+        return self._finalize_execution_budget_evaluation(
+            budget, result, execution_budget_lease
         )

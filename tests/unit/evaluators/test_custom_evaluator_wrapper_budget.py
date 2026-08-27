@@ -2,6 +2,7 @@ import pytest
 
 from traigent.api.types import ExampleResult
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
+from traigent.core.execution_budget import ExecutionBudget
 from traigent.core.sample_budget import SampleBudgetManager
 from traigent.evaluators.base import Dataset, EvaluationExample
 
@@ -48,3 +49,46 @@ async def test_custom_evaluator_wrapper_respects_sample_budget() -> None:
     assert closure.consumed == 2
     assert closure.exhausted is True
     assert manager.remaining() == 0
+
+
+@pytest.mark.asyncio
+async def test_custom_evaluator_wrapper_respects_execution_budget() -> None:
+    dataset = Dataset(
+        examples=[
+            EvaluationExample(input_data={"value": i}, expected_output=i)
+            for i in range(5)
+        ],
+        name="custom-execution-budget-test",
+    )
+
+    async def identity(value: int) -> int:
+        return value
+
+    async def custom_evaluator(func, config, example):
+        output = await func(**example.input_data)
+        return ExampleResult(
+            example_id=example.metadata.get("example_id", "example"),
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output=output,
+            metrics={"accuracy": 1.0},
+            execution_time=0.0,
+            success=True,
+            error_message=None,
+            metadata=example.metadata.copy() if example.metadata else {},
+        )
+
+    budget = ExecutionBudget(max_examples=2)
+    evaluator = CustomEvaluatorWrapper(custom_evaluator, metrics=["accuracy"])
+    result = await evaluator.evaluate(identity, {}, dataset, budget=budget)
+
+    snapshot = budget.snapshot()
+    assert result.total_examples == 2
+    assert result.examples_consumed == 2
+    assert result.sample_budget_exhausted is True
+    assert result.execution_budget is not None
+    assert result.execution_budget["consumed_examples"] == 2
+    assert snapshot.runs == 1
+    assert snapshot.trials == 1
+    assert snapshot.consumed_examples == 2
+    assert snapshot.exhausted_dimension == "examples"

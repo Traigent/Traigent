@@ -693,20 +693,27 @@ class TestProcessWithRetryAndRecovery:
     """Test process_with_retry_and_recovery function."""
 
     @pytest.mark.asyncio
-    async def test_basic_retry_and_recovery(self, mock_batch_processor_function):
+    async def test_basic_retry_and_recovery(
+        self, mock_batch_processor_function, caplog
+    ):
         """Test basic retry and recovery functionality."""
         items = [{"id": f"item_{i}", "value": i, "complexity": 1} for i in range(10)]
 
-        results = await process_with_retry_and_recovery(
-            items=items,
-            processor_func=mock_batch_processor_function,
-            max_retries=3,
-            retry_delay=0.1,
-            checkpoint_interval=5,
-        )
+        with caplog.at_level("INFO", logger="traigent.utils.batch_processing"):
+            results = await process_with_retry_and_recovery(
+                items=items,
+                processor_func=mock_batch_processor_function,
+                max_retries=3,
+                retry_delay=0.1,
+                checkpoint_interval=5,
+            )
 
         assert len(results) == len(items)
         assert all(isinstance(r, InvocationResult) for r in results)
+        assert any(
+            "Batch processing completed successfully" in record.message
+            for record in caplog.records
+        )
 
     @pytest.mark.asyncio
     async def test_retry_with_failures(self, mock_batch_processor_function):

@@ -539,9 +539,9 @@ async def process_with_retry_and_recovery(
 
     # Use retry handler for the entire processing operation
     try:
-        result = await retry_handler.execute_async(process_missing_items)
+        result = await retry_handler.execute_async_with_result(process_missing_items)
 
-        if result.success and result.value:
+        if result.success and result.result:
             logger.info("Batch processing completed successfully")
         else:
             logger.warning(
@@ -553,8 +553,8 @@ async def process_with_retry_and_recovery(
         # Continue to fill remaining None results with errors
 
     # Fill any remaining None results with error results
-    for i, result in enumerate(all_results):
-        if result is None:
+    for i, item_result in enumerate(all_results):
+        if item_result is None:
             all_results[i] = InvocationResult(
                 error="Failed to process after all retries",
                 is_successful=False,
