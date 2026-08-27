@@ -90,6 +90,7 @@ class SampleBudgetLease:
         self._closed = False
         self._exhausted = False
         self._wasted = 0
+        self._completed = 0
         self._lock = threading.RLock()
 
     def remaining(self) -> float:
@@ -122,14 +123,42 @@ class SampleBudgetLease:
             return
 
         with self._lock:
-            if count > self._consumed:
-                count = self._consumed
+            # Never return an admission that has already reached a terminal
+            # result.  Callers that need the exact remainder can use
+            # ``rollback_uncompleted``; retaining this guard here keeps the
+            # primitive honest for all cancellation paths.
+            count = min(count, max(self._consumed - self._completed, 0))
             if count <= 0:
                 return
             self._consumed -= count
             self._manager._release(self, count)  # noqa: SLF001
             self._wasted += count
             self._exhausted = False
+
+    def rollback_uncompleted(self) -> int:
+        """Return admitted work that never reached a terminal result.
+
+        Evaluators call this from their cancellation boundary.  Completed
+        examples remain charged, while admissions still in flight are returned
+        exactly once.  The operation is idempotent so an evaluator and its
+        owning orchestration task can both perform cleanup safely.
+        """
+        with self._lock:
+            uncompleted = max(self._consumed - self._completed, 0)
+            if uncompleted <= 0:
+                return 0
+            self._consumed -= uncompleted
+            self._manager._release(self, uncompleted)  # noqa: SLF001
+            self._wasted += uncompleted
+            self._exhausted = False
+            return uncompleted
+
+    def mark_completed(self, count: int = 1) -> None:
+        """Mark admitted examples whose evaluation has finished."""
+        if count <= 0:
+            return
+        with self._lock:
+            self._completed = min(self._consumed, self._completed + count)
 
     def finalize(self) -> LeaseClosure:
         """Close the lease and report utilisation."""
@@ -153,6 +182,12 @@ class SampleBudgetLease:
     def consumed(self) -> int:
         with self._lock:
             return self._consumed
+
+    @property
+    def completed(self) -> int:
+        """Return the number of admitted examples that finished evaluation."""
+        with self._lock:
+            return self._completed
 
     @property
     def exhausted(self) -> bool:

@@ -48,8 +48,8 @@ if TYPE_CHECKING:
         MCPServerConfig,
         ProductionMCPClient,
     )
-    from traigent.core.sample_budget import SampleBudgetLease
     from traigent.core.execution_budget import ExecutionBudget
+    from traigent.core.sample_budget import SampleBudgetLease
 
 logger = get_logger(__name__)
 
@@ -693,12 +693,17 @@ class HybridAPIEvaluator(BaseEvaluator):
             EvaluationError: If evaluation fails.
         """
         execution_budget_lease, blocked_result = (
-            self._prepare_execution_budget_evaluation(budget, config)
+            self._prepare_execution_budget_evaluation(
+                budget, config, sample_lease=sample_lease
+            )
         )
         if blocked_result is not None:
             return blocked_result
         if sample_lease is None:
             sample_lease = execution_budget_lease
+        self._register_sample_lease_cleanup(
+            sample_lease, finalize=execution_budget_lease is not None
+        )
 
         start_time = time.time()
         transport = await self._get_transport()
@@ -752,6 +757,8 @@ class HybridAPIEvaluator(BaseEvaluator):
             # Execute batch
             batch_results = await self._execute_batch(transport, caps, config, batch)
             example_results.extend(batch_results)
+            if sample_lease:
+                sample_lease.mark_completed(len(batch_results))
 
             # Track cost
             batch_cost = sum(r.cost_usd for r in batch_results)

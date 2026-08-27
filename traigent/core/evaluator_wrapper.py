@@ -464,12 +464,17 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             EvaluationError: If evaluation fails
         """
         execution_budget_lease, blocked_result = (
-            self._prepare_execution_budget_evaluation(budget, config)
+            self._prepare_execution_budget_evaluation(
+                budget, config, sample_lease=sample_lease
+            )
         )
         if blocked_result is not None:
             return blocked_result
         if sample_lease is None:
             sample_lease = execution_budget_lease
+        self._register_sample_lease_cleanup(
+            sample_lease, finalize=execution_budget_lease is not None
+        )
 
         logger.info(
             "Starting custom evaluation with %d examples, config: %s",
@@ -521,12 +526,21 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                                 # Run blocking custom evaluators off the main event loop so
                                 # concurrent async tasks (progress callbacks, heartbeats)
                                 # are not starved while long-running per-example work runs.
-                                example_result = await asyncio.to_thread(
-                                    self.custom_evaluator,
-                                    func,
-                                    config,
-                                    example,
+                                thread_task = asyncio.create_task(
+                                    asyncio.to_thread(
+                                        self.custom_evaluator,
+                                        func,
+                                        config,
+                                        example,
+                                    )
                                 )
+                                try:
+                                    example_result = await asyncio.shield(thread_task)
+                                except asyncio.CancelledError:
+                                    # A canceled task cannot stop the worker thread;
+                                    # keep the admission until that work has settled.
+                                    await self._drain_uncancellable(thread_task)
+                                    raise
                         except asyncio.CancelledError:
                             self._abort_execution_budget_evaluation(
                                 execution_budget_lease
@@ -550,6 +564,8 @@ class CustomEvaluatorWrapper(BaseEvaluator):
 
                 example_results.append(example_result)
                 consumed_examples += 1
+                if sample_lease:
+                    sample_lease.mark_completed()
                 if progress_callback:
                     progress_callback(
                         i,
@@ -580,6 +596,8 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 failed_result = self._create_failed_example_result(example, i, e)
                 example_results.append(failed_result)
                 consumed_examples += 1
+                if sample_lease:
+                    sample_lease.mark_completed()
                 if progress_callback:
                     progress_callback(
                         i,

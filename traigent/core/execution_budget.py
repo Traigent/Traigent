@@ -54,6 +54,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from traigent.core.sample_budget import (
+    BudgetMetrics,
     LeaseClosure,
     SampleBudgetLease,
     SampleBudgetManager,
@@ -88,6 +89,23 @@ class _ExecutionBudgetSampleManager(SampleBudgetManager):
             ceiling_remaining = max(lease._ceiling - lease._consumed, 0)  # noqa: SLF001
         return min(ceiling_remaining, self._budget.remaining_examples)
 
+    def consumed(self) -> int:
+        """Return the shared execution-budget example count."""
+        return self._budget.snapshot().consumed_examples
+
+    def snapshot(self) -> BudgetMetrics:
+        """Return metrics reflecting the shared execution-budget example pool."""
+        # Keep the manager-side waste counter and budget-side consumption from
+        # being observed mid-release.  ``_release`` takes these locks in this
+        # same order (manager -> budget), so snapshots cannot race or deadlock.
+        with self._lock:
+            snapshot = self._budget.snapshot()
+            return BudgetMetrics(
+                total_budget=snapshot.max_examples,
+                consumed=snapshot.consumed_examples,
+                wasted=self._wasted,
+            )
+
     def _acquire(self, lease: SampleBudgetLease, count: int) -> bool:
         ceiling = lease._ceiling  # noqa: SLF001
         if ceiling is not None and lease._consumed + count > ceiling:  # noqa: SLF001
@@ -95,10 +113,13 @@ class _ExecutionBudgetSampleManager(SampleBudgetManager):
         return self._budget._acquire_execution_examples(count)  # noqa: SLF001
 
     def _release(self, lease: SampleBudgetLease, count: int) -> None:
-        self._budget._release_execution_examples(count)  # noqa: SLF001
+        with self._lock:
+            self._budget._release_execution_examples(count)  # noqa: SLF001
+            self._wasted += count
 
     def _finalize(self, lease: SampleBudgetLease) -> LeaseClosure:
         consumed = lease._consumed  # noqa: SLF001
+        self._leases.pop(lease.trial_id, None)
         return LeaseClosure(
             trial_id=lease.trial_id,
             consumed=consumed,
@@ -341,8 +362,8 @@ class ExecutionBudget:
         with self._lock:
             self._consumed_examples = max(self._consumed_examples - count, 0)
 
-    def create_example_lease(self) -> SampleBudgetLease:
-        """Create a sample lease whose admissions are atomic on this budget."""
+    def _create_example_lease(self) -> SampleBudgetLease:
+        """Create an internal lease whose admissions are atomic on this budget."""
         return _ExecutionBudgetSampleManager(self).create_lease(
             "execution-budget-evaluation"
         )

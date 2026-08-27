@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from traigent.core.execution_budget import ExecutionBudget
+from traigent.core.sample_budget import SampleBudgetManager
 from traigent.evaluators.hybrid_api import HybridAPIEvaluator, HybridExampleResult
 
 # ---------------------------------------------------------------------------
@@ -114,3 +116,93 @@ async def test_evaluate_outputs_propagates_cancelled_error():
             inputs=inputs,
             execute_response=mock_execute_response,
         )
+
+
+@pytest.mark.asyncio
+async def test_evaluate_cancellation_refunds_execution_budget_admission():
+    """Cancellation during a hybrid batch must release shared budget capacity."""
+    started = asyncio.Event()
+    never = asyncio.Event()
+
+    evaluator = HybridAPIEvaluator(
+        api_endpoint="http://localhost:9999",
+        batch_size=1,
+    )
+
+    async def blocking_batch(*args: Any, **kwargs: Any) -> list[HybridExampleResult]:
+        started.set()
+        await never.wait()
+        return []
+
+    evaluator._get_transport = AsyncMock(return_value=MagicMock())
+    evaluator._get_capabilities = AsyncMock(return_value=MagicMock())
+    evaluator._ensure_lifecycle_manager = AsyncMock()
+    evaluator._execute_batch = blocking_batch
+
+    from traigent.evaluators.base import Dataset, EvaluationExample
+
+    dataset = Dataset(
+        name="hybrid-cancellation-budget-test",
+        examples=[EvaluationExample(input_data={"value": 1}, expected_output=1)],
+    )
+    budget = ExecutionBudget(max_examples=1)
+    evaluation = asyncio.create_task(
+        evaluator.evaluate(lambda value: value, {}, dataset, budget=budget)
+    )
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+    evaluation.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(evaluation, timeout=1.0)
+
+    snapshot = budget.snapshot()
+    assert snapshot.consumed_examples == 0
+    assert snapshot.trials == 0
+
+
+@pytest.mark.asyncio
+async def test_evaluate_cancellation_refunds_external_sample_lease():
+    """Hybrid cancellation must release admissions without closing the caller lease."""
+    started = asyncio.Event()
+    never = asyncio.Event()
+
+    evaluator = HybridAPIEvaluator(
+        api_endpoint="http://localhost:9999",
+        batch_size=1,
+    )
+
+    async def blocking_batch(*args: Any, **kwargs: Any) -> list[HybridExampleResult]:
+        started.set()
+        await never.wait()
+        return []
+
+    evaluator._get_transport = AsyncMock(return_value=MagicMock())
+    evaluator._get_capabilities = AsyncMock(return_value=MagicMock())
+    evaluator._ensure_lifecycle_manager = AsyncMock()
+    evaluator._execute_batch = blocking_batch
+
+    from traigent.evaluators.base import Dataset, EvaluationExample
+
+    dataset = Dataset(
+        name="hybrid-external-cancellation-budget-test",
+        examples=[EvaluationExample(input_data={"value": 1}, expected_output=1)],
+    )
+    manager = SampleBudgetManager(total_budget=1)
+    lease = manager.create_lease("hybrid-cancelled")
+    evaluation = asyncio.create_task(
+        evaluator.evaluate(
+            lambda value: value,
+            {},
+            dataset,
+            sample_lease=lease,
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+    evaluation.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(evaluation, timeout=1.0)
+
+    assert manager.snapshot().consumed == 0
+    assert lease.completed == 0
+    lease.finalize()

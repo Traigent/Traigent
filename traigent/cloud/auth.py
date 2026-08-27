@@ -462,6 +462,16 @@ class InvalidCredentialsError(AuthenticationError):
     pass
 
 
+class _InvalidCredentialsWithSessionFailure(InvalidCredentialsError):
+    """Invalid credentials error carrying structured session failure detail."""
+
+    session_creation_failure: SessionCreationFailureDetail
+
+    def __init__(self, message: str, failure: SessionCreationFailureDetail) -> None:
+        super().__init__(message)
+        self.session_creation_failure = failure
+
+
 # ============================================================================
 # Secure Token Management
 # ============================================================================
@@ -1100,14 +1110,17 @@ class AuthManager:
                 # Fail closed: never emit headers built from an unverified or
                 # backend-rejected API key. Doing so would defeat backend
                 # validation by allowing the SDK to send the raw key anyway.
-                exc = InvalidCredentialsError(
+                failure_detail = auth_result.session_creation_failure
+                if failure_detail is not None:
+                    raise _InvalidCredentialsWithSessionFailure(
+                        auth_result.error_message
+                        or "Authentication failed; refusing to emit auth headers.",
+                        failure_detail,
+                    )
+                raise InvalidCredentialsError(
                     auth_result.error_message
                     or "Authentication failed; refusing to emit auth headers."
                 )
-                failure_detail = auth_result.session_creation_failure
-                if failure_detail is not None:
-                    cast(Any, exc).session_creation_failure = failure_detail
-                raise exc
 
         if not self._credentials:
             self._authenticated = False

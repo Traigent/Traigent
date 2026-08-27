@@ -60,6 +60,23 @@ _TRACE_BATCH_ITEM_SEPARATOR_BYTES = len(b", ")
 _HEALTH_DISPATCH_STOP = object()
 
 
+class _ClientErrorWithRetryAfter(ClientError):
+    """Client error carrying a parsed retry delay."""
+
+    retry_after: float
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int,
+        details: dict[str, Any],
+        retry_after: float,
+    ) -> None:
+        super().__init__(message, status_code=status_code, details=details)
+        self.retry_after = retry_after
+
+
 class _NoRedirectHandler(request.HTTPRedirectHandler):
     """Prevent credentialed observability requests from replaying headers elsewhere."""
 
@@ -2077,11 +2094,15 @@ class ObservabilityClient:
         details: dict[str, Any],
         headers: Any,
     ) -> ClientError:
-        exc = ClientError(message, status_code=status_code, details=details)
         retry_after = _parse_retry_after(headers)
         if retry_after is not None:
-            cast(Any, exc).retry_after = retry_after
-        return exc
+            return _ClientErrorWithRetryAfter(
+                message,
+                status_code=status_code,
+                details=details,
+                retry_after=retry_after,
+            )
+        return ClientError(message, status_code=status_code, details=details)
 
     def _read_http_error_body(self, exc: error.HTTPError) -> str:
         try:

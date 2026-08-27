@@ -1846,12 +1846,17 @@ class LocalEvaluator(BaseEvaluator):
         self.validate_config(config)
 
         execution_budget_lease, blocked_result = (
-            self._prepare_execution_budget_evaluation(budget, config)
+            self._prepare_execution_budget_evaluation(
+                budget, config, sample_lease=sample_lease
+            )
         )
         if blocked_result is not None:
             return blocked_result
         if sample_lease is None:
             sample_lease = execution_budget_lease
+        self._register_sample_lease_cleanup(
+            sample_lease, finalize=execution_budget_lease is not None
+        )
 
         if not dataset.examples:
             raise EvaluationError("Dataset cannot be empty")

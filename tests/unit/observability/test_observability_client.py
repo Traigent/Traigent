@@ -3557,3 +3557,44 @@ def test_observability_ingest_http_error_attaches_retry_after(monkeypatch):
 
     assert exc_info.value.status_code == 429
     assert exc_info.value.retry_after == 4.25
+
+
+def test_observability_retry_exhaustion_runs_real_retry_handler(monkeypatch):
+    """A permanently failing sender is attempted exactly at the configured cap."""
+    attempts = 0
+
+    def failing_sender(_payloads):
+        nonlocal attempts
+        attempts += 1
+        raise ClientError("observability unavailable", status_code=503)
+
+    monkeypatch.setattr(retry_module.time, "sleep", lambda _delay: None)
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=failing_sender,
+    )
+    client._transport._retry_handler = retry_module.RetryHandler(
+        retry_module.RetryConfig(
+            max_attempts=3,
+            initial_delay=0.0,
+            max_delay=0.0,
+            jitter=False,
+            retry_on_status={503},
+        )
+    )
+
+    events = client._transport._send_batch([("trace_retry_exhausted", {"id": "trace"})])
+    stats = client._transport.get_stats()
+    client.close()
+
+    assert attempts == 3
+    assert stats["failed_batches"] == 1
+    assert stats["dropped_items"] == 1
+    assert stats["errors"]
+    assert events

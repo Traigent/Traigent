@@ -8,12 +8,12 @@ SonarQube S7497 requires CancelledError to always propagate.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 from typing import Any
-from unittest.mock import MagicMock, patch
 
 import pytest
 
+from traigent.core.execution_budget import ExecutionBudget
+from traigent.core.sample_budget import SampleBudgetManager
 from traigent.evaluators.base import Dataset, EvaluationExample, SimpleScoringEvaluator
 
 # ---------------------------------------------------------------------------
@@ -107,3 +107,97 @@ async def test_evaluate_propagates_cancelled_error():
 
     with pytest.raises(asyncio.CancelledError):
         await evaluator.evaluate(dummy_func, {}, dataset)
+
+
+@pytest.mark.asyncio
+async def test_evaluate_cancellation_refunds_execution_budget_admission():
+    """Cancellation after function admission must release the shared budget."""
+    started = asyncio.Event()
+    never = asyncio.Event()
+
+    async def blocking_func(question: str, **kwargs: Any) -> str:
+        started.set()
+        await never.wait()
+        return "answer"
+
+    evaluator = SimpleScoringEvaluator(scoring_function=lambda output, expected: 1.0)
+    budget = ExecutionBudget(max_examples=1)
+    evaluation = asyncio.create_task(
+        evaluator.evaluate(blocking_func, {}, _make_dataset(1), budget=budget)
+    )
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+    evaluation.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(evaluation, timeout=1.0)
+
+    snapshot = budget.snapshot()
+    assert snapshot.consumed_examples == 0
+    assert snapshot.trials == 0
+
+
+@pytest.mark.asyncio
+async def test_evaluate_cancellation_refunds_external_sample_lease() -> None:
+    """Simple scoring must release an orchestrator lease on task cancellation."""
+    started = asyncio.Event()
+    never = asyncio.Event()
+
+    async def blocking_func(question: str, **kwargs: Any) -> str:
+        started.set()
+        await never.wait()
+        return "answer"
+
+    manager = SampleBudgetManager(total_budget=1)
+    lease = manager.create_lease("simple-cancelled")
+    evaluator = SimpleScoringEvaluator(scoring_function=lambda output, expected: 1.0)
+    evaluation = asyncio.create_task(
+        evaluator.evaluate(
+            blocking_func,
+            {},
+            _make_dataset(1),
+            sample_lease=lease,
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+    evaluation.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(evaluation, timeout=1.0)
+
+    assert manager.snapshot().consumed == 0
+    assert lease.completed == 0
+    lease.finalize()
+
+
+@pytest.mark.asyncio
+async def test_simple_cancellation_retains_completed_examples() -> None:
+    """A completed example remains charged when the next one is cancelled."""
+    second_started = asyncio.Event()
+    never = asyncio.Event()
+    calls = 0
+
+    async def function(value: int) -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            second_started.set()
+            await never.wait()
+        return value
+
+    dataset = _make_dataset(2)
+    manager = SampleBudgetManager(total_budget=2)
+    lease = manager.create_lease("simple-partial-cancelled")
+    evaluator = SimpleScoringEvaluator(scoring_function=lambda output, expected: 1.0)
+    evaluation = asyncio.create_task(
+        evaluator.evaluate(function, {}, dataset, sample_lease=lease)
+    )
+    await asyncio.wait_for(second_started.wait(), timeout=1.0)
+    evaluation.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(evaluation, timeout=1.0)
+
+    assert lease.completed == 1
+    assert lease.consumed == 1
+    assert manager.snapshot().consumed == 1
+    lease.finalize()
