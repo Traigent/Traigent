@@ -367,7 +367,7 @@ class InteractiveOptimizer(BaseOptimizer):
             )
 
         self._completion_reason = None
-        suggestion = response.suggestion
+        suggestion: TrialSuggestion = response.suggestion
 
         # Store pending trial
         self._pending_trials[suggestion.trial_id] = suggestion

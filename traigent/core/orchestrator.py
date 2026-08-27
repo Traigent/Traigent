@@ -895,7 +895,7 @@ class OptimizationOrchestrator:
         """Return the backend strategy for named managed algorithms."""
 
         policy = policy_from_config(self.traigent_config)
-        if not policy_is_cloud_required(policy):
+        if policy is None or not policy_is_cloud_required(policy):
             return None
         strategy = backend_optimization_strategy_for_algorithm(policy.algorithm)
         if strategy is None:
@@ -1659,7 +1659,7 @@ class OptimizationOrchestrator:
             return None
 
         attempted = extract_examples_attempted(trial_result, default=1)
-        if attempted <= 0:
+        if attempted is None or attempted <= 0:
             attempted = 1
         return {
             "attempted_calls": attempted,

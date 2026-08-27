@@ -58,16 +58,16 @@ def normalize_typed_objectives(objectives: Any) -> list[Any]:
         score_direction = None
         if isinstance(objective, dict):
             metric = objective.get("metric")
-            direction = objective.get("direction")
+            objective_direction: Any = objective.get("direction")
             if (
                 isinstance(metric, str)
                 and metric == "score"
-                and isinstance(direction, str)
-                and direction.lower() in _DIRECTION_OBJECTIVES
+                and isinstance(objective_direction, str)
+                and objective_direction.lower() in _DIRECTION_OBJECTIVES
             ):
-                score_direction = direction.lower()
+                score_direction = objective_direction.lower()
 
-        if score_direction is not None:
+        if score_direction is not None and isinstance(objective, dict):
             if score_direction in seen_score_directions:
                 continue
             seen_score_directions.add(score_direction)

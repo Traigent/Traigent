@@ -173,7 +173,7 @@ class _SyncBatchTransport:
         self._lock = threading.RLock()
         self._send_lock = threading.Lock()
         self._health_event_queue: deque[
-            tuple[int, str, dict[str, Any]] | threading.Event | object
+            tuple[int, str, dict[str, Any]] | threading.Event
         ] = deque()
         self._health_event_condition = threading.Condition(self._lock)
         self._next_health_event_sequence = 0
@@ -842,7 +842,7 @@ class _SyncBatchTransport:
                 self._health_dispatch_closed = True
                 final_drain = threading.Event()
                 self._health_event_queue.append(final_drain)
-                self._health_event_queue.append(_HEALTH_DISPATCH_STOP)
+                self._health_event_queue.append(cast(Any, _HEALTH_DISPATCH_STOP))
                 self._health_event_condition.notify_all()
         finally:
             self._health_event_condition.release()
@@ -2080,7 +2080,7 @@ class ObservabilityClient:
         exc = ClientError(message, status_code=status_code, details=details)
         retry_after = _parse_retry_after(headers)
         if retry_after is not None:
-            exc.retry_after = retry_after
+            cast(Any, exc).retry_after = retry_after
         return exc
 
     def _read_http_error_body(self, exc: error.HTTPError) -> str:

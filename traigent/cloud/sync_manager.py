@@ -11,7 +11,7 @@ import os
 import re
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote, urlencode
 
 import requests  # Always needed for synchronous operations
@@ -857,7 +857,7 @@ class SyncManager:
             sync_result["status"] = "success"
             sync_result["cloud_url"] = build_experiment_url(
                 BackendConfig.get_cloud_web_url(),
-                experiment_id,
+                cast(str, experiment_id),
                 run_id=experiment_run_id,
                 project_id=project_id,
                 tenant_id=tenant_id,

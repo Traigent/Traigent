@@ -1104,8 +1104,9 @@ class AuthManager:
                     auth_result.error_message
                     or "Authentication failed; refusing to emit auth headers."
                 )
-                if auth_result.session_creation_failure is not None:
-                    exc.session_creation_failure = auth_result.session_creation_failure
+                failure_detail = auth_result.session_creation_failure
+                if failure_detail is not None:
+                    cast(Any, exc).session_creation_failure = failure_detail
                 raise exc
 
         if not self._credentials:

@@ -257,7 +257,7 @@ def _coerce_winner_stability_reps(value: Any) -> int:
         raise ValueError("winner_stability_reps must be an int")
     if value < 0 or value > 1000:
         raise ValueError("winner_stability_reps must be between 0 (off) and 1000")
-    return value
+    return cast(int, value)
 
 
 class ExecutionOptions(BaseModel):
@@ -401,7 +401,7 @@ class ExecutionOptions(BaseModel):
             # Field-assignment path (validate_assignment=True): preserve the
             # legacy keys captured at construction time.
             model._legacy_options = dict(carried_stash)
-        return model
+        return cast(ExecutionOptions, model)
 
     @field_validator("reps_per_trial")
     @classmethod

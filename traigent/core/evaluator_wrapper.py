@@ -64,6 +64,7 @@ def _redact_config_for_log(config: dict[str, Any]) -> dict[str, Any]:
 
 
 if TYPE_CHECKING:
+    from traigent.core.execution_budget import ExecutionBudget
     from traigent.core.sample_budget import SampleBudgetLease
 
 
@@ -428,6 +429,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         *,
         sample_lease: SampleBudgetLease | None = None,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
+        budget: ExecutionBudget | None = None,
     ) -> EvaluationResult:
         """Evaluate function using custom evaluator.
 
