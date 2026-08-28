@@ -12,6 +12,13 @@ from typing import Any
 
 import pytest
 
+import traigent
+from traigent.api.types import (
+    ExampleResult,
+    OptimizationResult,
+    OptimizationStatus,
+    TrialStatus,
+)
 from traigent.core.execution_budget import ExecutionBudget
 from traigent.core.sample_budget import SampleBudgetManager
 from traigent.evaluators.base import Dataset, EvaluationExample, SimpleScoringEvaluator
@@ -41,6 +48,53 @@ def _raising_metric(**kwargs: Any) -> float:
 def _raising_scoring(output: Any, expected: Any) -> float:
     """Scoring function that always raises CancelledError."""
     raise asyncio.CancelledError
+
+
+def test_public_optimize_sync_custom_evaluator_returns_partial_result_after_keyboard_interrupt():
+    """A sync custom evaluator interrupt remains a returned partial result."""
+    calls = 0
+    dataset = Dataset([EvaluationExample({"text": "hello"}, "ok")])
+
+    def target_function(text: str, **_config: Any) -> str:
+        return f"ok:{text}"
+
+    def interrupting_evaluator(func, config, example):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise KeyboardInterrupt
+        output = func(example.input_data["text"], **config)
+        return ExampleResult(
+            example_id=f"example-{calls}",
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output=output,
+            metrics={"accuracy": 1.0},
+            execution_time=0.0,
+            success=True,
+            error_message=None,
+        )
+
+    optimized = traigent.optimize(
+        eval_dataset=dataset,
+        custom_evaluator=interrupting_evaluator,
+        objectives=["accuracy"],
+        configuration_space={"temperature": [0.0, 0.5, 1.0]},
+        injection_mode="seamless",
+    )(target_function)
+
+    result = optimized.optimize_sync(
+        algorithm="grid",
+        max_trials=5,
+        progress_bar=False,
+    )
+
+    assert isinstance(result, OptimizationResult)
+    assert result.stop_reason == "user_cancelled"
+    assert result.status == OptimizationStatus.CANCELLED
+    assert len(result.trials) == 1
+    assert result.trials[0].status == TrialStatus.COMPLETED
+    assert calls == 2
 
 
 # ---------------------------------------------------------------------------
@@ -176,13 +230,13 @@ async def test_simple_cancellation_retains_completed_examples() -> None:
     never = asyncio.Event()
     calls = 0
 
-    async def function(value: int) -> int:
+    async def function(question: str) -> str:
         nonlocal calls
         calls += 1
         if calls == 2:
             second_started.set()
             await never.wait()
-        return value
+        return question
 
     dataset = _make_dataset(2)
     manager = SampleBudgetManager(total_budget=2)
@@ -294,7 +348,7 @@ async def test_sync_scoring_cancellation_refunds_external_lease_before_partial_r
     async def caller_returns_partial() -> str:
         try:
             await evaluator.evaluate(
-                lambda value: value,
+                lambda question: question,
                 {},
                 _make_dataset(1),
                 sample_lease=lease,
@@ -324,7 +378,7 @@ async def test_sync_scoring_cancellation_refunds_execution_budget_before_partial
     async def caller_returns_partial() -> str:
         try:
             await evaluator.evaluate(
-                lambda value: value,
+                lambda question: question,
                 {},
                 _make_dataset(1),
                 budget=budget,

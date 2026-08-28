@@ -701,9 +701,6 @@ class HybridAPIEvaluator(BaseEvaluator):
             return blocked_result
         if sample_lease is None:
             sample_lease = execution_budget_lease
-        self._register_sample_lease_cleanup(
-            sample_lease, finalize=execution_budget_lease is not None
-        )
 
         start_time = time.time()
         transport = await self._await_with_sample_lease_cleanup(

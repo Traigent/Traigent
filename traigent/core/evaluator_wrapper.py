@@ -472,9 +472,6 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             return blocked_result
         if sample_lease is None:
             sample_lease = execution_budget_lease
-        self._register_sample_lease_cleanup(
-            sample_lease, finalize=execution_budget_lease is not None
-        )
 
         logger.info(
             "Starting custom evaluation with %d examples, config: %s",
@@ -508,6 +505,9 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                     i,
                 )
                 break
+            cleanup_boundary = self._new_sample_lease_cleanup_boundary(
+                sample_lease, execution_budget_lease
+            )
             try:
                 # Clear any previous captured responses before evaluation
                 if self.capture_llm_metrics and self._metrics_available:
@@ -519,36 +519,41 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                         per_example_start = time.time()
                         try:
                             if is_coroutine_callable(self.custom_evaluator):
-                                example_result = (
-                                    await self._await_with_sample_lease_cleanup(
-                                        self.custom_evaluator(func, config, example),
-                                        sample_lease,
-                                        execution_budget_lease,
+                                try:
+                                    example_result = await self.custom_evaluator(
+                                        func, config, example
                                     )
-                                )
+                                except asyncio.CancelledError:
+                                    cleanup_boundary.cancel()
+                                    raise
                             else:
                                 # Run blocking custom evaluators off the main event loop so
                                 # concurrent async tasks (progress callbacks, heartbeats)
                                 # are not starved while long-running per-example work runs.
-                                thread_task = asyncio.create_task(
-                                    asyncio.to_thread(
-                                        self.custom_evaluator,
-                                        func,
-                                        config,
-                                        example,
-                                    )
+                                def run_custom_evaluator(
+                                    example: EvaluationExample = example,
+                                ) -> Any:
+                                    return self.custom_evaluator(func, config, example)
+
+                                (
+                                    output,
+                                    execution_error,
+                                ) = await self._execute_sync_in_thread(
+                                    run_custom_evaluator,
+                                    config,
+                                    (),
+                                    {},
+                                    None,
+                                    trial_ctx,
+                                    worker_started_callback=cleanup_boundary.worker_started,
+                                    worker_done_callback=cleanup_boundary.worker_done,
+                                    apply_timeout=False,
                                 )
-                                try:
-                                    example_result = await asyncio.shield(thread_task)
-                                except asyncio.CancelledError:
-                                    # A canceled task cannot stop the worker thread;
-                                    # keep the admission until that work has settled.
-                                    await self._drain_uncancellable(thread_task)
-                                    raise
+                                if execution_error is not None:
+                                    raise RuntimeError(execution_error)
+                                example_result = output
                         except asyncio.CancelledError:
-                            self._cleanup_sample_lease_on_cancel(
-                                sample_lease, execution_budget_lease
-                            )
+                            cleanup_boundary.cancel()
                             raise
                         per_example_duration = time.time() - per_example_start
 
@@ -591,9 +596,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             except asyncio.CancelledError:
                 # Progress/metric handling occurs after admission too; an
                 # outer orchestrator may catch this and return partial output.
-                self._cleanup_sample_lease_on_cancel(
-                    sample_lease, execution_budget_lease
-                )
+                cleanup_boundary.cancel()
                 raise
             except Exception as e:
                 # Check for signature mismatch errors (fail fast with helpful message)

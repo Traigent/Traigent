@@ -57,7 +57,13 @@ logger = get_logger(__name__)
 _TRACE_BATCH_PREFIX_BYTES = len(b'{"traces": [')
 _TRACE_BATCH_SUFFIX_BYTES = len(b"]}")
 _TRACE_BATCH_ITEM_SEPARATOR_BYTES = len(b", ")
-_HEALTH_DISPATCH_STOP = object()
+
+
+class _HealthDispatchStop:
+    """Typed sentinel that terminates the per-transport health dispatcher."""
+
+
+_HEALTH_DISPATCH_STOP = _HealthDispatchStop()
 
 
 class _ClientErrorWithRetryAfter(ClientError):
@@ -190,7 +196,7 @@ class _SyncBatchTransport:
         self._lock = threading.RLock()
         self._send_lock = threading.Lock()
         self._health_event_queue: deque[
-            tuple[int, str, dict[str, Any]] | threading.Event
+            tuple[int, str, dict[str, Any]] | threading.Event | _HealthDispatchStop
         ] = deque()
         self._health_event_condition = threading.Condition(self._lock)
         self._next_health_event_sequence = 0
@@ -831,7 +837,7 @@ class _SyncBatchTransport:
                 while not self._health_event_queue:
                     self._health_event_condition.wait()
                 queued = self._health_event_queue.popleft()
-            if queued is _HEALTH_DISPATCH_STOP:
+            if isinstance(queued, _HealthDispatchStop):
                 return
             if isinstance(queued, threading.Event):
                 queued.set()
@@ -859,7 +865,7 @@ class _SyncBatchTransport:
                 self._health_dispatch_closed = True
                 final_drain = threading.Event()
                 self._health_event_queue.append(final_drain)
-                self._health_event_queue.append(cast(Any, _HEALTH_DISPATCH_STOP))
+                self._health_event_queue.append(_HEALTH_DISPATCH_STOP)
                 self._health_event_condition.notify_all()
         finally:
             self._health_event_condition.release()

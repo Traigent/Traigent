@@ -224,6 +224,7 @@ async def test_custom_evaluator_cancellation_retains_completed_examples() -> Non
 async def test_custom_evaluator_wrapper_does_not_refund_running_worker_thread() -> None:
     started = threading.Event()
     release = threading.Event()
+    settled = threading.Event()
     calls = 0
 
     def blocking_custom_evaluator(func, config, example):
@@ -231,6 +232,7 @@ async def test_custom_evaluator_wrapper_does_not_refund_running_worker_thread() 
         calls += 1
         started.set()
         release.wait(timeout=5)
+        settled.set()
         return ExampleResult(
             example_id="example",
             input_data=example.input_data,
@@ -264,6 +266,7 @@ async def test_custom_evaluator_wrapper_does_not_refund_running_worker_thread() 
     release.set()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(first, timeout=2.0)
+    assert await asyncio.wait_for(asyncio.to_thread(settled.wait, 1), timeout=1.0)
     assert budget.snapshot().consumed_examples == 0
 
 
@@ -351,6 +354,18 @@ def test_execution_budget_lease_metrics_report_refunded_work() -> None:
     assert metrics.consumed == 1
     assert metrics.wasted == 1
     assert metrics.efficiency == 0.5
+
+
+def test_rollback_after_finalize_does_not_reopen_global_budget() -> None:
+    manager = SampleBudgetManager(total_budget=3)
+    lease = manager.create_lease("finalized-lease")
+    assert lease.try_take(2)
+    lease.mark_completed(1)
+    closure = lease.finalize()
+
+    assert closure.consumed == 2
+    assert lease.rollback_uncompleted() == 0
+    assert manager.consumed() == 2
 
 
 @pytest.mark.asyncio

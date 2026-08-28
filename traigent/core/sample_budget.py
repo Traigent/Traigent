@@ -144,6 +144,11 @@ class SampleBudgetLease:
         owning orchestration task can both perform cleanup safely.
         """
         with self._lock:
+            # ``finalize`` is the terminal transition.  A worker-completion
+            # callback may run after its owning task has already finalized the
+            # lease; it must not reopen the global budget retroactively.
+            if self._closed:
+                return 0
             uncompleted = max(self._consumed - self._completed, 0)
             if uncompleted <= 0:
                 return 0

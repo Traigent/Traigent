@@ -1,5 +1,6 @@
 import asyncio
 import threading
+import time
 
 import pytest
 
@@ -189,3 +190,75 @@ async def test_local_timeout_keeps_sync_worker_lane_occupied_until_settled() -> 
     assert second_started.is_set()
     assert peak_active == 1
     assert result.total_examples == 2
+
+
+@pytest.mark.asyncio
+async def test_local_sync_timeout_returns_promptly_but_retains_worker_lane() -> None:
+    """Timeout is wall-clock bounded while the timed-out worker owns its lane."""
+    first_started = threading.Event()
+    first_release = threading.Event()
+    second_started = threading.Event()
+
+    def blocking(value: int) -> int:
+        if value == 1:
+            first_started.set()
+            first_release.wait(timeout=2.0)
+        else:
+            second_started.set()
+        return value
+
+    evaluator = LocalEvaluator(metrics=["accuracy"], max_workers=1, timeout=0.05)
+    first = asyncio.create_task(evaluator._execute_function(blocking, {}, {"value": 1}))
+    await asyncio.wait_for(asyncio.to_thread(first_started.wait, 1.0), timeout=1.0)
+
+    started_timing = time.monotonic()
+    output, error = await asyncio.wait_for(first, timeout=0.5)
+    assert time.monotonic() - started_timing < 0.5
+    assert output is None
+    assert error == "Function call timed out after 0.05s"
+
+    second = asyncio.create_task(
+        evaluator._execute_function(blocking, {}, {"value": 2})
+    )
+    await asyncio.sleep(0.1)
+    assert not second_started.is_set()
+
+    first_release.set()
+    await asyncio.wait_for(second, timeout=1.0)
+    assert second_started.is_set()
+
+
+@pytest.mark.asyncio
+async def test_local_sync_cancel_returns_promptly_but_retains_worker_lane() -> None:
+    """Cancellation is prompt while the cancelled worker still owns its lane."""
+    first_started = threading.Event()
+    first_release = threading.Event()
+    second_started = threading.Event()
+
+    def blocking(value: int) -> int:
+        if value == 1:
+            first_started.set()
+            first_release.wait(timeout=2.0)
+        else:
+            second_started.set()
+        return value
+
+    evaluator = LocalEvaluator(metrics=["accuracy"], max_workers=1)
+    first = asyncio.create_task(evaluator._execute_function(blocking, {}, {"value": 1}))
+    await asyncio.wait_for(asyncio.to_thread(first_started.wait, 1.0), timeout=1.0)
+
+    started_cancelling = time.monotonic()
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(first, timeout=0.5)
+    assert time.monotonic() - started_cancelling < 0.5
+
+    second = asyncio.create_task(
+        evaluator._execute_function(blocking, {}, {"value": 2})
+    )
+    await asyncio.sleep(0.1)
+    assert not second_started.is_set()
+
+    first_release.set()
+    await asyncio.wait_for(second, timeout=1.0)
+    assert second_started.is_set()

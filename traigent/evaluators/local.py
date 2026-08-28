@@ -1854,9 +1854,6 @@ class LocalEvaluator(BaseEvaluator):
             return blocked_result
         if sample_lease is None:
             sample_lease = execution_budget_lease
-        self._register_sample_lease_cleanup(
-            sample_lease, finalize=execution_budget_lease is not None
-        )
 
         if not dataset.examples:
             raise EvaluationError("Dataset cannot be empty")
@@ -1889,9 +1886,11 @@ class LocalEvaluator(BaseEvaluator):
                 sample_lease=sample_lease,
                 detailed=self.detailed,
                 progress_callback=progress_callback,
+                execution_budget_lease=execution_budget_lease,
             ),
             sample_lease,
             execution_budget_lease,
+            cleanup_on_cancel=False,
         )
 
         # Collect expected outputs
