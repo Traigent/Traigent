@@ -15,7 +15,7 @@ Guidelines and policies for contributing to Traigent SDK.
 3. **Check [Security Policy](SECURITY.md)** - If reporting security issues
 
 For SDK development, use `make install-dev` or
-`python -m pip install -e ".[all,dev,dspy,docs]"`. For end-user onboarding
+`python -m pip install -e ".[all,dev,docs]"`. For end-user onboarding
 surfaces, see `traigent onboard`, `traigent quickstart`, and
 `traigent auth device-login`.
 

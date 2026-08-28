@@ -8,8 +8,46 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.27.0] - unreleased
 
+### Changed
+
+- **Cryptography 49.0.0 → cryptography 50.0.1.** The published floor is now
+  `cryptography>=50.0.0` and the shipped lock selects 50.0.1, closing
+  CVE-2026-69247 / GHSA-g6cj-pr64-35w5. This is possible because the integrations
+  extra now uses `mlflow-skinny` instead of full MLflow 3.15.1 and its
+  incompatible `cryptography<50` constraint. Pandas is a direct integrations
+  dependency so `mlflow.search_runs(..., output_format="pandas")` remains
+  available.
+- `traigent[integrations]` now bundles MLflow's tracking/client runtime, not the
+  full MLflow server and model stack. Install the supported client surface with
+  `python -m pip install "traigent[integrations]"`.
+- The dependency graph no longer adds full MLflow, `mlflow-tracing`, Alembic,
+  Flask and Flask-CORS, Gunicorn and Waitress, Docker, PyArrow, Graphene and its
+  GraphQL packages, Huey, Mako, PrettyTable, Skops, Blinker, ItsDangerous,
+  wcwidth, or Werkzeug. SQLAlchemy is deliberately not on this list: it remains
+  present through `langchain-community`, although Traigent does not promise it
+  as an MLflow SQL-backend extra.
+- Model-flavor modules remain importable, but their execution dependencies are
+  not supplied by the skinny runtime. Add only the flavor dependency you use,
+  for example `python -m pip install "traigent[integrations]" scikit-learn`.
+  PyTorch users can add their platform-appropriate `torch` build instead.
+- Full MLflow 3.15.1 cannot share the current Traigent environment because its
+  `cryptography<50` requirement conflicts with Traigent's security floor. The
+  skinny-only environment does not support local SQLite or other SQL tracking
+  URIs. Those require a separate environment or service running a compatible
+  full MLflow stack; point Traigent at that service's remote tracking URI.
+  Otherwise wait for a full MLflow release that supports `cryptography>=50`;
+  do not install full MLflow alongside this Traigent release.
+
 ### Removed
 
+- **The public `traigent[dspy]` extra and its locked dependency chain are
+  removed.** The import-optional DSPy adapter remains available to applications
+  that provide their own compatible DSPy installation, but Traigent no longer
+  brings `dspy-ai`, `dspy`, or `diskcache` into its shipped lock. This does not
+  attest a user-managed DSPy installation as safe: DSPy's current dependency
+  chain includes `diskcache`, and CVE-2025-69872 has no patched release at the
+  time of this release. Users who deliberately retain DSPy must manage and review
+  that dependency risk separately instead of installing `traigent[dspy]`.
 - **Named strategy presets removed** (#2100, #2101). The advisory selection rules
   behind `max_accuracy_then_cheapest_within_epsilon`, `quality_floor_min_cost`, and
   `pareto_frontier` are the technique, not something a public package ships readable
