@@ -3910,27 +3910,27 @@
 <p>Everything you need to run and adapt examples quickly.</p>
 <h2 id="common-commands">Common commands<a class="headerlink" href="#common-commands" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="c1"># Install from repo root (includes example deps)</span>
-pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;traigent[recommended]&quot;</span>
+pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"traigent[recommended]"</span>
 
 <span class="c1"># Auto-mocks when ANTHROPIC_API_KEY is unset</span>
 python<span class="w"> </span>examples/core/simple-prompt/run.py
 
 <span class="c1"># With real LLMs</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">ANTHROPIC_API_KEY</span><span class="o">=</span><span class="s2">&quot;your-key&quot;</span><span class="w"> </span><span class="c1"># pragma: allowlist secret</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">OPENAI_API_KEY</span><span class="o">=</span><span class="s2">&quot;your-key&quot;</span><span class="w"> </span><span class="c1"># pragma: allowlist secret</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">ANTHROPIC_API_KEY</span><span class="o">=</span><span class="s2">"your-key"</span><span class="w"> </span><span class="c1"># pragma: allowlist secret</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">OPENAI_API_KEY</span><span class="o">=</span><span class="s2">"your-key"</span><span class="w"> </span><span class="c1"># pragma: allowlist secret</span>
 python<span class="w"> </span>examples/core/multi-objective-tradeoff/run_openai_backend_smart.py
 </code></pre></div>
 <h2 id="core-optimize-pattern">Core optimize pattern<a class="headerlink" href="#core-optimize-pattern" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">traigent</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;examples/datasets/simple-prompt/evaluation_set.jsonl&quot;</span><span class="p">,</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;claude-3-haiku-20240307&quot;</span><span class="p">],</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">]},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"examples/datasets/simple-prompt/evaluation_set.jsonl"</span><span class="p">,</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"claude-3-haiku-20240307"</span><span class="p">],</span> <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">]},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">summarize</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
-    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Summary | model=</span><span class="si">{</span><span class="n">cfg</span><span class="p">[</span><span class="s1">&#39;model&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>  <span class="c1"># call your LLM here</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">"Summary | model=</span><span class="si">{</span><span class="n">cfg</span><span class="p">[</span><span class="s1">'model'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span>  <span class="c1"># call your LLM here</span>
 </code></pre></div>
 <h2 id="optimization-routing">Optimization routing<a class="headerlink" href="#optimization-routing" title="Permanent link">&para;</a></h2>
 <ul>

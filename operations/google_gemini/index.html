@@ -3858,18 +3858,18 @@
 discovery surfaces shipped in this repository.</p>
 <h2 id="environment">Environment<a class="headerlink" href="#environment" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="c1"># Required for real runs</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">GOOGLE_API_KEY</span><span class="o">=</span><span class="s2">&quot;&lt;key&gt;&quot;</span><span class="w">   </span><span class="c1"># or GEMINI_API_KEY</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">GOOGLE_API_KEY</span><span class="o">=</span><span class="s2">"&lt;key&gt;"</span><span class="w">   </span><span class="c1"># or GEMINI_API_KEY</span>
 
 <span class="c1"># Local mock mode: export TRAIGENT_MOCK_LLM=true, or call</span>
 <span class="c1"># traigent.testing.enable_mock_mode_for_quickstart() in tutorial code.</span>
 <span class="c1"># Provider-specific *_MOCK env vars are ignored.</span>
 </code></pre></div>
 <h2 id="dependencies">Dependencies<a class="headerlink" href="#dependencies" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;.[integrations]&quot;</span><span class="w">  </span><span class="c1"># or: pip install -r requirements/requirements-integrations.txt</span>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">".[integrations]"</span><span class="w">  </span><span class="c1"># or: pip install -r requirements/requirements-integrations.txt</span>
 </code></pre></div>
 <h2 id="validation-checks">Validation Checks<a class="headerlink" href="#validation-checks" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>pytest<span class="w"> </span>-q<span class="w"> </span>tests/unit/integrations/test_cloud_plugins.py<span class="w"> </span>-o<span class="w"> </span><span class="nv">addopts</span><span class="o">=</span><span class="s1">&#39;&#39;</span><span class="w"> </span>-k<span class="w"> </span>gemini
-pytest<span class="w"> </span>-q<span class="w"> </span>tests/unit/integrations/test_model_discovery.py<span class="w"> </span>-o<span class="w"> </span><span class="nv">addopts</span><span class="o">=</span><span class="s1">&#39;&#39;</span><span class="w"> </span>-k<span class="w"> </span>GeminiDiscovery
+<div class="highlight"><pre><span></span><code>pytest<span class="w"> </span>-q<span class="w"> </span>tests/unit/integrations/test_cloud_plugins.py<span class="w"> </span>-o<span class="w"> </span><span class="nv">addopts</span><span class="o">=</span><span class="s1">''</span><span class="w"> </span>-k<span class="w"> </span>gemini
+pytest<span class="w"> </span>-q<span class="w"> </span>tests/unit/integrations/test_model_discovery.py<span class="w"> </span>-o<span class="w"> </span><span class="nv">addopts</span><span class="o">=</span><span class="s1">''</span><span class="w"> </span>-k<span class="w"> </span>GeminiDiscovery
 </code></pre></div>
 <p>These checks cover provider-specific parameter mappings and Gemini model
 discovery. This repository does not currently ship a standalone Gemini example

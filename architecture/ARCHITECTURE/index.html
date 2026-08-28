@@ -4041,60 +4041,60 @@
 <hr />
 <h2 id="high-level-architecture">High-Level Architecture<a class="headerlink" href="#high-level-architecture" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>flowchart TB
-    subgraph UserCode[&quot;Your Application&quot;]
-        decorator[&quot;@traigent.optimize()&quot;]
-        func[&quot;LLM Function/Agent&quot;]
-        dataset[&quot;Evaluation Dataset&quot;]
+    subgraph UserCode["Your Application"]
+        decorator["@traigent.optimize()"]
+        func["LLM Function/Agent"]
+        dataset["Evaluation Dataset"]
     end
 
-    subgraph TraigentSDK[&quot;Traigent SDK&quot;]
-        subgraph API[&quot;Public API Layer&quot;]
-            ranges[&quot;Parameter Ranges&lt;br/&gt;(Range, Choices, IntRange)&quot;]
-            constraints[&quot;Constraints&lt;br/&gt;(TVL Expressions)&quot;]
-            objectives[&quot;Objectives&lt;br/&gt;(accuracy, cost, latency)&quot;]
+    subgraph TraigentSDK["Traigent SDK"]
+        subgraph API["Public API Layer"]
+            ranges["Parameter Ranges&lt;br/&gt;(Range, Choices, IntRange)"]
+            constraints["Constraints&lt;br/&gt;(TVL Expressions)"]
+            objectives["Objectives&lt;br/&gt;(accuracy, cost, latency)"]
         end
 
-        subgraph Core[&quot;Optimization Core&quot;]
-            orchestrator[&quot;Optimization&lt;br/&gt;Orchestrator&quot;]
-            optimized_func[&quot;Optimized&lt;br/&gt;Function&quot;]
-            trial_lifecycle[&quot;Trial&lt;br/&gt;Lifecycle&quot;]
-            cost_enforcer[&quot;Cost&lt;br/&gt;Enforcer&quot;]
+        subgraph Core["Optimization Core"]
+            orchestrator["Optimization&lt;br/&gt;Orchestrator"]
+            optimized_func["Optimized&lt;br/&gt;Function"]
+            trial_lifecycle["Trial&lt;br/&gt;Lifecycle"]
+            cost_enforcer["Cost&lt;br/&gt;Enforcer"]
         end
 
-        subgraph Optimizers[&quot;Optimization Algorithms&quot;]
-            tpe[&quot;TPE&lt;br/&gt;(Bayesian)&quot;]
-            grid[&quot;Grid&lt;br/&gt;Search&quot;]
-            random[&quot;Random&lt;br/&gt;Search&quot;]
-            nsga[&quot;NSGA-II&lt;br/&gt;(Multi-Obj)&quot;]
-            cmaes[&quot;CMA-ES&quot;]
+        subgraph Optimizers["Optimization Algorithms"]
+            tpe["TPE&lt;br/&gt;(Bayesian)"]
+            grid["Grid&lt;br/&gt;Search"]
+            random["Random&lt;br/&gt;Search"]
+            nsga["NSGA-II&lt;br/&gt;(Multi-Obj)"]
+            cmaes["CMA-ES"]
         end
 
-        subgraph Evaluation[&quot;Evaluation Engine&quot;]
-            evaluator[&quot;Local&lt;br/&gt;Evaluator&quot;]
-            metrics_tracker[&quot;Metrics&lt;br/&gt;Tracker&quot;]
-            custom_eval[&quot;Custom&lt;br/&gt;Evaluators&quot;]
+        subgraph Evaluation["Evaluation Engine"]
+            evaluator["Local&lt;br/&gt;Evaluator"]
+            metrics_tracker["Metrics&lt;br/&gt;Tracker"]
+            custom_eval["Custom&lt;br/&gt;Evaluators"]
         end
 
-        subgraph Config[&quot;Configuration&quot;]
-            injection[&quot;Config&lt;br/&gt;Injection&quot;]
-            context[&quot;Trial&lt;br/&gt;Context&quot;]
-            providers[&quot;Config&lt;br/&gt;Providers&quot;]
+        subgraph Config["Configuration"]
+            injection["Config&lt;br/&gt;Injection"]
+            context["Trial&lt;br/&gt;Context"]
+            providers["Config&lt;br/&gt;Providers"]
         end
 
-        subgraph Integrations[&quot;Framework Integrations&quot;]
-            langchain[&quot;LangChain&quot;]
-            dspy[&quot;DSPy&quot;]
-            openai[&quot;OpenAI&quot;]
-            anthropic[&quot;Anthropic&quot;]
-            more[&quot;+ More&quot;]
+        subgraph Integrations["Framework Integrations"]
+            langchain["LangChain"]
+            dspy["DSPy"]
+            openai["OpenAI"]
+            anthropic["Anthropic"]
+            more["+ More"]
         end
     end
 
-    subgraph Output[&quot;Results&quot;]
-        best_config[&quot;Best Configuration&quot;]
-        pareto[&quot;Pareto Front&lt;br/&gt;(Multi-Objective)&quot;]
-        insights[&quot;Optimization&lt;br/&gt;Insights&quot;]
-        analytics[&quot;Analytics &amp;&lt;br/&gt;Telemetry&quot;]
+    subgraph Output["Results"]
+        best_config["Best Configuration"]
+        pareto["Pareto Front&lt;br/&gt;(Multi-Objective)"]
+        insights["Optimization&lt;br/&gt;Insights"]
+        analytics["Analytics &amp;&lt;br/&gt;Telemetry"]
     end
 
     decorator --&gt; optimized_func
@@ -4183,16 +4183,16 @@
 <h2 id="configuration-injection-modes">Configuration Injection Modes<a class="headerlink" href="#configuration-injection-modes" title="Permanent link">&para;</a></h2>
 <p>Traigent supports multiple ways to inject optimized configurations into your functions:</p>
 <div class="highlight"><pre><span></span><code>flowchart LR
-    subgraph Modes[&quot;Injection Modes&quot;]
-        context[&quot;Context Mode&lt;br/&gt;(Default)&quot;]
-        param[&quot;Parameter Mode&quot;]
-        seamless[&quot;Seamless Mode&lt;br/&gt;(AST Transform)&quot;]
+    subgraph Modes["Injection Modes"]
+        context["Context Mode&lt;br/&gt;(Default)"]
+        param["Parameter Mode"]
+        seamless["Seamless Mode&lt;br/&gt;(AST Transform)"]
     end
 
-    subgraph Usage[&quot;How You Access Config&quot;]
-        context --&gt; ctx_code[&quot;traigent.get_config()&quot;]
-        param --&gt; param_code[&quot;def func(query, config):&quot;]
-        seamless --&gt; seamless_code[&quot;Direct variable names&lt;br/&gt;(temperature, model)&quot;]
+    subgraph Usage["How You Access Config"]
+        context --&gt; ctx_code["traigent.get_config()"]
+        param --&gt; param_code["def func(query, config):"]
+        seamless --&gt; seamless_code["Direct variable names&lt;br/&gt;(temperature, model)"]
     end
 
     style context fill:#e3f2fd
@@ -4205,25 +4205,25 @@
 <hr />
 <h2 id="optimization-routing">Optimization Routing<a class="headerlink" href="#optimization-routing" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>flowchart TB
-    subgraph DefaultPath[&quot;Default&quot;]
+    subgraph DefaultPath["Default"]
         direction TB
-        default_desc[&quot;Smart optimizer&lt;br/&gt;No routing settings&lt;br/&gt;Portal sync when authenticated&quot;]
-        default_portal[&quot;Traigent Portal&quot;]
+        default_desc["Smart optimizer&lt;br/&gt;No routing settings&lt;br/&gt;Portal sync when authenticated"]
+        default_portal["Traigent Portal"]
     end
 
-    subgraph LocalSearch[&quot;Local Search&quot;]
+    subgraph LocalSearch["Local Search"]
         direction TB
-        local_desc[&quot;Grid or random&lt;br/&gt;Trials run in your process&lt;br/&gt;Portal sync when authenticated&quot;]
-        local_opt[&quot;Local Optimizer&quot;]
+        local_desc["Grid or random&lt;br/&gt;Trials run in your process&lt;br/&gt;Portal sync when authenticated"]
+        local_opt["Local Optimizer"]
     end
 
-    subgraph NoEgress[&quot;No-Egress Run&quot;]
+    subgraph NoEgress["No-Egress Run"]
         direction TB
-        noegress_desc[&quot;offline=True&lt;br/&gt;Local optimizer&lt;br/&gt;No portal sync&quot;]
-        local_store[&quot;Local Results&quot;]
+        noegress_desc["offline=True&lt;br/&gt;Local optimizer&lt;br/&gt;No portal sync"]
+        local_store["Local Results"]
     end
 
-    User[&quot;Your Application&quot;] --&gt; DefaultPath
+    User["Your Application"] --&gt; DefaultPath
     User --&gt; LocalSearch
     User --&gt; NoEgress
 
@@ -4234,22 +4234,22 @@
 <hr />
 <h2 id="multi-objective-optimization">Multi-Objective Optimization<a class="headerlink" href="#multi-objective-optimization" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>flowchart LR
-    subgraph Objectives[&quot;Define Objectives&quot;]
-        acc[&quot;Accuracy&lt;br/&gt;(maximize)&quot;]
-        cost[&quot;Cost&lt;br/&gt;(minimize)&quot;]
-        latency[&quot;Latency&lt;br/&gt;(minimize)&quot;]
+    subgraph Objectives["Define Objectives"]
+        acc["Accuracy&lt;br/&gt;(maximize)"]
+        cost["Cost&lt;br/&gt;(minimize)"]
+        latency["Latency&lt;br/&gt;(minimize)"]
     end
 
-    subgraph Aggregation[&quot;Aggregation Modes&quot;]
-        weighted[&quot;Weighted Sum&lt;br/&gt;(Linear trade-offs)&quot;]
-        harmonic[&quot;Harmonic Mean&lt;br/&gt;(Penalize imbalance)&quot;]
-        chebyshev[&quot;Chebyshev&lt;br/&gt;(Worst-case focus)&quot;]
+    subgraph Aggregation["Aggregation Modes"]
+        weighted["Weighted Sum&lt;br/&gt;(Linear trade-offs)"]
+        harmonic["Harmonic Mean&lt;br/&gt;(Penalize imbalance)"]
+        chebyshev["Chebyshev&lt;br/&gt;(Worst-case focus)"]
     end
 
-    subgraph Results[&quot;Output&quot;]
-        pareto[&quot;Pareto Front&quot;]
-        best[&quot;Best Trade-off&quot;]
-        insights[&quot;Trade-off Analysis&quot;]
+    subgraph Results["Output"]
+        pareto["Pareto Front"]
+        best["Best Trade-off"]
+        insights["Trade-off Analysis"]
     end
 
     acc --&gt; weighted
@@ -4279,23 +4279,23 @@
 <h2 id="tvl-specification-system">TVL Specification System<a class="headerlink" href="#tvl-specification-system" title="Permanent link">&para;</a></h2>
 <p>TVL (Tuned Variable Language) lets you define optimization specs in YAML:</p>
 <div class="highlight"><pre><span></span><code>flowchart TB
-    subgraph TVLSpec[&quot;optimization.tvl.yaml&quot;]
-        tvars[&quot;tvars:&lt;br/&gt;- name: model&lt;br/&gt;- name: temperature&quot;]
-        objectives_tvl[&quot;objectives:&lt;br/&gt;- accuracy&lt;br/&gt;- cost&quot;]
-        constraints_tvl[&quot;constraints:&lt;br/&gt;- require: temp &lt;= 0.7&quot;]
-        exploration[&quot;exploration:&lt;br/&gt;  budget: 50&quot;]
+    subgraph TVLSpec["optimization.tvl.yaml"]
+        tvars["tvars:&lt;br/&gt;- name: model&lt;br/&gt;- name: temperature"]
+        objectives_tvl["objectives:&lt;br/&gt;- accuracy&lt;br/&gt;- cost"]
+        constraints_tvl["constraints:&lt;br/&gt;- require: temp &lt;= 0.7"]
+        exploration["exploration:&lt;br/&gt;  budget: 50"]
     end
 
-    subgraph Loader[&quot;TVL Loader&quot;]
-        parser[&quot;YAML Parser&quot;]
-        validator[&quot;Schema Validator&quot;]
-        compiler[&quot;Constraint Compiler&quot;]
+    subgraph Loader["TVL Loader"]
+        parser["YAML Parser"]
+        validator["Schema Validator"]
+        compiler["Constraint Compiler"]
     end
 
-    subgraph Runtime[&quot;Runtime&quot;]
-        config_space[&quot;Configuration Space&quot;]
-        constraint_eval[&quot;Constraint Evaluator&quot;]
-        objective_schema[&quot;Objective Schema&quot;]
+    subgraph Runtime["Runtime"]
+        config_space["Configuration Space"]
+        constraint_eval["Constraint Evaluator"]
+        objective_schema["Objective Schema"]
     end
 
     TVLSpec --&gt; parser
@@ -4313,35 +4313,35 @@
 <hr />
 <h2 id="component-relationships">Component Relationships<a class="headerlink" href="#component-relationships" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>graph TB
-    subgraph PublicAPI[&quot;Public API&quot;]
-        optimize[&quot;@optimize decorator&quot;]
-        configure[&quot;traigent.configure()&quot;]
-        get_config[&quot;traigent.get_config()&quot;]
+    subgraph PublicAPI["Public API"]
+        optimize["@optimize decorator"]
+        configure["traigent.configure()"]
+        get_config["traigent.get_config()"]
     end
 
-    subgraph CoreEngine[&quot;Core Engine&quot;]
-        opt_func[&quot;OptimizedFunction&quot;]
-        orch[&quot;Orchestrator&quot;]
-        trial[&quot;TrialLifecycle&quot;]
+    subgraph CoreEngine["Core Engine"]
+        opt_func["OptimizedFunction"]
+        orch["Orchestrator"]
+        trial["TrialLifecycle"]
     end
 
-    subgraph Strategies[&quot;Pluggable Strategies&quot;]
-        opt_alg[&quot;Optimizers&lt;br/&gt;(TPE, Grid, Random, NSGA-II)&quot;]
-        eval_strat[&quot;Evaluators&lt;br/&gt;(Local, Cloud)&quot;]
-        inject_mode[&quot;Injection&lt;br/&gt;(Context, Param, Seamless)&quot;]
+    subgraph Strategies["Pluggable Strategies"]
+        opt_alg["Optimizers&lt;br/&gt;(TPE, Grid, Random, NSGA-II)"]
+        eval_strat["Evaluators&lt;br/&gt;(Local, Cloud)"]
+        inject_mode["Injection&lt;br/&gt;(Context, Param, Seamless)"]
     end
 
-    subgraph Infrastructure[&quot;Infrastructure&quot;]
-        cost[&quot;CostEnforcer&quot;]
-        budget[&quot;SampleBudget&quot;]
-        metrics[&quot;MetricsTracker&quot;]
-        trace[&quot;Tracing&quot;]
+    subgraph Infrastructure["Infrastructure"]
+        cost["CostEnforcer"]
+        budget["SampleBudget"]
+        metrics["MetricsTracker"]
+        trace["Tracing"]
     end
 
-    subgraph External[&quot;External Systems&quot;]
-        llm_providers[&quot;LLM Providers&quot;]
-        observability[&quot;Observability&lt;br/&gt;(MLflow, W&amp;B)&quot;]
-        backend[&quot;Traigent Backend&quot;]
+    subgraph External["External Systems"]
+        llm_providers["LLM Providers"]
+        observability["Observability&lt;br/&gt;(MLflow, W&amp;B)"]
+        backend["Traigent Backend"]
     end
 
     optimize --&gt; opt_func
@@ -4377,14 +4377,14 @@
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="c1"># Define parameter search space</span>
-    <span class="n">model</span><span class="o">=</span><span class="n">Choices</span><span class="p">([</span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;claude-3-sonnet&quot;</span><span class="p">]),</span>
+    <span class="n">model</span><span class="o">=</span><span class="n">Choices</span><span class="p">([</span><span class="s2">"gpt-4o"</span><span class="p">,</span> <span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"claude-3-sonnet"</span><span class="p">]),</span>
     <span class="n">temperature</span><span class="o">=</span><span class="n">Range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
 
     <span class="c1"># Set optimization objectives</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">],</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">],</span>
 
     <span class="c1"># Configure evaluation</span>
-    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;test_cases.jsonl&quot;</span><span class="p">},</span>
+    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"test_cases.jsonl"</span><span class="p">},</span>
 
     <span class="c1"># Runtime limits are passed to .optimize()</span>
 <span class="p">)</span>
@@ -4395,8 +4395,8 @@
 
 <span class="c1"># Run optimization from synchronous code</span>
 <span class="n">result</span> <span class="o">=</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize_sync</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">cost_limit</span><span class="o">=</span><span class="mf">50.0</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Best config: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_config</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Accuracy: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_metrics</span><span class="p">[</span><span class="s1">&#39;accuracy&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.2%</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Best config: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_config</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Accuracy: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_metrics</span><span class="p">[</span><span class="s1">'accuracy'</span><span class="p">]</span><span class="si">:</span><span class="s2">.2%</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </code></pre></div>
 <hr />
 <h2 id="learn-more">Learn More<a class="headerlink" href="#learn-more" title="Permanent link">&para;</a></h2>

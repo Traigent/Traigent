@@ -5168,7 +5168,7 @@
     <span class="n">auto_load_best</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">load_from</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">config_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="n">best_config_source</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;off&quot;</span><span class="p">,</span>
+    <span class="n">best_config_source</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"off"</span><span class="p">,</span>
     <span class="n">best_config_strict</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">best_config_cache_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">best_config_cache_ttl_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">24</span> <span class="o">*</span> <span class="mi">60</span> <span class="o">*</span> <span class="mi">60</span><span class="p">,</span>
@@ -5272,11 +5272,11 @@ You can pass them directly in <code>configuration_space</code>, or supply a <cod
 object with structured constraints.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent</span><span class="w"> </span><span class="kn">import</span> <span class="n">Choices</span><span class="p">,</span> <span class="n">ConfigSpace</span><span class="p">,</span> <span class="n">Range</span><span class="p">,</span> <span class="n">implies</span>
 
-<span class="n">temp</span> <span class="o">=</span> <span class="n">Range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;temperature&quot;</span><span class="p">)</span>
-<span class="n">model</span> <span class="o">=</span> <span class="n">Choices</span><span class="p">([</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-3.5&quot;</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;model&quot;</span><span class="p">)</span>
+<span class="n">temp</span> <span class="o">=</span> <span class="n">Range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"temperature"</span><span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">Choices</span><span class="p">([</span><span class="s2">"gpt-4"</span><span class="p">,</span> <span class="s2">"gpt-3.5"</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">"model"</span><span class="p">)</span>
 <span class="n">space</span> <span class="o">=</span> <span class="n">ConfigSpace</span><span class="p">(</span>
-    <span class="n">tvars</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="n">temp</span><span class="p">,</span> <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="n">model</span><span class="p">},</span>
-    <span class="n">constraints</span><span class="o">=</span><span class="p">[</span><span class="n">implies</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">),</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))],</span>
+    <span class="n">tvars</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="n">temp</span><span class="p">,</span> <span class="s2">"model"</span><span class="p">:</span> <span class="n">model</span><span class="p">},</span>
+    <span class="n">constraints</span><span class="o">=</span><span class="p">[</span><span class="n">implies</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">),</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))],</span>
 <span class="p">)</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">configuration_space</span><span class="o">=</span><span class="n">space</span><span class="p">)</span>
@@ -5484,12 +5484,12 @@ object with structured constraints.</p>
 <p><strong>Returns:</strong> OptimizedFunction wrapper with optimization capabilities</p>
 <p><strong>Example:</strong>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">],</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">],</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">],</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
     <span class="p">},</span>
-    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;evals.jsonl&quot;</span><span class="p">},</span>  <span class="c1"># Grouped option bundle</span>
+    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"evals.jsonl"</span><span class="p">},</span>  <span class="c1"># Grouped option bundle</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_agent</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">process_query</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
@@ -5685,7 +5685,7 @@ object with structured constraints.</p>
 <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">()</span>
 
 <span class="c1"># Save results</span>
-<span class="k">await</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">save_optimization_results</span><span class="p">(</span><span class="s2">&quot;results.json&quot;</span><span class="p">)</span>
+<span class="k">await</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">save_optimization_results</span><span class="p">(</span><span class="s2">"results.json"</span><span class="p">)</span>
 </code></pre></div></p>
 <h3 id="configuration-management">Configuration Management<a class="headerlink" href="#configuration-management" title="Permanent link">&para;</a></h3>
 <h4 id="get_best_config"><code>.get_best_config()</code><a class="headerlink" href="#get_best_config" title="Permanent link">&para;</a></h4>
@@ -5776,11 +5776,11 @@ This is additive qualification only: it never changes which config wins.</p>
 <p><strong>Raises:</strong> <code>OptimizationStateError</code> if no configuration is available (e.g., called outside an optimized function without <code>apply_best_config()</code>).</p>
 <p><strong>Example:</strong>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4&quot;</span><span class="p">],</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)}</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">],</span> <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)}</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_agent</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>  <span class="c1"># Works during optimization AND after apply_best_config()</span>
-    <span class="k">return</span> <span class="n">call_llm</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">],</span> <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">call_llm</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"model"</span><span class="p">],</span> <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">])</span>
 </code></pre></div></p>
 <blockquote>
 <p><strong>Note:</strong> <code>traigent.get_trial_config()</code> is deprecated. Use <code>traigent.get_config()</code> instead, which works in all contexts.</p>
@@ -5882,7 +5882,7 @@ unavailable or the record unreadable; it may still be on disk — check
 <p>The id is store-relative. <code>traigent sync</code> runs as a separate process and
 resolves its store from the environment, so a run that passed the programmatic
 <code>local_storage_path</code> option must point the CLI at the same root:</p>
-<div class="highlight"><pre><span></span><code><span class="nv">TRAIGENT_RESULTS_FOLDER</span><span class="o">=</span><span class="s2">&quot;&lt;that path&gt;&quot;</span><span class="w"> </span>traigent<span class="w"> </span>sync<span class="w"> </span>&lt;sync_session_id&gt;
+<div class="highlight"><pre><span></span><code><span class="nv">TRAIGENT_RESULTS_FOLDER</span><span class="o">=</span><span class="s2">"&lt;that path&gt;"</span><span class="w"> </span>traigent<span class="w"> </span>sync<span class="w"> </span>&lt;sync_session_id&gt;
 </code></pre></div>
 <p>The SDK logs a warning naming that root when the run's configured store differs
 from the CLI default <em>as resolved in this process</em>. That default is read from
@@ -5901,7 +5901,7 @@ The id is machine-local and is not restored when a result is reloaded from disk.
 
 <span class="n">result</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">optimize_sync</span><span class="p">()</span>
 <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">sync_session_id</span><span class="p">:</span>
-    <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="s2">&quot;traigent&quot;</span><span class="p">,</span> <span class="s2">&quot;sync&quot;</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">sync_session_id</span><span class="p">],</span> <span class="n">check</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="s2">"traigent"</span><span class="p">,</span> <span class="s2">"sync"</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">sync_session_id</span><span class="p">],</span> <span class="n">check</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </code></pre></div>
 <h4 id="recovering-a-run-that-failed-mid-flight">Recovering a run that <em>failed</em> mid-flight<a class="headerlink" href="#recovering-a-run-that-failed-mid-flight" title="Permanent link">&para;</a></h4>
 <p>A run that raises never returns an <code>OptimizationResult</code>, but the trials that
@@ -5917,7 +5917,7 @@ typed <code>ResolutionError</code> alike.</p>
 <span class="k">except</span> <span class="p">(</span><span class="n">OptimizationError</span><span class="p">,</span> <span class="n">ResolutionError</span><span class="p">)</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
     <span class="k">if</span> <span class="n">exc</span><span class="o">.</span><span class="n">sync_session_id</span><span class="p">:</span>
         <span class="c1"># Upload the trials that DID complete before the failure.</span>
-        <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="s2">&quot;traigent&quot;</span><span class="p">,</span> <span class="s2">&quot;sync&quot;</span><span class="p">,</span> <span class="n">exc</span><span class="o">.</span><span class="n">sync_session_id</span><span class="p">],</span> <span class="n">check</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="s2">"traigent"</span><span class="p">,</span> <span class="s2">"sync"</span><span class="p">,</span> <span class="n">exc</span><span class="o">.</span><span class="n">sync_session_id</span><span class="p">],</span> <span class="n">check</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
     <span class="k">raise</span>
 </code></pre></div>
 <p><code>traigent sync --all</code> <strong>skips failed sessions</strong>, so naming the id explicitly is
@@ -6021,22 +6021,22 @@ the aggregate toward the heavier objective. (Issues #1682, #1846.)</p>
 - <code>get_metric(name: str, default: float | None = None) -&gt; float | None</code>: Get a specific metric value</p>
 <h3 id="trialstatus">TrialStatus<a class="headerlink" href="#trialstatus" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TrialStatus</span><span class="p">(</span><span class="n">Enum</span><span class="p">):</span>
-    <span class="n">NOT_STARTED</span> <span class="o">=</span> <span class="s2">&quot;not_started&quot;</span>
-    <span class="n">PENDING</span> <span class="o">=</span> <span class="s2">&quot;pending&quot;</span>
-    <span class="n">RUNNING</span> <span class="o">=</span> <span class="s2">&quot;running&quot;</span>
-    <span class="n">COMPLETED</span> <span class="o">=</span> <span class="s2">&quot;completed&quot;</span>
-    <span class="n">FAILED</span> <span class="o">=</span> <span class="s2">&quot;failed&quot;</span>
-    <span class="n">CANCELLED</span> <span class="o">=</span> <span class="s2">&quot;cancelled&quot;</span>
-    <span class="n">PRUNED</span> <span class="o">=</span> <span class="s2">&quot;pruned&quot;</span>
+    <span class="n">NOT_STARTED</span> <span class="o">=</span> <span class="s2">"not_started"</span>
+    <span class="n">PENDING</span> <span class="o">=</span> <span class="s2">"pending"</span>
+    <span class="n">RUNNING</span> <span class="o">=</span> <span class="s2">"running"</span>
+    <span class="n">COMPLETED</span> <span class="o">=</span> <span class="s2">"completed"</span>
+    <span class="n">FAILED</span> <span class="o">=</span> <span class="s2">"failed"</span>
+    <span class="n">CANCELLED</span> <span class="o">=</span> <span class="s2">"cancelled"</span>
+    <span class="n">PRUNED</span> <span class="o">=</span> <span class="s2">"pruned"</span>
 </code></pre></div>
 <h3 id="optimizationstatus">OptimizationStatus<a class="headerlink" href="#optimizationstatus" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">OptimizationStatus</span><span class="p">(</span><span class="n">Enum</span><span class="p">):</span>
-    <span class="n">NOT_STARTED</span> <span class="o">=</span> <span class="s2">&quot;not_started&quot;</span>
-    <span class="n">PENDING</span> <span class="o">=</span> <span class="s2">&quot;pending&quot;</span>
-    <span class="n">RUNNING</span> <span class="o">=</span> <span class="s2">&quot;running&quot;</span>
-    <span class="n">COMPLETED</span> <span class="o">=</span> <span class="s2">&quot;completed&quot;</span>
-    <span class="n">FAILED</span> <span class="o">=</span> <span class="s2">&quot;failed&quot;</span>
-    <span class="n">CANCELLED</span> <span class="o">=</span> <span class="s2">&quot;cancelled&quot;</span>
+    <span class="n">NOT_STARTED</span> <span class="o">=</span> <span class="s2">"not_started"</span>
+    <span class="n">PENDING</span> <span class="o">=</span> <span class="s2">"pending"</span>
+    <span class="n">RUNNING</span> <span class="o">=</span> <span class="s2">"running"</span>
+    <span class="n">COMPLETED</span> <span class="o">=</span> <span class="s2">"completed"</span>
+    <span class="n">FAILED</span> <span class="o">=</span> <span class="s2">"failed"</span>
+    <span class="n">CANCELLED</span> <span class="o">=</span> <span class="s2">"cancelled"</span>
 </code></pre></div>
 <h2 id="utility-classes">Utility Classes<a class="headerlink" href="#utility-classes" title="Permanent link">&para;</a></h2>
 <h3 id="constraints">Constraints<a class="headerlink" href="#constraints" title="Permanent link">&para;</a></h3>
@@ -6094,11 +6094,11 @@ the aggregate toward the heavier objective. (Issues #1682, #1846.)</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">traigent</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;qa_dataset.jsonl&quot;</span><span class="p">},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
+    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"qa_dataset.jsonl"</span><span class="p">},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">]</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">],</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">]</span>
     <span class="p">}</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">answer_question</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
@@ -6113,12 +6113,12 @@ the aggregate toward the heavier objective. (Issues #1682, #1846.)</p>
 </code></pre></div>
 <h3 id="multi-objective-optimization">Multi-Objective Optimization<a class="headerlink" href="#multi-objective-optimization" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;support_tickets.jsonl&quot;</span><span class="p">},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">,</span> <span class="s2">&quot;latency&quot;</span><span class="p">],</span>
+    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"support_tickets.jsonl"</span><span class="p">},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">,</span> <span class="s2">"latency"</span><span class="p">],</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4&quot;</span><span class="p">,</span> <span class="s2">&quot;claude-3-haiku&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
-        <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">100</span><span class="p">,</span> <span class="mi">500</span><span class="p">,</span> <span class="mi">1000</span><span class="p">]</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">,</span> <span class="s2">"claude-3-haiku"</span><span class="p">],</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+        <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="p">[</span><span class="mi">100</span><span class="p">,</span> <span class="mi">500</span><span class="p">,</span> <span class="mi">1000</span><span class="p">]</span>
     <span class="p">}</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">process_ticket</span><span class="p">(</span><span class="n">ticket</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
@@ -6130,12 +6130,12 @@ the aggregate toward the heavier objective. (Issues #1682, #1846.)</p>
 <span class="n">temp_guard</span> <span class="o">=</span> <span class="n">temperature_constraint</span><span class="p">(</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">)</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;support_tickets.jsonl&quot;</span><span class="p">},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">],</span>
+    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"support_tickets.jsonl"</span><span class="p">},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">],</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
-        <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">100</span><span class="p">,</span> <span class="mi">500</span><span class="p">,</span> <span class="mi">1000</span><span class="p">],</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">],</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+        <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="p">[</span><span class="mi">100</span><span class="p">,</span> <span class="mi">500</span><span class="p">,</span> <span class="mi">1000</span><span class="p">],</span>
     <span class="p">},</span>
     <span class="n">constraints</span><span class="o">=</span><span class="p">[</span><span class="n">temp_guard</span><span class="o">.</span><span class="n">validate</span><span class="p">],</span>
 <span class="p">)</span>
@@ -6149,12 +6149,12 @@ the aggregate toward the heavier objective. (Issues #1682, #1846.)</p>
     <span class="n">accuracy</span> <span class="o">=</span> <span class="n">compute_accuracy</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">example</span><span class="o">.</span><span class="n">expected_output</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">ExampleResult</span><span class="p">(</span>
         <span class="n">example_id</span><span class="o">=</span><span class="n">example</span><span class="o">.</span><span class="n">example_id</span><span class="p">,</span>
-        <span class="n">metrics</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;accuracy&quot;</span><span class="p">:</span> <span class="n">accuracy</span><span class="p">,</span> <span class="s2">&quot;custom_metric&quot;</span><span class="p">:</span> <span class="n">compute_custom</span><span class="p">(</span><span class="n">result</span><span class="p">)}</span>
+        <span class="n">metrics</span><span class="o">=</span><span class="p">{</span><span class="s2">"accuracy"</span><span class="p">:</span> <span class="n">accuracy</span><span class="p">,</span> <span class="s2">"custom_metric"</span><span class="p">:</span> <span class="n">compute_custom</span><span class="p">(</span><span class="n">result</span><span class="p">)}</span>
     <span class="p">)</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;dataset.jsonl&quot;</span><span class="p">,</span> <span class="s2">&quot;custom_evaluator&quot;</span><span class="p">:</span> <span class="n">custom_eval</span><span class="p">},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;custom_metric&quot;</span><span class="p">]</span>
+    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"dataset.jsonl"</span><span class="p">,</span> <span class="s2">"custom_evaluator"</span><span class="p">:</span> <span class="n">custom_eval</span><span class="p">},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"custom_metric"</span><span class="p">]</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_function</span><span class="p">(</span><span class="n">input_text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">process</span><span class="p">(</span><span class="n">input_text</span><span class="p">)</span>

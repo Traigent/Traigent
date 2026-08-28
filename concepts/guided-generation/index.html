@@ -3967,20 +3967,20 @@ endpoint as a black-box oracle. The defensible asset is the <em>recipe</em>, not
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.generation</span><span class="w"> </span><span class="kn">import</span> <span class="n">BackendGuidanceProvider</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">my_llm</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>                     <span class="c1"># your own model + creds</span>
-    <span class="k">return</span> <span class="n">client</span><span class="o">.</span><span class="n">responses</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">,</span> <span class="nb">input</span><span class="o">=</span><span class="n">prompt</span><span class="p">)</span><span class="o">.</span><span class="n">output_text</span>
+    <span class="k">return</span> <span class="n">client</span><span class="o">.</span><span class="n">responses</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">"gpt-4o"</span><span class="p">,</span> <span class="nb">input</span><span class="o">=</span><span class="n">prompt</span><span class="p">)</span><span class="o">.</span><span class="n">output_text</span>
 
 <span class="n">provider</span> <span class="o">=</span> <span class="n">BackendGuidanceProvider</span><span class="o">.</span><span class="n">from_async_post</span><span class="p">(</span><span class="n">session_id</span><span class="p">,</span> <span class="n">my_authed_post</span><span class="p">)</span>
 
 <span class="n">best</span> <span class="o">=</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize_with_guidance</span><span class="p">(</span>
     <span class="n">provider</span><span class="p">,</span>
-    <span class="n">plan_kind</span><span class="o">=</span><span class="s2">&quot;prompt_rewrite&quot;</span><span class="p">,</span>                     <span class="c1"># or &quot;benchmark_guide&quot;</span>
+    <span class="n">plan_kind</span><span class="o">=</span><span class="s2">"prompt_rewrite"</span><span class="p">,</span>                     <span class="c1"># or "benchmark_guide"</span>
     <span class="n">rewrite_llm</span><span class="o">=</span><span class="n">my_llm</span><span class="p">,</span>
-    <span class="n">prompt_param</span><span class="o">=</span><span class="s2">&quot;prompt_template&quot;</span><span class="p">,</span>
-    <span class="n">prompt_rewrite</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;rounds&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span> <span class="s2">&quot;candidates_per_round&quot;</span><span class="p">:</span> <span class="mi">3</span><span class="p">},</span>
+    <span class="n">prompt_param</span><span class="o">=</span><span class="s2">"prompt_template"</span><span class="p">,</span>
+    <span class="n">prompt_rewrite</span><span class="o">=</span><span class="p">{</span><span class="s2">"rounds"</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span> <span class="s2">"candidates_per_round"</span><span class="p">:</span> <span class="mi">3</span><span class="p">},</span>
 <span class="p">)</span>
 </code></pre></div>
 <p>Or configure at decoration time:</p>
-<div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">eval_dataset</span><span class="o">=...</span><span class="p">,</span> <span class="n">prompt_rewrite</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;rounds&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">})</span>
+<div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">eval_dataset</span><span class="o">=...</span><span class="p">,</span> <span class="n">prompt_rewrite</span><span class="o">=</span><span class="p">{</span><span class="s2">"rounds"</span><span class="p">:</span> <span class="mi">2</span><span class="p">})</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_agent</span><span class="p">(</span><span class="o">...</span><span class="p">):</span> <span class="o">...</span>
 </code></pre></div>
 <p>The building blocks are also usable directly: <code>PromptRewriter</code>,

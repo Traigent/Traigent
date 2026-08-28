@@ -3839,9 +3839,9 @@ ruff-format wins in the gate because that's what CI enforces. Fix reds with
 — CI's <code>spine-trail present</code> check fails the PR otherwise. You can't satisfy it
 <em>after</em> the fact without re-editing the PR. Create the breadcrumb up front:</p>
 <div class="highlight"><pre><span></span><code>python3<span class="w"> </span>../tools/spine-trail/spine_trail.py<span class="w"> </span>get-or-create<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--repo<span class="w"> </span>Traigent<span class="w"> </span>--branch<span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>git<span class="w"> </span>branch<span class="w"> </span>--show-current<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span>--base-branch<span class="w"> </span>develop<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--kind<span class="w"> </span>&lt;bug_fix<span class="p">|</span>feature<span class="p">|</span>change&gt;<span class="w"> </span>--source-type<span class="w"> </span>&lt;type&gt;<span class="w"> </span>--source-ref<span class="w"> </span><span class="s2">&quot;&lt;ref&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--changed-paths<span class="w"> </span><span class="s2">&quot;&lt;files&gt;&quot;</span>
+<span class="w">  </span>--repo<span class="w"> </span>Traigent<span class="w"> </span>--branch<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>git<span class="w"> </span>branch<span class="w"> </span>--show-current<span class="k">)</span><span class="s2">"</span><span class="w"> </span>--base-branch<span class="w"> </span>develop<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--kind<span class="w"> </span>&lt;bug_fix<span class="p">|</span>feature<span class="p">|</span>change&gt;<span class="w"> </span>--source-type<span class="w"> </span>&lt;type&gt;<span class="w"> </span>--source-ref<span class="w"> </span><span class="s2">"&lt;ref&gt;"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--changed-paths<span class="w"> </span><span class="s2">"&lt;files&gt;"</span>
 <span class="c1"># then add ONE of these lines to the PR body:</span>
 <span class="c1">#   Spine-Trail: st_xxxxxxxxxxxx     (a Tier-0 WorkIntent)</span>
 <span class="c1">#   Spine: cs_xxxxxxxx               (a promoted ChangeSession)</span>
@@ -3860,8 +3860,8 @@ matching the TraigentBackend gate — no script change needed.</p>
 <p>For <code>release/*</code> / <code>hotfix/*</code> branches the gate runs the SonarQube quality gate
 locally and <strong>blocks the push if it fails</strong> (mirroring the <code>SonarQube Quality
 Gate</code> check that is required on <code>main</code>). Configure once:</p>
-<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">SONAR_HOST_URL</span><span class="o">=</span><span class="s2">&quot;https://&lt;your-persistent-sonarqube&gt;&quot;</span><span class="w">   </span><span class="c1"># or http://localhost:9000</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">SONAR_TOKEN</span><span class="o">=</span><span class="s2">&quot;&lt;token&gt;&quot;</span><span class="w">        </span><span class="c1"># or keep a .env.sonar entry</span>
+<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">SONAR_HOST_URL</span><span class="o">=</span><span class="s2">"https://&lt;your-persistent-sonarqube&gt;"</span><span class="w">   </span><span class="c1"># or http://localhost:9000</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">SONAR_TOKEN</span><span class="o">=</span><span class="s2">"&lt;token&gt;"</span><span class="w">        </span><span class="c1"># or keep a .env.sonar entry</span>
 </code></pre></div>
 <p>It runs the Dockerized <code>sonar-scanner</code> (or a local one) with
 <code>-Dsonar.qualitygate.wait=true</code> and the repo's <code>Traigent_Traigent</code> project key,

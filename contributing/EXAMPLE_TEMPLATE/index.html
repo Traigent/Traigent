@@ -3938,15 +3938,15 @@
 <h1 id="example-authoring-template">Example Authoring Template<a class="headerlink" href="#example-authoring-template" title="Permanent link">&para;</a></h1>
 <p>Use this when adding a new runnable example under <code>examples/</code>.</p>
 <h2 id="template-structure">📋 Template Structure<a class="headerlink" href="#template-structure" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<div class="highlight"><pre><span></span><code><span class="sd">"""</span>
 <span class="sd">[ONE-LINE DESCRIPTION]</span>
 
 <span class="sd">This example demonstrates [FEATURE/CONCEPT] in Traigent.</span>
 <span class="sd">Shows how to [PRIMARY USE CASE].</span>
-<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">"""</span>
 
 <span class="c1"># [REQUIRED] Enable mock mode for safe testing</span>
-<span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;TRAIGENT_MOCK_LLM&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;true&quot;</span>
+<span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"TRAIGENT_MOCK_LLM"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"true"</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">traigent</span>
 
@@ -3964,10 +3964,10 @@
 # integration_openai_simple.py
 </code></pre></div>
 <h3 id="2-content-structure">2. <strong>Content Structure</strong><a class="headerlink" href="#2-content-structure" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
+<div class="highlight"><pre><span></span><code><span class="sd">"""</span>
 <span class="sd">ONE-LINE: What this example does</span>
-<span class="sd">MULTI-LINE: Why it&#39;s useful, what it teaches</span>
-<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">MULTI-LINE: Why it's useful, what it teaches</span>
+<span class="sd">"""</span>
 
 <span class="c1"># 1. Setup (2-3 lines)</span>
 <span class="c1"># 2. Core functionality (5-15 lines)</span>

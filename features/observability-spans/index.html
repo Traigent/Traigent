@@ -3888,21 +3888,21 @@ agent workflow spans inside active optimization trials.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.observability</span><span class="w"> </span><span class="kn">import</span> <span class="n">add_agent_span</span>
 
 <span class="n">add_agent_span</span><span class="p">(</span>
-    <span class="s2">&quot;retriever&quot;</span><span class="p">,</span>
-    <span class="n">span_type</span><span class="o">=</span><span class="s2">&quot;agent&quot;</span><span class="p">,</span>
+    <span class="s2">"retriever"</span><span class="p">,</span>
+    <span class="n">span_type</span><span class="o">=</span><span class="s2">"agent"</span><span class="p">,</span>
     <span class="n">input_tokens</span><span class="o">=</span><span class="mi">120</span><span class="p">,</span>
     <span class="n">output_tokens</span><span class="o">=</span><span class="mi">35</span><span class="p">,</span>
     <span class="n">cost_usd</span><span class="o">=</span><span class="mf">0.00042</span><span class="p">,</span>
     <span class="n">latency_ms</span><span class="o">=</span><span class="mf">180.5</span><span class="p">,</span>
-    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;anthropic.claude-3-5-sonnet&quot;</span><span class="p">,</span>
-    <span class="n">metadata</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;documents&quot;</span><span class="p">:</span> <span class="mi">4</span><span class="p">},</span>
+    <span class="n">model</span><span class="o">=</span><span class="s2">"anthropic.claude-3-5-sonnet"</span><span class="p">,</span>
+    <span class="n">metadata</span><span class="o">=</span><span class="p">{</span><span class="s2">"documents"</span><span class="p">:</span> <span class="mi">4</span><span class="p">},</span>
 <span class="p">)</span>
 </code></pre></div>
 <p>Signature:</p>
 <div class="highlight"><pre><span></span><code><span class="n">add_agent_span</span><span class="p">(</span>
     <span class="n">node_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="o">*</span><span class="p">,</span>
-    <span class="n">span_type</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;agent&quot;</span><span class="p">,</span>
+    <span class="n">span_type</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"agent"</span><span class="p">,</span>
     <span class="n">input_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">output_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">cost_usd</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
@@ -3921,9 +3921,9 @@ lost telemetry instead of inferring it from an empty dashboard.</p>
     <span class="n">dropped_metadata_keys</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">()</span>
 </code></pre></div>
 <p><code>SpanResult</code> is falsy when the span was not accepted, so a check reads naturally:</p>
-<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">add_agent_span</span><span class="p">(</span><span class="s2">&quot;retriever&quot;</span><span class="p">,</span> <span class="n">input_tokens</span><span class="o">=</span><span class="mi">1200</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">add_agent_span</span><span class="p">(</span><span class="s2">"retriever"</span><span class="p">,</span> <span class="n">input_tokens</span><span class="o">=</span><span class="mi">1200</span><span class="p">)</span>
 <span class="k">if</span> <span class="ow">not</span> <span class="n">result</span><span class="p">:</span>
-    <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;span dropped: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">reason</span><span class="p">)</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">"span dropped: </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">reason</span><span class="p">)</span>
 </code></pre></div>
 <p><code>reason</code> is one of <code>no_trace_context</code> (no active optimization trial),
 <code>no_trace_manager</code>, <code>tracing_disabled</code>, <code>invalid_node_id</code>, <code>no_trace_linkage</code>, or
@@ -3957,14 +3957,14 @@ tests can exercise token and span behavior without live AWS calls.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.observability</span><span class="w"> </span><span class="kn">import</span> <span class="n">add_agent_span</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">run_node</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="n">output</span> <span class="o">=</span> <span class="s2">&quot;mock answer&quot;</span>
+    <span class="n">output</span> <span class="o">=</span> <span class="s2">"mock answer"</span>
     <span class="n">add_agent_span</span><span class="p">(</span>
-        <span class="s2">&quot;answer_node&quot;</span><span class="p">,</span>
+        <span class="s2">"answer_node"</span><span class="p">,</span>
         <span class="n">input_tokens</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span>
         <span class="n">output_tokens</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
         <span class="n">cost_usd</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
         <span class="n">latency_ms</span><span class="o">=</span><span class="mf">12.0</span><span class="p">,</span>
-        <span class="n">metadata</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;candidate_count&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">},</span>
+        <span class="n">metadata</span><span class="o">=</span><span class="p">{</span><span class="s2">"candidate_count"</span><span class="p">:</span> <span class="mi">2</span><span class="p">},</span>
     <span class="p">)</span>
     <span class="k">return</span> <span class="n">output</span>
 </code></pre></div>

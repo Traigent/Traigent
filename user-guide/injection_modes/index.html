@@ -4691,34 +4691,34 @@
 <p>Access configuration through Traigent's context system — flexible, thread/async-safe, and works everywhere.</p>
 <h3 id="basic-example">Basic Example<a class="headerlink" href="#basic-example" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;context&quot;</span><span class="p">,</span>
+    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">"context"</span><span class="p">,</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">]</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">],</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">]</span>
     <span class="p">}</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">generate_text</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>  <span class="c1"># Works during optimization and after apply_best_config()</span>
     <span class="k">return</span> <span class="n">ai_client</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span>
-        <span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;model&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">),</span>
-        <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;temperature&quot;</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">),</span>
+        <span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"model"</span><span class="p">,</span> <span class="s2">"gpt-4o-mini"</span><span class="p">),</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"temperature"</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">),</span>
         <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span>
     <span class="p">)</span>
 </code></pre></div>
 <h3 id="advanced-example">Advanced Example<a class="headerlink" href="#advanced-example" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;context&quot;</span><span class="p">,</span>
+    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">"context"</span><span class="p">,</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;strategy&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;conservative&quot;</span><span class="p">,</span> <span class="s2">&quot;balanced&quot;</span><span class="p">,</span> <span class="s2">&quot;aggressive&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;risk_factor&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">],</span>
-        <span class="s2">&quot;max_exposure&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">1000</span><span class="p">,</span> <span class="mi">5000</span><span class="p">,</span> <span class="mi">10000</span><span class="p">]</span>
+        <span class="s2">"strategy"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"conservative"</span><span class="p">,</span> <span class="s2">"balanced"</span><span class="p">,</span> <span class="s2">"aggressive"</span><span class="p">],</span>
+        <span class="s2">"risk_factor"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">],</span>
+        <span class="s2">"max_exposure"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1000</span><span class="p">,</span> <span class="mi">5000</span><span class="p">,</span> <span class="mi">10000</span><span class="p">]</span>
     <span class="p">}</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">trading_algorithm</span><span class="p">(</span><span class="n">market_data</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Trade</span><span class="p">]:</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>  <span class="c1"># Get the config applied to this invocation</span>
-    <span class="n">strategy</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;strategy&quot;</span><span class="p">,</span> <span class="s2">&quot;balanced&quot;</span><span class="p">)</span>
-    <span class="n">risk_factor</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;risk_factor&quot;</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)</span>
-    <span class="n">max_exposure</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;max_exposure&quot;</span><span class="p">,</span> <span class="mi">5000</span><span class="p">)</span>
+    <span class="n">strategy</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"strategy"</span><span class="p">,</span> <span class="s2">"balanced"</span><span class="p">)</span>
+    <span class="n">risk_factor</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"risk_factor"</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)</span>
+    <span class="n">max_exposure</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"max_exposure"</span><span class="p">,</span> <span class="mi">5000</span><span class="p">)</span>
     <span class="c1"># ... existing logic ...</span>
     <span class="k">return</span> <span class="n">compute_positions</span><span class="p">(</span><span class="n">market_data</span><span class="p">,</span> <span class="n">strategy</span><span class="p">,</span> <span class="n">risk_factor</span><span class="p">,</span> <span class="n">max_exposure</span><span class="p">)</span>
 </code></pre></div>
@@ -4754,16 +4754,16 @@
 <p>Traigent automatically injects configuration values into simple variable assignments using safe AST transformation (no exec).</p>
 <h3 id="basic-example_1">Basic Example<a class="headerlink" href="#basic-example_1" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;seamless&quot;</span><span class="p">,</span>
+    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">"seamless"</span><span class="p">,</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;claude-sonnet-4-6&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o&quot;</span><span class="p">,</span> <span class="s2">&quot;gemini-1.5-pro&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;max_retries&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">5</span><span class="p">],</span>
-        <span class="s2">&quot;timeout&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">10</span><span class="p">,</span> <span class="mi">30</span><span class="p">,</span> <span class="mi">60</span><span class="p">]</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"claude-sonnet-4-6"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">,</span> <span class="s2">"gemini-1.5-pro"</span><span class="p">],</span>
+        <span class="s2">"max_retries"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">5</span><span class="p">],</span>
+        <span class="s2">"timeout"</span><span class="p">:</span> <span class="p">[</span><span class="mi">10</span><span class="p">,</span> <span class="mi">30</span><span class="p">,</span> <span class="mi">60</span><span class="p">]</span>
     <span class="p">}</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">robust_api_call</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="c1"># These assignments are overridden by Traigent during optimization</span>
-    <span class="n">model</span> <span class="o">=</span> <span class="s2">&quot;gpt-4o&quot;</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="s2">"gpt-4o"</span>
     <span class="n">max_retries</span> <span class="o">=</span> <span class="mi">3</span>
     <span class="n">timeout</span> <span class="o">=</span> <span class="mi">30</span>
 
@@ -4782,11 +4782,11 @@
 </code></pre></div>
 <h3 id="advanced-example-multi-parameter-optimization">Advanced Example: Multi-Parameter Optimization<a class="headerlink" href="#advanced-example-multi-parameter-optimization" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;seamless&quot;</span><span class="p">,</span>
+    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">"seamless"</span><span class="p">,</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;chunk_size&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">500</span><span class="p">,</span> <span class="mi">1000</span><span class="p">,</span> <span class="mi">2000</span><span class="p">],</span>
-        <span class="s2">&quot;overlap&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">50</span><span class="p">,</span> <span class="mi">100</span><span class="p">,</span> <span class="mi">200</span><span class="p">],</span>
-        <span class="s2">&quot;top_k&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">3</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">10</span><span class="p">]</span>
+        <span class="s2">"chunk_size"</span><span class="p">:</span> <span class="p">[</span><span class="mi">500</span><span class="p">,</span> <span class="mi">1000</span><span class="p">,</span> <span class="mi">2000</span><span class="p">],</span>
+        <span class="s2">"overlap"</span><span class="p">:</span> <span class="p">[</span><span class="mi">50</span><span class="p">,</span> <span class="mi">100</span><span class="p">,</span> <span class="mi">200</span><span class="p">],</span>
+        <span class="s2">"top_k"</span><span class="p">:</span> <span class="p">[</span><span class="mi">3</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">10</span><span class="p">]</span>
     <span class="p">}</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">rag_pipeline</span><span class="p">(</span><span class="n">documents</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
@@ -4844,12 +4844,12 @@
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent</span><span class="w"> </span><span class="kn">import</span> <span class="n">TraigentConfig</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;parameter&quot;</span><span class="p">,</span>
-    <span class="n">config_param</span><span class="o">=</span><span class="s2">&quot;config&quot;</span><span class="p">,</span>  <span class="c1"># Parameter name</span>
+    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">"parameter"</span><span class="p">,</span>
+    <span class="n">config_param</span><span class="o">=</span><span class="s2">"config"</span><span class="p">,</span>  <span class="c1"># Parameter name</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;learning_rate&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.001</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">],</span>
-        <span class="s2">&quot;batch_size&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">16</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">64</span><span class="p">],</span>
-        <span class="s2">&quot;optimizer&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;adam&quot;</span><span class="p">,</span> <span class="s2">&quot;sgd&quot;</span><span class="p">,</span> <span class="s2">&quot;rmsprop&quot;</span><span class="p">]</span>
+        <span class="s2">"learning_rate"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.001</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">],</span>
+        <span class="s2">"batch_size"</span><span class="p">:</span> <span class="p">[</span><span class="mi">16</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">64</span><span class="p">],</span>
+        <span class="s2">"optimizer"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"adam"</span><span class="p">,</span> <span class="s2">"sgd"</span><span class="p">,</span> <span class="s2">"rmsprop"</span><span class="p">]</span>
     <span class="p">}</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">train_model</span><span class="p">(</span>
@@ -4861,14 +4861,14 @@
     <span class="n">model</span> <span class="o">=</span> <span class="n">create_model</span><span class="p">()</span>
 
     <span class="n">optimizer</span> <span class="o">=</span> <span class="n">get_optimizer</span><span class="p">(</span>
-        <span class="n">config</span><span class="p">[</span><span class="s2">&quot;optimizer&quot;</span><span class="p">],</span>
-        <span class="n">lr</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;learning_rate&quot;</span><span class="p">]</span>
+        <span class="n">config</span><span class="p">[</span><span class="s2">"optimizer"</span><span class="p">],</span>
+        <span class="n">lr</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"learning_rate"</span><span class="p">]</span>
     <span class="p">)</span>
 
     <span class="k">for</span> <span class="n">epoch</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">100</span><span class="p">):</span>
-        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">),</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;batch_size&quot;</span><span class="p">]):</span>
-            <span class="n">batch_data</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span> <span class="o">+</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;batch_size&quot;</span><span class="p">]]</span>
-            <span class="n">batch_labels</span> <span class="o">=</span> <span class="n">labels</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span> <span class="o">+</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;batch_size&quot;</span><span class="p">]]</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">),</span> <span class="n">config</span><span class="p">[</span><span class="s2">"batch_size"</span><span class="p">]):</span>
+            <span class="n">batch_data</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span> <span class="o">+</span> <span class="n">config</span><span class="p">[</span><span class="s2">"batch_size"</span><span class="p">]]</span>
+            <span class="n">batch_labels</span> <span class="o">=</span> <span class="n">labels</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span> <span class="o">+</span> <span class="n">config</span><span class="p">[</span><span class="s2">"batch_size"</span><span class="p">]]</span>
 
             <span class="n">loss</span> <span class="o">=</span> <span class="n">train_step</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">batch_data</span><span class="p">,</span> <span class="n">batch_labels</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">)</span>
 
@@ -4884,32 +4884,32 @@
 
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">TransformerConfig</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Strongly typed configuration.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Strongly typed configuration."""</span>
     <span class="n">n_layers</span><span class="p">:</span> <span class="nb">int</span>
     <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span>
     <span class="n">d_model</span><span class="p">:</span> <span class="nb">int</span>
     <span class="n">dropout</span><span class="p">:</span> <span class="nb">float</span>
-    <span class="n">activation</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;relu&quot;</span><span class="p">,</span> <span class="s2">&quot;gelu&quot;</span><span class="p">,</span> <span class="s2">&quot;silu&quot;</span><span class="p">]</span>
+    <span class="n">activation</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"relu"</span><span class="p">,</span> <span class="s2">"gelu"</span><span class="p">,</span> <span class="s2">"silu"</span><span class="p">]</span>
 
     <span class="nd">@classmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">from_traigent</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">TraigentConfig</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;TransformerConfig&quot;</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_traigent</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">TraigentConfig</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"TransformerConfig"</span><span class="p">:</span>
         <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span>
-            <span class="n">n_layers</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;n_layers&quot;</span><span class="p">],</span>
-            <span class="n">n_heads</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;n_heads&quot;</span><span class="p">],</span>
-            <span class="n">d_model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;d_model&quot;</span><span class="p">],</span>
-            <span class="n">dropout</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;dropout&quot;</span><span class="p">],</span>
-            <span class="n">activation</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;activation&quot;</span><span class="p">]</span>
+            <span class="n">n_layers</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"n_layers"</span><span class="p">],</span>
+            <span class="n">n_heads</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"n_heads"</span><span class="p">],</span>
+            <span class="n">d_model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"d_model"</span><span class="p">],</span>
+            <span class="n">dropout</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"dropout"</span><span class="p">],</span>
+            <span class="n">activation</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"activation"</span><span class="p">]</span>
         <span class="p">)</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;parameter&quot;</span><span class="p">,</span>
-    <span class="n">config_param</span><span class="o">=</span><span class="s2">&quot;traigent_config&quot;</span><span class="p">,</span>
+    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">"parameter"</span><span class="p">,</span>
+    <span class="n">config_param</span><span class="o">=</span><span class="s2">"traigent_config"</span><span class="p">,</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;n_layers&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">6</span><span class="p">,</span> <span class="mi">12</span><span class="p">,</span> <span class="mi">24</span><span class="p">],</span>
-        <span class="s2">&quot;n_heads&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">8</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="mi">32</span><span class="p">],</span>
-        <span class="s2">&quot;d_model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">512</span><span class="p">,</span> <span class="mi">768</span><span class="p">,</span> <span class="mi">1024</span><span class="p">],</span>
-        <span class="s2">&quot;dropout&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">],</span>
-        <span class="s2">&quot;activation&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;relu&quot;</span><span class="p">,</span> <span class="s2">&quot;gelu&quot;</span><span class="p">,</span> <span class="s2">&quot;silu&quot;</span><span class="p">]</span>
+        <span class="s2">"n_layers"</span><span class="p">:</span> <span class="p">[</span><span class="mi">6</span><span class="p">,</span> <span class="mi">12</span><span class="p">,</span> <span class="mi">24</span><span class="p">],</span>
+        <span class="s2">"n_heads"</span><span class="p">:</span> <span class="p">[</span><span class="mi">8</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="mi">32</span><span class="p">],</span>
+        <span class="s2">"d_model"</span><span class="p">:</span> <span class="p">[</span><span class="mi">512</span><span class="p">,</span> <span class="mi">768</span><span class="p">,</span> <span class="mi">1024</span><span class="p">],</span>
+        <span class="s2">"dropout"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">],</span>
+        <span class="s2">"activation"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"relu"</span><span class="p">,</span> <span class="s2">"gelu"</span><span class="p">,</span> <span class="s2">"silu"</span><span class="p">]</span>
     <span class="p">}</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">build_transformer</span><span class="p">(</span>
@@ -4931,21 +4931,21 @@
 </code></pre></div>
 <h3 id="dependency-injection-pattern">Dependency Injection Pattern<a class="headerlink" href="#dependency-injection-pattern" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;parameter&quot;</span><span class="p">,</span>
-    <span class="n">config_param</span><span class="o">=</span><span class="s2">&quot;config&quot;</span><span class="p">,</span>
+    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">"parameter"</span><span class="p">,</span>
+    <span class="n">config_param</span><span class="o">=</span><span class="s2">"config"</span><span class="p">,</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;db_pool_size&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">10</span><span class="p">,</span> <span class="mi">50</span><span class="p">,</span> <span class="mi">100</span><span class="p">],</span>
-        <span class="s2">&quot;cache_ttl&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">60</span><span class="p">,</span> <span class="mi">300</span><span class="p">,</span> <span class="mi">3600</span><span class="p">],</span>
-        <span class="s2">&quot;rate_limit&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">10</span><span class="p">,</span> <span class="mi">100</span><span class="p">,</span> <span class="mi">1000</span><span class="p">]</span>
+        <span class="s2">"db_pool_size"</span><span class="p">:</span> <span class="p">[</span><span class="mi">10</span><span class="p">,</span> <span class="mi">50</span><span class="p">,</span> <span class="mi">100</span><span class="p">],</span>
+        <span class="s2">"cache_ttl"</span><span class="p">:</span> <span class="p">[</span><span class="mi">60</span><span class="p">,</span> <span class="mi">300</span><span class="p">,</span> <span class="mi">3600</span><span class="p">],</span>
+        <span class="s2">"rate_limit"</span><span class="p">:</span> <span class="p">[</span><span class="mi">10</span><span class="p">,</span> <span class="mi">100</span><span class="p">,</span> <span class="mi">1000</span><span class="p">]</span>
     <span class="p">}</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">create_application</span><span class="p">(</span>
     <span class="n">config</span><span class="p">:</span> <span class="n">TraigentConfig</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Application</span><span class="p">:</span>
     <span class="c1"># Use config to initialize all components</span>
-    <span class="n">db</span> <span class="o">=</span> <span class="n">Database</span><span class="p">(</span><span class="n">pool_size</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;db_pool_size&quot;</span><span class="p">])</span>
-    <span class="n">cache</span> <span class="o">=</span> <span class="n">Cache</span><span class="p">(</span><span class="n">ttl</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;cache_ttl&quot;</span><span class="p">])</span>
-    <span class="n">rate_limiter</span> <span class="o">=</span> <span class="n">RateLimiter</span><span class="p">(</span><span class="n">limit</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;rate_limit&quot;</span><span class="p">])</span>
+    <span class="n">db</span> <span class="o">=</span> <span class="n">Database</span><span class="p">(</span><span class="n">pool_size</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"db_pool_size"</span><span class="p">])</span>
+    <span class="n">cache</span> <span class="o">=</span> <span class="n">Cache</span><span class="p">(</span><span class="n">ttl</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"cache_ttl"</span><span class="p">])</span>
+    <span class="n">rate_limiter</span> <span class="o">=</span> <span class="n">RateLimiter</span><span class="p">(</span><span class="n">limit</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"rate_limit"</span><span class="p">])</span>
 
     <span class="k">return</span> <span class="n">Application</span><span class="p">(</span>
         <span class="n">database</span><span class="o">=</span><span class="n">db</span><span class="p">,</span>
@@ -5021,42 +5021,42 @@
 
 <span class="c1"># After (v2.x):</span>
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;context&quot;</span><span class="p">,</span>
+    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">"context"</span><span class="p">,</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;threshold&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">],</span>
-        <span class="s2">&quot;min_confidence&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.6</span><span class="p">,</span> <span class="mf">0.8</span><span class="p">,</span> <span class="mf">0.95</span><span class="p">],</span>
+        <span class="s2">"threshold"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">],</span>
+        <span class="s2">"min_confidence"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.6</span><span class="p">,</span> <span class="mf">0.8</span><span class="p">,</span> <span class="mf">0.95</span><span class="p">],</span>
     <span class="p">},</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">classify_image</span><span class="p">(</span><span class="n">image</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>  <span class="c1"># Thread-safe per trial</span>
     <span class="n">predictions</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
     <span class="n">max_prob</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">predictions</span><span class="p">)</span>
-    <span class="k">if</span> <span class="n">max_prob</span> <span class="o">&lt;</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;min_confidence&quot;</span><span class="p">]:</span>
-        <span class="k">return</span> <span class="s2">&quot;uncertain&quot;</span>
-    <span class="k">return</span> <span class="s2">&quot;high_confidence&quot;</span> <span class="k">if</span> <span class="n">max_prob</span> <span class="o">&gt;</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;threshold&quot;</span><span class="p">]</span> <span class="k">else</span> <span class="s2">&quot;low_confidence&quot;</span>
+    <span class="k">if</span> <span class="n">max_prob</span> <span class="o">&lt;</span> <span class="n">config</span><span class="p">[</span><span class="s2">"min_confidence"</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="s2">"uncertain"</span>
+    <span class="k">return</span> <span class="s2">"high_confidence"</span> <span class="k">if</span> <span class="n">max_prob</span> <span class="o">&gt;</span> <span class="n">config</span><span class="p">[</span><span class="s2">"threshold"</span><span class="p">]</span> <span class="k">else</span> <span class="s2">"low_confidence"</span>
 </code></pre></div>
 <p><strong>Example migration — external monitoring:</strong></p>
 <div class="highlight"><pre><span></span><code><span class="c1"># Before (v1.x): an external sidecar read text_generation_api.current_config</span>
 <span class="c1"># After (v2.x): emit the active config from inside the function</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;context&quot;</span><span class="p">,</span>
+    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">"context"</span><span class="p">,</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;model_name&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;bert-base&quot;</span><span class="p">,</span> <span class="s2">&quot;roberta-base&quot;</span><span class="p">,</span> <span class="s2">&quot;distilbert&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;max_length&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">512</span><span class="p">],</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.7</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">],</span>
+        <span class="s2">"model_name"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"bert-base"</span><span class="p">,</span> <span class="s2">"roberta-base"</span><span class="p">,</span> <span class="s2">"distilbert"</span><span class="p">],</span>
+        <span class="s2">"max_length"</span><span class="p">:</span> <span class="p">[</span><span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">512</span><span class="p">],</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.7</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">],</span>
     <span class="p">},</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">text_generation_api</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
-    <span class="n">metrics</span><span class="o">.</span><span class="n">gauge</span><span class="p">(</span><span class="s2">&quot;api.model&quot;</span><span class="p">,</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;model_name&quot;</span><span class="p">])</span>
-    <span class="n">metrics</span><span class="o">.</span><span class="n">gauge</span><span class="p">(</span><span class="s2">&quot;api.max_length&quot;</span><span class="p">,</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;max_length&quot;</span><span class="p">])</span>
-    <span class="n">metrics</span><span class="o">.</span><span class="n">gauge</span><span class="p">(</span><span class="s2">&quot;api.temperature&quot;</span><span class="p">,</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">])</span>
+    <span class="n">metrics</span><span class="o">.</span><span class="n">gauge</span><span class="p">(</span><span class="s2">"api.model"</span><span class="p">,</span> <span class="n">config</span><span class="p">[</span><span class="s2">"model_name"</span><span class="p">])</span>
+    <span class="n">metrics</span><span class="o">.</span><span class="n">gauge</span><span class="p">(</span><span class="s2">"api.max_length"</span><span class="p">,</span> <span class="n">config</span><span class="p">[</span><span class="s2">"max_length"</span><span class="p">])</span>
+    <span class="n">metrics</span><span class="o">.</span><span class="n">gauge</span><span class="p">(</span><span class="s2">"api.temperature"</span><span class="p">,</span> <span class="n">config</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">])</span>
     <span class="k">return</span> <span class="n">generate_text</span><span class="p">(</span>
         <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span>
-        <span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;model_name&quot;</span><span class="p">],</span>
-        <span class="n">max_length</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;max_length&quot;</span><span class="p">],</span>
-        <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">],</span>
+        <span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"model_name"</span><span class="p">],</span>
+        <span class="n">max_length</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"max_length"</span><span class="p">],</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">],</span>
     <span class="p">)</span>
 </code></pre></div>
 <p><strong>Example migration — stateful buffers (mutable state that v1.x stored on the function attribute):</strong></p>
@@ -5075,51 +5075,51 @@
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_get_state</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return (creating if needed) the state slot for this config key.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Return (creating if needed) the state slot for this config key."""</span>
     <span class="k">with</span> <span class="n">_REGISTRY_LOCK</span><span class="p">:</span>
         <span class="n">state</span> <span class="o">=</span> <span class="n">_BUFFERS</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">state</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
             <span class="n">state</span> <span class="o">=</span> <span class="p">{</span>
-                <span class="s2">&quot;buffer&quot;</span><span class="p">:</span> <span class="p">[],</span>
-                <span class="s2">&quot;last_flush&quot;</span><span class="p">:</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">(),</span>
-                <span class="s2">&quot;lock&quot;</span><span class="p">:</span> <span class="n">threading</span><span class="o">.</span><span class="n">Lock</span><span class="p">(),</span>
+                <span class="s2">"buffer"</span><span class="p">:</span> <span class="p">[],</span>
+                <span class="s2">"last_flush"</span><span class="p">:</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">(),</span>
+                <span class="s2">"lock"</span><span class="p">:</span> <span class="n">threading</span><span class="o">.</span><span class="n">Lock</span><span class="p">(),</span>
             <span class="p">}</span>
             <span class="n">_BUFFERS</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">state</span>
         <span class="k">return</span> <span class="n">state</span>
 
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;context&quot;</span><span class="p">,</span>
+    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">"context"</span><span class="p">,</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;buffer_size&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">100</span><span class="p">,</span> <span class="mi">1000</span><span class="p">,</span> <span class="mi">10000</span><span class="p">],</span>
-        <span class="s2">&quot;flush_interval&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">10</span><span class="p">],</span>
-        <span class="s2">&quot;compression&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;gzip&quot;</span><span class="p">,</span> <span class="s2">&quot;lz4&quot;</span><span class="p">],</span>
+        <span class="s2">"buffer_size"</span><span class="p">:</span> <span class="p">[</span><span class="mi">100</span><span class="p">,</span> <span class="mi">1000</span><span class="p">,</span> <span class="mi">10000</span><span class="p">],</span>
+        <span class="s2">"flush_interval"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">10</span><span class="p">],</span>
+        <span class="s2">"compression"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"none"</span><span class="p">,</span> <span class="s2">"gzip"</span><span class="p">,</span> <span class="s2">"lz4"</span><span class="p">],</span>
     <span class="p">},</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">buffered_writer</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
-    <span class="n">key</span> <span class="o">=</span> <span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;buffer_size&quot;</span><span class="p">],</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;flush_interval&quot;</span><span class="p">],</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;compression&quot;</span><span class="p">])</span>
+    <span class="n">key</span> <span class="o">=</span> <span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s2">"buffer_size"</span><span class="p">],</span> <span class="n">config</span><span class="p">[</span><span class="s2">"flush_interval"</span><span class="p">],</span> <span class="n">config</span><span class="p">[</span><span class="s2">"compression"</span><span class="p">])</span>
     <span class="n">state</span> <span class="o">=</span> <span class="n">_get_state</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
 
     <span class="n">payload</span> <span class="o">=</span> <span class="p">(</span>
-        <span class="n">compress</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;compression&quot;</span><span class="p">])</span>
-        <span class="k">if</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;compression&quot;</span><span class="p">]</span> <span class="o">!=</span> <span class="s2">&quot;none&quot;</span>
+        <span class="n">compress</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">config</span><span class="p">[</span><span class="s2">"compression"</span><span class="p">])</span>
+        <span class="k">if</span> <span class="n">config</span><span class="p">[</span><span class="s2">"compression"</span><span class="p">]</span> <span class="o">!=</span> <span class="s2">"none"</span>
         <span class="k">else</span> <span class="n">data</span>
     <span class="p">)</span>
 
-    <span class="k">with</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;lock&quot;</span><span class="p">]:</span>
-        <span class="n">state</span><span class="p">[</span><span class="s2">&quot;buffer&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">state</span><span class="p">[</span><span class="s2">"lock"</span><span class="p">]:</span>
+        <span class="n">state</span><span class="p">[</span><span class="s2">"buffer"</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
         <span class="k">if</span> <span class="p">(</span>
-            <span class="nb">len</span><span class="p">(</span><span class="n">state</span><span class="p">[</span><span class="s2">&quot;buffer&quot;</span><span class="p">])</span> <span class="o">&gt;=</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;buffer_size&quot;</span><span class="p">]</span>
-            <span class="ow">or</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;last_flush&quot;</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;flush_interval&quot;</span><span class="p">]</span>
+            <span class="nb">len</span><span class="p">(</span><span class="n">state</span><span class="p">[</span><span class="s2">"buffer"</span><span class="p">])</span> <span class="o">&gt;=</span> <span class="n">config</span><span class="p">[</span><span class="s2">"buffer_size"</span><span class="p">]</span>
+            <span class="ow">or</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">state</span><span class="p">[</span><span class="s2">"last_flush"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">config</span><span class="p">[</span><span class="s2">"flush_interval"</span><span class="p">]</span>
         <span class="p">):</span>
-            <span class="n">to_flush</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;buffer&quot;</span><span class="p">]</span>
-            <span class="n">state</span><span class="p">[</span><span class="s2">&quot;buffer&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
-            <span class="n">state</span><span class="p">[</span><span class="s2">&quot;last_flush&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+            <span class="n">to_flush</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">"buffer"</span><span class="p">]</span>
+            <span class="n">state</span><span class="p">[</span><span class="s2">"buffer"</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="n">state</span><span class="p">[</span><span class="s2">"last_flush"</span><span class="p">]</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
         <span class="k">else</span><span class="p">:</span>
             <span class="n">to_flush</span> <span class="o">=</span> <span class="kc">None</span>
 
-    <span class="c1"># Flush outside the lock so I/O doesn&#39;t serialize concurrent appenders.</span>
+    <span class="c1"># Flush outside the lock so I/O doesn't serialize concurrent appenders.</span>
     <span class="k">if</span> <span class="n">to_flush</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
         <span class="n">flush_buffer</span><span class="p">(</span><span class="n">to_flush</span><span class="p">)</span>
 </code></pre></div>
@@ -5132,18 +5132,18 @@
 <p>Context mode is the default and recommended starting point for most use cases:</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># Start with this (context mode is default)</span>
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o&quot;</span><span class="p">]}</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">]}</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_function</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>  <span class="c1"># Get config for current call</span>
-    <span class="k">return</span> <span class="n">call_llm</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;model&quot;</span><span class="p">),</span> <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">call_llm</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"model"</span><span class="p">),</span> <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="2-use-seamless-for-zero-touch-migration">2. Use Seamless for Zero-Touch Migration<a class="headerlink" href="#2-use-seamless-for-zero-touch-migration" title="Permanent link">&para;</a></h3>
 <p>For existing code where you don't want to add <code>get_config()</code> calls:</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># Seamless mode: Traigent overrides variable assignments automatically</span>
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;seamless&quot;</span><span class="p">,</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;threshold&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">]}</span>
+    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">"seamless"</span><span class="p">,</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"threshold"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">]}</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">():</span>
     <span class="n">threshold</span> <span class="o">=</span> <span class="mf">0.5</span>  <span class="c1"># Traigent will override this value during optimization</span>
@@ -5152,26 +5152,26 @@
 <h3 id="3-use-type-safety-when-it-matters">3. Use Type Safety When It Matters<a class="headerlink" href="#3-use-type-safety-when-it-matters" title="Permanent link">&para;</a></h3>
 <p>For production systems, consider parameter mode:</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># Development</span>
-<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;seamless&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">injection_mode</span><span class="o">=</span><span class="s2">"seamless"</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">train</span><span class="p">():</span>
     <span class="n">learning_rate</span> <span class="o">=</span> <span class="mf">0.01</span>
 
 <span class="c1"># Production</span>
-<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;parameter&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">injection_mode</span><span class="o">=</span><span class="s2">"parameter"</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">train</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">TraigentConfig</span><span class="p">):</span>
     <span class="n">learning_rate</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">learning_rate</span>  <span class="c1"># Type-safe!</span>
 </code></pre></div>
 <h3 id="4-monitor-in-production">4. Monitor in Production<a class="headerlink" href="#4-monitor-in-production" title="Permanent link">&para;</a></h3>
 <p>Emit the active configuration from inside the optimized function so your monitoring/observability pipeline picks it up — context mode keeps each trial isolated:</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;context&quot;</span><span class="p">,</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o&quot;</span><span class="p">]},</span>
+    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">"context"</span><span class="p">,</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">]},</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">api_endpoint</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
-    <span class="n">metrics</span><span class="o">.</span><span class="n">gauge</span><span class="p">(</span><span class="s2">&quot;api.model&quot;</span><span class="p">,</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">])</span>  <span class="c1"># picked up by external monitoring</span>
+    <span class="n">metrics</span><span class="o">.</span><span class="n">gauge</span><span class="p">(</span><span class="s2">"api.model"</span><span class="p">,</span> <span class="n">config</span><span class="p">[</span><span class="s2">"model"</span><span class="p">])</span>  <span class="c1"># picked up by external monitoring</span>
     <span class="n">alert_if_config_drift</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">call_llm</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">],</span> <span class="n">query</span><span class="o">=</span><span class="n">query</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">call_llm</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"model"</span><span class="p">],</span> <span class="n">query</span><span class="o">=</span><span class="n">query</span><span class="p">)</span>
 </code></pre></div>
 <blockquote>
 <p>Previous versions exposed <code>api_endpoint.current_config</code> for an external sidecar to read. That sidecar pattern was only safe under sequential trials and was removed with attribute mode in v2.x — emit the config from inside the function instead.</p>
@@ -5183,18 +5183,18 @@
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">()</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">preprocess</span><span class="p">(</span><span class="n">text</span><span class="p">):</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
-    <span class="n">max_length</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;max_length&quot;</span><span class="p">,</span> <span class="mi">512</span><span class="p">)</span>
+    <span class="n">max_length</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"max_length"</span><span class="p">,</span> <span class="mi">512</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">truncate</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">max_length</span><span class="p">)</span>
 
 <span class="c1"># Seamless - Traigent rewrites simple local variable assignments</span>
-<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;seamless&quot;</span><span class="p">)</span>
+<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">injection_mode</span><span class="o">=</span><span class="s2">"seamless"</span><span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">pipeline</span><span class="p">(</span><span class="n">data</span><span class="p">):</span>
-    <span class="n">model</span> <span class="o">=</span> <span class="s2">&quot;gpt-4o-mini&quot;</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="s2">"gpt-4o-mini"</span>
     <span class="n">temperature</span> <span class="o">=</span> <span class="mf">0.2</span>
     <span class="k">return</span> <span class="n">call_llm</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="n">temperature</span><span class="p">,</span> <span class="n">prompt</span><span class="o">=</span><span class="n">data</span><span class="p">)</span>
 
 <span class="c1"># Parameter for type-safe components — receives `config` explicitly</span>
-<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;parameter&quot;</span><span class="p">,</span> <span class="n">config_param</span><span class="o">=</span><span class="s2">&quot;config&quot;</span><span class="p">)</span>
+<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">injection_mode</span><span class="o">=</span><span class="s2">"parameter"</span><span class="p">,</span> <span class="n">config_param</span><span class="o">=</span><span class="s2">"config"</span><span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">train</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">TraigentConfig</span><span class="p">):</span>
     <span class="c1"># Type-safe training</span>
     <span class="k">return</span> <span class="n">train_model</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span>
@@ -5206,8 +5206,8 @@
     <span class="n">config</span> <span class="o">=</span> <span class="n">get_config_somehow</span><span class="p">()</span>  <span class="c1"># Depends on mode</span>
 
     <span class="c1"># Validate</span>
-    <span class="k">assert</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;threshold&quot;</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="mi">0</span>
-    <span class="k">assert</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">]</span> <span class="ow">in</span> <span class="n">SUPPORTED_MODELS</span>
+    <span class="k">assert</span> <span class="n">config</span><span class="p">[</span><span class="s2">"threshold"</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="mi">0</span>
+    <span class="k">assert</span> <span class="n">config</span><span class="p">[</span><span class="s2">"model"</span><span class="p">]</span> <span class="ow">in</span> <span class="n">SUPPORTED_MODELS</span>
 
     <span class="c1"># Continue processing</span>
 </code></pre></div>
@@ -5276,29 +5276,29 @@
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">traigent</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data.jsonl&quot;</span><span class="p">,</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"data.jsonl"</span><span class="p">,</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">]</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">],</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">]</span>
     <span class="p">}</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_function</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>  <span class="c1"># ✅ Unified access during/after optimization</span>
-    <span class="k">return</span> <span class="n">call_llm</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">],</span> <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">],</span> <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">call_llm</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">"model"</span><span class="p">],</span> <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">],</span> <span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">)</span>
 
 <span class="c1"># Run optimization</span>
 <span class="n">result</span> <span class="o">=</span> <span class="n">my_function</span><span class="o">.</span><span class="n">optimize</span><span class="p">()</span>
 
 <span class="c1"># Access best config AFTER optimization</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Best model: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_config</span><span class="p">[</span><span class="s1">&#39;model&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>       <span class="c1"># ✅ From OptimizationResult</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Best temp: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_config</span><span class="p">[</span><span class="s1">&#39;temperature&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Best model: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_config</span><span class="p">[</span><span class="s1">'model'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>       <span class="c1"># ✅ From OptimizationResult</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Best temp: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_config</span><span class="p">[</span><span class="s1">'temperature'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
 <span class="c1"># The function now uses best_config automatically</span>
-<span class="n">response</span> <span class="o">=</span> <span class="n">my_function</span><span class="p">(</span><span class="s2">&quot;Hello!&quot;</span><span class="p">)</span>  <span class="c1"># Uses {&quot;model&quot;: &quot;gpt-4o&quot;, &quot;temperature&quot;: 0.5}</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">my_function</span><span class="p">(</span><span class="s2">"Hello!"</span><span class="p">)</span>  <span class="c1"># Uses {"model": "gpt-4o", "temperature": 0.5}</span>
 
 <span class="c1"># Can also access via function attribute</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Applied config: </span><span class="si">{</span><span class="n">my_function</span><span class="o">.</span><span class="n">current_config</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>    <span class="c1"># ✅ Same as best_config</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Applied config: </span><span class="si">{</span><span class="n">my_function</span><span class="o">.</span><span class="n">current_config</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>    <span class="c1"># ✅ Same as best_config</span>
 </code></pre></div>
 <blockquote>
 <p><strong>Warning</strong>: Calling <code>get_trial_config()</code> outside an active optimization trial raises <code>OptimizationStateError</code>. Prefer <code>traigent.get_config()</code> inside your function for lifecycle-safe access.</p>

@@ -4276,12 +4276,12 @@
     <span class="n">scenario</span> <span class="o">=</span> <span class="n">TestScenario</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
     <span class="n">func</span><span class="p">,</span> <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">scenario_runner</span><span class="p">(</span><span class="n">scenario</span><span class="p">)</span>
 
-    <span class="c1"># EXPLICIT ASSERTIONS - clearly document what we&#39;re testing</span>
-    <span class="k">assert</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="ne">Exception</span><span class="p">),</span> <span class="sa">f</span><span class="s2">&quot;Unexpected error: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span>
-    <span class="k">assert</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="s2">&quot;trials&quot;</span><span class="p">),</span> <span class="s2">&quot;Result should have trials attribute&quot;</span>
-    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;Should complete at least one trial&quot;</span>
+    <span class="c1"># EXPLICIT ASSERTIONS - clearly document what we're testing</span>
+    <span class="k">assert</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="ne">Exception</span><span class="p">),</span> <span class="sa">f</span><span class="s2">"Unexpected error: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">"</span>
+    <span class="k">assert</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="s2">"trials"</span><span class="p">),</span> <span class="s2">"Result should have trials attribute"</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">"Should complete at least one trial"</span>
     <span class="k">for</span> <span class="n">trial</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">:</span>
-        <span class="k">assert</span> <span class="n">trial</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s2">&quot;Each trial should have a config&quot;</span>
+        <span class="k">assert</span> <span class="n">trial</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s2">"Each trial should have a config"</span>
 
     <span class="c1"># Validator AFTER explicit checks for additional coverage</span>
     <span class="n">validation</span> <span class="o">=</span> <span class="n">result_validator</span><span class="p">(</span><span class="n">scenario</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>
@@ -4296,31 +4296,31 @@
 <span class="k">assert</span> <span class="n">result</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">result</span> <span class="ow">is</span> <span class="kc">None</span>  <span class="c1"># Tautology</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><span class="c1"># GOOD - Meaningful assertions with specific bounds</span>
-<span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;Should have at least one trial&quot;</span>
-<span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">)</span> <span class="o">==</span> <span class="n">expected_count</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;Expected </span><span class="si">{</span><span class="n">expected_count</span><span class="si">}</span><span class="s2"> trials&quot;</span>
-<span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">stop_reason</span> <span class="o">==</span> <span class="s2">&quot;max_trials&quot;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;Wrong stop reason: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">stop_reason</span><span class="si">}</span><span class="s2">&quot;</span>
-<span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">error</span><span class="p">,</span> <span class="ne">ValueError</span><span class="p">),</span> <span class="sa">f</span><span class="s2">&quot;Expected ValueError, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">error</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">"Should have at least one trial"</span>
+<span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">)</span> <span class="o">==</span> <span class="n">expected_count</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"Expected </span><span class="si">{</span><span class="n">expected_count</span><span class="si">}</span><span class="s2"> trials"</span>
+<span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">stop_reason</span> <span class="o">==</span> <span class="s2">"max_trials"</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"Wrong stop reason: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">stop_reason</span><span class="si">}</span><span class="s2">"</span>
+<span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">error</span><span class="p">,</span> <span class="ne">ValueError</span><span class="p">),</span> <span class="sa">f</span><span class="s2">"Expected ValueError, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">error</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
 </code></pre></div>
 <h3 id="it-cbm-condition-behavior-mismatch">IT-CBM: Condition-Behavior Mismatch<a class="headerlink" href="#it-cbm-condition-behavior-mismatch" title="Permanent link">&para;</a></h3>
 <p><strong>Problem</strong>: Test setup doesn't actually trigger the behavior being tested.</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># BAD - max_trials can never trigger (config space exhausts first)</span>
 <span class="n">scenario</span> <span class="o">=</span> <span class="n">TestScenario</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;test_max_trials_stops&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"test_max_trials_stops"</span><span class="p">,</span>
     <span class="n">max_trials</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
-    <span class="n">config_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;a&quot;</span><span class="p">,</span> <span class="s2">&quot;b&quot;</span><span class="p">]}</span>  <span class="c1"># Only 2 combinations!</span>
+    <span class="n">config_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"a"</span><span class="p">,</span> <span class="s2">"b"</span><span class="p">]}</span>  <span class="c1"># Only 2 combinations!</span>
 <span class="p">)</span>
 <span class="c1"># Grid search will exhaust after 2 trials, not 10</span>
 <span class="c1"># Test name suggests max_trials but it never triggers</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><span class="c1"># GOOD - Config space larger than max_trials</span>
 <span class="n">scenario</span> <span class="o">=</span> <span class="n">TestScenario</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;test_max_trials_stops&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"test_max_trials_stops"</span><span class="p">,</span>
     <span class="n">max_trials</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
-    <span class="n">config_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;a&quot;</span><span class="p">,</span> <span class="s2">&quot;b&quot;</span><span class="p">,</span> <span class="s2">&quot;c&quot;</span><span class="p">,</span> <span class="s2">&quot;d&quot;</span><span class="p">,</span> <span class="s2">&quot;e&quot;</span><span class="p">]}</span>  <span class="c1"># 5 &gt; 3</span>
+    <span class="n">config_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"a"</span><span class="p">,</span> <span class="s2">"b"</span><span class="p">,</span> <span class="s2">"c"</span><span class="p">,</span> <span class="s2">"d"</span><span class="p">,</span> <span class="s2">"e"</span><span class="p">]}</span>  <span class="c1"># 5 &gt; 3</span>
 <span class="p">)</span>
 <span class="c1"># Now max_trials will actually trigger at trial 3</span>
 <span class="c1"># Also verify the stop reason!</span>
-<span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">stop_reason</span> <span class="o">==</span> <span class="s2">&quot;max_trials&quot;</span>
+<span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">stop_reason</span> <span class="o">==</span> <span class="s2">"max_trials"</span>
 </code></pre></div>
 <h2 id="test-writing-checklist">Test Writing Checklist<a class="headerlink" href="#test-writing-checklist" title="Permanent link">&para;</a></h2>
 <p>Before writing any test, answer these questions:</p>
@@ -4396,86 +4396,86 @@ python<span class="w"> </span>-m<span class="w"> </span>tests.optimizer_validati
 | MUT-WRONG-STOP-REASON | Returns wrong stop_reason | Tests without stop_reason checks |</p>
 <h2 id="test-structure-templates">Test Structure Templates<a class="headerlink" href="#test-structure-templates" title="Permanent link">&para;</a></h2>
 <h3 id="unit-test-template">Unit Test Template<a class="headerlink" href="#unit-test-template" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;Unit tests for {module_name}.</span>
+<div class="highlight"><pre><span></span><code><span class="sd">"""Unit tests for {module_name}.</span>
 
 <span class="sd">Tests cover:</span>
 <span class="sd">- Basic functionality</span>
 <span class="sd">- Edge cases</span>
 <span class="sd">- Error handling</span>
 <span class="sd">- Type validation</span>
-<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">"""</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">pytest</span>
 <span class="kn">from</span><span class="w"> </span><span class="p">{</span><span class="n">module</span><span class="p">}</span> <span class="kn">import</span><span class="w"> </span><span class="p">{</span><span class="n">ClassName</span><span class="p">}</span>
 
 
 <span class="k">class</span><span class="w"> </span><span class="nc">Test</span><span class="p">{</span><span class="n">ClassName</span><span class="p">}:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Tests for {ClassName}.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Tests for {ClassName}."""</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">test_basic_functionality</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Test {specific behavior being tested}.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Test {specific behavior being tested}."""</span>
         <span class="c1"># ARRANGE - set up test data</span>
-        <span class="n">obj</span> <span class="o">=</span> <span class="n">ClassName</span><span class="p">(</span><span class="n">param</span><span class="o">=</span><span class="s2">&quot;value&quot;</span><span class="p">)</span>
-        <span class="n">expected</span> <span class="o">=</span> <span class="s2">&quot;expected_result&quot;</span>
+        <span class="n">obj</span> <span class="o">=</span> <span class="n">ClassName</span><span class="p">(</span><span class="n">param</span><span class="o">=</span><span class="s2">"value"</span><span class="p">)</span>
+        <span class="n">expected</span> <span class="o">=</span> <span class="s2">"expected_result"</span>
 
         <span class="c1"># ACT - perform the action</span>
         <span class="n">result</span> <span class="o">=</span> <span class="n">obj</span><span class="o">.</span><span class="n">method</span><span class="p">()</span>
 
         <span class="c1"># ASSERT - verify explicit outcomes</span>
-        <span class="k">assert</span> <span class="n">result</span> <span class="o">==</span> <span class="n">expected</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;Expected </span><span class="si">{</span><span class="n">expected</span><span class="si">}</span><span class="s2">, got </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span>
-        <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="nb">str</span><span class="p">),</span> <span class="sa">f</span><span class="s2">&quot;Expected str, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">result</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">assert</span> <span class="n">result</span> <span class="o">==</span> <span class="n">expected</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"Expected </span><span class="si">{</span><span class="n">expected</span><span class="si">}</span><span class="s2">, got </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">"</span>
+        <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="nb">str</span><span class="p">),</span> <span class="sa">f</span><span class="s2">"Expected str, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">result</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">test_edge_case_empty_input</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Test behavior with empty input.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Test behavior with empty input."""</span>
         <span class="n">obj</span> <span class="o">=</span> <span class="n">ClassName</span><span class="p">()</span>
 
-        <span class="n">result</span> <span class="o">=</span> <span class="n">obj</span><span class="o">.</span><span class="n">method</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">obj</span><span class="o">.</span><span class="n">method</span><span class="p">(</span><span class="s2">""</span><span class="p">)</span>
 
-        <span class="c1"># Don&#39;t just check it doesn&#39;t error - verify specific behavior</span>
-        <span class="k">assert</span> <span class="n">result</span> <span class="o">==</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="s2">&quot;Empty input should return empty output&quot;</span>
+        <span class="c1"># Don't just check it doesn't error - verify specific behavior</span>
+        <span class="k">assert</span> <span class="n">result</span> <span class="o">==</span> <span class="s2">""</span><span class="p">,</span> <span class="s2">"Empty input should return empty output"</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">test_error_on_invalid_input</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Test that invalid input raises appropriate error.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Test that invalid input raises appropriate error."""</span>
         <span class="n">obj</span> <span class="o">=</span> <span class="n">ClassName</span><span class="p">()</span>
 
-        <span class="k">with</span> <span class="n">pytest</span><span class="o">.</span><span class="n">raises</span><span class="p">(</span><span class="ne">ValueError</span><span class="p">,</span> <span class="n">match</span><span class="o">=</span><span class="s2">&quot;must be positive&quot;</span><span class="p">):</span>
+        <span class="k">with</span> <span class="n">pytest</span><span class="o">.</span><span class="n">raises</span><span class="p">(</span><span class="ne">ValueError</span><span class="p">,</span> <span class="n">match</span><span class="o">=</span><span class="s2">"must be positive"</span><span class="p">):</span>
             <span class="n">obj</span><span class="o">.</span><span class="n">method</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="async-integration-test-template">Async Integration Test Template<a class="headerlink" href="#async-integration-test-template" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;Integration tests for {feature}.</span>
+<div class="highlight"><pre><span></span><code><span class="sd">"""Integration tests for {feature}.</span>
 
 <span class="sd">Tests cover:</span>
 <span class="sd">- End-to-end workflow</span>
 <span class="sd">- Component interaction</span>
 <span class="sd">- State transitions</span>
-<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">"""</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">pytest</span>
 
 
 <span class="k">class</span><span class="w"> </span><span class="nc">TestIntegration</span><span class="p">{</span><span class="n">Feature</span><span class="p">}:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Integration tests for {feature}.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Integration tests for {feature}."""</span>
 
     <span class="nd">@pytest</span><span class="o">.</span><span class="n">mark</span><span class="o">.</span><span class="n">asyncio</span>
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_complete_workflow</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Test complete workflow from input to output.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Test complete workflow from input to output."""</span>
         <span class="c1"># ARRANGE</span>
-        <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;param&quot;</span><span class="p">:</span> <span class="s2">&quot;value&quot;</span><span class="p">}</span>
+        <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"param"</span><span class="p">:</span> <span class="s2">"value"</span><span class="p">}</span>
         <span class="n">expected_trials</span> <span class="o">=</span> <span class="mi">3</span>
 
         <span class="c1"># ACT</span>
         <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">run_workflow</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
 
         <span class="c1"># ASSERT - verify all important aspects</span>
-        <span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">&quot;completed&quot;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;Wrong status: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">status</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">"completed"</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"Wrong status: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">status</span><span class="si">}</span><span class="s2">"</span>
         <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">)</span> <span class="o">==</span> <span class="n">expected_trials</span>
         <span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">best_config</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
-        <span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">stop_reason</span> <span class="o">==</span> <span class="s2">&quot;max_trials&quot;</span>
+        <span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">stop_reason</span> <span class="o">==</span> <span class="s2">"max_trials"</span>
 
         <span class="c1"># Verify trial structure</span>
         <span class="k">for</span> <span class="n">trial</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">:</span>
-            <span class="k">assert</span> <span class="n">trial</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s2">&quot;Trial missing config&quot;</span>
-            <span class="k">assert</span> <span class="s2">&quot;accuracy&quot;</span> <span class="ow">in</span> <span class="n">trial</span><span class="o">.</span><span class="n">metrics</span><span class="p">,</span> <span class="s2">&quot;Trial missing accuracy metric&quot;</span>
+            <span class="k">assert</span> <span class="n">trial</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s2">"Trial missing config"</span>
+            <span class="k">assert</span> <span class="s2">"accuracy"</span> <span class="ow">in</span> <span class="n">trial</span><span class="o">.</span><span class="n">metrics</span><span class="p">,</span> <span class="s2">"Trial missing accuracy metric"</span>
 </code></pre></div>
 <h2 id="running-tests">Running Tests<a class="headerlink" href="#running-tests" title="Permanent link">&para;</a></h2>
 <p>Always use mock mode for local development:</p>
@@ -4489,7 +4489,7 @@ python<span class="w"> </span>-m<span class="w"> </span>tests.optimizer_validati
 <span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span>pytest<span class="w"> </span>tests/unit/api/test_decorators.py<span class="w"> </span>-v
 
 <span class="c1"># Run tests matching pattern</span>
-<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span>pytest<span class="w"> </span>-k<span class="w"> </span><span class="s2">&quot;test_constraint&quot;</span><span class="w"> </span>-v
+<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span>pytest<span class="w"> </span>-k<span class="w"> </span><span class="s2">"test_constraint"</span><span class="w"> </span>-v
 </code></pre></div>
 <h2 id="common-mistakes">Common Mistakes<a class="headerlink" href="#common-mistakes" title="Permanent link">&para;</a></h2>
 <ol>

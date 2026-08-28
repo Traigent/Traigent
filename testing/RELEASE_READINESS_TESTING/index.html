@@ -4750,7 +4750,7 @@ ls<span class="w"> </span>~/.traigent<span class="w"> </span><span class="m">2</
 <p><strong>Environment variables to set for ALL testing:</strong>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_OFFLINE</span><span class="o">=</span><span class="m">1</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_LOG_LEVEL</span><span class="o">=</span>INFO<span class="w">  </span><span class="c1"># See what&#39;s happening</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_LOG_LEVEL</span><span class="o">=</span>INFO<span class="w">  </span><span class="c1"># See what's happening</span>
 </code></pre></div></p>
 <hr />
 <h2 id="part-1-installation-quickstart-validation">PART 1: Installation &amp; Quickstart Validation<a class="headerlink" href="#part-1-installation-quickstart-validation" title="Permanent link">&para;</a></h2>
@@ -4771,7 +4771,7 @@ git<span class="w"> </span>clone<span class="w"> </span>https://github.com/Traig
 <h3 id="12-version-verification">1.2 Version Verification<a class="headerlink" href="#12-version-verification" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code>traigent<span class="w"> </span>--version
 traigent<span class="w"> </span>info
-python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import traigent; print(traigent.__version__)&quot;</span>
+python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import traigent; print(traigent.__version__)"</span>
 </code></pre></div>
 <p><strong>Checklist:</strong>
 - [ ] All three show the same version, matching the release being tested (see <code>pyproject.toml</code>)
@@ -4828,12 +4828,12 @@ python<span class="w"> </span>examples/quickstart/03_custom_objectives.py
 <h2 id="part-3-creative-experiments-mock-mode">PART 3: Creative Experiments (Mock Mode)<a class="headerlink" href="#part-3-creative-experiments-mock-mode" title="Permanent link">&para;</a></h2>
 <h3 id="31-create-your-test-dataset">3.1 Create Your Test Dataset<a class="headerlink" href="#31-create-your-test-dataset" title="Permanent link">&para;</a></h3>
 <p>First, create a test dataset. The format should match what README documents:</p>
-<div class="highlight"><pre><span></span><code>cat<span class="w"> </span>&gt;<span class="w"> </span>my_test_data.jsonl<span class="w"> </span><span class="s">&lt;&lt; &#39;EOF&#39;</span>
-<span class="s">{&quot;input&quot;: {&quot;question&quot;: &quot;What is Python?&quot;}, &quot;output&quot;: &quot;Python is a programming language&quot;}</span>
-<span class="s">{&quot;input&quot;: {&quot;question&quot;: &quot;What is 2+2?&quot;}, &quot;output&quot;: &quot;4&quot;}</span>
-<span class="s">{&quot;input&quot;: {&quot;question&quot;: &quot;Who wrote Hamlet?&quot;}, &quot;output&quot;: &quot;William Shakespeare&quot;}</span>
-<span class="s">{&quot;input&quot;: {&quot;question&quot;: &quot;What color is the sky?&quot;}, &quot;output&quot;: &quot;Blue&quot;}</span>
-<span class="s">{&quot;input&quot;: {&quot;question&quot;: &quot;What is the capital of France?&quot;}, &quot;output&quot;: &quot;Paris&quot;}</span>
+<div class="highlight"><pre><span></span><code>cat<span class="w"> </span>&gt;<span class="w"> </span>my_test_data.jsonl<span class="w"> </span><span class="s">&lt;&lt; 'EOF'</span>
+<span class="s">{"input": {"question": "What is Python?"}, "output": "Python is a programming language"}</span>
+<span class="s">{"input": {"question": "What is 2+2?"}, "output": "4"}</span>
+<span class="s">{"input": {"question": "Who wrote Hamlet?"}, "output": "William Shakespeare"}</span>
+<span class="s">{"input": {"question": "What color is the sky?"}, "output": "Blue"}</span>
+<span class="s">{"input": {"question": "What is the capital of France?"}, "output": "Paris"}</span>
 <span class="s">EOF</span>
 </code></pre></div>
 <h3 id="32-parameter-sensitive-mock-function">3.2 Parameter-Sensitive Mock Function<a class="headerlink" href="#32-parameter-sensitive-mock-function" title="Permanent link">&para;</a></h3>
@@ -4844,55 +4844,55 @@ python<span class="w"> </span>examples/quickstart/03_custom_objectives.py
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">],</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-3.5-turbo&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">50</span><span class="p">,</span> <span class="mi">150</span><span class="p">,</span> <span class="mi">300</span><span class="p">]</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">],</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-3.5-turbo"</span><span class="p">,</span> <span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">],</span>
+        <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="p">[</span><span class="mi">50</span><span class="p">,</span> <span class="mi">150</span><span class="p">,</span> <span class="mi">300</span><span class="p">]</span>
     <span class="p">},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">],</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;my_test_data.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">],</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"my_test_data.jsonl"</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">smart_mock_agent</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""</span>
 <span class="sd">    Mock agent that simulates quality differences based on config.</span>
 <span class="sd">    Lower temperature + better model = better factual accuracy.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
-    <span class="n">temp</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;temperature&quot;</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">)</span>
-    <span class="n">model</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;model&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-3.5-turbo&quot;</span><span class="p">)</span>
-    <span class="n">max_tokens</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;max_tokens&quot;</span><span class="p">,</span> <span class="mi">150</span><span class="p">)</span>
+    <span class="n">temp</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"temperature"</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">)</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"model"</span><span class="p">,</span> <span class="s2">"gpt-3.5-turbo"</span><span class="p">)</span>
+    <span class="n">max_tokens</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"max_tokens"</span><span class="p">,</span> <span class="mi">150</span><span class="p">)</span>
 
     <span class="c1"># Simulate quality based on config</span>
     <span class="n">quality_score</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">temp</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.4</span> <span class="o">+</span> <span class="p">(</span><span class="n">max_tokens</span> <span class="o">/</span> <span class="mi">300</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.3</span>
-    <span class="k">if</span> <span class="s2">&quot;gpt-4&quot;</span> <span class="ow">in</span> <span class="n">model</span><span class="p">:</span>
+    <span class="k">if</span> <span class="s2">"gpt-4"</span> <span class="ow">in</span> <span class="n">model</span><span class="p">:</span>
         <span class="n">quality_score</span> <span class="o">+=</span> <span class="mf">0.3</span>
 
     <span class="c1"># Return answers that reflect quality</span>
-    <span class="k">if</span> <span class="s2">&quot;Python&quot;</span> <span class="ow">in</span> <span class="n">question</span><span class="p">:</span>
+    <span class="k">if</span> <span class="s2">"Python"</span> <span class="ow">in</span> <span class="n">question</span><span class="p">:</span>
         <span class="k">if</span> <span class="n">quality_score</span> <span class="o">&gt;</span> <span class="mf">0.7</span><span class="p">:</span>
-            <span class="k">return</span> <span class="s2">&quot;Python is a programming language&quot;</span>
+            <span class="k">return</span> <span class="s2">"Python is a programming language"</span>
         <span class="k">else</span><span class="p">:</span>
-            <span class="k">return</span> <span class="s2">&quot;Python is a language&quot;</span>
-    <span class="k">elif</span> <span class="s2">&quot;2+2&quot;</span> <span class="ow">in</span> <span class="n">question</span><span class="p">:</span>
-        <span class="k">return</span> <span class="s2">&quot;4&quot;</span> <span class="k">if</span> <span class="n">quality_score</span> <span class="o">&gt;</span> <span class="mf">0.3</span> <span class="k">else</span> <span class="s2">&quot;four&quot;</span>
-    <span class="k">elif</span> <span class="s2">&quot;Hamlet&quot;</span> <span class="ow">in</span> <span class="n">question</span><span class="p">:</span>
-        <span class="k">return</span> <span class="s2">&quot;William Shakespeare&quot;</span> <span class="k">if</span> <span class="n">quality_score</span> <span class="o">&gt;</span> <span class="mf">0.5</span> <span class="k">else</span> <span class="s2">&quot;Shakespeare&quot;</span>
-    <span class="k">elif</span> <span class="s2">&quot;sky&quot;</span> <span class="ow">in</span> <span class="n">question</span><span class="p">:</span>
-        <span class="k">return</span> <span class="s2">&quot;Blue&quot;</span> <span class="k">if</span> <span class="n">quality_score</span> <span class="o">&gt;</span> <span class="mf">0.4</span> <span class="k">else</span> <span class="s2">&quot;blue&quot;</span>
-    <span class="k">elif</span> <span class="s2">&quot;France&quot;</span> <span class="ow">in</span> <span class="n">question</span><span class="p">:</span>
-        <span class="k">return</span> <span class="s2">&quot;Paris&quot;</span> <span class="k">if</span> <span class="n">quality_score</span> <span class="o">&gt;</span> <span class="mf">0.6</span> <span class="k">else</span> <span class="s2">&quot;paris&quot;</span>
+            <span class="k">return</span> <span class="s2">"Python is a language"</span>
+    <span class="k">elif</span> <span class="s2">"2+2"</span> <span class="ow">in</span> <span class="n">question</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">"4"</span> <span class="k">if</span> <span class="n">quality_score</span> <span class="o">&gt;</span> <span class="mf">0.3</span> <span class="k">else</span> <span class="s2">"four"</span>
+    <span class="k">elif</span> <span class="s2">"Hamlet"</span> <span class="ow">in</span> <span class="n">question</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">"William Shakespeare"</span> <span class="k">if</span> <span class="n">quality_score</span> <span class="o">&gt;</span> <span class="mf">0.5</span> <span class="k">else</span> <span class="s2">"Shakespeare"</span>
+    <span class="k">elif</span> <span class="s2">"sky"</span> <span class="ow">in</span> <span class="n">question</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">"Blue"</span> <span class="k">if</span> <span class="n">quality_score</span> <span class="o">&gt;</span> <span class="mf">0.4</span> <span class="k">else</span> <span class="s2">"blue"</span>
+    <span class="k">elif</span> <span class="s2">"France"</span> <span class="ow">in</span> <span class="n">question</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">"Paris"</span> <span class="k">if</span> <span class="n">quality_score</span> <span class="o">&gt;</span> <span class="mf">0.6</span> <span class="k">else</span> <span class="s2">"paris"</span>
     <span class="k">else</span><span class="p">:</span>
-        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Answer about </span><span class="si">{</span><span class="n">question</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">"Answer about </span><span class="si">{</span><span class="n">question</span><span class="si">}</span><span class="s2">"</span>
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
     <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">smart_mock_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-        <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;random&quot;</span><span class="p">,</span>
+        <span class="n">algorithm</span><span class="o">=</span><span class="s2">"random"</span><span class="p">,</span>
         <span class="n">max_trials</span><span class="o">=</span><span class="mi">10</span>
     <span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Best score: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_score</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Best config: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_config</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Trials completed: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="s2">Best score: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_score</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Best config: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_config</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Trials completed: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
-<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
     <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
 </code></pre></div>
 <p><strong>Run and verify:</strong>
@@ -4964,11 +4964,11 @@ python<span class="w"> </span>examples/quickstart/03_custom_objectives.py
 <div class="highlight"><pre><span></span><code><span class="c1"># Test: Empty configuration space</span>
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;my_test_data.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"my_test_data.jsonl"</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">empty_config_test</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="s2">&quot;answer&quot;</span>
+    <span class="k">return</span> <span class="s2">"answer"</span>
 </code></pre></div>
 <h4 id="dataset-variations">Dataset Variations<a class="headerlink" href="#dataset-variations" title="Permanent link">&para;</a></h4>
 <table>
@@ -5034,7 +5034,7 @@ python<span class="w"> </span>examples/quickstart/03_custom_objectives.py
 </tbody>
 </table>
 <div class="highlight"><pre><span></span><code><span class="c1"># Test: Wrong field names</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;{&quot;query&quot;: &quot;test&quot;, &quot;answer&quot;: &quot;response&quot;}&#39;</span><span class="w"> </span>&gt;<span class="w"> </span>bad_dataset.jsonl
+<span class="nb">echo</span><span class="w"> </span><span class="s1">'{"query": "test", "answer": "response"}'</span><span class="w"> </span>&gt;<span class="w"> </span>bad_dataset.jsonl
 <span class="c1"># Then try to use it and note the error message</span>
 </code></pre></div>
 <h4 id="objective-variations">Objective Variations<a class="headerlink" href="#objective-variations" title="Permanent link">&para;</a></h4>
@@ -5141,35 +5141,35 @@ python<span class="w"> </span>examples/quickstart/03_custom_objectives.py
 <span class="kn">import</span><span class="w"> </span><span class="nn">traigent</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temp&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">]},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;my_test_data.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"temp"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">]},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"my_test_data.jsonl"</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">lifecycle_test</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
-    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Answer with temp=</span><span class="si">{</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;temp&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">"Answer with temp=</span><span class="si">{</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">'temp'</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
     <span class="c1"># 1. Run optimization</span>
     <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">lifecycle_test</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
 
     <span class="c1"># 2. Check result attributes</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;best_score: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_score</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;best_config: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_config</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;trials: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;duration: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">duration</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"best_score: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_score</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"best_config: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_config</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"trials: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trials</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"duration: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">duration</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
     <span class="c1"># 3. Apply best config</span>
     <span class="n">lifecycle_test</span><span class="o">.</span><span class="n">apply_best_config</span><span class="p">()</span>
 
     <span class="c1"># 4. Call function normally (should use best config)</span>
-    <span class="n">normal_result</span> <span class="o">=</span> <span class="n">lifecycle_test</span><span class="p">(</span><span class="s2">&quot;test question&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Normal call result: </span><span class="si">{</span><span class="n">normal_result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">normal_result</span> <span class="o">=</span> <span class="n">lifecycle_test</span><span class="p">(</span><span class="s2">"test question"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Normal call result: </span><span class="si">{</span><span class="n">normal_result</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
     <span class="c1"># 5. Check current_config</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;current_config: </span><span class="si">{</span><span class="n">lifecycle_test</span><span class="o">.</span><span class="n">current_config</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"current_config: </span><span class="si">{</span><span class="n">lifecycle_test</span><span class="o">.</span><span class="n">current_config</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
-<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
     <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
 </code></pre></div>
 <p><strong>Checklist:</strong>
@@ -5186,42 +5186,42 @@ python<span class="w"> </span>examples/quickstart/03_custom_objectives.py
 <span class="k">try</span><span class="p">:</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_trial_config</span><span class="p">()</span>  <span class="c1"># Should error</span>
 <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Error type: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Error message: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Error type: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Error message: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
     <span class="c1"># Is this message helpful? Does it suggest what to do?</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><span class="c1"># Test 2: Invalid dataset path</span>
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temp&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.5</span><span class="p">]},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;nonexistent_file.jsonl&quot;</span><span class="p">,</span>  <span class="c1"># Does not exist</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"temp"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.5</span><span class="p">]},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"nonexistent_file.jsonl"</span><span class="p">,</span>  <span class="c1"># Does not exist</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">bad_dataset_test</span><span class="p">(</span><span class="n">q</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="s2">&quot;answer&quot;</span>
+    <span class="k">return</span> <span class="s2">"answer"</span>
 
 <span class="c1"># Try to optimize - what error do you get?</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><span class="c1"># Test 3: Exception inside decorated function</span>
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temp&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.5</span><span class="p">]},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;my_test_data.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"temp"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.5</span><span class="p">]},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"my_test_data.jsonl"</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">error_prone_func</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">if</span> <span class="s2">&quot;Python&quot;</span> <span class="ow">in</span> <span class="n">question</span><span class="p">:</span>
-        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Intentional error!&quot;</span><span class="p">)</span>
-    <span class="k">return</span> <span class="s2">&quot;answer&quot;</span>
+    <span class="k">if</span> <span class="s2">"Python"</span> <span class="ow">in</span> <span class="n">question</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"Intentional error!"</span><span class="p">)</span>
+    <span class="k">return</span> <span class="s2">"answer"</span>
 
 <span class="c1"># Does the trial fail gracefully? Is the error reported?</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><span class="c1"># Test 4: Non-string return value</span>
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temp&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.5</span><span class="p">]},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;my_test_data.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"temp"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.5</span><span class="p">]},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"my_test_data.jsonl"</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">returns_dict</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>  <span class="c1"># Note: returns dict, not str</span>
-    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;answer&quot;</span><span class="p">:</span> <span class="s2">&quot;test&quot;</span><span class="p">}</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">"answer"</span><span class="p">:</span> <span class="s2">"test"</span><span class="p">}</span>
 
 <span class="c1"># What happens? Error? Works? Weird accuracy?</span>
 </code></pre></div>
@@ -5255,16 +5255,16 @@ traigent<span class="w"> </span>generate<span class="w"> </span>-t<span class="w
 - [ ] Template demonstrates the advertised feature</p>
 <h3 id="43-cli-optimize-command">4.3 CLI Optimize Command<a class="headerlink" href="#43-cli-optimize-command" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="c1"># Create a simple file to optimize</span>
-cat<span class="w"> </span>&gt;<span class="w"> </span>cli_test.py<span class="w"> </span><span class="s">&lt;&lt; &#39;EOF&#39;</span>
+cat<span class="w"> </span>&gt;<span class="w"> </span>cli_test.py<span class="w"> </span><span class="s">&lt;&lt; 'EOF'</span>
 <span class="s">import traigent</span>
 
 <span class="s">@traigent.optimize(</span>
-<span class="s">    configuration_space={&quot;temp&quot;: [0.1, 0.5, 0.9]},</span>
-<span class="s">    objectives=[&quot;accuracy&quot;],</span>
-<span class="s">    eval_dataset=&quot;my_test_data.jsonl&quot;,</span>
+<span class="s">    configuration_space={"temp": [0.1, 0.5, 0.9]},</span>
+<span class="s">    objectives=["accuracy"],</span>
+<span class="s">    eval_dataset="my_test_data.jsonl",</span>
 <span class="s">)</span>
 <span class="s">def my_func(question: str) -&gt; str:</span>
-<span class="s">    return &quot;answer&quot;</span>
+<span class="s">    return "answer"</span>
 <span class="s">EOF</span>
 
 <span class="c1"># Run via CLI</span>
@@ -5280,7 +5280,7 @@ cat<span class="w"> </span>&gt;<span class="w"> </span>cli_test.py<span class="w
 traigent<span class="w"> </span>validate<span class="w"> </span>my_test_data.jsonl<span class="w"> </span>-o<span class="w"> </span>accuracy<span class="w"> </span>-o<span class="w"> </span>cost
 
 <span class="c1"># Try validating bad dataset</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;invalid json&quot;</span><span class="w"> </span>&gt;<span class="w"> </span>bad.jsonl
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"invalid json"</span><span class="w"> </span>&gt;<span class="w"> </span>bad.jsonl
 traigent<span class="w"> </span>validate<span class="w"> </span>bad.jsonl<span class="w"> </span>-o<span class="w"> </span>accuracy
 </code></pre></div>
 <p><strong>Checklist:</strong>
@@ -5305,19 +5305,19 @@ traigent<span class="w"> </span>plot<span class="w"> </span>&lt;result_name&gt;<
     <span class="n">LANGCHAIN_AVAILABLE</span> <span class="o">=</span> <span class="kc">True</span>
 <span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
     <span class="n">LANGCHAIN_AVAILABLE</span> <span class="o">=</span> <span class="kc">False</span>
-    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;LangChain not installed - skip this test&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">"LangChain not installed - skip this test"</span><span class="p">)</span>
 
 <span class="k">if</span> <span class="n">LANGCHAIN_AVAILABLE</span><span class="p">:</span>
     <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
         <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-            <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-3.5-turbo&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">],</span>
-            <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">]</span>
+            <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-3.5-turbo"</span><span class="p">,</span> <span class="s2">"gpt-4o-mini"</span><span class="p">],</span>
+            <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">]</span>
         <span class="p">},</span>
-        <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
-        <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;my_test_data.jsonl&quot;</span><span class="p">,</span>
+        <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
+        <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"my_test_data.jsonl"</span><span class="p">,</span>
     <span class="p">)</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">langchain_test</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-        <span class="n">llm</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-3.5-turbo&quot;</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>
+        <span class="n">llm</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">"gpt-3.5-turbo"</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>
         <span class="c1"># In mock mode, this should work without API key</span>
         <span class="n">response</span> <span class="o">=</span> <span class="n">llm</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">question</span><span class="p">)</span>
         <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>
@@ -5328,28 +5328,28 @@ traigent<span class="w"> </span>plot<span class="w"> </span>&lt;result_name&gt;<
 
 <span class="c1"># First, run an optimization</span>
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temp&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">]},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;my_test_data.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"temp"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">]},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"my_test_data.jsonl"</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">persist_test</span><span class="p">(</span><span class="n">q</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="s2">&quot;answer&quot;</span>
+    <span class="k">return</span> <span class="s2">"answer"</span>
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
     <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">persist_test</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 
     <span class="c1"># Save result</span>
-    <span class="n">pm</span> <span class="o">=</span> <span class="n">PersistenceManager</span><span class="p">(</span><span class="s2">&quot;.traigent_test&quot;</span><span class="p">)</span>
-    <span class="n">path</span> <span class="o">=</span> <span class="n">pm</span><span class="o">.</span><span class="n">save_result</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="s2">&quot;my_test_result&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Saved to: </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">pm</span> <span class="o">=</span> <span class="n">PersistenceManager</span><span class="p">(</span><span class="s2">".traigent_test"</span><span class="p">)</span>
+    <span class="n">path</span> <span class="o">=</span> <span class="n">pm</span><span class="o">.</span><span class="n">save_result</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="s2">"my_test_result"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Saved to: </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
     <span class="c1"># List results</span>
     <span class="n">results</span> <span class="o">=</span> <span class="n">pm</span><span class="o">.</span><span class="n">list_results</span><span class="p">()</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Found </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">results</span><span class="p">)</span><span class="si">}</span><span class="s2"> results&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Found </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">results</span><span class="p">)</span><span class="si">}</span><span class="s2"> results"</span><span class="p">)</span>
 
     <span class="c1"># Load result</span>
-    <span class="n">loaded</span> <span class="o">=</span> <span class="n">pm</span><span class="o">.</span><span class="n">load_result</span><span class="p">(</span><span class="s2">&quot;my_test_result&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Loaded result with </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">loaded</span><span class="o">.</span><span class="n">trials</span><span class="p">)</span><span class="si">}</span><span class="s2"> trials&quot;</span><span class="p">)</span>
+    <span class="n">loaded</span> <span class="o">=</span> <span class="n">pm</span><span class="o">.</span><span class="n">load_result</span><span class="p">(</span><span class="s2">"my_test_result"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Loaded result with </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">loaded</span><span class="o">.</span><span class="n">trials</span><span class="p">)</span><span class="si">}</span><span class="s2"> trials"</span><span class="p">)</span>
 
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
 </code></pre></div>

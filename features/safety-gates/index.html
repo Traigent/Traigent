@@ -3926,20 +3926,20 @@ billing bypass.</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_STRICT_COST_ACCOUNTING</span><span class="o">=</span><span class="nb">true</span>
 </code></pre></div>
 <p>Provide explicit pricing for private or unsupported models with:</p>
-<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_CUSTOM_MODEL_PRICING_JSON</span><span class="o">=</span><span class="s1">&#39;{&quot;my-model&quot;:{&quot;input_cost_per_token&quot;:0.000001,&quot;output_cost_per_token&quot;:0.000002}}&#39;</span>
+<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_CUSTOM_MODEL_PRICING_JSON</span><span class="o">=</span><span class="s1">'{"my-model":{"input_cost_per_token":0.000001,"output_cost_per_token":0.000002}}'</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_CUSTOM_MODEL_PRICING_FILE</span><span class="o">=</span>.traigent/model-pricing.json
 </code></pre></div>
 <h2 id="ci-run-approval">CI Run Approval<a class="headerlink" href="#ci-run-approval" title="Permanent link">&para;</a></h2>
 <p>Edge analytics optimization in CI requires explicit approval. The recommended
 environment approval is:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_RUN_APPROVED</span><span class="o">=</span><span class="m">1</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_APPROVED_BY</span><span class="o">=</span><span class="s2">&quot;your_name&quot;</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_APPROVED_BY</span><span class="o">=</span><span class="s2">"your_name"</span>
 </code></pre></div>
 <p><code>TRAIGENT_MOCK_LLM</code> does not bypass this CI approval gate.</p>
 <h2 id="dataset-path-containment">Dataset Path Containment<a class="headerlink" href="#dataset-path-containment" title="Permanent link">&para;</a></h2>
 <p>Evaluation datasets must resolve under the trusted dataset root. Set the root
 explicitly when a process should only read datasets from one directory:</p>
-<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_DATASET_ROOT</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/evals&quot;</span>
+<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_DATASET_ROOT</span><span class="o">=</span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">/evals"</span>
 </code></pre></div>
 <p>When <code>TRAIGENT_DATASET_ROOT</code> is not set, the current working directory is the
 trusted root.</p>
@@ -3958,7 +3958,7 @@ content-bearing fields from disk:</p>
 </code></pre></div>
 <h2 id="copy-paste-example">Copy-Paste Example<a class="headerlink" href="#copy-paste-example" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_STRICT_COST_ACCOUNTING</span><span class="o">=</span><span class="nb">true</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_DATASET_ROOT</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/evals&quot;</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_DATASET_ROOT</span><span class="o">=</span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">/evals"</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_LOG_EXAMPLE_CONTENT</span><span class="o">=</span><span class="nb">false</span>
 </code></pre></div>
 <p>Honesty note: Traigent cost limits and estimates are local guardrails, not

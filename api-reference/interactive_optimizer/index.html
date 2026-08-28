@@ -4111,7 +4111,7 @@ methods take separate keyword arguments and name the result-submission call
 above:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.cloud</span><span class="w"> </span><span class="kn">import</span> <span class="n">TraigentCloudClient</span><span class="p">,</span> <span class="n">TraigentCloudRemoteGuidanceAdapter</span>
 
-<span class="n">client</span> <span class="o">=</span> <span class="n">TraigentCloudClient</span><span class="p">(</span><span class="n">api_key</span><span class="o">=</span><span class="s2">&quot;&lt;API_KEY&gt;&quot;</span><span class="p">)</span>
+<span class="n">client</span> <span class="o">=</span> <span class="n">TraigentCloudClient</span><span class="p">(</span><span class="n">api_key</span><span class="o">=</span><span class="s2">"&lt;API_KEY&gt;"</span><span class="p">)</span>
 <span class="n">remote_service</span> <span class="o">=</span> <span class="n">TraigentCloudRemoteGuidanceAdapter</span><span class="p">(</span><span class="n">client</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="methods">Methods<a class="headerlink" href="#methods" title="Permanent link">&para;</a></h2>
@@ -4120,7 +4120,7 @@ above:</p>
     <span class="n">function_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">max_trials</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
     <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="n">billing_tier</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;standard&quot;</span><span class="p">,</span>
+    <span class="n">billing_tier</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"standard"</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">OptimizationSession</span>
 </code></pre></div>
 <p>Creates a remote optimization session and stores session state locally.</p>
@@ -4160,13 +4160,13 @@ optimization is complete.</p>
 <p>Not supported. This raises <code>NotImplementedError</code>; use <code>get_next_suggestion</code>.</p>
 <h2 id="example">Example<a class="headerlink" href="#example" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="n">optimizer</span> <span class="o">=</span> <span class="n">InteractiveOptimizer</span><span class="p">(</span>
-    <span class="n">config_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
+    <span class="n">config_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
     <span class="n">remote_service</span><span class="o">=</span><span class="n">remote_service</span><span class="p">,</span>
-    <span class="n">dataset_metadata</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;size&quot;</span><span class="p">:</span> <span class="mi">1000</span><span class="p">},</span>
+    <span class="n">dataset_metadata</span><span class="o">=</span><span class="p">{</span><span class="s2">"size"</span><span class="p">:</span> <span class="mi">1000</span><span class="p">},</span>
 <span class="p">)</span>
 
-<span class="k">await</span> <span class="n">optimizer</span><span class="o">.</span><span class="n">initialize_session</span><span class="p">(</span><span class="n">function_name</span><span class="o">=</span><span class="s2">&quot;answer&quot;</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
+<span class="k">await</span> <span class="n">optimizer</span><span class="o">.</span><span class="n">initialize_session</span><span class="p">(</span><span class="n">function_name</span><span class="o">=</span><span class="s2">"answer"</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
 
 <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
     <span class="n">suggestion</span> <span class="o">=</span> <span class="k">await</span> <span class="n">optimizer</span><span class="o">.</span><span class="n">get_next_suggestion</span><span class="p">(</span><span class="n">dataset_size</span><span class="o">=</span><span class="mi">1000</span><span class="p">)</span>
@@ -4180,7 +4180,7 @@ optimization is complete.</p>
     <span class="k">await</span> <span class="n">optimizer</span><span class="o">.</span><span class="n">report_results</span><span class="p">(</span>
         <span class="n">trial_id</span><span class="o">=</span><span class="n">suggestion</span><span class="o">.</span><span class="n">trial_id</span><span class="p">,</span>
         <span class="n">metrics</span><span class="o">=</span><span class="n">metrics</span><span class="p">,</span>
-        <span class="n">duration</span><span class="o">=</span><span class="n">metrics</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;duration&quot;</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">),</span>
+        <span class="n">duration</span><span class="o">=</span><span class="n">metrics</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"duration"</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">),</span>
     <span class="p">)</span>
 
 <span class="n">summary</span> <span class="o">=</span> <span class="k">await</span> <span class="n">optimizer</span><span class="o">.</span><span class="n">finalize_optimization</span><span class="p">()</span>

@@ -4389,20 +4389,20 @@
 <p>How Traigent scores your runs and how to customize it.</p>
 <h2 id="dataset-format">Dataset Format<a class="headerlink" href="#dataset-format" title="Permanent link">&para;</a></h2>
 <p>Use JSONL with <code>input</code> and optional <code>output</code>/<code>expected_output</code> keys (both are accepted):</p>
-<div class="highlight"><pre><span></span><code>{&quot;input&quot;: {&quot;question&quot;: &quot;What is 2+2?&quot;}, &quot;output&quot;: &quot;4&quot;}
-{&quot;input&quot;: {&quot;question&quot;: &quot;Capital of France?&quot;}, &quot;output&quot;: &quot;Paris&quot;}
-{&quot;input&quot;: {&quot;query&quot;: &quot;Sentiment of: Great product!&quot;}, &quot;output&quot;: &quot;positive&quot;}
+<div class="highlight"><pre><span></span><code>{"input": {"question": "What is 2+2?"}, "output": "4"}
+{"input": {"question": "Capital of France?"}, "output": "Paris"}
+{"input": {"query": "Sentiment of: Great product!"}, "output": "positive"}
 </code></pre></div>
 <p>Minimal creator:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
 
 <span class="n">data</span> <span class="o">=</span> <span class="p">[</span>
-    <span class="p">{</span><span class="s2">&quot;input&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;What is 2+2?&quot;</span><span class="p">},</span> <span class="s2">&quot;output&quot;</span><span class="p">:</span> <span class="s2">&quot;4&quot;</span><span class="p">},</span>
-    <span class="p">{</span><span class="s2">&quot;input&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;Capital of France?&quot;</span><span class="p">},</span> <span class="s2">&quot;output&quot;</span><span class="p">:</span> <span class="s2">&quot;Paris&quot;</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">"input"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"question"</span><span class="p">:</span> <span class="s2">"What is 2+2?"</span><span class="p">},</span> <span class="s2">"output"</span><span class="p">:</span> <span class="s2">"4"</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">"input"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"question"</span><span class="p">:</span> <span class="s2">"Capital of France?"</span><span class="p">},</span> <span class="s2">"output"</span><span class="p">:</span> <span class="s2">"Paris"</span><span class="p">},</span>
 <span class="p">]</span>
-<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;data/qa_samples.jsonl&quot;</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">"data/qa_samples.jsonl"</span><span class="p">,</span> <span class="s2">"w"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
     <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
-        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">row</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">row</span><span class="p">)</span> <span class="o">+</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="attaching-a-dataset-at-runtime">Attaching a Dataset at Runtime<a class="headerlink" href="#attaching-a-dataset-at-runtime" title="Permanent link">&para;</a></h2>
 <p>You can also assign the dataset after decoration instead of hard-coding
@@ -4414,8 +4414,8 @@
 
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o&quot;</span><span class="p">]},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">]},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">qa_agent</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">answer_question</span><span class="p">(</span><span class="n">question</span><span class="p">)</span>
@@ -4424,15 +4424,15 @@
 <span class="n">qa_agent</span><span class="o">.</span><span class="n">eval_dataset</span> <span class="o">=</span> <span class="n">Dataset</span><span class="p">(</span>
     <span class="n">examples</span><span class="o">=</span><span class="p">[</span>
         <span class="n">EvaluationExample</span><span class="p">(</span>
-            <span class="n">input_data</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;What is 2+2?&quot;</span><span class="p">},</span>
-            <span class="n">expected_output</span><span class="o">=</span><span class="s2">&quot;4&quot;</span><span class="p">,</span>
+            <span class="n">input_data</span><span class="o">=</span><span class="p">{</span><span class="s2">"question"</span><span class="p">:</span> <span class="s2">"What is 2+2?"</span><span class="p">},</span>
+            <span class="n">expected_output</span><span class="o">=</span><span class="s2">"4"</span><span class="p">,</span>
         <span class="p">),</span>
         <span class="n">EvaluationExample</span><span class="p">(</span>
-            <span class="n">input_data</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;Capital of France?&quot;</span><span class="p">},</span>
-            <span class="n">expected_output</span><span class="o">=</span><span class="s2">&quot;Paris&quot;</span><span class="p">,</span>
+            <span class="n">input_data</span><span class="o">=</span><span class="p">{</span><span class="s2">"question"</span><span class="p">:</span> <span class="s2">"Capital of France?"</span><span class="p">},</span>
+            <span class="n">expected_output</span><span class="o">=</span><span class="s2">"Paris"</span><span class="p">,</span>
         <span class="p">),</span>
     <span class="p">],</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;qa-smoke-test&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"qa-smoke-test"</span><span class="p">,</span>
 <span class="p">)</span>
 
 <span class="n">results</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">qa_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">4</span><span class="p">))</span>
@@ -4463,14 +4463,14 @@
 <span class="kn">import</span><span class="w"> </span><span class="nn">traigent</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data/classification_samples.jsonl&quot;</span><span class="p">,</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">],</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"data/classification_samples.jsonl"</span><span class="p">,</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">],</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">classifier</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">response</span> <span class="o">=</span> <span class="n">litellm</span><span class="o">.</span><span class="n">completion</span><span class="p">(</span>
-        <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span>
+        <span class="n">model</span><span class="o">=</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span>
         <span class="n">temperature</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
-        <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;Label: </span><span class="si">{</span><span class="n">query</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">}],</span>
+        <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">"role"</span><span class="p">:</span> <span class="s2">"user"</span><span class="p">,</span> <span class="s2">"content"</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"Label: </span><span class="si">{</span><span class="n">query</span><span class="si">}</span><span class="s2">"</span><span class="p">}],</span>
     <span class="p">)</span>
     <span class="k">return</span> <span class="n">response</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
 </code></pre></div>
@@ -4488,8 +4488,8 @@ with an explicit error and log at ERROR level. The contract is
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">scoring_function</span><span class="o">=</span><span class="n">exact_match</span><span class="p">,</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data.jsonl&quot;</span><span class="p">,</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"data.jsonl"</span><span class="p">,</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">strict_agent</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="o">...</span>
@@ -4497,11 +4497,11 @@ with an explicit error and log at ERROR level. The contract is
 <h3 id="3-multiple-metric-functions">3) Multiple metric functions<a class="headerlink" href="#3-multiple-metric-functions" title="Permanent link">&para;</a></h3>
 <p>Use <code>metric_functions</code> to define multiple custom metrics with named keys:</p>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">accuracy_metric</span><span class="p">(</span><span class="n">output</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">expected</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return 1.0 for exact match, 0.0 otherwise.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Return 1.0 for exact match, 0.0 otherwise."""</span>
     <span class="k">return</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="n">output</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="o">==</span> <span class="n">expected</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">else</span> <span class="mf">0.0</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">cost_metric</span><span class="p">(</span><span class="n">output</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">expected</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Simulate cost based on output length.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Simulate cost based on output length."""</span>
     <span class="c1"># Approximate token count (4 chars ≈ 1 token)</span>
     <span class="n">output_tokens</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">output</span><span class="p">)</span> <span class="o">//</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">10</span><span class="p">)</span>
     <span class="n">input_tokens</span> <span class="o">=</span> <span class="mi">150</span>  <span class="c1"># Estimate for input</span>
@@ -4512,11 +4512,11 @@ with an explicit error and log at ERROR level. The contract is
     <span class="k">return</span> <span class="n">input_cost</span> <span class="o">+</span> <span class="n">output_cost</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data.jsonl&quot;</span><span class="p">,</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">],</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"data.jsonl"</span><span class="p">,</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">],</span>
     <span class="n">metric_functions</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;accuracy&quot;</span><span class="p">:</span> <span class="n">accuracy_metric</span><span class="p">,</span>
-        <span class="s2">&quot;total_cost&quot;</span><span class="p">:</span> <span class="n">cost_metric</span><span class="p">,</span>  <span class="c1"># Use &quot;total_cost&quot; to track costs</span>
+        <span class="s2">"accuracy"</span><span class="p">:</span> <span class="n">accuracy_metric</span><span class="p">,</span>
+        <span class="s2">"total_cost"</span><span class="p">:</span> <span class="n">cost_metric</span><span class="p">,</span>  <span class="c1"># Use "total_cost" to track costs</span>
     <span class="p">},</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_agent</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
@@ -4528,19 +4528,19 @@ with an explicit error and log at ERROR level. The contract is
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.api.types</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExampleResult</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">advanced_evaluator</span><span class="p">(</span><span class="n">func</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">example</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ExampleResult</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Full control over evaluation with access to function, config, and example.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Full control over evaluation with access to function, config, and example."""</span>
     <span class="n">output</span> <span class="o">=</span> <span class="n">func</span><span class="p">(</span><span class="o">**</span><span class="n">example</span><span class="o">.</span><span class="n">input</span><span class="p">)</span>
     <span class="n">exact</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="n">output</span> <span class="o">==</span> <span class="n">example</span><span class="o">.</span><span class="n">expected_output</span> <span class="k">else</span> <span class="mf">0.0</span>
     <span class="n">length_penalty</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="nb">abs</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">output</span><span class="p">)</span> <span class="o">-</span> <span class="nb">len</span><span class="p">(</span><span class="n">example</span><span class="o">.</span><span class="n">expected_output</span><span class="p">))</span> <span class="o">/</span> <span class="mi">100</span><span class="p">)</span>
 
     <span class="k">return</span> <span class="n">ExampleResult</span><span class="p">(</span>
         <span class="n">accuracy</span><span class="o">=</span><span class="n">exact</span><span class="p">,</span>
-        <span class="n">metrics</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;exact_match&quot;</span><span class="p">:</span> <span class="n">exact</span><span class="p">,</span> <span class="s2">&quot;length_score&quot;</span><span class="p">:</span> <span class="n">length_penalty</span><span class="p">},</span>
+        <span class="n">metrics</span><span class="o">=</span><span class="p">{</span><span class="s2">"exact_match"</span><span class="p">:</span> <span class="n">exact</span><span class="p">,</span> <span class="s2">"length_score"</span><span class="p">:</span> <span class="n">length_penalty</span><span class="p">},</span>
     <span class="p">)</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">custom_evaluator</span><span class="o">=</span><span class="n">advanced_evaluator</span><span class="p">,</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"data.jsonl"</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">strict_agent</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="o">...</span>
@@ -4608,8 +4608,8 @@ used, disagreeing with <code>best_config</code> whenever the custom scorer was n
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">rag_evaluator</span><span class="p">(</span><span class="n">output</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">expected</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">context</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">object</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-    <span class="n">retrieved_docs</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;retrieved_docs&quot;</span><span class="p">,</span> <span class="p">[])</span>
-    <span class="n">context_text</span> <span class="o">=</span> <span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">doc</span><span class="p">)</span> <span class="k">for</span> <span class="n">doc</span> <span class="ow">in</span> <span class="n">retrieved_docs</span><span class="p">)</span>
+    <span class="n">retrieved_docs</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"retrieved_docs"</span><span class="p">,</span> <span class="p">[])</span>
+    <span class="n">context_text</span> <span class="o">=</span> <span class="s2">" "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">doc</span><span class="p">)</span> <span class="k">for</span> <span class="n">doc</span> <span class="ow">in</span> <span class="n">retrieved_docs</span><span class="p">)</span>
 
     <span class="n">answer_similarity</span> <span class="o">=</span> <span class="n">token_overlap</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">expected</span><span class="p">)</span>
     <span class="n">context_support</span> <span class="o">=</span> <span class="n">token_overlap</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">context_text</span><span class="p">)</span>
@@ -4620,7 +4620,7 @@ used, disagreeing with <code>best_config</code> whenever the custom scorer was n
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">sklearn.metrics</span><span class="w"> </span><span class="kn">import</span> <span class="n">f1_score</span><span class="p">,</span> <span class="n">precision_score</span><span class="p">,</span> <span class="n">recall_score</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">classification_evaluator</span><span class="p">(</span><span class="n">output</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">expected</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Multi-class classification evaluator&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Multi-class classification evaluator"""</span>
     <span class="c1"># Parse outputs</span>
     <span class="n">predicted_class</span> <span class="o">=</span> <span class="n">extract_class</span><span class="p">(</span><span class="n">output</span><span class="p">)</span>
     <span class="n">true_class</span> <span class="o">=</span> <span class="n">extract_class</span><span class="p">(</span><span class="n">expected</span><span class="p">)</span>
@@ -4633,10 +4633,10 @@ used, disagreeing with <code>best_config</code> whenever the custom scorer was n
     <span class="n">correct</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="n">predicted_class</span> <span class="o">==</span> <span class="n">true_class</span> <span class="k">else</span> <span class="mf">0.0</span>
 
     <span class="k">return</span> <span class="p">{</span>
-        <span class="s2">&quot;accuracy&quot;</span><span class="p">:</span> <span class="n">correct</span><span class="p">,</span>
-        <span class="s2">&quot;precision&quot;</span><span class="p">:</span> <span class="n">precision_score</span><span class="p">([</span><span class="n">true_class</span><span class="p">],</span> <span class="p">[</span><span class="n">predicted_class</span><span class="p">],</span> <span class="n">average</span><span class="o">=</span><span class="s1">&#39;weighted&#39;</span><span class="p">),</span>
-        <span class="s2">&quot;recall&quot;</span><span class="p">:</span> <span class="n">recall_score</span><span class="p">([</span><span class="n">true_class</span><span class="p">],</span> <span class="p">[</span><span class="n">predicted_class</span><span class="p">],</span> <span class="n">average</span><span class="o">=</span><span class="s1">&#39;weighted&#39;</span><span class="p">),</span>
-        <span class="s2">&quot;f1&quot;</span><span class="p">:</span> <span class="n">f1_score</span><span class="p">([</span><span class="n">true_class</span><span class="p">],</span> <span class="p">[</span><span class="n">predicted_class</span><span class="p">],</span> <span class="n">average</span><span class="o">=</span><span class="s1">&#39;weighted&#39;</span><span class="p">)</span>
+        <span class="s2">"accuracy"</span><span class="p">:</span> <span class="n">correct</span><span class="p">,</span>
+        <span class="s2">"precision"</span><span class="p">:</span> <span class="n">precision_score</span><span class="p">([</span><span class="n">true_class</span><span class="p">],</span> <span class="p">[</span><span class="n">predicted_class</span><span class="p">],</span> <span class="n">average</span><span class="o">=</span><span class="s1">'weighted'</span><span class="p">),</span>
+        <span class="s2">"recall"</span><span class="p">:</span> <span class="n">recall_score</span><span class="p">([</span><span class="n">true_class</span><span class="p">],</span> <span class="p">[</span><span class="n">predicted_class</span><span class="p">],</span> <span class="n">average</span><span class="o">=</span><span class="s1">'weighted'</span><span class="p">),</span>
+        <span class="s2">"f1"</span><span class="p">:</span> <span class="n">f1_score</span><span class="p">([</span><span class="n">true_class</span><span class="p">],</span> <span class="p">[</span><span class="n">predicted_class</span><span class="p">],</span> <span class="n">average</span><span class="o">=</span><span class="s1">'weighted'</span><span class="p">)</span>
     <span class="p">}</span>
 </code></pre></div>
 <h3 id="pattern-3-code-generation-evaluator">Pattern 3: Code Generation Evaluator<a class="headerlink" href="#pattern-3-code-generation-evaluator" title="Permanent link">&para;</a></h3>
@@ -4644,8 +4644,8 @@ used, disagreeing with <code>best_config</code> whenever the custom scorer was n
 <span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">code_evaluator</span><span class="p">(</span><span class="n">output</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">expected</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">context</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Evaluate generated code quality&quot;&quot;&quot;</span>
-    <span class="n">test_cases</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;test_cases&quot;</span><span class="p">,</span> <span class="p">[])</span>
+<span class="w">    </span><span class="sd">"""Evaluate generated code quality"""</span>
+    <span class="n">test_cases</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"test_cases"</span><span class="p">,</span> <span class="p">[])</span>
 
     <span class="c1"># Check syntax validity</span>
     <span class="k">try</span><span class="p">:</span>
@@ -4686,12 +4686,12 @@ Best accuracy: 0.00
    <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
 
 <span class="c1"># Check first line of dataset</span>
-<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;data/qa_samples.jsonl&quot;</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">"data/qa_samples.jsonl"</span><span class="p">,</span> <span class="s2">"r"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
     <span class="n">first_line</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">readline</span><span class="p">()</span>
     <span class="n">data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">first_line</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Keys: </span><span class="si">{</span><span class="n">data</span><span class="o">.</span><span class="n">keys</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Input: </span><span class="si">{</span><span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;input&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Expected: </span><span class="si">{</span><span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;expected_output&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Keys: </span><span class="si">{</span><span class="n">data</span><span class="o">.</span><span class="n">keys</span><span class="p">()</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Input: </span><span class="si">{</span><span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">'input'</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Expected: </span><span class="si">{</span><span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">'expected_output'</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </code></pre></div></p>
 </li>
 <li>
@@ -4705,15 +4705,15 @@ Best accuracy: 0.00
 <li>
 <p><strong>Use Custom Scoring Function</strong>
    <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">debug_scorer</span><span class="p">(</span><span class="n">output</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">expected</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Output: &#39;</span><span class="si">{</span><span class="n">output</span><span class="si">}</span><span class="s2">&#39;&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Expected: &#39;</span><span class="si">{</span><span class="n">expected</span><span class="si">}</span><span class="s2">&#39;&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Output: '</span><span class="si">{</span><span class="n">output</span><span class="si">}</span><span class="s2">'"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Expected: '</span><span class="si">{</span><span class="n">expected</span><span class="si">}</span><span class="s2">'"</span><span class="p">)</span>
     <span class="n">score</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="n">output</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="o">==</span> <span class="n">expected</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">else</span> <span class="mf">0.0</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Score: </span><span class="si">{</span><span class="n">score</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Score: </span><span class="si">{</span><span class="n">score</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">score</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">scoring_function</span><span class="o">=</span><span class="n">debug_scorer</span><span class="p">,</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"data.jsonl"</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div></p>
 </li>
@@ -4721,7 +4721,7 @@ Best accuracy: 0.00
 <p><strong>Enable Debug Mode</strong>
    <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">debug_evaluation</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>  <span class="c1"># Print detailed eval info</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data.jsonl&quot;</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"data.jsonl"</span>
 <span class="p">)</span>
 </code></pre></div></p>
 </li>
@@ -4740,7 +4740,7 @@ Best accuracy: 0.00
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">random_seed</span><span class="o">=</span><span class="mi">42</span><span class="p">,</span>  <span class="c1"># Deterministic optimization</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data.jsonl&quot;</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"data.jsonl"</span>
 <span class="p">)</span>
 </code></pre></div></p>
 </li>
@@ -4753,8 +4753,8 @@ Best accuracy: 0.00
 <li>
 <p><strong>Use Temperature=0 for Deterministic Output</strong>
    <div class="highlight"><pre><span></span><code><span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-    <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o&quot;</span><span class="p">],</span>
-    <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">]</span>  <span class="c1"># Deterministic</span>
+    <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">],</span>
+    <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">]</span>  <span class="c1"># Deterministic</span>
 <span class="p">}</span>
 </code></pre></div></p>
 </li>
@@ -4767,7 +4767,7 @@ Best accuracy: 0.00
    <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.evaluators.base</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dataset</span>
 
 <span class="c1"># Sample subset for faster evaluation</span>
-<span class="n">full_dataset</span> <span class="o">=</span> <span class="n">Dataset</span><span class="o">.</span><span class="n">from_jsonl</span><span class="p">(</span><span class="s2">&quot;large_dataset.jsonl&quot;</span><span class="p">)</span>
+<span class="n">full_dataset</span> <span class="o">=</span> <span class="n">Dataset</span><span class="o">.</span><span class="n">from_jsonl</span><span class="p">(</span><span class="s2">"large_dataset.jsonl"</span><span class="p">)</span>
 <span class="n">sample_dataset</span> <span class="o">=</span> <span class="n">full_dataset</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="n">n</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">random_state</span><span class="o">=</span><span class="mi">42</span><span class="p">)</span>
 </code></pre></div></p>
 </li>
@@ -4775,8 +4775,8 @@ Best accuracy: 0.00
 <p><strong>Enable Parallel Evaluation</strong>
    <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">parallel_config</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;example_concurrency&quot;</span><span class="p">:</span> <span class="mi">8</span><span class="p">,</span>  <span class="c1"># Evaluate 8 examples in parallel</span>
-        <span class="s2">&quot;trial_concurrency&quot;</span><span class="p">:</span> <span class="mi">4</span>     <span class="c1"># Run 4 trials in parallel</span>
+        <span class="s2">"example_concurrency"</span><span class="p">:</span> <span class="mi">8</span><span class="p">,</span>  <span class="c1"># Evaluate 8 examples in parallel</span>
+        <span class="s2">"trial_concurrency"</span><span class="p">:</span> <span class="mi">4</span>     <span class="c1"># Run 4 trials in parallel</span>
     <span class="p">}</span>
 <span class="p">)</span>
 </code></pre></div></p>
@@ -4795,7 +4795,7 @@ Best accuracy: 0.00
 <li>
 <p><strong>Use a Smaller Dataset Subset</strong>
    <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;large_dataset_subset.jsonl&quot;</span>  <span class="c1"># Use a representative subset</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"large_dataset_subset.jsonl"</span>  <span class="c1"># Use a representative subset</span>
 <span class="p">)</span>
 </code></pre></div></p>
 </li>
@@ -4803,7 +4803,7 @@ Best accuracy: 0.00
 <p><strong>Use Streaming Evaluation</strong>
    <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.evaluators.base</span><span class="w"> </span><span class="kn">import</span> <span class="n">StreamingDataset</span>
 
-<span class="n">dataset</span> <span class="o">=</span> <span class="n">StreamingDataset</span><span class="o">.</span><span class="n">from_jsonl</span><span class="p">(</span><span class="s2">&quot;large_dataset.jsonl&quot;</span><span class="p">)</span>
+<span class="n">dataset</span> <span class="o">=</span> <span class="n">StreamingDataset</span><span class="o">.</span><span class="n">from_jsonl</span><span class="p">(</span><span class="s2">"large_dataset.jsonl"</span><span class="p">)</span>
 </code></pre></div></p>
 </li>
 </ol>
@@ -4824,8 +4824,8 @@ Best accuracy: 0.00
 </ul>
 <h3 id="3-optimization-settings">3. Optimization Settings<a class="headerlink" href="#3-optimization-settings" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;validated_dataset.jsonl&quot;</span><span class="p">,</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">],</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"validated_dataset.jsonl"</span><span class="p">,</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">],</span>
 
     <span class="c1"># Use custom metrics (choose one approach):</span>
     <span class="c1"># Option 1: Single scoring function</span>
@@ -4833,8 +4833,8 @@ Best accuracy: 0.00
 
     <span class="c1"># Option 2: Multiple named metrics</span>
     <span class="n">metric_functions</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;accuracy&quot;</span><span class="p">:</span> <span class="n">accuracy_metric</span><span class="p">,</span>
-        <span class="s2">&quot;total_cost&quot;</span><span class="p">:</span> <span class="n">cost_metric</span><span class="p">,</span>
+        <span class="s2">"accuracy"</span><span class="p">:</span> <span class="n">accuracy_metric</span><span class="p">,</span>
+        <span class="s2">"total_cost"</span><span class="p">:</span> <span class="n">cost_metric</span><span class="p">,</span>
     <span class="p">},</span>
 
     <span class="c1"># Enable debugging during development</span>
@@ -4846,8 +4846,8 @@ Best accuracy: 0.00
 
     <span class="c1"># Enable parallel processing</span>
     <span class="n">parallel_config</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;example_concurrency&quot;</span><span class="p">:</span> <span class="mi">4</span><span class="p">,</span>
-        <span class="s2">&quot;trial_concurrency&quot;</span><span class="p">:</span> <span class="mi">2</span>
+        <span class="s2">"example_concurrency"</span><span class="p">:</span> <span class="mi">4</span><span class="p">,</span>
+        <span class="s2">"trial_concurrency"</span><span class="p">:</span> <span class="mi">2</span>
     <span class="p">}</span>
 <span class="p">)</span>
 </code></pre></div>

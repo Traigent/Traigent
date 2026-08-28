@@ -4399,34 +4399,34 @@
 <h3 id="disabling-the-feature-default">Disabling the Feature (Default)<a class="headerlink" href="#disabling-the-feature-default" title="Permanent link">&para;</a></h3>
 <p>The feature is disabled by default for backward compatibility:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_STRICT_METRICS_NULLS</span><span class="o">=</span><span class="nb">false</span>
-<span class="c1"># Or simply don&#39;t set the variable</span>
+<span class="c1"># Or simply don't set the variable</span>
 </code></pre></div>
 <h2 id="behavior-comparison">Behavior Comparison<a class="headerlink" href="#behavior-comparison" title="Permanent link">&para;</a></h2>
 <h3 id="json-output-with-flag-disabled-default">JSON Output with Flag Disabled (Default)<a class="headerlink" href="#json-output-with-flag-disabled-default" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;accuracy&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;score&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;duration&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;input_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;output_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;total_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;response_time_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span>
+<span class="w">  </span><span class="nt">"metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"accuracy"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"score"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"duration"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"input_tokens"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"output_tokens"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"total_tokens"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"response_time_ms"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"cost"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
 <h3 id="json-output-with-flag-enabled">JSON Output with Flag Enabled<a class="headerlink" href="#json-output-with-flag-enabled" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;accuracy&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;score&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;duration&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;input_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;output_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;total_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;response_time_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span>
+<span class="w">  </span><span class="nt">"metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"accuracy"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"score"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"duration"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"input_tokens"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"output_tokens"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"total_tokens"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"response_time_ms"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"cost"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
@@ -4470,12 +4470,12 @@
 <li>
 <p><strong>Update code that expects numeric values</strong>:
    <div class="highlight"><pre><span></span><code><span class="c1"># Before (assumes numeric)</span>
-<span class="k">if</span> <span class="n">metrics</span><span class="p">[</span><span class="s2">&quot;cost&quot;</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
-    <span class="n">process_cost</span><span class="p">(</span><span class="n">metrics</span><span class="p">[</span><span class="s2">&quot;cost&quot;</span><span class="p">])</span>
+<span class="k">if</span> <span class="n">metrics</span><span class="p">[</span><span class="s2">"cost"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="n">process_cost</span><span class="p">(</span><span class="n">metrics</span><span class="p">[</span><span class="s2">"cost"</span><span class="p">])</span>
 
 <span class="c1"># After (handles None)</span>
-<span class="k">if</span> <span class="n">metrics</span><span class="p">[</span><span class="s2">&quot;cost&quot;</span><span class="p">]</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">metrics</span><span class="p">[</span><span class="s2">&quot;cost&quot;</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
-    <span class="n">process_cost</span><span class="p">(</span><span class="n">metrics</span><span class="p">[</span><span class="s2">&quot;cost&quot;</span><span class="p">])</span>
+<span class="k">if</span> <span class="n">metrics</span><span class="p">[</span><span class="s2">"cost"</span><span class="p">]</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">metrics</span><span class="p">[</span><span class="s2">"cost"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="n">process_cost</span><span class="p">(</span><span class="n">metrics</span><span class="p">[</span><span class="s2">"cost"</span><span class="p">])</span>
 </code></pre></div></p>
 </li>
 <li>
@@ -4516,7 +4516,7 @@
 </li>
 <li>
 <p><strong>Use default values explicitly</strong> when needed:
-   <div class="highlight"><pre><span></span><code><span class="n">cost</span> <span class="o">=</span> <span class="n">metrics</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;cost&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="mf">0.0</span>  <span class="c1"># Explicit default</span>
+   <div class="highlight"><pre><span></span><code><span class="n">cost</span> <span class="o">=</span> <span class="n">metrics</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"cost"</span><span class="p">)</span> <span class="ow">or</span> <span class="mf">0.0</span>  <span class="c1"># Explicit default</span>
 </code></pre></div></p>
 </li>
 <li>
@@ -4529,12 +4529,12 @@
 <li>
 <p><strong>Document expected behavior</strong> in your code:
    <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">process_metrics</span><span class="p">(</span><span class="n">metrics</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""</span>
 <span class="sd">    Process metrics dictionary.</span>
 
 <span class="sd">    Note: With TRAIGENT_STRICT_METRICS_NULLS=true,</span>
 <span class="sd">    missing metrics will be None instead of 0.0</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
 </code></pre></div></p>
 </li>
 </ol>
@@ -4544,8 +4544,8 @@
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">handle_metric</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
     <span class="c1"># Works with both 0.0 and None</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">value</span><span class="p">:</span>  <span class="c1"># Covers both 0.0 and None</span>
-        <span class="k">return</span> <span class="s2">&quot;No data&quot;</span>
-    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Value: </span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">return</span> <span class="s2">"No data"</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">"Value: </span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">"</span>
 </code></pre></div></p>
 <h2 id="performance-impact">Performance Impact<a class="headerlink" href="#performance-impact" title="Permanent link">&para;</a></h2>
 <p>Minimal performance impact:
@@ -4564,7 +4564,7 @@
 <h3 id="unexpected-none-values">Unexpected None values<a class="headerlink" href="#unexpected-none-values" title="Permanent link">&para;</a></h3>
 <p><strong>Check</strong>: Ensure the flag is set correctly:
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
-<span class="nb">print</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;TRAIGENT_STRICT_METRICS_NULLS&quot;</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"TRAIGENT_STRICT_METRICS_NULLS"</span><span class="p">))</span>
 </code></pre></div></p>
 <h2 id="related-configuration">Related Configuration<a class="headerlink" href="#related-configuration" title="Permanent link">&para;</a></h2>
 <p>Other Traigent configuration options that work well with strict nulls:

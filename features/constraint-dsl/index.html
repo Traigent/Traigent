@@ -5375,16 +5375,16 @@ used for runtime validation. This DSL module (<code>traigent.api.constraints</co
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent</span><span class="w"> </span><span class="kn">import</span> <span class="n">Range</span><span class="p">,</span> <span class="n">Choices</span><span class="p">,</span> <span class="n">implies</span><span class="p">,</span> <span class="n">when</span>
 
 <span class="n">temperature</span> <span class="o">=</span> <span class="n">Range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">)</span>
-<span class="n">model</span> <span class="o">=</span> <span class="n">Choices</span><span class="p">([</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-3.5-turbo&quot;</span><span class="p">])</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">Choices</span><span class="p">([</span><span class="s2">"gpt-4"</span><span class="p">,</span> <span class="s2">"gpt-3.5-turbo"</span><span class="p">])</span>
 
 <span class="c1"># 1. Functional style (canonical, explicit)</span>
-<span class="n">implies</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">),</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))</span>
+<span class="n">implies</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">),</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))</span>
 
 <span class="c1"># 2. Operator style (concise, formula-like)</span>
-<span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">)</span>
 
 <span class="c1"># 3. Fluent style (readable)</span>
-<span class="n">when</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))</span>
+<span class="n">when</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">))</span><span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))</span>
 </code></pre></div>
 <p>All three produce semantically identical <code>Constraint</code> objects.</p>
 <hr />
@@ -5407,17 +5407,17 @@ used for runtime validation. This DSL module (<code>traigent.api.constraints</co
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <h3 id="problem">Problem<a class="headerlink" href="#problem" title="Permanent link">&para;</a></h3>
 <p>The original constraint API used a functional style:</p>
-<div class="highlight"><pre><span></span><code><span class="n">implies</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">),</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))</span>
+<div class="highlight"><pre><span></span><code><span class="n">implies</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">),</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))</span>
 </code></pre></div>
 <p>While explicit, this becomes cumbersome for complex constraints:</p>
 <div class="highlight"><pre><span></span><code><span class="n">implies</span><span class="p">(</span>
-    <span class="n">and_</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">),</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)),</span>
+    <span class="n">and_</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">),</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)),</span>
     <span class="n">or_</span><span class="p">(</span><span class="n">max_tokens</span><span class="o">.</span><span class="n">gte</span><span class="p">(</span><span class="mi">1000</span><span class="p">),</span> <span class="n">top_p</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="mf">1.0</span><span class="p">))</span>
 <span class="p">)</span>
 </code></pre></div>
 <h3 id="solution">Solution<a class="headerlink" href="#solution" title="Permanent link">&para;</a></h3>
 <p>A formula-style DSL using Python operators:</p>
-<div class="highlight"><pre><span></span><code><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.5</span><span class="p">))</span> <span class="o">&gt;&gt;</span> <span class="p">(</span><span class="n">max_tokens</span><span class="o">.</span><span class="n">gte</span><span class="p">(</span><span class="mi">1000</span><span class="p">)</span> <span class="o">|</span> <span class="n">top_p</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="mf">1.0</span><span class="p">))</span>
+<div class="highlight"><pre><span></span><code><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.5</span><span class="p">))</span> <span class="o">&gt;&gt;</span> <span class="p">(</span><span class="n">max_tokens</span><span class="o">.</span><span class="n">gte</span><span class="p">(</span><span class="mi">1000</span><span class="p">)</span> <span class="o">|</span> <span class="n">top_p</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="mf">1.0</span><span class="p">))</span>
 </code></pre></div>
 <p>This is:
 - <strong>More readable</strong>: Resembles mathematical/logical notation
@@ -5571,19 +5571,19 @@ used for runtime validation. This DSL module (<code>traigent.api.constraints</co
     <span class="k">def</span><span class="w"> </span><span class="nf">evaluate_config</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="n">var_names</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__rshift__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">BoolExpr</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Constraint</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;A &gt;&gt; B creates Constraint(when=A, then=B)&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""A &gt;&gt; B creates Constraint(when=A, then=B)"""</span>
         <span class="k">return</span> <span class="n">Constraint</span><span class="p">(</span><span class="n">when</span><span class="o">=</span><span class="bp">self</span><span class="p">,</span> <span class="n">then</span><span class="o">=</span><span class="n">other</span><span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__and__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">BoolExpr</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AndCondition</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;A &amp; B creates AndCondition((A, B))&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""A &amp; B creates AndCondition((A, B))"""</span>
         <span class="k">return</span> <span class="n">AndCondition</span><span class="p">((</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">))</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__or__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">BoolExpr</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">OrCondition</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;A | B creates OrCondition((A, B))&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""A | B creates OrCondition((A, B))"""</span>
         <span class="k">return</span> <span class="n">OrCondition</span><span class="p">((</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">))</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__invert__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">NotCondition</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;~A creates NotCondition(A)&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""~A creates NotCondition(A)"""</span>
         <span class="k">return</span> <span class="n">NotCondition</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="condition">Condition<a class="headerlink" href="#condition" title="Permanent link">&para;</a></h3>
@@ -5619,7 +5619,7 @@ used for runtime validation. This DSL module (<code>traigent.api.constraints</co
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent</span><span class="w"> </span><span class="kn">import</span> <span class="n">implies</span><span class="p">,</span> <span class="n">require</span>
 
 <span class="c1"># Implication: if model is gpt-4, then temperature must be &lt;= 0.7</span>
-<span class="n">implies</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">),</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))</span>
+<span class="n">implies</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">),</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))</span>
 
 <span class="c1"># Requirement: temperature must always be &lt;= 1.5</span>
 <span class="n">require</span><span class="p">(</span><span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">1.5</span><span class="p">))</span>
@@ -5631,16 +5631,16 @@ used for runtime validation. This DSL module (<code>traigent.api.constraints</co
 <h3 id="2-operator-style-formula">2. Operator Style (Formula)<a class="headerlink" href="#2-operator-style-formula" title="Permanent link">&para;</a></h3>
 <p>Concise notation using Python operators:</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># Implication using &gt;&gt;</span>
-<span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">)</span>
 
 <span class="c1"># Combined conditions</span>
-<span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.5</span><span class="p">))</span> <span class="o">&gt;&gt;</span> <span class="n">max_tokens</span><span class="o">.</span><span class="n">gte</span><span class="p">(</span><span class="mi">1000</span><span class="p">)</span>
+<span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.5</span><span class="p">))</span> <span class="o">&gt;&gt;</span> <span class="n">max_tokens</span><span class="o">.</span><span class="n">gte</span><span class="p">(</span><span class="mi">1000</span><span class="p">)</span>
 
 <span class="c1"># Negation</span>
-<span class="o">~</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">gte</span><span class="p">(</span><span class="mf">0.8</span><span class="p">)</span>
+<span class="o">~</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">gte</span><span class="p">(</span><span class="mf">0.8</span><span class="p">)</span>
 
 <span class="c1"># Disjunction</span>
-<span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="p">(</span><span class="n">top_p</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">|</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.5</span><span class="p">))</span>
+<span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="p">(</span><span class="n">top_p</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">|</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.5</span><span class="p">))</span>
 </code></pre></div>
 <p><strong>When to use</strong>:
 - Complex constraints with multiple conditions
@@ -5650,10 +5650,10 @@ used for runtime validation. This DSL module (<code>traigent.api.constraints</co
 <p>Natural-language-like API using <code>when().then()</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent</span><span class="w"> </span><span class="kn">import</span> <span class="n">when</span>
 
-<span class="n">when</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))</span>
+<span class="n">when</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">))</span><span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))</span>
 
 <span class="c1"># Also supports .implies() method</span>
-<span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">implies</span><span class="p">(</span><span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))</span>
+<span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span><span class="o">.</span><span class="n">implies</span><span class="p">(</span><span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))</span>
 </code></pre></div>
 <p><strong>When to use</strong>:
 - Maximum readability
@@ -5663,34 +5663,34 @@ used for runtime validation. This DSL module (<code>traigent.api.constraints</co
 <h2 id="operators-combinators">Operators &amp; Combinators<a class="headerlink" href="#operators-combinators" title="Permanent link">&para;</a></h2>
 <h3 id="implication">Implication (<code>&gt;&gt;</code>)<a class="headerlink" href="#implication" title="Permanent link">&para;</a></h3>
 <p>"If A then B" - when A is true, B must also be true:</p>
-<div class="highlight"><pre><span></span><code><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">)</span>
-<span class="c1"># Semantics: not(model == &quot;gpt-4&quot;) or (temperature &lt;= 0.7)</span>
+<div class="highlight"><pre><span></span><code><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">)</span>
+<span class="c1"># Semantics: not(model == "gpt-4") or (temperature &lt;= 0.7)</span>
 </code></pre></div>
 <h3 id="conjunction">Conjunction (<code>&amp;</code>)<a class="headerlink" href="#conjunction" title="Permanent link">&para;</a></h3>
 <p>"A and B" - both must be true:</p>
-<div class="highlight"><pre><span></span><code><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">)</span>
 <span class="c1"># Creates AndCondition, can be used in larger expressions</span>
 </code></pre></div>
 <h3 id="disjunction">Disjunction (<code>|</code>)<a class="headerlink" href="#disjunction" title="Permanent link">&para;</a></h3>
 <p>"A or B" - at least one must be true:</p>
-<div class="highlight"><pre><span></span><code><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">|</span> <span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span> <span class="o">|</span> <span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4o"</span><span class="p">)</span>
 <span class="c1"># Creates OrCondition</span>
 </code></pre></div>
 <h3 id="negation">Negation (<code>~</code>)<a class="headerlink" href="#negation" title="Permanent link">&para;</a></h3>
 <p>"not A" - A must be false:</p>
-<div class="highlight"><pre><span></span><code><span class="o">~</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="o">~</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span>
 <span class="c1"># Creates NotCondition</span>
 </code></pre></div>
 <h3 id="combining-operators">Combining Operators<a class="headerlink" href="#combining-operators" title="Permanent link">&para;</a></h3>
 <p>Build complex constraints by combining operators:</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># If using gpt-4 AND low temperature, then require high max_tokens</span>
-<span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.5</span><span class="p">))</span> <span class="o">&gt;&gt;</span> <span class="n">max_tokens</span><span class="o">.</span><span class="n">gte</span><span class="p">(</span><span class="mi">1000</span><span class="p">)</span>
+<span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.5</span><span class="p">))</span> <span class="o">&gt;&gt;</span> <span class="n">max_tokens</span><span class="o">.</span><span class="n">gte</span><span class="p">(</span><span class="mi">1000</span><span class="p">)</span>
 
 <span class="c1"># If NOT using gpt-4, allow any temperature</span>
-<span class="o">~</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">in_range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">)</span>
+<span class="o">~</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">in_range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">)</span>
 
 <span class="c1"># Model must be either gpt-4 or gpt-4o when temperature is high</span>
-<span class="n">temperature</span><span class="o">.</span><span class="n">gt</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">|</span> <span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">))</span>
+<span class="n">temperature</span><span class="o">.</span><span class="n">gt</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span> <span class="o">|</span> <span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4o"</span><span class="p">))</span>
 </code></pre></div>
 <hr />
 <h2 id="operator-precedence">Operator Precedence<a class="headerlink" href="#operator-precedence" title="Permanent link">&para;</a></h2>
@@ -5707,10 +5707,10 @@ used for runtime validation. This DSL module (<code>traigent.api.constraints</co
 <p>Worse: since <code>b &gt;&gt; c</code> returns a <code>Constraint</code> (not a <code>BoolExpr</code>), the expression <code>a &amp; &lt;Constraint&gt;</code> will raise a <strong>TypeError</strong>.</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># WRONG: This raises TypeError because (temp.lte(0.5) &gt;&gt; max_tokens.gte(1000))</span>
 <span class="c1"># returns a Constraint, and Condition &amp; Constraint is not supported.</span>
-<span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">max_tokens</span><span class="o">.</span><span class="n">gte</span><span class="p">(</span><span class="mi">1000</span><span class="p">)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">max_tokens</span><span class="o">.</span><span class="n">gte</span><span class="p">(</span><span class="mi">1000</span><span class="p">)</span>
 
 <span class="c1"># CORRECT: Use parentheses</span>
-<span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.5</span><span class="p">))</span> <span class="o">&gt;&gt;</span> <span class="n">max_tokens</span><span class="o">.</span><span class="n">gte</span><span class="p">(</span><span class="mi">1000</span><span class="p">)</span>
+<span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.5</span><span class="p">))</span> <span class="o">&gt;&gt;</span> <span class="n">max_tokens</span><span class="o">.</span><span class="n">gte</span><span class="p">(</span><span class="mi">1000</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="rule-of-thumb">Rule of Thumb<a class="headerlink" href="#rule-of-thumb" title="Permanent link">&para;</a></h3>
 <p><strong>Always use parentheses around compound conditions:</strong></p>
@@ -5730,7 +5730,7 @@ used for runtime validation. This DSL module (<code>traigent.api.constraints</co
 <h3 id="functions">Functions<a class="headerlink" href="#functions" title="Permanent link">&para;</a></h3>
 <h4 id="implieswhen-boolexpr-then-boolexpr-constraint"><code>implies(when: BoolExpr, then: BoolExpr) -&gt; Constraint</code><a class="headerlink" href="#implieswhen-boolexpr-then-boolexpr-constraint" title="Permanent link">&para;</a></h4>
 <p>Create an implication constraint.</p>
-<div class="highlight"><pre><span></span><code><span class="n">implies</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">),</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))</span>
+<div class="highlight"><pre><span></span><code><span class="n">implies</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">),</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))</span>
 </code></pre></div>
 <h4 id="requireexpr-boolexpr-constraint"><code>require(expr: BoolExpr) -&gt; Constraint</code><a class="headerlink" href="#requireexpr-boolexpr-constraint" title="Permanent link">&para;</a></h4>
 <p>Create an unconditional requirement.</p>
@@ -5738,14 +5738,14 @@ used for runtime validation. This DSL module (<code>traigent.api.constraints</co
 </code></pre></div>
 <h4 id="whencondition-boolexpr-whenbuilder"><code>when(condition: BoolExpr) -&gt; WhenBuilder</code><a class="headerlink" href="#whencondition-boolexpr-whenbuilder" title="Permanent link">&para;</a></h4>
 <p>Start a fluent constraint builder.</p>
-<div class="highlight"><pre><span></span><code><span class="n">when</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))</span>
+<div class="highlight"><pre><span></span><code><span class="n">when</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">))</span><span class="o">.</span><span class="n">then</span><span class="p">(</span><span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))</span>
 </code></pre></div>
 <h4 id="normalize_constraintsconstraints-list-var_names-dictint-str-none-none-listcallable"><code>normalize_constraints(constraints: list, var_names: dict[int, str] | None = None) -&gt; list[Callable]</code><a class="headerlink" href="#normalize_constraintsconstraints-list-var_names-dictint-str-none-none-listcallable" title="Permanent link">&para;</a></h4>
 <p>Normalize a mixed list of constraints, callables, and bare <code>BoolExpr</code> into callable constraint functions.</p>
 <div class="highlight"><pre><span></span><code><span class="n">constraints</span> <span class="o">=</span> <span class="n">normalize_constraints</span><span class="p">([</span>
     <span class="n">implies</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">),</span>        <span class="c1"># Already a Constraint -&gt; to_callable()</span>
     <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">),</span>        <span class="c1"># Bare BoolExpr → wrapped in Constraint</span>
-    <span class="k">lambda</span> <span class="n">cfg</span><span class="p">:</span> <span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;x&quot;</span><span class="p">],</span> <span class="c1"># Callable → passed through unchanged</span>
+    <span class="k">lambda</span> <span class="n">cfg</span><span class="p">:</span> <span class="n">cfg</span><span class="p">[</span><span class="s2">"x"</span><span class="p">],</span> <span class="c1"># Callable → passed through unchanged</span>
 <span class="p">])</span>
 </code></pre></div>
 <p>Note: For Constraint/BoolExpr inputs, either set the <code>name</code> on your Range/Choices/IntRange
@@ -5754,19 +5754,19 @@ objects or pass an explicit <code>var_names</code> mapping so config keys can be
 <p>Convert a list of <code>Constraint</code> objects into callables for the decorator.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent</span><span class="w"> </span><span class="kn">import</span> <span class="n">Choices</span><span class="p">,</span> <span class="n">Range</span><span class="p">,</span> <span class="n">constraints_to_callables</span><span class="p">,</span> <span class="n">implies</span>
 
-<span class="n">model</span> <span class="o">=</span> <span class="n">Choices</span><span class="p">([</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-3.5&quot;</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;model&quot;</span><span class="p">)</span>
-<span class="n">temp</span> <span class="o">=</span> <span class="n">Range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;temperature&quot;</span><span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">Choices</span><span class="p">([</span><span class="s2">"gpt-4"</span><span class="p">,</span> <span class="s2">"gpt-3.5"</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">"model"</span><span class="p">)</span>
+<span class="n">temp</span> <span class="o">=</span> <span class="n">Range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"temperature"</span><span class="p">)</span>
 
 <span class="n">constraint_fns</span> <span class="o">=</span> <span class="n">constraints_to_callables</span><span class="p">([</span>
-    <span class="n">implies</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">),</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">)),</span>
+    <span class="n">implies</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">),</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">)),</span>
 <span class="p">])</span>
 </code></pre></div>
 <p>Note: Like <code>normalize_constraints</code>, this relies on parameter names (or <code>var_names</code>).</p>
 <h3 id="classes">Classes<a class="headerlink" href="#classes" title="Permanent link">&para;</a></h3>
 <h4 id="conditionboolexpr"><code>Condition(BoolExpr)</code><a class="headerlink" href="#conditionboolexpr" title="Permanent link">&para;</a></h4>
 <p>Atomic boolean expression. Created via <code>ParameterRange</code> builder methods:</p>
-<div class="highlight"><pre><span></span><code><span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">)</span>       <span class="c1"># Condition(tvar=temp, operator=&quot;&lt;=&quot;, value=0.7)</span>
-<span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;x&quot;</span><span class="p">)</span>   <span class="c1"># Condition(tvar=model, operator=&quot;==&quot;, value=&quot;x&quot;)</span>
+<div class="highlight"><pre><span></span><code><span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">)</span>       <span class="c1"># Condition(tvar=temp, operator="&lt;=", value=0.7)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"x"</span><span class="p">)</span>   <span class="c1"># Condition(tvar=model, operator="==", value="x")</span>
 </code></pre></div>
 <h4 id="andconditionboolexpr"><code>AndCondition(BoolExpr)</code><a class="headerlink" href="#andconditionboolexpr" title="Permanent link">&para;</a></h4>
 <p>Conjunction of multiple expressions (stored as tuple):</p>
@@ -5851,7 +5851,7 @@ objects or pass an explicit <code>var_names</code> mapping so config keys can be
 <h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>┌─────────────────────────────────────────────────────────────┐
 │                      User Code                              │
-│  model.equals(&quot;gpt-4&quot;) &gt;&gt; temp.lte(0.7)                    │
+│  model.equals("gpt-4") &gt;&gt; temp.lte(0.7)                    │
 └───────────────────────────┬─────────────────────────────────┘
                             │
                             ▼
@@ -5897,19 +5897,19 @@ objects or pass an explicit <code>var_names</code> mapping so config keys can be
 <span class="c1"># Define parameter ranges</span>
 <span class="n">temperature</span> <span class="o">=</span> <span class="n">Range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">)</span>
 <span class="n">max_tokens</span> <span class="o">=</span> <span class="n">IntRange</span><span class="p">(</span><span class="mi">100</span><span class="p">,</span> <span class="mi">4096</span><span class="p">)</span>
-<span class="n">model</span> <span class="o">=</span> <span class="n">Choices</span><span class="p">([</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-3.5-turbo&quot;</span><span class="p">])</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">Choices</span><span class="p">([</span><span class="s2">"gpt-4"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">,</span> <span class="s2">"gpt-3.5-turbo"</span><span class="p">])</span>
 <span class="n">top_p</span> <span class="o">=</span> <span class="n">Range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
 
 <span class="c1"># Define constraints</span>
 <span class="n">constraints</span> <span class="o">=</span> <span class="p">[</span>
     <span class="c1"># GPT-4 requires lower temperature</span>
-    <span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">),</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">),</span>
 
     <span class="c1"># High temperature requires top_p = 1.0</span>
     <span class="n">temperature</span><span class="o">.</span><span class="n">gt</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">top_p</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="mf">1.0</span><span class="p">),</span>
 
     <span class="c1"># GPT-3.5 with low temp needs more tokens</span>
-    <span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-3.5-turbo&quot;</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.3</span><span class="p">))</span> <span class="o">&gt;&gt;</span> <span class="n">max_tokens</span><span class="o">.</span><span class="n">gte</span><span class="p">(</span><span class="mi">2000</span><span class="p">),</span>
+    <span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-3.5-turbo"</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.3</span><span class="p">))</span> <span class="o">&gt;&gt;</span> <span class="n">max_tokens</span><span class="o">.</span><span class="n">gte</span><span class="p">(</span><span class="mi">2000</span><span class="p">),</span>
 
     <span class="c1"># Global requirement</span>
     <span class="n">require</span><span class="p">(</span><span class="n">max_tokens</span><span class="o">.</span><span class="n">gte</span><span class="p">(</span><span class="mi">100</span><span class="p">)),</span>
@@ -5918,7 +5918,7 @@ objects or pass an explicit <code>var_names</code> mapping so config keys can be
 <h3 id="complex-compound-constraints">Complex Compound Constraints<a class="headerlink" href="#complex-compound-constraints" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="c1"># Premium models with conservative settings need high token limits</span>
 <span class="p">(</span>
-    <span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">|</span> <span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">))</span>
+    <span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span> <span class="o">|</span> <span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4o"</span><span class="p">))</span>
     <span class="o">&amp;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
     <span class="o">&amp;</span> <span class="n">top_p</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.9</span><span class="p">)</span>
 <span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">max_tokens</span><span class="o">.</span><span class="n">gte</span><span class="p">(</span><span class="mi">2000</span><span class="p">)</span>
@@ -5927,26 +5927,26 @@ objects or pass an explicit <code>var_names</code> mapping so config keys can be
 <span class="o">~</span><span class="p">(</span><span class="n">temperature</span><span class="o">.</span><span class="n">gt</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">top_p</span><span class="o">.</span><span class="n">gt</span><span class="p">(</span><span class="mf">0.9</span><span class="p">))</span>
 
 <span class="c1"># If NOT using gpt-4, then allow creative settings</span>
-<span class="o">~</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="p">(</span><span class="n">temperature</span><span class="o">.</span><span class="n">gt</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">|</span> <span class="n">top_p</span><span class="o">.</span><span class="n">gt</span><span class="p">(</span><span class="mf">0.9</span><span class="p">))</span>
+<span class="o">~</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="p">(</span><span class="n">temperature</span><span class="o">.</span><span class="n">gt</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">|</span> <span class="n">top_p</span><span class="o">.</span><span class="n">gt</span><span class="p">(</span><span class="mf">0.9</span><span class="p">))</span>
 </code></pre></div>
 <h3 id="in-decorator">In Decorator<a class="headerlink" href="#in-decorator" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent</span><span class="w"> </span><span class="kn">import</span> <span class="n">optimize</span><span class="p">,</span> <span class="n">Range</span><span class="p">,</span> <span class="n">Choices</span><span class="p">,</span> <span class="n">get_config</span>
 
 <span class="n">temperature</span> <span class="o">=</span> <span class="n">Range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">)</span>
-<span class="n">model</span> <span class="o">=</span> <span class="n">Choices</span><span class="p">([</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-3.5-turbo&quot;</span><span class="p">])</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">Choices</span><span class="p">([</span><span class="s2">"gpt-4"</span><span class="p">,</span> <span class="s2">"gpt-3.5-turbo"</span><span class="p">])</span>
 
 <span class="nd">@optimize</span><span class="p">(</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="n">temperature</span><span class="p">,</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="n">model</span><span class="p">,</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="n">temperature</span><span class="p">,</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="n">model</span><span class="p">,</span>
     <span class="p">},</span>
     <span class="n">constraints</span><span class="o">=</span><span class="p">[</span>
-        <span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">),</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">temperature</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">),</span>
     <span class="p">],</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_llm_call</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">get_config</span><span class="p">()</span>
-    <span class="k">return</span> <span class="n">call_model</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">],</span> <span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">call_model</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">],</span> <span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">"model"</span><span class="p">])</span>
 </code></pre></div>
 <hr />
 <h2 id="testing">Testing<a class="headerlink" href="#testing" title="Permanent link">&para;</a></h2>
@@ -6036,28 +6036,28 @@ objects or pass an explicit <code>var_names</code> mapping so config keys can be
 <p>Every <code>BoolExpr</code> and <code>Constraint</code> has an <code>explain()</code> method that returns a human-readable description:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent</span><span class="w"> </span><span class="kn">import</span> <span class="n">Range</span><span class="p">,</span> <span class="n">Choices</span><span class="p">,</span> <span class="n">implies</span><span class="p">,</span> <span class="n">require</span>
 
-<span class="n">model</span> <span class="o">=</span> <span class="n">Choices</span><span class="p">([</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-3.5&quot;</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;model&quot;</span><span class="p">)</span>
-<span class="n">temp</span> <span class="o">=</span> <span class="n">Range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;temperature&quot;</span><span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">Choices</span><span class="p">([</span><span class="s2">"gpt-4"</span><span class="p">,</span> <span class="s2">"gpt-3.5"</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">"model"</span><span class="p">)</span>
+<span class="n">temp</span> <span class="o">=</span> <span class="n">Range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"temperature"</span><span class="p">)</span>
 
 <span class="c1"># Explain a condition</span>
 <span class="n">cond</span> <span class="o">=</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">cond</span><span class="o">.</span><span class="n">explain</span><span class="p">())</span>
-<span class="c1"># Output: &quot;temperature is at most 0.7&quot;</span>
+<span class="c1"># Output: "temperature is at most 0.7"</span>
 
 <span class="c1"># Explain a compound condition</span>
-<span class="n">compound</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
+<span class="n">compound</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">compound</span><span class="o">.</span><span class="n">explain</span><span class="p">())</span>
-<span class="c1"># Output: &quot;model equals &#39;gpt-4&#39; AND temperature is at most 0.5&quot;</span>
+<span class="c1"># Output: "model equals 'gpt-4' AND temperature is at most 0.5"</span>
 
 <span class="c1"># Explain a full constraint</span>
-<span class="n">c</span> <span class="o">=</span> <span class="n">implies</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">),</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))</span>
+<span class="n">c</span> <span class="o">=</span> <span class="n">implies</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">equals</span><span class="p">(</span><span class="s2">"gpt-4"</span><span class="p">),</span> <span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.7</span><span class="p">))</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">explain</span><span class="p">())</span>
-<span class="c1"># Output: &quot;IF model equals &#39;gpt-4&#39; THEN temperature is at most 0.7&quot;</span>
+<span class="c1"># Output: "IF model equals 'gpt-4' THEN temperature is at most 0.7"</span>
 
 <span class="c1"># Explain a requirement</span>
 <span class="n">r</span> <span class="o">=</span> <span class="n">require</span><span class="p">(</span><span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">1.5</span><span class="p">))</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">explain</span><span class="p">())</span>
-<span class="c1"># Output: &quot;REQUIRE: temperature is at most 1.5&quot;</span>
+<span class="c1"># Output: "REQUIRE: temperature is at most 1.5"</span>
 </code></pre></div>
 <h3 id="constraint-conflict-detection">Constraint Conflict Detection<a class="headerlink" href="#constraint-conflict-detection" title="Permanent link">&para;</a></h3>
 <p>When constraints cannot be satisfied together, use <code>check_constraints_conflict()</code> and <code>explain_constraint_violation()</code> to diagnose issues:</p>
@@ -6070,9 +6070,9 @@ representative sample configs and ensure parameter names line up with config key
     <span class="n">explain_constraint_violation</span><span class="p">,</span>
 <span class="p">)</span>
 
-<span class="n">temp</span> <span class="o">=</span> <span class="n">Range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;temperature&quot;</span><span class="p">)</span>
+<span class="n">temp</span> <span class="o">=</span> <span class="n">Range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"temperature"</span><span class="p">)</span>
 
-<span class="c1"># These constraints conflict - temperature can&#39;t be both &lt;= 0.5 AND &gt;= 0.8</span>
+<span class="c1"># These constraints conflict - temperature can't be both &lt;= 0.5 AND &gt;= 0.8</span>
 <span class="n">c1</span> <span class="o">=</span> <span class="n">require</span><span class="p">(</span><span class="n">temp</span><span class="o">.</span><span class="n">lte</span><span class="p">(</span><span class="mf">0.5</span><span class="p">))</span>
 <span class="n">c2</span> <span class="o">=</span> <span class="n">require</span><span class="p">(</span><span class="n">temp</span><span class="o">.</span><span class="n">gte</span><span class="p">(</span><span class="mf">0.8</span><span class="p">))</span>
 
@@ -6080,9 +6080,9 @@ representative sample configs and ensure parameter names line up with config key
 <span class="n">conflict</span> <span class="o">=</span> <span class="n">check_constraints_conflict</span><span class="p">(</span>
     <span class="p">[</span><span class="n">c1</span><span class="p">,</span> <span class="n">c2</span><span class="p">],</span>
     <span class="n">sample_configs</span><span class="o">=</span><span class="p">[</span>
-        <span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">},</span>
-        <span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.6</span><span class="p">},</span>
-        <span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.9</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.6</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.9</span><span class="p">},</span>
     <span class="p">]</span>
 <span class="p">)</span>
 
@@ -6094,11 +6094,11 @@ representative sample configs and ensure parameter names line up with config key
     <span class="c1">#       Violated: REQUIRE: temperature is at most 0.5</span>
     <span class="c1">#   [2] REQUIRE: temperature is at least 0.8</span>
     <span class="c1">#       Violated: REQUIRE: temperature is at least 0.8</span>
-    <span class="c1">#   Sample config: {&#39;temperature&#39;: 0.6}</span>
+    <span class="c1">#   Sample config: {'temperature': 0.6}</span>
 </code></pre></div>
 <h3 id="explaining-individual-violations">Explaining Individual Violations<a class="headerlink" href="#explaining-individual-violations" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="c1"># Check why a specific config violates a constraint</span>
-<span class="n">msg</span> <span class="o">=</span> <span class="n">explain_constraint_violation</span><span class="p">(</span><span class="n">c1</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.9</span><span class="p">})</span>
+<span class="n">msg</span> <span class="o">=</span> <span class="n">explain_constraint_violation</span><span class="p">(</span><span class="n">c1</span><span class="p">,</span> <span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.9</span><span class="p">})</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
 <span class="c1"># Output:</span>
 <span class="c1"># Constraint violated: REQUIRE: temperature is at most 0.5</span>

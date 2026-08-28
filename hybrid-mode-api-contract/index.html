@@ -4842,14 +4842,14 @@ openapi-generator<span class="w"> </span>generate<span class="w"> </span>-i<span
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">jsonschema</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
 
-<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;docs/hybrid-mode-schemas.json&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">"docs/hybrid-mode-schemas.json"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
     <span class="n">schemas</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
 
 <span class="c1"># Validate an execute response</span>
 <span class="n">execute_response_schema</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;$schema&quot;</span><span class="p">:</span> <span class="n">schemas</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;$schema&quot;</span><span class="p">,</span> <span class="s2">&quot;https://json-schema.org/draft/2020-12/schema&quot;</span><span class="p">),</span>
-    <span class="s2">&quot;$ref&quot;</span><span class="p">:</span> <span class="s2">&quot;#/definitions/ExecuteResponse&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;definitions&quot;</span><span class="p">:</span> <span class="n">schemas</span><span class="p">[</span><span class="s2">&quot;definitions&quot;</span><span class="p">],</span>
+    <span class="s2">"$schema"</span><span class="p">:</span> <span class="n">schemas</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"$schema"</span><span class="p">,</span> <span class="s2">"https://json-schema.org/draft/2020-12/schema"</span><span class="p">),</span>
+    <span class="s2">"$ref"</span><span class="p">:</span> <span class="s2">"#/definitions/ExecuteResponse"</span><span class="p">,</span>
+    <span class="s2">"definitions"</span><span class="p">:</span> <span class="n">schemas</span><span class="p">[</span><span class="s2">"definitions"</span><span class="p">],</span>
 <span class="p">}</span>
 <span class="n">validate</span><span class="p">(</span><span class="n">response_data</span><span class="p">,</span> <span class="n">execute_response_schema</span><span class="p">)</span>
 </code></pre></div></p>
@@ -4936,9 +4936,9 @@ openapi-generator<span class="w"> </span>generate<span class="w"> </span>-i<span
 <li><strong>Handle ID collisions</strong>: Different optimization runs may reuse example IDs but produce different outputs - use <code>session_id</code> to distinguish</li>
 </ol>
 <p><strong>Example ID format</strong>:</p>
-<div class="highlight"><pre><span></span><code>example_id: &quot;example_001&quot;                  # Stable across runs
-output_id: &quot;out_example_001_run_abc123&quot;    # Scoped to run
-target_id: &quot;target_001&quot;                    # Stable across runs
+<div class="highlight"><pre><span></span><code>example_id: "example_001"                  # Stable across runs
+output_id: "out_example_001_run_abc123"    # Scoped to run
+target_id: "target_001"                    # Stable across runs
 </code></pre></div>
 <h3 id="full-content-datasets-optional">Full-Content Datasets (Optional)<a class="headerlink" href="#full-content-datasets-optional" title="Permanent link">&para;</a></h3>
 <p>If privacy is not a concern, you can send full content instead of IDs:
@@ -4978,32 +4978,32 @@ target_id: &quot;target_001&quot;                    # Stable across runs
 <h3 id="combined-mode">Combined Mode<a class="headerlink" href="#combined-mode" title="Permanent link">&para;</a></h3>
 <p>Return quality metrics directly in the execute response to skip the separate evaluate call:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;completed&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;outputs&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"completed"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"outputs"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;example_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ex_001&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;output_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;out_001_run_abc&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;cost_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.005</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;accuracy&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.92</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;relevance&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.88</span><span class="p">}</span>
+<span class="w">      </span><span class="nt">"example_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ex_001"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"output_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"out_001_run_abc"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"cost_usd"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.005</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"accuracy"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.92</span><span class="p">,</span><span class="w"> </span><span class="nt">"relevance"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.88</span><span class="p">}</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="w">  </span><span class="p">],</span>
-<span class="w">  </span><span class="nt">&quot;operational_metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;total_cost_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.005</span><span class="p">},</span>
-<span class="w">  </span><span class="nt">&quot;quality_metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;accuracy&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.92</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;relevance&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.88</span><span class="p">}</span>
+<span class="w">  </span><span class="nt">"operational_metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"total_cost_usd"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.005</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">"quality_metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"accuracy"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.92</span><span class="p">,</span><span class="w"> </span><span class="nt">"relevance"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.88</span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
 <h3 id="two-phase-mode">Two-Phase Mode<a class="headerlink" href="#two-phase-mode" title="Permanent link">&para;</a></h3>
 <p>Return <code>quality_metrics: null</code> (or omit it) and set <code>supports_evaluate: true</code> in capabilities. The SDK will call <code>/evaluate</code> after <code>/execute</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;completed&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;outputs&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"completed"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"outputs"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;example_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ex_001&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;output_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;out_001_run_abc&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;cost_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.005</span>
+<span class="w">      </span><span class="nt">"example_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ex_001"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"output_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"out_001_run_abc"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"cost_usd"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.005</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="w">  </span><span class="p">],</span>
-<span class="w">  </span><span class="nt">&quot;operational_metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;total_cost_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.005</span><span class="p">},</span>
-<span class="w">  </span><span class="nt">&quot;quality_metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span>
+<span class="w">  </span><span class="nt">"operational_metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"total_cost_usd"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.005</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">"quality_metrics"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span>
 <span class="p">}</span>
 </code></pre></div>
 <p>The SDK then sends the outputs to <code>POST /evaluate</code> for quality scoring.</p>
@@ -5014,13 +5014,13 @@ target_id: &quot;target_001&quot;                    # Stable across runs
 <p>Returns service capabilities for the initial handshake.</p>
 <h4 id="response-200-ok">Response (200 OK)<a class="headerlink" href="#response-200-ok" title="Permanent link">&para;</a></h4>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;version&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;supports_evaluate&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;supports_keep_alive&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;supports_streaming&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;max_batch_size&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;max_payload_bytes&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;tunable_ids&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;my_agent&quot;</span><span class="p">]</span>
+<span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"1.0"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"supports_evaluate"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"supports_keep_alive"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"supports_streaming"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"max_batch_size"</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"max_payload_bytes"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"tunable_ids"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"my_agent"</span><span class="p">]</span>
 <span class="p">}</span>
 </code></pre></div>
 <table>
@@ -5086,48 +5086,48 @@ target_id: &quot;target_001&quot;                    # Stable across runs
 <p>Returns tunable variable definitions. Traigent uses these to understand what parameters it can optimize.</p>
 <h4 id="response-200-ok_1">Response (200 OK)<a class="headerlink" href="#response-200-ok_1" title="Permanent link">&para;</a></h4>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;schema_version&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;0.9&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;tunable_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;my_agent&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;tunables&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="nt">"schema_version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.9"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"tunable_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"my_agent"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"tunables"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;model&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;enum&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;domain&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;values&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;claude-3-sonnet&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;llama-70b&quot;</span><span class="p">]},</span>
-<span class="w">      </span><span class="nt">&quot;default&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpt-4o&quot;</span>
+<span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"model"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"enum"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"domain"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"values"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"gpt-4o"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude-3-sonnet"</span><span class="p">,</span><span class="w"> </span><span class="s2">"llama-70b"</span><span class="p">]},</span>
+<span class="w">      </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gpt-4o"</span>
 <span class="w">    </span><span class="p">},</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;temperature&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;float&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;domain&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;range&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="mf">2.0</span><span class="p">],</span><span class="w"> </span><span class="nt">&quot;resolution&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.1</span><span class="p">},</span>
-<span class="w">      </span><span class="nt">&quot;default&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.7</span>
+<span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"temperature"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"float"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"domain"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"range"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="mf">2.0</span><span class="p">],</span><span class="w"> </span><span class="nt">"resolution"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.1</span><span class="p">},</span>
+<span class="w">      </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.7</span>
 <span class="w">    </span><span class="p">},</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;max_tokens&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;int&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;domain&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;range&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">100</span><span class="p">,</span><span class="w"> </span><span class="mi">4096</span><span class="p">]},</span>
-<span class="w">      </span><span class="nt">&quot;default&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1024</span>
+<span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"max_tokens"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"int"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"domain"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"range"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">100</span><span class="p">,</span><span class="w"> </span><span class="mi">4096</span><span class="p">]},</span>
+<span class="w">      </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="mi">1024</span>
 <span class="w">    </span><span class="p">},</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;use_cache&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;bool&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;default&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"use_cache"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"bool"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="w">  </span><span class="p">],</span>
-<span class="w">  </span><span class="nt">&quot;objectives&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<span class="w">    </span><span class="p">{</span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;direction&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;maximize&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;weight&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">2.0</span><span class="p">},</span>
-<span class="w">    </span><span class="p">{</span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cost&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;direction&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;minimize&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;weight&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1.0</span><span class="p">}</span>
+<span class="w">  </span><span class="nt">"objectives"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"accuracy"</span><span class="p">,</span><span class="w"> </span><span class="nt">"direction"</span><span class="p">:</span><span class="w"> </span><span class="s2">"maximize"</span><span class="p">,</span><span class="w"> </span><span class="nt">"weight"</span><span class="p">:</span><span class="w"> </span><span class="mf">2.0</span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"cost"</span><span class="p">,</span><span class="w"> </span><span class="nt">"direction"</span><span class="p">:</span><span class="w"> </span><span class="s2">"minimize"</span><span class="p">,</span><span class="w"> </span><span class="nt">"weight"</span><span class="p">:</span><span class="w"> </span><span class="mf">1.0</span><span class="p">}</span>
 <span class="w">  </span><span class="p">],</span>
-<span class="w">  </span><span class="nt">&quot;exploration&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;strategy&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;nsga2&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;budgets&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;max_trials&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">50</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;max_spend_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">10.0</span><span class="p">}</span>
+<span class="w">  </span><span class="nt">"exploration"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"strategy"</span><span class="p">:</span><span class="w"> </span><span class="s2">"nsga2"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"budgets"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"max_trials"</span><span class="p">:</span><span class="w"> </span><span class="mi">50</span><span class="p">,</span><span class="w"> </span><span class="nt">"max_spend_usd"</span><span class="p">:</span><span class="w"> </span><span class="mf">10.0</span><span class="p">}</span>
 <span class="w">  </span><span class="p">},</span>
-<span class="w">  </span><span class="nt">&quot;promotion_policy&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;dominance&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;epsilon_pareto&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;alpha&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.05</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;min_effect&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;accuracy&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.02</span><span class="p">}</span>
+<span class="w">  </span><span class="nt">"promotion_policy"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"dominance"</span><span class="p">:</span><span class="w"> </span><span class="s2">"epsilon_pareto"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"alpha"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.05</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"min_effect"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"accuracy"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.02</span><span class="p">}</span>
 <span class="w">  </span><span class="p">},</span>
-<span class="w">  </span><span class="nt">&quot;defaults&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;model&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">},</span>
-<span class="w">  </span><span class="nt">&quot;measures&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;cost&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;latency&quot;</span><span class="p">]</span>
+<span class="w">  </span><span class="nt">"defaults"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"model"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gpt-4o"</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">"measures"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span><span class="w"> </span><span class="s2">"cost"</span><span class="p">,</span><span class="w"> </span><span class="s2">"latency"</span><span class="p">]</span>
 <span class="p">}</span>
 </code></pre></div>
 <table>
@@ -5254,44 +5254,44 @@ target_id: &quot;target_001&quot;                    # Stable across runs
 <h4 id="tunable-types">Tunable Types<a class="headerlink" href="#tunable-types" title="Permanent link">&para;</a></h4>
 <p><strong>Enum</strong> - Discrete choices:
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;model&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;enum&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;domain&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;values&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;option_a&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;option_b&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;option_c&quot;</span><span class="p">]},</span>
-<span class="w">  </span><span class="nt">&quot;default&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;option_a&quot;</span>
+<span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"model"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"enum"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"domain"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"values"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"option_a"</span><span class="p">,</span><span class="w"> </span><span class="s2">"option_b"</span><span class="p">,</span><span class="w"> </span><span class="s2">"option_c"</span><span class="p">]},</span>
+<span class="w">  </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="s2">"option_a"</span>
 <span class="p">}</span>
 </code></pre></div></p>
 <p><strong>Float</strong> - Continuous range:
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;temperature&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;float&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;domain&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;range&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="mf">2.0</span><span class="p">],</span>
-<span class="w">    </span><span class="nt">&quot;resolution&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.1</span>
+<span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"temperature"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"float"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"domain"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"range"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="mf">2.0</span><span class="p">],</span>
+<span class="w">    </span><span class="nt">"resolution"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.1</span>
 <span class="w">  </span><span class="p">},</span>
-<span class="w">  </span><span class="nt">&quot;default&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.7</span>
+<span class="w">  </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.7</span>
 <span class="p">}</span>
 </code></pre></div></p>
 <p><strong>Integer</strong> - Discrete range:
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;max_tokens&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;int&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;domain&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;range&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">100</span><span class="p">,</span><span class="w"> </span><span class="mi">4096</span><span class="p">]},</span>
-<span class="w">  </span><span class="nt">&quot;default&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1024</span>
+<span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"max_tokens"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"int"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"domain"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"range"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">100</span><span class="p">,</span><span class="w"> </span><span class="mi">4096</span><span class="p">]},</span>
+<span class="w">  </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="mi">1024</span>
 <span class="p">}</span>
 </code></pre></div></p>
 <p><strong>Boolean</strong>:
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;use_cache&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;bool&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;default&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"use_cache"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"bool"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
 <span class="p">}</span>
 </code></pre></div></p>
 <p><strong>String</strong> - Discrete string values:
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;prompt_style&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;str&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;domain&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;values&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;concise&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;detailed&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;technical&quot;</span><span class="p">]},</span>
-<span class="w">  </span><span class="nt">&quot;default&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;concise&quot;</span>
+<span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"prompt_style"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"str"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"domain"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"values"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"concise"</span><span class="p">,</span><span class="w"> </span><span class="s2">"detailed"</span><span class="p">,</span><span class="w"> </span><span class="s2">"technical"</span><span class="p">]},</span>
+<span class="w">  </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="s2">"concise"</span>
 <span class="p">}</span>
 </code></pre></div></p>
 <hr />
@@ -5300,31 +5300,31 @@ target_id: &quot;target_001&quot;                    # Stable across runs
 <p>Execute the agent with a specific configuration on a batch of inputs.</p>
 <h4 id="request">Request<a class="headerlink" href="#request" title="Permanent link">&para;</a></h4>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;request_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;550e8400-e29b-41d4-a716-446655440000&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;tunable_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;my_agent&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;config&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;model&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;temperature&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.5</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;max_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1024</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;use_cache&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="nt">"request_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"550e8400-e29b-41d4-a716-446655440000"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"tunable_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"my_agent"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"model"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gpt-4o"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"temperature"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.5</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"max_tokens"</span><span class="p">:</span><span class="w"> </span><span class="mi">1024</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"use_cache"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
 <span class="w">  </span><span class="p">},</span>
-<span class="w">  </span><span class="nt">&quot;examples&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="nt">"examples"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;example_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ex_001&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;query&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;What is machine learning?&quot;</span><span class="p">}</span>
+<span class="w">      </span><span class="nt">"example_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ex_001"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"data"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"query"</span><span class="p">:</span><span class="w"> </span><span class="s2">"What is machine learning?"</span><span class="p">}</span>
 <span class="w">    </span><span class="p">},</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;example_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ex_002&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;query&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Explain neural networks&quot;</span><span class="p">}</span>
+<span class="w">      </span><span class="nt">"example_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ex_002"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"data"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"query"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Explain neural networks"</span><span class="p">}</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="w">  </span><span class="p">],</span>
-<span class="w">  </span><span class="nt">&quot;session_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;batch_options&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;parallelism&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;fail_fast&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;timeout_per_item_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span>
+<span class="w">  </span><span class="nt">"session_id"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"batch_options"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"parallelism"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"fail_fast"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"timeout_per_item_ms"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span>
 <span class="w">  </span><span class="p">},</span>
-<span class="w">  </span><span class="nt">&quot;timeout_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">30000</span>
+<span class="w">  </span><span class="nt">"timeout_ms"</span><span class="p">:</span><span class="w"> </span><span class="mi">30000</span>
 <span class="p">}</span>
 </code></pre></div>
 <table>
@@ -5394,40 +5394,40 @@ target_id: &quot;target_001&quot;                    # Stable across runs
 | <code>timeout_per_item_ms</code> | integer | 0 | Per-item timeout (0 = use request timeout) |</p>
 <h4 id="response-200-ok_2">Response (200 OK)<a class="headerlink" href="#response-200-ok_2" title="Permanent link">&para;</a></h4>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;request_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;550e8400-e29b-41d4-a716-446655440000&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;execution_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;exec_123456&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;completed&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;outputs&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="nt">"request_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"550e8400-e29b-41d4-a716-446655440000"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"execution_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"exec_123456"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"completed"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"outputs"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;example_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ex_001&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;output&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="nt">&quot;response&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Machine learning is a subset of AI...&quot;</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;model_used&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpt-4o-2024-01-01&quot;</span>
+<span class="w">      </span><span class="nt">"example_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ex_001"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"output"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">"response"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Machine learning is a subset of AI..."</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"model_used"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gpt-4o-2024-01-01"</span>
 <span class="w">      </span><span class="p">},</span>
-<span class="w">      </span><span class="nt">&quot;cost_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.002</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;latency_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">150</span>
+<span class="w">      </span><span class="nt">"cost_usd"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.002</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"latency_ms"</span><span class="p">:</span><span class="w"> </span><span class="mi">150</span>
 <span class="w">    </span><span class="p">},</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;example_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ex_002&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;output&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="nt">&quot;response&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Neural networks are computing systems...&quot;</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;model_used&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpt-4o-2024-01-01&quot;</span>
+<span class="w">      </span><span class="nt">"example_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ex_002"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"output"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">"response"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Neural networks are computing systems..."</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"model_used"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gpt-4o-2024-01-01"</span>
 <span class="w">      </span><span class="p">},</span>
-<span class="w">      </span><span class="nt">&quot;cost_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.003</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;latency_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">180</span>
+<span class="w">      </span><span class="nt">"cost_usd"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.003</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"latency_ms"</span><span class="p">:</span><span class="w"> </span><span class="mi">180</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="w">  </span><span class="p">],</span>
-<span class="w">  </span><span class="nt">&quot;operational_metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;total_cost_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.005</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;cost_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.005</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;latency_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">330</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;tokens_used&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">450</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;cache_hits&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;retry_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span>
+<span class="w">  </span><span class="nt">"operational_metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"total_cost_usd"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.005</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"cost_usd"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.005</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"latency_ms"</span><span class="p">:</span><span class="w"> </span><span class="mi">330</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"tokens_used"</span><span class="p">:</span><span class="w"> </span><span class="mi">450</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"cache_hits"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"retry_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span>
 <span class="w">  </span><span class="p">},</span>
-<span class="w">  </span><span class="nt">&quot;quality_metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;session_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;error&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span>
+<span class="w">  </span><span class="nt">"quality_metrics"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"session_id"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"error"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span>
 <span class="p">}</span>
 </code></pre></div>
 <table>
@@ -5508,15 +5508,15 @@ target_id: &quot;target_001&quot;                    # Stable across runs
 | <code>latency_ms</code> | number | Total latency in milliseconds |</p>
 <p>You can add any custom operational metrics:
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;operational_metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;total_cost_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.005</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;latency_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">330</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;tokens_input&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;tokens_output&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">350</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;api_calls&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;cache_hit_rate&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.25</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;retry_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;model_version&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpt-4o-2024-01-01&quot;</span>
+<span class="w">  </span><span class="nt">"operational_metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"total_cost_usd"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.005</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"latency_ms"</span><span class="p">:</span><span class="w"> </span><span class="mi">330</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"tokens_input"</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"tokens_output"</span><span class="p">:</span><span class="w"> </span><span class="mi">350</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"api_calls"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"cache_hit_rate"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.25</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"retry_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"model_version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gpt-4o-2024-01-01"</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div></p>
@@ -5526,24 +5526,24 @@ target_id: &quot;target_001&quot;                    # Stable across runs
 <p>Evaluate outputs against expected targets to measure quality.</p>
 <h4 id="request_1">Request<a class="headerlink" href="#request_1" title="Permanent link">&para;</a></h4>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;request_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;660e8400-e29b-41d4-a716-446655440001&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;tunable_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;my_agent&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;execution_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;exec_123456&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;evaluations&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="nt">"request_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"660e8400-e29b-41d4-a716-446655440001"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"tunable_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"my_agent"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"execution_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"exec_123456"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"evaluations"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;example_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ex_001&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;output&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;response&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Machine learning is a subset of AI...&quot;</span><span class="p">},</span>
-<span class="w">      </span><span class="nt">&quot;target&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;expected&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Machine learning is a branch of artificial intelligence...&quot;</span><span class="p">}</span>
+<span class="w">      </span><span class="nt">"example_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ex_001"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"output"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"response"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Machine learning is a subset of AI..."</span><span class="p">},</span>
+<span class="w">      </span><span class="nt">"target"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"expected"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Machine learning is a branch of artificial intelligence..."</span><span class="p">}</span>
 <span class="w">    </span><span class="p">},</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;example_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ex_002&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;output&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;response&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Neural networks are computing systems...&quot;</span><span class="p">},</span>
-<span class="w">      </span><span class="nt">&quot;target&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;expected&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Neural networks are computer systems inspired by the brain...&quot;</span><span class="p">}</span>
+<span class="w">      </span><span class="nt">"example_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ex_002"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"output"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"response"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Neural networks are computing systems..."</span><span class="p">},</span>
+<span class="w">      </span><span class="nt">"target"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"expected"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Neural networks are computer systems inspired by the brain..."</span><span class="p">}</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="w">  </span><span class="p">],</span>
-<span class="w">  </span><span class="nt">&quot;config&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;session_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;timeout_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">30000</span>
+<span class="w">  </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"session_id"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"timeout_ms"</span><span class="p">:</span><span class="w"> </span><span class="mi">30000</span>
 <span class="p">}</span>
 </code></pre></div>
 <table>
@@ -5610,36 +5610,36 @@ target_id: &quot;target_001&quot;                    # Stable across runs
 | <code>target_id</code> | string | No | Target identifier (for privacy-preserving mode) |</p>
 <h4 id="response-200-ok_3">Response (200 OK)<a class="headerlink" href="#response-200-ok_3" title="Permanent link">&para;</a></h4>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;request_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;660e8400-e29b-41d4-a716-446655440001&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;completed&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;results&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="nt">"request_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"660e8400-e29b-41d4-a716-446655440001"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"completed"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"results"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;example_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ex_001&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="nt">&quot;accuracy&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.92</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;relevance&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.88</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;fluency&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.95</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;semantic_similarity&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.87</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;hallucination_score&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.02</span>
+<span class="w">      </span><span class="nt">"example_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ex_001"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">"accuracy"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.92</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"relevance"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.88</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"fluency"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.95</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"semantic_similarity"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.87</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"hallucination_score"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.02</span>
 <span class="w">      </span><span class="p">}</span>
 <span class="w">    </span><span class="p">},</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;example_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ex_002&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="nt">&quot;accuracy&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.89</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;relevance&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.91</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;fluency&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.93</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;semantic_similarity&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.85</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;hallucination_score&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.05</span>
+<span class="w">      </span><span class="nt">"example_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ex_002"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">"accuracy"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.89</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"relevance"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.91</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"fluency"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.93</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"semantic_similarity"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.85</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"hallucination_score"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.05</span>
 <span class="w">      </span><span class="p">}</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="w">  </span><span class="p">],</span>
-<span class="w">  </span><span class="nt">&quot;aggregate_metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;accuracy&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;mean&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.905</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;std&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.021</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;n&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;relevance&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;mean&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.895</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;std&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.021</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;n&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;fluency&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;mean&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.94</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;std&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.014</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;n&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;semantic_similarity&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;mean&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.86</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;std&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.014</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;n&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;hallucination_score&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;mean&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.035</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;std&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.021</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;n&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">}</span>
+<span class="w">  </span><span class="nt">"aggregate_metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"accuracy"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"mean"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.905</span><span class="p">,</span><span class="w"> </span><span class="nt">"std"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.021</span><span class="p">,</span><span class="w"> </span><span class="nt">"n"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"relevance"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"mean"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.895</span><span class="p">,</span><span class="w"> </span><span class="nt">"std"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.021</span><span class="p">,</span><span class="w"> </span><span class="nt">"n"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"fluency"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"mean"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.94</span><span class="p">,</span><span class="w"> </span><span class="nt">"std"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.014</span><span class="p">,</span><span class="w"> </span><span class="nt">"n"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"semantic_similarity"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"mean"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.86</span><span class="p">,</span><span class="w"> </span><span class="nt">"std"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.014</span><span class="p">,</span><span class="w"> </span><span class="nt">"n"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"hallucination_score"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"mean"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.035</span><span class="p">,</span><span class="w"> </span><span class="nt">"std"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.021</span><span class="p">,</span><span class="w"> </span><span class="nt">"n"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">}</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
@@ -5699,18 +5699,18 @@ target_id: &quot;target_001&quot;                    # Stable across runs
 | <code>n</code> | integer | Number of examples |</p>
 <p><strong>Custom Quality Metrics</strong> - add any metrics specific to your use case:
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;results&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="nt">"results"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;example_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ex_001&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="nt">&quot;accuracy&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.92</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;semantic_similarity&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.87</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;hallucination_score&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.02</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;citation_coverage&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.75</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;safety_score&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1.0</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;factual_correctness&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.90</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;response_relevance&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.88</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;instruction_following&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.95</span>
+<span class="w">      </span><span class="nt">"example_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ex_001"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">"accuracy"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.92</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"semantic_similarity"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.87</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"hallucination_score"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.02</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"citation_coverage"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.75</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"safety_score"</span><span class="p">:</span><span class="w"> </span><span class="mf">1.0</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"factual_correctness"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.90</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"response_relevance"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.88</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"instruction_following"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.95</span>
 <span class="w">      </span><span class="p">}</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="w">  </span><span class="p">]</span>
@@ -5722,12 +5722,12 @@ target_id: &quot;target_001&quot;                    # Stable across runs
 <p>Health check endpoint for monitoring.</p>
 <h4 id="response-200-ok_4">Response (200 OK)<a class="headerlink" href="#response-200-ok_4" title="Permanent link">&para;</a></h4>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;healthy&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;version&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;1.0.0&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;uptime_seconds&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">3600.5</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;details&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;database&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;connected&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;cache&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;connected&quot;</span>
+<span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"healthy"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"1.0.0"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"uptime_seconds"</span><span class="p">:</span><span class="w"> </span><span class="mf">3600.5</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"details"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"database"</span><span class="p">:</span><span class="w"> </span><span class="s2">"connected"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"cache"</span><span class="p">:</span><span class="w"> </span><span class="s2">"connected"</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
@@ -5773,20 +5773,20 @@ target_id: &quot;target_001&quot;                    # Stable across runs
 <p>Session heartbeat for stateful agents.</p>
 <h4 id="request_2">Request<a class="headerlink" href="#request_2" title="Permanent link">&para;</a></h4>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;session_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;session_abc123&quot;</span>
+<span class="w">  </span><span class="nt">"session_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"session_abc123"</span>
 <span class="p">}</span>
 </code></pre></div>
 <h4 id="response-200-ok_5">Response (200 OK)<a class="headerlink" href="#response-200-ok_5" title="Permanent link">&para;</a></h4>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;alive&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;session_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;session_abc123&quot;</span>
+<span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"alive"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"session_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"session_abc123"</span>
 <span class="p">}</span>
 </code></pre></div>
 <h4 id="response-404-not-found">Response (404 Not Found)<a class="headerlink" href="#response-404-not-found" title="Permanent link">&para;</a></h4>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;error&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;SESSION_NOT_FOUND&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Session not found: session_abc123&quot;</span>
+<span class="w">  </span><span class="nt">"error"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"code"</span><span class="p">:</span><span class="w"> </span><span class="s2">"SESSION_NOT_FOUND"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Session not found: session_abc123"</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
@@ -5845,11 +5845,11 @@ target_id: &quot;target_001&quot;                    # Stable across runs
 - OpenAPI operation-level response lists are normative for each endpoint.</p>
 <p>Error response format:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;error&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;INVALID_CONFIG&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Unknown tunable: invalid_param&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;details&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;invalid_params&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;invalid_param&quot;</span><span class="p">]</span>
+<span class="w">  </span><span class="nt">"error"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"code"</span><span class="p">:</span><span class="w"> </span><span class="s2">"INVALID_CONFIG"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Unknown tunable: invalid_param"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"details"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">"invalid_params"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"invalid_param"</span><span class="p">]</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>

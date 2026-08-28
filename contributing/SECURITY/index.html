@@ -4540,20 +4540,20 @@
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.security.auth</span><span class="w"> </span><span class="kn">import</span> <span class="n">SAMLAuthProvider</span>
 
 <span class="n">saml_settings</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;sp&quot;</span><span class="p">:</span> <span class="p">{</span>
-        <span class="s2">&quot;entityId&quot;</span><span class="p">:</span> <span class="s2">&quot;https://yourapp.com&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;assertionConsumerService&quot;</span><span class="p">:</span> <span class="p">{</span>
-            <span class="s2">&quot;url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://yourapp.com/saml/acs&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;binding&quot;</span><span class="p">:</span> <span class="s2">&quot;urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST&quot;</span>
+    <span class="s2">"sp"</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">"entityId"</span><span class="p">:</span> <span class="s2">"https://yourapp.com"</span><span class="p">,</span>
+        <span class="s2">"assertionConsumerService"</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">"url"</span><span class="p">:</span> <span class="s2">"https://yourapp.com/saml/acs"</span><span class="p">,</span>
+            <span class="s2">"binding"</span><span class="p">:</span> <span class="s2">"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"</span>
         <span class="p">}</span>
     <span class="p">},</span>
-    <span class="s2">&quot;idp&quot;</span><span class="p">:</span> <span class="p">{</span>
-        <span class="s2">&quot;entityId&quot;</span><span class="p">:</span> <span class="s2">&quot;https://idp.example.com&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;singleSignOnService&quot;</span><span class="p">:</span> <span class="p">{</span>
-            <span class="s2">&quot;url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://idp.example.com/sso&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;binding&quot;</span><span class="p">:</span> <span class="s2">&quot;urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect&quot;</span>
+    <span class="s2">"idp"</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">"entityId"</span><span class="p">:</span> <span class="s2">"https://idp.example.com"</span><span class="p">,</span>
+        <span class="s2">"singleSignOnService"</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">"url"</span><span class="p">:</span> <span class="s2">"https://idp.example.com/sso"</span><span class="p">,</span>
+            <span class="s2">"binding"</span><span class="p">:</span> <span class="s2">"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"</span>
         <span class="p">},</span>
-        <span class="s2">&quot;x509cert&quot;</span><span class="p">:</span> <span class="s2">&quot;YOUR_IDP_CERTIFICATE&quot;</span>
+        <span class="s2">"x509cert"</span><span class="p">:</span> <span class="s2">"YOUR_IDP_CERTIFICATE"</span>
     <span class="p">}</span>
 <span class="p">}</span>
 
@@ -4563,12 +4563,12 @@
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.security.auth</span><span class="w"> </span><span class="kn">import</span> <span class="n">OIDCAuthProvider</span>
 
 <span class="n">oidc_settings</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;client_id&quot;</span><span class="p">:</span> <span class="s2">&quot;your-client-id&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;client_secret&quot;</span><span class="p">:</span> <span class="s2">&quot;your-client-secret&quot;</span><span class="p">,</span>  <span class="c1"># pragma: allowlist secret</span>
-    <span class="s2">&quot;issuer&quot;</span><span class="p">:</span> <span class="s2">&quot;https://accounts.google.com&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;jwks_uri&quot;</span><span class="p">:</span> <span class="s2">&quot;https://www.googleapis.com/oauth2/v3/certs&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;authorization_endpoint&quot;</span><span class="p">:</span> <span class="s2">&quot;https://accounts.google.com/o/oauth2/v2/auth&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;token_endpoint&quot;</span><span class="p">:</span> <span class="s2">&quot;https://oauth2.googleapis.com/token&quot;</span>
+    <span class="s2">"client_id"</span><span class="p">:</span> <span class="s2">"your-client-id"</span><span class="p">,</span>
+    <span class="s2">"client_secret"</span><span class="p">:</span> <span class="s2">"your-client-secret"</span><span class="p">,</span>  <span class="c1"># pragma: allowlist secret</span>
+    <span class="s2">"issuer"</span><span class="p">:</span> <span class="s2">"https://accounts.google.com"</span><span class="p">,</span>
+    <span class="s2">"jwks_uri"</span><span class="p">:</span> <span class="s2">"https://www.googleapis.com/oauth2/v3/certs"</span><span class="p">,</span>
+    <span class="s2">"authorization_endpoint"</span><span class="p">:</span> <span class="s2">"https://accounts.google.com/o/oauth2/v2/auth"</span><span class="p">,</span>
+    <span class="s2">"token_endpoint"</span><span class="p">:</span> <span class="s2">"https://oauth2.googleapis.com/token"</span>
 <span class="p">}</span>
 
 <span class="n">provider</span> <span class="o">=</span> <span class="n">OIDCAuthProvider</span><span class="p">(</span><span class="n">oidc_settings</span><span class="p">)</span>
@@ -4576,33 +4576,33 @@
 <h3 id="totp-setup">TOTP Setup<a class="headerlink" href="#totp-setup" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.security.auth</span><span class="w"> </span><span class="kn">import</span> <span class="n">TOTPAuthProvider</span>
 
-<span class="n">totp_provider</span> <span class="o">=</span> <span class="n">TOTPAuthProvider</span><span class="p">(</span><span class="n">issuer_name</span><span class="o">=</span><span class="s2">&quot;YourApp&quot;</span><span class="p">)</span>
+<span class="n">totp_provider</span> <span class="o">=</span> <span class="n">TOTPAuthProvider</span><span class="p">(</span><span class="n">issuer_name</span><span class="o">=</span><span class="s2">"YourApp"</span><span class="p">)</span>
 
 <span class="c1"># Generate secret for user</span>
 <span class="n">secret</span> <span class="o">=</span> <span class="n">totp_provider</span><span class="o">.</span><span class="n">generate_totp_secret</span><span class="p">()</span>
 
 <span class="c1"># Generate QR code URI</span>
-<span class="n">qr_uri</span> <span class="o">=</span> <span class="n">totp_provider</span><span class="o">.</span><span class="n">generate_provisioning_uri</span><span class="p">(</span><span class="s2">&quot;user@example.com&quot;</span><span class="p">,</span> <span class="n">secret</span><span class="p">)</span>
+<span class="n">qr_uri</span> <span class="o">=</span> <span class="n">totp_provider</span><span class="o">.</span><span class="n">generate_provisioning_uri</span><span class="p">(</span><span class="s2">"user@example.com"</span><span class="p">,</span> <span class="n">secret</span><span class="p">)</span>
 
 <span class="c1"># Verify code from user</span>
-<span class="n">is_valid</span> <span class="o">=</span> <span class="n">totp_provider</span><span class="o">.</span><span class="n">verify_totp_code</span><span class="p">(</span><span class="s2">&quot;123456&quot;</span><span class="p">,</span> <span class="n">secret</span><span class="p">)</span>
+<span class="n">is_valid</span> <span class="o">=</span> <span class="n">totp_provider</span><span class="o">.</span><span class="n">verify_totp_code</span><span class="p">(</span><span class="s2">"123456"</span><span class="p">,</span> <span class="n">secret</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="sms-authentication_1">SMS Authentication<a class="headerlink" href="#sms-authentication_1" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.security.auth</span><span class="w"> </span><span class="kn">import</span> <span class="n">SMSAuthProvider</span>
 
 <span class="n">sms_settings</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;account_sid&quot;</span><span class="p">:</span> <span class="s2">&quot;YOUR_TWILIO_ACCOUNT_SID&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;auth_token&quot;</span><span class="p">:</span> <span class="s2">&quot;YOUR_TWILIO_AUTH_TOKEN&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;from_number&quot;</span><span class="p">:</span> <span class="s2">&quot;+1234567890&quot;</span>
+    <span class="s2">"account_sid"</span><span class="p">:</span> <span class="s2">"YOUR_TWILIO_ACCOUNT_SID"</span><span class="p">,</span>
+    <span class="s2">"auth_token"</span><span class="p">:</span> <span class="s2">"YOUR_TWILIO_AUTH_TOKEN"</span><span class="p">,</span>
+    <span class="s2">"from_number"</span><span class="p">:</span> <span class="s2">"+1234567890"</span>
 <span class="p">}</span>
 
 <span class="n">provider</span> <span class="o">=</span> <span class="n">SMSAuthProvider</span><span class="p">(</span><span class="n">sms_settings</span><span class="p">)</span>
 
 <span class="c1"># Send verification code</span>
-<span class="n">message_sid</span> <span class="o">=</span> <span class="n">provider</span><span class="o">.</span><span class="n">send_verification_code</span><span class="p">(</span><span class="s2">&quot;+1987654321&quot;</span><span class="p">,</span> <span class="s2">&quot;user_id_123&quot;</span><span class="p">)</span>
+<span class="n">message_sid</span> <span class="o">=</span> <span class="n">provider</span><span class="o">.</span><span class="n">send_verification_code</span><span class="p">(</span><span class="s2">"+1987654321"</span><span class="p">,</span> <span class="s2">"user_id_123"</span><span class="p">)</span>
 
 <span class="c1"># Verify code</span>
-<span class="n">is_valid</span> <span class="o">=</span> <span class="n">provider</span><span class="o">.</span><span class="n">verify_sms_code</span><span class="p">(</span><span class="s2">&quot;user_id_123&quot;</span><span class="p">,</span> <span class="s2">&quot;123456&quot;</span><span class="p">)</span>
+<span class="n">is_valid</span> <span class="o">=</span> <span class="n">provider</span><span class="o">.</span><span class="n">verify_sms_code</span><span class="p">(</span><span class="s2">"user_id_123"</span><span class="p">,</span> <span class="s2">"123456"</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="credential-management-best-practices">Credential Management Best Practices<a class="headerlink" href="#credential-management-best-practices" title="Permanent link">&para;</a></h2>
 <h3 id="1-initial-setup">1. Initial Setup<a class="headerlink" href="#1-initial-setup" title="Permanent link">&para;</a></h3>
@@ -4612,23 +4612,23 @@
 <span class="n">store</span> <span class="o">=</span> <span class="n">get_secure_credential_store</span><span class="p">()</span>
 
 <span class="c1"># Store API keys securely</span>
-<span class="n">store</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">&quot;OPENAI_API_KEY&quot;</span><span class="p">,</span> <span class="s2">&quot;&lt;OPENAI_API_KEY&gt;&quot;</span><span class="p">,</span> <span class="n">CredentialType</span><span class="o">.</span><span class="n">API_KEY</span><span class="p">)</span>
-<span class="n">store</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">&quot;DATABASE_PASSWORD&quot;</span><span class="p">,</span> <span class="s2">&quot;&lt;DATABASE_PASSWORD&gt;&quot;</span><span class="p">,</span> <span class="n">CredentialType</span><span class="o">.</span><span class="n">PASSWORD</span><span class="p">)</span>
+<span class="n">store</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">"OPENAI_API_KEY"</span><span class="p">,</span> <span class="s2">"&lt;OPENAI_API_KEY&gt;"</span><span class="p">,</span> <span class="n">CredentialType</span><span class="o">.</span><span class="n">API_KEY</span><span class="p">)</span>
+<span class="n">store</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">"DATABASE_PASSWORD"</span><span class="p">,</span> <span class="s2">"&lt;DATABASE_PASSWORD&gt;"</span><span class="p">,</span> <span class="n">CredentialType</span><span class="o">.</span><span class="n">PASSWORD</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="2-environment-variables">2. Environment Variables<a class="headerlink" href="#2-environment-variables" title="Permanent link">&para;</a></h3>
 <p>Set environment variables for automatic loading:
-<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_MASTER_PASSWORD</span><span class="o">=</span><span class="s2">&quot;&lt;MASTER_PASSPHRASE&gt;&quot;</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_OPENAI_API_KEY</span><span class="o">=</span><span class="s2">&quot;&lt;OPENAI_API_KEY&gt;&quot;</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_DATABASE_PASSWORD</span><span class="o">=</span><span class="s2">&quot;&lt;DATABASE_PASSWORD&gt;&quot;</span>
+<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_MASTER_PASSWORD</span><span class="o">=</span><span class="s2">"&lt;MASTER_PASSPHRASE&gt;"</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_OPENAI_API_KEY</span><span class="o">=</span><span class="s2">"&lt;OPENAI_API_KEY&gt;"</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_DATABASE_PASSWORD</span><span class="o">=</span><span class="s2">"&lt;DATABASE_PASSWORD&gt;"</span>
 </code></pre></div></p>
 <h3 id="3-reading-credentials">3. Reading credentials<a class="headerlink" href="#3-reading-credentials" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="c1"># Get API keys (checks env vars first, then encrypted store)</span>
-<span class="n">openai_key</span> <span class="o">=</span> <span class="n">store</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;OPENAI_API_KEY&quot;</span><span class="p">)</span>
-<span class="n">database_password</span> <span class="o">=</span> <span class="n">store</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;DATABASE_PASSWORD&quot;</span><span class="p">)</span>
+<span class="n">openai_key</span> <span class="o">=</span> <span class="n">store</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"OPENAI_API_KEY"</span><span class="p">)</span>
+<span class="n">database_password</span> <span class="o">=</span> <span class="n">store</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"DATABASE_PASSWORD"</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="4-credential-rotation">4. Credential Rotation<a class="headerlink" href="#4-credential-rotation" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="c1"># Rotate a credential (keeps history)</span>
-<span class="n">store</span><span class="o">.</span><span class="n">rotate_credential</span><span class="p">(</span><span class="s2">&quot;DATABASE_PASSWORD&quot;</span><span class="p">,</span> <span class="s2">&quot;&lt;NEW_DATABASE_PASSWORD&gt;&quot;</span><span class="p">)</span>
+<span class="n">store</span><span class="o">.</span><span class="n">rotate_credential</span><span class="p">(</span><span class="s2">"DATABASE_PASSWORD"</span><span class="p">,</span> <span class="s2">"&lt;NEW_DATABASE_PASSWORD&gt;"</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="security-checklist">Security Checklist<a class="headerlink" href="#security-checklist" title="Permanent link">&para;</a></h2>
 <h3 id="for-developers">For Developers<a class="headerlink" href="#for-developers" title="Permanent link">&para;</a></h3>

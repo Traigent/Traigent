@@ -3948,14 +3948,14 @@ on them for release decisions.</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># Load and analyze feature matrix</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">yaml</span>
 
-<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s1">&#39;docs/feature_matrices/analytics.yml&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s1">'docs/feature_matrices/analytics.yml'</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
     <span class="n">matrix</span> <span class="o">=</span> <span class="n">yaml</span><span class="o">.</span><span class="n">safe_load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
 
 <span class="c1"># Find gaps</span>
-<span class="k">for</span> <span class="n">module</span> <span class="ow">in</span> <span class="n">matrix</span><span class="p">[</span><span class="s1">&#39;modules&#39;</span><span class="p">]:</span>
-    <span class="k">for</span> <span class="bp">cls</span> <span class="ow">in</span> <span class="n">module</span><span class="p">[</span><span class="s1">&#39;classes&#39;</span><span class="p">]:</span>
-        <span class="k">if</span> <span class="bp">cls</span><span class="p">[</span><span class="s1">&#39;status&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;partial&#39;</span><span class="p">:</span>
-            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Gap in </span><span class="si">{</span><span class="bp">cls</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="bp">cls</span><span class="p">[</span><span class="s1">&#39;gaps&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">module</span> <span class="ow">in</span> <span class="n">matrix</span><span class="p">[</span><span class="s1">'modules'</span><span class="p">]:</span>
+    <span class="k">for</span> <span class="bp">cls</span> <span class="ow">in</span> <span class="n">module</span><span class="p">[</span><span class="s1">'classes'</span><span class="p">]:</span>
+        <span class="k">if</span> <span class="bp">cls</span><span class="p">[</span><span class="s1">'status'</span><span class="p">]</span> <span class="o">==</span> <span class="s1">'partial'</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Gap in </span><span class="si">{</span><span class="bp">cls</span><span class="p">[</span><span class="s1">'name'</span><span class="p">]</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="bp">cls</span><span class="p">[</span><span class="s1">'gaps'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="related-documents">Related Documents<a class="headerlink" href="#related-documents" title="Permanent link">&para;</a></h2>
 <ul>

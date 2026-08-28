@@ -3996,9 +3996,9 @@ not execute your dataset examples remotely.</p>
 </table>
 <h2 id="default-smart-optimization">Default Smart Optimization<a class="headerlink" href="#default-smart-optimization" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;evals.jsonl&quot;</span><span class="p">},</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o&quot;</span><span class="p">]},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
+    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"evals.jsonl"</span><span class="p">},</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">]},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">agent</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">answer_question</span><span class="p">(</span><span class="n">question</span><span class="p">)</span>
@@ -4008,26 +4008,26 @@ not execute your dataset examples remotely.</p>
 <h2 id="explicit-local-search">Explicit Local Search<a class="headerlink" href="#explicit-local-search" title="Permanent link">&para;</a></h2>
 <p>Use <code>grid</code> or <code>random</code> for reproducible sweeps, CI smoke tests, and simple
 baselines. These runs still sync results to the portal when authenticated.</p>
-<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">"grid"</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="no-egress-local-runs">No-Egress Local Runs<a class="headerlink" href="#no-egress-local-runs" title="Permanent link">&para;</a></h2>
 <p>Use <code>offline=True</code> only when no Traigent backend traffic is allowed.</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;evals.jsonl&quot;</span><span class="p">},</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">]},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
+    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"evals.jsonl"</span><span class="p">},</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">]},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
     <span class="n">offline</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">sensitive_agent</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">answer_question</span><span class="p">(</span><span class="n">question</span><span class="p">)</span>
 
-<span class="n">result</span> <span class="o">=</span> <span class="n">sensitive_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">sensitive_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">"grid"</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
 </code></pre></div>
 <p><code>offline=True</code> does not block calls your function makes to LLM providers,
 databases, or tools.</p>
 <h2 id="smart-algorithms">Smart Algorithms<a class="headerlink" href="#smart-algorithms" title="Permanent link">&para;</a></h2>
 <p>Explicit smart algorithms run in the cloud only:</p>
-<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;bayesian&quot;</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">"bayesian"</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
 </code></pre></div>
 <p>They hard-error when cloud optimization is unavailable or <code>offline=True</code> is set.
 Use the default path when you want Traigent to pick the best available option.</p>

@@ -3794,13 +3794,13 @@ backend/network client is imported; no cost is ever incurred.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">traigent</span>
 
 <span class="n">report</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">validate_evaluation_contract</span><span class="p">(</span>
-    <span class="n">func</span><span class="o">=</span><span class="n">my_agent</span><span class="p">,</span>                       <span class="c1"># raw callable OR @traigent.optimize&#39;d function</span>
-    <span class="n">dataset</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;input&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;q&quot;</span><span class="p">:</span> <span class="s2">&quot;hi&quot;</span><span class="p">},</span> <span class="s2">&quot;expected&quot;</span><span class="p">:</span> <span class="s2">&quot;hello&quot;</span><span class="p">}],</span>
+    <span class="n">func</span><span class="o">=</span><span class="n">my_agent</span><span class="p">,</span>                       <span class="c1"># raw callable OR @traigent.optimize'd function</span>
+    <span class="n">dataset</span><span class="o">=</span><span class="p">[{</span><span class="s2">"input"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"q"</span><span class="p">:</span> <span class="s2">"hi"</span><span class="p">},</span> <span class="s2">"expected"</span><span class="p">:</span> <span class="s2">"hello"</span><span class="p">}],</span>
     <span class="n">scoring_function</span><span class="o">=</span><span class="n">my_scorer</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">if</span> <span class="ow">not</span> <span class="n">report</span><span class="o">.</span><span class="n">ok</span><span class="p">:</span>
     <span class="k">for</span> <span class="n">finding</span> <span class="ow">in</span> <span class="n">report</span><span class="o">.</span><span class="n">findings</span><span class="p">:</span>
-        <span class="k">if</span> <span class="n">finding</span><span class="o">.</span><span class="n">severity</span> <span class="o">==</span> <span class="s2">&quot;error&quot;</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">finding</span><span class="o">.</span><span class="n">severity</span> <span class="o">==</span> <span class="s2">"error"</span><span class="p">:</span>
             <span class="nb">print</span><span class="p">(</span><span class="n">finding</span><span class="o">.</span><span class="n">code</span><span class="p">,</span> <span class="n">finding</span><span class="o">.</span><span class="n">message</span><span class="p">)</span>
 </code></pre></div>
 <p><code>report</code> is an <code>EvaluationContractReport</code> (a frozen dataclass). Call

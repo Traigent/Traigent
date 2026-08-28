@@ -4010,15 +4010,15 @@ decouples termination policies from individual optimizers. Each condition implem
 the <code>StopCondition</code> interface (<code>traigent/core/stop_conditions.py</code>) and can be
 combined freely:</p>
 <div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">StopCondition</span><span class="p">(</span><span class="n">ABC</span><span class="p">):</span>
-    <span class="n">reason</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;condition&quot;</span>
+    <span class="n">reason</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"condition"</span>
 
     <span class="nd">@abstractmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">reset</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Clear internal state before a new optimization run.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Clear internal state before a new optimization run."""</span>
 
     <span class="nd">@abstractmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">should_stop</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">trials</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">TrialResult</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return ``True`` when the condition dictates stopping.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Return ``True`` when the condition dictates stopping."""</span>
 </code></pre></div>
 <p>Built-in implementations:</p>
 <table>
@@ -4077,10 +4077,10 @@ can stop only before the next trial or batch item. In parallel mode, already
 running trials may finish after the limit is reached.</p>
 <p><code>metric_name</code> is required with <code>metric_limit</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;qa.jsonl&quot;</span><span class="p">,</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">]},</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"qa.jsonl"</span><span class="p">,</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">]},</span>
     <span class="n">metric_limit</span><span class="o">=</span><span class="mi">50_000</span><span class="p">,</span>
-    <span class="n">metric_name</span><span class="o">=</span><span class="s2">&quot;total_tokens&quot;</span><span class="p">,</span>
+    <span class="n">metric_name</span><span class="o">=</span><span class="s2">"total_tokens"</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">chat</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="o">...</span>
@@ -4090,20 +4090,20 @@ running trials may finish after the limit is reached.</p>
 <span class="c1"># removed in 0.13.0. Use cost_limit=&lt;value&gt; and/or metric_limit=&lt;value&gt; with</span>
 <span class="c1"># metric_name=&lt;name&gt; instead.</span>
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;qa.jsonl&quot;</span><span class="p">,</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">]},</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"qa.jsonl"</span><span class="p">,</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">]},</span>
     <span class="n">budget_limit</span><span class="o">=</span><span class="mi">50_000</span><span class="p">,</span>
-    <span class="n">budget_metric</span><span class="o">=</span><span class="s2">&quot;total_tokens&quot;</span><span class="p">,</span>
+    <span class="n">budget_metric</span><span class="o">=</span><span class="s2">"total_tokens"</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">chat</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="o">...</span>
 </code></pre></div>
 <p>Migrate to:</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;qa.jsonl&quot;</span><span class="p">,</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">]},</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"qa.jsonl"</span><span class="p">,</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">]},</span>
     <span class="n">metric_limit</span><span class="o">=</span><span class="mi">50_000</span><span class="p">,</span>
-    <span class="n">metric_name</span><span class="o">=</span><span class="s2">&quot;total_tokens&quot;</span><span class="p">,</span>
+    <span class="n">metric_name</span><span class="o">=</span><span class="s2">"total_tokens"</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">chat</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="o">...</span>
@@ -4159,7 +4159,7 @@ non-recoverable reason.</p>
 <code>ObjectiveSchema.compute_weighted_score(...)</code>. This method normalizes weights,
 respects per-objective orientations, and supports both explicit schemas and
 string lists (the orchestrator auto-creates equal-weight schemas when needed).</p>
-<div class="highlight"><pre><span></span><code><span class="n">schema</span><span class="o">.</span><span class="n">compute_weighted_score</span><span class="p">({</span><span class="s2">&quot;accuracy&quot;</span><span class="p">:</span> <span class="mf">0.8</span><span class="p">,</span> <span class="s2">&quot;total_cost&quot;</span><span class="p">:</span> <span class="mf">0.05</span><span class="p">})</span>
+<div class="highlight"><pre><span></span><code><span class="n">schema</span><span class="o">.</span><span class="n">compute_weighted_score</span><span class="p">({</span><span class="s2">"accuracy"</span><span class="p">:</span> <span class="mf">0.8</span><span class="p">,</span> <span class="s2">"total_cost"</span><span class="p">:</span> <span class="mf">0.05</span><span class="p">})</span>
 <span class="c1"># -&gt; 0.5 * 0.8 + 0.5 * (-0.05) = 0.375</span>
 </code></pre></div>
 <p>This guarantees consistent behaviour for multi-objective runs regardless of how
@@ -4184,8 +4184,8 @@ they were declared in <code>@optimize</code>.</p>
 <h3 id="usage-examples">Usage examples<a class="headerlink" href="#usage-examples" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="c1"># Context injection (default)</span>
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;math.jsonl&quot;</span><span class="p">,</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;openai/gpt-4.1-nano&quot;</span><span class="p">,</span> <span class="s2">&quot;openai/gpt-4.1&quot;</span><span class="p">]},</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"math.jsonl"</span><span class="p">,</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"openai/gpt-4.1-nano"</span><span class="p">,</span> <span class="s2">"openai/gpt-4.1"</span><span class="p">]},</span>
     <span class="n">plateau_window</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
     <span class="n">plateau_epsilon</span><span class="o">=</span><span class="mf">1e-5</span><span class="p">,</span>
     <span class="n">cost_limit</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>
@@ -4196,10 +4196,10 @@ they were declared in <code>@optimize</code>.</p>
 
 <span class="c1"># Parameter injection</span>
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;qa.jsonl&quot;</span><span class="p">,</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">]},</span>
-    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;parameter&quot;</span><span class="p">,</span>
-    <span class="n">config_param</span><span class="o">=</span><span class="s2">&quot;config&quot;</span><span class="p">,</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"qa.jsonl"</span><span class="p">,</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">]},</span>
+    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">"parameter"</span><span class="p">,</span>
+    <span class="n">config_param</span><span class="o">=</span><span class="s2">"config"</span><span class="p">,</span>
     <span class="n">plateau_window</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">chat</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
@@ -4207,11 +4207,11 @@ they were declared in <code>@optimize</code>.</p>
 
 <span class="c1"># Seamless injection</span>
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;scenarios.jsonl&quot;</span><span class="p">,</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;openai/gpt-4o&quot;</span><span class="p">,</span> <span class="s2">&quot;openai/gpt-4o-mini&quot;</span><span class="p">]},</span>
-    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">&quot;seamless&quot;</span><span class="p">,</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"scenarios.jsonl"</span><span class="p">,</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"openai/gpt-4o"</span><span class="p">,</span> <span class="s2">"openai/gpt-4o-mini"</span><span class="p">]},</span>
+    <span class="n">injection_mode</span><span class="o">=</span><span class="s2">"seamless"</span><span class="p">,</span>
     <span class="n">metric_limit</span><span class="o">=</span><span class="mi">100_000</span><span class="p">,</span>
-    <span class="n">metric_name</span><span class="o">=</span><span class="s2">&quot;total_tokens&quot;</span><span class="p">,</span>
+    <span class="n">metric_name</span><span class="o">=</span><span class="s2">"total_tokens"</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">plan_trip</span><span class="p">(</span><span class="n">itinerary</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="o">...</span>
@@ -4241,7 +4241,7 @@ unless they are explicitly mapped into the public <code>StopReason</code> contra
 </ul>
 <p>To run:</p>
 <div class="highlight"><pre><span></span><code>pytest<span class="w"> </span>tests/unit/core/test_stop_conditions.py
-pytest<span class="w"> </span>tests/unit/core/test_orchestrator.py<span class="w"> </span>-k<span class="w"> </span><span class="s2">&quot;plateau or metric_limit&quot;</span>
+pytest<span class="w"> </span>tests/unit/core/test_orchestrator.py<span class="w"> </span>-k<span class="w"> </span><span class="s2">"plateau or metric_limit"</span>
 </code></pre></div>
 <p><em>(Note: the shared environment used for development lacks <code>pytest</code>; run locally
 to observe green test results.)</em></p>

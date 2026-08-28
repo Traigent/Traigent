@@ -3856,10 +3856,10 @@ not bind values and do not trigger cloud effectuation.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.knobs.patterns</span><span class="w"> </span><span class="kn">import</span> <span class="n">binary_cascade</span>
 
 <span class="n">answerer</span> <span class="o">=</span> <span class="n">binary_cascade</span><span class="p">(</span>
-    <span class="s2">&quot;answerer&quot;</span><span class="p">,</span>
-    <span class="n">base_stage</span><span class="o">=</span><span class="s2">&quot;cheap&quot;</span><span class="p">,</span>
-    <span class="n">expert_stage</span><span class="o">=</span><span class="s2">&quot;strong&quot;</span><span class="p">,</span>
-    <span class="n">threshold</span><span class="o">=</span><span class="s2">&quot;router_margin_threshold&quot;</span><span class="p">,</span>  <span class="c1"># a calibrated CVAR name</span>
+    <span class="s2">"answerer"</span><span class="p">,</span>
+    <span class="n">base_stage</span><span class="o">=</span><span class="s2">"cheap"</span><span class="p">,</span>
+    <span class="n">expert_stage</span><span class="o">=</span><span class="s2">"strong"</span><span class="p">,</span>
+    <span class="n">threshold</span><span class="o">=</span><span class="s2">"router_margin_threshold"</span><span class="p">,</span>  <span class="c1"># a calibrated CVAR name</span>
 <span class="p">)</span>
 </code></pre></div>
 <h2 id="executing-a-composite">Executing a composite<a class="headerlink" href="#executing-a-composite" title="Permanent link">&para;</a></h2>
@@ -3881,12 +3881,12 @@ gate thresholds:</p>
 
 <span class="n">run</span> <span class="o">=</span> <span class="n">execute_composite</span><span class="p">(</span>
     <span class="n">answerer</span><span class="o">.</span><span class="n">structure</span><span class="p">,</span>
-    <span class="n">stages</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;cheap&quot;</span><span class="p">:</span> <span class="n">stage</span><span class="p">([</span><span class="s2">&quot;A&quot;</span><span class="p">,</span> <span class="s2">&quot;A&quot;</span><span class="p">,</span> <span class="s2">&quot;B&quot;</span><span class="p">]),</span> <span class="s2">&quot;strong&quot;</span><span class="p">:</span> <span class="n">stage</span><span class="p">([</span><span class="s2">&quot;STRONG&quot;</span><span class="p">])},</span>
-    <span class="n">config</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;variant&quot;</span><span class="p">:</span> <span class="s2">&quot;strong&quot;</span><span class="p">},</span>
-    <span class="n">calibrated_values</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;router_margin_threshold&quot;</span><span class="p">:</span> <span class="mf">0.9</span><span class="p">},</span>
+    <span class="n">stages</span><span class="o">=</span><span class="p">{</span><span class="s2">"cheap"</span><span class="p">:</span> <span class="n">stage</span><span class="p">([</span><span class="s2">"A"</span><span class="p">,</span> <span class="s2">"A"</span><span class="p">,</span> <span class="s2">"B"</span><span class="p">]),</span> <span class="s2">"strong"</span><span class="p">:</span> <span class="n">stage</span><span class="p">([</span><span class="s2">"STRONG"</span><span class="p">])},</span>
+    <span class="n">config</span><span class="o">=</span><span class="p">{</span><span class="s2">"variant"</span><span class="p">:</span> <span class="s2">"strong"</span><span class="p">},</span>
+    <span class="n">calibrated_values</span><span class="o">=</span><span class="p">{</span><span class="s2">"router_margin_threshold"</span><span class="p">:</span> <span class="mf">0.9</span><span class="p">},</span>
 <span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">result_kind</span><span class="p">)</span>  <span class="c1"># output | no_accept | error</span>
-<span class="nb">print</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">output</span><span class="p">)</span>       <span class="c1"># the selected arm&#39;s output (when result_kind is output)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">output</span><span class="p">)</span>       <span class="c1"># the selected arm's output (when result_kind is output)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">measures</span><span class="p">)</span>     <span class="c1"># the §3.10 content-free telemetry dict</span>
 </code></pre></div>
 <p><code>execute_composite</code> returns a frozen <code>CompositeRunResult</code>:</p>
@@ -3919,14 +3919,14 @@ silent fallback to some stage's output.</p>
 <span class="kn">from</span><span class="w"> </span><span class="nn">traigent.tvl.promotion_gate</span><span class="w"> </span><span class="kn">import</span> <span class="n">ObjectiveSpec</span><span class="p">,</span> <span class="n">PromotionGate</span>
 
 <span class="n">gate</span> <span class="o">=</span> <span class="n">PromotionGate</span><span class="p">(</span>
-    <span class="n">PromotionPolicy</span><span class="p">(</span><span class="n">alpha</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span> <span class="n">min_effect</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;accuracy&quot;</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">}),</span>
-    <span class="p">[</span><span class="n">ObjectiveSpec</span><span class="p">(</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;maximize&quot;</span><span class="p">)],</span>
+    <span class="n">PromotionPolicy</span><span class="p">(</span><span class="n">alpha</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span> <span class="n">min_effect</span><span class="o">=</span><span class="p">{</span><span class="s2">"accuracy"</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">}),</span>
+    <span class="p">[</span><span class="n">ObjectiveSpec</span><span class="p">(</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"maximize"</span><span class="p">)],</span>
 <span class="p">)</span>
 <span class="n">decision</span> <span class="o">=</span> <span class="n">gate</span><span class="o">.</span><span class="n">evaluate</span><span class="p">(</span>
-    <span class="n">incumbent_metrics</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;accuracy&quot;</span><span class="p">:</span> <span class="n">incumbent_accuracy_samples</span><span class="p">},</span>
-    <span class="n">candidate_metrics</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;accuracy&quot;</span><span class="p">:</span> <span class="n">candidate_accuracy_samples</span><span class="p">},</span>
+    <span class="n">incumbent_metrics</span><span class="o">=</span><span class="p">{</span><span class="s2">"accuracy"</span><span class="p">:</span> <span class="n">incumbent_accuracy_samples</span><span class="p">},</span>
+    <span class="n">candidate_metrics</span><span class="o">=</span><span class="p">{</span><span class="s2">"accuracy"</span><span class="p">:</span> <span class="n">candidate_accuracy_samples</span><span class="p">},</span>
 <span class="p">)</span>
-<span class="c1"># decision.decision is &quot;promote&quot;, &quot;reject&quot;, or &quot;no_decision&quot;.</span>
+<span class="c1"># decision.decision is "promote", "reject", or "no_decision".</span>
 </code></pre></div>
 <p><code>decision.decision</code> is one of <code>promote</code>, <code>reject</code>, or <code>no_decision</code>. A
 <code>no_decision</code> is the honest outcome when the evidence does not establish
@@ -3957,9 +3957,9 @@ It flattens the run's measures into identifier-safe, numeric-only keys:</p>
 
 <span class="n">composite_measures</span><span class="p">(</span><span class="n">run</span><span class="p">)</span>
 <span class="c1"># {</span>
-<span class="c1">#   &quot;composite_escalation_rate&quot;: 1.0,</span>
-<span class="c1">#   &quot;composite_stage_selected&quot;: 1,</span>
-<span class="c1">#   &quot;composite_gate_0_margin_pass_rate&quot;: 0.0,</span>
+<span class="c1">#   "composite_escalation_rate": 1.0,</span>
+<span class="c1">#   "composite_stage_selected": 1,</span>
+<span class="c1">#   "composite_gate_0_margin_pass_rate": 0.0,</span>
 <span class="c1"># }</span>
 </code></pre></div>
 <p>Flattening rules:</p>
@@ -3988,21 +3988,21 @@ channel as ordinary numeric metrics:</p>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">eval_dataset</span><span class="o">=...</span><span class="p">,</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;variant&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;cheap&quot;</span><span class="p">,</span> <span class="s2">&quot;strong&quot;</span><span class="p">]},</span>
-    <span class="n">default_config</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;variant&quot;</span><span class="p">:</span> <span class="s2">&quot;cheap&quot;</span><span class="p">},</span>
-    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"variant"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"cheap"</span><span class="p">,</span> <span class="s2">"strong"</span><span class="p">]},</span>
+    <span class="n">default_config</span><span class="o">=</span><span class="p">{</span><span class="s2">"variant"</span><span class="p">:</span> <span class="s2">"cheap"</span><span class="p">},</span>
+    <span class="n">algorithm</span><span class="o">=</span><span class="s2">"auto"</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">answer</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]:</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
     <span class="n">params</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">cfg</span><span class="p">)</span>
     <span class="n">run</span> <span class="o">=</span> <span class="n">execute_composite</span><span class="p">(</span>
         <span class="n">answerer</span><span class="o">.</span><span class="n">structure</span><span class="p">,</span>
-        <span class="n">stages</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;cheap&quot;</span><span class="p">:</span> <span class="n">stage</span><span class="p">([</span><span class="o">...</span><span class="p">]),</span> <span class="s2">&quot;strong&quot;</span><span class="p">:</span> <span class="n">stage</span><span class="p">([</span><span class="s2">&quot;STRONG&quot;</span><span class="p">])},</span>
+        <span class="n">stages</span><span class="o">=</span><span class="p">{</span><span class="s2">"cheap"</span><span class="p">:</span> <span class="n">stage</span><span class="p">([</span><span class="o">...</span><span class="p">]),</span> <span class="s2">"strong"</span><span class="p">:</span> <span class="n">stage</span><span class="p">([</span><span class="s2">"STRONG"</span><span class="p">])},</span>
         <span class="n">config</span><span class="o">=</span><span class="n">params</span><span class="p">,</span>
-        <span class="n">calibrated_values</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;router_margin_threshold&quot;</span><span class="p">:</span> <span class="n">params</span><span class="p">[</span><span class="s2">&quot;router_margin_threshold&quot;</span><span class="p">]},</span>
+        <span class="n">calibrated_values</span><span class="o">=</span><span class="p">{</span><span class="s2">"router_margin_threshold"</span><span class="p">:</span> <span class="n">params</span><span class="p">[</span><span class="s2">"router_margin_threshold"</span><span class="p">]},</span>
     <span class="p">)</span>
-    <span class="n">metrics</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;accuracy&quot;</span><span class="p">:</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">output</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;STRONG&quot;</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">}</span>
+    <span class="n">metrics</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"accuracy"</span><span class="p">:</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">output</span><span class="p">)</span> <span class="o">==</span> <span class="s2">"STRONG"</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">}</span>
     <span class="n">merge_composite_measures</span><span class="p">(</span><span class="n">metrics</span><span class="p">,</span> <span class="n">run</span><span class="p">)</span>  <span class="c1"># composite_* keys ride the wire</span>
     <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">output</span><span class="p">),</span> <span class="n">metrics</span>
 </code></pre></div>

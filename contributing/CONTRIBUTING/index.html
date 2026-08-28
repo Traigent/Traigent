@@ -4144,7 +4144,7 @@ make<span class="w"> </span>install-dev
 
 <span class="c1"># Or use pip directly</span>
 pip<span class="w"> </span>install<span class="w"> </span>-r<span class="w"> </span>requirements/requirements-dev.txt
-pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;.[dev,integrations,analytics,security]&quot;</span>
+pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">".[dev,integrations,analytics,security]"</span>
 </code></pre></div></li>
 </ol>
 <h2 id="development-workflow">Development Workflow<a class="headerlink" href="#development-workflow" title="Permanent link">&para;</a></h2>
@@ -4181,7 +4181,7 @@ python<span class="w"> </span>-m<span class="w"> </span>pytest<span class="w"> <
 <li>
 <p><strong>Commit your changes</strong>:
    <div class="highlight"><pre><span></span><code>git<span class="w"> </span>add<span class="w"> </span>.
-git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;feat: add new feature&quot;</span>
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">"feat: add new feature"</span>
 </code></pre></div></p>
 </li>
 </ol>
@@ -4231,7 +4231,7 @@ isort<span class="w"> </span>--check-only<span class="w"> </span>traigent/
 </ul>
 <p>Example test structure:
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_feature_behavior</span><span class="p">():</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Test that feature behaves correctly.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Test that feature behaves correctly."""</span>
     <span class="c1"># Arrange</span>
     <span class="n">input_data</span> <span class="o">=</span> <span class="n">create_test_data</span><span class="p">()</span>
 

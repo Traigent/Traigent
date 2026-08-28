@@ -4140,21 +4140,21 @@
 <div class="highlight"><pre><span></span><code><span class="c1"># Before - DELETE THIS:</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">_get_default_mappings</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
     <span class="k">return</span> <span class="p">{</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;model&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="s2">&quot;temperature&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="s2">&quot;max_tokens&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;top_p&quot;</span><span class="p">:</span> <span class="s2">&quot;top_p&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;stream&quot;</span><span class="p">:</span> <span class="s2">&quot;stream&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;stop&quot;</span><span class="p">:</span> <span class="s2">&quot;stop&quot;</span><span class="p">,</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="s2">"model"</span><span class="p">,</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="s2">"temperature"</span><span class="p">,</span>
+        <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="s2">"max_tokens"</span><span class="p">,</span>
+        <span class="s2">"top_p"</span><span class="p">:</span> <span class="s2">"top_p"</span><span class="p">,</span>
+        <span class="s2">"stream"</span><span class="p">:</span> <span class="s2">"stream"</span><span class="p">,</span>
+        <span class="s2">"stop"</span><span class="p">:</span> <span class="s2">"stop"</span><span class="p">,</span>
         <span class="c1"># ... many more lines</span>
     <span class="p">}</span>
 
 <span class="c1"># After - Only add EXTRA mappings not in normalizer:</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">_get_extra_mappings</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
     <span class="k">return</span> <span class="p">{</span>
-        <span class="s2">&quot;logit_bias&quot;</span><span class="p">:</span> <span class="s2">&quot;logit_bias&quot;</span><span class="p">,</span>  <span class="c1"># OpenAI-specific</span>
-        <span class="s2">&quot;logprobs&quot;</span><span class="p">:</span> <span class="s2">&quot;logprobs&quot;</span><span class="p">,</span>       <span class="c1"># OpenAI-specific</span>
-        <span class="s2">&quot;n&quot;</span><span class="p">:</span> <span class="s2">&quot;n&quot;</span><span class="p">,</span>                      <span class="c1"># OpenAI-specific</span>
+        <span class="s2">"logit_bias"</span><span class="p">:</span> <span class="s2">"logit_bias"</span><span class="p">,</span>  <span class="c1"># OpenAI-specific</span>
+        <span class="s2">"logprobs"</span><span class="p">:</span> <span class="s2">"logprobs"</span><span class="p">,</span>       <span class="c1"># OpenAI-specific</span>
+        <span class="s2">"n"</span><span class="p">:</span> <span class="s2">"n"</span><span class="p">,</span>                      <span class="c1"># OpenAI-specific</span>
     <span class="p">}</span>
 </code></pre></div>
 <h3 id="step-3-convert-validation-rules">Step 3: Convert Validation Rules<a class="headerlink" href="#step-3-convert-validation-rules" title="Permanent link">&para;</a></h3>
@@ -4162,30 +4162,30 @@
 <div class="highlight"><pre><span></span><code><span class="c1"># Before:</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">_get_validation_rules</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">ValidationRule</span><span class="p">]:</span>
     <span class="k">return</span> <span class="p">{</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>  <span class="c1"># Common - now auto</span>
-        <span class="s2">&quot;top_p&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">1.0</span><span class="p">),</span>        <span class="c1"># Common - now auto</span>
-        <span class="s2">&quot;frequency_penalty&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=-</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>  <span class="c1"># Provider-specific</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>  <span class="c1"># Common - now auto</span>
+        <span class="s2">"top_p"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">1.0</span><span class="p">),</span>        <span class="c1"># Common - now auto</span>
+        <span class="s2">"frequency_penalty"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=-</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>  <span class="c1"># Provider-specific</span>
     <span class="p">}</span>
 
 <span class="c1"># After:</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">_get_provider_specific_rules</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">ValidationRule</span><span class="p">]:</span>
     <span class="k">return</span> <span class="p">{</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>  <span class="c1"># Override to make required</span>
-        <span class="s2">&quot;frequency_penalty&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=-</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
-        <span class="s2">&quot;presence_penalty&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=-</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>  <span class="c1"># Override to make required</span>
+        <span class="s2">"frequency_penalty"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=-</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
+        <span class="s2">"presence_penalty"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=-</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
     <span class="p">}</span>
 </code></pre></div>
 <h3 id="step-4-keep-provider-specific-logic">Step 4: Keep Provider-Specific Logic<a class="headerlink" href="#step-4-keep-provider-specific-logic" title="Permanent link">&para;</a></h3>
 <p>The <code>apply_overrides()</code> method still works - keep any provider-specific logic:</p>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">apply_overrides</span><span class="p">(</span>
-    <span class="bp">self</span><span class="p">,</span> <span class="n">kwargs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="n">config</span><span class="p">:</span> <span class="s2">&quot;TraigentConfig | dict[str, Any]&quot;</span>
+    <span class="bp">self</span><span class="p">,</span> <span class="n">kwargs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="n">config</span><span class="p">:</span> <span class="s2">"TraigentConfig | dict[str, Any]"</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
     <span class="c1"># Apply base overrides (handles standard mapping)</span>
     <span class="n">overridden</span> <span class="o">=</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">apply_overrides</span><span class="p">(</span><span class="n">kwargs</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span>
 
     <span class="c1"># Add provider-specific transformations</span>
-    <span class="k">if</span> <span class="s2">&quot;functions&quot;</span> <span class="ow">in</span> <span class="n">overridden</span> <span class="ow">and</span> <span class="s2">&quot;tools&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">overridden</span><span class="p">:</span>
+    <span class="k">if</span> <span class="s2">"functions"</span> <span class="ow">in</span> <span class="n">overridden</span> <span class="ow">and</span> <span class="s2">"tools"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">overridden</span><span class="p">:</span>
         <span class="c1"># Convert functions to tools format</span>
         <span class="o">...</span>
 
@@ -4231,14 +4231,14 @@
 <h3 id="critical-_get_supported_canonical_params">Critical: <code>_get_supported_canonical_params()</code><a class="headerlink" href="#critical-_get_supported_canonical_params" title="Permanent link">&para;</a></h3>
 <p><strong>IMPORTANT</strong>: If your provider doesn't support all canonical LLM params, you MUST override <code>_get_supported_canonical_params()</code> to prevent runtime errors.</p>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">_get_supported_canonical_params</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">set</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return only the params this provider accepts.</span>
+<span class="w">    </span><span class="sd">"""Return only the params this provider accepts.</span>
 
 <span class="sd">    Without this, the normalizer maps ALL canonical params, which causes:</span>
 <span class="sd">    - Bedrock: ValidationException for frequency_penalty, presence_penalty</span>
 <span class="sd">    - Gemini: TypeError for unsupported params in generate_content()</span>
 <span class="sd">    - Cohere: Unexpected keyword argument errors</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">,</span> <span class="s2">&quot;max_tokens&quot;</span><span class="p">,</span> <span class="s2">&quot;temperature&quot;</span><span class="p">,</span> <span class="s2">&quot;top_p&quot;</span><span class="p">,</span> <span class="s2">&quot;stop&quot;</span><span class="p">}</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">"model"</span><span class="p">,</span> <span class="s2">"max_tokens"</span><span class="p">,</span> <span class="s2">"temperature"</span><span class="p">,</span> <span class="s2">"top_p"</span><span class="p">,</span> <span class="s2">"stop"</span><span class="p">}</span>
 </code></pre></div>
 <p><strong>Return values:</strong></p>
 <ul>
@@ -4254,35 +4254,35 @@
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_get_default_mappings</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
         <span class="k">return</span> <span class="p">{</span>
-            <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;model&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="s2">&quot;temperature&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="s2">&quot;max_tokens&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;top_p&quot;</span><span class="p">:</span> <span class="s2">&quot;top_p&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;frequency_penalty&quot;</span><span class="p">:</span> <span class="s2">&quot;frequency_penalty&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;presence_penalty&quot;</span><span class="p">:</span> <span class="s2">&quot;presence_penalty&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;stop&quot;</span><span class="p">:</span> <span class="s2">&quot;stop&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;stream&quot;</span><span class="p">:</span> <span class="s2">&quot;stream&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;functions&quot;</span><span class="p">:</span> <span class="s2">&quot;functions&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;function_call&quot;</span><span class="p">:</span> <span class="s2">&quot;function_call&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;tools&quot;</span><span class="p">:</span> <span class="s2">&quot;tools&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;tool_choice&quot;</span><span class="p">:</span> <span class="s2">&quot;tool_choice&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;response_format&quot;</span><span class="p">:</span> <span class="s2">&quot;response_format&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;seed&quot;</span><span class="p">:</span> <span class="s2">&quot;seed&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;logit_bias&quot;</span><span class="p">:</span> <span class="s2">&quot;logit_bias&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;logprobs&quot;</span><span class="p">:</span> <span class="s2">&quot;logprobs&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;top_logprobs&quot;</span><span class="p">:</span> <span class="s2">&quot;top_logprobs&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;n&quot;</span><span class="p">:</span> <span class="s2">&quot;n&quot;</span><span class="p">,</span>
+            <span class="s2">"model"</span><span class="p">:</span> <span class="s2">"model"</span><span class="p">,</span>
+            <span class="s2">"temperature"</span><span class="p">:</span> <span class="s2">"temperature"</span><span class="p">,</span>
+            <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="s2">"max_tokens"</span><span class="p">,</span>
+            <span class="s2">"top_p"</span><span class="p">:</span> <span class="s2">"top_p"</span><span class="p">,</span>
+            <span class="s2">"frequency_penalty"</span><span class="p">:</span> <span class="s2">"frequency_penalty"</span><span class="p">,</span>
+            <span class="s2">"presence_penalty"</span><span class="p">:</span> <span class="s2">"presence_penalty"</span><span class="p">,</span>
+            <span class="s2">"stop"</span><span class="p">:</span> <span class="s2">"stop"</span><span class="p">,</span>
+            <span class="s2">"stream"</span><span class="p">:</span> <span class="s2">"stream"</span><span class="p">,</span>
+            <span class="s2">"functions"</span><span class="p">:</span> <span class="s2">"functions"</span><span class="p">,</span>
+            <span class="s2">"function_call"</span><span class="p">:</span> <span class="s2">"function_call"</span><span class="p">,</span>
+            <span class="s2">"tools"</span><span class="p">:</span> <span class="s2">"tools"</span><span class="p">,</span>
+            <span class="s2">"tool_choice"</span><span class="p">:</span> <span class="s2">"tool_choice"</span><span class="p">,</span>
+            <span class="s2">"response_format"</span><span class="p">:</span> <span class="s2">"response_format"</span><span class="p">,</span>
+            <span class="s2">"seed"</span><span class="p">:</span> <span class="s2">"seed"</span><span class="p">,</span>
+            <span class="s2">"logit_bias"</span><span class="p">:</span> <span class="s2">"logit_bias"</span><span class="p">,</span>
+            <span class="s2">"logprobs"</span><span class="p">:</span> <span class="s2">"logprobs"</span><span class="p">,</span>
+            <span class="s2">"top_logprobs"</span><span class="p">:</span> <span class="s2">"top_logprobs"</span><span class="p">,</span>
+            <span class="s2">"n"</span><span class="p">:</span> <span class="s2">"n"</span><span class="p">,</span>
         <span class="p">}</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_get_validation_rules</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">ValidationRule</span><span class="p">]:</span>
         <span class="k">return</span> <span class="p">{</span>
-            <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
-            <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
-            <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mi">128000</span><span class="p">),</span>
-            <span class="s2">&quot;top_p&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">1.0</span><span class="p">),</span>
-            <span class="s2">&quot;frequency_penalty&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=-</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
-            <span class="s2">&quot;presence_penalty&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=-</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
-            <span class="s2">&quot;n&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span>
+            <span class="s2">"model"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
+            <span class="s2">"temperature"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
+            <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mi">128000</span><span class="p">),</span>
+            <span class="s2">"top_p"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">1.0</span><span class="p">),</span>
+            <span class="s2">"frequency_penalty"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=-</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
+            <span class="s2">"presence_penalty"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=-</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
+            <span class="s2">"n"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span>
         <span class="p">}</span>
 </code></pre></div>
 <h3 id="after-openai-plugin">After (OpenAI Plugin)<a class="headerlink" href="#after-openai-plugin" title="Permanent link">&para;</a></h3>
@@ -4296,22 +4296,22 @@
     <span class="k">def</span><span class="w"> </span><span class="nf">_get_extra_mappings</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
         <span class="c1"># Only OpenAI-specific params not in ParameterNormalizer</span>
         <span class="k">return</span> <span class="p">{</span>
-            <span class="s2">&quot;logit_bias&quot;</span><span class="p">:</span> <span class="s2">&quot;logit_bias&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;logprobs&quot;</span><span class="p">:</span> <span class="s2">&quot;logprobs&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;top_logprobs&quot;</span><span class="p">:</span> <span class="s2">&quot;top_logprobs&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;n&quot;</span><span class="p">:</span> <span class="s2">&quot;n&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;functions&quot;</span><span class="p">:</span> <span class="s2">&quot;functions&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;function_call&quot;</span><span class="p">:</span> <span class="s2">&quot;function_call&quot;</span><span class="p">,</span>
+            <span class="s2">"logit_bias"</span><span class="p">:</span> <span class="s2">"logit_bias"</span><span class="p">,</span>
+            <span class="s2">"logprobs"</span><span class="p">:</span> <span class="s2">"logprobs"</span><span class="p">,</span>
+            <span class="s2">"top_logprobs"</span><span class="p">:</span> <span class="s2">"top_logprobs"</span><span class="p">,</span>
+            <span class="s2">"n"</span><span class="p">:</span> <span class="s2">"n"</span><span class="p">,</span>
+            <span class="s2">"functions"</span><span class="p">:</span> <span class="s2">"functions"</span><span class="p">,</span>
+            <span class="s2">"function_call"</span><span class="p">:</span> <span class="s2">"function_call"</span><span class="p">,</span>
         <span class="p">}</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_get_provider_specific_rules</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">ValidationRule</span><span class="p">]:</span>
         <span class="k">return</span> <span class="p">{</span>
-            <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
-            <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mi">128000</span><span class="p">),</span>
-            <span class="s2">&quot;frequency_penalty&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=-</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
-            <span class="s2">&quot;presence_penalty&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=-</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
-            <span class="s2">&quot;n&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span>
-            <span class="s2">&quot;top_logprobs&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span>
+            <span class="s2">"model"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
+            <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mi">128000</span><span class="p">),</span>
+            <span class="s2">"frequency_penalty"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=-</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
+            <span class="s2">"presence_penalty"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=-</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
+            <span class="s2">"n"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span>
+            <span class="s2">"top_logprobs"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span>
         <span class="p">}</span>
 </code></pre></div>
 <h2 id="built-in-llm-plugins">Built-In LLM Plugins<a class="headerlink" href="#built-in-llm-plugins" title="Permanent link">&para;</a></h2>

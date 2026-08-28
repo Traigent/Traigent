@@ -4378,11 +4378,11 @@ make<span class="w"> </span>install-dev
 <h3 id="step-1-add-framework-to-parameter-normalizer">Step 1: Add Framework to Parameter Normalizer<a class="headerlink" href="#step-1-add-framework-to-parameter-normalizer" title="Permanent link">&para;</a></h3>
 <p>First, register your framework in <code>traigent/integrations/utils/parameter_normalizer.py</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Framework</span><span class="p">(</span><span class="n">Enum</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Supported LLM frameworks.&quot;&quot;&quot;</span>
-    <span class="n">TRAIGENT</span> <span class="o">=</span> <span class="s2">&quot;traigent&quot;</span>
-    <span class="n">OPENAI</span> <span class="o">=</span> <span class="s2">&quot;openai&quot;</span>
+<span class="w">    </span><span class="sd">"""Supported LLM frameworks."""</span>
+    <span class="n">TRAIGENT</span> <span class="o">=</span> <span class="s2">"traigent"</span>
+    <span class="n">OPENAI</span> <span class="o">=</span> <span class="s2">"openai"</span>
     <span class="c1"># ... existing frameworks ...</span>
-    <span class="n">YOUR_PROVIDER</span> <span class="o">=</span> <span class="s2">&quot;your_provider&quot;</span>  <span class="c1"># Add your framework</span>
+    <span class="n">YOUR_PROVIDER</span> <span class="o">=</span> <span class="s2">"your_provider"</span>  <span class="c1"># Add your framework</span>
 </code></pre></div>
 <h3 id="step-2-create-the-plugin-file">Step 2: Create the Plugin File<a class="headerlink" href="#step-2-create-the-plugin-file" title="Permanent link">&para;</a></h3>
 <p>Create a new plugin file in <code>traigent/integrations/llms/</code>:</p>
@@ -4390,11 +4390,11 @@ make<span class="w"> </span>install-dev
 </code></pre></div>
 <h3 id="step-3-implement-the-plugin-class">Step 3: Implement the Plugin Class<a class="headerlink" href="#step-3-implement-the-plugin-class" title="Permanent link">&para;</a></h3>
 <p>Follow this template structure:</p>
-<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;Your Provider integration plugin for Traigent.</span>
+<div class="highlight"><pre><span></span><code><span class="sd">"""Your Provider integration plugin for Traigent.</span>
 
 <span class="sd">This module provides the Your Provider-specific plugin implementation for</span>
 <span class="sd">parameter mappings and framework overrides.</span>
-<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">"""</span>
 
 <span class="c1"># Traceability tag (required for all new files):</span>
 <span class="c1"># Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook</span>
@@ -4418,68 +4418,68 @@ make<span class="w"> </span>install-dev
 
 
 <span class="k">class</span><span class="w"> </span><span class="nc">YourProviderPlugin</span><span class="p">(</span><span class="n">LLMPlugin</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Plugin for Your Provider SDK integration.</span>
+<span class="w">    </span><span class="sd">"""Plugin for Your Provider SDK integration.</span>
 
 <span class="sd">    Supports the official Your Provider Python SDK.</span>
 <span class="sd">    Handles parameter mapping for chat completions including streaming,</span>
 <span class="sd">    tool use, and provider-specific parameters.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
 
     <span class="n">FRAMEWORK</span> <span class="o">=</span> <span class="n">Framework</span><span class="o">.</span><span class="n">YOUR_PROVIDER</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_get_metadata</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PluginMetadata</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return plugin metadata.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Return plugin metadata."""</span>
         <span class="k">return</span> <span class="n">PluginMetadata</span><span class="p">(</span>
-            <span class="n">name</span><span class="o">=</span><span class="s2">&quot;your_provider&quot;</span><span class="p">,</span>
-            <span class="n">version</span><span class="o">=</span><span class="s2">&quot;1.0.0&quot;</span><span class="p">,</span>
-            <span class="n">supported_packages</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;your_provider_sdk&quot;</span><span class="p">],</span>
+            <span class="n">name</span><span class="o">=</span><span class="s2">"your_provider"</span><span class="p">,</span>
+            <span class="n">version</span><span class="o">=</span><span class="s2">"1.0.0"</span><span class="p">,</span>
+            <span class="n">supported_packages</span><span class="o">=</span><span class="p">[</span><span class="s2">"your_provider_sdk"</span><span class="p">],</span>
             <span class="n">priority</span><span class="o">=</span><span class="n">IntegrationPriority</span><span class="o">.</span><span class="n">HIGH</span><span class="p">,</span>
-            <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Your Provider SDK integration&quot;</span><span class="p">,</span>
-            <span class="n">author</span><span class="o">=</span><span class="s2">&quot;Your Name&quot;</span><span class="p">,</span>
-            <span class="n">requires_packages</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;your_provider_sdk&gt;=1.0.0&quot;</span><span class="p">],</span>
-            <span class="n">supports_versions</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;your_provider_sdk&quot;</span><span class="p">:</span> <span class="s2">&quot;1.&quot;</span><span class="p">},</span>
+            <span class="n">description</span><span class="o">=</span><span class="s2">"Your Provider SDK integration"</span><span class="p">,</span>
+            <span class="n">author</span><span class="o">=</span><span class="s2">"Your Name"</span><span class="p">,</span>
+            <span class="n">requires_packages</span><span class="o">=</span><span class="p">[</span><span class="s2">"your_provider_sdk&gt;=1.0.0"</span><span class="p">],</span>
+            <span class="n">supports_versions</span><span class="o">=</span><span class="p">{</span><span class="s2">"your_provider_sdk"</span><span class="p">:</span> <span class="s2">"1."</span><span class="p">},</span>
         <span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_get_extra_mappings</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return provider-specific parameter mappings.</span>
+<span class="w">        </span><span class="sd">"""Return provider-specific parameter mappings.</span>
 
 <span class="sd">        These mappings handle parameters unique to your provider</span>
-<span class="sd">        that aren&#39;t in the standard ParameterNormalizer.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
+<span class="sd">        that aren't in the standard ParameterNormalizer.</span>
+<span class="sd">        """</span>
         <span class="k">return</span> <span class="p">{</span>
             <span class="c1"># Provider-specific parameters</span>
-            <span class="s2">&quot;provider_specific_param&quot;</span><span class="p">:</span> <span class="s2">&quot;sdk_param_name&quot;</span><span class="p">,</span>
+            <span class="s2">"provider_specific_param"</span><span class="p">:</span> <span class="s2">"sdk_param_name"</span><span class="p">,</span>
             <span class="c1"># API configuration</span>
-            <span class="s2">&quot;your_api_key&quot;</span><span class="p">:</span> <span class="s2">&quot;api_key&quot;</span><span class="p">,</span>  <span class="c1"># pragma: allowlist secret</span>
+            <span class="s2">"your_api_key"</span><span class="p">:</span> <span class="s2">"api_key"</span><span class="p">,</span>  <span class="c1"># pragma: allowlist secret</span>
             <span class="c1"># Common aliases</span>
-            <span class="s2">&quot;seed&quot;</span><span class="p">:</span> <span class="s2">&quot;random_seed&quot;</span><span class="p">,</span>  <span class="c1"># Example: map common &#39;seed&#39; to provider name</span>
+            <span class="s2">"seed"</span><span class="p">:</span> <span class="s2">"random_seed"</span><span class="p">,</span>  <span class="c1"># Example: map common 'seed' to provider name</span>
         <span class="p">}</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_get_provider_specific_rules</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">ValidationRule</span><span class="p">]:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return provider-specific validation rules.</span>
+<span class="w">        </span><span class="sd">"""Return provider-specific validation rules.</span>
 
 <span class="sd">        Define valid ranges, allowed values, and required parameters.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
+<span class="sd">        """</span>
         <span class="k">return</span> <span class="p">{</span>
-            <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span>
+            <span class="s2">"model"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span>
                 <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-                <span class="n">custom_validator</span><span class="o">=</span><span class="s2">&quot;_validate_model&quot;</span><span class="p">,</span>
+                <span class="n">custom_validator</span><span class="o">=</span><span class="s2">"_validate_model"</span><span class="p">,</span>
             <span class="p">),</span>
-            <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
-            <span class="s2">&quot;top_p&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">1.0</span><span class="p">),</span>
-            <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mi">100000</span><span class="p">),</span>
-            <span class="s2">&quot;stream&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">allowed_values</span><span class="o">=</span><span class="p">[</span><span class="kc">True</span><span class="p">,</span> <span class="kc">False</span><span class="p">]),</span>
+            <span class="s2">"temperature"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
+            <span class="s2">"top_p"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">1.0</span><span class="p">),</span>
+            <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mi">100000</span><span class="p">),</span>
+            <span class="s2">"stream"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">allowed_values</span><span class="o">=</span><span class="p">[</span><span class="kc">True</span><span class="p">,</span> <span class="kc">False</span><span class="p">]),</span>
         <span class="p">}</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_validate_model</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">param_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Validate model ID using dynamic discovery.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Validate model ID using dynamic discovery."""</span>
         <span class="n">errors</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
-            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Parameter &#39;</span><span class="si">{</span><span class="n">param_name</span><span class="si">}</span><span class="s2">&#39; must be a string&quot;</span><span class="p">)</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Parameter '</span><span class="si">{</span><span class="n">param_name</span><span class="si">}</span><span class="s2">' must be a string"</span><span class="p">)</span>
             <span class="k">return</span> <span class="n">errors</span>
 
         <span class="k">if</span> <span class="ow">not</span> <span class="n">value</span><span class="p">:</span>
-            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Parameter &#39;</span><span class="si">{</span><span class="n">param_name</span><span class="si">}</span><span class="s2">&#39; cannot be empty&quot;</span><span class="p">)</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Parameter '</span><span class="si">{</span><span class="n">param_name</span><span class="si">}</span><span class="s2">' cannot be empty"</span><span class="p">)</span>
             <span class="k">return</span> <span class="n">errors</span>
 
         <span class="k">try</span><span class="p">:</span>
@@ -4487,42 +4487,42 @@ make<span class="w"> </span>install-dev
 
             <span class="n">discovery</span> <span class="o">=</span> <span class="n">get_model_discovery</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">FRAMEWORK</span><span class="p">)</span>
             <span class="k">if</span> <span class="n">discovery</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">discovery</span><span class="o">.</span><span class="n">is_valid_model</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
-                <span class="c1"># Warn but don&#39;t block - model might be new</span>
+                <span class="c1"># Warn but don't block - model might be new</span>
                 <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
-                    <span class="sa">f</span><span class="s2">&quot;Unrecognized model: </span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">. Proceeding anyway.&quot;</span>
+                    <span class="sa">f</span><span class="s2">"Unrecognized model: </span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">. Proceeding anyway."</span>
                 <span class="p">)</span>
         <span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
-            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Model discovery not available&quot;</span><span class="p">)</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">"Model discovery not available"</span><span class="p">)</span>
 
         <span class="k">return</span> <span class="n">errors</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">get_target_classes</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return list of SDK classes to override.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Return list of SDK classes to override."""</span>
         <span class="k">return</span> <span class="p">[</span>
-            <span class="s2">&quot;your_provider_sdk.Client&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;your_provider_sdk.AsyncClient&quot;</span><span class="p">,</span>
+            <span class="s2">"your_provider_sdk.Client"</span><span class="p">,</span>
+            <span class="s2">"your_provider_sdk.AsyncClient"</span><span class="p">,</span>
         <span class="p">]</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">get_target_methods</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]]:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return mapping of classes to methods to override.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Return mapping of classes to methods to override."""</span>
         <span class="k">return</span> <span class="p">{</span>
-            <span class="s2">&quot;your_provider_sdk.Client&quot;</span><span class="p">:</span> <span class="p">[</span>
-                <span class="s2">&quot;chat.completions.create&quot;</span><span class="p">,</span>
-                <span class="s2">&quot;completions.create&quot;</span><span class="p">,</span>
+            <span class="s2">"your_provider_sdk.Client"</span><span class="p">:</span> <span class="p">[</span>
+                <span class="s2">"chat.completions.create"</span><span class="p">,</span>
+                <span class="s2">"completions.create"</span><span class="p">,</span>
             <span class="p">],</span>
-            <span class="s2">&quot;your_provider_sdk.AsyncClient&quot;</span><span class="p">:</span> <span class="p">[</span>
-                <span class="s2">&quot;chat.completions.create&quot;</span><span class="p">,</span>
-                <span class="s2">&quot;completions.create&quot;</span><span class="p">,</span>
+            <span class="s2">"your_provider_sdk.AsyncClient"</span><span class="p">:</span> <span class="p">[</span>
+                <span class="s2">"chat.completions.create"</span><span class="p">,</span>
+                <span class="s2">"completions.create"</span><span class="p">,</span>
             <span class="p">],</span>
         <span class="p">}</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">apply_overrides</span><span class="p">(</span>
-        <span class="bp">self</span><span class="p">,</span> <span class="n">kwargs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="n">config</span><span class="p">:</span> <span class="s2">&quot;TraigentConfig | dict[str, Any]&quot;</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">kwargs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="n">config</span><span class="p">:</span> <span class="s2">"TraigentConfig | dict[str, Any]"</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Apply provider-specific overrides.</span>
+<span class="w">        </span><span class="sd">"""Apply provider-specific overrides.</span>
 
 <span class="sd">        Extend base implementation for provider-specific logic.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
+<span class="sd">        """</span>
         <span class="n">config_obj</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_normalize_config</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
         <span class="n">overridden</span> <span class="o">=</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">apply_overrides</span><span class="p">(</span><span class="n">kwargs</span><span class="p">,</span> <span class="n">config_obj</span><span class="p">)</span>
 
@@ -4533,7 +4533,7 @@ make<span class="w"> </span>install-dev
 </code></pre></div>
 <h3 id="step-4-add-model-discovery-optional-but-recommended">Step 4: Add Model Discovery (Optional but Recommended)<a class="headerlink" href="#step-4-add-model-discovery-optional-but-recommended" title="Permanent link">&para;</a></h3>
 <p>Create a model discovery module in <code>traigent/integrations/model_discovery/</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;Model discovery for Your Provider.&quot;&quot;&quot;</span>
+<div class="highlight"><pre><span></span><code><span class="sd">"""Model discovery for Your Provider."""</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
@@ -4546,18 +4546,18 @@ make<span class="w"> </span>install-dev
 <span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
 
 <span class="c1"># Pattern for validating model names</span>
-<span class="n">YOUR_PROVIDER_MODEL_PATTERN</span> <span class="o">=</span> <span class="sa">r</span><span class="s2">&quot;^(your-model-prefix-|another-prefix-)&quot;</span>
+<span class="n">YOUR_PROVIDER_MODEL_PATTERN</span> <span class="o">=</span> <span class="sa">r</span><span class="s2">"^(your-model-prefix-|another-prefix-)"</span>
 
 
 <span class="k">class</span><span class="w"> </span><span class="nc">YourProviderDiscovery</span><span class="p">(</span><span class="n">ModelDiscovery</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Model discovery service for Your Provider.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Model discovery service for Your Provider."""</span>
 
-    <span class="n">PROVIDER</span> <span class="o">=</span> <span class="s2">&quot;your_provider&quot;</span>
+    <span class="n">PROVIDER</span> <span class="o">=</span> <span class="s2">"your_provider"</span>
     <span class="n">FRAMEWORK</span> <span class="o">=</span> <span class="n">Framework</span><span class="o">.</span><span class="n">YOUR_PROVIDER</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_fetch_models_from_sdk</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Fetch models directly from SDK if API key available.&quot;&quot;&quot;</span>
-        <span class="n">api_key</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;YOUR_PROVIDER_API_KEY&quot;</span><span class="p">)</span>
+<span class="w">        </span><span class="sd">"""Fetch models directly from SDK if API key available."""</span>
+        <span class="n">api_key</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">"YOUR_PROVIDER_API_KEY"</span><span class="p">)</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="n">api_key</span><span class="p">:</span>
             <span class="k">return</span> <span class="p">[]</span>
 
@@ -4567,15 +4567,15 @@ make<span class="w"> </span>install-dev
             <span class="n">models_response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">models</span><span class="o">.</span><span class="n">list</span><span class="p">()</span>
             <span class="k">return</span> <span class="nb">sorted</span><span class="p">([</span><span class="n">m</span><span class="o">.</span><span class="n">id</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">models_response</span><span class="o">.</span><span class="n">data</span><span class="p">])</span>
         <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to fetch models: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Failed to fetch models: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
             <span class="k">return</span> <span class="p">[]</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_get_config_key</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return config key for loading known models.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="s2">&quot;your_provider&quot;</span>
+<span class="w">        </span><span class="sd">"""Return config key for loading known models."""</span>
+        <span class="k">return</span> <span class="s2">"your_provider"</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_get_model_pattern</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">re</span><span class="o">.</span><span class="n">Pattern</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return regex pattern for model validation.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Return regex pattern for model validation."""</span>
         <span class="k">return</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">YOUR_PROVIDER_MODEL_PATTERN</span><span class="p">)</span>
 </code></pre></div>
 <p>Register the discovery in <code>traigent/integrations/model_discovery/registry.py</code>:</p>
@@ -4583,7 +4583,7 @@ make<span class="w"> </span>install-dev
     <span class="n">YourProviderDiscovery</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="c1"># ...</span>
-<span class="n">register_discovery</span><span class="p">(</span><span class="s2">&quot;your_provider&quot;</span><span class="p">,</span> <span class="n">YourProviderDiscovery</span><span class="p">)</span>
+<span class="n">register_discovery</span><span class="p">(</span><span class="s2">"your_provider"</span><span class="p">,</span> <span class="n">YourProviderDiscovery</span><span class="p">)</span>
 </code></pre></div>
 <p>Add known models to <code>traigent/config/models.yaml</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="nt">your_provider</span><span class="p">:</span>
@@ -4591,7 +4591,7 @@ make<span class="w"> </span>install-dev
 <span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">your-model-small</span>
 <span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">your-model-large</span>
 <span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">your-model-latest</span>
-<span class="w">  </span><span class="nt">pattern</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;^(your-model-prefix-|another-prefix-)&quot;</span>
+<span class="w">  </span><span class="nt">pattern</span><span class="p">:</span><span class="w"> </span><span class="s">"^(your-model-prefix-|another-prefix-)"</span>
 </code></pre></div>
 <h3 id="step-5-export-the-plugin">Step 5: Export the Plugin<a class="headerlink" href="#step-5-export-the-plugin" title="Permanent link">&para;</a></h3>
 <p>Add your plugin to <code>traigent/integrations/llms/__init__.py</code>:</p>
@@ -4599,12 +4599,12 @@ make<span class="w"> </span>install-dev
 
 <span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span>
     <span class="c1"># ... existing exports ...</span>
-    <span class="s2">&quot;YourProviderPlugin&quot;</span><span class="p">,</span>
+    <span class="s2">"YourProviderPlugin"</span><span class="p">,</span>
 <span class="p">]</span>
 </code></pre></div>
 <h3 id="step-6-write-comprehensive-tests">Step 6: Write Comprehensive Tests<a class="headerlink" href="#step-6-write-comprehensive-tests" title="Permanent link">&para;</a></h3>
 <p>Create test file at <code>tests/unit/integrations/test_your_provider_plugin.py</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;Tests for the Your Provider integration plugin.&quot;&quot;&quot;</span>
+<div class="highlight"><pre><span></span><code><span class="sd">"""Tests for the Your Provider integration plugin."""</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">pytest</span>
 
@@ -4613,86 +4613,86 @@ make<span class="w"> </span>install-dev
 
 
 <span class="k">class</span><span class="w"> </span><span class="nc">TestYourProviderPlugin</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Basic plugin behavior tests.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Basic plugin behavior tests."""</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">setup_method</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">plugin</span> <span class="o">=</span> <span class="n">YourProviderPlugin</span><span class="p">()</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">test_apply_overrides_with_dict_config</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Plugin should handle raw dict payloads.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Plugin should handle raw dict payloads."""</span>
         <span class="n">config_payload</span> <span class="o">=</span> <span class="p">{</span>
-            <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;your-model-latest&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;stream&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
-            <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">,</span>
-            <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="mi">1000</span><span class="p">,</span>
+            <span class="s2">"model"</span><span class="p">:</span> <span class="s2">"your-model-latest"</span><span class="p">,</span>
+            <span class="s2">"stream"</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+            <span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">,</span>
+            <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="mi">1000</span><span class="p">,</span>
         <span class="p">}</span>
 
         <span class="n">overridden</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">plugin</span><span class="o">.</span><span class="n">apply_overrides</span><span class="p">({},</span> <span class="n">config_payload</span><span class="p">)</span>
 
-        <span class="k">assert</span> <span class="n">overridden</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;your-model-latest&quot;</span>
-        <span class="k">assert</span> <span class="n">overridden</span><span class="p">[</span><span class="s2">&quot;stream&quot;</span><span class="p">]</span> <span class="ow">is</span> <span class="kc">True</span>
-        <span class="k">assert</span> <span class="n">overridden</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="n">pytest</span><span class="o">.</span><span class="n">approx</span><span class="p">(</span><span class="mf">0.7</span><span class="p">)</span>
-        <span class="k">assert</span> <span class="n">overridden</span><span class="p">[</span><span class="s2">&quot;max_tokens&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1000</span>
+        <span class="k">assert</span> <span class="n">overridden</span><span class="p">[</span><span class="s2">"model"</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"your-model-latest"</span>
+        <span class="k">assert</span> <span class="n">overridden</span><span class="p">[</span><span class="s2">"stream"</span><span class="p">]</span> <span class="ow">is</span> <span class="kc">True</span>
+        <span class="k">assert</span> <span class="n">overridden</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">]</span> <span class="o">==</span> <span class="n">pytest</span><span class="o">.</span><span class="n">approx</span><span class="p">(</span><span class="mf">0.7</span><span class="p">)</span>
+        <span class="k">assert</span> <span class="n">overridden</span><span class="p">[</span><span class="s2">"max_tokens"</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1000</span>
 
 
 <span class="k">class</span><span class="w"> </span><span class="nc">TestYourProviderParameterMappings</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Test parameter mapping via ParameterNormalizer.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Test parameter mapping via ParameterNormalizer."""</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">setup_method</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">plugin</span> <span class="o">=</span> <span class="n">YourProviderPlugin</span><span class="p">()</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">test_model_preserved</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Test that model parameter is preserved.&quot;&quot;&quot;</span>
-        <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;your-model-small&quot;</span><span class="p">}</span>
+<span class="w">        </span><span class="sd">"""Test that model parameter is preserved."""</span>
+        <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"your-model-small"</span><span class="p">}</span>
         <span class="n">overridden</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">plugin</span><span class="o">.</span><span class="n">apply_overrides</span><span class="p">({},</span> <span class="n">config</span><span class="p">)</span>
-        <span class="k">assert</span> <span class="n">overridden</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;your-model-small&quot;</span>
+        <span class="k">assert</span> <span class="n">overridden</span><span class="p">[</span><span class="s2">"model"</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"your-model-small"</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">test_temperature_preserved</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Test that temperature is preserved.&quot;&quot;&quot;</span>
-        <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;your-model-small&quot;</span><span class="p">,</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">}</span>
+<span class="w">        </span><span class="sd">"""Test that temperature is preserved."""</span>
+        <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"your-model-small"</span><span class="p">,</span> <span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">}</span>
         <span class="n">overridden</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">plugin</span><span class="o">.</span><span class="n">apply_overrides</span><span class="p">({},</span> <span class="n">config</span><span class="p">)</span>
-        <span class="k">assert</span> <span class="n">overridden</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="n">pytest</span><span class="o">.</span><span class="n">approx</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
+        <span class="k">assert</span> <span class="n">overridden</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">]</span> <span class="o">==</span> <span class="n">pytest</span><span class="o">.</span><span class="n">approx</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">test_user_kwarg_not_overwritten</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Test that user-provided kwargs take precedence.&quot;&quot;&quot;</span>
-        <span class="n">kwargs</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;user-specified-model&quot;</span><span class="p">}</span>
-        <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;config-model&quot;</span><span class="p">}</span>
+<span class="w">        </span><span class="sd">"""Test that user-provided kwargs take precedence."""</span>
+        <span class="n">kwargs</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"user-specified-model"</span><span class="p">}</span>
+        <span class="n">config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"config-model"</span><span class="p">}</span>
         <span class="n">overridden</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">plugin</span><span class="o">.</span><span class="n">apply_overrides</span><span class="p">(</span><span class="n">kwargs</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span>
-        <span class="k">assert</span> <span class="n">overridden</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;user-specified-model&quot;</span>
+        <span class="k">assert</span> <span class="n">overridden</span><span class="p">[</span><span class="s2">"model"</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"user-specified-model"</span>
 
 
 <span class="k">class</span><span class="w"> </span><span class="nc">TestYourProviderValidationRules</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Test validation rules.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Test validation rules."""</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">setup_method</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">plugin</span> <span class="o">=</span> <span class="n">YourProviderPlugin</span><span class="p">()</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">test_temperature_validation_range</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Test temperature has valid range.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Test temperature has valid range."""</span>
         <span class="n">rules</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">plugin</span><span class="o">.</span><span class="n">_get_provider_specific_rules</span><span class="p">()</span>
-        <span class="k">assert</span> <span class="s2">&quot;temperature&quot;</span> <span class="ow">in</span> <span class="n">rules</span>
-        <span class="k">assert</span> <span class="n">rules</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">min_value</span> <span class="o">==</span> <span class="mf">0.0</span>
-        <span class="k">assert</span> <span class="n">rules</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">max_value</span> <span class="o">==</span> <span class="mf">2.0</span>
+        <span class="k">assert</span> <span class="s2">"temperature"</span> <span class="ow">in</span> <span class="n">rules</span>
+        <span class="k">assert</span> <span class="n">rules</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">]</span><span class="o">.</span><span class="n">min_value</span> <span class="o">==</span> <span class="mf">0.0</span>
+        <span class="k">assert</span> <span class="n">rules</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">]</span><span class="o">.</span><span class="n">max_value</span> <span class="o">==</span> <span class="mf">2.0</span>
 
 
 <span class="k">class</span><span class="w"> </span><span class="nc">TestYourProviderPluginMetadata</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Test plugin metadata.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Test plugin metadata."""</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">setup_method</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">plugin</span> <span class="o">=</span> <span class="n">YourProviderPlugin</span><span class="p">()</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">test_framework_is_correct</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Test plugin identifies correct framework.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Test plugin identifies correct framework."""</span>
         <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">plugin</span><span class="o">.</span><span class="n">FRAMEWORK</span> <span class="o">==</span> <span class="n">Framework</span><span class="o">.</span><span class="n">YOUR_PROVIDER</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">test_metadata_name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Test plugin metadata has correct name.&quot;&quot;&quot;</span>
-        <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">plugin</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">name</span> <span class="o">==</span> <span class="s2">&quot;your_provider&quot;</span>
+<span class="w">        </span><span class="sd">"""Test plugin metadata has correct name."""</span>
+        <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">plugin</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">name</span> <span class="o">==</span> <span class="s2">"your_provider"</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">test_supported_packages</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Test plugin lists supported packages.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Test plugin lists supported packages."""</span>
         <span class="n">packages</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">plugin</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">supported_packages</span>
-        <span class="k">assert</span> <span class="s2">&quot;your_provider_sdk&quot;</span> <span class="ow">in</span> <span class="n">packages</span>
+        <span class="k">assert</span> <span class="s2">"your_provider_sdk"</span> <span class="ow">in</span> <span class="n">packages</span>
 </code></pre></div>
 <p>Run tests in mock mode to avoid real API calls:</p>
 <div class="highlight"><pre><span></span><code><span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span>pytest<span class="w"> </span>tests/unit/integrations/test_your_provider_plugin.py<span class="w"> </span>-v

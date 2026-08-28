@@ -3979,11 +3979,11 @@ available. Add <code>offline=True</code> only when no Traigent backend traffic i
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">],</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">],</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">],</span>
     <span class="p">},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
-    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;data.jsonl&quot;</span><span class="p">},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
+    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"data.jsonl"</span><span class="p">},</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">answer</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">run_agent</span><span class="p">(</span><span class="n">question</span><span class="p">)</span>
@@ -3993,27 +3993,27 @@ available. Add <code>offline=True</code> only when no Traigent backend traffic i
 <h2 id="explicit-local-search">Explicit Local Search<a class="headerlink" href="#explicit-local-search" title="Permanent link">&para;</a></h2>
 <p>Use local search when you want a simple sweep or reproducible baseline. Results
 still sync to the portal unless you also set <code>offline=True</code>.</p>
-<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">"grid"</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="no-egress-local-runs">No-Egress Local Runs<a class="headerlink" href="#no-egress-local-runs" title="Permanent link">&para;</a></h2>
 <p>Use <code>offline=True</code> when policy requires zero Traigent backend egress. This only
 controls Traigent traffic; your function may still call LLM providers, tools, or
 databases.</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">]},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
-    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;data.jsonl&quot;</span><span class="p">},</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">]},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
+    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"data.jsonl"</span><span class="p">},</span>
     <span class="n">offline</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">answer</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">run_agent</span><span class="p">(</span><span class="n">question</span><span class="p">)</span>
 
-<span class="n">result</span> <span class="o">=</span> <span class="n">answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">"grid"</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="smart-algorithms">Smart Algorithms<a class="headerlink" href="#smart-algorithms" title="Permanent link">&para;</a></h2>
 <p>Explicit smart algorithms are cloud-required. Do not request them for local-only
 runs.</p>
-<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;bayesian&quot;</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">"bayesian"</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
 </code></pre></div>
 <p>If cloud optimization is unavailable, this run raises an error. Use the default
 when you want Traigent to pick the best available path.</p>

@@ -4191,10 +4191,10 @@
 <h2 id="regular-mode-enhanced-utilities-unavailable">Regular Mode (enhanced utilities unavailable)<a class="headerlink" href="#regular-mode-enhanced-utilities-unavailable" title="Permanent link">&para;</a></h2>
 <p>In regular mode, the system only uses the hardcoded mappings defined in <code>PARAMETER_MAPPINGS</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="n">PARAMETER_MAPPINGS</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;openai.OpenAI&quot;</span><span class="p">:</span> <span class="p">{</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;model&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="s2">&quot;temperature&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="s2">&quot;max_tokens&quot;</span><span class="p">,</span>
+    <span class="s2">"openai.OpenAI"</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="s2">"model"</span><span class="p">,</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="s2">"temperature"</span><span class="p">,</span>
+        <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="s2">"max_tokens"</span><span class="p">,</span>
         <span class="c1"># ... etc</span>
     <span class="p">},</span>
     <span class="c1"># ... other frameworks</span>
@@ -4208,8 +4208,8 @@
 <li>We inject the mapped parameters into the constructor</li>
 </ol>
 <h3 id="example">Example:<a class="headerlink" href="#example" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><span class="c1"># Traigent config has: {&quot;model&quot;: &quot;gpt-4&quot;, &quot;temperature&quot;: 0.5}</span>
-<span class="c1"># OpenAI expects: model=&quot;gpt-4&quot;, temperature=0.5</span>
+<div class="highlight"><pre><span></span><code><span class="c1"># Traigent config has: {"model": "gpt-4", "temperature": 0.5}</span>
+<span class="c1"># OpenAI expects: model="gpt-4", temperature=0.5</span>
 <span class="c1"># Mapping is straightforward: model -&gt; model, temperature -&gt; temperature</span>
 </code></pre></div>
 <h3 id="limitations">Limitations:<a class="headerlink" href="#limitations" title="Permanent link">&para;</a></h3>
@@ -4226,17 +4226,17 @@
 <p><strong>How it works</strong>:
 <div class="highlight"><pre><span></span><code><span class="c1"># Instead of hardcoding, we inspect the class</span>
 <span class="n">params</span> <span class="o">=</span> <span class="n">discovery</span><span class="o">.</span><span class="n">discover_init_parameters</span><span class="p">(</span><span class="n">OpenAI</span><span class="p">)</span>
-<span class="c1"># Returns: {&quot;api_key&quot;: &lt;Parameter&gt;, &quot;model&quot;: &lt;Parameter&gt;, ...}</span>
+<span class="c1"># Returns: {"api_key": &lt;Parameter&gt;, "model": &lt;Parameter&gt;, ...}</span>
 
 <span class="c1"># We can also discover method parameters</span>
-<span class="n">method_params</span> <span class="o">=</span> <span class="n">discovery</span><span class="o">.</span><span class="n">discover_method_parameters</span><span class="p">(</span><span class="n">client</span><span class="p">,</span> <span class="s2">&quot;chat.completions.create&quot;</span><span class="p">)</span>
+<span class="n">method_params</span> <span class="o">=</span> <span class="n">discovery</span><span class="o">.</span><span class="n">discover_method_parameters</span><span class="p">(</span><span class="n">client</span><span class="p">,</span> <span class="s2">"chat.completions.create"</span><span class="p">)</span>
 </code></pre></div></p>
 <p><strong>Auto-discovery features</strong>:
 - Uses Python's <code>inspect</code> module to analyze constructors and methods
 - Creates universal mappings for common parameter variations:
   <div class="highlight"><pre><span></span><code><span class="n">universal_mapping</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">,</span> <span class="s2">&quot;model_name&quot;</span><span class="p">,</span> <span class="s2">&quot;model_id&quot;</span><span class="p">,</span> <span class="s2">&quot;engine&quot;</span><span class="p">],</span>
-    <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;max_tokens&quot;</span><span class="p">,</span> <span class="s2">&quot;max_length&quot;</span><span class="p">,</span> <span class="s2">&quot;max_new_tokens&quot;</span><span class="p">,</span> <span class="s2">&quot;max_tokens_to_sample&quot;</span><span class="p">],</span>
+    <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"model"</span><span class="p">,</span> <span class="s2">"model_name"</span><span class="p">,</span> <span class="s2">"model_id"</span><span class="p">,</span> <span class="s2">"engine"</span><span class="p">],</span>
+    <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"max_tokens"</span><span class="p">,</span> <span class="s2">"max_length"</span><span class="p">,</span> <span class="s2">"max_new_tokens"</span><span class="p">,</span> <span class="s2">"max_tokens_to_sample"</span><span class="p">],</span>
     <span class="c1"># ... etc</span>
 <span class="p">}</span>
 </code></pre></div>
@@ -4250,15 +4250,15 @@ hooks are wired into the override path.</p>
 <p><strong>Purpose</strong>: Handle parameter changes across SDK versions</p>
 <p><strong>Features</strong>:
 - Version-specific mappings (when known):
-  <div class="highlight"><pre><span></span><code><span class="c1"># OpenAI v1.0: uses &quot;max_tokens&quot;</span>
-<span class="c1"># OpenAI v2.0 (hypothetical): might use &quot;max_completion_tokens&quot;</span>
+  <div class="highlight"><pre><span></span><code><span class="c1"># OpenAI v1.0: uses "max_tokens"</span>
+<span class="c1"># OpenAI v2.0 (hypothetical): might use "max_completion_tokens"</span>
 </code></pre></div>
 - Optional compatibility lookups based on package version</p>
 <p><strong>Example scenario</strong>:
 <div class="highlight"><pre><span></span><code><span class="c1"># User has OpenAI v0.28 (old version)</span>
-<span class="c1"># Old version uses &quot;engine&quot; parameter</span>
-<span class="c1"># New version uses &quot;model&quot; parameter</span>
-<span class="c1"># Version manager can map &quot;model&quot; -&gt; &quot;engine&quot; when a compatibility mapping exists</span>
+<span class="c1"># Old version uses "engine" parameter</span>
+<span class="c1"># New version uses "model" parameter</span>
+<span class="c1"># Version manager can map "model" -&gt; "engine" when a compatibility mapping exists</span>
 </code></pre></div></p>
 <h2 id="key-differences">Key Differences<a class="headerlink" href="#key-differences" title="Permanent link">&para;</a></h2>
 <table>
@@ -4335,10 +4335,10 @@ hooks are wired into the override path.</p>
 <li><strong>Exact Name Fallback</strong>: If no mapping found, try exact parameter names</li>
 </ol>
 <div class="highlight"><pre><span></span><code><span class="c1"># Strategy 1: Use mapping</span>
-<span class="c1"># Traigent: &quot;model&quot; -&gt; Framework: &quot;model_name&quot; (via mapping)</span>
+<span class="c1"># Traigent: "model" -&gt; Framework: "model_name" (via mapping)</span>
 
 <span class="c1"># Strategy 2: Fallback</span>
-<span class="c1"># Traigent: &quot;custom_param&quot; -&gt; Framework: &quot;custom_param&quot; (no mapping, use exact name)</span>
+<span class="c1"># Traigent: "custom_param" -&gt; Framework: "custom_param" (no mapping, use exact name)</span>
 </code></pre></div>
 <p>This ensures maximum compatibility even with unknown parameters.</p>
 <h2 id="performance-considerations">Performance Considerations<a class="headerlink" href="#performance-considerations" title="Permanent link">&para;</a></h2>

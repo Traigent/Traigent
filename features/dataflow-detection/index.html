@@ -4407,10 +4407,10 @@ while worklist:
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
 <h3 id="custom-sink-patterns">Custom Sink Patterns<a class="headerlink" href="#custom-sink-patterns" title="Permanent link">&para;</a></h3>
 <p>Extend detection for your own frameworks by passing <code>extra_sinks</code> in the context:</p>
-<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">detector</span><span class="o">.</span><span class="n">detect_from_source</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="s2">&quot;my_func&quot;</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="p">{</span>
-    <span class="s2">&quot;extra_sinks&quot;</span><span class="p">:</span> <span class="p">[</span>
-        <span class="p">{</span><span class="s2">&quot;method&quot;</span><span class="p">:</span> <span class="s2">&quot;predict&quot;</span><span class="p">,</span> <span class="s2">&quot;category&quot;</span><span class="p">:</span> <span class="s2">&quot;ml&quot;</span><span class="p">},</span>
-        <span class="p">{</span><span class="s2">&quot;method&quot;</span><span class="p">:</span> <span class="s2">&quot;classify&quot;</span><span class="p">,</span> <span class="s2">&quot;category&quot;</span><span class="p">:</span> <span class="s2">&quot;ml&quot;</span><span class="p">},</span>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">detector</span><span class="o">.</span><span class="n">detect_from_source</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="s2">"my_func"</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="p">{</span>
+    <span class="s2">"extra_sinks"</span><span class="p">:</span> <span class="p">[</span>
+        <span class="p">{</span><span class="s2">"method"</span><span class="p">:</span> <span class="s2">"predict"</span><span class="p">,</span> <span class="s2">"category"</span><span class="p">:</span> <span class="s2">"ml"</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">"method"</span><span class="p">:</span> <span class="s2">"classify"</span><span class="p">,</span> <span class="s2">"category"</span><span class="p">:</span> <span class="s2">"ml"</span><span class="p">},</span>
     <span class="p">],</span>
 <span class="p">})</span>
 </code></pre></div>
@@ -4427,7 +4427,7 @@ while worklist:
     <span class="n">CONSTRUCTOR_CLASS_HINTS</span><span class="p">,</span>
 <span class="p">)</span>
 
-<span class="n">my_hints</span> <span class="o">=</span> <span class="n">CONSTRUCTOR_CLASS_HINTS</span> <span class="o">|</span> <span class="p">{</span><span class="s2">&quot;MyCustomLLM&quot;</span><span class="p">,</span> <span class="s2">&quot;MyEmbedder&quot;</span><span class="p">}</span>
+<span class="n">my_hints</span> <span class="o">=</span> <span class="n">CONSTRUCTOR_CLASS_HINTS</span> <span class="o">|</span> <span class="p">{</span><span class="s2">"MyCustomLLM"</span><span class="p">,</span> <span class="s2">"MyEmbedder"</span><span class="p">}</span>
 <span class="n">strategy</span> <span class="o">=</span> <span class="n">DataFlowDetectionStrategy</span><span class="p">(</span><span class="n">constructor_hints</span><span class="o">=</span><span class="n">my_hints</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h2>
@@ -4483,21 +4483,21 @@ traigent/cli/detect_tvars_command.py   (optional CLI)
 </ul>
 <h3 id="suggested-pyprojecttoml-for-standalone-package">Suggested pyproject.toml for standalone package<a class="headerlink" href="#suggested-pyprojecttoml-for-standalone-package" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="k">[project]</span>
-<span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;traigent-detect-tvars&quot;</span>
-<span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
-<span class="n">requires-python</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=3.10&quot;</span>
+<span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"traigent-detect-tvars"</span>
+<span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"0.1.0"</span>
+<span class="n">requires-python</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"&gt;=3.10"</span>
 <span class="c1"># No runtime dependencies for core</span>
 
 <span class="k">[project.optional-dependencies]</span>
-<span class="n">cli</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;click&gt;=8.0&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;rich&gt;=13.0&quot;</span><span class="p">]</span>
+<span class="n">cli</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"click&gt;=8.0"</span><span class="p">,</span><span class="w"> </span><span class="s2">"rich&gt;=13.0"</span><span class="p">]</span>
 
 <span class="k">[project.scripts]</span>
-<span class="n">traigent-detect-tvars</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;traigent_detect_tvars.cli:detect_tvars&quot;</span>
+<span class="n">traigent-detect-tvars</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"traigent_detect_tvars.cli:detect_tvars"</span>
 </code></pre></div>
 <h3 id="re-integration-with-traigent">Re-integration with Traigent<a class="headerlink" href="#re-integration-with-traigent" title="Permanent link">&para;</a></h3>
 <p>The main <code>traigent</code> package would add it as an optional dependency:</p>
 <div class="highlight"><pre><span></span><code><span class="k">[project.optional-dependencies]</span>
-<span class="n">tvar-detect</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;traigent-detect-tvars&quot;</span><span class="p">]</span>
+<span class="n">tvar-detect</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"traigent-detect-tvars"</span><span class="p">]</span>
 </code></pre></div>
 <p>And conditionally import in <code>traigent/cli/main.py</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="k">try</span><span class="p">:</span>

@@ -4364,20 +4364,20 @@
 <span class="n">registry</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">plugin</span><span class="p">)</span>
 
 <span class="c1"># Get plugin for a class</span>
-<span class="n">plugin</span> <span class="o">=</span> <span class="n">registry</span><span class="o">.</span><span class="n">get_plugin_for_class</span><span class="p">(</span><span class="s2">&quot;openai.OpenAI&quot;</span><span class="p">)</span>
+<span class="n">plugin</span> <span class="o">=</span> <span class="n">registry</span><span class="o">.</span><span class="n">get_plugin_for_class</span><span class="p">(</span><span class="s2">"openai.OpenAI"</span><span class="p">)</span>
 
 <span class="c1"># Get plugins for a package</span>
-<span class="n">plugins</span> <span class="o">=</span> <span class="n">registry</span><span class="o">.</span><span class="n">get_plugins_for_package</span><span class="p">(</span><span class="s2">&quot;langchain&quot;</span><span class="p">)</span>
+<span class="n">plugins</span> <span class="o">=</span> <span class="n">registry</span><span class="o">.</span><span class="n">get_plugins_for_package</span><span class="p">(</span><span class="s2">"langchain"</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="3-framework-override-manager-framework_overridepy">3. Framework Override Manager (<code>framework_override.py</code>)<a class="headerlink" href="#3-framework-override-manager-framework_overridepy" title="Permanent link">&para;</a></h3>
 <p>The manager uses plugins to intercept and override framework calls:</p>
 <div class="highlight"><pre><span></span><code><span class="n">manager</span> <span class="o">=</span> <span class="n">FrameworkOverrideManager</span><span class="p">()</span>
 
 <span class="c1"># Activate overrides for specific framework classes</span>
-<span class="n">manager</span><span class="o">.</span><span class="n">activate_overrides</span><span class="p">([</span><span class="s2">&quot;openai.OpenAI&quot;</span><span class="p">,</span> <span class="s2">&quot;openai.AsyncOpenAI&quot;</span><span class="p">])</span>
+<span class="n">manager</span><span class="o">.</span><span class="n">activate_overrides</span><span class="p">([</span><span class="s2">"openai.OpenAI"</span><span class="p">,</span> <span class="s2">"openai.AsyncOpenAI"</span><span class="p">])</span>
 
 <span class="c1"># Use as context manager</span>
-<span class="k">with</span> <span class="n">manager</span><span class="o">.</span><span class="n">override_context</span><span class="p">([</span><span class="s2">&quot;langchain_openai.ChatOpenAI&quot;</span><span class="p">]):</span>
+<span class="k">with</span> <span class="n">manager</span><span class="o">.</span><span class="n">override_context</span><span class="p">([</span><span class="s2">"langchain_openai.ChatOpenAI"</span><span class="p">]):</span>
     <span class="c1"># Framework calls are intercepted here</span>
     <span class="k">pass</span>
 </code></pre></div>
@@ -4388,32 +4388,32 @@
 <span class="k">class</span><span class="w"> </span><span class="nc">MyFrameworkPlugin</span><span class="p">(</span><span class="n">IntegrationPlugin</span><span class="p">):</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">_get_metadata</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PluginMetadata</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">PluginMetadata</span><span class="p">(</span>
-            <span class="n">name</span><span class="o">=</span><span class="s2">&quot;myframework&quot;</span><span class="p">,</span>
-            <span class="n">version</span><span class="o">=</span><span class="s2">&quot;1.0.0&quot;</span><span class="p">,</span>
-            <span class="n">supported_packages</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;myframework&quot;</span><span class="p">,</span> <span class="s2">&quot;myframework-extras&quot;</span><span class="p">],</span>
-            <span class="n">description</span><span class="o">=</span><span class="s2">&quot;MyFramework integration plugin&quot;</span>
+            <span class="n">name</span><span class="o">=</span><span class="s2">"myframework"</span><span class="p">,</span>
+            <span class="n">version</span><span class="o">=</span><span class="s2">"1.0.0"</span><span class="p">,</span>
+            <span class="n">supported_packages</span><span class="o">=</span><span class="p">[</span><span class="s2">"myframework"</span><span class="p">,</span> <span class="s2">"myframework-extras"</span><span class="p">],</span>
+            <span class="n">description</span><span class="o">=</span><span class="s2">"MyFramework integration plugin"</span>
         <span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_get_default_mappings</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
         <span class="k">return</span> <span class="p">{</span>
-            <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;model_name&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="s2">&quot;temp&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="s2">&quot;max_length&quot;</span>
+            <span class="s2">"model"</span><span class="p">:</span> <span class="s2">"model_name"</span><span class="p">,</span>
+            <span class="s2">"temperature"</span><span class="p">:</span> <span class="s2">"temp"</span><span class="p">,</span>
+            <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="s2">"max_length"</span>
         <span class="p">}</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_get_validation_rules</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">ValidationRule</span><span class="p">]:</span>
         <span class="k">return</span> <span class="p">{</span>
-            <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">1.0</span><span class="p">),</span>
-            <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mi">4096</span><span class="p">)</span>
+            <span class="s2">"temperature"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">1.0</span><span class="p">),</span>
+            <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">min_value</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mi">4096</span><span class="p">)</span>
         <span class="p">}</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">get_target_classes</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
-        <span class="k">return</span> <span class="p">[</span><span class="s2">&quot;myframework.Client&quot;</span><span class="p">,</span> <span class="s2">&quot;myframework.AsyncClient&quot;</span><span class="p">]</span>
+        <span class="k">return</span> <span class="p">[</span><span class="s2">"myframework.Client"</span><span class="p">,</span> <span class="s2">"myframework.AsyncClient"</span><span class="p">]</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">get_target_methods</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]:</span>
         <span class="k">return</span> <span class="p">{</span>
-            <span class="s2">&quot;myframework.Client&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;generate&quot;</span><span class="p">,</span> <span class="s2">&quot;complete&quot;</span><span class="p">],</span>
-            <span class="s2">&quot;myframework.AsyncClient&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;agenerate&quot;</span><span class="p">,</span> <span class="s2">&quot;acomplete&quot;</span><span class="p">]</span>
+            <span class="s2">"myframework.Client"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"generate"</span><span class="p">,</span> <span class="s2">"complete"</span><span class="p">],</span>
+            <span class="s2">"myframework.AsyncClient"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"agenerate"</span><span class="p">,</span> <span class="s2">"acomplete"</span><span class="p">]</span>
         <span class="p">}</span>
 </code></pre></div>
 <h3 id="step-2-register-the-plugin">Step 2: Register the Plugin<a class="headerlink" href="#step-2-register-the-plugin" title="Permanent link">&para;</a></h3>
@@ -4425,19 +4425,19 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">traigent.integrations.plugin_registry</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_registry</span>
 
 <span class="n">registry</span> <span class="o">=</span> <span class="n">get_registry</span><span class="p">()</span>
-<span class="n">plugin</span> <span class="o">=</span> <span class="n">MyFrameworkPlugin</span><span class="p">(</span><span class="n">config_path</span><span class="o">=</span><span class="n">Path</span><span class="p">(</span><span class="s2">&quot;configs/myframework.yaml&quot;</span><span class="p">))</span>
+<span class="n">plugin</span> <span class="o">=</span> <span class="n">MyFrameworkPlugin</span><span class="p">(</span><span class="n">config_path</span><span class="o">=</span><span class="n">Path</span><span class="p">(</span><span class="s2">"configs/myframework.yaml"</span><span class="p">))</span>
 <span class="n">registry</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">plugin</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="step-3-optional-configuration-file">Step 3: Optional Configuration File<a class="headerlink" href="#step-3-optional-configuration-file" title="Permanent link">&para;</a></h3>
 <p>Create a YAML configuration file to customize the plugin without code changes:</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># configs/myframework.yaml (example path)</span>
 <span class="nt">metadata</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Custom</span><span class="nv"> </span><span class="s">MyFramework</span><span class="nv"> </span><span class="s">settings&quot;</span>
+<span class="w">  </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">"Custom</span><span class="nv"> </span><span class="s">MyFramework</span><span class="nv"> </span><span class="s">settings"</span>
 
 <span class="nt">mappings</span><span class="p">:</span>
 <span class="w">  </span><span class="c1"># Override or extend parameter mappings</span>
-<span class="w">  </span><span class="nt">custom_param</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;framework_specific_param&quot;</span>
-<span class="w">  </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;auth_token&quot;</span>
+<span class="w">  </span><span class="nt">custom_param</span><span class="p">:</span><span class="w"> </span><span class="s">"framework_specific_param"</span>
+<span class="w">  </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="s">"auth_token"</span>
 
 <span class="nt">validation</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">temperature</span><span class="p">:</span>
@@ -4445,7 +4445,7 @@
 <span class="w">    </span><span class="nt">max_value</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.9</span>
 <span class="w">  </span><span class="nt">custom_param</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">required</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<span class="w">    </span><span class="nt">allowed_values</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;option1&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;option2&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;option3&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">allowed_values</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"option1"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"option2"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"option3"</span><span class="p p-Indicator">]</span>
 </code></pre></div>
 <h2 id="parameter-mapping-flow">Parameter Mapping Flow<a class="headerlink" href="#parameter-mapping-flow" title="Permanent link">&para;</a></h2>
 <ol>
@@ -4459,15 +4459,15 @@
 <div class="highlight"><pre><span></span><code><span class="c1"># User code</span>
 <span class="n">client</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">()</span>
 <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
-    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-3.5-turbo&quot;</span><span class="p">,</span>
-    <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;Hello&quot;</span><span class="p">}]</span>
+    <span class="n">model</span><span class="o">=</span><span class="s2">"gpt-3.5-turbo"</span><span class="p">,</span>
+    <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">"role"</span><span class="p">:</span> <span class="s2">"user"</span><span class="p">,</span> <span class="s2">"content"</span><span class="p">:</span> <span class="s2">"Hello"</span><span class="p">}]</span>
 <span class="p">)</span>
 
-<span class="c1"># Behind the scenes with TraigentConfig(model=&quot;gpt-4&quot;, temperature=0.5)</span>
+<span class="c1"># Behind the scenes with TraigentConfig(model="gpt-4", temperature=0.5)</span>
 <span class="c1"># 1. OpenAIPlugin intercepts the call</span>
-<span class="c1"># 2. Maps: model=&quot;gpt-4&quot;, temperature=0.5</span>
+<span class="c1"># 2. Maps: model="gpt-4", temperature=0.5</span>
 <span class="c1"># 3. Validates: model is in allowed list, temperature in range</span>
-<span class="c1"># 4. Calls original with: model=&quot;gpt-4&quot;, temperature=0.5, messages=[...]</span>
+<span class="c1"># 4. Calls original with: model="gpt-4", temperature=0.5, messages=[...]</span>
 </code></pre></div>
 <h2 id="built-in-plugins">Built-in Plugins<a class="headerlink" href="#built-in-plugins" title="Permanent link">&para;</a></h2>
 <p>The built-in plugin surface is regenerated from the current
@@ -4485,9 +4485,9 @@
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.integrations.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">Framework</span><span class="p">,</span> <span class="n">normalize_params</span><span class="p">,</span> <span class="n">get_normalizer</span>
 
 <span class="c1"># Direct conversion between frameworks</span>
-<span class="n">params</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;model_name&quot;</span><span class="p">:</span> <span class="s2">&quot;gpt-4&quot;</span><span class="p">,</span> <span class="s2">&quot;streaming&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="mi">100</span><span class="p">}</span>
-<span class="n">normalized</span> <span class="o">=</span> <span class="n">normalize_params</span><span class="p">(</span><span class="n">params</span><span class="p">,</span> <span class="s2">&quot;langchain&quot;</span><span class="p">,</span> <span class="s2">&quot;openai&quot;</span><span class="p">)</span>
-<span class="c1"># Result: {&quot;model&quot;: &quot;gpt-4&quot;, &quot;stream&quot;: True, &quot;max_tokens&quot;: 100}</span>
+<span class="n">params</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"model_name"</span><span class="p">:</span> <span class="s2">"gpt-4"</span><span class="p">,</span> <span class="s2">"streaming"</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="mi">100</span><span class="p">}</span>
+<span class="n">normalized</span> <span class="o">=</span> <span class="n">normalize_params</span><span class="p">(</span><span class="n">params</span><span class="p">,</span> <span class="s2">"langchain"</span><span class="p">,</span> <span class="s2">"openai"</span><span class="p">)</span>
+<span class="c1"># Result: {"model": "gpt-4", "stream": True, "max_tokens": 100}</span>
 
 <span class="c1"># Or use the normalizer instance for more control</span>
 <span class="n">normalizer</span> <span class="o">=</span> <span class="n">get_normalizer</span><span class="p">()</span>
@@ -4573,8 +4573,8 @@
 <p>The LangChain plugin demonstrates dynamic discovery of components:</p>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">_discover_langchain_components</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
     <span class="n">packages_to_scan</span> <span class="o">=</span> <span class="p">[</span>
-        <span class="p">(</span><span class="s2">&quot;langchain_openai&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;ChatOpenAI&quot;</span><span class="p">,</span> <span class="s2">&quot;OpenAI&quot;</span><span class="p">]),</span>
-        <span class="p">(</span><span class="s2">&quot;langchain_anthropic&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;ChatAnthropic&quot;</span><span class="p">]),</span>
+        <span class="p">(</span><span class="s2">"langchain_openai"</span><span class="p">,</span> <span class="p">[</span><span class="s2">"ChatOpenAI"</span><span class="p">,</span> <span class="s2">"OpenAI"</span><span class="p">]),</span>
+        <span class="p">(</span><span class="s2">"langchain_anthropic"</span><span class="p">,</span> <span class="p">[</span><span class="s2">"ChatAnthropic"</span><span class="p">]),</span>
         <span class="c1"># ... more packages</span>
     <span class="p">]</span>
 
@@ -4605,13 +4605,13 @@
 <p>Plugins can implement custom validation methods:</p>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">_get_validation_rules</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
     <span class="k">return</span> <span class="p">{</span>
-        <span class="s2">&quot;seed&quot;</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">custom_validator</span><span class="o">=</span><span class="s2">&quot;_validate_seed&quot;</span><span class="p">)</span>
+        <span class="s2">"seed"</span><span class="p">:</span> <span class="n">ValidationRule</span><span class="p">(</span><span class="n">custom_validator</span><span class="o">=</span><span class="s2">"_validate_seed"</span><span class="p">)</span>
     <span class="p">}</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_validate_seed</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">param_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
     <span class="n">errors</span> <span class="o">=</span> <span class="p">[]</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="nb">int</span><span class="p">):</span>
-        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">param_name</span><span class="si">}</span><span class="s2"> must be an integer&quot;</span><span class="p">)</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">param_name</span><span class="si">}</span><span class="s2"> must be an integer"</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">errors</span>
 </code></pre></div>
 <h2 id="testing-plugins">Testing Plugins<a class="headerlink" href="#testing-plugins" title="Permanent link">&para;</a></h2>
@@ -4621,8 +4621,8 @@
 <span class="k">class</span><span class="w"> </span><span class="nc">TestMyPlugin</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">test_parameter_mappings</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">my_plugin</span><span class="p">):</span>
         <span class="n">mappings</span> <span class="o">=</span> <span class="n">my_plugin</span><span class="o">.</span><span class="n">get_parameter_mappings</span><span class="p">()</span>
-        <span class="k">assert</span> <span class="s2">&quot;model&quot;</span> <span class="ow">in</span> <span class="n">mappings</span>
-        <span class="k">assert</span> <span class="n">mappings</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;model_name&quot;</span>
+        <span class="k">assert</span> <span class="s2">"model"</span> <span class="ow">in</span> <span class="n">mappings</span>
+        <span class="k">assert</span> <span class="n">mappings</span><span class="p">[</span><span class="s2">"model"</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"model_name"</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">test_validation</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">my_plugin</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
         <span class="c1"># Valid config</span>
@@ -4633,26 +4633,26 @@
             <span class="n">my_plugin</span><span class="o">.</span><span class="n">validate_config</span><span class="p">(</span><span class="n">invalid_config</span><span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">test_overrides</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">my_plugin</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
-        <span class="n">kwargs</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;existing&quot;</span><span class="p">:</span> <span class="s2">&quot;value&quot;</span><span class="p">}</span>
+        <span class="n">kwargs</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"existing"</span><span class="p">:</span> <span class="s2">"value"</span><span class="p">}</span>
         <span class="n">overridden</span> <span class="o">=</span> <span class="n">my_plugin</span><span class="o">.</span><span class="n">apply_overrides</span><span class="p">(</span><span class="n">kwargs</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span>
-        <span class="k">assert</span> <span class="s2">&quot;model_name&quot;</span> <span class="ow">in</span> <span class="n">overridden</span>
+        <span class="k">assert</span> <span class="s2">"model_name"</span> <span class="ow">in</span> <span class="n">overridden</span>
 </code></pre></div>
 <h2 id="migration-guide">Migration Guide<a class="headerlink" href="#migration-guide" title="Permanent link">&para;</a></h2>
 <h3 id="from-old-system-to-plugin-system">From Old System to Plugin System<a class="headerlink" href="#from-old-system-to-plugin-system" title="Permanent link">&para;</a></h3>
 <p><strong>Old System</strong> (Duplicate mappings in multiple files):
 <div class="highlight"><pre><span></span><code><span class="c1"># In framework_override.py</span>
 <span class="n">PARAMETER_MAPPINGS</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;openai.OpenAI&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;model&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">}</span>
+    <span class="s2">"openai.OpenAI"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"model"</span><span class="p">,</span> <span class="o">...</span><span class="p">}</span>
 <span class="p">}</span>
 
 <span class="c1"># In integrations/llms/openai.py</span>
-<span class="n">OPENAI_MAPPINGS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;model&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">}</span>
+<span class="n">OPENAI_MAPPINGS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"model"</span><span class="p">,</span> <span class="o">...</span><span class="p">}</span>
 </code></pre></div></p>
 <p><strong>New System</strong> (Single plugin owns mappings):
 <div class="highlight"><pre><span></span><code><span class="c1"># In integrations/llms/openai_plugin.py</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">OpenAIPlugin</span><span class="p">(</span><span class="n">IntegrationPlugin</span><span class="p">):</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">_get_default_mappings</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;model&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">}</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"model"</span><span class="p">,</span> <span class="o">...</span><span class="p">}</span>
 </code></pre></div></p>
 <h3 id="benefits-of-migration">Benefits of Migration<a class="headerlink" href="#benefits-of-migration" title="Permanent link">&para;</a></h3>
 <ol>

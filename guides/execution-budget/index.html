@@ -3832,7 +3832,7 @@ keyword. Pass the <strong>same instance</strong> to every direct evaluator call 
 <code>optimize()</code> / <code>optimize_sync()</code> call in the workflow:</p>
 <div class="highlight"><pre><span></span><code><span class="n">budget</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">ExecutionBudget</span><span class="p">(</span><span class="n">max_cost_usd</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span> <span class="n">max_examples</span><span class="o">=</span><span class="mi">2_000</span><span class="p">)</span>
 
-<span class="n">evaluator</span> <span class="o">=</span> <span class="n">LocalEvaluator</span><span class="p">(</span><span class="n">metrics</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">])</span>
+<span class="n">evaluator</span> <span class="o">=</span> <span class="n">LocalEvaluator</span><span class="p">(</span><span class="n">metrics</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">])</span>
 
 <span class="n">baseline</span> <span class="o">=</span> <span class="k">await</span> <span class="n">evaluator</span><span class="o">.</span><span class="n">evaluate</span><span class="p">(</span><span class="n">answer</span><span class="p">,</span> <span class="p">{},</span> <span class="n">baseline_dataset</span><span class="p">,</span> <span class="n">budget</span><span class="o">=</span><span class="n">budget</span><span class="p">)</span>
 <span class="n">search</span> <span class="o">=</span> <span class="k">await</span> <span class="n">answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">budget</span><span class="o">=</span><span class="n">budget</span><span class="p">)</span>  <span class="c1"># same instance</span>
@@ -3873,17 +3873,17 @@ stops a small shared <code>max_cost_usd</code> from manufacturing a spurious pre
 <strong>starts and stops gracefully</strong> with <code>stop_reason == "execution_budget"</code> once the
 shared cost is spent.</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># Per-run cost_limit=2.0, but shared remaining is 0.50 -&gt; this run stops at ~0.50</span>
-<span class="c1"># with stop_reason == &quot;execution_budget&quot; (never a pre-run CostLimitExceeded).</span>
+<span class="c1"># with stop_reason == "execution_budget" (never a pre-run CostLimitExceeded).</span>
 <span class="k">await</span> <span class="n">answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">cost_limit</span><span class="o">=</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">budget</span><span class="o">=</span><span class="n">traigent</span><span class="o">.</span><span class="n">ExecutionBudget</span><span class="p">(</span><span class="n">max_cost_usd</span><span class="o">=</span><span class="mf">0.50</span><span class="p">))</span>
 </code></pre></div>
 <h2 id="reading-what-was-consumed">Reading what was consumed<a class="headerlink" href="#reading-what-was-consumed" title="Permanent link">&para;</a></h2>
 <p>After a run, the budget's state is on the result metadata (the result shape is
 unchanged — this is additive):</p>
-<div class="highlight"><pre><span></span><code><span class="n">snap</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;execution_budget&quot;</span><span class="p">]</span>
-<span class="n">snap</span><span class="p">[</span><span class="s2">&quot;consumed_cost&quot;</span><span class="p">],</span> <span class="n">snap</span><span class="p">[</span><span class="s2">&quot;remaining_cost&quot;</span><span class="p">]</span>         <span class="c1"># remaining is None when unbounded</span>
-<span class="n">snap</span><span class="p">[</span><span class="s2">&quot;consumed_examples&quot;</span><span class="p">],</span> <span class="n">snap</span><span class="p">[</span><span class="s2">&quot;remaining_examples&quot;</span><span class="p">]</span>
-<span class="n">snap</span><span class="p">[</span><span class="s2">&quot;elapsed_seconds&quot;</span><span class="p">],</span> <span class="n">snap</span><span class="p">[</span><span class="s2">&quot;remaining_seconds&quot;</span><span class="p">]</span>
-<span class="n">snap</span><span class="p">[</span><span class="s2">&quot;trials&quot;</span><span class="p">],</span> <span class="n">snap</span><span class="p">[</span><span class="s2">&quot;untracked_trials&quot;</span><span class="p">],</span> <span class="n">snap</span><span class="p">[</span><span class="s2">&quot;cost_tracking&quot;</span><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><span class="n">snap</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">"execution_budget"</span><span class="p">]</span>
+<span class="n">snap</span><span class="p">[</span><span class="s2">"consumed_cost"</span><span class="p">],</span> <span class="n">snap</span><span class="p">[</span><span class="s2">"remaining_cost"</span><span class="p">]</span>         <span class="c1"># remaining is None when unbounded</span>
+<span class="n">snap</span><span class="p">[</span><span class="s2">"consumed_examples"</span><span class="p">],</span> <span class="n">snap</span><span class="p">[</span><span class="s2">"remaining_examples"</span><span class="p">]</span>
+<span class="n">snap</span><span class="p">[</span><span class="s2">"elapsed_seconds"</span><span class="p">],</span> <span class="n">snap</span><span class="p">[</span><span class="s2">"remaining_seconds"</span><span class="p">]</span>
+<span class="n">snap</span><span class="p">[</span><span class="s2">"trials"</span><span class="p">],</span> <span class="n">snap</span><span class="p">[</span><span class="s2">"untracked_trials"</span><span class="p">],</span> <span class="n">snap</span><span class="p">[</span><span class="s2">"cost_tracking"</span><span class="p">]</span>
 </code></pre></div>
 <p>You can also read the live object directly: <code>budget.remaining_cost</code>,
 <code>budget.remaining_examples</code>, <code>budget.remaining_seconds</code> (each <code>float("inf")</code> when

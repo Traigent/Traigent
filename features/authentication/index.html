@@ -5589,12 +5589,12 @@ and the <a href="../../api-reference/telemetry/">telemetry documentation</a>.</p
 <span class="c1"># 3. Development defaults</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;data.jsonl&quot;</span><span class="p">},</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-3.5-turbo&quot;</span><span class="p">]}</span>
+    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"data.jsonl"</span><span class="p">},</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4"</span><span class="p">,</span> <span class="s2">"gpt-3.5-turbo"</span><span class="p">]}</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_function</span><span class="p">(</span><span class="n">input_text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
-    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;model&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">input_text</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">config</span><span class="p">[</span><span class="s1">'model'</span><span class="p">]</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">input_text</span><span class="si">}</span><span class="s2">"</span>
 
 <span class="c1"># Optimization automatically uses authenticated backend</span>
 <span class="n">results</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">my_function</span><span class="o">.</span><span class="n">optimize</span><span class="p">())</span>
@@ -5672,8 +5672,8 @@ traigent<span class="w"> </span>auth<span class="w"> </span>login
 created. The mounted encrypted store cannot be unlocked without this
 environment variable.</p>
 <h3 id="jenkins">Jenkins<a class="headerlink" href="#jenkins" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><span class="n">withCredentials</span><span class="o">([</span><span class="n">string</span><span class="o">(</span><span class="nl">credentialsId:</span><span class="w"> </span><span class="s1">&#39;traigent-api-key&#39;</span><span class="o">,</span><span class="w"> </span><span class="nl">variable:</span><span class="w"> </span><span class="s1">&#39;TRAIGENT_API_KEY&#39;</span><span class="o">)])</span><span class="w"> </span><span class="o">{</span>
-<span class="w">    </span><span class="n">sh</span><span class="w"> </span><span class="s1">&#39;python your_optimization_script.py&#39;</span>
+<div class="highlight"><pre><span></span><code><span class="n">withCredentials</span><span class="o">([</span><span class="n">string</span><span class="o">(</span><span class="nl">credentialsId:</span><span class="w"> </span><span class="s1">'traigent-api-key'</span><span class="o">,</span><span class="w"> </span><span class="nl">variable:</span><span class="w"> </span><span class="s1">'TRAIGENT_API_KEY'</span><span class="o">)])</span><span class="w"> </span><span class="o">{</span>
+<span class="w">    </span><span class="n">sh</span><span class="w"> </span><span class="s1">'python your_optimization_script.py'</span>
 <span class="o">}</span>
 </code></pre></div>
 <h2 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h2>
@@ -5742,7 +5742,7 @@ traigent<span class="w"> </span>auth<span class="w"> </span>whoami<span class="w
 <p>If you're migrating from the old authentication system:</p>
 <h3 id="old-method">Old Method<a class="headerlink" href="#old-method" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="c1"># Manual API key management</span>
-<span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;TRAIGENT_API_KEY&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;your_key&quot;</span>
+<span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"TRAIGENT_API_KEY"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"your_key"</span>
 </code></pre></div>
 <h3 id="new-method">New Method<a class="headerlink" href="#new-method" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="c1"># Use CLI for secure storage</span>
@@ -5755,7 +5755,7 @@ traigent<span class="w"> </span>auth<span class="w"> </span>login
 <h3 id="migrating-from-traigentcredentialsjson">Migrating from <code>~/.traigent/credentials.json</code><a class="headerlink" href="#migrating-from-traigentcredentialsjson" title="Permanent link">&para;</a></h3>
 <p>Older CLI versions wrote credentials to <code>~/.traigent/credentials.json</code>. Current
 SDK releases ignore that plaintext file by default. For one-time migration:</p>
-<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_MASTER_PASSWORD</span><span class="o">=</span><span class="s2">&quot;&lt;new encrypted-store password&gt;&quot;</span>
+<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_MASTER_PASSWORD</span><span class="o">=</span><span class="s2">"&lt;new encrypted-store password&gt;"</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_ALLOW_PLAINTEXT_CREDENTIALS</span><span class="o">=</span><span class="nb">true</span>
 traigent<span class="w"> </span>auth<span class="w"> </span>status<span class="w">   </span><span class="c1"># Optional: confirms the old plaintext key is still valid</span>
 traigent<span class="w"> </span>auth<span class="w"> </span><span class="nb">logout</span><span class="w">   </span><span class="c1"># Deletes the legacy plaintext file so login cannot reuse it</span>

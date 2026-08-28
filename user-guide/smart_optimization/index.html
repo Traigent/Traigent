@@ -3840,11 +3840,11 @@ validated by the SDK and routed to TraigentBackend.</p>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">eval_dataset</span><span class="o">=</span><span class="p">[</span>
-        <span class="p">{</span><span class="s2">&quot;input&quot;</span><span class="p">:</span> <span class="s2">&quot;What is the capital of France?&quot;</span><span class="p">,</span> <span class="s2">&quot;expected&quot;</span><span class="p">:</span> <span class="s2">&quot;Paris&quot;</span><span class="p">},</span>
-        <span class="p">{</span><span class="s2">&quot;input&quot;</span><span class="p">:</span> <span class="s2">&quot;What is the capital of Germany?&quot;</span><span class="p">,</span> <span class="s2">&quot;expected&quot;</span><span class="p">:</span> <span class="s2">&quot;Berlin&quot;</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">"input"</span><span class="p">:</span> <span class="s2">"What is the capital of France?"</span><span class="p">,</span> <span class="s2">"expected"</span><span class="p">:</span> <span class="s2">"Paris"</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">"input"</span><span class="p">:</span> <span class="s2">"What is the capital of Germany?"</span><span class="p">,</span> <span class="s2">"expected"</span><span class="p">:</span> <span class="s2">"Berlin"</span><span class="p">},</span>
     <span class="p">],</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">],</span>
-    <span class="n">model</span><span class="o">=</span><span class="n">Choices</span><span class="p">([</span><span class="s2">&quot;fast&quot;</span><span class="p">,</span> <span class="s2">&quot;accurate&quot;</span><span class="p">]),</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">],</span>
+    <span class="n">model</span><span class="o">=</span><span class="n">Choices</span><span class="p">([</span><span class="s2">"fast"</span><span class="p">,</span> <span class="s2">"accurate"</span><span class="p">]),</span>
     <span class="n">temperature</span><span class="o">=</span><span class="n">Range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">answer_quality</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
@@ -3853,7 +3853,7 @@ validated by the SDK and routed to TraigentBackend.</p>
 
 <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">answer_quality</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">max_trials</span><span class="o">=</span><span class="mi">12</span><span class="p">,</span>
-    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;tpe&quot;</span><span class="p">,</span>
+    <span class="n">algorithm</span><span class="o">=</span><span class="s2">"tpe"</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
 <p>Use <code>bayesian</code>, <code>tpe</code>, or one of the accepted Optuna-family aliases when you

@@ -4521,7 +4521,7 @@
 <p>Unlike traditional optimization where everything runs in one call, interactive optimization uses sessions:</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># Create a session</span>
 <span class="n">session</span> <span class="o">=</span> <span class="k">await</span> <span class="n">optimizer</span><span class="o">.</span><span class="n">initialize_session</span><span class="p">(</span>
-    <span class="n">function_name</span><span class="o">=</span><span class="s2">&quot;my_llm_function&quot;</span><span class="p">,</span>
+    <span class="n">function_name</span><span class="o">=</span><span class="s2">"my_llm_function"</span><span class="p">,</span>
     <span class="n">max_trials</span><span class="o">=</span><span class="mi">50</span>
 <span class="p">)</span>
 
@@ -4577,22 +4577,22 @@ only need cloud-brain optimizer decisions with local trial execution.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.cloud</span><span class="w"> </span><span class="kn">import</span> <span class="n">TraigentCloudClient</span><span class="p">,</span> <span class="n">TraigentCloudRemoteGuidanceAdapter</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">traigent.optimizers.interactive_optimizer</span><span class="w"> </span><span class="kn">import</span> <span class="n">InteractiveOptimizer</span>
 
-<span class="n">client</span> <span class="o">=</span> <span class="n">TraigentCloudClient</span><span class="p">(</span><span class="n">api_key</span><span class="o">=</span><span class="s2">&quot;&lt;API_KEY&gt;&quot;</span><span class="p">)</span>
+<span class="n">client</span> <span class="o">=</span> <span class="n">TraigentCloudClient</span><span class="p">(</span><span class="n">api_key</span><span class="o">=</span><span class="s2">"&lt;API_KEY&gt;"</span><span class="p">)</span>
 <span class="n">remote_service</span> <span class="o">=</span> <span class="n">TraigentCloudRemoteGuidanceAdapter</span><span class="p">(</span><span class="n">client</span><span class="p">)</span>
 
 <span class="c1"># Create interactive optimizer</span>
 <span class="n">optimizer</span> <span class="o">=</span> <span class="n">InteractiveOptimizer</span><span class="p">(</span>
     <span class="n">config_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;o4-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;GPT-4o&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mi">50</span><span class="p">,</span> <span class="mi">500</span><span class="p">)</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"o4-mini"</span><span class="p">,</span> <span class="s2">"GPT-4o"</span><span class="p">],</span>
+        <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="p">(</span><span class="mi">50</span><span class="p">,</span> <span class="mi">500</span><span class="p">)</span>
     <span class="p">},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;latency&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">],</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"latency"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">],</span>
     <span class="n">remote_service</span><span class="o">=</span><span class="n">remote_service</span><span class="p">,</span>
     <span class="n">dataset_metadata</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;size&quot;</span><span class="p">:</span> <span class="mi">10000</span><span class="p">,</span>
-        <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;question_answering&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;language&quot;</span><span class="p">:</span> <span class="s2">&quot;english&quot;</span>
+        <span class="s2">"size"</span><span class="p">:</span> <span class="mi">10000</span><span class="p">,</span>
+        <span class="s2">"type"</span><span class="p">:</span> <span class="s2">"question_answering"</span><span class="p">,</span>
+        <span class="s2">"language"</span><span class="p">:</span> <span class="s2">"english"</span>
     <span class="p">}</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -4601,14 +4601,14 @@ keep the client inside its own <code>async with</code> block (or call
 <code>await client.close()</code>) when you are done.</p>
 <h3 id="step-2-initialize-session">Step 2: Initialize Session<a class="headerlink" href="#step-2-initialize-session" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">session</span> <span class="o">=</span> <span class="k">await</span> <span class="n">optimizer</span><span class="o">.</span><span class="n">initialize_session</span><span class="p">(</span>
-    <span class="n">function_name</span><span class="o">=</span><span class="s2">&quot;optimize_qa_system&quot;</span><span class="p">,</span>
+    <span class="n">function_name</span><span class="o">=</span><span class="s2">"optimize_qa_system"</span><span class="p">,</span>
     <span class="n">max_trials</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
-    <span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;team-alpha&quot;</span><span class="p">,</span>
-    <span class="n">billing_tier</span><span class="o">=</span><span class="s2">&quot;professional&quot;</span>
+    <span class="n">user_id</span><span class="o">=</span><span class="s2">"team-alpha"</span><span class="p">,</span>
+    <span class="n">billing_tier</span><span class="o">=</span><span class="s2">"professional"</span>
 <span class="p">)</span>
 
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Session ID: </span><span class="si">{</span><span class="n">session</span><span class="o">.</span><span class="n">session_id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Optimization strategy: </span><span class="si">{</span><span class="n">session</span><span class="o">.</span><span class="n">optimization_strategy</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Session ID: </span><span class="si">{</span><span class="n">session</span><span class="o">.</span><span class="n">session_id</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Optimization strategy: </span><span class="si">{</span><span class="n">session</span><span class="o">.</span><span class="n">optimization_strategy</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="step-3-optimization-loop">Step 3: Optimization Loop<a class="headerlink" href="#step-3-optimization-loop" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">run_optimization</span><span class="p">():</span>
@@ -4619,7 +4619,7 @@ keep the client inside its own <code>async with</code> block (or call
         <span class="p">)</span>
 
         <span class="k">if</span> <span class="ow">not</span> <span class="n">suggestion</span><span class="p">:</span>
-            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Optimization complete!&quot;</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">"Optimization complete!"</span><span class="p">)</span>
             <span class="k">break</span>
 
         <span class="c1"># Extract suggested subset</span>
@@ -4637,12 +4637,12 @@ keep the client inside its own <code>async with</code> block (or call
             <span class="n">trial_id</span><span class="o">=</span><span class="n">suggestion</span><span class="o">.</span><span class="n">trial_id</span><span class="p">,</span>
             <span class="n">metrics</span><span class="o">=</span><span class="n">metrics</span><span class="p">,</span>
             <span class="n">duration</span><span class="o">=</span><span class="n">execution_time</span><span class="p">,</span>
-            <span class="n">status</span><span class="o">=</span><span class="s2">&quot;completed&quot;</span>
+            <span class="n">status</span><span class="o">=</span><span class="s2">"completed"</span>
         <span class="p">)</span>
 
         <span class="c1"># Check progress</span>
         <span class="n">status</span> <span class="o">=</span> <span class="k">await</span> <span class="n">optimizer</span><span class="o">.</span><span class="n">get_optimization_status</span><span class="p">()</span>
-        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Progress: </span><span class="si">{</span><span class="n">status</span><span class="p">[</span><span class="s1">&#39;progress&#39;</span><span class="p">]</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Progress: </span><span class="si">{</span><span class="n">status</span><span class="p">[</span><span class="s1">'progress'</span><span class="p">]</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%"</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="step-4-finalize-and-get-results">Step 4: Finalize and Get Results<a class="headerlink" href="#step-4-finalize-and-get-results" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="c1"># Finalize optimization</span>
@@ -4650,10 +4650,10 @@ keep the client inside its own <code>async with</code> block (or call
     <span class="n">include_full_history</span><span class="o">=</span><span class="kc">True</span>
 <span class="p">)</span>
 
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Best configuration: </span><span class="si">{</span><span class="n">results</span><span class="o">.</span><span class="n">best_config</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Best metrics: </span><span class="si">{</span><span class="n">results</span><span class="o">.</span><span class="n">best_metrics</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Total trials: </span><span class="si">{</span><span class="n">results</span><span class="o">.</span><span class="n">total_trials</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cost savings: </span><span class="si">{</span><span class="n">results</span><span class="o">.</span><span class="n">cost_savings</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Best configuration: </span><span class="si">{</span><span class="n">results</span><span class="o">.</span><span class="n">best_config</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Best metrics: </span><span class="si">{</span><span class="n">results</span><span class="o">.</span><span class="n">best_metrics</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Total trials: </span><span class="si">{</span><span class="n">results</span><span class="o">.</span><span class="n">total_trials</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Cost savings: </span><span class="si">{</span><span class="n">results</span><span class="o">.</span><span class="n">cost_savings</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%"</span><span class="p">)</span>
 
 <span class="c1"># Use optimized configuration</span>
 <span class="n">optimized_function</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">my_llm_function</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="o">**</span><span class="n">results</span><span class="o">.</span><span class="n">best_config</span><span class="p">)</span>
@@ -4665,12 +4665,12 @@ keep the client inside its own <code>async with</code> block (or call
     <span class="n">objectives</span><span class="o">=</span><span class="n">objectives</span><span class="p">,</span>
     <span class="n">remote_service</span><span class="o">=</span><span class="n">client</span><span class="p">,</span>
     <span class="n">optimization_strategy</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;exploration_ratio&quot;</span><span class="p">:</span> <span class="mf">0.2</span><span class="p">,</span>  <span class="c1"># 20% exploration, 80% exploitation</span>
-        <span class="s2">&quot;min_examples_per_trial&quot;</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span>
-        <span class="s2">&quot;max_examples_per_trial&quot;</span><span class="p">:</span> <span class="mi">500</span><span class="p">,</span>
-        <span class="s2">&quot;adaptive_sampling&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
-        <span class="s2">&quot;early_stopping&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
-        <span class="s2">&quot;convergence_threshold&quot;</span><span class="p">:</span> <span class="mf">0.001</span>
+        <span class="s2">"exploration_ratio"</span><span class="p">:</span> <span class="mf">0.2</span><span class="p">,</span>  <span class="c1"># 20% exploration, 80% exploitation</span>
+        <span class="s2">"min_examples_per_trial"</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span>
+        <span class="s2">"max_examples_per_trial"</span><span class="p">:</span> <span class="mi">500</span><span class="p">,</span>
+        <span class="s2">"adaptive_sampling"</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="s2">"early_stopping"</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="s2">"convergence_threshold"</span><span class="p">:</span> <span class="mf">0.001</span>
     <span class="p">}</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -4682,13 +4682,13 @@ keep the client inside its own <code>async with</code> block (or call
         <span class="c1"># Execute function</span>
         <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">my_function</span><span class="p">(</span><span class="n">config</span><span class="o">=</span><span class="n">suggestion</span><span class="o">.</span><span class="n">config</span><span class="p">)</span>
         <span class="n">metrics</span> <span class="o">=</span> <span class="n">compute_metrics</span><span class="p">(</span><span class="n">results</span><span class="p">)</span>
-        <span class="n">status</span> <span class="o">=</span> <span class="s2">&quot;completed&quot;</span>
+        <span class="n">status</span> <span class="o">=</span> <span class="s2">"completed"</span>
         <span class="n">error_message</span> <span class="o">=</span> <span class="kc">None</span>
 
     <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
         <span class="c1"># Report failure</span>
         <span class="n">metrics</span> <span class="o">=</span> <span class="p">{}</span>
-        <span class="n">status</span> <span class="o">=</span> <span class="s2">&quot;failed&quot;</span>
+        <span class="n">status</span> <span class="o">=</span> <span class="s2">"failed"</span>
         <span class="n">error_message</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
 
     <span class="k">await</span> <span class="n">optimizer</span><span class="o">.</span><span class="n">report_results</span><span class="p">(</span>
@@ -4703,27 +4703,27 @@ keep the client inside its own <code>async with</code> block (or call
 <div class="highlight"><pre><span></span><code><span class="c1"># Get detailed status</span>
 <span class="n">status</span> <span class="o">=</span> <span class="k">await</span> <span class="n">optimizer</span><span class="o">.</span><span class="n">get_optimization_status</span><span class="p">()</span>
 
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Session: </span><span class="si">{</span><span class="n">status</span><span class="p">[</span><span class="s1">&#39;session_id&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Status: </span><span class="si">{</span><span class="n">status</span><span class="p">[</span><span class="s1">&#39;status&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Completed trials: </span><span class="si">{</span><span class="n">status</span><span class="p">[</span><span class="s1">&#39;completed_trials&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">status</span><span class="p">[</span><span class="s1">&#39;max_trials&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Best metrics so far: </span><span class="si">{</span><span class="n">status</span><span class="p">[</span><span class="s1">&#39;best_metrics&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Trials per minute: </span><span class="si">{</span><span class="n">status</span><span class="p">[</span><span class="s1">&#39;trials_per_minute&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Session: </span><span class="si">{</span><span class="n">status</span><span class="p">[</span><span class="s1">'session_id'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Status: </span><span class="si">{</span><span class="n">status</span><span class="p">[</span><span class="s1">'status'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Completed trials: </span><span class="si">{</span><span class="n">status</span><span class="p">[</span><span class="s1">'completed_trials'</span><span class="p">]</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">status</span><span class="p">[</span><span class="s1">'max_trials'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Best metrics so far: </span><span class="si">{</span><span class="n">status</span><span class="p">[</span><span class="s1">'best_metrics'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Trials per minute: </span><span class="si">{</span><span class="n">status</span><span class="p">[</span><span class="s1">'trials_per_minute'</span><span class="p">]</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h2>
 <h3 id="1-dataset-metadata">1. Dataset Metadata<a class="headerlink" href="#1-dataset-metadata" title="Permanent link">&para;</a></h3>
 <p>Provide accurate metadata for better subset selection:</p>
 <div class="highlight"><pre><span></span><code><span class="n">dataset_metadata</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;size&quot;</span><span class="p">:</span> <span class="mi">50000</span><span class="p">,</span>
-    <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;classification&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;class_distribution&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;positive&quot;</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">,</span> <span class="s2">&quot;negative&quot;</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">},</span>
-    <span class="s2">&quot;avg_text_length&quot;</span><span class="p">:</span> <span class="mi">150</span><span class="p">,</span>
-    <span class="s2">&quot;language&quot;</span><span class="p">:</span> <span class="s2">&quot;english&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="s2">&quot;customer_support&quot;</span>
+    <span class="s2">"size"</span><span class="p">:</span> <span class="mi">50000</span><span class="p">,</span>
+    <span class="s2">"type"</span><span class="p">:</span> <span class="s2">"classification"</span><span class="p">,</span>
+    <span class="s2">"class_distribution"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"positive"</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">,</span> <span class="s2">"negative"</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">},</span>
+    <span class="s2">"avg_text_length"</span><span class="p">:</span> <span class="mi">150</span><span class="p">,</span>
+    <span class="s2">"language"</span><span class="p">:</span> <span class="s2">"english"</span><span class="p">,</span>
+    <span class="s2">"domain"</span><span class="p">:</span> <span class="s2">"customer_support"</span>
 <span class="p">}</span>
 </code></pre></div>
 <h3 id="2-efficient-local-execution">2. Efficient Local Execution<a class="headerlink" href="#2-efficient-local-execution" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">evaluate_batch</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">data_batch</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Evaluate function on a batch of data efficiently.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Evaluate function on a batch of data efficiently."""</span>
     <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="p">[</span>
         <span class="n">function</span><span class="p">(</span><span class="n">item</span><span class="p">,</span> <span class="o">**</span><span class="n">config</span><span class="p">)</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">data_batch</span>
     <span class="p">])</span>
@@ -4745,7 +4745,7 @@ keep the client inside its own <code>async with</code> block (or call
 </code></pre></div>
 <h3 id="4-progressive-evaluation">4. Progressive Evaluation<a class="headerlink" href="#4-progressive-evaluation" title="Permanent link">&para;</a></h3>
 <p>Start with fast approximate metrics, then switch to accurate ones:</p>
-<div class="highlight"><pre><span></span><code><span class="k">if</span> <span class="n">suggestion</span><span class="o">.</span><span class="n">exploration_type</span> <span class="o">==</span> <span class="s2">&quot;exploration&quot;</span><span class="p">:</span>
+<div class="highlight"><pre><span></span><code><span class="k">if</span> <span class="n">suggestion</span><span class="o">.</span><span class="n">exploration_type</span> <span class="o">==</span> <span class="s2">"exploration"</span><span class="p">:</span>
     <span class="c1"># Use fast approximate metrics for exploration</span>
     <span class="n">metrics</span> <span class="o">=</span> <span class="k">await</span> <span class="n">fast_evaluation</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">subset</span><span class="p">)</span>
 <span class="k">else</span><span class="p">:</span>
@@ -4798,43 +4798,43 @@ keep the client inside its own <code>async with</code> block (or call
 <h2 id="common-use-cases">Common Use Cases<a class="headerlink" href="#common-use-cases" title="Permanent link">&para;</a></h2>
 <h3 id="1-llm-parameter-tuning">1. LLM Parameter Tuning<a class="headerlink" href="#1-llm-parameter-tuning" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">config_space</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
-    <span class="s2">&quot;top_p&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
-    <span class="s2">&quot;frequency_penalty&quot;</span><span class="p">:</span> <span class="p">(</span><span class="o">-</span><span class="mf">2.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">),</span>
-    <span class="s2">&quot;presence_penalty&quot;</span><span class="p">:</span> <span class="p">(</span><span class="o">-</span><span class="mf">2.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">),</span>
-    <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;o4-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;GPT-4o&quot;</span><span class="p">,</span> <span class="s2">&quot;claude-2&quot;</span><span class="p">]</span>
+    <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+    <span class="s2">"top_p"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+    <span class="s2">"frequency_penalty"</span><span class="p">:</span> <span class="p">(</span><span class="o">-</span><span class="mf">2.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">),</span>
+    <span class="s2">"presence_penalty"</span><span class="p">:</span> <span class="p">(</span><span class="o">-</span><span class="mf">2.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">),</span>
+    <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"o4-mini"</span><span class="p">,</span> <span class="s2">"GPT-4o"</span><span class="p">,</span> <span class="s2">"claude-2"</span><span class="p">]</span>
 <span class="p">}</span>
 
-<span class="n">objectives</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;response_quality&quot;</span><span class="p">,</span> <span class="s2">&quot;latency&quot;</span><span class="p">,</span> <span class="s2">&quot;cost_per_token&quot;</span><span class="p">]</span>
+<span class="n">objectives</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"response_quality"</span><span class="p">,</span> <span class="s2">"latency"</span><span class="p">,</span> <span class="s2">"cost_per_token"</span><span class="p">]</span>
 </code></pre></div>
 <h3 id="2-ml-model-hyperparameter-optimization">2. ML Model Hyperparameter Optimization<a class="headerlink" href="#2-ml-model-hyperparameter-optimization" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">config_space</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;learning_rate&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">1e-5</span><span class="p">,</span> <span class="mf">1e-1</span><span class="p">),</span>
-    <span class="s2">&quot;batch_size&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">16</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">128</span><span class="p">],</span>
-    <span class="s2">&quot;num_epochs&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">20</span><span class="p">),</span>
-    <span class="s2">&quot;optimizer&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;adam&quot;</span><span class="p">,</span> <span class="s2">&quot;sgd&quot;</span><span class="p">,</span> <span class="s2">&quot;rmsprop&quot;</span><span class="p">],</span>
-    <span class="s2">&quot;dropout_rate&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)</span>
+    <span class="s2">"learning_rate"</span><span class="p">:</span> <span class="p">(</span><span class="mf">1e-5</span><span class="p">,</span> <span class="mf">1e-1</span><span class="p">),</span>
+    <span class="s2">"batch_size"</span><span class="p">:</span> <span class="p">[</span><span class="mi">16</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">128</span><span class="p">],</span>
+    <span class="s2">"num_epochs"</span><span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">20</span><span class="p">),</span>
+    <span class="s2">"optimizer"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"adam"</span><span class="p">,</span> <span class="s2">"sgd"</span><span class="p">,</span> <span class="s2">"rmsprop"</span><span class="p">],</span>
+    <span class="s2">"dropout_rate"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)</span>
 <span class="p">}</span>
 
-<span class="n">objectives</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;validation_accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;training_time&quot;</span><span class="p">,</span> <span class="s2">&quot;model_size&quot;</span><span class="p">]</span>
+<span class="n">objectives</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"validation_accuracy"</span><span class="p">,</span> <span class="s2">"training_time"</span><span class="p">,</span> <span class="s2">"model_size"</span><span class="p">]</span>
 </code></pre></div>
 <h3 id="3-system-configuration-optimization">3. System Configuration Optimization<a class="headerlink" href="#3-system-configuration-optimization" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">config_space</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;cache_size&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1000</span><span class="p">),</span>
-    <span class="s2">&quot;num_workers&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">32</span><span class="p">),</span>
-    <span class="s2">&quot;timeout&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">),</span>
-    <span class="s2">&quot;retry_strategy&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;exponential&quot;</span><span class="p">,</span> <span class="s2">&quot;linear&quot;</span><span class="p">,</span> <span class="s2">&quot;fixed&quot;</span><span class="p">],</span>
-    <span class="s2">&quot;compression&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;gzip&quot;</span><span class="p">,</span> <span class="s2">&quot;zstd&quot;</span><span class="p">]</span>
+    <span class="s2">"cache_size"</span><span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1000</span><span class="p">),</span>
+    <span class="s2">"num_workers"</span><span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">32</span><span class="p">),</span>
+    <span class="s2">"timeout"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">),</span>
+    <span class="s2">"retry_strategy"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"exponential"</span><span class="p">,</span> <span class="s2">"linear"</span><span class="p">,</span> <span class="s2">"fixed"</span><span class="p">],</span>
+    <span class="s2">"compression"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"none"</span><span class="p">,</span> <span class="s2">"gzip"</span><span class="p">,</span> <span class="s2">"zstd"</span><span class="p">]</span>
 <span class="p">}</span>
 
-<span class="n">objectives</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;throughput&quot;</span><span class="p">,</span> <span class="s2">&quot;latency_p99&quot;</span><span class="p">,</span> <span class="s2">&quot;error_rate&quot;</span><span class="p">]</span>
+<span class="n">objectives</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"throughput"</span><span class="p">,</span> <span class="s2">"latency_p99"</span><span class="p">,</span> <span class="s2">"error_rate"</span><span class="p">]</span>
 </code></pre></div>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <h3 id="session-timeout">Session Timeout<a class="headerlink" href="#session-timeout" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="k">try</span><span class="p">:</span>
     <span class="n">suggestion</span> <span class="o">=</span> <span class="k">await</span> <span class="n">optimizer</span><span class="o">.</span><span class="n">get_next_suggestion</span><span class="p">(</span><span class="n">dataset_size</span><span class="p">)</span>
 <span class="k">except</span> <span class="n">SessionError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-    <span class="k">if</span> <span class="s2">&quot;expired&quot;</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">):</span>
+    <span class="k">if</span> <span class="s2">"expired"</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">):</span>
         <span class="c1"># Recreate session</span>
         <span class="n">session</span> <span class="o">=</span> <span class="k">await</span> <span class="n">optimizer</span><span class="o">.</span><span class="n">initialize_session</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
 </code></pre></div>
@@ -4843,7 +4843,7 @@ keep the client inside its own <code>async with</code> block (or call
 
 <span class="c1"># Configure retry behavior</span>
 <span class="n">client</span> <span class="o">=</span> <span class="n">TraigentCloudClient</span><span class="p">(</span>
-    <span class="n">api_key</span><span class="o">=</span><span class="s2">&quot;your-key&quot;</span><span class="p">,</span>  <span class="c1"># pragma: allowlist secret</span>
+    <span class="n">api_key</span><span class="o">=</span><span class="s2">"your-key"</span><span class="p">,</span>  <span class="c1"># pragma: allowlist secret</span>
     <span class="n">max_retries</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
     <span class="n">timeout</span><span class="o">=</span><span class="mf">60.0</span><span class="p">,</span>
 <span class="p">)</span>

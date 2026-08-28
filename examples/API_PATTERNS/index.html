@@ -4112,14 +4112,14 @@ tuned values, running optimization, and inspecting results.</p>
 
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">]},</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data/eval.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">]},</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"data/eval.jsonl"</span><span class="p">,</span>
     <span class="n">scoring_function</span><span class="o">=</span><span class="n">my_score</span><span class="p">,</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">],</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">],</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
-    <span class="k">return</span> <span class="n">call_model</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">call_model</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">])</span>
 
 
 <span class="n">results</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">fn</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">20</span><span class="p">))</span>
@@ -4141,19 +4141,19 @@ tuned values, running optimization, and inspecting results.</p>
 
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;style&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;short&quot;</span><span class="p">,</span> <span class="s2">&quot;detailed&quot;</span><span class="p">]},</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data/qa.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"style"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"short"</span><span class="p">,</span> <span class="s2">"detailed"</span><span class="p">]},</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"data/qa.jsonl"</span><span class="p">,</span>
     <span class="n">scoring_function</span><span class="o">=</span><span class="n">contains_expected</span><span class="p">,</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">answer</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
-    <span class="k">return</span> <span class="n">render_answer</span><span class="p">(</span><span class="n">question</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;style&quot;</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">render_answer</span><span class="p">(</span><span class="n">question</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">"style"</span><span class="p">])</span>
 </code></pre></div>
 <h2 id="runtime-controls">Runtime Controls<a class="headerlink" href="#runtime-controls" title="Permanent link">&para;</a></h2>
 <p>Runtime controls belong on <code>.optimize()</code>, not on the decorator.</p>
 <div class="highlight"><pre><span></span><code><span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span>
+    <span class="n">algorithm</span><span class="o">=</span><span class="s2">"grid"</span><span class="p">,</span>
     <span class="n">max_trials</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
     <span class="n">timeout</span><span class="o">=</span><span class="mi">3600</span><span class="p">,</span>
     <span class="n">cost_limit</span><span class="o">=</span><span class="mf">5.00</span><span class="p">,</span>
@@ -4164,44 +4164,44 @@ tuned values, running optimization, and inspecting results.</p>
 <code>"true"</code> are ignored.</p>
 <h2 id="configuration-spaces">Configuration Spaces<a class="headerlink" href="#configuration-spaces" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="n">space</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o&quot;</span><span class="p">],</span>
-    <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">],</span>
-    <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">512</span><span class="p">],</span>
+    <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">],</span>
+    <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">],</span>
+    <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="p">[</span><span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="mi">512</span><span class="p">],</span>
 <span class="p">}</span>
 </code></pre></div>
 <p>You can also use structured tuned-variable objects:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent</span><span class="w"> </span><span class="kn">import</span> <span class="n">Choices</span><span class="p">,</span> <span class="n">Range</span>
 
 <span class="n">space</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="n">Choices</span><span class="p">([</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4o&quot;</span><span class="p">]),</span>
-    <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="n">Range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+    <span class="s2">"model"</span><span class="p">:</span> <span class="n">Choices</span><span class="p">([</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4o"</span><span class="p">]),</span>
+    <span class="s2">"temperature"</span><span class="p">:</span> <span class="n">Range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
 <span class="p">}</span>
 </code></pre></div>
 <h2 id="parameter-injection">Parameter Injection<a class="headerlink" href="#parameter-injection" title="Permanent link">&para;</a></h2>
 <p>Context injection is the default and works with <code>traigent.get_config()</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">]})</span>
+<div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">]})</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">summarize</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
-    <span class="k">return</span> <span class="n">call_model</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">call_model</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">])</span>
 </code></pre></div>
 <p>If you prefer explicit config arguments, opt into parameter injection:</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">]},</span>
-    <span class="n">injection</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;injection_mode&quot;</span><span class="p">:</span> <span class="s2">&quot;parameter&quot;</span><span class="p">,</span> <span class="s2">&quot;config_param&quot;</span><span class="p">:</span> <span class="s2">&quot;config&quot;</span><span class="p">},</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">]},</span>
+    <span class="n">injection</span><span class="o">=</span><span class="p">{</span><span class="s2">"injection_mode"</span><span class="p">:</span> <span class="s2">"parameter"</span><span class="p">,</span> <span class="s2">"config_param"</span><span class="p">:</span> <span class="s2">"config"</span><span class="p">},</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">summarize</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">object</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">call_model</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="nb">float</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">]))</span>
+    <span class="k">return</span> <span class="n">call_model</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="nb">float</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">]))</span>
 </code></pre></div>
 <p>Valid injection modes are <code>context</code>, <code>parameter</code>, and <code>seamless</code>.</p>
 <h2 id="async-functions">Async Functions<a class="headerlink" href="#async-functions" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">]},</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data/eval.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">]},</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"data/eval.jsonl"</span><span class="p">,</span>
     <span class="n">scoring_function</span><span class="o">=</span><span class="n">my_score</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">async_answer</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
-    <span class="k">return</span> <span class="k">await</span> <span class="n">async_call_model</span><span class="p">(</span><span class="n">question</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">])</span>
+    <span class="k">return</span> <span class="k">await</span> <span class="n">async_call_model</span><span class="p">(</span><span class="n">question</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">])</span>
 
 
 <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">async_answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">max_trials</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
@@ -4220,16 +4220,16 @@ tuned values, running optimization, and inspecting results.</p>
 <p><code>results.source</code> tells you which routing path ran:
 <code>cloud_brain</code>, <code>local_fallback</code>, <code>explicit_local</code>, or <code>offline</code>.</p>
 <h2 id="progressive-runs">Progressive Runs<a class="headerlink" href="#progressive-runs" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="n">quick</span> <span class="o">=</span> <span class="k">await</span> <span class="n">answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;random&quot;</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">quick</span> <span class="o">=</span> <span class="k">await</span> <span class="n">answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="s2">"random"</span><span class="p">,</span> <span class="n">max_trials</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
 
 <span class="n">refined_space</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="n">quick</span><span class="o">.</span><span class="n">best_config</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">]],</span>
-    <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.4</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">],</span>
+    <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="n">quick</span><span class="o">.</span><span class="n">best_config</span><span class="p">[</span><span class="s2">"model"</span><span class="p">]],</span>
+    <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.4</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">],</span>
 <span class="p">}</span>
 
 <span class="n">refined</span> <span class="o">=</span> <span class="k">await</span> <span class="n">answer</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="n">refined_space</span><span class="p">,</span>
-    <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;grid&quot;</span><span class="p">,</span>
+    <span class="n">algorithm</span><span class="o">=</span><span class="s2">"grid"</span><span class="p">,</span>
     <span class="n">max_trials</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -4268,7 +4268,7 @@ this through <code>example.metadata</code>.</p>
 </tbody>
 </table>
 <p>A row like:</p>
-<div class="highlight"><pre><span></span><code>{&quot;input&quot;: &quot;How many employees live in each city?&quot;, &quot;expected_output&quot;: &quot;3 rows&quot;, &quot;db_id&quot;: &quot;company&quot;, &quot;gold_sql&quot;: &quot;SELECT city, COUNT(*) FROM employees GROUP BY city&quot;}
+<div class="highlight"><pre><span></span><code>{"input": "How many employees live in each city?", "expected_output": "3 rows", "db_id": "company", "gold_sql": "SELECT city, COUNT(*) FROM employees GROUP BY city"}
 </code></pre></div>
 <p>produces an <code>EvaluationExample</code> where:
 - <code>example.input_data</code> → <code>"How many employees live in each city?"</code>
@@ -4283,8 +4283,8 @@ The evaluator receives the raw <code>EvaluationExample</code> and must return an
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">sql_evaluator</span><span class="p">(</span><span class="n">func</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">example</span><span class="p">):</span>
-    <span class="n">db_id</span> <span class="o">=</span> <span class="n">example</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;db_id&quot;</span><span class="p">,</span> <span class="s2">&quot;default&quot;</span><span class="p">)</span>
-    <span class="n">gold_sql</span> <span class="o">=</span> <span class="n">example</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;gold_sql&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+    <span class="n">db_id</span> <span class="o">=</span> <span class="n">example</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"db_id"</span><span class="p">,</span> <span class="s2">"default"</span><span class="p">)</span>
+    <span class="n">gold_sql</span> <span class="o">=</span> <span class="n">example</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"gold_sql"</span><span class="p">,</span> <span class="s2">""</span><span class="p">)</span>
 
     <span class="n">predicted_sql</span> <span class="o">=</span> <span class="n">func</span><span class="p">(</span><span class="n">example</span><span class="o">.</span><span class="n">input_data</span><span class="p">)</span>
     <span class="n">correct</span> <span class="o">=</span> <span class="n">predicted_sql</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="o">==</span> <span class="n">gold_sql</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
@@ -4296,17 +4296,17 @@ The evaluator receives the raw <code>EvaluationExample</code> and must return an
 
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data/text2sql.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"data/text2sql.jsonl"</span><span class="p">,</span>
     <span class="n">custom_evaluator</span><span class="o">=</span><span class="n">sql_evaluator</span><span class="p">,</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;claude-3-haiku-20240307&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">],</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"claude-3-haiku-20240307"</span><span class="p">],</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">],</span>
     <span class="p">},</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">text2sql_agent</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
-    <span class="k">return</span> <span class="n">call_llm</span><span class="p">(</span><span class="n">question</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">],</span> <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">call_llm</span><span class="p">(</span><span class="n">question</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">"model"</span><span class="p">],</span> <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">])</span>
 </code></pre></div>
 <blockquote>
 <p><strong>Note:</strong> a plain <code>scoring_function(output, expected)</code> does not receive
@@ -4316,31 +4316,31 @@ fields beyond the predicted and expected outputs.</p>
 <h3 id="multi-field-input-dict">Multi-field input dict<a class="headerlink" href="#multi-field-input-dict" title="Permanent link">&para;</a></h3>
 <p>When the optimized function itself needs multiple inputs, set <code>input</code> to a
 JSON object:</p>
-<div class="highlight"><pre><span></span><code>{&quot;input&quot;: {&quot;question&quot;: &quot;Find all cities with more than 100 employees&quot;, &quot;schema&quot;: &quot;employees(id, city, dept)&quot;}, &quot;expected_output&quot;: &quot;SELECT city FROM employees GROUP BY city HAVING COUNT(*) &gt; 100&quot;}
+<div class="highlight"><pre><span></span><code>{"input": {"question": "Find all cities with more than 100 employees", "schema": "employees(id, city, dept)"}, "expected_output": "SELECT city FROM employees GROUP BY city HAVING COUNT(*) &gt; 100"}
 </code></pre></div>
 <p>The SDK passes the dict's keys as keyword arguments if the function signature
 matches (either via named parameters or <code>**kwargs</code>):</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data/text2sql.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"data/text2sql.jsonl"</span><span class="p">,</span>
     <span class="n">scoring_function</span><span class="o">=</span><span class="n">my_score</span><span class="p">,</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;claude-3-haiku-20240307&quot;</span><span class="p">],</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">]},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"claude-3-haiku-20240307"</span><span class="p">],</span> <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">]},</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">text2sql_agent</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">schema</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
     <span class="k">return</span> <span class="n">call_llm</span><span class="p">(</span>
-        <span class="sa">f</span><span class="s2">&quot;Schema: </span><span class="si">{</span><span class="n">schema</span><span class="si">}</span><span class="se">\n</span><span class="s2">Question: </span><span class="si">{</span><span class="n">question</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-        <span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">],</span>
-        <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">],</span>
+        <span class="sa">f</span><span class="s2">"Schema: </span><span class="si">{</span><span class="n">schema</span><span class="si">}</span><span class="se">\n</span><span class="s2">Question: </span><span class="si">{</span><span class="n">question</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
+        <span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">"model"</span><span class="p">],</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">],</span>
     <span class="p">)</span>
 </code></pre></div>
 <p>Alternatively, accept <code>**kwargs</code> to keep the signature flexible:</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">text2sql_agent</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
-    <span class="n">question</span> <span class="o">=</span> <span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;question&quot;</span><span class="p">]</span>
-    <span class="n">schema</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;schema&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">call_llm</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Schema: </span><span class="si">{</span><span class="n">schema</span><span class="si">}</span><span class="se">\n</span><span class="s2">Q: </span><span class="si">{</span><span class="n">question</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">])</span>
+    <span class="n">question</span> <span class="o">=</span> <span class="n">kwargs</span><span class="p">[</span><span class="s2">"question"</span><span class="p">]</span>
+    <span class="n">schema</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"schema"</span><span class="p">,</span> <span class="s2">""</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">call_llm</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Schema: </span><span class="si">{</span><span class="n">schema</span><span class="si">}</span><span class="se">\n</span><span class="s2">Q: </span><span class="si">{</span><span class="n">question</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">"model"</span><span class="p">])</span>
 </code></pre></div>
 <h2 id="mock-smoke-tests">Mock Smoke Tests<a class="headerlink" href="#mock-smoke-tests" title="Permanent link">&para;</a></h2>
 <p>For tutorials and CI smoke tests, call mock mode explicitly near the top of the

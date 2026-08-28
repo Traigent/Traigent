@@ -4491,9 +4491,9 @@
 <h2 id="what-is-evaluation">What is Evaluation?<a class="headerlink" href="#what-is-evaluation" title="Permanent link">&para;</a></h2>
 <p>Evaluation in Traigent compares your AI agent's outputs against expected results to determine which configuration performs best.</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">]},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>  <span class="c1"># What we&#39;re measuring</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data.jsonl&quot;</span>  <span class="c1"># Test cases with expected outputs</span>
+    <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">]},</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>  <span class="c1"># What we're measuring</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"data.jsonl"</span>  <span class="c1"># Test cases with expected outputs</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_agent</span><span class="p">(</span><span class="nb">input</span><span class="p">):</span>
     <span class="c1"># Your AI agent logic</span>
@@ -4504,15 +4504,15 @@
 <h3 id="1-classification-accuracy-exact-match">1. Classification Accuracy (Exact Match)<a class="headerlink" href="#1-classification-accuracy-exact-match" title="Permanent link">&para;</a></h3>
 <p>For tasks with discrete outputs (sentiment, categories, yes/no):
 <div class="highlight"><pre><span></span><code><span class="c1"># Accuracy = % of exact matches</span>
-<span class="n">Input</span><span class="p">:</span> <span class="s2">&quot;I love this!&quot;</span>  <span class="err">→</span> <span class="n">Output</span><span class="p">:</span> <span class="s2">&quot;positive&quot;</span> <span class="err">→</span> <span class="n">Expected</span><span class="p">:</span> <span class="s2">&quot;positive&quot;</span> <span class="err">→</span> <span class="err">✅</span> <span class="mi">100</span><span class="o">%</span>
-<span class="n">Input</span><span class="p">:</span> <span class="s2">&quot;I hate this!&quot;</span>  <span class="err">→</span> <span class="n">Output</span><span class="p">:</span> <span class="s2">&quot;neutral&quot;</span>  <span class="err">→</span> <span class="n">Expected</span><span class="p">:</span> <span class="s2">&quot;negative&quot;</span> <span class="err">→</span> <span class="err">❌</span> <span class="mi">0</span><span class="o">%</span>
+<span class="n">Input</span><span class="p">:</span> <span class="s2">"I love this!"</span>  <span class="err">→</span> <span class="n">Output</span><span class="p">:</span> <span class="s2">"positive"</span> <span class="err">→</span> <span class="n">Expected</span><span class="p">:</span> <span class="s2">"positive"</span> <span class="err">→</span> <span class="err">✅</span> <span class="mi">100</span><span class="o">%</span>
+<span class="n">Input</span><span class="p">:</span> <span class="s2">"I hate this!"</span>  <span class="err">→</span> <span class="n">Output</span><span class="p">:</span> <span class="s2">"neutral"</span>  <span class="err">→</span> <span class="n">Expected</span><span class="p">:</span> <span class="s2">"negative"</span> <span class="err">→</span> <span class="err">❌</span> <span class="mi">0</span><span class="o">%</span>
 </code></pre></div></p>
 <h3 id="2-semantic-similarity-bring-your-own-scorer">2. Semantic Similarity (Bring Your Own Scorer)<a class="headerlink" href="#2-semantic-similarity-bring-your-own-scorer" title="Permanent link">&para;</a></h3>
 <p>For tasks with varied but equivalent outputs:
 <div class="highlight"><pre><span></span><code><span class="c1"># Accuracy = semantic similarity score (from a user-supplied scoring_function)</span>
-<span class="n">Input</span><span class="p">:</span> <span class="s2">&quot;Capital of France?&quot;</span>
-<span class="n">Output</span><span class="p">:</span> <span class="s2">&quot;Paris is the capital&quot;</span>
-<span class="n">Expected</span><span class="p">:</span> <span class="s2">&quot;Paris&quot;</span>
+<span class="n">Input</span><span class="p">:</span> <span class="s2">"Capital of France?"</span>
+<span class="n">Output</span><span class="p">:</span> <span class="s2">"Paris is the capital"</span>
+<span class="n">Expected</span><span class="p">:</span> <span class="s2">"Paris"</span>
 <span class="err">→</span> <span class="mi">95</span><span class="o">%</span> <span class="p">(</span><span class="n">semantically</span> <span class="n">equivalent</span><span class="p">,</span> <span class="k">with</span> <span class="n">your</span> <span class="n">own</span> <span class="n">embedding</span><span class="o">-</span><span class="n">based</span> <span class="n">scorer</span><span class="p">)</span>
 </code></pre></div></p>
 <blockquote>
@@ -4539,8 +4539,8 @@ comparing the agent's output to <code>expected_output</code> using exact match,
 falling back to a case-insensitive string comparison. There is no
 embedding model and no LLM judge in this path.</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;qa_pairs.jsonl&quot;</span><span class="p">,</span>  <span class="c1"># Default: exact / case-insensitive accuracy</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">]</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"qa_pairs.jsonl"</span><span class="p">,</span>  <span class="c1"># Default: exact / case-insensitive accuracy</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">]</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">qa_agent</span><span class="p">(</span><span class="n">question</span><span class="p">):</span>
     <span class="k">return</span> <span class="n">answer</span>
@@ -4551,8 +4551,8 @@ and any task where the expected output is a fixed string or label.</p>
 where paraphrases must count as correct — those need a user-supplied
 semantic scorer (see Method 2).</p>
 <p><strong>Dataset format (JSONL):</strong>
-<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">&quot;input&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;question&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;What is AI?&quot;</span><span class="p">},</span><span class="w"> </span><span class="nt">&quot;output&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Artificial Intelligence&quot;</span><span class="p">}</span>
-<span class="p">{</span><span class="nt">&quot;input&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;question&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Who invented Python?&quot;</span><span class="p">},</span><span class="w"> </span><span class="nt">&quot;output&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Guido van Rossum&quot;</span><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"input"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"question"</span><span class="p">:</span><span class="w"> </span><span class="s2">"What is AI?"</span><span class="p">},</span><span class="w"> </span><span class="nt">"output"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Artificial Intelligence"</span><span class="p">}</span>
+<span class="p">{</span><span class="nt">"input"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"question"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Who invented Python?"</span><span class="p">},</span><span class="w"> </span><span class="nt">"output"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Guido van Rossum"</span><span class="p">}</span>
 </code></pre></div></p>
 <h3 id="method-2-semantic-similarity-user-supplied-scorer">Method 2: Semantic Similarity (User-Supplied Scorer)<a class="headerlink" href="#method-2-semantic-similarity-user-supplied-scorer" title="Permanent link">&para;</a></h3>
 <p>For tasks where paraphrases should count as correct, supply your own
@@ -4563,9 +4563,9 @@ Traigent does not ship one out of the box.</p>
 <span class="n">client</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">()</span>  <span class="c1"># requires OPENAI_API_KEY in your own environment</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">semantic_accuracy</span><span class="p">(</span><span class="n">output</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">expected</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Embedding-based cosine similarity, returned as a 0.0-1.0 score.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Embedding-based cosine similarity, returned as a 0.0-1.0 score."""</span>
     <span class="n">resp</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">embeddings</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
-        <span class="n">model</span><span class="o">=</span><span class="s2">&quot;text-embedding-3-small&quot;</span><span class="p">,</span>
+        <span class="n">model</span><span class="o">=</span><span class="s2">"text-embedding-3-small"</span><span class="p">,</span>
         <span class="nb">input</span><span class="o">=</span><span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">output</span><span class="p">),</span> <span class="nb">str</span><span class="p">(</span><span class="n">expected</span><span class="p">)],</span>
     <span class="p">)</span>
     <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">resp</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">embedding</span><span class="p">,</span> <span class="n">resp</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">embedding</span>
@@ -4575,9 +4575,9 @@ Traigent does not ship one out of the box.</p>
     <span class="k">return</span> <span class="n">dot</span> <span class="o">/</span> <span class="p">(</span><span class="n">na</span> <span class="o">*</span> <span class="n">nb</span><span class="p">)</span> <span class="k">if</span> <span class="n">na</span> <span class="ow">and</span> <span class="n">nb</span> <span class="k">else</span> <span class="mf">0.0</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;qa_pairs.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"qa_pairs.jsonl"</span><span class="p">,</span>
     <span class="n">scoring_function</span><span class="o">=</span><span class="n">semantic_accuracy</span><span class="p">,</span>  <span class="c1"># your scorer, your dependency, your API key</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">qa_agent</span><span class="p">(</span><span class="n">question</span><span class="p">):</span>
     <span class="k">return</span> <span class="n">answer</span>
@@ -4593,13 +4593,13 @@ shows up immediately instead of silently scoring paraphrases as wrong.</p>
 <h3 id="method-3-exact-match-explicit">Method 3: Exact Match (Explicit)<a class="headerlink" href="#method-3-exact-match-explicit" title="Permanent link">&para;</a></h3>
 <p>For classification tasks where you want to be explicit:</p>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">exact_match_score</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">expected</span><span class="p">,</span> <span class="n">llm_metrics</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Returns 1.0 for exact match, 0.0 otherwise.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Returns 1.0 for exact match, 0.0 otherwise."""</span>
     <span class="k">return</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">output</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="o">==</span> <span class="nb">str</span><span class="p">(</span><span class="n">expected</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">else</span> <span class="mf">0.0</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;classification.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"classification.jsonl"</span><span class="p">,</span>
     <span class="n">scoring_function</span><span class="o">=</span><span class="n">exact_match_score</span><span class="p">,</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">]</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">]</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">classifier</span><span class="p">(</span><span class="n">text</span><span class="p">):</span>
     <span class="k">return</span> <span class="n">category</span>
@@ -4624,9 +4624,9 @@ shows up immediately instead of silently scoring paraphrases as wrong.</p>
 <h2 id="creating-evaluation-datasets">Creating Evaluation Datasets<a class="headerlink" href="#creating-evaluation-datasets" title="Permanent link">&para;</a></h2>
 <h3 id="format-jsonl-json-lines">Format: JSONL (JSON Lines)<a class="headerlink" href="#format-jsonl-json-lines" title="Permanent link">&para;</a></h3>
 <p>Each line is a complete JSON object:</p>
-<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">&quot;input&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Great product!&quot;</span><span class="p">},</span><span class="w"> </span><span class="nt">&quot;output&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;positive&quot;</span><span class="p">}</span>
-<span class="p">{</span><span class="nt">&quot;input&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Terrible service&quot;</span><span class="p">},</span><span class="w"> </span><span class="nt">&quot;output&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;negative&quot;</span><span class="p">}</span>
-<span class="p">{</span><span class="nt">&quot;input&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;It&#39;s okay&quot;</span><span class="p">},</span><span class="w"> </span><span class="nt">&quot;output&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;neutral&quot;</span><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"input"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"text"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Great product!"</span><span class="p">},</span><span class="w"> </span><span class="nt">"output"</span><span class="p">:</span><span class="w"> </span><span class="s2">"positive"</span><span class="p">}</span>
+<span class="p">{</span><span class="nt">"input"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"text"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Terrible service"</span><span class="p">},</span><span class="w"> </span><span class="nt">"output"</span><span class="p">:</span><span class="w"> </span><span class="s2">"negative"</span><span class="p">}</span>
+<span class="p">{</span><span class="nt">"input"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"text"</span><span class="p">:</span><span class="w"> </span><span class="s2">"It's okay"</span><span class="p">},</span><span class="w"> </span><span class="nt">"output"</span><span class="p">:</span><span class="w"> </span><span class="s2">"neutral"</span><span class="p">}</span>
 </code></pre></div>
 <h3 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h3>
 <ol>
@@ -4643,19 +4643,19 @@ shows up immediately instead of silently scoring paraphrases as wrong.</p>
 
 <span class="c1"># Add examples</span>
 <span class="n">dataset</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
-    <span class="s2">&quot;input&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;What is 2+2?&quot;</span><span class="p">},</span>
-    <span class="s2">&quot;output&quot;</span><span class="p">:</span> <span class="s2">&quot;4&quot;</span>
+    <span class="s2">"input"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"question"</span><span class="p">:</span> <span class="s2">"What is 2+2?"</span><span class="p">},</span>
+    <span class="s2">"output"</span><span class="p">:</span> <span class="s2">"4"</span>
 <span class="p">})</span>
 
 <span class="n">dataset</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
-    <span class="s2">&quot;input&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;Capital of Japan?&quot;</span><span class="p">},</span>
-    <span class="s2">&quot;output&quot;</span><span class="p">:</span> <span class="s2">&quot;Tokyo&quot;</span>
+    <span class="s2">"input"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"question"</span><span class="p">:</span> <span class="s2">"Capital of Japan?"</span><span class="p">},</span>
+    <span class="s2">"output"</span><span class="p">:</span> <span class="s2">"Tokyo"</span>
 <span class="p">})</span>
 
 <span class="c1"># Save to JSONL</span>
-<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;eval_dataset.jsonl&quot;</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">"eval_dataset.jsonl"</span><span class="p">,</span> <span class="s2">"w"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
     <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">dataset</span><span class="p">:</span>
-        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">item</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">item</span><span class="p">)</span> <span class="o">+</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="custom-evaluators">Custom Evaluators<a class="headerlink" href="#custom-evaluators" title="Permanent link">&para;</a></h2>
 <h3 id="when-to-use-custom-evaluators">When to Use Custom Evaluators<a class="headerlink" href="#when-to-use-custom-evaluators" title="Permanent link">&para;</a></h3>
@@ -4666,12 +4666,12 @@ shows up immediately instead of silently scoring paraphrases as wrong.</p>
 - You want to evaluate multiple aspects</p>
 <h3 id="example-multi-aspect-evaluator">Example: Multi-Aspect Evaluator<a class="headerlink" href="#example-multi-aspect-evaluator" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">business_score</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">expected</span><span class="p">,</span> <span class="n">llm_metrics</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""</span>
 <span class="sd">    Custom evaluator for business requirements.</span>
 
 <span class="sd">    Returns:</span>
 <span class="sd">        float: Score between 0.0 and 1.0</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
     <span class="n">score</span> <span class="o">=</span> <span class="mf">0.0</span>
 
     <span class="c1"># Check correctness (40% weight)</span>
@@ -4684,14 +4684,14 @@ shows up immediately instead of silently scoring paraphrases as wrong.</p>
         <span class="n">score</span> <span class="o">+=</span> <span class="mf">0.3</span>
 
     <span class="c1"># Check format (30% weight)</span>
-    <span class="k">if</span> <span class="n">output</span><span class="o">.</span><span class="n">startswith</span><span class="p">((</span><span class="s2">&quot;The&quot;</span><span class="p">,</span> <span class="s2">&quot;A&quot;</span><span class="p">,</span> <span class="s2">&quot;An&quot;</span><span class="p">)):</span>  <span class="c1"># Proper sentence</span>
+    <span class="k">if</span> <span class="n">output</span><span class="o">.</span><span class="n">startswith</span><span class="p">((</span><span class="s2">"The"</span><span class="p">,</span> <span class="s2">"A"</span><span class="p">,</span> <span class="s2">"An"</span><span class="p">)):</span>  <span class="c1"># Proper sentence</span>
         <span class="n">score</span> <span class="o">+=</span> <span class="mf">0.3</span>
 
     <span class="k">return</span> <span class="nb">min</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">score</span><span class="p">)</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">scoring_function</span><span class="o">=</span><span class="n">business_score</span><span class="p">,</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;business_cases.jsonl&quot;</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"business_cases.jsonl"</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">business_agent</span><span class="p">(</span><span class="n">query</span><span class="p">):</span>
     <span class="k">return</span> <span class="n">response</span>
@@ -4700,16 +4700,16 @@ shows up immediately instead of silently scoring paraphrases as wrong.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rouge_score</span><span class="w"> </span><span class="kn">import</span> <span class="n">rouge_scorer</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">rouge_score_fn</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">expected</span><span class="p">,</span> <span class="n">llm_metrics</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Evaluate using ROUGE score for summarization.&quot;&quot;&quot;</span>
-    <span class="n">scorer</span> <span class="o">=</span> <span class="n">rouge_scorer</span><span class="o">.</span><span class="n">RougeScorer</span><span class="p">([</span><span class="s1">&#39;rouge1&#39;</span><span class="p">,</span> <span class="s1">&#39;rougeL&#39;</span><span class="p">],</span> <span class="n">use_stemmer</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="w">    </span><span class="sd">"""Evaluate using ROUGE score for summarization."""</span>
+    <span class="n">scorer</span> <span class="o">=</span> <span class="n">rouge_scorer</span><span class="o">.</span><span class="n">RougeScorer</span><span class="p">([</span><span class="s1">'rouge1'</span><span class="p">,</span> <span class="s1">'rougeL'</span><span class="p">],</span> <span class="n">use_stemmer</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
     <span class="n">scores</span> <span class="o">=</span> <span class="n">scorer</span><span class="o">.</span><span class="n">score</span><span class="p">(</span><span class="n">expected</span><span class="p">,</span> <span class="n">output</span><span class="p">)</span>
 
     <span class="c1"># Return ROUGE-L F1 score</span>
-    <span class="k">return</span> <span class="n">scores</span><span class="p">[</span><span class="s1">&#39;rougeL&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">fmeasure</span>
+    <span class="k">return</span> <span class="n">scores</span><span class="p">[</span><span class="s1">'rougeL'</span><span class="p">]</span><span class="o">.</span><span class="n">fmeasure</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">scoring_function</span><span class="o">=</span><span class="n">rouge_score_fn</span><span class="p">,</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;summaries.jsonl&quot;</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"summaries.jsonl"</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">summarizer</span><span class="p">(</span><span class="n">text</span><span class="p">):</span>
     <span class="k">return</span> <span class="n">summary</span>
@@ -4729,10 +4729,10 @@ shows up immediately instead of silently scoring paraphrases as wrong.</p>
 <li>
 <p><strong>Wrong Dataset Format</strong>
    <div class="highlight"><pre><span></span><code><span class="c1"># ❌ Wrong</span>
-<span class="p">{</span><span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;...&quot;</span><span class="p">,</span> <span class="s2">&quot;answer&quot;</span><span class="p">:</span> <span class="s2">&quot;...&quot;</span><span class="p">}</span>
+<span class="p">{</span><span class="s2">"question"</span><span class="p">:</span> <span class="s2">"..."</span><span class="p">,</span> <span class="s2">"answer"</span><span class="p">:</span> <span class="s2">"..."</span><span class="p">}</span>
 
 <span class="c1"># ✅ Correct</span>
-<span class="p">{</span><span class="s2">&quot;input&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;...&quot;</span><span class="p">},</span> <span class="s2">&quot;output&quot;</span><span class="p">:</span> <span class="s2">&quot;...&quot;</span><span class="p">}</span>
+<span class="p">{</span><span class="s2">"input"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"question"</span><span class="p">:</span> <span class="s2">"..."</span><span class="p">},</span> <span class="s2">"output"</span><span class="p">:</span> <span class="s2">"..."</span><span class="p">}</span>
 </code></pre></div></p>
 </li>
 <li>
@@ -4791,51 +4791,51 @@ shows up immediately instead of silently scoring paraphrases as wrong.</p>
 
 <span class="c1"># Create evaluation dataset</span>
 <span class="n">dataset</span> <span class="o">=</span> <span class="p">[</span>
-    <span class="p">{</span><span class="s2">&quot;input&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="s2">&quot;Amazing product!&quot;</span><span class="p">},</span> <span class="s2">&quot;output&quot;</span><span class="p">:</span> <span class="s2">&quot;positive&quot;</span><span class="p">},</span>
-    <span class="p">{</span><span class="s2">&quot;input&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="s2">&quot;Terrible experience&quot;</span><span class="p">},</span> <span class="s2">&quot;output&quot;</span><span class="p">:</span> <span class="s2">&quot;negative&quot;</span><span class="p">},</span>
-    <span class="p">{</span><span class="s2">&quot;input&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="s2">&quot;It&#39;s acceptable&quot;</span><span class="p">},</span> <span class="s2">&quot;output&quot;</span><span class="p">:</span> <span class="s2">&quot;neutral&quot;</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">"input"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"text"</span><span class="p">:</span> <span class="s2">"Amazing product!"</span><span class="p">},</span> <span class="s2">"output"</span><span class="p">:</span> <span class="s2">"positive"</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">"input"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"text"</span><span class="p">:</span> <span class="s2">"Terrible experience"</span><span class="p">},</span> <span class="s2">"output"</span><span class="p">:</span> <span class="s2">"negative"</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">"input"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"text"</span><span class="p">:</span> <span class="s2">"It's acceptable"</span><span class="p">},</span> <span class="s2">"output"</span><span class="p">:</span> <span class="s2">"neutral"</span><span class="p">},</span>
 <span class="p">]</span>
 
 <span class="c1"># Save dataset</span>
-<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;sentiment_eval.jsonl&quot;</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">"sentiment_eval.jsonl"</span><span class="p">,</span> <span class="s2">"w"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
     <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">dataset</span><span class="p">:</span>
-        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">item</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">item</span><span class="p">)</span> <span class="o">+</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span>
 
 <span class="c1"># Define simple scoring function for exact match</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">sentiment_score</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">expected</span><span class="p">,</span> <span class="n">llm_metrics</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Exact match for sentiment classification.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Exact match for sentiment classification."""</span>
     <span class="k">return</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="n">output</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="o">==</span> <span class="n">expected</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">else</span> <span class="mf">0.0</span>
 
 <span class="c1"># Create optimizable function</span>
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">],</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-3.5-turbo&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4&quot;</span><span class="p">]</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">],</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-3.5-turbo"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">]</span>
     <span class="p">},</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;sentiment_eval.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"sentiment_eval.jsonl"</span><span class="p">,</span>
     <span class="n">scoring_function</span><span class="o">=</span><span class="n">sentiment_score</span><span class="p">,</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
     <span class="n">max_trials</span><span class="o">=</span><span class="mi">10</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">sentiment_classifier</span><span class="p">(</span><span class="n">text</span><span class="p">):</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
-    <span class="n">temperature</span> <span class="o">=</span> <span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">]</span>
-    <span class="n">model</span> <span class="o">=</span> <span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">]</span>
+    <span class="n">temperature</span> <span class="o">=</span> <span class="n">cfg</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">]</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">cfg</span><span class="p">[</span><span class="s2">"model"</span><span class="p">]</span>
     <span class="c1"># Your LLM logic here</span>
     <span class="c1"># This is simplified for example</span>
-    <span class="k">if</span> <span class="s2">&quot;amazing&quot;</span> <span class="ow">in</span> <span class="n">text</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">or</span> <span class="s2">&quot;great&quot;</span> <span class="ow">in</span> <span class="n">text</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span>
-        <span class="k">return</span> <span class="s2">&quot;positive&quot;</span>
-    <span class="k">elif</span> <span class="s2">&quot;terrible&quot;</span> <span class="ow">in</span> <span class="n">text</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">or</span> <span class="s2">&quot;bad&quot;</span> <span class="ow">in</span> <span class="n">text</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span>
-        <span class="k">return</span> <span class="s2">&quot;negative&quot;</span>
+    <span class="k">if</span> <span class="s2">"amazing"</span> <span class="ow">in</span> <span class="n">text</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">or</span> <span class="s2">"great"</span> <span class="ow">in</span> <span class="n">text</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span>
+        <span class="k">return</span> <span class="s2">"positive"</span>
+    <span class="k">elif</span> <span class="s2">"terrible"</span> <span class="ow">in</span> <span class="n">text</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">or</span> <span class="s2">"bad"</span> <span class="ow">in</span> <span class="n">text</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span>
+        <span class="k">return</span> <span class="s2">"negative"</span>
     <span class="k">else</span><span class="p">:</span>
-        <span class="k">return</span> <span class="s2">&quot;neutral&quot;</span>
+        <span class="k">return</span> <span class="s2">"neutral"</span>
 
 <span class="c1"># Run optimization</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
 <span class="n">results</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">sentiment_classifier</span><span class="o">.</span><span class="n">optimize</span><span class="p">())</span>
 
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Best config: </span><span class="si">{</span><span class="n">results</span><span class="o">.</span><span class="n">best_config</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Best accuracy: </span><span class="si">{</span><span class="n">results</span><span class="o">.</span><span class="n">best_score</span><span class="si">:</span><span class="s2">.2%</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Best config: </span><span class="si">{</span><span class="n">results</span><span class="o">.</span><span class="n">best_config</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Best accuracy: </span><span class="si">{</span><span class="n">results</span><span class="o">.</span><span class="n">best_score</span><span class="si">:</span><span class="s2">.2%</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="qa-system-with-semantic-evaluation">Q&amp;A System with Semantic Evaluation<a class="headerlink" href="#qa-system-with-semantic-evaluation" title="Permanent link">&para;</a></h3>
 <p>Q&amp;A is a natural fit for semantic scoring because well-formed answers
@@ -4846,7 +4846,7 @@ default scorer would mark these paraphrases as wrong.</p>
 <span class="kn">import</span><span class="w"> </span><span class="nn">traigent</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">semantic_accuracy</span><span class="p">(</span><span class="n">output</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">expected</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Replace this with embeddings / an LLM judge for your domain.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Replace this with embeddings / an LLM judge for your domain."""</span>
     <span class="n">out_tokens</span> <span class="o">=</span> <span class="p">{</span><span class="n">tok</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">tok</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">output</span><span class="p">)</span><span class="o">.</span><span class="n">split</span><span class="p">()}</span>
     <span class="n">exp_tokens</span> <span class="o">=</span> <span class="p">{</span><span class="n">tok</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">tok</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">expected</span><span class="p">)</span><span class="o">.</span><span class="n">split</span><span class="p">()}</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">exp_tokens</span><span class="p">:</span>
@@ -4855,21 +4855,21 @@ default scorer would mark these paraphrases as wrong.</p>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">],</span>
-        <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">50</span><span class="p">,</span> <span class="mi">100</span><span class="p">,</span> <span class="mi">200</span><span class="p">],</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">],</span>
+        <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="p">[</span><span class="mi">50</span><span class="p">,</span> <span class="mi">100</span><span class="p">,</span> <span class="mi">200</span><span class="p">],</span>
     <span class="p">},</span>
-    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;data/qa_dataset.jsonl&quot;</span><span class="p">,</span>
+    <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"data/qa_dataset.jsonl"</span><span class="p">,</span>
     <span class="n">scoring_function</span><span class="o">=</span><span class="n">semantic_accuracy</span><span class="p">,</span>  <span class="c1"># required for paraphrase tolerance</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">],</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">],</span>
     <span class="n">max_trials</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">qa_system</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">cfg</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
     <span class="n">response</span> <span class="o">=</span> <span class="n">litellm</span><span class="o">.</span><span class="n">completion</span><span class="p">(</span>
-        <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span>
-        <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">],</span>
-        <span class="n">max_tokens</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">&quot;max_tokens&quot;</span><span class="p">],</span>
-        <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;Answer concisely: </span><span class="si">{</span><span class="n">question</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">}],</span>
+        <span class="n">model</span><span class="o">=</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span>
+        <span class="n">temperature</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">],</span>
+        <span class="n">max_tokens</span><span class="o">=</span><span class="n">cfg</span><span class="p">[</span><span class="s2">"max_tokens"</span><span class="p">],</span>
+        <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">"role"</span><span class="p">:</span> <span class="s2">"user"</span><span class="p">,</span> <span class="s2">"content"</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"Answer concisely: </span><span class="si">{</span><span class="n">question</span><span class="si">}</span><span class="s2">"</span><span class="p">}],</span>
     <span class="p">)</span>
 
     <span class="k">return</span> <span class="n">response</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span>

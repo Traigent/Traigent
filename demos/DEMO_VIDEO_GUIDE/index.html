@@ -4290,124 +4290,124 @@
 <div class="highlight"><pre><span></span><code><span class="ch">#!/bin/bash</span>
 <span class="c1"># Demo: Traigent LLM Agent Optimization</span>
 <span class="nb">set</span><span class="w"> </span>-e
-<span class="nb">cd</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>dirname<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$0</span><span class="s2">&quot;</span><span class="k">)</span><span class="s2">/..&quot;</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">TERM</span><span class="o">=</span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">TERM</span><span class="k">:-</span><span class="nv">xterm</span><span class="p">-256color</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="nb">cd</span><span class="w"> </span><span class="s2">"</span><span class="k">$(</span>dirname<span class="w"> </span><span class="s2">"</span><span class="nv">$0</span><span class="s2">"</span><span class="k">)</span><span class="s2">/.."</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">TERM</span><span class="o">=</span><span class="s2">"</span><span class="si">${</span><span class="nv">TERM</span><span class="k">:-</span><span class="nv">xterm</span><span class="p">-256color</span><span class="si">}</span><span class="s2">"</span>
 
 clear
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;# Traigent: Evaluation-Driven LLM Optimization&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"# Traigent: Evaluation-Driven LLM Optimization"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
 sleep<span class="w"> </span><span class="m">1</span>
 
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;# Step 1: Define your LLM agent with tuned variables&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"# Step 1: Define your LLM agent with tuned variables"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
 
-cat<span class="w"> </span><span class="s">&lt;&lt; &#39;PYTHON&#39;</span>
+cat<span class="w"> </span><span class="s">&lt;&lt; 'PYTHON'</span>
 <span class="s">import litellm</span>
 <span class="s">import traigent</span>
 
 <span class="s">@traigent.optimize(</span>
 <span class="s">    # Define TUNED VARIABLES - parameters to optimize</span>
 <span class="s">    configuration_space={</span>
-<span class="s">        &quot;model&quot;: [&quot;gpt-3.5-turbo&quot;, &quot;gpt-4o-mini&quot;, &quot;gpt-4o&quot;],</span>
-<span class="s">        &quot;temperature&quot;: [0.1, 0.5, 0.9],</span>
-<span class="s">        &quot;max_tokens&quot;: [500, 1000, 2000]</span>
+<span class="s">        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],</span>
+<span class="s">        "temperature": [0.1, 0.5, 0.9],</span>
+<span class="s">        "max_tokens": [500, 1000, 2000]</span>
 <span class="s">    },</span>
 
 <span class="s">    # Define OBJECTIVES - what to optimize for</span>
-<span class="s">    objectives=[&quot;accuracy&quot;, &quot;cost&quot;],</span>
+<span class="s">    objectives=["accuracy", "cost"],</span>
 
 <span class="s">    # Evaluation dataset for testing</span>
-<span class="s">    eval_dataset=&quot;data/qa_samples.jsonl&quot;</span>
+<span class="s">    eval_dataset="data/qa_samples.jsonl"</span>
 <span class="s">)</span>
 <span class="s">def qa_agent(question: str) -&gt; str:</span>
-<span class="s">    &quot;&quot;&quot;Q&amp;A agent with tunable parameters&quot;&quot;&quot;</span>
+<span class="s">    """Q&amp;A agent with tunable parameters"""</span>
 <span class="s">    cfg = traigent.get_config()</span>
 <span class="s">    response = litellm.completion(</span>
-<span class="s">        model=cfg[&quot;model&quot;],</span>
-<span class="s">        temperature=cfg[&quot;temperature&quot;],</span>
-<span class="s">        max_tokens=cfg[&quot;max_tokens&quot;],</span>
-<span class="s">        messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: question}],</span>
+<span class="s">        model=cfg["model"],</span>
+<span class="s">        temperature=cfg["temperature"],</span>
+<span class="s">        max_tokens=cfg["max_tokens"],</span>
+<span class="s">        messages=[{"role": "user", "content": question}],</span>
 <span class="s">    )</span>
 <span class="s">    return response.choices[0].message.content</span>
 <span class="s">PYTHON</span>
 sleep<span class="w"> </span><span class="m">3</span>
 
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;# Step 2: Prepare evaluation dataset (data/qa_samples.jsonl)&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"# Step 2: Prepare evaluation dataset (data/qa_samples.jsonl)"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
 
-cat<span class="w"> </span><span class="s">&lt;&lt; &#39;JSONL&#39;</span>
-<span class="s">{&quot;input&quot;: {&quot;question&quot;: &quot;What is Python?&quot;}, &quot;output&quot;: &quot;A programming language&quot;}</span>
-<span class="s">{&quot;input&quot;: {&quot;question&quot;: &quot;What is 2+2?&quot;}, &quot;output&quot;: &quot;4&quot;}</span>
-<span class="s">{&quot;input&quot;: {&quot;question&quot;: &quot;Capital of France?&quot;}, &quot;output&quot;: &quot;Paris&quot;}</span>
+cat<span class="w"> </span><span class="s">&lt;&lt; 'JSONL'</span>
+<span class="s">{"input": {"question": "What is Python?"}, "output": "A programming language"}</span>
+<span class="s">{"input": {"question": "What is 2+2?"}, "output": "4"}</span>
+<span class="s">{"input": {"question": "Capital of France?"}, "output": "Paris"}</span>
 <span class="s">JSONL</span>
 sleep<span class="w"> </span><span class="m">2</span>
 
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;# Step 3: Run the optimization&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"# Step 3: Run the optimization"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
 
-<span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;$ python -c &quot;import asyncio; asyncio.run(qa_agent.optimize())&quot;&#39;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s1">'$ python -c "import asyncio; asyncio.run(qa_agent.optimize())"'</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Starting optimization with grid search...&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Objectives: accuracy, cost&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Configuration space: 27 combinations (3 models x 3 temps x 3 tokens)&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"Starting optimization with grid search..."</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"Objectives: accuracy, cost"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"Configuration space: 27 combinations (3 models x 3 temps x 3 tokens)"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
 sleep<span class="w"> </span><span class="m">1</span>
 
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;[1/27] Testing: gpt-3.5-turbo, temp=0.1, tokens=500&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;       Score: accuracy=0.72, cost=\$0.002&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"[1/27] Testing: gpt-3.5-turbo, temp=0.1, tokens=500"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"       Score: accuracy=0.72, cost=\$0.002"</span>
 sleep<span class="w"> </span><span class="m">0</span>.3
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;[2/27] Testing: gpt-3.5-turbo, temp=0.1, tokens=1000&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;       Score: accuracy=0.75, cost=\$0.003&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"[2/27] Testing: gpt-3.5-turbo, temp=0.1, tokens=1000"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"       Score: accuracy=0.75, cost=\$0.003"</span>
 sleep<span class="w"> </span><span class="m">0</span>.3
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;[3/27] Testing: gpt-3.5-turbo, temp=0.5, tokens=500&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;       Score: accuracy=0.68, cost=\$0.002&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"[3/27] Testing: gpt-3.5-turbo, temp=0.5, tokens=500"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"       Score: accuracy=0.68, cost=\$0.002"</span>
 sleep<span class="w"> </span><span class="m">0</span>.3
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;...&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"..."</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;[15/27] Testing: gpt-4o-mini, temp=0.1, tokens=1000&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;       Score: accuracy=0.89, cost=\$0.008  &lt;- New best!&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"[15/27] Testing: gpt-4o-mini, temp=0.1, tokens=1000"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"       Score: accuracy=0.89, cost=\$0.008  &lt;- New best!"</span>
 sleep<span class="w"> </span><span class="m">0</span>.3
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;...&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"..."</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;[27/27] Testing: gpt-4o, temp=0.9, tokens=2000&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;       Score: accuracy=0.91, cost=\$0.045&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"[27/27] Testing: gpt-4o, temp=0.9, tokens=2000"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"       Score: accuracy=0.91, cost=\$0.045"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
 sleep<span class="w"> </span><span class="m">1</span>
 
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Optimization complete!&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;BEST CONFIGURATION FOUND:&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;  model: gpt-4o-mini&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;  temperature: 0.1&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;  max_tokens: 1000&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;METRICS:&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;  accuracy: 0.89 (89%)&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;  cost: \$0.008 per query&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Compared to default (gpt-3.5-turbo, temp=0.7):&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;  +17% accuracy improvement&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;  Best cost/accuracy trade-off&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"Optimization complete!"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"BEST CONFIGURATION FOUND:"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"  model: gpt-4o-mini"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"  temperature: 0.1"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"  max_tokens: 1000"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"METRICS:"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"  accuracy: 0.89 (89%)"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"  cost: \$0.008 per query"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"Compared to default (gpt-3.5-turbo, temp=0.7):"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"  +17% accuracy improvement"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"  Best cost/accuracy trade-off"</span>
 sleep<span class="w"> </span><span class="m">3</span>
 
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;# Step 4: Apply best configuration&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"# Step 4: Apply best configuration"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
 
-cat<span class="w"> </span><span class="s">&lt;&lt; &#39;PYTHON&#39;</span>
+cat<span class="w"> </span><span class="s">&lt;&lt; 'PYTHON'</span>
 <span class="s"># Apply the optimized configuration</span>
 <span class="s">results = await qa_agent.optimize()</span>
 <span class="s">qa_agent.apply_best_config(results)</span>
 
 <span class="s"># Now qa_agent uses: gpt-4o-mini, temp=0.1, tokens=1000</span>
-<span class="s">answer = qa_agent(&quot;What is machine learning?&quot;)</span>
+<span class="s">answer = qa_agent("What is machine learning?")</span>
 <span class="s">PYTHON</span>
 sleep<span class="w"> </span><span class="m">2</span>
 </code></pre></div>
@@ -4423,31 +4423,31 @@ sleep<span class="w"> </span><span class="m">2</span>
 <div class="highlight"><pre><span></span><code><span class="ch">#!/bin/bash</span>
 <span class="c1"># Demo: Traigent Hooks &amp; Callbacks</span>
 <span class="nb">set</span><span class="w"> </span>-e
-<span class="nb">cd</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>dirname<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$0</span><span class="s2">&quot;</span><span class="k">)</span><span class="s2">/..&quot;</span>
-<span class="nb">export</span><span class="w"> </span><span class="nv">TERM</span><span class="o">=</span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">TERM</span><span class="k">:-</span><span class="nv">xterm</span><span class="p">-256color</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="nb">cd</span><span class="w"> </span><span class="s2">"</span><span class="k">$(</span>dirname<span class="w"> </span><span class="s2">"</span><span class="nv">$0</span><span class="s2">"</span><span class="k">)</span><span class="s2">/.."</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">TERM</span><span class="o">=</span><span class="s2">"</span><span class="si">${</span><span class="nv">TERM</span><span class="k">:-</span><span class="nv">xterm</span><span class="p">-256color</span><span class="si">}</span><span class="s2">"</span>
 
 clear
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;# Traigent Hooks &amp; Callbacks&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"# Traigent Hooks &amp; Callbacks"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
 sleep<span class="w"> </span><span class="m">1</span>
 
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;# Traigent provides lifecycle hooks to monitor optimization&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"# Traigent provides lifecycle hooks to monitor optimization"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
 
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Available callback events:&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;  on_optimization_start  - Called when optimization begins&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;  on_trial_start         - Called before each trial&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;  on_trial_complete      - Called after each trial&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;  on_optimization_complete - Called when optimization ends&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"Available callback events:"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"  on_optimization_start  - Called when optimization begins"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"  on_trial_start         - Called before each trial"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"  on_trial_complete      - Called after each trial"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"  on_optimization_complete - Called when optimization ends"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
 sleep<span class="w"> </span><span class="m">2</span>
 
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;# Built-in Callbacks&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"# Built-in Callbacks"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
 
-cat<span class="w"> </span><span class="s">&lt;&lt; &#39;PYTHON&#39;</span>
+cat<span class="w"> </span><span class="s">&lt;&lt; 'PYTHON'</span>
 <span class="s">from traigent.utils.callbacks import (</span>
 <span class="s">    ProgressBarCallback,    # Visual progress bar</span>
 <span class="s">    LoggingCallback,        # Log all events</span>
@@ -4456,8 +4456,8 @@ cat<span class="w"> </span><span class="s">&lt;&lt; &#39;PYTHON&#39;</span>
 <span class="s">)</span>
 
 <span class="s">@traigent.optimize(</span>
-<span class="s">    configuration_space={&quot;model&quot;: [&quot;gpt-4o-mini&quot;, &quot;gpt-4o&quot;]},</span>
-<span class="s">    objectives=[&quot;accuracy&quot;],</span>
+<span class="s">    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},</span>
+<span class="s">    objectives=["accuracy"],</span>
 <span class="s">    callbacks=[</span>
 <span class="s">        ProgressBarCallback(width=50),</span>
 <span class="s">        StatisticsCallback()</span>
@@ -4468,57 +4468,57 @@ cat<span class="w"> </span><span class="s">&lt;&lt; &#39;PYTHON&#39;</span>
 <span class="s">PYTHON</span>
 sleep<span class="w"> </span><span class="m">3</span>
 
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;# Example: ProgressBarCallback output&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"# Example: ProgressBarCallback output"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
 
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Starting optimization with grid...&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Objectives: accuracy&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Configuration space: 2 parameters&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"Starting optimization with grid..."</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"Objectives: accuracy"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"Configuration space: 2 parameters"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
 
 <span class="c1"># Simulate progress bar</span>
-<span class="nb">echo</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;[##########                                        ]  20% (1/5) Best: 0.72&quot;</span>
+<span class="nb">echo</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">"[##########                                        ]  20% (1/5) Best: 0.72"</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
-<span class="nb">echo</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;[####################                              ]  40% (2/5) Best: 0.78&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
+<span class="nb">echo</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">"[####################                              ]  40% (2/5) Best: 0.78"</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
-<span class="nb">echo</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;[##############################                    ]  60% (3/5) Best: 0.85&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
+<span class="nb">echo</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">"[##############################                    ]  60% (3/5) Best: 0.85"</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
-<span class="nb">echo</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;[########################################          ]  80% (4/5) Best: 0.85&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
+<span class="nb">echo</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">"[########################################          ]  80% (4/5) Best: 0.85"</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
-<span class="nb">echo</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;[##################################################] 100% (5/5) Best: 0.89&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
+<span class="nb">echo</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">"[##################################################] 100% (5/5) Best: 0.89"</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Optimization complete! Best score: 0.89&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"Optimization complete! Best score: 0.89"</span>
 sleep<span class="w"> </span><span class="m">2</span>
 
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;# Creating a Custom Callback&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"# Creating a Custom Callback"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
 
-cat<span class="w"> </span><span class="s">&lt;&lt; &#39;PYTHON&#39;</span>
+cat<span class="w"> </span><span class="s">&lt;&lt; 'PYTHON'</span>
 <span class="s">from traigent.utils.callbacks import OptimizationCallback</span>
 
 <span class="s">class SlackNotificationCallback(OptimizationCallback):</span>
-<span class="s">    &quot;&quot;&quot;Send Slack notifications on optimization events.&quot;&quot;&quot;</span>
+<span class="s">    """Send Slack notifications on optimization events."""</span>
 
 <span class="s">    def on_optimization_start(self, config_space, objectives, algorithm):</span>
-<span class="s">        slack.post(f&quot;Optimization started: {algorithm}&quot;)</span>
+<span class="s">        slack.post(f"Optimization started: {algorithm}")</span>
 
 <span class="s">    def on_trial_complete(self, trial, progress):</span>
 <span class="s">        if progress.best_score and progress.best_score &gt; 0.9:</span>
-<span class="s">            slack.post(f&quot;New best score: {progress.best_score:.1%}&quot;)</span>
+<span class="s">            slack.post(f"New best score: {progress.best_score:.1%}")</span>
 
 <span class="s">    def on_optimization_complete(self, result):</span>
-<span class="s">        slack.post(f&quot;Done! Best: {result.best_config}&quot;)</span>
+<span class="s">        slack.post(f"Done! Best: {result.best_config}")</span>
 
 <span class="s"># Use it</span>
 <span class="s">@traigent.optimize(</span>
@@ -4530,16 +4530,16 @@ cat<span class="w"> </span><span class="s">&lt;&lt; &#39;PYTHON&#39;</span>
 <span class="s">PYTHON</span>
 sleep<span class="w"> </span><span class="m">3</span>
 
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;# StatisticsCallback: Analyze Results&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"# StatisticsCallback: Analyze Results"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
 sleep<span class="w"> </span><span class="m">0</span>.5
 
-cat<span class="w"> </span><span class="s">&lt;&lt; &#39;PYTHON&#39;</span>
+cat<span class="w"> </span><span class="s">&lt;&lt; 'PYTHON'</span>
 <span class="s">stats_callback = StatisticsCallback()</span>
 
 <span class="s">@traigent.optimize(</span>
-<span class="s">    configuration_space={&quot;model&quot;: [...], &quot;temperature&quot;: [...]},</span>
+<span class="s">    configuration_space={"model": [...], "temperature": [...]},</span>
 <span class="s">    callbacks=[stats_callback]</span>
 <span class="s">)</span>
 <span class="s">def agent(q): ...</span>
@@ -4549,18 +4549,18 @@ cat<span class="w"> </span><span class="s">&lt;&lt; &#39;PYTHON&#39;</span>
 <span class="s"># Get parameter importance analysis</span>
 <span class="s">importance = stats_callback.get_parameter_importance()</span>
 <span class="s">print(importance)</span>
-<span class="s"># {&#39;model&#39;: 0.85, &#39;temperature&#39;: 0.42}</span>
+<span class="s"># {'model': 0.85, 'temperature': 0.42}</span>
 <span class="s"># -&gt; Model choice has more impact on results!</span>
 <span class="s">PYTHON</span>
 sleep<span class="w"> </span><span class="m">3</span>
 
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;# Callbacks enable:&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;  - Real-time monitoring dashboards&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;  - Slack/email notifications&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;  - Custom logging and metrics&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;  - Early stopping conditions&quot;</span>
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;  - Parameter importance analysis&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">""</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"# Callbacks enable:"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"  - Real-time monitoring dashboards"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"  - Slack/email notifications"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"  - Custom logging and metrics"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"  - Early stopping conditions"</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"  - Parameter importance analysis"</span>
 sleep<span class="w"> </span><span class="m">2</span>
 </code></pre></div>
 <hr />

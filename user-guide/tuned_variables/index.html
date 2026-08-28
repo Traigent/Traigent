@@ -4400,7 +4400,7 @@
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
 <p>Tuned variables in Traigent provide callable auto-discovery from source code.</p>
 <h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;traigent[recommended]&quot;</span>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"traigent[recommended]"</span>
 </code></pre></div>
 <hr />
 <h2 id="part-1-callable-auto-discovery">Part 1: Callable Auto-Discovery<a class="headerlink" href="#part-1-callable-auto-discovery" title="Permanent link">&para;</a></h2>
@@ -4413,7 +4413,7 @@
 <span class="n">callables</span> <span class="o">=</span> <span class="n">discover_callables</span><span class="p">(</span><span class="n">my_retrieval_module</span><span class="p">)</span>
 
 <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">info</span> <span class="ow">in</span> <span class="n">callables</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">info</span><span class="o">.</span><span class="n">signature</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">info</span><span class="o">.</span><span class="n">signature</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="discovery-with-filters">Discovery with Filters<a class="headerlink" href="#discovery-with-filters" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.tuned_variables</span><span class="w"> </span><span class="kn">import</span> <span class="n">discover_callables</span>
@@ -4421,8 +4421,8 @@
 <span class="c1"># Find functions matching a pattern</span>
 <span class="n">retrievers</span> <span class="o">=</span> <span class="n">discover_callables</span><span class="p">(</span>
     <span class="n">my_module</span><span class="p">,</span>
-    <span class="n">pattern</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;^(retrieve|search)_&quot;</span><span class="p">,</span>  <span class="c1"># Regex pattern</span>
-    <span class="n">required_params</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;query&quot;</span><span class="p">,</span> <span class="s2">&quot;k&quot;</span><span class="p">],</span>   <span class="c1"># Must have these parameters</span>
+    <span class="n">pattern</span><span class="o">=</span><span class="sa">r</span><span class="s2">"^(retrieve|search)_"</span><span class="p">,</span>  <span class="c1"># Regex pattern</span>
+    <span class="n">required_params</span><span class="o">=</span><span class="p">[</span><span class="s2">"query"</span><span class="p">,</span> <span class="s2">"k"</span><span class="p">],</span>   <span class="c1"># Must have these parameters</span>
     <span class="n">return_type</span><span class="o">=</span><span class="nb">list</span><span class="p">,</span>                 <span class="c1"># Must return this type</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -4430,18 +4430,18 @@
 <p>Mark functions with a decorator attribute for explicit registration:</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># In my_retrievers.py</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">traigent_callable</span><span class="p">(</span><span class="n">func</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Decorator to mark functions as tunable callables.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Decorator to mark functions as tunable callables."""</span>
     <span class="n">func</span><span class="o">.</span><span class="n">__traigent_callable__</span> <span class="o">=</span> <span class="kc">True</span>
     <span class="k">return</span> <span class="n">func</span>
 
 <span class="nd">@traigent_callable</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">similarity_search</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Similarity-based retrieval.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Similarity-based retrieval."""</span>
     <span class="o">...</span>
 
 <span class="nd">@traigent_callable</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">mmr_search</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span><span class="p">,</span> <span class="n">lambda_mult</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;MMR-based retrieval with diversity.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""MMR-based retrieval with diversity."""</span>
     <span class="o">...</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><span class="c1"># Discovery</span>
@@ -4460,24 +4460,24 @@
 <span class="c1"># Discover retrieval functions</span>
 <span class="n">retrievers</span> <span class="o">=</span> <span class="n">discover_callables</span><span class="p">(</span>
     <span class="n">my_retrievers</span><span class="p">,</span>
-    <span class="n">pattern</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;^(similarity|mmr|bm25)_search$&quot;</span><span class="p">,</span>
-    <span class="n">required_params</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;query&quot;</span><span class="p">]</span>
+    <span class="n">pattern</span><span class="o">=</span><span class="sa">r</span><span class="s2">"^(similarity|mmr|bm25)_search$"</span><span class="p">,</span>
+    <span class="n">required_params</span><span class="o">=</span><span class="p">[</span><span class="s2">"query"</span><span class="p">]</span>
 <span class="p">)</span>
 
 <span class="c1"># Create Choices for optimization</span>
-<span class="n">retriever_choices</span> <span class="o">=</span> <span class="n">Choices</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">retrievers</span><span class="o">.</span><span class="n">keys</span><span class="p">()),</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;retriever&quot;</span><span class="p">)</span>
+<span class="n">retriever_choices</span> <span class="o">=</span> <span class="n">Choices</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">retrievers</span><span class="o">.</span><span class="n">keys</span><span class="p">()),</span> <span class="n">name</span><span class="o">=</span><span class="s2">"retriever"</span><span class="p">)</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">retriever</span><span class="o">=</span><span class="n">retriever_choices</span><span class="p">,</span>
     <span class="n">k</span><span class="o">=</span><span class="n">traigent</span><span class="o">.</span><span class="n">IntRange</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">10</span><span class="p">),</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;latency&quot;</span><span class="p">],</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"latency"</span><span class="p">],</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">rag_pipeline</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
 
     <span class="c1"># Get the selected retriever function</span>
-    <span class="n">retriever_fn</span> <span class="o">=</span> <span class="n">retrievers</span><span class="p">[</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;retriever&quot;</span><span class="p">]]</span><span class="o">.</span><span class="n">callable</span>
-    <span class="n">docs</span> <span class="o">=</span> <span class="n">retriever_fn</span><span class="p">(</span><span class="n">query</span><span class="o">=</span><span class="n">query</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;k&quot;</span><span class="p">])</span>
+    <span class="n">retriever_fn</span> <span class="o">=</span> <span class="n">retrievers</span><span class="p">[</span><span class="n">config</span><span class="p">[</span><span class="s2">"retriever"</span><span class="p">]]</span><span class="o">.</span><span class="n">callable</span>
+    <span class="n">docs</span> <span class="o">=</span> <span class="n">retriever_fn</span><span class="p">(</span><span class="n">query</span><span class="o">=</span><span class="n">query</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"k"</span><span class="p">])</span>
 
     <span class="k">return</span> <span class="n">generate_answer</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">docs</span><span class="p">)</span>
 </code></pre></div>
@@ -4493,10 +4493,10 @@
     <span class="n">tags</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>        <span class="c1"># Extracted tags</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">matches_params</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">required_params</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Check if callable has all required parameters.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Check if callable has all required parameters."""</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">matches_return_type</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">expected_type</span><span class="p">:</span> <span class="nb">type</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Check if return annotation matches expected type.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Check if return annotation matches expected type."""</span>
 </code></pre></div>
 <h3 id="signature-filtering">Signature Filtering<a class="headerlink" href="#signature-filtering" title="Permanent link">&para;</a></h3>
 <p>Filter callables to match a target signature:</p>
@@ -4527,35 +4527,35 @@
 
 <span class="k">def</span><span class="w"> </span><span class="nf">my_agent</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">temperature</span> <span class="o">=</span> <span class="mf">0.7</span>
-    <span class="n">model</span> <span class="o">=</span> <span class="s2">&quot;gpt-4o&quot;</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="s2">"gpt-4o"</span>
     <span class="n">max_tokens</span> <span class="o">=</span> <span class="mi">1024</span>
     <span class="n">response</span> <span class="o">=</span> <span class="n">llm</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="n">temperature</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span> <span class="n">max_tokens</span><span class="o">=</span><span class="n">max_tokens</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">response</span>
 
 <span class="n">result</span> <span class="o">=</span> <span class="n">detector</span><span class="o">.</span><span class="n">detect_from_callable</span><span class="p">(</span><span class="n">my_agent</span><span class="p">)</span>
 
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Detected </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">count</span><span class="si">}</span><span class="s2"> candidates in &#39;</span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">function_name</span><span class="si">}</span><span class="s2">&#39;:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Detected </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">count</span><span class="si">}</span><span class="s2"> candidates in '</span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">function_name</span><span class="si">}</span><span class="s2">':"</span><span class="p">)</span>
 <span class="k">for</span> <span class="n">candidate</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">candidates</span><span class="p">:</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">candidate</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">candidate</span><span class="o">.</span><span class="n">candidate_type</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">candidate</span><span class="o">.</span><span class="n">confidence</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">candidate</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">candidate</span><span class="o">.</span><span class="n">candidate_type</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">candidate</span><span class="o">.</span><span class="n">confidence</span><span class="si">}</span><span class="s2">)"</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">candidate</span><span class="o">.</span><span class="n">suggested_range</span><span class="p">:</span>
-        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;    Suggested range: </span><span class="si">{</span><span class="n">candidate</span><span class="o">.</span><span class="n">suggested_range</span><span class="o">.</span><span class="n">to_parameter_range_code</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"    Suggested range: </span><span class="si">{</span><span class="n">candidate</span><span class="o">.</span><span class="n">suggested_range</span><span class="o">.</span><span class="n">to_parameter_range_code</span><span class="p">()</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="detection-from-source-code">Detection from Source Code<a class="headerlink" href="#detection-from-source-code" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="c1"># Detect from a source string directly</span>
-<span class="n">source</span> <span class="o">=</span> <span class="s1">&#39;&#39;&#39;</span>
+<span class="n">source</span> <span class="o">=</span> <span class="s1">'''</span>
 <span class="s1">def rag_pipeline(query: str) -&gt; str:</span>
 <span class="s1">    temperature = 0.5</span>
 <span class="s1">    chunk_size = 512</span>
 <span class="s1">    k = 5</span>
-<span class="s1">    model = &quot;gpt-4o-mini&quot;</span>
+<span class="s1">    model = "gpt-4o-mini"</span>
 <span class="s1">    ...</span>
-<span class="s1">&#39;&#39;&#39;</span>
+<span class="s1">'''</span>
 
-<span class="n">result</span> <span class="o">=</span> <span class="n">detector</span><span class="o">.</span><span class="n">detect_from_source</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">function_name</span><span class="o">=</span><span class="s2">&quot;rag_pipeline&quot;</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">detector</span><span class="o">.</span><span class="n">detect_from_source</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">function_name</span><span class="o">=</span><span class="s2">"rag_pipeline"</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="detection-from-a-file">Detection from a File<a class="headerlink" href="#detection-from-a-file" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="c1"># Scan a file for all tunable variable candidates</span>
-<span class="n">result</span> <span class="o">=</span> <span class="n">detector</span><span class="o">.</span><span class="n">detect_from_file</span><span class="p">(</span><span class="s2">&quot;my_agent.py&quot;</span><span class="p">,</span> <span class="n">function_name</span><span class="o">=</span><span class="s2">&quot;my_agent&quot;</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">detector</span><span class="o">.</span><span class="n">detect_from_file</span><span class="p">(</span><span class="s2">"my_agent.py"</span><span class="p">,</span> <span class="n">function_name</span><span class="o">=</span><span class="s2">"my_agent"</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="detection-strategies">Detection Strategies<a class="headerlink" href="#detection-strategies" title="Permanent link">&para;</a></h3>
 <p>The detector ships with three strategies:</p>
@@ -4601,15 +4601,15 @@
 <span class="n">detector</span> <span class="o">=</span> <span class="n">TunedVariableDetector</span><span class="p">(</span><span class="n">strategies</span><span class="o">=</span><span class="p">[</span>
     <span class="n">ASTDetectionStrategy</span><span class="p">(),</span>
     <span class="n">DataFlowDetectionStrategy</span><span class="p">(),</span>
-    <span class="n">LLMDetectionStrategy</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">),</span>
+    <span class="n">LLMDetectionStrategy</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">"gpt-4o-mini"</span><span class="p">),</span>
 <span class="p">])</span>
 </code></pre></div>
 <h3 id="data-flow-detection">Data-Flow Detection<a class="headerlink" href="#data-flow-detection" title="Permanent link">&para;</a></h3>
 <p>The <code>DataFlowDetectionStrategy</code> uses <strong>backward program slicing</strong> to find variables that flow into LLM invocations, retrieval queries, or embedding calls — even if they don't have recognizable names like <code>temperature</code>.</p>
 <p><strong>Constructor tracing</strong> — detects parameters passed through LLM client constructors:</p>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">my_agent</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="n">custom_temp</span> <span class="o">=</span> <span class="mf">0.7</span>                                  <span class="c1"># no &quot;temperature&quot; in name</span>
-    <span class="n">llm</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">temperature</span><span class="o">=</span><span class="n">custom_temp</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">)</span>
+    <span class="n">custom_temp</span> <span class="o">=</span> <span class="mf">0.7</span>                                  <span class="c1"># no "temperature" in name</span>
+    <span class="n">llm</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">temperature</span><span class="o">=</span><span class="n">custom_temp</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s2">"gpt-4o"</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">llm</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
     <span class="c1"># DataFlow detects: custom_temp (HIGH — 1 hop to ChatOpenAI.__init__)</span>
 </code></pre></div>
@@ -4644,10 +4644,10 @@
 </tbody>
 </table>
 <p><strong>Custom sinks</strong> — extend detection for your own frameworks:</p>
-<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">detector</span><span class="o">.</span><span class="n">detect_from_source</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="s2">&quot;my_func&quot;</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="p">{</span>
-    <span class="s2">&quot;extra_sinks&quot;</span><span class="p">:</span> <span class="p">[</span>
-        <span class="p">{</span><span class="s2">&quot;method&quot;</span><span class="p">:</span> <span class="s2">&quot;predict&quot;</span><span class="p">,</span> <span class="s2">&quot;category&quot;</span><span class="p">:</span> <span class="s2">&quot;ml&quot;</span><span class="p">},</span>
-        <span class="p">{</span><span class="s2">&quot;method&quot;</span><span class="p">:</span> <span class="s2">&quot;classify&quot;</span><span class="p">,</span> <span class="s2">&quot;category&quot;</span><span class="p">:</span> <span class="s2">&quot;ml&quot;</span><span class="p">},</span>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">detector</span><span class="o">.</span><span class="n">detect_from_source</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="s2">"my_func"</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="p">{</span>
+    <span class="s2">"extra_sinks"</span><span class="p">:</span> <span class="p">[</span>
+        <span class="p">{</span><span class="s2">"method"</span><span class="p">:</span> <span class="s2">"predict"</span><span class="p">,</span> <span class="s2">"category"</span><span class="p">:</span> <span class="s2">"ml"</span><span class="p">},</span>
+        <span class="p">{</span><span class="s2">"method"</span><span class="p">:</span> <span class="s2">"classify"</span><span class="p">,</span> <span class="s2">"category"</span><span class="p">:</span> <span class="s2">"ml"</span><span class="p">},</span>
     <span class="p">],</span>
 <span class="p">})</span>
 </code></pre></div>
@@ -4718,11 +4718,11 @@ or typed <code>Range</code>/<code>Choices</code> objects.</p>
 <div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">detector</span><span class="o">.</span><span class="n">detect_from_callable</span><span class="p">(</span><span class="n">my_agent</span><span class="p">)</span>
 
 <span class="c1"># Get optimize-ready Range/Choices objects from detected candidates</span>
-<span class="n">config_space</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">to_configuration_space</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">&quot;ranges&quot;</span><span class="p">)</span>
+<span class="n">config_space</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">to_configuration_space</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"ranges"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">config_space</span><span class="p">)</span>
-<span class="c1"># {&#39;temperature&#39;: Range(...), &#39;model&#39;: Choices(...), ...}</span>
+<span class="c1"># {'temperature': Range(...), 'model': Choices(...), ...}</span>
 
-<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="o">**</span><span class="n">config_space</span><span class="p">,</span> <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">])</span>
+<span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span><span class="o">**</span><span class="n">config_space</span><span class="p">,</span> <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">])</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_agent</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="o">...</span>
 </code></pre></div>
@@ -4730,15 +4730,15 @@ or typed <code>Range</code>/<code>Choices</code> objects.</p>
 <p><code>@traigent.optimize</code> can auto-build <code>configuration_space</code> directly from source
 detection when no explicit config space is provided:</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">],</span>
-    <span class="n">auto_detect_tvars_mode</span><span class="o">=</span><span class="s2">&quot;apply&quot;</span><span class="p">,</span>          <span class="c1"># off | suggest | apply</span>
-    <span class="n">auto_detect_tvars_min_confidence</span><span class="o">=</span><span class="s2">&quot;medium&quot;</span><span class="p">,</span>
-    <span class="n">auto_detect_tvars_include</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">,</span> <span class="s2">&quot;model&quot;</span><span class="p">},</span>  <span class="c1"># optional</span>
-    <span class="n">auto_detect_tvars_exclude</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;debug_flag&quot;</span><span class="p">},</span>            <span class="c1"># optional</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">],</span>
+    <span class="n">auto_detect_tvars_mode</span><span class="o">=</span><span class="s2">"apply"</span><span class="p">,</span>          <span class="c1"># off | suggest | apply</span>
+    <span class="n">auto_detect_tvars_min_confidence</span><span class="o">=</span><span class="s2">"medium"</span><span class="p">,</span>
+    <span class="n">auto_detect_tvars_include</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">,</span> <span class="s2">"model"</span><span class="p">},</span>  <span class="c1"># optional</span>
+    <span class="n">auto_detect_tvars_exclude</span><span class="o">=</span><span class="p">{</span><span class="s2">"debug_flag"</span><span class="p">},</span>            <span class="c1"># optional</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_agent</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">temperature</span> <span class="o">=</span> <span class="mf">0.7</span>
-    <span class="n">model</span> <span class="o">=</span> <span class="s2">&quot;gpt-4o-mini&quot;</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="s2">"gpt-4o-mini"</span>
     <span class="k">return</span> <span class="n">run_agent</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="n">temperature</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">)</span>
 </code></pre></div>
 <p>Behavior:</p>
@@ -4753,7 +4753,7 @@ auto-apply is skipped.</p>
 <p>Pass <code>existing_tvars</code> in the context to avoid re-detecting variables you've already defined:</p>
 <div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">detector</span><span class="o">.</span><span class="n">detect_from_callable</span><span class="p">(</span>
     <span class="n">my_agent</span><span class="p">,</span>
-    <span class="n">context</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;existing_tvars&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">,</span> <span class="s2">&quot;model&quot;</span><span class="p">}},</span>
+    <span class="n">context</span><span class="o">=</span><span class="p">{</span><span class="s2">"existing_tvars"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"temperature"</span><span class="p">,</span> <span class="s2">"model"</span><span class="p">}},</span>
 <span class="p">)</span>
 <span class="c1"># Only returns candidates not already in existing_tvars</span>
 </code></pre></div>
@@ -4773,7 +4773,7 @@ auto-apply is skipped.</p>
     <span class="k">def</span><span class="w"> </span><span class="nf">to_configuration_space</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="o">*</span><span class="p">,</span>
-        <span class="nb">format</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;normalized&quot;</span><span class="p">,</span> <span class="s2">&quot;ranges&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;normalized&quot;</span><span class="p">,</span>
+        <span class="nb">format</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"normalized"</span><span class="p">,</span> <span class="s2">"ranges"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"normalized"</span><span class="p">,</span>
         <span class="n">min_confidence</span><span class="p">:</span> <span class="n">DetectionConfidence</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">DetectionConfidence</span><span class="o">.</span><span class="n">MEDIUM</span><span class="p">,</span>
         <span class="n">include</span><span class="p">:</span> <span class="n">Collection</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">exclude</span><span class="p">:</span> <span class="n">Collection</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
@@ -4788,9 +4788,9 @@ auto-apply is skipped.</p>
     <span class="n">location</span><span class="p">:</span> <span class="n">SourceLocation</span>           <span class="c1"># Line/col in source</span>
     <span class="n">current_value</span><span class="p">:</span> <span class="n">Any</span> <span class="o">|</span> <span class="kc">None</span>          <span class="c1"># Literal value if detectable</span>
     <span class="n">suggested_range</span><span class="p">:</span> <span class="n">SuggestedRange</span> <span class="o">|</span> <span class="kc">None</span>  <span class="c1"># Suggested ParameterRange</span>
-    <span class="n">detection_source</span><span class="p">:</span> <span class="nb">str</span>              <span class="c1"># &quot;ast&quot;, &quot;dataflow&quot;, &quot;llm&quot;, or &quot;combined&quot;</span>
+    <span class="n">detection_source</span><span class="p">:</span> <span class="nb">str</span>              <span class="c1"># "ast", "dataflow", "llm", or "combined"</span>
     <span class="n">reasoning</span><span class="p">:</span> <span class="nb">str</span>                     <span class="c1"># Human-readable explanation</span>
-    <span class="n">canonical_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>         <span class="c1"># Canonical LLM param (e.g., &quot;model&quot;)</span>
+    <span class="n">canonical_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>         <span class="c1"># Canonical LLM param (e.g., "model")</span>
 </code></pre></div>
 <hr />
 <h2 id="api-reference">API Reference<a class="headerlink" href="#api-reference" title="Permanent link">&para;</a></h2>

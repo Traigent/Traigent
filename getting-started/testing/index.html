@@ -4454,10 +4454,10 @@
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <h3 id="install-test-dependencies">Install Test Dependencies<a class="headerlink" href="#install-test-dependencies" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="c1"># Using pip</span>
-pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;.[test]&quot;</span>
+pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">".[test]"</span>
 
 <span class="c1"># Or install dev dependencies (includes test + linting tools)</span>
-pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;.[dev]&quot;</span>
+pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">".[dev]"</span>
 </code></pre></div>
 <h3 id="run-tests">Run Tests<a class="headerlink" href="#run-tests" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="c1"># Run all tests through the legacy shell fixture path</span>
@@ -4471,7 +4471,7 @@ pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </s
 <span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_COST_APPROVED</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_OFFLINE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>pytest<span class="w"> </span>tests/unit<span class="w"> </span>-q<span class="w"> </span>--tb<span class="o">=</span>short
 
 <span class="c1"># Run tests matching a pattern</span>
-<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_COST_APPROVED</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_OFFLINE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>pytest<span class="w"> </span>-k<span class="w"> </span><span class="s2">&quot;test_optimization&quot;</span><span class="w"> </span>-v
+<span class="nv">TRAIGENT_MOCK_LLM</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_COST_APPROVED</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">TRAIGENT_OFFLINE</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>pytest<span class="w"> </span>-k<span class="w"> </span><span class="s2">"test_optimization"</span><span class="w"> </span>-v
 </code></pre></div>
 <h2 id="test-dependencies">Test Dependencies<a class="headerlink" href="#test-dependencies" title="Permanent link">&para;</a></h2>
 <p>The <code>[test]</code> extra includes:</p>
@@ -4567,7 +4567,7 @@ python3<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </
 <span class="c1"># or: .venv\Scripts\activate  # Windows</span>
 
 <span class="c1"># Install dev dependencies (includes test)</span>
-pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;.[dev]&quot;</span>
+pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">".[dev]"</span>
 </code></pre></div>
 <h3 id="2-run-tests-before-committing">2. Run Tests Before Committing<a class="headerlink" href="#2-run-tests-before-committing" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="c1"># Run all tests through the legacy shell fixture path</span>
@@ -4603,31 +4603,31 @@ pre-commit<span class="w"> </span>run<span class="w"> </span>--all-files
 
 <span class="nd">@pytest</span><span class="o">.</span><span class="n">mark</span><span class="o">.</span><span class="n">asyncio</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_optimization_basic</span><span class="p">():</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Test basic optimization workflow&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Test basic optimization workflow"""</span>
 
     <span class="nd">@optimize</span><span class="p">(</span>
-        <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;x&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]},</span>
-        <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">],</span>
-        <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">&quot;test.jsonl&quot;</span>
+        <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span><span class="s2">"x"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]},</span>
+        <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">],</span>
+        <span class="n">eval_dataset</span><span class="o">=</span><span class="s2">"test.jsonl"</span>
     <span class="p">)</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">test_func</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;result-</span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">"result-</span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">"</span>
 
     <span class="c1"># Run optimization</span>
     <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">test_func</span><span class="o">.</span><span class="n">optimize</span><span class="p">()</span>
 
     <span class="c1"># Assertions</span>
     <span class="k">assert</span> <span class="n">results</span><span class="o">.</span><span class="n">best_config</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
-    <span class="k">assert</span> <span class="s2">&quot;x&quot;</span> <span class="ow">in</span> <span class="n">results</span><span class="o">.</span><span class="n">best_config</span>
-    <span class="k">assert</span> <span class="n">results</span><span class="o">.</span><span class="n">best_config</span><span class="p">[</span><span class="s2">&quot;x&quot;</span><span class="p">]</span> <span class="ow">in</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+    <span class="k">assert</span> <span class="s2">"x"</span> <span class="ow">in</span> <span class="n">results</span><span class="o">.</span><span class="n">best_config</span>
+    <span class="k">assert</span> <span class="n">results</span><span class="o">.</span><span class="n">best_config</span><span class="p">[</span><span class="s2">"x"</span><span class="p">]</span> <span class="ow">in</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
 </code></pre></div>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <h3 id="import-errors">Import Errors<a class="headerlink" href="#import-errors" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="c1"># Make sure the recommended bundle is installed</span>
-pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;traigent[recommended]&quot;</span>
+pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"traigent[recommended]"</span>
 
 <span class="c1"># Check installation</span>
-python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import traigent; print(traigent.__version__)&quot;</span>
+python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import traigent; print(traigent.__version__)"</span>
 </code></pre></div>
 <h3 id="test-discovery-issues">Test Discovery Issues<a class="headerlink" href="#test-discovery-issues" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="c1"># Run from project root</span>
@@ -4642,7 +4642,7 @@ pytest<span class="w"> </span>tests/<span class="w"> </span>-v
 pip<span class="w"> </span>install<span class="w"> </span>pytest-asyncio
 
 <span class="c1"># Check pytest configuration in pyproject.toml</span>
-grep<span class="w"> </span>-A<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="s1">&#39;tool.pytest&#39;</span><span class="w"> </span>pyproject.toml
+grep<span class="w"> </span>-A<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="s1">'tool.pytest'</span><span class="w"> </span>pyproject.toml
 </code></pre></div>
 <h3 id="mock-mode-not-working">Mock Mode Not Working<a class="headerlink" href="#mock-mode-not-working" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="c1"># Legacy shell fixture path only</span>
@@ -4664,7 +4664,7 @@ grep<span class="w"> </span>-A<span class="w"> </span><span class="m">5</span><s
 <span class="w">    </span><span class="nt">runs-on</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ubuntu-latest</span>
 <span class="w">    </span><span class="nt">strategy</span><span class="p">:</span>
 <span class="w">      </span><span class="nt">matrix</span><span class="p">:</span>
-<span class="w">        </span><span class="nt">python-version</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;3.11&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;3.12&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;3.13&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="nt">python-version</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"3.11"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"3.12"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"3.13"</span><span class="p p-Indicator">]</span>
 
 <span class="w">    </span><span class="nt">steps</span><span class="p">:</span>
 <span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/checkout@v3</span>
@@ -4676,7 +4676,7 @@ grep<span class="w"> </span>-A<span class="w"> </span><span class="m">5</span><s
 
 <span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Install dependencies</span>
 <span class="w">      </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
-<span class="w">        </span><span class="no">pip install -e &quot;.[test]&quot;</span>
+<span class="w">        </span><span class="no">pip install -e ".[test]"</span>
 
 <span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Run tests</span>
 <span class="w">      </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pytest --cov=traigent --cov-report=xml</span>

@@ -4750,18 +4750,18 @@
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.cloud.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentSpecification</span>
 
 <span class="n">agent_spec</span> <span class="o">=</span> <span class="n">AgentSpecification</span><span class="p">(</span>
-    <span class="nb">id</span><span class="o">=</span><span class="s2">&quot;unique-agent-id&quot;</span><span class="p">,</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;My Agent&quot;</span><span class="p">,</span>
-    <span class="n">agent_type</span><span class="o">=</span><span class="s2">&quot;conversational&quot;</span><span class="p">,</span>  <span class="c1"># or &quot;task&quot;, &quot;tool_use&quot;</span>
-    <span class="n">agent_platform</span><span class="o">=</span><span class="s2">&quot;openai&quot;</span><span class="p">,</span>      <span class="c1"># or &quot;langchain&quot;, &quot;custom&quot;</span>
-    <span class="n">prompt_template</span><span class="o">=</span><span class="s2">&quot;Your prompt with </span><span class="si">{variables}</span><span class="s2">&quot;</span><span class="p">,</span>
+    <span class="nb">id</span><span class="o">=</span><span class="s2">"unique-agent-id"</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"My Agent"</span><span class="p">,</span>
+    <span class="n">agent_type</span><span class="o">=</span><span class="s2">"conversational"</span><span class="p">,</span>  <span class="c1"># or "task", "tool_use"</span>
+    <span class="n">agent_platform</span><span class="o">=</span><span class="s2">"openai"</span><span class="p">,</span>      <span class="c1"># or "langchain", "custom"</span>
+    <span class="n">prompt_template</span><span class="o">=</span><span class="s2">"Your prompt with </span><span class="si">{variables}</span><span class="s2">"</span><span class="p">,</span>
     <span class="n">model_parameters</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;o4-mini&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">,</span>
-        <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="mi">150</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="s2">"o4-mini"</span><span class="p">,</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">,</span>
+        <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="mi">150</span>
     <span class="p">},</span>
-    <span class="n">persona</span><span class="o">=</span><span class="s2">&quot;helpful assistant&quot;</span><span class="p">,</span>
-    <span class="n">guidelines</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;Be concise&quot;</span><span class="p">,</span> <span class="s2">&quot;Be accurate&quot;</span><span class="p">],</span>
+    <span class="n">persona</span><span class="o">=</span><span class="s2">"helpful assistant"</span><span class="p">,</span>
+    <span class="n">guidelines</span><span class="o">=</span><span class="p">[</span><span class="s2">"Be concise"</span><span class="p">,</span> <span class="s2">"Be accurate"</span><span class="p">],</span>
     <span class="c1"># Tool execution is not available in the local LangChain executor yet;</span>
     <span class="c1"># tool-bearing specs fail closed instead of running as plain LLM calls.</span>
     <span class="n">custom_tools</span><span class="o">=</span><span class="kc">None</span>
@@ -4771,17 +4771,17 @@
 <p>Define which parameters to optimize:</p>
 <div class="highlight"><pre><span></span><code><span class="n">configuration_space</span> <span class="o">=</span> <span class="p">{</span>
     <span class="c1"># Categorical parameters</span>
-    <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;o4-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;GPT-4o&quot;</span><span class="p">],</span>
+    <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"o4-mini"</span><span class="p">,</span> <span class="s2">"GPT-4o"</span><span class="p">],</span>
 
     <span class="c1"># Continuous parameters</span>
-    <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+    <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
 
     <span class="c1"># Discrete parameters</span>
-    <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">100</span><span class="p">,</span> <span class="mi">200</span><span class="p">,</span> <span class="mi">300</span><span class="p">,</span> <span class="mi">500</span><span class="p">],</span>
+    <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="p">[</span><span class="mi">100</span><span class="p">,</span> <span class="mi">200</span><span class="p">,</span> <span class="mi">300</span><span class="p">,</span> <span class="mi">500</span><span class="p">],</span>
 
     <span class="c1"># Nested parameters</span>
-    <span class="s2">&quot;top_p&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
-    <span class="s2">&quot;frequency_penalty&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)</span>
+    <span class="s2">"top_p"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+    <span class="s2">"frequency_penalty"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)</span>
 <span class="p">}</span>
 </code></pre></div>
 <h3 id="3-optimization-objectives">3. Optimization Objectives<a class="headerlink" href="#3-optimization-objectives" title="Permanent link">&para;</a></h3>
@@ -4799,8 +4799,8 @@
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.cloud.client</span><span class="w"> </span><span class="kn">import</span> <span class="n">TraigentCloudClient</span>
 
 <span class="n">client</span> <span class="o">=</span> <span class="n">TraigentCloudClient</span><span class="p">(</span>
-    <span class="n">api_key</span><span class="o">=</span><span class="s2">&quot;your-api-key&quot;</span><span class="p">,</span>  <span class="c1"># pragma: allowlist secret</span>
-    <span class="n">base_url</span><span class="o">=</span><span class="s2">&quot;https://api.traigent.ai&quot;</span>
+    <span class="n">api_key</span><span class="o">=</span><span class="s2">"your-api-key"</span><span class="p">,</span>  <span class="c1"># pragma: allowlist secret</span>
+    <span class="n">base_url</span><span class="o">=</span><span class="s2">"https://api.traigent.ai"</span>
 <span class="p">)</span>
 </code></pre></div>
 <h3 id="step-2-create-agent-and-dataset">Step 2: Create Agent and Dataset<a class="headerlink" href="#step-2-create-agent-and-dataset" title="Permanent link">&para;</a></h3>
@@ -4808,19 +4808,19 @@
 
 <span class="c1"># Define your agent</span>
 <span class="n">agent_spec</span> <span class="o">=</span> <span class="n">AgentSpecification</span><span class="p">(</span>
-    <span class="nb">id</span><span class="o">=</span><span class="s2">&quot;qa-agent&quot;</span><span class="p">,</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Question Answering Agent&quot;</span><span class="p">,</span>
-    <span class="n">agent_type</span><span class="o">=</span><span class="s2">&quot;conversational&quot;</span><span class="p">,</span>
-    <span class="n">agent_platform</span><span class="o">=</span><span class="s2">&quot;openai&quot;</span><span class="p">,</span>
-    <span class="n">prompt_template</span><span class="o">=</span><span class="s2">&quot;Answer the question: </span><span class="si">{question}</span><span class="s2">&quot;</span><span class="p">,</span>
-    <span class="n">model_parameters</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;o4-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">}</span>
+    <span class="nb">id</span><span class="o">=</span><span class="s2">"qa-agent"</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"Question Answering Agent"</span><span class="p">,</span>
+    <span class="n">agent_type</span><span class="o">=</span><span class="s2">"conversational"</span><span class="p">,</span>
+    <span class="n">agent_platform</span><span class="o">=</span><span class="s2">"openai"</span><span class="p">,</span>
+    <span class="n">prompt_template</span><span class="o">=</span><span class="s2">"Answer the question: </span><span class="si">{question}</span><span class="s2">"</span><span class="p">,</span>
+    <span class="n">model_parameters</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"o4-mini"</span><span class="p">,</span> <span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">}</span>
 <span class="p">)</span>
 
 <span class="c1"># Create evaluation dataset</span>
 <span class="n">dataset</span> <span class="o">=</span> <span class="n">Dataset</span><span class="p">([</span>
     <span class="n">EvaluationExample</span><span class="p">(</span>
-        <span class="n">input_data</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;What is AI?&quot;</span><span class="p">},</span>
-        <span class="n">expected_output</span><span class="o">=</span><span class="s2">&quot;Artificial Intelligence is...&quot;</span>
+        <span class="n">input_data</span><span class="o">=</span><span class="p">{</span><span class="s2">"question"</span><span class="p">:</span> <span class="s2">"What is AI?"</span><span class="p">},</span>
+        <span class="n">expected_output</span><span class="o">=</span><span class="s2">"Artificial Intelligence is..."</span>
     <span class="p">),</span>
     <span class="c1"># Add more examples</span>
 <span class="p">])</span>
@@ -4831,12 +4831,12 @@
         <span class="n">agent_spec</span><span class="o">=</span><span class="n">agent_spec</span><span class="p">,</span>
         <span class="n">dataset</span><span class="o">=</span><span class="n">dataset</span><span class="p">,</span>
         <span class="n">configuration_space</span><span class="o">=</span><span class="n">configuration_space</span><span class="p">,</span>
-        <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">],</span>
+        <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">],</span>
         <span class="n">max_trials</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span>
         <span class="n">optimization_strategy</span><span class="o">=</span><span class="p">{</span>
-            <span class="s2">&quot;exploration_ratio&quot;</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">,</span>
+            <span class="s2">"exploration_ratio"</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">,</span>
         <span class="p">},</span>
-        <span class="n">parallel_config</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;trial_concurrency&quot;</span><span class="p">:</span> <span class="mi">5</span><span class="p">}</span>
+        <span class="n">parallel_config</span><span class="o">=</span><span class="p">{</span><span class="s2">"trial_concurrency"</span><span class="p">:</span> <span class="mi">5</span><span class="p">}</span>
     <span class="p">)</span>
 
     <span class="n">optimization_id</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">optimization_id</span>
@@ -4845,10 +4845,10 @@
 <div class="highlight"><pre><span></span><code><span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
     <span class="n">status</span> <span class="o">=</span> <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="n">get_agent_optimization_status</span><span class="p">(</span><span class="n">optimization_id</span><span class="p">)</span>
 
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Progress: </span><span class="si">{</span><span class="n">status</span><span class="o">.</span><span class="n">progress</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Current best: </span><span class="si">{</span><span class="n">status</span><span class="o">.</span><span class="n">current_best_metrics</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Progress: </span><span class="si">{</span><span class="n">status</span><span class="o">.</span><span class="n">progress</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Current best: </span><span class="si">{</span><span class="n">status</span><span class="o">.</span><span class="n">current_best_metrics</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
-    <span class="k">if</span> <span class="n">status</span><span class="o">.</span><span class="n">status</span><span class="o">.</span><span class="n">value</span> <span class="o">==</span> <span class="s2">&quot;completed&quot;</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">status</span><span class="o">.</span><span class="n">status</span><span class="o">.</span><span class="n">value</span> <span class="o">==</span> <span class="s2">"completed"</span><span class="p">:</span>
         <span class="k">break</span>
 
     <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
@@ -4860,9 +4860,9 @@
 
 <span class="c1"># Apply optimized configuration</span>
 <span class="n">optimized_config</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;GPT-4o&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">,</span>
-    <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="mi">250</span>
+    <span class="s2">"model"</span><span class="p">:</span> <span class="s2">"GPT-4o"</span><span class="p">,</span>
+    <span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">,</span>
+    <span class="s2">"max_tokens"</span><span class="p">:</span> <span class="mi">250</span>
 <span class="p">}</span>
 
 <span class="n">optimized_agent</span> <span class="o">=</span> <span class="n">apply_config_to_agent</span><span class="p">(</span>
@@ -4875,17 +4875,17 @@
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">ParameterMapping</span><span class="p">,</span> <span class="n">PlatformMapping</span><span class="p">,</span> <span class="n">register_platform_mapping</span>
 
 <span class="n">custom_mapping</span> <span class="o">=</span> <span class="n">PlatformMapping</span><span class="p">(</span>
-    <span class="n">platform</span><span class="o">=</span><span class="s2">&quot;custom_platform&quot;</span><span class="p">,</span>
+    <span class="n">platform</span><span class="o">=</span><span class="s2">"custom_platform"</span><span class="p">,</span>
     <span class="n">parameter_mappings</span><span class="o">=</span><span class="p">[</span>
         <span class="n">ParameterMapping</span><span class="p">(</span>
-            <span class="n">source_key</span><span class="o">=</span><span class="s2">&quot;temperature&quot;</span><span class="p">,</span>
-            <span class="n">target_key</span><span class="o">=</span><span class="s2">&quot;sampling_temperature&quot;</span><span class="p">,</span>
+            <span class="n">source_key</span><span class="o">=</span><span class="s2">"temperature"</span><span class="p">,</span>
+            <span class="n">target_key</span><span class="o">=</span><span class="s2">"sampling_temperature"</span><span class="p">,</span>
             <span class="n">transform</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span> <span class="o">*</span> <span class="mi">100</span>  <span class="c1"># Convert to percentage</span>
         <span class="p">),</span>
         <span class="n">ParameterMapping</span><span class="p">(</span>
-            <span class="n">source_key</span><span class="o">=</span><span class="s2">&quot;model&quot;</span><span class="p">,</span>
-            <span class="n">target_key</span><span class="o">=</span><span class="s2">&quot;model_name&quot;</span><span class="p">,</span>
-            <span class="n">validation</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;model1&quot;</span><span class="p">,</span> <span class="s2">&quot;model2&quot;</span><span class="p">]</span>
+            <span class="n">source_key</span><span class="o">=</span><span class="s2">"model"</span><span class="p">,</span>
+            <span class="n">target_key</span><span class="o">=</span><span class="s2">"model_name"</span><span class="p">,</span>
+            <span class="n">validation</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">"model1"</span><span class="p">,</span> <span class="s2">"model2"</span><span class="p">]</span>
         <span class="p">)</span>
     <span class="p">]</span>
 <span class="p">)</span>
@@ -4897,25 +4897,25 @@
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_executor_for_platform</span>
 
 <span class="c1"># Get executor for your platform</span>
-<span class="n">executor</span> <span class="o">=</span> <span class="n">get_executor_for_platform</span><span class="p">(</span><span class="s2">&quot;openai&quot;</span><span class="p">)</span>
+<span class="n">executor</span> <span class="o">=</span> <span class="n">get_executor_for_platform</span><span class="p">(</span><span class="s2">"openai"</span><span class="p">)</span>
 <span class="k">await</span> <span class="n">executor</span><span class="o">.</span><span class="n">initialize</span><span class="p">()</span>
 
 <span class="c1"># Execute agent</span>
 <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">executor</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span>
     <span class="n">agent_spec</span><span class="o">=</span><span class="n">agent_spec</span><span class="p">,</span>
-    <span class="n">input_data</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;What is machine learning?&quot;</span><span class="p">},</span>
-    <span class="n">config_overrides</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">}</span>  <span class="c1"># Optional</span>
+    <span class="n">input_data</span><span class="o">=</span><span class="p">{</span><span class="s2">"question"</span><span class="p">:</span> <span class="s2">"What is machine learning?"</span><span class="p">},</span>
+    <span class="n">config_overrides</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">}</span>  <span class="c1"># Optional</span>
 <span class="p">)</span>
 
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Output: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">output</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cost: $</span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">cost</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Output: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">output</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Cost: $</span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">cost</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="batch-execution">Batch Execution<a class="headerlink" href="#batch-execution" title="Permanent link">&para;</a></h3>
 <p>Process multiple inputs efficiently:</p>
 <div class="highlight"><pre><span></span><code><span class="n">inputs</span> <span class="o">=</span> <span class="p">[</span>
-    <span class="p">{</span><span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;What is AI?&quot;</span><span class="p">},</span>
-    <span class="p">{</span><span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;What is ML?&quot;</span><span class="p">},</span>
-    <span class="p">{</span><span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;What is DL?&quot;</span><span class="p">}</span>
+    <span class="p">{</span><span class="s2">"question"</span><span class="p">:</span> <span class="s2">"What is AI?"</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">"question"</span><span class="p">:</span> <span class="s2">"What is ML?"</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">"question"</span><span class="p">:</span> <span class="s2">"What is DL?"</span><span class="p">}</span>
 <span class="p">]</span>
 
 <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">executor</span><span class="o">.</span><span class="n">batch_execute</span><span class="p">(</span>
@@ -4925,8 +4925,8 @@
 <span class="p">)</span>
 
 <span class="k">for</span> <span class="n">input_data</span><span class="p">,</span> <span class="n">result</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">inputs</span><span class="p">,</span> <span class="n">results</span><span class="p">):</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Q: </span><span class="si">{</span><span class="n">input_data</span><span class="p">[</span><span class="s1">&#39;question&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;A: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">output</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Q: </span><span class="si">{</span><span class="n">input_data</span><span class="p">[</span><span class="s1">'question'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"A: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">output</span><span class="si">}</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="custom-specification-generator-strategies">Custom Specification Generator Strategies<a class="headerlink" href="#custom-specification-generator-strategies" title="Permanent link">&para;</a></h2>
 <p>You can extend the agent specification generation with custom strategies for specialized prompt templates and platform inference:</p>
@@ -4935,25 +4935,25 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
 
 <span class="k">class</span><span class="w"> </span><span class="nc">CustomPromptBuilder</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Custom prompt template builder for domain-specific agents.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Custom prompt template builder for domain-specific agents."""</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">build_template</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">function_analysis</span><span class="p">:</span> <span class="n">FunctionAnalysis</span><span class="p">,</span>
         <span class="n">config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Build custom prompt template.&quot;&quot;&quot;</span>
-        <span class="k">if</span> <span class="n">function_analysis</span><span class="o">.</span><span class="n">inferred_domain</span> <span class="o">==</span> <span class="s2">&quot;medical&quot;</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Build custom prompt template."""</span>
+        <span class="k">if</span> <span class="n">function_analysis</span><span class="o">.</span><span class="n">inferred_domain</span> <span class="o">==</span> <span class="s2">"medical"</span><span class="p">:</span>
             <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_build_medical_template</span><span class="p">(</span><span class="n">function_analysis</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span>
-        <span class="k">elif</span> <span class="n">function_analysis</span><span class="o">.</span><span class="n">inferred_domain</span> <span class="o">==</span> <span class="s2">&quot;legal&quot;</span><span class="p">:</span>
+        <span class="k">elif</span> <span class="n">function_analysis</span><span class="o">.</span><span class="n">inferred_domain</span> <span class="o">==</span> <span class="s2">"legal"</span><span class="p">:</span>
             <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_build_legal_template</span><span class="p">(</span><span class="n">function_analysis</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span>
         <span class="k">else</span><span class="p">:</span>
             <span class="c1"># Fall back to default behavior</span>
             <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_build_default_template</span><span class="p">(</span><span class="n">function_analysis</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_build_medical_template</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">analysis</span><span class="p">:</span> <span class="n">FunctionAnalysis</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Build medical-specific prompt template.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;&quot;&quot;You are a medical AI assistant specializing in </span><span class="si">{</span><span class="n">analysis</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">.</span>
+<span class="w">        </span><span class="sd">"""Build medical-specific prompt template."""</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">"""You are a medical AI assistant specializing in </span><span class="si">{</span><span class="n">analysis</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">.</span>
 
 <span class="s2">Context: You provide accurate, evidence-based medical information.</span>
 <span class="s2">Always include appropriate disclaimers about consulting healthcare professionals.</span>
@@ -4967,16 +4967,16 @@
 <span class="s2">- Always mention limitations of AI medical advice</span>
 <span class="s2">- Suggest consulting qualified healthcare providers for personalized advice</span>
 
-<span class="s2">Response:&quot;&quot;&quot;</span>
+<span class="s2">Response:"""</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_build_default_template</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">analysis</span><span class="p">:</span> <span class="n">FunctionAnalysis</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Default template building logic.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;&quot;&quot;You are an AI assistant specialized in </span><span class="si">{</span><span class="n">analysis</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">.</span>
+<span class="w">        </span><span class="sd">"""Default template building logic."""</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">"""You are an AI assistant specialized in </span><span class="si">{</span><span class="n">analysis</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">.</span>
 
-<span class="s2">Task: </span><span class="si">{</span><span class="n">analysis</span><span class="o">.</span><span class="n">docstring</span><span class="w"> </span><span class="ow">or</span><span class="w"> </span><span class="sa">f</span><span class="s1">&#39;Process </span><span class="si">{</span><span class="n">analysis</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s1"> requests&#39;</span><span class="si">}</span>
+<span class="s2">Task: </span><span class="si">{</span><span class="n">analysis</span><span class="o">.</span><span class="n">docstring</span><span class="w"> </span><span class="ow">or</span><span class="w"> </span><span class="sa">f</span><span class="s1">'Process </span><span class="si">{</span><span class="n">analysis</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s1"> requests'</span><span class="si">}</span>
 <span class="s2">Input: </span><span class="se">{{</span><span class="s2">input</span><span class="se">}}</span>
 
-<span class="s2">Response:&quot;&quot;&quot;</span>
+<span class="s2">Response:"""</span>
 
 <span class="c1"># Use custom builder</span>
 <span class="n">custom_builder</span> <span class="o">=</span> <span class="n">CustomPromptBuilder</span><span class="p">()</span>
@@ -4987,30 +4987,30 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
 
 <span class="k">class</span><span class="w"> </span><span class="nc">CustomPlatformStrategy</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Custom platform inference strategy.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Custom platform inference strategy."""</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">infer_platform</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Infer platform with custom logic.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Infer platform with custom logic."""</span>
         <span class="c1"># Check for custom model families</span>
-        <span class="n">model_config</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;configuration_space&quot;</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;model&quot;</span><span class="p">,</span> <span class="p">[])</span>
+        <span class="n">model_config</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"configuration_space"</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"model"</span><span class="p">,</span> <span class="p">[])</span>
         <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">model_config</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
             <span class="k">for</span> <span class="n">model</span> <span class="ow">in</span> <span class="n">model_config</span><span class="p">:</span>
-                <span class="k">if</span> <span class="s2">&quot;claude-3&quot;</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">model</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span>
-                    <span class="k">return</span> <span class="s2">&quot;anthropic&quot;</span>
-                <span class="k">elif</span> <span class="s2">&quot;medical-llm&quot;</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">model</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span>
-                    <span class="k">return</span> <span class="s2">&quot;custom_medical&quot;</span>
-                <span class="k">elif</span> <span class="s2">&quot;legal-llm&quot;</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">model</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span>
-                    <span class="k">return</span> <span class="s2">&quot;custom_legal&quot;</span>
+                <span class="k">if</span> <span class="s2">"claude-3"</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">model</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span>
+                    <span class="k">return</span> <span class="s2">"anthropic"</span>
+                <span class="k">elif</span> <span class="s2">"medical-llm"</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">model</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span>
+                    <span class="k">return</span> <span class="s2">"custom_medical"</span>
+                <span class="k">elif</span> <span class="s2">"legal-llm"</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">model</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span>
+                    <span class="k">return</span> <span class="s2">"custom_legal"</span>
 
         <span class="c1"># Check for domain-specific requirements</span>
-        <span class="n">objectives</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;objectives&quot;</span><span class="p">,</span> <span class="p">[])</span>
-        <span class="k">if</span> <span class="s2">&quot;medical_accuracy&quot;</span> <span class="ow">in</span> <span class="n">objectives</span><span class="p">:</span>
-            <span class="k">return</span> <span class="s2">&quot;medical_platform&quot;</span>
-        <span class="k">elif</span> <span class="s2">&quot;legal_compliance&quot;</span> <span class="ow">in</span> <span class="n">objectives</span><span class="p">:</span>
-            <span class="k">return</span> <span class="s2">&quot;legal_platform&quot;</span>
+        <span class="n">objectives</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"objectives"</span><span class="p">,</span> <span class="p">[])</span>
+        <span class="k">if</span> <span class="s2">"medical_accuracy"</span> <span class="ow">in</span> <span class="n">objectives</span><span class="p">:</span>
+            <span class="k">return</span> <span class="s2">"medical_platform"</span>
+        <span class="k">elif</span> <span class="s2">"legal_compliance"</span> <span class="ow">in</span> <span class="n">objectives</span><span class="p">:</span>
+            <span class="k">return</span> <span class="s2">"legal_platform"</span>
 
         <span class="c1"># Default fallback</span>
-        <span class="k">return</span> <span class="s2">&quot;openai&quot;</span>
+        <span class="k">return</span> <span class="s2">"openai"</span>
 
 <span class="c1"># Use custom strategy</span>
 <span class="n">custom_strategy</span> <span class="o">=</span> <span class="n">CustomPlatformStrategy</span><span class="p">()</span>
@@ -5064,9 +5064,9 @@
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_execute_agent</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">agent_spec</span><span class="p">,</span> <span class="n">input_data</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
         <span class="c1"># Execute on your platform</span>
         <span class="k">return</span> <span class="p">{</span>
-            <span class="s2">&quot;output&quot;</span><span class="p">:</span> <span class="s2">&quot;response&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;tokens_used&quot;</span><span class="p">:</span> <span class="mi">100</span><span class="p">,</span>
-            <span class="s2">&quot;cost&quot;</span><span class="p">:</span> <span class="mf">0.01</span>
+            <span class="s2">"output"</span><span class="p">:</span> <span class="s2">"response"</span><span class="p">,</span>
+            <span class="s2">"tokens_used"</span><span class="p">:</span> <span class="mi">100</span><span class="p">,</span>
+            <span class="s2">"cost"</span><span class="p">:</span> <span class="mf">0.01</span>
         <span class="p">}</span>
 </code></pre></div>
 <ol>
@@ -5074,7 +5074,7 @@
 </ol>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">PlatformRegistry</span>
 
-<span class="n">PlatformRegistry</span><span class="o">.</span><span class="n">register_executor</span><span class="p">(</span><span class="s2">&quot;custom&quot;</span><span class="p">,</span> <span class="n">CustomAgentExecutor</span><span class="p">)</span>
+<span class="n">PlatformRegistry</span><span class="o">.</span><span class="n">register_executor</span><span class="p">(</span><span class="s2">"custom"</span><span class="p">,</span> <span class="n">CustomAgentExecutor</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h2>
 <h3 id="1-dataset-design">1. Dataset Design<a class="headerlink" href="#1-dataset-design" title="Permanent link">&para;</a></h3>
@@ -5094,29 +5094,29 @@
 <h3 id="3-optimization-strategy">3. Optimization Strategy<a class="headerlink" href="#3-optimization-strategy" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">optimization_strategy</span> <span class="o">=</span> <span class="p">{</span>
     <span class="c1"># Exploration vs Exploitation</span>
-    <span class="s2">&quot;exploration_ratio&quot;</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">,</span>  <span class="c1"># 30% exploration, 70% exploitation</span>
+    <span class="s2">"exploration_ratio"</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">,</span>  <span class="c1"># 30% exploration, 70% exploitation</span>
 
     <span class="c1"># Early stopping</span>
-    <span class="s2">&quot;early_stopping&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
-    <span class="s2">&quot;patience&quot;</span><span class="p">:</span> <span class="mi">5</span><span class="p">,</span>  <span class="c1"># Stop if no improvement for 5 trials</span>
+    <span class="s2">"early_stopping"</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="s2">"patience"</span><span class="p">:</span> <span class="mi">5</span><span class="p">,</span>  <span class="c1"># Stop if no improvement for 5 trials</span>
 
     <span class="c1"># Resource management</span>
-    <span class="s2">&quot;max_cost_budget&quot;</span><span class="p">:</span> <span class="mf">10.0</span><span class="p">,</span>  <span class="c1"># Maximum $10 for optimization</span>
+    <span class="s2">"max_cost_budget"</span><span class="p">:</span> <span class="mf">10.0</span><span class="p">,</span>  <span class="c1"># Maximum $10 for optimization</span>
 
     <span class="c1"># Smart features</span>
-    <span class="s2">&quot;adaptive_sample_size&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>  <span class="c1"># Increase sample size for promising configs</span>
-    <span class="s2">&quot;use_prior_knowledge&quot;</span><span class="p">:</span> <span class="kc">True</span>    <span class="c1"># Use meta-learning from similar tasks</span>
+    <span class="s2">"adaptive_sample_size"</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>  <span class="c1"># Increase sample size for promising configs</span>
+    <span class="s2">"use_prior_knowledge"</span><span class="p">:</span> <span class="kc">True</span>    <span class="c1"># Use meta-learning from similar tasks</span>
 <span class="p">}</span>
 
 <span class="c1"># Parallel execution is configured separately:</span>
-<span class="c1"># parallel_config={&quot;trial_concurrency&quot;: 3}  # Run 3 trials concurrently</span>
+<span class="c1"># parallel_config={"trial_concurrency": 3}  # Run 3 trials concurrently</span>
 </code></pre></div>
 <h3 id="4-error-handling">4. Error Handling<a class="headerlink" href="#4-error-handling" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="k">try</span><span class="p">:</span>
     <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="n">optimize_agent</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
 <span class="k">except</span> <span class="n">CloudServiceError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-    <span class="k">if</span> <span class="s2">&quot;quota exceeded&quot;</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">):</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Optimization quota exceeded, using fallback&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="s2">"quota exceeded"</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">"Optimization quota exceeded, using fallback"</span><span class="p">)</span>
         <span class="c1"># Use local optimization or cached results</span>
     <span class="k">else</span><span class="p">:</span>
         <span class="k">raise</span>
@@ -5174,10 +5174,10 @@
     <span class="n">agent_spec</span><span class="o">=</span><span class="n">agent_spec</span><span class="p">,</span>
     <span class="n">dataset</span><span class="o">=</span><span class="n">dataset</span><span class="p">,</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="n">config_space</span><span class="p">,</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">,</span> <span class="s2">&quot;latency&quot;</span><span class="p">],</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">,</span> <span class="s2">"latency"</span><span class="p">],</span>
     <span class="n">multi_objective_strategy</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;method&quot;</span><span class="p">:</span> <span class="s2">&quot;pareto&quot;</span><span class="p">,</span>  <span class="c1"># Find Pareto optimal solutions</span>
-        <span class="s2">&quot;weights&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;accuracy&quot;</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">,</span> <span class="s2">&quot;latency&quot;</span><span class="p">:</span> <span class="mf">0.2</span><span class="p">}</span>
+        <span class="s2">"method"</span><span class="p">:</span> <span class="s2">"pareto"</span><span class="p">,</span>  <span class="c1"># Find Pareto optimal solutions</span>
+        <span class="s2">"weights"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"accuracy"</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">,</span> <span class="s2">"latency"</span><span class="p">:</span> <span class="mf">0.2</span><span class="p">}</span>
     <span class="p">}</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -5188,10 +5188,10 @@
     <span class="n">dataset</span><span class="o">=</span><span class="n">dataset</span><span class="p">,</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="n">config_space</span><span class="p">,</span>
     <span class="n">optimization_strategy</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;warm_start&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
-        <span class="s2">&quot;initial_configs&quot;</span><span class="p">:</span> <span class="p">[</span>
-            <span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;GPT-4o&quot;</span><span class="p">,</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">},</span>
-            <span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;o4-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">}</span>
+        <span class="s2">"warm_start"</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="s2">"initial_configs"</span><span class="p">:</span> <span class="p">[</span>
+            <span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"GPT-4o"</span><span class="p">,</span> <span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">},</span>
+            <span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"o4-mini"</span><span class="p">,</span> <span class="s2">"temperature"</span><span class="p">:</span> <span class="mf">0.7</span><span class="p">}</span>
         <span class="p">]</span>
     <span class="p">}</span>
 <span class="p">)</span>
@@ -5202,9 +5202,9 @@
     <span class="n">dataset</span><span class="o">=</span><span class="n">dataset</span><span class="p">,</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="n">config_space</span><span class="p">,</span>
     <span class="n">constraints</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;max_cost_per_call&quot;</span><span class="p">:</span> <span class="mf">0.01</span><span class="p">,</span>      <span class="c1"># Max $0.01 per API call</span>
-        <span class="s2">&quot;max_latency&quot;</span><span class="p">:</span> <span class="mf">2.0</span><span class="p">,</span>              <span class="c1"># Max 2 second response time</span>
-        <span class="s2">&quot;min_accuracy&quot;</span><span class="p">:</span> <span class="mf">0.8</span>              <span class="c1"># Minimum 80% accuracy</span>
+        <span class="s2">"max_cost_per_call"</span><span class="p">:</span> <span class="mf">0.01</span><span class="p">,</span>      <span class="c1"># Max $0.01 per API call</span>
+        <span class="s2">"max_latency"</span><span class="p">:</span> <span class="mf">2.0</span><span class="p">,</span>              <span class="c1"># Max 2 second response time</span>
+        <span class="s2">"min_accuracy"</span><span class="p">:</span> <span class="mf">0.8</span>              <span class="c1"># Minimum 80% accuracy</span>
     <span class="p">}</span>
 <span class="p">)</span>
 </code></pre></div>

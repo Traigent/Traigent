@@ -4299,21 +4299,21 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">concurrent.futures</span><span class="w"> </span><span class="kn">import</span> <span class="n">ThreadPoolExecutor</span><span class="p">,</span> <span class="n">as_completed</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;latency&quot;</span><span class="p">],</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"latency"</span><span class="p">],</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">],</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">],</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">],</span>
     <span class="p">},</span>
-    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;documents.jsonl&quot;</span><span class="p">},</span>
+    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"documents.jsonl"</span><span class="p">},</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">process_documents</span><span class="p">(</span><span class="n">documents</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Process multiple documents in parallel with proper context propagation.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Process multiple documents in parallel with proper context propagation."""</span>
 
     <span class="c1"># Capture context BEFORE creating threads</span>
     <span class="n">snapshot</span> <span class="o">=</span> <span class="n">copy_context_to_thread</span><span class="p">()</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">process_single_doc</span><span class="p">(</span><span class="n">doc_snapshot</span><span class="p">,</span> <span class="n">doc</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Worker function that runs in thread pool.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Worker function that runs in thread pool."""</span>
         <span class="c1"># Restore context in worker thread</span>
         <span class="k">with</span> <span class="n">doc_snapshot</span><span class="o">.</span><span class="n">restore</span><span class="p">():</span>
             <span class="c1"># Now we can access the trial configuration</span>
@@ -4321,10 +4321,10 @@
 
             <span class="c1"># Use the configuration for this trial</span>
             <span class="n">llm</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">(</span>
-                <span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">],</span>
-                <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">]</span>
+                <span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"model"</span><span class="p">],</span>
+                <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">]</span>
             <span class="p">)</span>
-            <span class="k">return</span> <span class="n">llm</span><span class="o">.</span><span class="n">complete</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Summarize: </span><span class="si">{</span><span class="n">doc</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">llm</span><span class="o">.</span><span class="n">complete</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Summarize: </span><span class="si">{</span><span class="n">doc</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
     <span class="c1"># Process documents in parallel</span>
     <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
@@ -4348,20 +4348,20 @@
 <span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">,</span> <span class="s2">&quot;latency&quot;</span><span class="p">],</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">,</span> <span class="s2">"latency"</span><span class="p">],</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;batch_size&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">10</span><span class="p">,</span> <span class="mi">20</span><span class="p">,</span> <span class="mi">50</span><span class="p">],</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">],</span>
+        <span class="s2">"batch_size"</span><span class="p">:</span> <span class="p">[</span><span class="mi">10</span><span class="p">,</span> <span class="mi">20</span><span class="p">,</span> <span class="mi">50</span><span class="p">],</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
     <span class="p">},</span>
-    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;queries.jsonl&quot;</span><span class="p">},</span>
+    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"queries.jsonl"</span><span class="p">},</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">batch_process_queries</span><span class="p">(</span><span class="n">queries</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Process queries in batches with optimized batch size.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Process queries in batches with optimized batch size."""</span>
 
     <span class="c1"># Get configuration for this trial</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
-    <span class="n">batch_size</span> <span class="o">=</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;batch_size&quot;</span><span class="p">]</span>
+    <span class="n">batch_size</span> <span class="o">=</span> <span class="n">config</span><span class="p">[</span><span class="s2">"batch_size"</span><span class="p">]</span>
 
     <span class="c1"># Split into batches</span>
     <span class="n">batches</span> <span class="o">=</span> <span class="p">[</span><span class="n">queries</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span> <span class="o">+</span> <span class="n">batch_size</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">queries</span><span class="p">),</span> <span class="n">batch_size</span><span class="p">)]</span>
@@ -4370,14 +4370,14 @@
     <span class="n">snapshot</span> <span class="o">=</span> <span class="n">copy_context_to_thread</span><span class="p">()</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">process_batch</span><span class="p">(</span><span class="n">batch_snapshot</span><span class="p">,</span> <span class="n">batch</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Process a single batch in a worker thread.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Process a single batch in a worker thread."""</span>
         <span class="k">with</span> <span class="n">batch_snapshot</span><span class="o">.</span><span class="n">restore</span><span class="p">():</span>
             <span class="c1"># Context is now available in worker thread</span>
             <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
 
             <span class="n">llm</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">(</span>
-                <span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">],</span>
-                <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">]</span>
+                <span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"model"</span><span class="p">],</span>
+                <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">]</span>
             <span class="p">)</span>
 
             <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
@@ -4407,50 +4407,50 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">concurrent.futures</span><span class="w"> </span><span class="kn">import</span> <span class="n">ThreadPoolExecutor</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;latency&quot;</span><span class="p">],</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"latency"</span><span class="p">],</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;researcher_model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;writer_model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;editor_model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">],</span>
+        <span class="s2">"researcher_model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">],</span>
+        <span class="s2">"writer_model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">],</span>
+        <span class="s2">"editor_model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">],</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">],</span>
     <span class="p">},</span>
-    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;articles.jsonl&quot;</span><span class="p">},</span>
+    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"articles.jsonl"</span><span class="p">},</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">multi_agent_content_creation</span><span class="p">(</span><span class="n">topic</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Use multiple agents in parallel to create content.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Use multiple agents in parallel to create content."""</span>
 
     <span class="c1"># Capture context once</span>
     <span class="n">snapshot</span> <span class="o">=</span> <span class="n">copy_context_to_thread</span><span class="p">()</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">research_agent</span><span class="p">(</span><span class="n">ctx_snapshot</span><span class="p">,</span> <span class="n">topic</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Research agent runs in parallel.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Research agent runs in parallel."""</span>
         <span class="k">with</span> <span class="n">ctx_snapshot</span><span class="o">.</span><span class="n">restore</span><span class="p">():</span>
             <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
             <span class="n">llm</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">(</span>
-                <span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;researcher_model&quot;</span><span class="p">],</span>
-                <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">]</span>
+                <span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"researcher_model"</span><span class="p">],</span>
+                <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">]</span>
             <span class="p">)</span>
-            <span class="k">return</span> <span class="n">llm</span><span class="o">.</span><span class="n">complete</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Research: </span><span class="si">{</span><span class="n">topic</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">llm</span><span class="o">.</span><span class="n">complete</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Research: </span><span class="si">{</span><span class="n">topic</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">writer_agent</span><span class="p">(</span><span class="n">ctx_snapshot</span><span class="p">,</span> <span class="n">topic</span><span class="p">,</span> <span class="n">research</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Writer agent runs after research.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Writer agent runs after research."""</span>
         <span class="k">with</span> <span class="n">ctx_snapshot</span><span class="o">.</span><span class="n">restore</span><span class="p">():</span>
             <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
             <span class="n">llm</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">(</span>
-                <span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;writer_model&quot;</span><span class="p">],</span>
-                <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">]</span>
+                <span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"writer_model"</span><span class="p">],</span>
+                <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">]</span>
             <span class="p">)</span>
-            <span class="k">return</span> <span class="n">llm</span><span class="o">.</span><span class="n">complete</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Write article about </span><span class="si">{</span><span class="n">topic</span><span class="si">}</span><span class="s2"> using: </span><span class="si">{</span><span class="n">research</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">llm</span><span class="o">.</span><span class="n">complete</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Write article about </span><span class="si">{</span><span class="n">topic</span><span class="si">}</span><span class="s2"> using: </span><span class="si">{</span><span class="n">research</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">editor_agent</span><span class="p">(</span><span class="n">ctx_snapshot</span><span class="p">,</span> <span class="n">draft</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Editor agent runs after writing.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Editor agent runs after writing."""</span>
         <span class="k">with</span> <span class="n">ctx_snapshot</span><span class="o">.</span><span class="n">restore</span><span class="p">():</span>
             <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
             <span class="n">llm</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">(</span>
-                <span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;editor_model&quot;</span><span class="p">],</span>
-                <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">]</span>
+                <span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"editor_model"</span><span class="p">],</span>
+                <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">]</span>
             <span class="p">)</span>
-            <span class="k">return</span> <span class="n">llm</span><span class="o">.</span><span class="n">complete</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Edit and improve: </span><span class="si">{</span><span class="n">draft</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">llm</span><span class="o">.</span><span class="n">complete</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Edit and improve: </span><span class="si">{</span><span class="n">draft</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
     <span class="c1"># Execute agents in pipeline</span>
     <span class="k">with</span> <span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="n">max_workers</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span> <span class="k">as</span> <span class="n">executor</span><span class="p">:</span>
@@ -4474,16 +4474,16 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">concurrent.futures</span><span class="w"> </span><span class="kn">import</span> <span class="n">ThreadPoolExecutor</span><span class="p">,</span> <span class="n">as_completed</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">],</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">],</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;mapper_model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;reducer_model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="s2">&quot;gpt-4&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">],</span>
+        <span class="s2">"mapper_model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">],</span>
+        <span class="s2">"reducer_model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span> <span class="s2">"gpt-4"</span><span class="p">],</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">],</span>
     <span class="p">},</span>
-    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;eval_dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;large_documents.jsonl&quot;</span><span class="p">},</span>
+    <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"large_documents.jsonl"</span><span class="p">},</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">analyze_large_document</span><span class="p">(</span><span class="n">document</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">chunk_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1000</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Analyze large document using map-reduce with thread pool.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Analyze large document using map-reduce with thread pool."""</span>
 
     <span class="c1"># Split document into chunks</span>
     <span class="n">chunks</span> <span class="o">=</span> <span class="p">[</span><span class="n">document</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span> <span class="o">+</span> <span class="n">chunk_size</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">document</span><span class="p">),</span> <span class="n">chunk_size</span><span class="p">)]</span>
@@ -4492,25 +4492,25 @@
     <span class="n">snapshot</span> <span class="o">=</span> <span class="n">copy_context_to_thread</span><span class="p">()</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">map_chunk</span><span class="p">(</span><span class="n">ctx_snapshot</span><span class="p">,</span> <span class="n">chunk</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Map phase: analyze each chunk independently.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Map phase: analyze each chunk independently."""</span>
         <span class="k">with</span> <span class="n">ctx_snapshot</span><span class="o">.</span><span class="n">restore</span><span class="p">():</span>
             <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
             <span class="n">llm</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">(</span>
-                <span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;mapper_model&quot;</span><span class="p">],</span>
-                <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">]</span>
+                <span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"mapper_model"</span><span class="p">],</span>
+                <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">]</span>
             <span class="p">)</span>
-            <span class="k">return</span> <span class="n">llm</span><span class="o">.</span><span class="n">complete</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Summarize key points: </span><span class="si">{</span><span class="n">chunk</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">llm</span><span class="o">.</span><span class="n">complete</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Summarize key points: </span><span class="si">{</span><span class="n">chunk</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">reduce_summaries</span><span class="p">(</span><span class="n">ctx_snapshot</span><span class="p">,</span> <span class="n">summaries</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Reduce phase: combine all chunk summaries.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Reduce phase: combine all chunk summaries."""</span>
         <span class="k">with</span> <span class="n">ctx_snapshot</span><span class="o">.</span><span class="n">restore</span><span class="p">():</span>
             <span class="n">config</span> <span class="o">=</span> <span class="n">traigent</span><span class="o">.</span><span class="n">get_config</span><span class="p">()</span>
             <span class="n">llm</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">(</span>
-                <span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;reducer_model&quot;</span><span class="p">],</span>
-                <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;temperature&quot;</span><span class="p">]</span>
+                <span class="n">model</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"reducer_model"</span><span class="p">],</span>
+                <span class="n">temperature</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s2">"temperature"</span><span class="p">]</span>
             <span class="p">)</span>
-            <span class="n">combined</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">summaries</span><span class="p">)</span>
-            <span class="k">return</span> <span class="n">llm</span><span class="o">.</span><span class="n">complete</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Create final summary from: </span><span class="si">{</span><span class="n">combined</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">combined</span> <span class="o">=</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">summaries</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">llm</span><span class="o">.</span><span class="n">complete</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Create final summary from: </span><span class="si">{</span><span class="n">combined</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
     <span class="c1"># Map phase: process chunks in parallel</span>
     <span class="n">chunk_summaries</span> <span class="o">=</span> <span class="p">[]</span>
@@ -4629,8 +4629,8 @@
 <p>Consider your optimization's parallelism:</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">execution</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;parallel_config&quot;</span><span class="p">:</span> <span class="p">{</span>
-            <span class="s2">&quot;thread_workers&quot;</span><span class="p">:</span> <span class="mi">4</span><span class="p">,</span>  <span class="c1"># Traigent&#39;s parallel trial execution</span>
+        <span class="s2">"parallel_config"</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">"thread_workers"</span><span class="p">:</span> <span class="mi">4</span><span class="p">,</span>  <span class="c1"># Traigent's parallel trial execution</span>
         <span class="p">}</span>
     <span class="p">},</span>
     <span class="o">...</span>

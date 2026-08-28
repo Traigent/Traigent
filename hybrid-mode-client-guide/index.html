@@ -4989,38 +4989,38 @@
 </table>
 <h3 id="how-to-implement-privacy-preserving-mode">How to Implement Privacy-Preserving Mode<a class="headerlink" href="#how-to-implement-privacy-preserving-mode" title="Permanent link">&para;</a></h3>
 <p><strong>Execute endpoint</strong>: Return <code>output_id</code> instead of <code>output</code> content:</p>
-<div class="highlight"><pre><span></span><code><span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s2">&quot;/traigent/v1/execute&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;POST&quot;</span><span class="p">])</span>
+<div class="highlight"><pre><span></span><code><span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s2">"/traigent/v1/execute"</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">"POST"</span><span class="p">])</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">execute</span><span class="p">():</span>
     <span class="n">outputs</span> <span class="o">=</span> <span class="p">[]</span>
     <span class="k">for</span> <span class="n">inp</span> <span class="ow">in</span> <span class="n">examples</span><span class="p">:</span>
-        <span class="n">result</span> <span class="o">=</span> <span class="n">process_input</span><span class="p">(</span><span class="n">inp</span><span class="p">[</span><span class="s2">&quot;example_id&quot;</span><span class="p">])</span>  <span class="c1"># Look up by ID locally</span>
-        <span class="n">output_id</span> <span class="o">=</span> <span class="n">generate_output_id</span><span class="p">(</span><span class="n">inp</span><span class="p">[</span><span class="s2">&quot;example_id&quot;</span><span class="p">],</span> <span class="n">session_id</span><span class="p">)</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">process_input</span><span class="p">(</span><span class="n">inp</span><span class="p">[</span><span class="s2">"example_id"</span><span class="p">])</span>  <span class="c1"># Look up by ID locally</span>
+        <span class="n">output_id</span> <span class="o">=</span> <span class="n">generate_output_id</span><span class="p">(</span><span class="n">inp</span><span class="p">[</span><span class="s2">"example_id"</span><span class="p">],</span> <span class="n">session_id</span><span class="p">)</span>
 
         <span class="n">store_output_locally</span><span class="p">(</span><span class="n">output_id</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>  <span class="c1"># Store locally</span>
 
         <span class="n">outputs</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
-            <span class="s2">&quot;example_id&quot;</span><span class="p">:</span> <span class="n">inp</span><span class="p">[</span><span class="s2">&quot;example_id&quot;</span><span class="p">],</span>
-            <span class="s2">&quot;output_id&quot;</span><span class="p">:</span> <span class="n">output_id</span><span class="p">,</span>  <span class="c1"># Only transmit ID, not content</span>
-            <span class="s2">&quot;cost_usd&quot;</span><span class="p">:</span> <span class="mf">0.005</span><span class="p">,</span>
+            <span class="s2">"example_id"</span><span class="p">:</span> <span class="n">inp</span><span class="p">[</span><span class="s2">"example_id"</span><span class="p">],</span>
+            <span class="s2">"output_id"</span><span class="p">:</span> <span class="n">output_id</span><span class="p">,</span>  <span class="c1"># Only transmit ID, not content</span>
+            <span class="s2">"cost_usd"</span><span class="p">:</span> <span class="mf">0.005</span><span class="p">,</span>
         <span class="p">})</span>
 
     <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="o">...</span><span class="p">})</span>
 </code></pre></div>
 <p><strong>Evaluate endpoint</strong>: Accept <code>output_id</code> and optionally <code>target_id</code> instead of content:</p>
-<div class="highlight"><pre><span></span><code><span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s2">&quot;/traigent/v1/evaluate&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;POST&quot;</span><span class="p">])</span>
+<div class="highlight"><pre><span></span><code><span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s2">"/traigent/v1/evaluate"</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">"POST"</span><span class="p">])</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">evaluate</span><span class="p">():</span>
     <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
     <span class="k">for</span> <span class="n">eval_item</span> <span class="ow">in</span> <span class="n">evaluations</span><span class="p">:</span>
         <span class="c1"># Look up output locally using output_id</span>
-        <span class="n">output</span> <span class="o">=</span> <span class="n">get_output_locally</span><span class="p">(</span><span class="n">eval_item</span><span class="p">[</span><span class="s2">&quot;output_id&quot;</span><span class="p">])</span>
+        <span class="n">output</span> <span class="o">=</span> <span class="n">get_output_locally</span><span class="p">(</span><span class="n">eval_item</span><span class="p">[</span><span class="s2">"output_id"</span><span class="p">])</span>
         <span class="c1"># For ID-based datasets, target_id may be absent — use example_id to look up target</span>
-        <span class="n">target_key</span> <span class="o">=</span> <span class="n">eval_item</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;target_id&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="n">eval_item</span><span class="p">[</span><span class="s2">&quot;example_id&quot;</span><span class="p">]</span>
+        <span class="n">target_key</span> <span class="o">=</span> <span class="n">eval_item</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"target_id"</span><span class="p">)</span> <span class="ow">or</span> <span class="n">eval_item</span><span class="p">[</span><span class="s2">"example_id"</span><span class="p">]</span>
         <span class="n">target</span> <span class="o">=</span> <span class="n">get_target_locally</span><span class="p">(</span><span class="n">target_key</span><span class="p">)</span>
 
         <span class="n">metrics</span> <span class="o">=</span> <span class="n">compute_metrics</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">target</span><span class="p">)</span>
         <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
-            <span class="s2">&quot;example_id&quot;</span><span class="p">:</span> <span class="n">eval_item</span><span class="p">[</span><span class="s2">&quot;example_id&quot;</span><span class="p">],</span>
-            <span class="s2">&quot;metrics&quot;</span><span class="p">:</span> <span class="n">metrics</span><span class="p">,</span>
+            <span class="s2">"example_id"</span><span class="p">:</span> <span class="n">eval_item</span><span class="p">[</span><span class="s2">"example_id"</span><span class="p">],</span>
+            <span class="s2">"metrics"</span><span class="p">:</span> <span class="n">metrics</span><span class="p">,</span>
         <span class="p">})</span>
 
     <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="o">...</span><span class="p">})</span>
@@ -5036,7 +5036,7 @@ This prevents accidental cross-routing in multi-service environments and aligns 
 <li><strong>Store data locally</strong>: Maintain a mapping of IDs to actual content</li>
 </ol>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">generate_output_id</span><span class="p">(</span><span class="n">example_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;out_</span><span class="si">{</span><span class="n">example_id</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">session_id</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">"out_</span><span class="si">{</span><span class="n">example_id</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">session_id</span><span class="si">}</span><span class="s2">"</span>
 
 <span class="c1"># Storage example</span>
 <span class="n">output_storage</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
@@ -5061,32 +5061,32 @@ GET  /traigent/v1/health         - Optional
 <p>The SDK provides a decorator-based wrapper for building services:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.wrapper</span><span class="w"> </span><span class="kn">import</span> <span class="n">EvaluationContext</span><span class="p">,</span> <span class="n">TraigentService</span>
 
-<span class="n">app</span> <span class="o">=</span> <span class="n">TraigentService</span><span class="p">(</span><span class="n">tunable_id</span><span class="o">=</span><span class="s2">&quot;my_agent&quot;</span><span class="p">)</span>
+<span class="n">app</span> <span class="o">=</span> <span class="n">TraigentService</span><span class="p">(</span><span class="n">tunable_id</span><span class="o">=</span><span class="s2">"my_agent"</span><span class="p">)</span>
 
 <span class="nd">@app</span><span class="o">.</span><span class="n">tunables</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">config_space</span><span class="p">():</span>
     <span class="k">return</span> <span class="p">{</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;enum&quot;</span><span class="p">,</span> <span class="s2">&quot;values&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;gpt-4&quot;</span><span class="p">,</span> <span class="s2">&quot;claude-3&quot;</span><span class="p">]},</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;float&quot;</span><span class="p">,</span> <span class="s2">&quot;range&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">]},</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"enum"</span><span class="p">,</span> <span class="s2">"values"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"gpt-4"</span><span class="p">,</span> <span class="s2">"claude-3"</span><span class="p">]},</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"float"</span><span class="p">,</span> <span class="s2">"range"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">]},</span>
     <span class="p">}</span>
 
 <span class="nd">@app</span><span class="o">.</span><span class="n">execute</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">generate_response</span><span class="p">(</span><span class="n">example_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
-    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">my_agent_logic</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;query&quot;</span><span class="p">],</span> <span class="o">**</span><span class="n">config</span><span class="p">)</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">my_agent_logic</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">"query"</span><span class="p">],</span> <span class="o">**</span><span class="n">config</span><span class="p">)</span>
     <span class="k">return</span> <span class="p">{</span>
-        <span class="s2">&quot;output&quot;</span><span class="p">:</span> <span class="n">result</span><span class="p">,</span>
-        <span class="s2">&quot;cost_usd&quot;</span><span class="p">:</span> <span class="mf">0.005</span><span class="p">,</span>
-        <span class="s2">&quot;metrics&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;accuracy_hint&quot;</span><span class="p">:</span> <span class="mf">0.92</span><span class="p">}</span>  <span class="c1"># Custom quality metrics (combined mode)</span>
+        <span class="s2">"output"</span><span class="p">:</span> <span class="n">result</span><span class="p">,</span>
+        <span class="s2">"cost_usd"</span><span class="p">:</span> <span class="mf">0.005</span><span class="p">,</span>
+        <span class="s2">"metrics"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"accuracy_hint"</span><span class="p">:</span> <span class="mf">0.92</span><span class="p">}</span>  <span class="c1"># Custom quality metrics (combined mode)</span>
     <span class="p">}</span>
 
 <span class="nd">@app</span><span class="o">.</span><span class="n">evaluation_kwargs</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">evaluation_parameters</span><span class="p">():</span>
     <span class="k">return</span> <span class="p">[</span>
         <span class="p">{</span>
-            <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;strict_mode&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;bool&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="s2">&quot;Use the stricter grading rubric&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;default&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+            <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"strict_mode"</span><span class="p">,</span>
+            <span class="s2">"type"</span><span class="p">:</span> <span class="s2">"bool"</span><span class="p">,</span>
+            <span class="s2">"description"</span><span class="p">:</span> <span class="s2">"Use the stricter grading rubric"</span><span class="p">,</span>
+            <span class="s2">"default"</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
         <span class="p">}</span>
     <span class="p">]</span>
 
@@ -5098,15 +5098,15 @@ GET  /traigent/v1/health         - Optional
     <span class="n">context</span><span class="p">:</span> <span class="n">EvaluationContext</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
     <span class="n">accuracy</span> <span class="o">=</span> <span class="n">compute_accuracy</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">target</span><span class="p">)</span>
-    <span class="k">if</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;strict_mode&quot;</span><span class="p">)</span> <span class="ow">and</span> <span class="n">context</span><span class="o">.</span><span class="n">execution_config</span><span class="p">:</span>
-        <span class="k">if</span> <span class="n">context</span><span class="o">.</span><span class="n">execution_config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;model&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;gpt-4&quot;</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"strict_mode"</span><span class="p">)</span> <span class="ow">and</span> <span class="n">context</span><span class="o">.</span><span class="n">execution_config</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">context</span><span class="o">.</span><span class="n">execution_config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"model"</span><span class="p">)</span> <span class="o">==</span> <span class="s2">"gpt-4"</span><span class="p">:</span>
             <span class="n">accuracy</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">accuracy</span><span class="p">,</span> <span class="mf">0.95</span><span class="p">)</span>
     <span class="k">return</span> <span class="p">{</span>
-        <span class="s2">&quot;accuracy&quot;</span><span class="p">:</span> <span class="n">accuracy</span><span class="p">,</span>
-        <span class="s2">&quot;safety_score&quot;</span><span class="p">:</span> <span class="n">check_safety</span><span class="p">(</span><span class="n">output</span><span class="p">),</span>  <span class="c1"># Custom quality metrics</span>
+        <span class="s2">"accuracy"</span><span class="p">:</span> <span class="n">accuracy</span><span class="p">,</span>
+        <span class="s2">"safety_score"</span><span class="p">:</span> <span class="n">check_safety</span><span class="p">(</span><span class="n">output</span><span class="p">),</span>  <span class="c1"># Custom quality metrics</span>
     <span class="p">}</span>
 
-<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
     <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">port</span><span class="o">=</span><span class="mi">8080</span><span class="p">)</span>
 </code></pre></div>
 <p><code>config</code> is execute-time trial state. Optional evaluator controls belong in
@@ -5119,57 +5119,57 @@ optional <code>EvaluationContext.execution_config</code> populated from <code>ex
 <h3 id="enum-discrete-choices">Enum (Discrete Choices)<a class="headerlink" href="#enum-discrete-choices" title="Permanent link">&para;</a></h3>
 <p>Use for model selection, prompt templates, or discrete options:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;model&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;enum&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;domain&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;values&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;claude-3-sonnet&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;llama-70b&quot;</span><span class="p">]},</span>
-<span class="w">  </span><span class="nt">&quot;default&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpt-4o&quot;</span>
+<span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"model"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"enum"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"domain"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"values"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"gpt-4o"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude-3-sonnet"</span><span class="p">,</span><span class="w"> </span><span class="s2">"llama-70b"</span><span class="p">]},</span>
+<span class="w">  </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gpt-4o"</span>
 <span class="p">}</span>
 </code></pre></div>
 <h3 id="float-continuous-range">Float (Continuous Range)<a class="headerlink" href="#float-continuous-range" title="Permanent link">&para;</a></h3>
 <p>Use for temperature, top_p, or other continuous parameters:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;temperature&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;float&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;domain&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;range&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="mf">2.0</span><span class="p">],</span>
-<span class="w">    </span><span class="nt">&quot;resolution&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.1</span>
+<span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"temperature"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"float"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"domain"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"range"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="mf">2.0</span><span class="p">],</span>
+<span class="w">    </span><span class="nt">"resolution"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.1</span>
 <span class="w">  </span><span class="p">},</span>
-<span class="w">  </span><span class="nt">&quot;default&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.7</span>
+<span class="w">  </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.7</span>
 <span class="p">}</span>
 </code></pre></div>
 <p>The <code>resolution</code> field is optional and specifies the step size for sampling.</p>
 <h3 id="integer-discrete-range">Integer (Discrete Range)<a class="headerlink" href="#integer-discrete-range" title="Permanent link">&para;</a></h3>
 <p>Use for max_tokens, retry counts, or other integer parameters:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;max_tokens&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;int&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;domain&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;range&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">100</span><span class="p">,</span><span class="w"> </span><span class="mi">4096</span><span class="p">]},</span>
-<span class="w">  </span><span class="nt">&quot;default&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1024</span>
+<span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"max_tokens"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"int"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"domain"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"range"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">100</span><span class="p">,</span><span class="w"> </span><span class="mi">4096</span><span class="p">]},</span>
+<span class="w">  </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="mi">1024</span>
 <span class="p">}</span>
 </code></pre></div>
 <h3 id="boolean">Boolean<a class="headerlink" href="#boolean" title="Permanent link">&para;</a></h3>
 <p>Use for feature flags:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;use_caching&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;bool&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;default&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"use_caching"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"bool"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
 <span class="p">}</span>
 </code></pre></div>
 <h3 id="multi-agent-grouping">Multi-Agent Grouping<a class="headerlink" href="#multi-agent-grouping" title="Permanent link">&para;</a></h3>
 <p>For services with multiple agents, use the <code>agent</code> field:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;tunables&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="nt">"tunables"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;model&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;enum&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;domain&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;values&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;claude-3&quot;</span><span class="p">]},</span>
-<span class="w">      </span><span class="nt">&quot;agent&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;planner&quot;</span>
+<span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"model"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"enum"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"domain"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"values"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"gpt-4o"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude-3"</span><span class="p">]},</span>
+<span class="w">      </span><span class="nt">"agent"</span><span class="p">:</span><span class="w"> </span><span class="s2">"planner"</span>
 <span class="w">    </span><span class="p">},</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;model&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;enum&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;domain&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;values&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;claude-3-haiku&quot;</span><span class="p">]},</span>
-<span class="w">      </span><span class="nt">&quot;agent&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;executor&quot;</span>
+<span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"model"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"enum"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"domain"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"values"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"gpt-4o-mini"</span><span class="p">,</span><span class="w"> </span><span class="s2">"claude-3-haiku"</span><span class="p">]},</span>
+<span class="w">      </span><span class="nt">"agent"</span><span class="p">:</span><span class="w"> </span><span class="s2">"executor"</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="w">  </span><span class="p">]</span>
 <span class="p">}</span>
@@ -5179,15 +5179,15 @@ optional <code>EvaluationContext.execution_config</code> populated from <code>ex
 <h3 id="operational-metrics-execute-response">Operational Metrics (Execute Response)<a class="headerlink" href="#operational-metrics-execute-response" title="Permanent link">&para;</a></h3>
 <p>Track costs, latency, and any operational data in the execute response:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;operational_metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;total_cost_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.005</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;latency_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">150</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;tokens_input&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;tokens_output&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">200</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;api_calls&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;cache_hit_rate&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.5</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;retry_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;model_version&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpt-4o-2024-01-01&quot;</span>
+<span class="w">  </span><span class="nt">"operational_metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"total_cost_usd"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.005</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"latency_ms"</span><span class="p">:</span><span class="w"> </span><span class="mi">150</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"tokens_input"</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"tokens_output"</span><span class="p">:</span><span class="w"> </span><span class="mi">200</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"api_calls"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"cache_hit_rate"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.5</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"retry_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"model_version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gpt-4o-2024-01-01"</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
@@ -5205,23 +5205,23 @@ For optimization objectives, use numeric metrics. Non-numeric operational fields
 <h3 id="quality-metrics-evaluate-response">Quality Metrics (Evaluate Response)<a class="headerlink" href="#quality-metrics-evaluate-response" title="Permanent link">&para;</a></h3>
 <p>Measure output quality with any metrics you need:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;results&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="nt">"results"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
 <span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;example_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ex_001&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="nt">&quot;accuracy&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.92</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;semantic_similarity&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.87</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;hallucination_score&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.02</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;citation_coverage&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.75</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;safety_score&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1.0</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;factual_correctness&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.90</span><span class="p">,</span>
-<span class="w">        </span><span class="nt">&quot;instruction_following&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.95</span>
+<span class="w">      </span><span class="nt">"example_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ex_001"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">"accuracy"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.92</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"semantic_similarity"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.87</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"hallucination_score"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.02</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"citation_coverage"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.75</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"safety_score"</span><span class="p">:</span><span class="w"> </span><span class="mf">1.0</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"factual_correctness"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.90</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"instruction_following"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.95</span>
 <span class="w">      </span><span class="p">}</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="w">  </span><span class="p">],</span>
-<span class="w">  </span><span class="nt">&quot;aggregate_metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;accuracy&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;mean&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.92</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;std&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.05</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;n&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;hallucination_score&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;mean&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.02</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;std&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.01</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;n&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span><span class="p">}</span>
+<span class="w">  </span><span class="nt">"aggregate_metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"accuracy"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"mean"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.92</span><span class="p">,</span><span class="w"> </span><span class="nt">"std"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.05</span><span class="p">,</span><span class="w"> </span><span class="nt">"n"</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"hallucination_score"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"mean"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.02</span><span class="p">,</span><span class="w"> </span><span class="nt">"std"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.01</span><span class="p">,</span><span class="w"> </span><span class="nt">"n"</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span><span class="p">}</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
@@ -5243,55 +5243,55 @@ For optimization objectives, use numeric metrics. Non-numeric operational fields
 <span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
 
 <span class="n">TUNABLES</span> <span class="o">=</span> <span class="p">[</span>
-    <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;model&quot;</span><span class="p">,</span> <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;enum&quot;</span><span class="p">,</span> <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;values&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;fast&quot;</span><span class="p">,</span> <span class="s2">&quot;accurate&quot;</span><span class="p">]}},</span>
-    <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;temperature&quot;</span><span class="p">,</span> <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;float&quot;</span><span class="p">,</span> <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;range&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">]}},</span>
+    <span class="p">{</span><span class="s2">"name"</span><span class="p">:</span> <span class="s2">"model"</span><span class="p">,</span> <span class="s2">"type"</span><span class="p">:</span> <span class="s2">"enum"</span><span class="p">,</span> <span class="s2">"domain"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"values"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"fast"</span><span class="p">,</span> <span class="s2">"accurate"</span><span class="p">]}},</span>
+    <span class="p">{</span><span class="s2">"name"</span><span class="p">:</span> <span class="s2">"temperature"</span><span class="p">,</span> <span class="s2">"type"</span><span class="p">:</span> <span class="s2">"float"</span><span class="p">,</span> <span class="s2">"domain"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"range"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">]}},</span>
 <span class="p">]</span>
 
-<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s2">&quot;/traigent/v1/capabilities&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;GET&quot;</span><span class="p">])</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s2">"/traigent/v1/capabilities"</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">"GET"</span><span class="p">])</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">capabilities</span><span class="p">():</span>
     <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span>
-        <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="s2">&quot;1.0&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;supports_evaluate&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="s2">"version"</span><span class="p">:</span> <span class="s2">"1.0"</span><span class="p">,</span>
+        <span class="s2">"supports_evaluate"</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
     <span class="p">})</span>
 
-<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s2">&quot;/traigent/v1/config-space&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;GET&quot;</span><span class="p">])</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s2">"/traigent/v1/config-space"</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">"GET"</span><span class="p">])</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">config_space</span><span class="p">():</span>
     <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span>
-        <span class="s2">&quot;schema_version&quot;</span><span class="p">:</span> <span class="s2">&quot;0.9&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;tunable_id&quot;</span><span class="p">:</span> <span class="s2">&quot;my_agent&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;tunables&quot;</span><span class="p">:</span> <span class="n">TUNABLES</span><span class="p">,</span>
+        <span class="s2">"schema_version"</span><span class="p">:</span> <span class="s2">"0.9"</span><span class="p">,</span>
+        <span class="s2">"tunable_id"</span><span class="p">:</span> <span class="s2">"my_agent"</span><span class="p">,</span>
+        <span class="s2">"tunables"</span><span class="p">:</span> <span class="n">TUNABLES</span><span class="p">,</span>
     <span class="p">})</span>
 
-<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s2">&quot;/traigent/v1/execute&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;POST&quot;</span><span class="p">])</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s2">"/traigent/v1/execute"</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">"POST"</span><span class="p">])</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">execute</span><span class="p">():</span>
     <span class="n">data</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">get_json</span><span class="p">()</span>
-    <span class="n">config</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;config&quot;</span><span class="p">,</span> <span class="p">{})</span>
-    <span class="n">examples</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;examples&quot;</span><span class="p">,</span> <span class="p">[])</span>
+    <span class="n">config</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"config"</span><span class="p">,</span> <span class="p">{})</span>
+    <span class="n">examples</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"examples"</span><span class="p">,</span> <span class="p">[])</span>
 
     <span class="n">outputs</span> <span class="o">=</span> <span class="p">[]</span>
     <span class="n">total_cost</span> <span class="o">=</span> <span class="mf">0.0</span>
 
     <span class="k">for</span> <span class="n">inp</span> <span class="ow">in</span> <span class="n">examples</span><span class="p">:</span>
         <span class="c1"># Look up input data locally using example_id (ID-based datasets)</span>
-        <span class="n">input_data</span> <span class="o">=</span> <span class="n">get_input_locally</span><span class="p">(</span><span class="n">inp</span><span class="p">[</span><span class="s2">&quot;example_id&quot;</span><span class="p">])</span>
+        <span class="n">input_data</span> <span class="o">=</span> <span class="n">get_input_locally</span><span class="p">(</span><span class="n">inp</span><span class="p">[</span><span class="s2">"example_id"</span><span class="p">])</span>
         <span class="n">result</span> <span class="o">=</span> <span class="n">process_input</span><span class="p">(</span><span class="n">input_data</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span>
         <span class="n">cost</span> <span class="o">=</span> <span class="n">calculate_cost</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
         <span class="n">total_cost</span> <span class="o">+=</span> <span class="n">cost</span>
 
         <span class="n">outputs</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
-            <span class="s2">&quot;example_id&quot;</span><span class="p">:</span> <span class="n">inp</span><span class="p">[</span><span class="s2">&quot;example_id&quot;</span><span class="p">],</span>
-            <span class="s2">&quot;output_id&quot;</span><span class="p">:</span> <span class="n">generate_output_id</span><span class="p">(</span><span class="n">inp</span><span class="p">[</span><span class="s2">&quot;example_id&quot;</span><span class="p">],</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;session_id&quot;</span><span class="p">)),</span>
-            <span class="s2">&quot;cost_usd&quot;</span><span class="p">:</span> <span class="n">cost</span><span class="p">,</span>
+            <span class="s2">"example_id"</span><span class="p">:</span> <span class="n">inp</span><span class="p">[</span><span class="s2">"example_id"</span><span class="p">],</span>
+            <span class="s2">"output_id"</span><span class="p">:</span> <span class="n">generate_output_id</span><span class="p">(</span><span class="n">inp</span><span class="p">[</span><span class="s2">"example_id"</span><span class="p">],</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"session_id"</span><span class="p">)),</span>
+            <span class="s2">"cost_usd"</span><span class="p">:</span> <span class="n">cost</span><span class="p">,</span>
         <span class="p">})</span>
 
     <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span>
-        <span class="s2">&quot;request_id&quot;</span><span class="p">:</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;request_id&quot;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">())),</span>
-        <span class="s2">&quot;execution_id&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">()),</span>
-        <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;completed&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;outputs&quot;</span><span class="p">:</span> <span class="n">outputs</span><span class="p">,</span>
-        <span class="s2">&quot;operational_metrics&quot;</span><span class="p">:</span> <span class="p">{</span>
-            <span class="s2">&quot;total_cost_usd&quot;</span><span class="p">:</span> <span class="n">total_cost</span><span class="p">,</span>
-            <span class="s2">&quot;latency_ms&quot;</span><span class="p">:</span> <span class="mi">150</span><span class="p">,</span>
+        <span class="s2">"request_id"</span><span class="p">:</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"request_id"</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">())),</span>
+        <span class="s2">"execution_id"</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">()),</span>
+        <span class="s2">"status"</span><span class="p">:</span> <span class="s2">"completed"</span><span class="p">,</span>
+        <span class="s2">"outputs"</span><span class="p">:</span> <span class="n">outputs</span><span class="p">,</span>
+        <span class="s2">"operational_metrics"</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">"total_cost_usd"</span><span class="p">:</span> <span class="n">total_cost</span><span class="p">,</span>
+            <span class="s2">"latency_ms"</span><span class="p">:</span> <span class="mi">150</span><span class="p">,</span>
         <span class="p">},</span>
     <span class="p">})</span>
 </code></pre></div>
@@ -5309,42 +5309,42 @@ For optimization objectives, use numeric metrics. Non-numeric operational fields
     <span class="n">examples</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span>
     <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
 
-<span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;/traigent/v1/capabilities&quot;</span><span class="p">)</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"/traigent/v1/capabilities"</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">capabilities</span><span class="p">():</span>
     <span class="k">return</span> <span class="p">{</span>
-        <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="s2">&quot;1.0&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;supports_evaluate&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="s2">"version"</span><span class="p">:</span> <span class="s2">"1.0"</span><span class="p">,</span>
+        <span class="s2">"supports_evaluate"</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
     <span class="p">}</span>
 
-<span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;/traigent/v1/config-space&quot;</span><span class="p">)</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"/traigent/v1/config-space"</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">config_space</span><span class="p">():</span>
     <span class="k">return</span> <span class="p">{</span>
-        <span class="s2">&quot;schema_version&quot;</span><span class="p">:</span> <span class="s2">&quot;0.9&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;tunable_id&quot;</span><span class="p">:</span> <span class="s2">&quot;my_agent&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;tunables&quot;</span><span class="p">:</span> <span class="p">[</span>
-            <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;model&quot;</span><span class="p">,</span> <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;enum&quot;</span><span class="p">,</span> <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;values&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;fast&quot;</span><span class="p">,</span> <span class="s2">&quot;accurate&quot;</span><span class="p">]}},</span>
+        <span class="s2">"schema_version"</span><span class="p">:</span> <span class="s2">"0.9"</span><span class="p">,</span>
+        <span class="s2">"tunable_id"</span><span class="p">:</span> <span class="s2">"my_agent"</span><span class="p">,</span>
+        <span class="s2">"tunables"</span><span class="p">:</span> <span class="p">[</span>
+            <span class="p">{</span><span class="s2">"name"</span><span class="p">:</span> <span class="s2">"model"</span><span class="p">,</span> <span class="s2">"type"</span><span class="p">:</span> <span class="s2">"enum"</span><span class="p">,</span> <span class="s2">"domain"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"values"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"fast"</span><span class="p">,</span> <span class="s2">"accurate"</span><span class="p">]}},</span>
         <span class="p">],</span>
     <span class="p">}</span>
 
-<span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/traigent/v1/execute&quot;</span><span class="p">)</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">"/traigent/v1/execute"</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">execute</span><span class="p">(</span><span class="n">req</span><span class="p">:</span> <span class="n">ExecuteRequest</span><span class="p">):</span>
     <span class="n">outputs</span> <span class="o">=</span> <span class="p">[]</span>
     <span class="k">for</span> <span class="n">inp</span> <span class="ow">in</span> <span class="n">req</span><span class="o">.</span><span class="n">examples</span><span class="p">:</span>
         <span class="c1"># Look up input data locally using example_id (ID-based datasets)</span>
-        <span class="n">input_data</span> <span class="o">=</span> <span class="k">await</span> <span class="n">get_input_locally</span><span class="p">(</span><span class="n">inp</span><span class="p">[</span><span class="s2">&quot;example_id&quot;</span><span class="p">])</span>
+        <span class="n">input_data</span> <span class="o">=</span> <span class="k">await</span> <span class="n">get_input_locally</span><span class="p">(</span><span class="n">inp</span><span class="p">[</span><span class="s2">"example_id"</span><span class="p">])</span>
         <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">process_input</span><span class="p">(</span><span class="n">input_data</span><span class="p">,</span> <span class="n">req</span><span class="o">.</span><span class="n">config</span><span class="p">)</span>
         <span class="n">outputs</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
-            <span class="s2">&quot;example_id&quot;</span><span class="p">:</span> <span class="n">inp</span><span class="p">[</span><span class="s2">&quot;example_id&quot;</span><span class="p">],</span>
-            <span class="s2">&quot;output_id&quot;</span><span class="p">:</span> <span class="n">generate_output_id</span><span class="p">(</span><span class="n">inp</span><span class="p">[</span><span class="s2">&quot;example_id&quot;</span><span class="p">],</span> <span class="n">req</span><span class="o">.</span><span class="n">session_id</span><span class="p">),</span>
-            <span class="s2">&quot;cost_usd&quot;</span><span class="p">:</span> <span class="mf">0.005</span><span class="p">,</span>
+            <span class="s2">"example_id"</span><span class="p">:</span> <span class="n">inp</span><span class="p">[</span><span class="s2">"example_id"</span><span class="p">],</span>
+            <span class="s2">"output_id"</span><span class="p">:</span> <span class="n">generate_output_id</span><span class="p">(</span><span class="n">inp</span><span class="p">[</span><span class="s2">"example_id"</span><span class="p">],</span> <span class="n">req</span><span class="o">.</span><span class="n">session_id</span><span class="p">),</span>
+            <span class="s2">"cost_usd"</span><span class="p">:</span> <span class="mf">0.005</span><span class="p">,</span>
         <span class="p">})</span>
 
     <span class="k">return</span> <span class="p">{</span>
-        <span class="s2">&quot;request_id&quot;</span><span class="p">:</span> <span class="n">req</span><span class="o">.</span><span class="n">request_id</span> <span class="ow">or</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">()),</span>
-        <span class="s2">&quot;execution_id&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">()),</span>
-        <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;completed&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;outputs&quot;</span><span class="p">:</span> <span class="n">outputs</span><span class="p">,</span>
-        <span class="s2">&quot;operational_metrics&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;total_cost_usd&quot;</span><span class="p">:</span> <span class="mf">0.005</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">outputs</span><span class="p">)},</span>
+        <span class="s2">"request_id"</span><span class="p">:</span> <span class="n">req</span><span class="o">.</span><span class="n">request_id</span> <span class="ow">or</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">()),</span>
+        <span class="s2">"execution_id"</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">()),</span>
+        <span class="s2">"status"</span><span class="p">:</span> <span class="s2">"completed"</span><span class="p">,</span>
+        <span class="s2">"outputs"</span><span class="p">:</span> <span class="n">outputs</span><span class="p">,</span>
+        <span class="s2">"operational_metrics"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"total_cost_usd"</span><span class="p">:</span> <span class="mf">0.005</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">outputs</span><span class="p">)},</span>
     <span class="p">}</span>
 </code></pre></div>
 <hr />
@@ -5358,31 +5358,31 @@ curl<span class="w"> </span>http://localhost:8080/traigent/v1/config-space
 
 <span class="c1"># Test execute</span>
 curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8080/traigent/v1/execute<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
-<span class="s1">    &quot;request_id&quot;: &quot;550e8400-e29b-41d4-a716-446655440000&quot;,</span>
-<span class="s1">    &quot;tunable_id&quot;: &quot;my_agent&quot;,</span>
-<span class="s1">    &quot;config&quot;: {&quot;model&quot;: &quot;fast&quot;, &quot;temperature&quot;: 0.5},</span>
-<span class="s1">    &quot;examples&quot;: [</span>
-<span class="s1">      {&quot;example_id&quot;: &quot;ex_001&quot;, &quot;data&quot;: {&quot;query&quot;: &quot;Hello&quot;}}</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{</span>
+<span class="s1">    "request_id": "550e8400-e29b-41d4-a716-446655440000",</span>
+<span class="s1">    "tunable_id": "my_agent",</span>
+<span class="s1">    "config": {"model": "fast", "temperature": 0.5},</span>
+<span class="s1">    "examples": [</span>
+<span class="s1">      {"example_id": "ex_001", "data": {"query": "Hello"}}</span>
 <span class="s1">    ]</span>
-<span class="s1">  }&#39;</span>
+<span class="s1">  }'</span>
 
 <span class="c1"># Test evaluate</span>
 curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8080/traigent/v1/evaluate<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
-<span class="s1">    &quot;request_id&quot;: &quot;660e8400-e29b-41d4-a716-446655440001&quot;,</span>
-<span class="s1">    &quot;tunable_id&quot;: &quot;my_agent&quot;,</span>
-<span class="s1">    &quot;kwargs&quot;: {&quot;strict_mode&quot;: true},</span>
-<span class="s1">    &quot;evaluations&quot;: [</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{</span>
+<span class="s1">    "request_id": "660e8400-e29b-41d4-a716-446655440001",</span>
+<span class="s1">    "tunable_id": "my_agent",</span>
+<span class="s1">    "kwargs": {"strict_mode": true},</span>
+<span class="s1">    "evaluations": [</span>
 <span class="s1">      {</span>
-<span class="s1">        &quot;example_id&quot;: &quot;ex_001&quot;,</span>
-<span class="s1">        &quot;output&quot;: {&quot;response&quot;: &quot;Hi there!&quot;},</span>
-<span class="s1">        &quot;target&quot;: {&quot;expected&quot;: &quot;Hello!&quot;}</span>
+<span class="s1">        "example_id": "ex_001",</span>
+<span class="s1">        "output": {"response": "Hi there!"},</span>
+<span class="s1">        "target": {"expected": "Hello!"}</span>
 <span class="s1">      }</span>
 <span class="s1">    ]</span>
-<span class="s1">  }&#39;</span>
+<span class="s1">  }'</span>
 </code></pre></div>
 <h3 id="using-the-test-client">Using the Test Client<a class="headerlink" href="#using-the-test-client" title="Permanent link">&para;</a></h3>
 <p>See the Flask example above for a complete reference implementation.</p>
@@ -5393,10 +5393,10 @@ clients may be blocked when using the default <code>python-requests/*</code> Use
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">requests</span>
 
 <span class="n">headers</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;User-Agent&quot;</span><span class="p">:</span> <span class="s2">&quot;Traigent-SDK/1.0&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;Content-Type&quot;</span><span class="p">:</span> <span class="s2">&quot;application/json&quot;</span><span class="p">,</span>
+    <span class="s2">"User-Agent"</span><span class="p">:</span> <span class="s2">"Traigent-SDK/1.0"</span><span class="p">,</span>
+    <span class="s2">"Content-Type"</span><span class="p">:</span> <span class="s2">"application/json"</span><span class="p">,</span>
 <span class="p">}</span>
-<span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;https://your-service/traigent/v1/health&quot;</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="n">headers</span><span class="p">)</span>
+<span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"https://your-service/traigent/v1/health"</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="n">headers</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">resp</span><span class="o">.</span><span class="n">status_code</span><span class="p">)</span>
 </code></pre></div>
 <p>Traigent SDK transport already sets <code>User-Agent: Traigent-SDK/1.0</code> automatically.</p>
@@ -5411,27 +5411,27 @@ npx<span class="w"> </span>@redocly/cli<span class="w"> </span>lint<span class="
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_connection</span><span class="p">():</span>
     <span class="n">transport</span> <span class="o">=</span> <span class="n">create_transport</span><span class="p">(</span>
-        <span class="n">transport_type</span><span class="o">=</span><span class="s2">&quot;http&quot;</span><span class="p">,</span>
-        <span class="n">base_url</span><span class="o">=</span><span class="s2">&quot;http://localhost:8080&quot;</span><span class="p">,</span>
+        <span class="n">transport_type</span><span class="o">=</span><span class="s2">"http"</span><span class="p">,</span>
+        <span class="n">base_url</span><span class="o">=</span><span class="s2">"http://localhost:8080"</span><span class="p">,</span>
     <span class="p">)</span>
 
     <span class="c1"># Test capabilities</span>
     <span class="n">caps</span> <span class="o">=</span> <span class="k">await</span> <span class="n">transport</span><span class="o">.</span><span class="n">capabilities</span><span class="p">()</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Connected: version=</span><span class="si">{</span><span class="n">caps</span><span class="o">.</span><span class="n">version</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Connected: version=</span><span class="si">{</span><span class="n">caps</span><span class="o">.</span><span class="n">version</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
     <span class="c1"># Test config space</span>
     <span class="n">config_space</span> <span class="o">=</span> <span class="k">await</span> <span class="n">transport</span><span class="o">.</span><span class="n">discover_config_space</span><span class="p">()</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Tunables: </span><span class="si">{</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">name</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">t</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">config_space</span><span class="o">.</span><span class="n">tunables</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Tunables: </span><span class="si">{</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">name</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">t</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">config_space</span><span class="o">.</span><span class="n">tunables</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
     <span class="c1"># Test execute</span>
     <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="n">transport</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span>
         <span class="n">HybridExecuteRequest</span><span class="p">(</span>
-            <span class="n">tunable_id</span><span class="o">=</span><span class="s2">&quot;my_agent&quot;</span><span class="p">,</span>
-            <span class="n">config</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;fast&quot;</span><span class="p">},</span>
-            <span class="n">examples</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;example_id&quot;</span><span class="p">:</span> <span class="s2">&quot;ex_001&quot;</span><span class="p">,</span> <span class="s2">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;query&quot;</span><span class="p">:</span> <span class="s2">&quot;test&quot;</span><span class="p">}}],</span>
+            <span class="n">tunable_id</span><span class="o">=</span><span class="s2">"my_agent"</span><span class="p">,</span>
+            <span class="n">config</span><span class="o">=</span><span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"fast"</span><span class="p">},</span>
+            <span class="n">examples</span><span class="o">=</span><span class="p">[{</span><span class="s2">"example_id"</span><span class="p">:</span> <span class="s2">"ex_001"</span><span class="p">,</span> <span class="s2">"data"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"query"</span><span class="p">:</span> <span class="s2">"test"</span><span class="p">}}],</span>
         <span class="p">)</span>
     <span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Status: </span><span class="si">{</span><span class="n">response</span><span class="o">.</span><span class="n">status</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Status: </span><span class="si">{</span><span class="n">response</span><span class="o">.</span><span class="n">status</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">test_connection</span><span class="p">())</span>
 </code></pre></div>
@@ -5444,9 +5444,9 @@ npx<span class="w"> </span>@redocly/cli<span class="w"> </span>lint<span class="
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">evaluator</span><span class="o">=</span><span class="n">ExternalServiceEvaluator</span><span class="p">(</span>
         <span class="n">hybrid_api</span><span class="o">=</span><span class="n">HybridAPIOptions</span><span class="p">(</span>
-            <span class="n">endpoint</span><span class="o">=</span><span class="s2">&quot;http://your-service:8080&quot;</span><span class="p">,</span>
-            <span class="n">tunable_id</span><span class="o">=</span><span class="s2">&quot;my_agent&quot;</span><span class="p">,</span>
-            <span class="n">auth_header</span><span class="o">=</span><span class="s2">&quot;Bearer &lt;token&gt;&quot;</span><span class="p">,</span>  <span class="c1"># Optional</span>
+            <span class="n">endpoint</span><span class="o">=</span><span class="s2">"http://your-service:8080"</span><span class="p">,</span>
+            <span class="n">tunable_id</span><span class="o">=</span><span class="s2">"my_agent"</span><span class="p">,</span>
+            <span class="n">auth_header</span><span class="o">=</span><span class="s2">"Bearer &lt;token&gt;"</span><span class="p">,</span>  <span class="c1"># Optional</span>
             <span class="n">batch_size</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
             <span class="n">batch_parallelism</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
         <span class="p">)</span>
@@ -5455,8 +5455,8 @@ npx<span class="w"> </span>@redocly/cli<span class="w"> </span>lint<span class="
 
     <span class="c1"># Provide tunables/configuration space for optimizer search</span>
     <span class="n">configuration_space</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;fast&quot;</span><span class="p">,</span> <span class="s2">&quot;accurate&quot;</span><span class="p">,</span> <span class="s2">&quot;balanced&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+        <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"fast"</span><span class="p">,</span> <span class="s2">"accurate"</span><span class="p">,</span> <span class="s2">"balanced"</span><span class="p">],</span>
+        <span class="s2">"temperature"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
     <span class="p">},</span>
 
     <span class="c1"># Optimization settings</span>
@@ -5464,14 +5464,14 @@ npx<span class="w"> </span>@redocly/cli<span class="w"> </span>lint<span class="
     <span class="n">cost_limit</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span>
 
     <span class="c1"># Objectives (use your custom metric names)</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">,</span> <span class="s2">&quot;latency&quot;</span><span class="p">],</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">,</span> <span class="s2">"latency"</span><span class="p">],</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_agent</span><span class="p">(</span><span class="n">_query</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
-    <span class="k">return</span> <span class="s2">&quot;&quot;</span>  <span class="c1"># Execution is delegated to the external hybrid API</span>
+    <span class="k">return</span> <span class="s2">""</span>  <span class="c1"># Execution is delegated to the external hybrid API</span>
 
 <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">optimize</span><span class="p">()</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Best config: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_config</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Best metrics: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_metrics</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Best config: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_config</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Best metrics: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">best_metrics</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="online-mode-and-backend-visibility">Online Mode and Backend Visibility<a class="headerlink" href="#online-mode-and-backend-visibility" title="Permanent link">&para;</a></h3>
 <p>To ensure runs appear in Traigent backend UI:</p>
@@ -5486,7 +5486,7 @@ npx<span class="w"> </span>@redocly/cli<span class="w"> </span>lint<span class="
 <p>Traigent can optimize for any metrics you return. The <code>objectives</code> parameter accepts two forms:</p>
 <p><strong>Shorthand — a list of metric names.</strong> Direction is inferred from the name: <code>accuracy</code>, <code>precision</code>, <code>recall</code>, and <code>f1</code> default to <em>maximize</em>; <code>cost</code>, <code>latency</code>, <code>error</code>, <code>loss</code>, <code>time</code>, and <code>memory</code> default to <em>minimize</em>. Unknown names default to <em>maximize</em>.</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="s2">&quot;cost&quot;</span><span class="p">,</span> <span class="s2">&quot;latency&quot;</span><span class="p">],</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"cost"</span><span class="p">,</span> <span class="s2">"latency"</span><span class="p">],</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_pipeline</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
     <span class="o">...</span>
@@ -5498,9 +5498,9 @@ npx<span class="w"> </span>@redocly/cli<span class="w"> </span>lint<span class="
 <span class="p">)</span>
 
 <span class="n">schema</span> <span class="o">=</span> <span class="n">ObjectiveSchema</span><span class="o">.</span><span class="n">from_objectives</span><span class="p">([</span>
-    <span class="n">ObjectiveDefinition</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;accuracy&quot;</span><span class="p">,</span> <span class="n">orientation</span><span class="o">=</span><span class="s2">&quot;maximize&quot;</span><span class="p">,</span> <span class="n">weight</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
-    <span class="n">ObjectiveDefinition</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;cost&quot;</span><span class="p">,</span>     <span class="n">orientation</span><span class="o">=</span><span class="s2">&quot;minimize&quot;</span><span class="p">,</span> <span class="n">weight</span><span class="o">=</span><span class="mf">1.0</span><span class="p">),</span>
-    <span class="n">ObjectiveDefinition</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;latency&quot;</span><span class="p">,</span>  <span class="n">orientation</span><span class="o">=</span><span class="s2">&quot;minimize&quot;</span><span class="p">,</span> <span class="n">weight</span><span class="o">=</span><span class="mf">1.0</span><span class="p">),</span>
+    <span class="n">ObjectiveDefinition</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="n">orientation</span><span class="o">=</span><span class="s2">"maximize"</span><span class="p">,</span> <span class="n">weight</span><span class="o">=</span><span class="mf">2.0</span><span class="p">),</span>
+    <span class="n">ObjectiveDefinition</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"cost"</span><span class="p">,</span>     <span class="n">orientation</span><span class="o">=</span><span class="s2">"minimize"</span><span class="p">,</span> <span class="n">weight</span><span class="o">=</span><span class="mf">1.0</span><span class="p">),</span>
+    <span class="n">ObjectiveDefinition</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"latency"</span><span class="p">,</span>  <span class="n">orientation</span><span class="o">=</span><span class="s2">"minimize"</span><span class="p">,</span> <span class="n">weight</span><span class="o">=</span><span class="mf">1.0</span><span class="p">),</span>
 <span class="p">])</span>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
@@ -5517,9 +5517,9 @@ npx<span class="w"> </span>@redocly/cli<span class="w"> </span>lint<span class="
 <h2 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h2>
 <h3 id="1-idempotency">1. Idempotency<a class="headerlink" href="#1-idempotency" title="Permanent link">&para;</a></h3>
 <p>Use <code>request_id</code> for safe retries:</p>
-<div class="highlight"><pre><span></span><code><span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s2">&quot;/traigent/v1/execute&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;POST&quot;</span><span class="p">])</span>
+<div class="highlight"><pre><span></span><code><span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s2">"/traigent/v1/execute"</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">"POST"</span><span class="p">])</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">execute</span><span class="p">():</span>
-    <span class="n">request_id</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">json</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;request_id&quot;</span><span class="p">)</span>
+    <span class="n">request_id</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">json</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"request_id"</span><span class="p">)</span>
 
     <span class="c1"># Check cache for existing result</span>
     <span class="n">cached</span> <span class="o">=</span> <span class="n">get_cached_result</span><span class="p">(</span><span class="n">request_id</span><span class="p">)</span>
@@ -5537,15 +5537,15 @@ npx<span class="w"> </span>@redocly/cli<span class="w"> </span>lint<span class="
 <p>If idempotency is not implemented on the server, retries can execute duplicate work and produce double billing/side effects.</p>
 <h3 id="2-error-handling">2. Error Handling<a class="headerlink" href="#2-error-handling" title="Permanent link">&para;</a></h3>
 <p>Return appropriate HTTP status codes and structured errors:</p>
-<div class="highlight"><pre><span></span><code><span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s2">&quot;/traigent/v1/execute&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;POST&quot;</span><span class="p">])</span>
+<div class="highlight"><pre><span></span><code><span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s2">"/traigent/v1/execute"</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">"POST"</span><span class="p">])</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">execute</span><span class="p">():</span>
     <span class="k">try</span><span class="p">:</span>
         <span class="n">data</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">get_json</span><span class="p">()</span>
-        <span class="k">if</span> <span class="ow">not</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;examples&quot;</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"examples"</span><span class="p">):</span>
             <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span>
-                <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="p">{</span>
-                    <span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;INVALID_REQUEST&quot;</span><span class="p">,</span>
-                    <span class="s2">&quot;message&quot;</span><span class="p">:</span> <span class="s2">&quot;examples field is required&quot;</span>
+                <span class="s2">"error"</span><span class="p">:</span> <span class="p">{</span>
+                    <span class="s2">"code"</span><span class="p">:</span> <span class="s2">"INVALID_REQUEST"</span><span class="p">,</span>
+                    <span class="s2">"message"</span><span class="p">:</span> <span class="s2">"examples field is required"</span>
                 <span class="p">}</span>
             <span class="p">}),</span> <span class="mi">400</span>
 
@@ -5554,11 +5554,11 @@ npx<span class="w"> </span>@redocly/cli<span class="w"> </span>lint<span class="
 
     <span class="k">except</span> <span class="n">RateLimitError</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span>
-            <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;RATE_LIMITED&quot;</span><span class="p">,</span> <span class="s2">&quot;message&quot;</span><span class="p">:</span> <span class="s2">&quot;Too many requests&quot;</span><span class="p">}</span>
+            <span class="s2">"error"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"code"</span><span class="p">:</span> <span class="s2">"RATE_LIMITED"</span><span class="p">,</span> <span class="s2">"message"</span><span class="p">:</span> <span class="s2">"Too many requests"</span><span class="p">}</span>
         <span class="p">}),</span> <span class="mi">429</span>
     <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span>
-            <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;INTERNAL_ERROR&quot;</span><span class="p">,</span> <span class="s2">&quot;message&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)}</span>
+            <span class="s2">"error"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"code"</span><span class="p">:</span> <span class="s2">"INTERNAL_ERROR"</span><span class="p">,</span> <span class="s2">"message"</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)}</span>
         <span class="p">}),</span> <span class="mi">500</span>
 </code></pre></div>
 <p>Status-code handling matrix (recommended client behavior):</p>
@@ -5623,12 +5623,12 @@ npx<span class="w"> </span>@redocly/cli<span class="w"> </span>lint<span class="
 <span class="nd">@app</span><span class="o">.</span><span class="n">execute</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="n">example_id</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
     <span class="k">if</span> <span class="n">quota_exceeded</span><span class="p">():</span>
-        <span class="k">raise</span> <span class="n">RateLimitError</span><span class="p">(</span><span class="s2">&quot;Quota exceeded&quot;</span><span class="p">,</span> <span class="n">retry_after</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>  <span class="c1"># HTTP 429</span>
+        <span class="k">raise</span> <span class="n">RateLimitError</span><span class="p">(</span><span class="s2">"Quota exceeded"</span><span class="p">,</span> <span class="n">retry_after</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>  <span class="c1"># HTTP 429</span>
     <span class="k">if</span> <span class="n">backend_down</span><span class="p">():</span>
-        <span class="k">raise</span> <span class="n">ServiceUnavailableError</span><span class="p">(</span><span class="s2">&quot;Dependency unavailable&quot;</span><span class="p">,</span> <span class="n">retry_after</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>  <span class="c1"># HTTP 503</span>
+        <span class="k">raise</span> <span class="n">ServiceUnavailableError</span><span class="p">(</span><span class="s2">"Dependency unavailable"</span><span class="p">,</span> <span class="n">retry_after</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>  <span class="c1"># HTTP 503</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">valid_token</span><span class="p">():</span>
-        <span class="k">raise</span> <span class="n">UnauthorizedError</span><span class="p">(</span><span class="s2">&quot;Missing/invalid token&quot;</span><span class="p">)</span>  <span class="c1"># HTTP 401</span>
-    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;output&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;ok&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">},</span> <span class="s2">&quot;cost_usd&quot;</span><span class="p">:</span> <span class="mf">0.001</span><span class="p">}</span>
+        <span class="k">raise</span> <span class="n">UnauthorizedError</span><span class="p">(</span><span class="s2">"Missing/invalid token"</span><span class="p">)</span>  <span class="c1"># HTTP 401</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">"output"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"ok"</span><span class="p">:</span> <span class="kc">True</span><span class="p">},</span> <span class="s2">"cost_usd"</span><span class="p">:</span> <span class="mf">0.001</span><span class="p">}</span>
 </code></pre></div>
 <h3 id="3-partial-results">3. Partial Results<a class="headerlink" href="#3-partial-results" title="Permanent link">&para;</a></h3>
 <p>Return partial results when some inputs fail:</p>
@@ -5639,24 +5639,24 @@ npx<span class="w"> </span>@redocly/cli<span class="w"> </span>lint<span class="
     <span class="k">for</span> <span class="n">inp</span> <span class="ow">in</span> <span class="n">examples</span><span class="p">:</span>
         <span class="k">try</span><span class="p">:</span>
             <span class="n">result</span> <span class="o">=</span> <span class="n">process_input</span><span class="p">(</span><span class="n">inp</span><span class="p">)</span>
-            <span class="n">outputs</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s2">&quot;example_id&quot;</span><span class="p">:</span> <span class="n">inp</span><span class="p">[</span><span class="s2">&quot;example_id&quot;</span><span class="p">],</span> <span class="s2">&quot;output&quot;</span><span class="p">:</span> <span class="n">result</span><span class="p">})</span>
+            <span class="n">outputs</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s2">"example_id"</span><span class="p">:</span> <span class="n">inp</span><span class="p">[</span><span class="s2">"example_id"</span><span class="p">],</span> <span class="s2">"output"</span><span class="p">:</span> <span class="n">result</span><span class="p">})</span>
         <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s2">&quot;example_id&quot;</span><span class="p">:</span> <span class="n">inp</span><span class="p">[</span><span class="s2">&quot;example_id&quot;</span><span class="p">],</span> <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)})</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s2">"example_id"</span><span class="p">:</span> <span class="n">inp</span><span class="p">[</span><span class="s2">"example_id"</span><span class="p">],</span> <span class="s2">"error"</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)})</span>
 
     <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span>
-        <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;partial&quot;</span> <span class="k">if</span> <span class="n">errors</span> <span class="k">else</span> <span class="s2">&quot;completed&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;outputs&quot;</span><span class="p">:</span> <span class="n">outputs</span><span class="p">,</span>
-        <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;failed_examples&quot;</span><span class="p">:</span> <span class="n">errors</span><span class="p">}</span> <span class="k">if</span> <span class="n">errors</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="s2">"status"</span><span class="p">:</span> <span class="s2">"partial"</span> <span class="k">if</span> <span class="n">errors</span> <span class="k">else</span> <span class="s2">"completed"</span><span class="p">,</span>
+        <span class="s2">"outputs"</span><span class="p">:</span> <span class="n">outputs</span><span class="p">,</span>
+        <span class="s2">"error"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"failed_examples"</span><span class="p">:</span> <span class="n">errors</span><span class="p">}</span> <span class="k">if</span> <span class="n">errors</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">})</span>
 </code></pre></div>
 <h3 id="4-timeout-handling">4. Timeout Handling<a class="headerlink" href="#4-timeout-handling" title="Permanent link">&para;</a></h3>
 <p>Respect the <code>timeout_ms</code> parameter:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
 
-<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s2">&quot;/traigent/v1/execute&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;POST&quot;</span><span class="p">])</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s2">"/traigent/v1/execute"</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">"POST"</span><span class="p">])</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">execute</span><span class="p">():</span>
     <span class="n">data</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">get_json</span><span class="p">()</span>
-    <span class="n">timeout_ms</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;timeout_ms&quot;</span><span class="p">,</span> <span class="mi">30000</span><span class="p">)</span>
+    <span class="n">timeout_ms</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"timeout_ms"</span><span class="p">,</span> <span class="mi">30000</span><span class="p">)</span>
     <span class="n">timeout_sec</span> <span class="o">=</span> <span class="n">timeout_ms</span> <span class="o">/</span> <span class="mi">1000</span>
 
     <span class="k">try</span><span class="p">:</span>
@@ -5667,8 +5667,8 @@ npx<span class="w"> </span>@redocly/cli<span class="w"> </span>lint<span class="
         <span class="k">return</span> <span class="n">jsonify</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
     <span class="k">except</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">TimeoutError</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span>
-            <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;failed&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;REQUEST_TIMEOUT&quot;</span><span class="p">,</span> <span class="s2">&quot;message&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;Request timed out after </span><span class="si">{</span><span class="n">timeout_ms</span><span class="si">}</span><span class="s2">ms&quot;</span><span class="p">}</span>
+            <span class="s2">"status"</span><span class="p">:</span> <span class="s2">"failed"</span><span class="p">,</span>
+            <span class="s2">"error"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"code"</span><span class="p">:</span> <span class="s2">"REQUEST_TIMEOUT"</span><span class="p">,</span> <span class="s2">"message"</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"Request timed out after </span><span class="si">{</span><span class="n">timeout_ms</span><span class="si">}</span><span class="s2">ms"</span><span class="p">}</span>
         <span class="p">}),</span> <span class="mi">408</span>
 </code></pre></div>
 <h3 id="5-keep-optional-fields-truly-optional">5. Keep Optional Fields Truly Optional<a class="headerlink" href="#5-keep-optional-fields-truly-optional" title="Permanent link">&para;</a></h3>

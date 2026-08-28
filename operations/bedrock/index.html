@@ -4005,11 +4005,11 @@ environment or tooling, not in Traigent backend configuration.</p>
 <a href="../../security/trust_model/">Credential &amp; data trust model</a>.</p>
 <h2 id="dependency-installation">Dependency Installation<a class="headerlink" href="#dependency-installation" title="Permanent link">&para;</a></h2>
 <p>Ensure you installed integration dependencies:
-<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;.[integrations]&quot;</span><span class="w">  </span><span class="c1"># or: pip install -r requirements/requirements-integrations.txt</span>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">".[integrations]"</span><span class="w">  </span><span class="c1"># or: pip install -r requirements/requirements-integrations.txt</span>
 </code></pre></div></p>
 <h2 id="validation-checks">Validation Checks<a class="headerlink" href="#validation-checks" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>pytest<span class="w"> </span>-q<span class="w"> </span>tests/unit/integrations/test_cloud_plugins.py<span class="w"> </span>-o<span class="w"> </span><span class="nv">addopts</span><span class="o">=</span><span class="s1">&#39;&#39;</span><span class="w"> </span>-k<span class="w"> </span>bedrock
-pytest<span class="w"> </span>-q<span class="w"> </span>tests/unit/integrations/test_bedrock_client.py<span class="w"> </span>-o<span class="w"> </span><span class="nv">addopts</span><span class="o">=</span><span class="s1">&#39;&#39;</span>
+<div class="highlight"><pre><span></span><code>pytest<span class="w"> </span>-q<span class="w"> </span>tests/unit/integrations/test_cloud_plugins.py<span class="w"> </span>-o<span class="w"> </span><span class="nv">addopts</span><span class="o">=</span><span class="s1">''</span><span class="w"> </span>-k<span class="w"> </span>bedrock
+pytest<span class="w"> </span>-q<span class="w"> </span>tests/unit/integrations/test_bedrock_client.py<span class="w"> </span>-o<span class="w"> </span><span class="nv">addopts</span><span class="o">=</span><span class="s1">''</span>
 </code></pre></div>
 <h2 id="minimal-real-run">Minimal Real Run<a class="headerlink" href="#minimal-real-run" title="Permanent link">&para;</a></h2>
 <p>With AWS credentials configured, you can exercise the shipped Bedrock example:</p>
