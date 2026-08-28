@@ -11,14 +11,14 @@ import math
 import os
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from collections.abc import Mapping
 from collections.abc import Mapping as CollectionsMapping
 from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from traigent.api.types import ExampleResult
 from traigent.evaluators.dataset_registry import (
@@ -85,6 +85,8 @@ example_evaluation_span = None  # type: ignore
 record_example_result = None  # type: ignore
 
 logger = get_logger(__name__)
+
+_T = TypeVar("_T")
 
 
 class _TaskBoundaryInterrupt:
@@ -1205,10 +1207,35 @@ class BaseEvaluator(ABC):
         execution_budget_lease: SampleBudgetLease | None,
     ) -> None:
         """Refund admitted examples when a direct evaluation is cancelled."""
-        if execution_budget_lease is None:
-            return
-        execution_budget_lease.rollback_uncompleted()
-        execution_budget_lease.finalize()
+        BaseEvaluator._cleanup_sample_lease_on_cancel(
+            execution_budget_lease, execution_budget_lease
+        )
+
+    @staticmethod
+    def _cleanup_sample_lease_on_cancel(
+        sample_lease: SampleBudgetLease | None,
+        execution_budget_lease: SampleBudgetLease | None,
+    ) -> None:
+        """Refund only uncompleted admissions at an evaluator cancellation boundary."""
+        if sample_lease is not None:
+            sample_lease.rollback_uncompleted()
+        if execution_budget_lease is not None:
+            execution_budget_lease.finalize()
+
+    @staticmethod
+    async def _await_with_sample_lease_cleanup(
+        awaitable: Awaitable[_T],
+        sample_lease: SampleBudgetLease | None,
+        execution_budget_lease: SampleBudgetLease | None,
+    ) -> _T:
+        """Await one evaluator operation and clean up before cancellation escapes."""
+        try:
+            return await awaitable
+        except asyncio.CancelledError:
+            BaseEvaluator._cleanup_sample_lease_on_cancel(
+                sample_lease, execution_budget_lease
+            )
+            raise
 
     @staticmethod
     def _execution_budget_cost(result: EvaluationResult) -> float | None:
@@ -4037,8 +4064,13 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 # Execute function with configuration context
                 with _maybe_restore_trial_context(trial_ctx):
                     with ConfigurationContext(config):
-                        raw_output, execution_error = await self._execute_function(
-                            func, config, example.input_data
+                        (
+                            raw_output,
+                            execution_error,
+                        ) = await self._await_with_sample_lease_cleanup(
+                            self._execute_function(func, config, example.input_data),
+                            sample_lease,
+                            execution_budget_lease,
                         )
                         if execution_error is not None:
                             raise RuntimeError(execution_error)
@@ -4104,6 +4136,13 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 errors.append(None)
 
             except asyncio.CancelledError:
+                # Scoring and metric callbacks run after admission and may
+                # raise cancellation directly.  Clean up here as well as at
+                # awaited-operation boundaries because an outer orchestrator
+                # can catch this cancellation and return a partial result.
+                self._cleanup_sample_lease_on_cancel(
+                    sample_lease, execution_budget_lease
+                )
                 raise
             except TrialPrunedError as e:
                 if example_results or e.example_results:
@@ -4130,10 +4169,16 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 errors.append(str(e))
 
         if budget_exhausted and progress_callback:
-            progress_callback(
-                len(example_results),
-                {"success": None, "stop_reason": "sample_budget_exhausted"},
-            )
+            try:
+                progress_callback(
+                    len(example_results),
+                    {"success": None, "stop_reason": "sample_budget_exhausted"},
+                )
+            except asyncio.CancelledError:
+                self._cleanup_sample_lease_on_cancel(
+                    sample_lease, execution_budget_lease
+                )
+                raise
 
         duration = time.time() - start_time
 

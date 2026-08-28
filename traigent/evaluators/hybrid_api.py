@@ -706,11 +706,17 @@ class HybridAPIEvaluator(BaseEvaluator):
         )
 
         start_time = time.time()
-        transport = await self._get_transport()
-        caps = await self._get_capabilities()
+        transport = await self._await_with_sample_lease_cleanup(
+            self._get_transport(), sample_lease, execution_budget_lease
+        )
+        caps = await self._await_with_sample_lease_cleanup(
+            self._get_capabilities(), sample_lease, execution_budget_lease
+        )
 
         # Initialize lifecycle manager if needed
-        await self._ensure_lifecycle_manager()
+        await self._await_with_sample_lease_cleanup(
+            self._ensure_lifecycle_manager(), sample_lease, execution_budget_lease
+        )
 
         # Prepare examples
         examples = list(dataset)
@@ -755,7 +761,11 @@ class HybridAPIEvaluator(BaseEvaluator):
                     break
 
             # Execute batch
-            batch_results = await self._execute_batch(transport, caps, config, batch)
+            batch_results = await self._await_with_sample_lease_cleanup(
+                self._execute_batch(transport, caps, config, batch),
+                sample_lease,
+                execution_budget_lease,
+            )
             example_results.extend(batch_results)
             if sample_lease:
                 sample_lease.mark_completed(len(batch_results))
@@ -776,6 +786,12 @@ class HybridAPIEvaluator(BaseEvaluator):
                         },
                     )
                 except asyncio.CancelledError:
+                    # The callback runs after batch admissions are marked, but
+                    # keep the evaluator's cancellation boundary explicit for
+                    # any uncompleted admission from a partial batch.
+                    self._cleanup_sample_lease_on_cancel(
+                        sample_lease, execution_budget_lease
+                    )
                     raise
                 except Exception as e:
                     logger.warning(f"Progress callback error: {e}")

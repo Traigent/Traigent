@@ -201,3 +201,139 @@ async def test_simple_cancellation_retains_completed_examples() -> None:
     assert lease.consumed == 1
     assert manager.snapshot().consumed == 1
     lease.finalize()
+
+
+@pytest.mark.asyncio
+async def test_caught_cancellation_refunds_external_lease_before_partial_return() -> (
+    None
+):
+    """An outer partial-result handler must not strand an external admission."""
+    started = asyncio.Event()
+    never = asyncio.Event()
+    manager = SampleBudgetManager(total_budget=1)
+    lease = manager.create_lease("simple-caught-cancelled")
+    evaluator = SimpleScoringEvaluator(scoring_function=lambda output, expected: 1.0)
+
+    async def blocking_func(question: str, **kwargs: Any) -> str:
+        started.set()
+        await never.wait()
+        return "answer"
+
+    async def caller_returns_partial() -> str:
+        try:
+            await evaluator.evaluate(
+                blocking_func,
+                {},
+                _make_dataset(1),
+                sample_lease=lease,
+            )
+        except asyncio.CancelledError:
+            return "partial"
+        raise AssertionError("evaluation unexpectedly completed")
+
+    evaluation = asyncio.create_task(caller_returns_partial())
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+    evaluation.cancel()
+
+    assert await asyncio.wait_for(evaluation, timeout=1.0) == "partial"
+    assert manager.snapshot().consumed == 0
+    assert lease.completed == 0
+    lease.finalize()
+
+
+@pytest.mark.asyncio
+async def test_caught_cancellation_refunds_execution_budget_before_partial_return() -> (
+    None
+):
+    """A caught cancellation must refund a direct execution-budget admission."""
+    started = asyncio.Event()
+    never = asyncio.Event()
+    budget = ExecutionBudget(max_examples=1)
+    evaluator = SimpleScoringEvaluator(scoring_function=lambda output, expected: 1.0)
+
+    async def blocking_func(question: str, **kwargs: Any) -> str:
+        started.set()
+        await never.wait()
+        return "answer"
+
+    async def caller_returns_partial() -> str:
+        try:
+            await evaluator.evaluate(
+                blocking_func,
+                {},
+                _make_dataset(1),
+                budget=budget,
+            )
+        except asyncio.CancelledError:
+            return "partial"
+        raise AssertionError("evaluation unexpectedly completed")
+
+    evaluation = asyncio.create_task(caller_returns_partial())
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+    evaluation.cancel()
+
+    assert await asyncio.wait_for(evaluation, timeout=1.0) == "partial"
+    snapshot = budget.snapshot()
+    assert snapshot.consumed_examples == 0
+    assert snapshot.trials == 0
+
+
+@pytest.mark.asyncio
+async def test_sync_scoring_cancellation_refunds_external_lease_before_partial_return() -> (
+    None
+):
+    """A sync scorer raising CancelledError cannot strand a caller lease."""
+    manager = SampleBudgetManager(total_budget=1)
+    lease = manager.create_lease("simple-sync-score-cancelled")
+
+    def cancelling_score(output: Any, expected: Any) -> float:
+        raise asyncio.CancelledError
+
+    evaluator = SimpleScoringEvaluator(scoring_function=cancelling_score)
+
+    async def caller_returns_partial() -> str:
+        try:
+            await evaluator.evaluate(
+                lambda value: value,
+                {},
+                _make_dataset(1),
+                sample_lease=lease,
+            )
+        except asyncio.CancelledError:
+            return "partial"
+        raise AssertionError("evaluation unexpectedly completed")
+
+    assert await asyncio.wait_for(caller_returns_partial(), timeout=1.0) == "partial"
+    assert manager.snapshot().consumed == 0
+    assert lease.completed == 0
+    lease.finalize()
+
+
+@pytest.mark.asyncio
+async def test_sync_scoring_cancellation_refunds_execution_budget_before_partial_return() -> (
+    None
+):
+    """A sync scorer raising CancelledError cannot strand a direct admission."""
+    budget = ExecutionBudget(max_examples=1)
+
+    def cancelling_score(output: Any, expected: Any) -> float:
+        raise asyncio.CancelledError
+
+    evaluator = SimpleScoringEvaluator(scoring_function=cancelling_score)
+
+    async def caller_returns_partial() -> str:
+        try:
+            await evaluator.evaluate(
+                lambda value: value,
+                {},
+                _make_dataset(1),
+                budget=budget,
+            )
+        except asyncio.CancelledError:
+            return "partial"
+        raise AssertionError("evaluation unexpectedly completed")
+
+    assert await asyncio.wait_for(caller_returns_partial(), timeout=1.0) == "partial"
+    snapshot = budget.snapshot()
+    assert snapshot.consumed_examples == 0
+    assert snapshot.trials == 0

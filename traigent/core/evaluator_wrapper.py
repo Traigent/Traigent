@@ -519,8 +519,12 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                         per_example_start = time.time()
                         try:
                             if is_coroutine_callable(self.custom_evaluator):
-                                example_result = await self.custom_evaluator(
-                                    func, config, example
+                                example_result = (
+                                    await self._await_with_sample_lease_cleanup(
+                                        self.custom_evaluator(func, config, example),
+                                        sample_lease,
+                                        execution_budget_lease,
+                                    )
                                 )
                             else:
                                 # Run blocking custom evaluators off the main event loop so
@@ -542,8 +546,8 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                                     await self._drain_uncancellable(thread_task)
                                     raise
                         except asyncio.CancelledError:
-                            self._abort_execution_budget_evaluation(
-                                execution_budget_lease
+                            self._cleanup_sample_lease_on_cancel(
+                                sample_lease, execution_budget_lease
                             )
                             raise
                         per_example_duration = time.time() - per_example_start
@@ -584,6 +588,13 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 outputs.append(example_result.actual_output)
                 errors.append(example_result.error_message)
 
+            except asyncio.CancelledError:
+                # Progress/metric handling occurs after admission too; an
+                # outer orchestrator may catch this and return partial output.
+                self._cleanup_sample_lease_on_cancel(
+                    sample_lease, execution_budget_lease
+                )
+                raise
             except Exception as e:
                 # Check for signature mismatch errors (fail fast with helpful message)
                 try:
