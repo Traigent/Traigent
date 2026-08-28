@@ -139,12 +139,24 @@ jobs:
 
       - name: Prepare compose environment
         run: |
-          {
-            echo "JWT_SECRET_KEY=$(openssl rand -hex 32)"
-            echo "SECRET_KEY=$(openssl rand -hex 32)"
-            echo "TRAIGENT_MASTER_KEY=$(openssl rand -hex 32)"
-            echo "TRAIGENT_ID_SECRET=$(openssl rand -hex 32)"
-          } >> "$GITHUB_ENV"
+          set -euo pipefail
+
+          write_masked_env() {
+            local name="$1"
+            local value
+            value="$(openssl rand -hex 32)"
+            if [ -z "$value" ]; then
+              echo "::error::openssl produced an empty value for ${name}." >&2
+              return 1
+            fi
+            printf '::add-mask::%s\n' "$value"
+            printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
+          }
+
+          write_masked_env JWT_SECRET_KEY
+          write_masked_env SECRET_KEY
+          write_masked_env TRAIGENT_MASTER_KEY
+          write_masked_env TRAIGENT_ID_SECRET
 
       - name: Start dockerized backend
         working-directory: ${{ env.BACKEND_DIR }}
@@ -172,6 +184,8 @@ jobs:
       - name: Mint live-contract API key
         working-directory: ${{ env.BACKEND_DIR }}
         run: |
+          set -euo pipefail
+
           # The mint script writes the raw key to a private (0600) file inside
           # the container — never to stdout — so the secret can't leak into
           # captured CI output or race ::add-mask::. Read it back, mask it, then
@@ -182,14 +196,23 @@ jobs:
           }
           compose exec -T backend python scripts/ci/mint_ci_api_key.py \
             --out /tmp/ci_api_key
-          key="$(compose exec -T backend cat /tmp/ci_api_key)"
-          compose exec -T backend rm -f /tmp/ci_api_key || true
+
+          # Redirect stdout before reading the key so the docker command cannot
+          # put the raw value in the Actions log before it is masked.
+          key_file="$(mktemp)"
+          trap 'rm -f -- "$key_file"' EXIT
+          if ! compose exec -T backend cat /tmp/ci_api_key >"$key_file"; then
+            echo "::error::Could not read the minted live-contract API key." >&2
+            exit 1
+          fi
+          key="$(<"$key_file")"
           if [ -z "$key" ]; then
             echo "mint_ci_api_key.py produced an empty key" >&2
             exit 1
           fi
-          echo "::add-mask::$key"
-          echo "TRAIGENT_API_KEY=$key" >> "$GITHUB_ENV"
+          printf '::add-mask::%s\n' "$key"
+          compose exec -T backend rm -f /tmp/ci_api_key
+          printf '%s=%s\n' "TRAIGENT_API_KEY" "$key" >> "$GITHUB_ENV"
 
       - name: Clean container-owned build artifacts from the SDK checkout
         working-directory: ${{ env.SDK_DIR }}
