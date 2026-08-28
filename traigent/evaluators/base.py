@@ -1249,13 +1249,28 @@ class BaseEvaluator(ABC):
         """
         return _SampleLeaseCleanupBoundary(sample_lease, execution_budget_lease)
 
-    async def _acquire_sync_worker_slot(self) -> None:
-        """Acquire a sync worker lane without blocking the event loop."""
+    async def _acquire_sync_worker_slot(self, timeout: float | None = None) -> bool:
+        """Acquire a sync worker lane without blocking the event loop.
+
+        A lane can remain occupied while a timed-out synchronous user function
+        is still running.  Bound a subsequent admission wait when the public
+        evaluator has a timeout so one wedged worker cannot turn that timeout
+        into an unbounded evaluation hang.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout if timeout is not None else None
         while not self._sync_worker_slots.acquire(blocking=False):
             # Polling avoids creating a helper thread that could itself outlive
             # a cancelled caller.  The interval is short relative to evaluator
             # timeouts while keeping the uncontended path synchronous.
-            await asyncio.sleep(0.001)
+            if deadline is not None:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    return False
+                await asyncio.sleep(min(0.001, remaining))
+            else:
+                await asyncio.sleep(0.001)
+        return True
 
     @staticmethod
     def _abort_execution_budget_evaluation(
@@ -2179,6 +2194,7 @@ class BaseEvaluator(ABC):
         worker_started_callback: Callable[[], None] | None = None,
         worker_done_callback: Callable[[], None] | None = None,
         apply_timeout: bool = True,
+        bound_lane_wait: bool = False,
     ) -> tuple[Any, str | None]:
         """Execute sync function in thread pool with context propagation.
 
@@ -2189,6 +2205,7 @@ class BaseEvaluator(ABC):
             call_kwargs: Keyword arguments
             executor: Optional thread pool executor
             trial_ctx: Trial context to propagate to thread
+            bound_lane_wait: Bound worker-lane admission for public evaluations
 
         Returns:
             Tuple of (output, error_message)
@@ -2232,8 +2249,18 @@ class BaseEvaluator(ABC):
 
         slot_acquired = False
         try:
-            await self._acquire_sync_worker_slot()
-            slot_acquired = True
+            lane_timeout = (
+                self.timeout
+                if bound_lane_wait and apply_timeout and self.timeout
+                else None
+            )
+            slot_acquired = await self._acquire_sync_worker_slot(lane_timeout)
+            if not slot_acquired:
+                error_msg = (
+                    f"Sync evaluator worker lane unavailable after {self.timeout}s"
+                )
+                logger.warning(error_msg)
+                return None, error_msg
             future = submit_executor.submit(call_with_config)
             if worker_started_callback is not None:
                 worker_started_callback()
@@ -2332,6 +2359,7 @@ class BaseEvaluator(ABC):
         executor: Any | None = None,
         worker_started_callback: Callable[[], None] | None = None,
         worker_done_callback: Callable[[], None] | None = None,
+        bound_lane_wait: bool = False,
     ) -> tuple[Any, str | None]:
         """Execute function with configuration context and timeout.
 
@@ -2346,6 +2374,7 @@ class BaseEvaluator(ABC):
             config: Configuration parameters
             input_data: Input data for the function
             executor: Optional thread pool executor for sync functions
+            bound_lane_wait: Whether sync worker admission honors ``timeout``
 
         Returns:
             Tuple of (output, error_message)
@@ -2373,6 +2402,7 @@ class BaseEvaluator(ABC):
                         trial_ctx,
                         worker_started_callback,
                         worker_done_callback,
+                        bound_lane_wait=bound_lane_wait,
                     )
                     if error:
                         return None, error
@@ -2424,6 +2454,7 @@ class BaseEvaluator(ABC):
                     executor=None,
                     worker_started_callback=cleanup_boundary.worker_started,
                     worker_done_callback=cleanup_boundary.worker_done,
+                    bound_lane_wait=True,
                 )
                 execution_time = time.time() - start_time
 
@@ -2954,6 +2985,7 @@ class BaseEvaluator(ABC):
                         executor=None,
                         worker_started_callback=cleanup_boundary.worker_started,
                         worker_done_callback=cleanup_boundary.worker_done,
+                        bound_lane_wait=True,
                     )
                 except asyncio.CancelledError:
                     cleanup_boundary.cancel()
@@ -3116,8 +3148,17 @@ class BaseEvaluator(ABC):
                     if is_coroutine_callable(custom_eval_func):
                         result = await custom_eval_func(func, config, example)
                     else:
+
+                        def run_custom_evaluator() -> Any:
+                            # ``capture_key`` uses threading.local, which is
+                            # not propagated by ``copy_context``.  Re-enter it
+                            # in the worker so captured responses keep their
+                            # per-example correlation key.
+                            with capture_key(example_id):
+                                return custom_eval_func(func, config, example)
+
                         result, error = await self._execute_sync_in_thread(
-                            lambda: custom_eval_func(func, config, example),
+                            run_custom_evaluator,
                             config,
                             (),
                             {},
@@ -3594,6 +3635,7 @@ class BaseEvaluator(ABC):
                         executor,
                         worker_started_callback=cleanup_boundary.worker_started,
                         worker_done_callback=cleanup_boundary.worker_done,
+                        bound_lane_wait=True,
                     )
             except asyncio.CancelledError:
                 cleanup_boundary.cancel()

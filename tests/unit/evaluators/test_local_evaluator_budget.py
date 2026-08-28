@@ -4,10 +4,16 @@ import time
 
 import pytest
 
+from traigent.api.types import ExampleResult
 from traigent.core.execution_budget import ExecutionBudget
 from traigent.core.sample_budget import SampleBudgetManager
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.evaluators.local import LocalEvaluator
+from traigent.utils.langchain_interceptor import (
+    capture_langchain_response,
+    clear_captured_responses,
+    get_captured_response_by_key,
+)
 
 
 @pytest.mark.asyncio
@@ -148,6 +154,7 @@ async def test_local_timeout_keeps_sync_worker_lane_occupied_until_settled() -> 
     """A timed-out sync call cannot overlap the next example on one worker."""
     first_started = threading.Event()
     first_release = threading.Event()
+    first_finished = threading.Event()
     second_started = threading.Event()
     active_lock = threading.Lock()
     active = 0
@@ -168,6 +175,8 @@ async def test_local_timeout_keeps_sync_worker_lane_occupied_until_settled() -> 
         finally:
             with active_lock:
                 active -= 1
+            if value == 1:
+                first_finished.set()
 
     evaluator = LocalEvaluator(metrics=["accuracy"], max_workers=1, timeout=0.05)
     dataset = Dataset(
@@ -179,17 +188,23 @@ async def test_local_timeout_keeps_sync_worker_lane_occupied_until_settled() -> 
     )
     evaluation = asyncio.create_task(evaluator.evaluate(blocking, {}, dataset))
 
-    await asyncio.wait_for(asyncio.to_thread(first_started.wait, 1.0), timeout=1.0)
-    await asyncio.sleep(0.1)  # bounded: longer than the evaluator timeout
-    assert not second_started.is_set()
-    assert peak_active == 1
+    try:
+        await asyncio.wait_for(asyncio.to_thread(first_started.wait, 1.0), timeout=1.0)
+        await asyncio.sleep(0.1)  # bounded: longer than the evaluator timeout
+        assert not second_started.is_set()
+        assert peak_active == 1
 
-    first_release.set()
-    result = await asyncio.wait_for(evaluation, timeout=2.0)
+        result = await asyncio.wait_for(evaluation, timeout=2.0)
 
-    assert second_started.is_set()
-    assert peak_active == 1
-    assert result.total_examples == 2
+        assert not second_started.is_set()
+        assert peak_active == 1
+        assert result.total_examples == 2
+        assert result.errors[1] == (
+            "Sync evaluator worker lane unavailable after 0.05s"
+        )
+    finally:
+        first_release.set()
+        assert await asyncio.to_thread(first_finished.wait, 1.0)
 
 
 @pytest.mark.asyncio
@@ -226,6 +241,111 @@ async def test_local_sync_timeout_returns_promptly_but_retains_worker_lane() -> 
     first_release.set()
     await asyncio.wait_for(second, timeout=1.0)
     assert second_started.is_set()
+
+
+@pytest.mark.asyncio
+async def test_local_sync_timeout_bounds_wait_for_wedged_worker_lane() -> None:
+    """A never-settling worker must not make later examples hang forever."""
+    first_started = threading.Event()
+    release_wedged_worker = threading.Event()
+    worker_done = threading.Event()
+    second_started = threading.Event()
+
+    def blocking(value: int) -> int:
+        try:
+            if value == 1:
+                first_started.set()
+                release_wedged_worker.wait()
+            else:
+                second_started.set()
+            return value
+        finally:
+            if value == 1:
+                worker_done.set()
+
+    evaluator = LocalEvaluator(metrics=["accuracy"], max_workers=1, timeout=0.05)
+    dataset = Dataset(
+        examples=[
+            EvaluationExample(input_data={"value": 1}, expected_output=1),
+            EvaluationExample(input_data={"value": 2}, expected_output=2),
+        ],
+        name="local-wedged-worker-timeout-test",
+    )
+
+    try:
+        start = time.monotonic()
+        evaluation = await asyncio.wait_for(
+            evaluator.evaluate(blocking, {}, dataset), timeout=0.5
+        )
+        elapsed = time.monotonic() - start
+
+        assert first_started.is_set()
+        assert not second_started.is_set()
+        assert elapsed < 0.4
+        assert evaluation.total_examples == 2
+        assert evaluation.errors[0] == "Function call timed out after 0.05s"
+        assert evaluation.errors[1] == (
+            "Sync evaluator worker lane unavailable after 0.05s"
+        )
+        assert evaluator._sync_worker_slots.acquire(blocking=False) is False
+    finally:
+        release_wedged_worker.set()
+
+    assert await asyncio.to_thread(worker_done.wait, 1.0)
+    assert evaluator._sync_worker_slots.acquire(blocking=False) is True
+    evaluator._sync_worker_slots.release()
+
+
+@pytest.mark.asyncio
+async def test_local_sync_custom_evaluator_preserves_capture_key_in_worker() -> None:
+    """Sync custom evaluators must correlate captures from their worker thread."""
+    clear_captured_responses()
+    observed: dict[str, object | None] = {}
+    worker_thread_name: list[str] = []
+    response = object()
+
+    def custom_evaluator(
+        func: object, config: dict[str, object], example: EvaluationExample
+    ) -> ExampleResult:
+        worker_thread_name.append(threading.current_thread().name)
+        capture_langchain_response(response)
+        observed["keyed_response"] = get_captured_response_by_key("example-42")
+        return ExampleResult(
+            example_id="example-42",
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output="ok",
+            metrics={"accuracy": 1.0},
+            execution_time=0.0,
+            success=True,
+        )
+
+    evaluator = LocalEvaluator(
+        metrics=["accuracy"],
+        max_workers=1,
+        detailed=True,
+        custom_eval_func=custom_evaluator,
+    )
+    dataset = Dataset(
+        examples=[
+            EvaluationExample(
+                input_data={"value": "input"},
+                expected_output="ok",
+                metadata={"example_id": "example-42"},
+            )
+        ],
+        name="local-capture-key-worker-test",
+    )
+
+    try:
+        result = await evaluator.evaluate(lambda value: value, {}, dataset)
+    finally:
+        clear_captured_responses()
+
+    assert result.successful_examples == 1
+    assert observed["keyed_response"] is response
+    assert worker_thread_name
+    assert worker_thread_name[0] != threading.current_thread().name
 
 
 @pytest.mark.asyncio
