@@ -33,6 +33,13 @@ def _walk(value: object):
             yield from _walk(item)
 
 
+def _json_default(value: object) -> object:
+    getstate = getattr(value, "__getstate__", None)
+    if callable(getstate):
+        return getstate()
+    raise TypeError("client-local value has no state export")
+
+
 def test_manifest_result_and_root_are_content_free(monkeypatch) -> None:
     documents = _documents()
     blinds = tuple(bytes([index]) * 32 for index in range(1, 5))
@@ -94,14 +101,20 @@ def test_two_builds_over_same_documents_use_independent_blinds() -> None:
 def test_client_local_manifest_and_slots_reject_generic_serialization() -> None:
     result = build_client_evidence_manifest(*_documents())
     local_values = (
+        result,
         result.manifest,
         result.manifest.agent_revision,
+        result.manifest.evaluation_dataset,
+        result.manifest.evaluator,
+        result.manifest.build_process_evidence,
+        *result._openings,
     )
     for local in local_values:
+        assert "client-only" not in repr(local)
         with pytest.raises(TypeError):
             vars(local)
         with pytest.raises(TypeError):
-            json.dumps(local)
+            json.dumps(local, default=_json_default)
         with pytest.raises(TypeError):
             pickle.dumps(local)
         with pytest.raises(TypeError):

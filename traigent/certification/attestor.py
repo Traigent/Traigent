@@ -199,11 +199,11 @@ def _validate_context(
 def _check_g1_root(manifest: dict[str, Any], local_build: ClientEvidenceBuild) -> None:
     if type(local_build) is not ClientEvidenceBuild:
         _raise("BUILD", VerificationError)
-    for claim in manifest["claims"]:
-        if claim["claim_id"] == "G1":
-            expected_root = claim["payload"]["params"]["manifest_root_digest"]
-            if expected_root != compute_manifest_root(local_build.manifest):
-                _raise("ROOT", VerificationError)
+    _, g1_root = _validate_claims(manifest, VerificationError)
+    if g1_root is None:
+        _raise("G1_REQUIRED", VerificationError)
+    if g1_root != compute_manifest_root(local_build.manifest):
+        _raise("ROOT", VerificationError)
 
 
 def create_client_co_attestation(
@@ -229,10 +229,12 @@ def create_client_co_attestation(
         _raise("KEY_REF")
     if key_ring.get("client_signature_algorithm") != algorithm:
         _raise("ALGORITHM")
-    if g1_root is not None and g1_root != compute_manifest_root(local_build.manifest):
-        _raise("ROOT")
     if not has_claims:
         _raise("CO_ATTESTATION_FORBIDDEN")
+    if g1_root is None:
+        _raise("G1_REQUIRED")
+    if g1_root != compute_manifest_root(local_build.manifest):
+        _raise("ROOT")
     if "client_key_ref" not in key_ring:
         _raise("CO_ATTESTATION_REQUIRED")
     digest = manifest_digest(copied)
@@ -289,9 +291,11 @@ def verify_client_co_attestation(
     """Verify a co-attestation locally, including the G1 opening root."""
 
     copied, manifest_bytes, co = _validate_co_shape(manifest, co_attestation)
-    has_claims, _ = _validate_claims(copied, VerificationError)
+    has_claims, g1_root = _validate_claims(copied, VerificationError)
     if not has_claims:
         _raise("CO_ATTESTATION_FORBIDDEN", VerificationError)
+    if g1_root is None:
+        _raise("G1_REQUIRED", VerificationError)
     _validate_context(copied, context)
     if co["client_key_ref"] != context.expected_client_key_ref:
         _raise("KEY_REF", VerificationError)
@@ -377,7 +381,7 @@ def verify_certificate_signatures(
     """Verify client co-attestation and issuer signature as one composition."""
 
     copied, _ = _canonical_for_attestation(manifest)
-    has_claims, _ = _validate_claims(copied, VerificationError)
+    has_claims, g1_root = _validate_claims(copied, VerificationError)
     if not has_claims:
         if co_attestation is not None or client_public_key is not None:
             _raise("CO_ATTESTATION_FORBIDDEN", VerificationError)
@@ -392,6 +396,8 @@ def verify_certificate_signatures(
         )
     if co_attestation is None or client_public_key is None:
         _raise("CO_ATTESTATION_REQUIRED", VerificationError)
+    if g1_root is None:
+        _raise("G1_REQUIRED", VerificationError)
     if context.expected_client_key_ref is None:
         _raise("CONTEXT", VerificationError)
     co_copied, manifest_bytes, co = _validate_co_shape(copied, co_attestation)
