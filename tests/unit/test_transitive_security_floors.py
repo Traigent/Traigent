@@ -168,7 +168,7 @@ def test_aiohttp_url_validation_still_accepts_the_urls_the_sdk_builds() -> None:
     assert q.query["name"] == "a b&c"
 
 
-def test_hybrid_http2_transport_smoke() -> None:
+def test_hybrid_http2_transport_smoke(monkeypatch: pytest.MonkeyPatch) -> None:
     """The hybrid HTTP/2 path constructs and enforces its https precondition.
 
     ``HTTPTransport._get_client`` opts into HTTP/2 only when ``h2`` imports, so
@@ -177,6 +177,8 @@ def test_hybrid_http2_transport_smoke() -> None:
     """
     pytest.importorskip("h2")
     import asyncio
+
+    import httpx
 
     from traigent.hybrid.http_transport import HTTPTransport
 
@@ -193,18 +195,28 @@ def test_hybrid_http2_transport_smoke() -> None:
     # Reach _get_client(), which is where the h2 import decides http2=True.
     # Asserting only on the constructor would still pass if that path silently
     # fell back to HTTP/1.1 -- the exact regression the h2 floor guards.
+    #
+    # Spy on the public httpx.AsyncClient(http2=...) keyword rather than
+    # introspecting client._transport._pool._http2: the private attribute chain
+    # is httpcore internals and would start silently passing (or failing) on an
+    # httpx upgrade, which is precisely the failure mode this test is meant to
+    # detect. The keyword is public, documented API.
+    seen: dict[str, object] = {}
+    real_client = httpx.AsyncClient
+
+    class _SpyClient(real_client):  # type: ignore[misc, valid-type]
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            seen.update(kwargs)
+            super().__init__(*args, **kwargs)
+
     async def _build() -> None:
+        monkeypatch.setattr(httpx, "AsyncClient", _SpyClient)
         client = await strict._get_client()
         try:
-            h2_enabled = any(
-                type(t).__name__ == "AsyncHTTPTransport"
-                and getattr(getattr(t, "_pool", None), "_http2", None) is True
-                for t in [client._transport]
-            )
-            assert h2_enabled, (
-                "HTTPTransport did not negotiate an HTTP/2-capable client even "
-                "though h2 is installed; the transport silently downgraded to "
-                "HTTP/1.1."
+            assert seen.get("http2") is True, (
+                "HTTPTransport built its client with "
+                f"http2={seen.get('http2')!r} even though h2 is installed; the "
+                "transport silently downgraded to HTTP/1.1."
             )
         finally:
             await client.aclose()
