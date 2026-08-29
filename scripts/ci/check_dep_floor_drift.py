@@ -16,7 +16,12 @@ This script is the generic guard. It:
    packages and asserts their floor is ``>=`` the pyproject floor.
 3. Asserts every *core* dependency that carries a floor in
    ``[project.dependencies]`` is enforced by ``requirements/requirements.txt``
-   -- present **and** carrying a floor. A bare name is not protection.
+   -- present, carrying a floor, and not gated behind an environment marker.
+   A bare name is not protection, and neither is a conditional floor.
+
+   Known conservative gap: a package floored only via an ``-r other.txt``
+   include is reported as absent. That is a false positive, never a false
+   clean, and the core mirror is not supposed to delegate its own floors.
 4. Exits non-zero with a readable diff if any drift is detected.
 
 Check 3 exists because checks 1-2 iterate the requirements file and look each
@@ -176,9 +181,13 @@ def _find_unprotected_core_floors() -> list[tuple[str, str, str]]:
     Returns ``(name, pyproject_floor, reason)``. Two ways a floor goes
     unenforced, and **presence alone is not protection**:
 
-    * ``absent``  -- the package is not in the mirror at all.
-    * ``unpinned`` -- the package is listed with no floor (``yarl``, or
-      ``yarl; python_version >= "3.11"``).
+    * ``absent``      -- the package is not in the mirror at all.
+    * ``unpinned``    -- listed with no floor (``yarl``).
+    * ``conditional`` -- floored only behind an environment marker
+      (``yarl>=1.24.5,<2; python_version < "3.11"``). pyproject declares these
+      unconditionally, so a marker-gated mirror line protects only the
+      environments the marker admits -- and a marker that no supported
+      interpreter satisfies protects nothing at all while still looking pinned.
 
     Both leave ``pip install -r requirements/requirements.txt`` -- a documented,
     sdist-shipped install path (MANIFEST.in) -- free to resolve a
@@ -199,21 +208,38 @@ def _find_unprotected_core_floors() -> list[tuple[str, str, str]]:
             (name, version, "absent") for name, version in sorted(core_floors.items())
         ]
 
-    floored = set(_collect_requirements_floors(core_requirements))
+    # A floor only protects unconditionally when its line carries no
+    # environment marker. Collect the three states separately rather than
+    # reusing _collect_requirements_floors(), which is marker-blind because its
+    # own job (comparing floor values) does not depend on applicability.
+    unconditional: set[str] = set()
+    conditional: set[str] = set()
     listed: set[str] = set()
     for raw_line in core_requirements.read_text().splitlines():
         line = raw_line.split("#", 1)[0].strip()
         if not line or line.startswith("-"):
             continue
-        name = re.match(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]*", line)
-        if name:
-            listed.add(_normalize_name(name.group(0)))
+        spec, _, marker = line.partition(";")
+        name_match = re.match(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]*", spec.strip())
+        if not name_match:
+            continue
+        name = _normalize_name(name_match.group(0))
+        listed.add(name)
+        if _extract_floor(spec.strip()) is None:
+            continue
+        (conditional if marker.strip() else unconditional).add(name)
 
     findings: list[tuple[str, str, str]] = []
     for name, version in sorted(core_floors.items()):
-        if name in floored:
+        if name in unconditional:
             continue
-        findings.append((name, version, "unpinned" if name in listed else "absent"))
+        if name in conditional:
+            reason = "conditional"
+        elif name in listed:
+            reason = "unpinned"
+        else:
+            reason = "absent"
+        findings.append((name, version, reason))
     return findings
 
 
@@ -242,11 +268,14 @@ def main() -> int:
             file=sys.stderr,
         )
         for name, version, reason in unprotected:
-            detail = (
-                "absent from the mirror"
-                if reason == "absent"
-                else "listed in the mirror with no floor"
-            )
+            detail = {
+                "absent": "absent from the mirror",
+                "unpinned": "listed in the mirror with no floor",
+                "conditional": (
+                    "floored only behind an environment marker, so the floor "
+                    "does not apply to every supported install"
+                ),
+            }[reason]
             print(f"  {name}: pyproject.toml=>={version}, {detail}", file=sys.stderr)
         print(
             "\n`pip install -r requirements/requirements.txt` applies no floor for these, so a "

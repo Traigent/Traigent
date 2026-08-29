@@ -183,6 +183,42 @@ def test_environment_marker_does_not_disguise_a_missing_floor(drift_module) -> N
     assert module.main() == 1
 
 
+def test_floor_behind_an_environment_marker_is_a_finding(drift_module) -> None:
+    """A conditional floor is not an unconditional one.
+
+    ``langchain-core>=1.2.11; python_version < "3.11"`` looks pinned and reads
+    as pinned, but pip applies it only where the marker holds. When pyproject
+    declares the dependency unconditionally -- and especially when the project's
+    own ``requires-python`` excludes the marker's range -- such a line protects
+    nothing while defeating a presence-and-floor check. Found in review round 3
+    of PR #2210, after rounds 1 and 2 had each found a different hole in this
+    same guard.
+    """
+    module, root = drift_module
+    _write_pyproject(root)
+    (root / "requirements" / "requirements.txt").write_text(
+        "cryptography>=46.0.7\naiohttp>=3.13.4\n"
+        'langchain-core>=1.2.11; python_version < "3.11"\n'
+    )
+
+    assert module.main() == 1
+
+
+def test_unconditional_floor_alongside_a_conditional_one_is_clean(
+    drift_module,
+) -> None:
+    """One applicable floor is enough; a conditional duplicate does not taint it."""
+    module, root = drift_module
+    _write_pyproject(root)
+    (root / "requirements" / "requirements.txt").write_text(
+        "cryptography>=46.0.7\naiohttp>=3.13.4\n"
+        'langchain-core>=1.2.11; python_version < "3.11"\n'
+        "langchain-core>=1.2.11\n"
+    )
+
+    assert module.main() == 0
+
+
 def test_missing_core_requirements_file_is_a_finding(drift_module) -> None:
     """An absent mirror must fail, not silently pass.
 
