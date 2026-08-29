@@ -5704,6 +5704,7 @@ dependencies = [
     { name = "backoff" },
     { name = "click" },
     { name = "cryptography" },
+    { name = "filelock" },
     { name = "jsonschema" },
     { name = "litellm" },
     { name = "psutil" },
@@ -5713,6 +5714,7 @@ dependencies = [
     { name = "requests" },
     { name = "rich" },
     { name = "tenacity" },
+    { name = "yarl" },
 ]
 
 [package.optional-dependencies]
@@ -5728,6 +5730,7 @@ all = [
     { name = "google-genai" },
     { name = "google-generativeai" },
     { name = "groq" },
+    { name = "h2" },
     { name = "httpx", extra = ["http2"] },
     { name = "hypothesis" },
     { name = "langchain" },
@@ -5830,6 +5833,7 @@ enterprise = [
     { name = "google-genai" },
     { name = "google-generativeai" },
     { name = "groq" },
+    { name = "h2" },
     { name = "httpx", extra = ["http2"] },
     { name = "hypothesis" },
     { name = "langchain" },
@@ -5871,6 +5875,7 @@ enterprise = [
 ]
 hybrid = [
     { name = "claude-code-sdk" },
+    { name = "h2" },
     { name = "httpx", extra = ["http2"] },
     { name = "mcp" },
 ]
@@ -5918,6 +5923,7 @@ recommended = [
     { name = "google-genai" },
     { name = "google-generativeai" },
     { name = "groq" },
+    { name = "h2" },
     { name = "httpx", extra = ["http2"] },
     { name = "langchain" },
     { name = "langchain-anthropic" },
@@ -5992,10 +5998,12 @@ requires-dist = [
     { name = "dspy-ai", marker = "extra == 'dspy'", specifier = ">=2.5.0" },
     { name = "faiss-cpu", marker = "sys_platform != 'win32' and extra == 'integrations'", specifier = ">=1.7.0" },
     { name = "fastapi", marker = "extra == 'security'", specifier = ">=0.95.0" },
+    { name = "filelock", specifier = ">=3.29.5,<4" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=5.0.0" },
     { name = "google-genai", marker = "extra == 'integrations'", specifier = ">=0.8.0" },
     { name = "google-generativeai", marker = "extra == 'integrations'", specifier = ">=0.3.0" },
     { name = "groq", marker = "extra == 'integrations'", specifier = ">=0.9.0" },
+    { name = "h2", marker = "extra == 'hybrid'", specifier = ">=4.4.1,<5" },
     { name = "httpx", extras = ["http2"], marker = "extra == 'hybrid'", specifier = ">=0.24.0" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.100.0" },
     { name = "hypothesis", marker = "extra == 'test'", specifier = ">=6.100.0" },
@@ -6068,6 +6076,7 @@ requires-dist = [
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31.0" },
     { name = "uvicorn", marker = "extra == 'security'", specifier = ">=0.18.0" },
     { name = "wandb", marker = "extra == 'integrations'", specifier = ">=0.15.0" },
+    { name = "yarl", specifier = ">=1.24.5,<2" },
 ]
 provides-extras = ["analytics", "bayesian", "integrations", "dspy", "pydanticai", "security", "visualization", "hybrid", "mcp", "test", "tracing", "dev", "docs", "ml", "deepeval", "cloud", "recommended", "all", "enterprise"]
 
