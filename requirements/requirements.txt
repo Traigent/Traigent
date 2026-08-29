@@ -4,6 +4,10 @@
 click>=8.0.0
 rich>=12.0.0
 aiohttp>=3.14.3,<4.0
+yarl>=1.24.5,<2               # AIKIDO-2026-181733; transitive via aiohttp, undeclared upstream
+anyio>=4.14.2                 # AIKIDO-2026-889297 / anyio#1208 IDNA2008 TLS hostname cert-matching
+requests>=2.33.0              # CVE-2026-25645 / GHSA-9hjg-9r4m-mvj7
+PyJWT[crypto]>=2.13.0,<3.0.0  # DoS, SSRF via JWKClient, HS256 forgery, alg bypass, kid DoS
 jsonschema>=4.0.0
 cryptography>=50.0.0
 typing-extensions>=4.0.0; python_version<"3.11"
@@ -11,6 +15,8 @@ claude-code-sdk>=0.0.14
 mcp>=1.28.1,<2.0.0
 backoff>=2.2.0
 litellm>=1.87.1,<2
+filelock>=3.29.5,<4           # AIKIDO-2026-181731; transitive via litellm -> tokenizers -> huggingface-hub
 tenacity>=8.1.0
 rank-bm25
 psutil>=5.8.0
+pydantic>=2.0.0

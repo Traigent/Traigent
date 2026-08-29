@@ -94,7 +94,9 @@ def test_requirements_lagging_behind_pyproject_is_detected(
 def test_requirements_equal_to_pyproject_is_clean(drift_module) -> None:
     module, root = drift_module
     _write_pyproject(root)
-    (root / "requirements" / "requirements.txt").write_text("cryptography>=46.0.7\n")
+    (root / "requirements" / "requirements.txt").write_text(
+        "cryptography>=46.0.7\naiohttp>=3.13.4\nlangchain-core>=1.2.11\n"
+    )
 
     assert module.main() == 0
 
@@ -103,23 +105,133 @@ def test_requirements_ahead_of_pyproject_is_clean(drift_module) -> None:
     """A requirements file tighter than pyproject is safer than required, not drift."""
     module, root = drift_module
     _write_pyproject(root)
-    (root / "requirements" / "requirements.txt").write_text("cryptography>=46.0.8\n")
-
-    assert module.main() == 0
-
-
-def test_package_only_in_pyproject_is_ignored(drift_module) -> None:
-    """We only compare packages that appear in both files. A pyproject-only
-    dep doesn't require mention in requirements/*.txt."""
-    module, root = drift_module
-    _write_pyproject(root)
     (root / "requirements" / "requirements.txt").write_text(
-        "cryptography>=46.0.7\n"  # matches pyproject
-        # aiohttp intentionally omitted — that's ok, means the requirements
-        # file just doesn't pin it, not a drift.
+        "cryptography>=46.0.8\naiohttp>=3.13.4\nlangchain-core>=1.2.11\nrank-bm25\n"
     )
 
     assert module.main() == 0
+
+
+def test_core_dependency_absent_from_requirements_is_a_finding(drift_module) -> None:
+    """A core floor missing from the mirror is the worst case, not an exemption.
+
+    This test previously asserted the opposite -- that a pyproject-only
+    dependency "doesn't require mention in requirements/*.txt" -- and that
+    assumption was the blind spot. The floor-comparison loop iterates the
+    requirements file and looks each name up in pyproject, so a package present
+    in pyproject and **absent** from the mirror was never examined at all.
+
+    Absence is strictly worse than drift: a lagging floor still bounds the
+    resolver somewhere, while an absent one bounds it nowhere. Found on PR
+    #2210, where newly-declared ``yarl``/``filelock`` floors left this script
+    green, and ``anyio``/``requests``/``PyJWT``/``pydantic`` proved to have been
+    missing from the mirror for far longer.
+    """
+    module, root = drift_module
+    _write_pyproject(root)
+    (root / "requirements" / "requirements.txt").write_text(
+        "cryptography>=46.0.7\n"  # matches pyproject; aiohttp + langchain-core absent
+    )
+
+    assert module.main() == 1
+
+
+def test_core_dependency_listed_without_a_floor_is_a_finding(drift_module) -> None:
+    """A bare name in the mirror is presence, not protection.
+
+    The first version of this check treated any package-shaped line as
+    satisfying the requirement, so ``langchain-core`` with no specifier passed
+    while ``pip install -r requirements/requirements.txt`` applied no floor for
+    it -- reproducing, inside the guard, the exact defect the guard exists to
+    catch. Caught in review round 2 of PR #2210.
+    """
+    module, root = drift_module
+    _write_pyproject(root)
+    (root / "requirements" / "requirements.txt").write_text(
+        "cryptography>=46.0.7\naiohttp>=3.13.4\nlangchain-core\n"
+    )
+
+    assert module.main() == 1
+
+
+def test_core_dependency_unfloored_in_pyproject_needs_no_mirror_floor(
+    drift_module,
+) -> None:
+    """``rank-bm25`` carries no floor in pyproject, so there is none to enforce.
+
+    This is the case the previous test's docstring described but its body did
+    not exercise -- it wrote a *floored* package instead.
+    """
+    module, root = drift_module
+    _write_pyproject(root)
+    (root / "requirements" / "requirements.txt").write_text(
+        "cryptography>=46.0.7\naiohttp>=3.13.4\nlangchain-core>=1.2.11\nrank-bm25\n"
+    )
+
+    assert module.main() == 0
+
+
+def test_environment_marker_does_not_disguise_a_missing_floor(drift_module) -> None:
+    """``langchain-core; python_version >= "3.11"`` is still an unfloored line."""
+    module, root = drift_module
+    _write_pyproject(root)
+    (root / "requirements" / "requirements.txt").write_text(
+        "cryptography>=46.0.7\naiohttp>=3.13.4\n"
+        'langchain-core; python_version >= "3.11"\n'
+    )
+
+    assert module.main() == 1
+
+
+def test_floor_behind_an_environment_marker_is_a_finding(drift_module) -> None:
+    """A conditional floor is not an unconditional one.
+
+    ``langchain-core>=1.2.11; python_version < "3.11"`` looks pinned and reads
+    as pinned, but pip applies it only where the marker holds. When pyproject
+    declares the dependency unconditionally -- and especially when the project's
+    own ``requires-python`` excludes the marker's range -- such a line protects
+    nothing while defeating a presence-and-floor check. Found in review round 3
+    of PR #2210, after rounds 1 and 2 had each found a different hole in this
+    same guard.
+    """
+    module, root = drift_module
+    _write_pyproject(root)
+    (root / "requirements" / "requirements.txt").write_text(
+        "cryptography>=46.0.7\naiohttp>=3.13.4\n"
+        'langchain-core>=1.2.11; python_version < "3.11"\n'
+    )
+
+    assert module.main() == 1
+
+
+def test_unconditional_floor_alongside_a_conditional_one_is_clean(
+    drift_module,
+) -> None:
+    """One applicable floor is enough; a conditional duplicate does not taint it."""
+    module, root = drift_module
+    _write_pyproject(root)
+    (root / "requirements" / "requirements.txt").write_text(
+        "cryptography>=46.0.7\naiohttp>=3.13.4\n"
+        'langchain-core>=1.2.11; python_version < "3.11"\n'
+        "langchain-core>=1.2.11\n"
+    )
+
+    assert module.main() == 0
+
+
+def test_missing_core_requirements_file_is_a_finding(drift_module) -> None:
+    """An absent mirror must fail, not silently pass.
+
+    ``_find_unprotected_core_floors`` used to return ``[]`` when
+    ``requirements/requirements.txt`` did not exist, so deleting the file made
+    the check green -- an absent-input false green. Caught in review round 2 of
+    PR #2210.
+    """
+    module, root = drift_module
+    _write_pyproject(root)
+    # requirements/ exists (fixture) but the core mirror does not.
+
+    assert module.main() == 1
 
 
 def test_extra_dependencies_are_also_checked(drift_module) -> None:
@@ -145,7 +257,8 @@ def test_ignores_loose_specs_without_floor(drift_module) -> None:
     module, root = drift_module
     _write_pyproject(root)
     (root / "requirements" / "requirements.txt").write_text(
-        "cryptography>=46.0.7\nrank-bm25\n"  # no pin
+        "cryptography>=46.0.7\naiohttp>=3.13.4\nlangchain-core>=1.2.11\n"
+        "rank-bm25\n"  # no pin
     )
 
     assert module.main() == 0
@@ -155,6 +268,11 @@ def test_ignores_option_lines(drift_module) -> None:
     """-r chained requirements and -e editable installs are options, not pins."""
     module, root = drift_module
     _write_pyproject(root)
+    # The core mirror must exist and be complete, or its own check fires and
+    # this test would pass/fail for a reason unrelated to option-line parsing.
+    (root / "requirements" / "requirements.txt").write_text(
+        "cryptography>=46.0.7\naiohttp>=3.13.4\nlangchain-core>=1.2.11\n"
+    )
     (root / "requirements" / "requirements-security.txt").write_text(
         "-r requirements.txt\n-e .\ncryptography>=46.0.7\n"
     )

@@ -38,6 +38,7 @@ dependencies = [
     "click>=8.0.0",
     "rich>=12.0.0",
     "aiohttp>=3.14.3,<4.0",  # AIKIDO-2026-168095 fixed in 3.14.3
+    "yarl>=1.24.5,<2",  # AIKIDO-2026-181733 — URL host parsing/normalisation; transitive via aiohttp, which does not floor it
     "anyio>=4.14.2",  # AIKIDO-2026-889297 / anyio#1208 IDNA2008 TLS hostname cert-matching (fixed 4.14.2; transitive via httpx/anthropic/mcp)
     "requests>=2.33.0",  # Required by Langfuse integration sync fallback; CVE-2026-25645 / GHSA-9hjg-9r4m-mvj7 fix
     "jsonschema>=4.0.0",
@@ -45,6 +46,7 @@ dependencies = [
     "PyJWT[crypto]>=2.13.0,<3.0.0",  # >=2.13.0: Dependabot alerts — DoS, SSRF via JWKClient, HS256 forgery, alg bypass, kid DoS
     "backoff>=2.2.0",
     "litellm>=1.87.1,<2",  # Floor: 1.84+ escaped the 1.83.x python-dotenv==1.0.1 and openai==2.24.0 exact sub-pins; 1.87.1 is the first stable release verified against this SDK. Upper bound <2 guards against a future breaking major. The demo (TraigentDemo) requires 1.88.0; this range admits it. Only the public API surface (completion, acompletion, cost_per_token, token_counter, model_cost, ModelResponse) is used — stable across the 1.x line.
+    "filelock>=3.29.5,<4",  # AIKIDO-2026-181731 — symlink handling in the lock path; transitive via litellm -> tokenizers -> huggingface-hub, undeclared upstream
     "tenacity>=8.1.0",  # tenacity completes litellm's retry surface: litellm imports it lazily in its public *_with_retries helpers (and the retry path exercised on litellm 1.91.0, #1824) but doesn't declare it — declare it so litellm's retry path works on a clean install
     "rank-bm25",
     "psutil>=5.8.0",
@@ -129,6 +131,7 @@ visualization = [
 # Hybrid mode - external agentic service optimization via REST API
 hybrid = [
     "httpx[http2]>=0.24.0",
+    "h2>=4.4.1,<5",  # GHSA-6hr6-w5qg-qmwg — HTTP/2 request smuggling via duplicate Host headers; transitive via httpx[http2], which floors only h2>=3. Pulls hpack>=4.2 transitively.
     "claude-code-sdk>=0.0.14",
     "mcp>=1.28.1,<2.0.0",  # CVE-2025-66416, AIKIDO-2026-10472, CVE-2026-59950, CVE-2026-52870 (claude-code-sdk dependency)
 ]
