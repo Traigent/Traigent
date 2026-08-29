@@ -11,9 +11,19 @@ from typing import Any, cast
 
 try:
     import mlflow
-    import mlflow.sklearn
 
-    # pytorch import is optional - may fail with torch issues
+    # Model-flavor modules are optional. This integration uses only MLflow's
+    # tracking surface (start_run, log_param/metric/dict/artifact, set_tag,
+    # search_runs, MlflowClient), none of which lives in a flavor module, so a
+    # missing flavor must not disable the whole integration. sklearn was
+    # previously imported unguarded here and never used, which meant any
+    # install without it -- mlflow-skinny, notably -- silently set
+    # MLFLOW_AVAILABLE = False instead of working. See #2183.
+    try:
+        import mlflow.sklearn  # noqa: F401
+    except (ImportError, RuntimeError):
+        pass  # sklearn autologging not available
+
     try:
         import mlflow.pytorch  # noqa: F401
     except (ImportError, RuntimeError):
