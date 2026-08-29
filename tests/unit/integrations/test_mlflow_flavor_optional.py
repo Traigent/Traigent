@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import builtins
 import importlib
+import inspect
 import sys
 
 import pytest
@@ -67,3 +68,53 @@ def test_integration_reports_available_in_this_environment() -> None:
     pytest.importorskip("mlflow")
     module = importlib.import_module(MODULE)
     assert module.MLFLOW_AVAILABLE is True
+
+
+def test_tracker_ends_runs_through_a_real_mlflow_api() -> None:
+    """``end_optimization_run`` must call an API MLflow actually exposes.
+
+    Until #2183 this called ``mlflow.finish()``. MLflow has never had a
+    ``finish`` function -- the real name is ``end_run`` -- so every run against
+    a genuine MLflow install raised ``AttributeError`` on completion. It went
+    unnoticed because the mock class in this module's ``except ImportError``
+    branch defined a matching ``finish()`` shim, so the only environment that
+    exercised the line was the one where MLflow was absent.
+
+    That shim is gone, and this test asserts against the installed package
+    rather than the mock, so the two cannot drift apart again.
+    """
+    mlflow = pytest.importorskip("mlflow")
+
+    assert hasattr(mlflow, "end_run"), "mlflow.end_run is the run-termination API"
+    assert not hasattr(mlflow, "finish"), (
+        "mlflow now exposes finish(); if upstream added it, revisit the comment "
+        "at traigent/integrations/observability/mlflow.py:351"
+    )
+
+    module = importlib.import_module(MODULE)
+    source = inspect.getsource(module.TraigentMLflowTracker.end_optimization_run)
+    # Strip comments: the fix carries an explanatory comment naming the old call,
+    # and scanning raw source would match that rather than executable code.
+    code = "\n".join(line.split("#", 1)[0] for line in source.splitlines())
+    assert "mlflow.end_run()" in code
+    assert "mlflow.finish()" not in code
+
+
+def test_the_offline_mock_matches_the_real_run_termination_api() -> None:
+    """The mock must not define methods the real package lacks.
+
+    A mock with a richer surface than the thing it stands in for turns a broken
+    call into a passing test, which is exactly how the ``finish()`` defect
+    survived. Assert the mock exposes ``end_run`` and not ``finish``.
+    """
+    module = importlib.import_module(MODULE)
+    source = inspect.getsource(module)
+    mock_start = source.index("except ImportError:")
+    mock_block = source[mock_start:]
+
+    mock_code = "\n".join(line.split("#", 1)[0] for line in mock_block.splitlines())
+    assert "def end_run(" in mock_code
+    assert "def finish(" not in mock_code, (
+        "the offline mock defines finish(), which real MLflow does not expose; "
+        "that mismatch is what hid the #2183 defect"
+    )

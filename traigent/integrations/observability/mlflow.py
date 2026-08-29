@@ -81,10 +81,6 @@ except ImportError:
             pass
 
         @staticmethod
-        def finish(*args, **kwargs) -> None:
-            pass
-
-        @staticmethod
         def log_param(*args, **kwargs) -> None:
             pass
 
@@ -352,7 +348,11 @@ class TraigentMLflowTracker:
     def end_optimization_run(self) -> None:
         """End current MLflow run."""
         if self.current_run:
-            mlflow.finish()
+            # mlflow.end_run() is the real API. This called mlflow.finish() until
+            # #2183 -- a method MLflow has never exposed -- so every real-MLflow
+            # run raised AttributeError here. It passed CI only because the mock
+            # below carried a matching finish() shim.
+            mlflow.end_run()
             logger.info(f"Ended MLflow run: {self.current_run.info.run_id}")
             self.current_run = None
 
