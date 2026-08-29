@@ -11,9 +11,19 @@ from typing import Any, cast
 
 try:
     import mlflow
-    import mlflow.sklearn
 
-    # pytorch import is optional - may fail with torch issues
+    # Model-flavor modules are optional. This integration uses only MLflow's
+    # tracking surface (start_run, log_param/metric/dict/artifact, set_tag,
+    # search_runs, MlflowClient), none of which lives in a flavor module, so a
+    # missing flavor must not disable the whole integration. sklearn was
+    # previously imported unguarded here and never used, which meant any
+    # install without it -- mlflow-skinny, notably -- silently set
+    # MLFLOW_AVAILABLE = False instead of working. See #2183.
+    try:
+        import mlflow.sklearn  # noqa: F401
+    except (ImportError, RuntimeError):
+        pass  # sklearn autologging not available
+
     try:
         import mlflow.pytorch  # noqa: F401
     except (ImportError, RuntimeError):
@@ -68,10 +78,6 @@ except ImportError:
 
         @staticmethod
         def end_run(*args, **kwargs) -> None:
-            pass
-
-        @staticmethod
-        def finish(*args, **kwargs) -> None:
             pass
 
         @staticmethod
@@ -342,7 +348,11 @@ class TraigentMLflowTracker:
     def end_optimization_run(self) -> None:
         """End current MLflow run."""
         if self.current_run:
-            mlflow.finish()
+            # mlflow.end_run() is the real API. This called mlflow.finish() until
+            # #2183 -- a method MLflow has never exposed -- so every real-MLflow
+            # run raised AttributeError here. It passed CI only because the mock
+            # below carried a matching finish() shim.
+            mlflow.end_run()
             logger.info(f"Ended MLflow run: {self.current_run.info.run_id}")
             self.current_run = None
 
