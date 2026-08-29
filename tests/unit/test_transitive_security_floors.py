@@ -30,12 +30,14 @@ from packaging.specifiers import SpecifierSet
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT_PATH = _REPO_ROOT / "pyproject.toml"
 
-# package -> (extra or None for core, vulnerable version, first fixed version, advisory)
-FLOORS: dict[str, tuple[str | None, str, str, str]] = {
-    "yarl": (None, "1.24.2", "1.24.5", "AIKIDO-2026-181733"),
-    "filelock": (None, "3.29.4", "3.29.5", "AIKIDO-2026-181731"),
-    "h2": ("hybrid", "4.3.0", "4.4.1", "GHSA-6hr6-w5qg-qmwg"),
+# package -> (extra or None for core, vulnerable, first fixed, next major, advisory)
+FLOORS: dict[str, tuple[str | None, str, str, str, str]] = {
+    "yarl": (None, "1.24.2", "1.24.5", "2.0.0", "AIKIDO-2026-181733"),
+    "filelock": (None, "3.29.4", "3.29.5", "4.0.0", "AIKIDO-2026-181731"),
+    "h2": ("hybrid", "4.3.0", "4.4.1", "5.0.0", "GHSA-6hr6-w5qg-qmwg"),
 }
+
+REQUIREMENTS_DIR = _REPO_ROOT / "requirements"
 
 
 def _declared_specifier(package: str, extra: str | None) -> str:
@@ -63,7 +65,7 @@ def _declared_specifier(package: str, extra: str | None) -> str:
 @pytest.mark.parametrize("package", sorted(FLOORS))
 def test_floor_is_declared_in_shipped_metadata(package: str) -> None:
     """The floor exists where a customer's resolver will actually read it."""
-    extra, _, _, _ = FLOORS[package]
+    extra, _, _, _, _ = FLOORS[package]
     assert _declared_specifier(package, extra), (
         f"{package} is declared with no version specifier; an unbounded "
         f"declaration provides no floor at all."
@@ -72,7 +74,7 @@ def test_floor_is_declared_in_shipped_metadata(package: str) -> None:
 
 @pytest.mark.parametrize("package", sorted(FLOORS))
 def test_floor_rejects_the_vulnerable_version(package: str) -> None:
-    extra, vulnerable, _, advisory = FLOORS[package]
+    extra, vulnerable, _, _, advisory = FLOORS[package]
     spec = SpecifierSet(_declared_specifier(package, extra))
     assert not spec.contains(vulnerable), (
         f"{package} specifier {spec} still admits {vulnerable}, which is "
@@ -82,7 +84,7 @@ def test_floor_rejects_the_vulnerable_version(package: str) -> None:
 
 @pytest.mark.parametrize("package", sorted(FLOORS))
 def test_floor_admits_the_first_fixed_version(package: str) -> None:
-    extra, _, fixed, advisory = FLOORS[package]
+    extra, _, fixed, _, advisory = FLOORS[package]
     spec = SpecifierSet(_declared_specifier(package, extra))
     assert spec.contains(fixed), (
         f"{package} specifier {spec} excludes {fixed}, the first release that "
@@ -96,25 +98,34 @@ def test_floor_is_bounded_below_the_next_major(package: str) -> None:
 
     An unbounded floor lets a resolver pull an unverified future major into a
     customer install; every other security floor in this file is bounded.
+
+    Asserting the *next major* is excluded rather than merely that some ``<``
+    exists: a nominal upper bound like ``<99`` would satisfy the weaker check
+    while providing no protection at all.
     """
-    extra, _, _, _ = FLOORS[package]
+    extra, _, _, next_major, _ = FLOORS[package]
     spec = SpecifierSet(_declared_specifier(package, extra))
-    assert any(s.operator in ("<", "<=") for s in spec), (
-        f"{package} specifier {spec} has no upper bound."
+    assert not spec.contains(next_major), (
+        f"{package} specifier {spec} admits {next_major}, an unverified future "
+        f"major. Bound it below the next major, e.g. '<{next_major.split('.')[0]}'."
     )
 
 
 @pytest.mark.parametrize("package", sorted(FLOORS))
-def test_resolved_environment_satisfies_the_declared_floor(package: str) -> None:
-    """The lockfile must not resolve *below* the metadata floor.
+def test_installed_distribution_satisfies_the_declared_floor(package: str) -> None:
+    """The *installed* distribution must not sit below the metadata floor.
 
-    pyproject and uv.lock are two independent statements about the same
-    dependency. This catches the case where the floor is raised but the lock is
-    left behind (or re-resolved downwards).
+    This reads ``importlib.metadata``, i.e. what uv actually resolved and
+    synced into this environment -- not ``uv.lock`` itself. It therefore
+    catches a lock that was left behind (or re-resolved downwards) only once
+    that lock has been synced, and it skips entirely when the package is
+    absent, as ``h2`` is without the hybrid extra. Treat it as a
+    reconciliation check between two independent statements about the same
+    dependency, not as a lockfile gate.
     """
     from importlib.metadata import PackageNotFoundError, version
 
-    extra, _, _, _ = FLOORS[package]
+    extra, _, _, _, _ = FLOORS[package]
     try:
         installed = version(package)
     except PackageNotFoundError:
@@ -165,6 +176,8 @@ def test_hybrid_http2_transport_smoke() -> None:
     of failing. Assert the import works and the strict mode is wired.
     """
     pytest.importorskip("h2")
+    import asyncio
+
     from traigent.hybrid.http_transport import HTTPTransport
 
     strict = HTTPTransport(base_url="https://agent.example.com", require_http2=True)
@@ -176,3 +189,24 @@ def test_hybrid_http2_transport_smoke() -> None:
 
     lenient = HTTPTransport(base_url="http://agent.example.com")
     assert lenient.require_http2 is False
+
+    # Reach _get_client(), which is where the h2 import decides http2=True.
+    # Asserting only on the constructor would still pass if that path silently
+    # fell back to HTTP/1.1 -- the exact regression the h2 floor guards.
+    async def _build() -> None:
+        client = await strict._get_client()
+        try:
+            h2_enabled = any(
+                type(t).__name__ == "AsyncHTTPTransport"
+                and getattr(getattr(t, "_pool", None), "_http2", None) is True
+                for t in [client._transport]
+            )
+            assert h2_enabled, (
+                "HTTPTransport did not negotiate an HTTP/2-capable client even "
+                "though h2 is installed; the transport silently downgraded to "
+                "HTTP/1.1."
+            )
+        finally:
+            await client.aclose()
+
+    asyncio.run(_build())

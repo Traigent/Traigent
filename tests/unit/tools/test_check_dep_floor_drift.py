@@ -94,7 +94,9 @@ def test_requirements_lagging_behind_pyproject_is_detected(
 def test_requirements_equal_to_pyproject_is_clean(drift_module) -> None:
     module, root = drift_module
     _write_pyproject(root)
-    (root / "requirements" / "requirements.txt").write_text("cryptography>=46.0.7\n")
+    (root / "requirements" / "requirements.txt").write_text(
+        "cryptography>=46.0.7\naiohttp>=3.13.4\nlangchain-core>=1.2.11\n"
+    )
 
     assert module.main() == 0
 
@@ -103,20 +105,48 @@ def test_requirements_ahead_of_pyproject_is_clean(drift_module) -> None:
     """A requirements file tighter than pyproject is safer than required, not drift."""
     module, root = drift_module
     _write_pyproject(root)
-    (root / "requirements" / "requirements.txt").write_text("cryptography>=46.0.8\n")
+    (root / "requirements" / "requirements.txt").write_text(
+        "cryptography>=46.0.8\naiohttp>=3.13.4\nlangchain-core>=1.2.11\nrank-bm25\n"
+    )
 
     assert module.main() == 0
 
 
-def test_package_only_in_pyproject_is_ignored(drift_module) -> None:
-    """We only compare packages that appear in both files. A pyproject-only
-    dep doesn't require mention in requirements/*.txt."""
+def test_core_dependency_absent_from_requirements_is_a_finding(drift_module) -> None:
+    """A core floor missing from the mirror is the worst case, not an exemption.
+
+    This test previously asserted the opposite -- that a pyproject-only
+    dependency "doesn't require mention in requirements/*.txt" -- and that
+    assumption was the blind spot. The floor-comparison loop iterates the
+    requirements file and looks each name up in pyproject, so a package present
+    in pyproject and **absent** from the mirror was never examined at all.
+
+    Absence is strictly worse than drift: a lagging floor still bounds the
+    resolver somewhere, while an absent one bounds it nowhere. Found on PR
+    #2210, where newly-declared ``yarl``/``filelock`` floors left this script
+    green, and ``anyio``/``requests``/``PyJWT``/``pydantic`` proved to have been
+    missing from the mirror for far longer.
+    """
     module, root = drift_module
     _write_pyproject(root)
     (root / "requirements" / "requirements.txt").write_text(
-        "cryptography>=46.0.7\n"  # matches pyproject
-        # aiohttp intentionally omitted — that's ok, means the requirements
-        # file just doesn't pin it, not a drift.
+        "cryptography>=46.0.7\n"  # matches pyproject; aiohttp + langchain-core absent
+    )
+
+    assert module.main() == 1
+
+
+def test_unpinned_core_dependency_counts_as_present(drift_module) -> None:
+    """``rank-bm25`` carries no floor in pyproject, so its mirror entry needs none.
+
+    Only packages that declare a floor are required to appear; and a name listed
+    without a specifier still counts as present, so the check reports genuine
+    absence rather than merely-unpinned entries.
+    """
+    module, root = drift_module
+    _write_pyproject(root)
+    (root / "requirements" / "requirements.txt").write_text(
+        "cryptography>=46.0.7\naiohttp>=3.13.4\nlangchain-core\n"
     )
 
     assert module.main() == 0
@@ -145,7 +175,8 @@ def test_ignores_loose_specs_without_floor(drift_module) -> None:
     module, root = drift_module
     _write_pyproject(root)
     (root / "requirements" / "requirements.txt").write_text(
-        "cryptography>=46.0.7\nrank-bm25\n"  # no pin
+        "cryptography>=46.0.7\naiohttp>=3.13.4\nlangchain-core>=1.2.11\n"
+        "rank-bm25\n"  # no pin
     )
 
     assert module.main() == 0

@@ -14,7 +14,20 @@ This script is the generic guard. It:
    (core dependencies and every optional extra).
 2. For each ``requirements/*.txt`` file, parses ``==``, ``>=``, ``~=`` pinned
    packages and asserts their floor is ``>=`` the pyproject floor.
-3. Exits non-zero with a readable diff if any drift is detected.
+3. Asserts every *core* dependency that carries a floor in
+   ``[project.dependencies]`` is also present in ``requirements/requirements.txt``.
+4. Exits non-zero with a readable diff if any drift is detected.
+
+Check 3 exists because checks 1-2 iterate the requirements file and look each
+name up in pyproject, so a package that is in pyproject but **absent** from the
+mirror was invisible to them -- the guard could not fail for the one case that
+matters most, a newly-declared security floor. Found on PR #2210, where
+``yarl``/``filelock`` were added to ``pyproject.toml`` and this script stayed
+green; ``anyio``, ``requests``, ``PyJWT`` and ``pydantic`` turned out to have
+been missing from the mirror for far longer.
+
+Scope note: check 3 covers ``[project.dependencies]`` only. The optional extras
+have their own drift (issue #2211) which is not security-floor work.
 
 Intentionally does NOT attempt to solve lockfile sync (that is ``uv``'s job).
 The scope is spec-file floors only.
@@ -140,6 +153,47 @@ def _collect_requirements_floors(path: Path) -> dict[str, str]:
     return floors
 
 
+def _collect_core_floors() -> dict[str, str]:
+    """Floors declared in ``[project.dependencies]`` only (not extras)."""
+    data = tomllib.loads(PYPROJECT_PATH.read_text())
+    deps = data.get("project", {}).get("dependencies") or []
+    floors: dict[str, str] = {}
+    for spec in deps:
+        if not isinstance(spec, str):
+            continue
+        pair = _extract_floor(spec)
+        if pair is not None:
+            floors[pair[0]] = pair[1]
+    return floors
+
+
+def _find_missing_core_floors() -> list[tuple[str, str]]:
+    """Core floors absent from requirements/requirements.txt.
+
+    A package declared with a floor in ``[project.dependencies]`` but missing
+    from the core requirements file means ``pip install -r
+    requirements/requirements.txt`` -- a documented, sdist-shipped install path
+    (MANIFEST.in) -- applies no floor at all for it.
+    """
+    core_requirements = REQUIREMENTS_DIR / "requirements.txt"
+    if not core_requirements.exists():
+        return []
+    present = set(_collect_requirements_floors(core_requirements))
+    # Unpinned names still count as present; only absence is a finding here.
+    for raw_line in core_requirements.read_text().splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line or line.startswith("-"):
+            continue
+        name = re.match(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]*", line)
+        if name:
+            present.add(_normalize_name(name.group(0)))
+    return sorted(
+        (name, version)
+        for name, version in _collect_core_floors().items()
+        if name not in present
+    )
+
+
 def main() -> int:
     pyproject_floors = _collect_pyproject_floors()
 
@@ -153,9 +207,31 @@ def main() -> int:
             if _parse_version_tuple(req_version) < _parse_version_tuple(py_version):
                 drifts.append((req_path, name, req_version, py_version))
 
-    if not drifts:
+    missing = _find_missing_core_floors()
+
+    if not drifts and not missing:
         print("OK: no dependency floor drift between pyproject.toml and requirements/")
         return 0
+
+    if missing:
+        print(
+            "❌ Core dependency floors missing from requirements/requirements.txt:\n",
+            file=sys.stderr,
+        )
+        for name, version in missing:
+            print(
+                f"  {name}: pyproject.toml=>={version}, absent from the mirror",
+                file=sys.stderr,
+            )
+        print(
+            "\n`pip install -r requirements/requirements.txt` applies no floor for these, so a "
+            "resolver can still pick a known-vulnerable version. Add each to the core "
+            "requirements file with the same specifier.\n",
+            file=sys.stderr,
+        )
+
+    if not drifts:
+        return 1
 
     print("❌ Dependency floor drift detected:\n", file=sys.stderr)
     for req_path, name, req_version, py_version in drifts:
