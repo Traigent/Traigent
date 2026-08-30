@@ -215,9 +215,19 @@ in *What is NOT Collected*. That material is used to:
    separate configurations, which were too few to support a reliable
    comparison, and which look inconsistent.
 
-Each of those is scoped to your own run and your own dataset, and is reported
-back to you. Your material is not pooled with other customers' material to
-produce a cross-customer view.
+Those three are scoped to your own run and reported back to you.
+
+Beyond your run, the **numeric measures and tuned configuration values** may
+also be used in aggregate across customers: which settings tend to help which
+kinds of agent, and the statistics that inform how Traigent searches in future.
+Two things bound that, and they are the reason it stays private rather than a
+promise that it does. Your dataset, your prompts and your model's responses are
+not part of it, because they are never sent. And **example identifiers are not
+used this way** - an identifier names a row in your dataset and means nothing
+outside it, so it carries no signal to aggregate.
+
+What crosses that boundary is therefore a knob name, a value, and a number.
+Nothing in it is yours to recognise.
 
 Two things this section deliberately does not claim. It does not say the four
 older bullets were wrong about Traigent's *intentions* - it says they were not
