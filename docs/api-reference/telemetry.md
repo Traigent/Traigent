@@ -229,6 +229,13 @@ outside it, so it carries no signal to aggregate.
 What crosses that boundary is therefore a knob name, a value, and a number.
 Nothing in it is yours to recognise.
 
+That aggregate is statistical: which settings tended to help which kinds of
+agent, counted over those names, values and numbers. Because a dataset, a
+prompt or a model response is never sent, none of that material exists on
+Traigent's side to be used for anything, including training or fine-tuning a
+model. This is a consequence of the boundary above rather than a separate
+promise: what was never received cannot be used.
+
 Two things this section deliberately does not claim. It does not say the four
 older bullets were wrong about Traigent's *intentions* - it says they were not
 a description of where the data is. And it makes no statement about training or
