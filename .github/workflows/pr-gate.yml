@@ -50,6 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Classify changed files
         id: changed
@@ -237,6 +238,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       # Pinned TraigentSchema revision this generator reads from. Bump this
       # SHA deliberately (in the same PR that regenerates
       # traigent/generated/schema_types.py) when TraigentSchema changes need
@@ -244,6 +247,7 @@ jobs:
       # time-dependent (see tools/spine-trail memory on time-dependent gates).
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           repository: Traigent/TraigentSchema
           ref: 43b20f725f5c912501a852c21ff34ada3d40e6d1
           path: TraigentSchema
@@ -275,6 +279,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           fetch-depth: 0
       - uses: actions/setup-python@v7
         with:
@@ -343,6 +348,8 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -408,6 +415,8 @@ jobs:
     needs: [changes, preflight]
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -449,6 +458,8 @@ jobs:
     needs: [changes, preflight]
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -476,6 +487,8 @@ jobs:
     if: ${{ !cancelled() }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Verify required gate jobs
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
