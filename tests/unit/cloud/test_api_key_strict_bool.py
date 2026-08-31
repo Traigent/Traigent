@@ -189,9 +189,9 @@ async def test_validate_rejects_string_false_payload():
     with _patch_aiohttp({"valid": "false"}):
         reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
 
-    assert reason is not None, (
-        "String 'false' was treated as truthy — strict ``is True`` check missing"
-    )
+    assert (
+        reason is not None
+    ), "String 'false' was treated as truthy — strict ``is True`` check missing"
     assert "invalid" in reason.lower() or "reported" in reason.lower()
 
 
@@ -574,3 +574,58 @@ async def test_validate_rejects_non_global_backend_validation_hosts(backend_url)
         await manager._validate_api_key_with_backend("tg_" + "x" * 61)
 
     assert _FakeSession.last_post_kwargs is None
+
+
+def test_generic_401_with_remediation_guidance_is_not_called_insufficient_scope():
+    """The /keys/validate 401 body embeds static setup guidance whose key names
+    ("required_scopes", "required_permissions") satisfy the scope substring
+    markers, so a dead/unknown key was reported as "insufficient scope" and the
+    remedy told the user to grant scopes no re-scoping can supply (the backend
+    deliberately never scope-checks on /keys/validate). It must read as an
+    invalid/revoked key instead."""
+    body = json.dumps(
+        {
+            "valid": False,
+            "error": "Invalid API key",
+            "error_code": "API_KEY_VALIDATION_FAILED",
+            "message": (
+                "API key validation failed. Create an API key in the "
+                "Traigent portal or run traigent auth device-login, then set "
+                "TRAIGENT_API_KEY before running the SDK."
+            ),
+            "remediation": {
+                "reason": "Backend tracking requires a valid Traigent API key.",
+                "env_var": "TRAIGENT_API_KEY",
+                "device_login_command": "traigent auth device-login",
+                "api_key_create_endpoint": "/api/v1/keys",
+                "api_key_validate_endpoint": "/api/v1/keys/validate",
+                "required_permissions": ["read", "write"],
+                "required_scopes": ["experiments:read", "experiments:write"],
+                "steps": [
+                    "Create an API key in the Traigent portal or run "
+                    "traigent auth device-login.",
+                    "Set TRAIGENT_API_KEY to the API key before running the SDK.",
+                    "Re-run the SDK job; cloud-tracked runs will appear in the "
+                    "dashboard.",
+                ],
+            },
+        }
+    )
+
+    reason = AuthManager._interpret_backend_key_validation_response(
+        401,
+        None,
+        raw_body=body,
+        url="https://backend.example.test/api/v1/keys/validate",
+    )
+
+    assert reason is not None
+    assert "invalid api key" in reason.lower()
+    assert "insufficient scope" not in reason.lower()
+
+    classification = _classify_session_creation_failure(
+        SessionCreationFailureReason.AUTH,
+        reason.session_creation_failure,
+        failure_detail=f"API key validation failed: {reason}",
+    )
+    assert classification == SessionCreationFailureClassification.INVALID_OR_REVOKED_KEY
