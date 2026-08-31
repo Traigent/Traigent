@@ -189,9 +189,9 @@ async def test_validate_rejects_string_false_payload():
     with _patch_aiohttp({"valid": "false"}):
         reason = await manager._validate_api_key_with_backend("tg_" + "x" * 61)
 
-    assert (
-        reason is not None
-    ), "String 'false' was treated as truthy — strict ``is True`` check missing"
+    assert reason is not None, (
+        "String 'false' was treated as truthy — strict ``is True`` check missing"
+    )
     assert "invalid" in reason.lower() or "reported" in reason.lower()
 
 
