@@ -133,10 +133,24 @@ def test_shipped_mlflow_example_explicitly_opts_into_file_store() -> None:
     assert "defaults to local" not in tracker_source
 
 
+_FIRST_VERSIONED_HEADING = re.compile(r"^## \[\d+\.\d+\.\d+\]", re.MULTILINE)
+
+
 def test_current_release_records_cryptography_advisory_closure() -> None:
-    """The dependency remediation belongs to the current release, not Unreleased."""
+    """The dependency remediation belongs to a released section, not Unreleased.
+
+    Split at the first *versioned* heading rather than a literal version string:
+    cutting a release renames that heading (``## [0.27.0] - unreleased`` becomes
+    ``## [0.27.0] - 2026-08-22``), and a guard that hard-codes the pre-release
+    spelling stops guarding the moment it would matter most. Everything above the
+    first versioned heading is the ``## [Unreleased]`` staging area; everything
+    from it down has shipped or is shipping now.
+    """
     changelog = (_REPO_ROOT / "CHANGELOG.md").read_text()
-    unreleased, current_release = changelog.split("## [0.27.0] - unreleased", 1)
+    boundary = _FIRST_VERSIONED_HEADING.search(changelog)
+    assert boundary is not None, "CHANGELOG.md has no versioned release section"
+    unreleased = changelog[: boundary.start()]
+    current_release = changelog[boundary.start() :]
     current_release_lower = current_release.lower()
 
     assert "mlflow-skinny" not in unreleased
