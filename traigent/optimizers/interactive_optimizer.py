@@ -418,10 +418,9 @@ class InteractiveOptimizer(BaseOptimizer):
             raise OptimizationError(
                 f"Cloud optimizer service did not become available during {stage} "
                 f"within {self.optimizer_ready_timeout:g}s. "
-                "Bayesian and other managed/cloud optimization algorithms require "
-                "the backend optimizer service and cannot fall back to the local SDK. "
-                "Check that the optimizer service is deployed and healthy "
-                "(BE#1831/#1146), then retry."
+                "Managed optimization algorithms require the backend optimizer "
+                "service and cannot fall back to the local SDK. Check that the "
+                "optimizer service is deployed and healthy, then retry."
             ) from exc
 
     async def report_results(

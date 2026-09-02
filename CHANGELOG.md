@@ -6,7 +6,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.27.0] - unreleased
+## [0.27.0] - 2026-08-22
 
 ### Changed
 
@@ -126,6 +126,39 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   its selection record. No code path in this build populates them. The `strategy_preset`
   key is no longer written to session or trial metadata, and is no longer reconstructed
   when reading a pre-#2031 legacy artifact (such artifacts still load).
+
+### Changed
+
+- **The eval audit reports a review tier instead of its scoring model** (#1881). Same
+  reasoning as the strategy-preset removal above: the scorer is the technique, not
+  something a public package ships readable. `OptimizationResult.eval_audit.scored`
+  previously returned, for every scored item, a continuous `defect_score`, its exact
+  `defect_percentile`, the raw `features` map, and `contributing_signals` — each carrying
+  the model coefficient (`weight`) and its additive `contribution`. Together with the
+  documented functional form, that published the estimator itself and a ranked dataset
+  to fit against.
+
+  `ItemDefectScore` now carries `example_id`, `review_tier` (`"high"` / `"elevated"` /
+  `"normal"`, relative to this run) and `primary_reason` (`"never_correct"` /
+  `"mean_wrong"` / `"instability"`). `DefectSignal` is removed from the public surface.
+  The ranked worklist is unchanged — items still arrive most-in-need-of-review first, and
+  **the list order is the ranking**, so "work the top of the list" behaves exactly as
+  before. `flagged` and `summary` are untouched.
+
+  The scorer itself is unchanged in behaviour and still refittable via
+  `defect_score_intercept` / `defect_score_weights` on `compute_eval_audit` — pass a dict
+  fitted on your own labeled subset to calibrate the ranking to your data. It is now
+  **private**, along with everything that carries the model: `compute_defect_scores`,
+  `DEFECT_SCORE_WEIGHTS`, `DEFECT_SCORE_INTERCEPT` and `DEFECT_SCORE_FEATURES` are renamed
+  with a leading underscore, and the two refit parameters default to `None` rather than to
+  the shipped coefficients, so the signature does not publish them either. A projection is
+  only a boundary if there is no supported way around it.
+
+  Code reading `item.defect_score` or `item.defect_percentile` should switch to
+  `item.review_tier`, and code reading `item.contributing_signals[0].feature` to
+  `item.primary_reason`. Code that only iterated `scored` in order needs no change. Code
+  importing `compute_defect_scores` or the `DEFECT_SCORE_*` constants directly was reading
+  the estimator and has no replacement; use `compute_eval_audit` and the refit parameters.
 
 ## [0.26.0] - 2026-08-02
 

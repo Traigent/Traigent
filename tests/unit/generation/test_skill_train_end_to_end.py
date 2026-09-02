@@ -178,9 +178,16 @@ def test_train_skill_requires_enough_examples_for_a_selection_split() -> None:
         max_trials=2,
     )(_agent)
 
-    with pytest.raises(ValueError, match="selection split requires at least 5"):
+    with pytest.raises(ValueError, match="selection split requires at least 5") as exc:
         fn.train_skill(
             document=_WEAK_DOC,
             optimizer_llm=lambda prompt: _replace_edit(_WEAK_DOC, _STRONG_DOC),
             doc_param="system_prompt",
         )
+
+    # The caller controls the dataset size, not the derived selection count, so
+    # the message must name the input to change and the target to reach.
+    message = str(exc.value)
+    assert "total=6" in message
+    assert "selection_fraction=" in message
+    assert "Provide at least 25 examples" in message

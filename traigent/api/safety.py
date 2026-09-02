@@ -138,7 +138,11 @@ class SafetyThreshold:
                 f"on small samples. Pass an explicit level (e.g. confidence=0.95) or "
                 f"omit the argument to use the default of {DEFAULT_SAFETY_CONFIDENCE}."
             )
-        if not 0 < self.confidence < 1:
+        # Sonar flags this S2583 "always true" by assuming confidence is always
+        # the default 0.95; callers pass arbitrary floats. Keep the chained
+        # comparison: it also rejects NaN, which `c <= 0 or c >= 1` does not,
+        # because every comparison against NaN is False.
+        if not 0 < self.confidence < 1:  # NOSONAR(S2583)
             raise ValueError(f"confidence must be in (0, 1), got {self.confidence}")
         if self.min_samples < 1:
             raise ValueError(f"min_samples must be >= 1, got {self.min_samples}")

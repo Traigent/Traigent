@@ -90,6 +90,23 @@ def test_gemini_shape_is_the_real_usage_metadata_payload_from_the_issue():
     assert usage.billable_input_tokens == 696219
 
 
+def test_gemini_google_python_usage_metadata_snake_case_matches_camel_case():
+    """Google's Python client uses snake_case for the same Gemini usage fields."""
+    camel_case = normalize_cache_usage(
+        {"promptTokenCount": 696219, "cachedContentTokenCount": 696190}
+    )
+    snake_case = normalize_cache_usage(
+        {"prompt_token_count": 696219, "cached_content_token_count": 696190}
+    )
+
+    assert snake_case.provider_shape == "gemini"
+    assert snake_case.cache_read_tokens == 696190
+    assert snake_case.input_tokens == 29
+    assert (
+        snake_case.billable_input_tokens == camel_case.billable_input_tokens == 696219
+    )
+
+
 def test_gemini_input_is_unknown_when_only_the_legacy_unrecognized_key_is_sent():
     """A payload using a key the reader does not recognize still yields an honest
     gap rather than a wrong number -- the pre-fix masking behaviour, preserved as a
