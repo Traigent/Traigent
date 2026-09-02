@@ -53,7 +53,9 @@ class TestDSPyAvailabilityDetection:
                 with pytest.raises(ImportError) as exc_info:
                     dspy_adapter.DSPyPromptOptimizer(method="mipro")
 
-                assert "dspy-ai" in str(exc_info.value).lower()
+                message = str(exc_info.value).lower()
+                assert "does not bundle dspy" in message
+                assert "dependency security" in message
             finally:
                 dspy_adapter.DSPY_AVAILABLE = original_available
 

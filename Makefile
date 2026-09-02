@@ -28,7 +28,7 @@ install:  ## Install package in production mode
 	$(PIP) install -e .
 
 install-dev:  ## Install package with all development dependencies
-	$(PIP) install -e ".[all,dev,dspy,docs]"
+	$(PIP) install -e ".[all,dev,docs]"
 	$(PYTHON) -m pre_commit install
 
 generate-schema-types:  ## Regenerate traigent/generated/schema_types.py from TraigentSchema (needs TRAIGENT_SCHEMA_REPO or a sibling ../TraigentSchema checkout)

@@ -115,13 +115,17 @@ class TraigentMLflowTracker:
         """Initialize MLflow tracker.
 
         Args:
-            tracking_uri: MLflow tracking URI (defaults to local)
+            tracking_uri: Explicit remote MLflow tracking URI. For a local file
+                store, pass an explicit ``file://`` URI and set
+                ``MLFLOW_ALLOW_FILE_STORE=true``. When omitted, the caller's
+                existing MLflow configuration must already point to a remote store.
             experiment_name: Name of MLflow experiment
             auto_log: Automatically log optimization results
         """
         if not MLFLOW_AVAILABLE:
             raise ImportError(
-                "MLflow is not installed. Please install it with: pip install mlflow"
+                "MLflow is not installed. Install supported tracking with: "
+                "pip install 'traigent[integrations]'"
             )
 
         self.auto_log = auto_log

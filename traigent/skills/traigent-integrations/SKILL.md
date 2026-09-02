@@ -33,6 +33,11 @@ pip install traigent litellm
 pip install traigent dspy
 ```
 
+DSPy is a bring-your-own dependency: Traigent does not bundle it. Before installing
+it, review its dependency chain; its current `diskcache` dependency has no patched
+release for CVE-2025-69872 at the time of this release. Traigent does not attest a
+user-managed DSPy installation as safe.
+
 ## LangChain Integration
 
 Traigent integrates with LangChain by optimizing the model and parameters used inside your chain. The key pattern: get the config from Traigent, then construct your LangChain objects.
@@ -219,19 +224,32 @@ See [DSPy reference](references/dspy.md) for BootstrapFewShot patterns and advan
 
 ## Observability Integrations
 
-MLflow and Weights & Biases are not included in the base `traigent` package. Install them separately:
+MLflow tracking and Weights & Biases are not included in the base `traigent` package. Install the supported integrations extra:
 
 ```bash
-pip install mlflow           # MLflow tracking
-pip install wandb            # Weights & Biases
+pip install "traigent[integrations]"  # Tracking and framework integrations
 ```
+
+This installs the lightweight tracking client and pandas support. The full
+MLflow server and model-serving stack are not included.
 
 ### MLflow
 
 Log Traigent optimization results to MLflow for experiment tracking:
 
 ```python
+import os
+from pathlib import Path
+
 import mlflow
+
+# mlflow-skinny does not enable an implicit local store. This example opts into
+# an explicit file store; production deployments should use a remote tracking URI.
+tracking_dir = (Path.cwd() / ".mlruns").resolve()
+tracking_dir.mkdir(exist_ok=True)
+os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
+mlflow.set_tracking_uri(tracking_dir.as_uri())
+mlflow.set_experiment("traigent_optimization")
 
 results = func.optimize()
 
