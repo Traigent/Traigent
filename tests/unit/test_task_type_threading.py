@@ -10,13 +10,14 @@ SessionCreationRequest. Each hop is a place it can be silently dropped -- exactl
 
 from __future__ import annotations
 
+import sys
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
 from tests.unit.cloud.test_session_creation_warm_start import CapturingFakeClient
-from traigent.api.decorators import EvaluationOptions, optimize
+from traigent.api.decorators import optimize
 from traigent.cloud.backend_client import BackendIntegratedClient
 from traigent.cloud.models import SessionCreationResponse
 from traigent.cloud.session_operations import SessionOperations
@@ -26,6 +27,14 @@ from traigent.optimizers.interactive_optimizer import (
 )
 
 pytestmark = pytest.mark.backend_online
+
+# `_coerce_bundle` accepts the bundle via ``isinstance(value, model_cls)``. Import the
+# class from the module object ``optimize`` actually lives in rather than by path: under
+# a CI layout that admits two copies of the package, a same-named class from a second
+# copy fails that isinstance and the decorator rejects it with
+# "must be a dict or EvaluationOptions, got EvaluationOptions". Binding it here keeps
+# the object-form test testing the decorator, not the import system.
+EvaluationOptions = sys.modules[optimize.__module__].EvaluationOptions
 
 
 class TestDecoratorHop:
