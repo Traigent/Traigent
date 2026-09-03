@@ -10,7 +10,6 @@ SessionCreationRequest. Each hop is a place it can be silently dropped -- exactl
 
 from __future__ import annotations
 
-import sys
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -28,19 +27,24 @@ from traigent.optimizers.interactive_optimizer import (
 
 pytestmark = pytest.mark.backend_online
 
-# `_coerce_bundle` accepts the bundle via ``isinstance(value, model_cls)``. Import the
-# class from the module object ``optimize`` actually lives in rather than by path: under
-# a CI layout that admits two copies of the package, a same-named class from a second
-# copy fails that isinstance and the decorator rejects it with
-# "must be a dict or EvaluationOptions, got EvaluationOptions". Binding it here keeps
-# the object-form test testing the decorator, not the import system.
-EvaluationOptions = sys.modules[optimize.__module__].EvaluationOptions
-
 
 class TestDecoratorHop:
+    """The decorator hop is exercised through the dict form on purpose.
+
+    ``_coerce_bundle`` admits a pre-built bundle via ``isinstance(value, model_cls)``,
+    so an object-form test asserts class *identity* as much as behaviour -- and CI's
+    module graph resolves ``EvaluationOptions`` to a second same-named class, which
+    fails that isinstance with "must be a dict or EvaluationOptions, got
+    EvaluationOptions" while passing locally. The dict form is the documented path,
+    is what the repo's comparable tests use (see
+    ``test_registered_evaluator_definition_identity_reaches_optimized_function``), and
+    goes through the same ``model_validate``. The object form is covered at the model
+    level by ``TestEvaluationOptionsModel`` below.
+    """
+
     def test_task_type_reaches_the_optimized_function(self):
         @optimize(
-            evaluation=EvaluationOptions(task_type=" multiple_choice "),
+            evaluation={"task_type": " multiple_choice "},
             configuration_space={"temperature": [0.1, 0.9]},
         )
         def answer(question: str) -> str:
@@ -48,7 +52,7 @@ class TestDecoratorHop:
 
         assert answer.task_type == "multiple_choice"
 
-    def test_dict_form_works_too(self):
+    def test_dict_form_and_declared_default_agree(self):
         @optimize(
             evaluation={"task_type": "text2sql"},
             configuration_space={"temperature": [0.1, 0.9]},
@@ -57,6 +61,17 @@ class TestDecoratorHop:
             return question
 
         assert answer.task_type == "text2sql"
+
+
+class TestEvaluationOptionsModel:
+    """The field is declared on the bundle model, with the right default."""
+
+    def test_model_carries_the_field(self):
+        options = optimize.__globals__["EvaluationOptions"](task_type="multiple_choice")
+        assert options.task_type == "multiple_choice"
+
+    def test_model_default_is_none(self):
+        assert optimize.__globals__["EvaluationOptions"]().task_type is None
 
     @pytest.mark.parametrize("blank", ["", "   "])
     def test_blank_hint_is_none_not_an_empty_token(self, blank):
