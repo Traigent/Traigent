@@ -478,6 +478,7 @@ class OptimizedFunction(Generic[_P, _R]):
         metric_functions: dict[str, Callable[..., Any]] | None = None,
         evaluator_definition_id: str | None = None,
         effectuation: bool = False,
+        task_type: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize optimized function wrapper.
@@ -571,6 +572,7 @@ class OptimizedFunction(Generic[_P, _R]):
             metric_functions,
             evaluator_definition_id,
             effectuation,
+            task_type,
         )
 
         # Handle configuration space
@@ -611,6 +613,7 @@ class OptimizedFunction(Generic[_P, _R]):
         metric_functions,
         evaluator_definition_id,
         effectuation,
+        task_type=None,
     ) -> None:
         """Store core initialization parameters."""
         self.func = func
@@ -669,6 +672,12 @@ class OptimizedFunction(Generic[_P, _R]):
             else None
         )
         self.effectuation = bool(effectuation)
+        # Coarse task hint for the service's anchor policy (see EvaluationOptions).
+        self.task_type = (
+            task_type.strip()
+            if isinstance(task_type, str) and task_type.strip()
+            else None
+        )
 
     def _is_cloud_execution_mode(self) -> bool:
         return False
@@ -2093,6 +2102,7 @@ class OptimizedFunction(Generic[_P, _R]):
             "fingerprint_meta"
         )
         orchestrator.evaluator_definition_id = self.evaluator_definition_id
+        orchestrator.task_type = self.task_type
         # RFC 0001 §3.4: forward the user-attached knob resolver so the
         # public optimize() path resolves Fixed/CVAR bindings in-trial.
         # Attribute seam (like promotion_gate): set
@@ -2462,6 +2472,7 @@ class OptimizedFunction(Generic[_P, _R]):
                 ),
                 fingerprint_meta=artifact_fingerprint_payload.get("fingerprint_meta"),
                 evaluator_definition_id=self.evaluator_definition_id,
+                task_type=self.task_type,
                 context=traigent_config,
                 **optimizer_kwargs,
             )
