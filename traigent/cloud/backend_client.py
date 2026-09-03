@@ -1650,6 +1650,7 @@ class BackendIntegratedClient:
         agent_key: str | None = None,
         run_title: str | None = None,
         run_description: str | None = None,
+        task_type: str | None = None,
     ) -> SessionCreationResult:
         """Synchronous wrapper for creating a session.
         Delegates to session_operations module. Phase 8: objectives are
@@ -1675,6 +1676,7 @@ class BackendIntegratedClient:
             agent_key=agent_key,
             run_title=run_title,
             run_description=run_description,
+            task_type=task_type,
         )
 
     async def create_hybrid_session(

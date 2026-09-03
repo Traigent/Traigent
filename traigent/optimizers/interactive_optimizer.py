@@ -199,6 +199,7 @@ class InteractiveOptimizer(BaseOptimizer):
         artifact_fingerprints: dict[str, str | None] | None = None,
         fingerprint_meta: dict[str, Any] | None = None,
         evaluator_definition_id: str | None = None,
+        task_type: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize interactive optimizer.
@@ -227,6 +228,7 @@ class InteractiveOptimizer(BaseOptimizer):
         self.artifact_fingerprints = artifact_fingerprints
         self.fingerprint_meta = fingerprint_meta
         self.evaluator_definition_id = evaluator_definition_id
+        self.task_type = task_type
         self.optimizer_ready_timeout = _resolve_optimizer_ready_timeout(
             optimizer_ready_timeout
         )
@@ -275,6 +277,7 @@ class InteractiveOptimizer(BaseOptimizer):
                 artifact_fingerprints=self.artifact_fingerprints,
                 fingerprint_meta=self.fingerprint_meta,
                 evaluator_definition_id=self.evaluator_definition_id,
+                task_type=self.task_type,
             )
 
             response = await self._await_optimizer_service(

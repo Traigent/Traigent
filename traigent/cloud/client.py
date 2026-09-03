@@ -72,6 +72,7 @@ from .models import (
     TrialResultSubmission,
     TrialSuggestion,
     session_narrative_to_wire,
+    session_task_type_to_wire,
 )
 from .session_budgets import (
     ensure_cost_metric_for_budgeted_completed_submission,
@@ -2005,6 +2006,7 @@ class TraigentCloudClient(BaseTraigentClient):
         # cohorts. Shared with the orchestrator payload builder so the two paths
         # cannot drift apart again.
         payload.update(session_narrative_to_wire(request))
+        payload.update(session_task_type_to_wire(request))
         if request.budget is not None:
             payload["budget"] = request.budget
         if request.constraints is not None:
