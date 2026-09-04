@@ -5,20 +5,22 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import copy_context
 import inspect
 import json
 import math
 import os
+import threading
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from collections.abc import Mapping
 from collections.abc import Mapping as CollectionsMapping
 from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from traigent.api.types import ExampleResult
 from traigent.evaluators.dataset_registry import (
@@ -86,22 +88,88 @@ record_example_result = None  # type: ignore
 
 logger = get_logger(__name__)
 
+_T = TypeVar("_T")
+
 
 class _TaskBoundaryInterrupt:
     """Carries a KeyboardInterrupt/SystemExit back across an asyncio Task boundary.
 
-    Never returned to callers: ``_execute_async_with_timeout`` unwraps it and
-    re-raises the original exception in its own frame. It exists only so the
-    exception travels as a *value* through the Task that ``asyncio.wait_for``
-    creates, instead of as a raise that CPython would re-throw out of the event
-    loop. Not a dataclass or a NamedTuple, so it cannot be confused with any
-    legitimate agent return value.
+    Never returned to callers: the async and sync execution helpers unwrap it
+    and re-raise the original exception in their own frame. It exists only so
+    the exception travels as a *value* through an asyncio Future/Task instead
+    of as a raise that CPython would re-throw out of the event loop. Not a
+    dataclass or a NamedTuple, so it cannot be confused with any legitimate
+    agent return value.
     """
 
     __slots__ = ("exc",)
 
     def __init__(self, exc: BaseException) -> None:
         self.exc = exc
+
+
+class _SampleLeaseCleanupBoundary:
+    """Coordinate cancellation cleanup with an optional running sync worker.
+
+    A task that is cancelled while a synchronous user function is running in a
+    thread must return immediately, but its admission cannot be refunded until
+    that thread has stopped producing side effects.  The boundary is notified
+    from both sides and performs cleanup exactly once after both cancellation
+    and worker completion have been observed.
+    """
+
+    __slots__ = (
+        "_sample_lease",
+        "_execution_budget_lease",
+        "_lock",
+        "_worker_pending",
+        "_worker_settled",
+        "_cancelled",
+        "_cleaned",
+    )
+
+    def __init__(
+        self,
+        sample_lease: SampleBudgetLease | None,
+        execution_budget_lease: SampleBudgetLease | None,
+    ) -> None:
+        self._sample_lease = sample_lease
+        self._execution_budget_lease = execution_budget_lease
+        self._lock = threading.Lock()
+        self._worker_pending = False
+        self._worker_settled = False
+        self._cancelled = False
+        self._cleaned = False
+
+    def worker_started(self) -> None:
+        """Mark the point at which cancellation must wait for the worker."""
+        with self._lock:
+            self._worker_pending = True
+
+    def worker_done(self) -> None:
+        """Release the deferred cleanup boundary after the worker settles."""
+        with self._lock:
+            self._worker_pending = False
+            self._worker_settled = True
+            should_cleanup = self._cancelled and not self._cleaned
+            if should_cleanup:
+                self._cleaned = True
+        if should_cleanup:
+            BaseEvaluator._cleanup_sample_lease_on_cancel(
+                self._sample_lease, self._execution_budget_lease
+            )
+
+    def cancel(self) -> None:
+        """Request cleanup, deferring it only while a worker is live."""
+        with self._lock:
+            self._cancelled = True
+            should_cleanup = not self._worker_pending and not self._cleaned
+            if should_cleanup:
+                self._cleaned = True
+        if should_cleanup:
+            BaseEvaluator._cleanup_sample_lease_on_cancel(
+                self._sample_lease, self._execution_budget_lease
+            )
 
 
 _ACCURACY_REL_TOL = 1e-9
@@ -1072,6 +1140,11 @@ class BaseEvaluator(ABC):
         self.max_workers = max_workers
         self.custom_eval_func = custom_eval_func
         self.config = kwargs
+        # ``asyncio`` cancellation cannot interrupt a running user thread.
+        # Keep a process-local lane count independent of task lifetime so a
+        # timed-out/cancelled call still occupies one evaluator worker until
+        # its underlying thread future settles.
+        self._sync_worker_slots = threading.BoundedSemaphore(max_workers)
 
         # Initialize metric registry with defaults
         self._metric_registry: dict[str, Any] = {
@@ -1120,6 +1193,7 @@ class BaseEvaluator(ABC):
         self,
         budget: ExecutionBudget | None,
         config: dict[str, Any],
+        sample_lease: SampleBudgetLease | None = None,
     ) -> tuple[SampleBudgetLease | None, EvaluationResult | None]:
         """Start a direct evaluation against ``budget`` and admit its examples.
 
@@ -1132,6 +1206,11 @@ class BaseEvaluator(ABC):
         """
         if budget is None:
             return None, None
+        if sample_lease is not None:
+            raise ValueError(
+                "Pass either budget or sample_lease to evaluate(), not both; "
+                "the execution budget must remain the sole example authority."
+            )
 
         budget.begin_run()
         snapshot = budget.snapshot()
@@ -1150,14 +1229,86 @@ class BaseEvaluator(ABC):
         if snapshot.remaining_examples == float("inf"):
             return None, None
 
-        # A fresh lease gives standalone Local/Hybrid evaluators the same hard
-        # example admission that optimize() gets from its sample budget manager.
+        # The budget owns admission so concurrent direct evaluator calls cannot
+        # each snapshot and spend the same remaining example pool independently.
         # Do not layer a second lease over an orchestrator-owned one; the
         # orchestrator already clamps that pool from this same budget.
-        from traigent.core.sample_budget import SampleBudgetManager
+        return budget._create_example_lease(), None
 
-        manager = SampleBudgetManager(int(snapshot.remaining_examples))
-        return manager.create_lease("execution-budget-evaluation"), None
+    @staticmethod
+    def _new_sample_lease_cleanup_boundary(
+        sample_lease: SampleBudgetLease | None,
+        execution_budget_lease: SampleBudgetLease | None,
+    ) -> _SampleLeaseCleanupBoundary:
+        """Create a per-evaluation-operation cancellation boundary.
+
+        Cleanup is attached to the operation rather than to
+        ``asyncio.current_task()``.  This prevents callbacks from accumulating
+        when one task performs many evaluator calls and lets a worker future
+        defer cleanup past prompt task cancellation.
+        """
+        return _SampleLeaseCleanupBoundary(sample_lease, execution_budget_lease)
+
+    async def _acquire_sync_worker_slot(self, timeout: float | None = None) -> bool:
+        """Acquire a sync worker lane without blocking the event loop.
+
+        A lane can remain occupied while a timed-out synchronous user function
+        is still running.  Bound a subsequent admission wait when the public
+        evaluator has a timeout so one wedged worker cannot turn that timeout
+        into an unbounded evaluation hang.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout if timeout is not None else None
+        while not self._sync_worker_slots.acquire(blocking=False):
+            # Polling avoids creating a helper thread that could itself outlive
+            # a cancelled caller.  The interval is short relative to evaluator
+            # timeouts while keeping the uncontended path synchronous.
+            if deadline is not None:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    return False
+                await asyncio.sleep(min(0.001, remaining))
+            else:
+                await asyncio.sleep(0.001)
+        return True
+
+    @staticmethod
+    def _abort_execution_budget_evaluation(
+        execution_budget_lease: SampleBudgetLease | None,
+    ) -> None:
+        """Refund admitted examples when a direct evaluation is cancelled."""
+        BaseEvaluator._cleanup_sample_lease_on_cancel(
+            execution_budget_lease, execution_budget_lease
+        )
+
+    @staticmethod
+    def _cleanup_sample_lease_on_cancel(
+        sample_lease: SampleBudgetLease | None,
+        execution_budget_lease: SampleBudgetLease | None,
+    ) -> None:
+        """Refund only uncompleted admissions at an evaluator cancellation boundary."""
+        if sample_lease is not None:
+            sample_lease.rollback_uncompleted()
+        if execution_budget_lease is not None:
+            execution_budget_lease.finalize()
+
+    @staticmethod
+    async def _await_with_sample_lease_cleanup(
+        awaitable: Awaitable[_T],
+        sample_lease: SampleBudgetLease | None,
+        execution_budget_lease: SampleBudgetLease | None,
+        *,
+        cleanup_on_cancel: bool = True,
+    ) -> _T:
+        """Await one evaluator operation and clean up at its boundary."""
+        try:
+            return await awaitable
+        except asyncio.CancelledError:
+            if cleanup_on_cancel:
+                BaseEvaluator._cleanup_sample_lease_on_cancel(
+                    sample_lease, execution_budget_lease
+                )
+            raise
 
     @staticmethod
     def _execution_budget_cost(result: EvaluationResult) -> float | None:
@@ -1178,14 +1329,20 @@ class BaseEvaluator(ABC):
     ) -> EvaluationResult:
         """Debit one completed direct evaluation and surface the shared state."""
         if execution_budget_lease is not None:
+            execution_budget_lease.mark_completed(result.examples_consumed)
             execution_budget_lease.finalize()
         if budget is None:
             return result
 
         cost = BaseEvaluator._execution_budget_cost(result)
+        # An execution-budget lease accounts examples atomically at admission;
+        # only externally supplied sample leases need the result debit here.
+        examples = result.examples_consumed
+        if execution_budget_lease is not None and execution_budget_lease.consumed:
+            examples = 0
         budget.debit_trial(
             cost=cost,
-            examples=result.examples_consumed,
+            examples=examples,
             untracked=cost is None,
         )
         snapshot = budget.snapshot()
@@ -2034,6 +2191,10 @@ class BaseEvaluator(ABC):
         call_kwargs: dict[str, Any],
         executor: Any | None,
         trial_ctx: Any | None,
+        worker_started_callback: Callable[[], None] | None = None,
+        worker_done_callback: Callable[[], None] | None = None,
+        apply_timeout: bool = True,
+        bound_lane_wait: bool = False,
     ) -> tuple[Any, str | None]:
         """Execute sync function in thread pool with context propagation.
 
@@ -2044,6 +2205,7 @@ class BaseEvaluator(ABC):
             call_kwargs: Keyword arguments
             executor: Optional thread pool executor
             trial_ctx: Trial context to propagate to thread
+            bound_lane_wait: Bound worker-lane admission for public evaluations
 
         Returns:
             Tuple of (output, error_message)
@@ -2051,17 +2213,30 @@ class BaseEvaluator(ABC):
         from traigent.config.context import ConfigurationContext, set_trial_context
         from traigent.config.context import trial_context as trial_context_var
 
-        def call_with_config() -> Any:
-            # Re-establish context in thread (contextvars don't propagate)
+        caller_context = copy_context()
+
+        def call_with_config_inner() -> Any:
+            # Re-establish the explicit trial context in the copied context.
             trial_token = None
             if trial_ctx is not None:
                 trial_token = set_trial_context(trial_ctx)
             try:
                 with ConfigurationContext(config):
-                    return func(*call_args, **call_kwargs)
+                    try:
+                        return func(*call_args, **call_kwargs)
+                    except (KeyboardInterrupt, SystemExit) as exc:
+                        # Keep BaseException-valued worker failures from
+                        # crossing an asyncio Future/Task boundary.  The
+                        # caller unwraps this marker in its own frame.
+                        return _TaskBoundaryInterrupt(exc)
             finally:
                 if trial_token is not None:
                     trial_context_var.reset(trial_token)
+
+        def call_with_config() -> Any:
+            # Match ``asyncio.to_thread`` context propagation for every sync
+            # callable, including custom evaluators.
+            return caller_context.run(call_with_config_inner)
 
         temporary_executor = None
         submit_executor = executor
@@ -2072,20 +2247,90 @@ class BaseEvaluator(ABC):
             temporary_executor = ThreadPoolExecutor(max_workers=1)
             submit_executor = temporary_executor
 
+        slot_acquired = False
         try:
+            lane_timeout = (
+                self.timeout
+                if bound_lane_wait and apply_timeout and self.timeout
+                else None
+            )
+            slot_acquired = await self._acquire_sync_worker_slot(lane_timeout)
+            if not slot_acquired:
+                error_msg = (
+                    f"Sync evaluator worker lane unavailable after {self.timeout}s"
+                )
+                logger.warning(error_msg)
+                return None, error_msg
             future = submit_executor.submit(call_with_config)
-            deadline = (time.monotonic() + self.timeout) if self.timeout else None
+            if worker_started_callback is not None:
+                worker_started_callback()
 
-            while not future.done():
-                if deadline is not None and time.monotonic() >= deadline:
-                    future.cancel()
-                    error_msg = f"Function call timed out after {self.timeout}s"
-                    logger.warning(error_msg)
-                    return None, error_msg
-                await asyncio.sleep(0.001)
+            def on_worker_done(done_future: Any) -> None:
+                """Observe worker failures and release its evaluator lane."""
+                try:
+                    done_future.exception()
+                except BaseException:
+                    # The result is observed here; callers that were still
+                    # awaiting the wrapped Future receive the same failure.
+                    pass
+                try:
+                    self._sync_worker_slots.release()
+                except ValueError:  # pragma: no cover - defensive guard
+                    logger.error("Sync evaluator worker lane released twice")
+                if worker_done_callback is not None:
+                    try:
+                        worker_done_callback()
+                    except BaseException:
+                        # Cleanup runs from the executor callback thread and
+                        # must never turn into an unobserved callback failure.
+                        logger.exception("Sync worker cleanup callback failed")
 
-            return future.result(), None
+            future.add_done_callback(on_worker_done)
+            slot_acquired = False
+            async_future = asyncio.wrap_future(future)
+
+            def consume_late_result(done_future: asyncio.Future[Any]) -> None:
+                """Prevent a timed-out worker exception from becoming unobserved."""
+                try:
+                    done_future.exception()
+                except BaseException:
+                    pass
+
+            async_future.add_done_callback(consume_late_result)
+
+            # A timeout must not cancel a worker that is already running, and
+            # task cancellation must not release its sample admission while
+            # that worker can still execute.  Shielding the wrapped future
+            # gives both paths an explicit ownership boundary.
+            try:
+                if apply_timeout and self.timeout:
+                    try:
+                        output = await asyncio.wait_for(
+                            asyncio.shield(async_future), timeout=self.timeout
+                        )
+                    except TimeoutError:
+                        future.cancel()
+                        # A running thread cannot be interrupted.  The worker
+                        # completion callback retains the lane and any sample
+                        # admission until it settles, while this caller gets
+                        # its timeout at the configured wall-clock boundary.
+                        error_msg = f"Function call timed out after {self.timeout}s"
+                        logger.warning(error_msg)
+                        return None, error_msg
+                else:
+                    output = await asyncio.shield(async_future)
+            except asyncio.CancelledError:
+                # ``shield`` leaves the wrapped worker future alive.  Return
+                # cancellation promptly; its completion callback owns lane
+                # release and any deferred lease cleanup.
+                raise
+
+            if type(output) is _TaskBoundaryInterrupt:
+                raise output.exc
+            return output, None
         finally:
+            if slot_acquired:
+                self._sync_worker_slots.release()
             if temporary_executor is not None:
                 temporary_executor.shutdown(wait=False, cancel_futures=True)
 
@@ -2112,6 +2357,9 @@ class BaseEvaluator(ABC):
         config: dict[str, Any],
         input_data: dict[str, Any],
         executor: Any | None = None,
+        worker_started_callback: Callable[[], None] | None = None,
+        worker_done_callback: Callable[[], None] | None = None,
+        bound_lane_wait: bool = False,
     ) -> tuple[Any, str | None]:
         """Execute function with configuration context and timeout.
 
@@ -2126,6 +2374,7 @@ class BaseEvaluator(ABC):
             config: Configuration parameters
             input_data: Input data for the function
             executor: Optional thread pool executor for sync functions
+            bound_lane_wait: Whether sync worker admission honors ``timeout``
 
         Returns:
             Tuple of (output, error_message)
@@ -2145,7 +2394,15 @@ class BaseEvaluator(ABC):
                     )
                 else:
                     output, error = await self._execute_sync_in_thread(
-                        func, config, call_args, call_kwargs, executor, trial_ctx
+                        func,
+                        config,
+                        call_args,
+                        call_kwargs,
+                        executor,
+                        trial_ctx,
+                        worker_started_callback,
+                        worker_done_callback,
+                        bound_lane_wait=bound_lane_wait,
                     )
                     if error:
                         return None, error
@@ -2174,6 +2431,8 @@ class BaseEvaluator(ABC):
         example: EvaluationExample,
         index: int,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        sample_lease: SampleBudgetLease | None = None,
+        execution_budget_lease: SampleBudgetLease | None = None,
     ) -> tuple[Any, str | None]:
         """Evaluate a single example in non-detailed mode with tracing."""
         example_id = (
@@ -2182,24 +2441,39 @@ class BaseEvaluator(ABC):
             else f"example_{index}"
         )
         start_time = time.time()
+        cleanup_boundary = self._new_sample_lease_cleanup_boundary(
+            sample_lease, execution_budget_lease
+        )
 
-        with self._example_trace_context(example_id, index, example) as span:
-            output, error = await self._execute_function(
-                func, config, example.input_data, executor=None
-            )
-            execution_time = time.time() - start_time
+        try:
+            with self._example_trace_context(example_id, index, example) as span:
+                output, error = await self._execute_function(
+                    func,
+                    config,
+                    example.input_data,
+                    executor=None,
+                    worker_started_callback=cleanup_boundary.worker_started,
+                    worker_done_callback=cleanup_boundary.worker_done,
+                    bound_lane_wait=True,
+                )
+                execution_time = time.time() - start_time
 
-            if span is not None:
-                _, record_fn, available = _get_tracing_functions()
-                if available and record_fn is not None:
-                    record_fn(
-                        span,
-                        success=(error is None),
-                        actual_output=output,
-                        error=error,
-                        execution_time=execution_time,
-                    )
+                if span is not None:
+                    _, record_fn, available = _get_tracing_functions()
+                    if available and record_fn is not None:
+                        record_fn(
+                            span,
+                            success=(error is None),
+                            actual_output=output,
+                            error=error,
+                            execution_time=execution_time,
+                        )
+        except asyncio.CancelledError:
+            cleanup_boundary.cancel()
+            raise
 
+        if sample_lease:
+            sample_lease.mark_completed()
         if progress_callback:
             progress_callback(
                 index,
@@ -2218,6 +2492,7 @@ class BaseEvaluator(ABC):
         sample_lease: SampleBudgetLease | None,
         detailed: bool,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        execution_budget_lease: SampleBudgetLease | None = None,
     ) -> tuple[list[Any], list[str | None], list[ExampleResult | None], int, bool]:
         """Evaluate dataset sequentially (max_workers=1)."""
         outputs: list[Any] = []
@@ -2241,13 +2516,21 @@ class BaseEvaluator(ABC):
                         dataset,
                         executor=None,
                         progress_callback=progress_callback,
+                        sample_lease=sample_lease,
+                        execution_budget_lease=execution_budget_lease,
                     )
                     example_results.append(result)
                     outputs.append(result.actual_output)
                     errors.append(result.error_message)
                 else:
                     output, error = await self._evaluate_single_non_detailed(
-                        func, config, example, i, progress_callback
+                        func,
+                        config,
+                        example,
+                        i,
+                        progress_callback,
+                        sample_lease,
+                        execution_budget_lease,
                     )
                     outputs.append(output)
                     errors.append(error)
@@ -2297,7 +2580,7 @@ class BaseEvaluator(ABC):
         """Process exception from concurrent evaluation. Returns True to skip."""
         if isinstance(result, asyncio.CancelledError):
             if sample_lease:
-                sample_lease.rollback(1)
+                sample_lease.rollback_uncompleted()
             if progress_callback:
                 progress_callback(
                     index, {"success": False, "error": "sample_budget_cancelled"}
@@ -2373,8 +2656,6 @@ class BaseEvaluator(ABC):
             raise
         except asyncio.CancelledError:
             # S7497: CancelledError must be re-raised after cleanup
-            if sample_lease:
-                sample_lease.rollback(1)
             if progress_callback:
                 await self._safe_progress_callback(
                     progress_callback,
@@ -2397,6 +2678,8 @@ class BaseEvaluator(ABC):
                 errors_by_index,
                 example_results_by_index,
             )
+            if sample_lease:
+                sample_lease.mark_completed()
             if progress_callback:
                 await self._safe_progress_callback(
                     progress_callback,
@@ -2407,7 +2690,10 @@ class BaseEvaluator(ABC):
                 )
             return  # Error stored, continue to next task
 
-        # Success case
+        # Success case.  The single-example executor marks the admission
+        # before invoking progress callbacks; do not count it a second time.
+        if sample_lease and not detailed:
+            sample_lease.mark_completed()
         self._store_success_result(
             index,
             result,
@@ -2507,8 +2793,13 @@ class BaseEvaluator(ABC):
         results = await asyncio.gather(*tasks_list, return_exceptions=True)
         if sample_lease:
             for _index, result in zip(indices_list, results, strict=False):
-                if isinstance(result, asyncio.CancelledError):
-                    sample_lease.rollback(1)
+                # Detailed executors and custom evaluators mark their own
+                # terminal result before callbacks.  A non-detailed common
+                # executor returns its tuple directly, so account for that
+                # result here before returning all remaining admissions.
+                if isinstance(result, tuple):
+                    sample_lease.mark_completed()
+            sample_lease.rollback_uncompleted()
 
     def _collect_partial_results(
         self,
@@ -2552,6 +2843,7 @@ class BaseEvaluator(ABC):
         sample_lease: SampleBudgetLease | None = None,
         detailed: bool = False,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
+        execution_budget_lease: SampleBudgetLease | None = None,
     ) -> tuple[list[Any], list[str | None], list[ExampleResult | None], int, bool]:
         """Evaluate function on entire dataset with optional detailed tracking.
 
@@ -2575,11 +2867,23 @@ class BaseEvaluator(ABC):
 
         if self.max_workers == 1:
             return await self._evaluate_batch_sequential(
-                func, config, dataset, sample_lease, detailed, progress_callback
+                func,
+                config,
+                dataset,
+                sample_lease,
+                detailed,
+                progress_callback,
+                execution_budget_lease,
             )
 
         return await self._evaluate_batch_concurrent(
-            func, config, dataset, sample_lease, detailed, progress_callback
+            func,
+            config,
+            dataset,
+            sample_lease,
+            detailed,
+            progress_callback,
+            execution_budget_lease,
         )
 
     async def _evaluate_batch_concurrent(
@@ -2590,6 +2894,7 @@ class BaseEvaluator(ABC):
         sample_lease: SampleBudgetLease | None,
         detailed: bool,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        execution_budget_lease: SampleBudgetLease | None = None,
     ) -> tuple[list[Any], list[str | None], list[ExampleResult | None], int, bool]:
         """Execute concurrent batch evaluation."""
         outputs_by_index: dict[int, Any] = {}
@@ -2611,6 +2916,7 @@ class BaseEvaluator(ABC):
                 errors_by_index,
                 example_results_by_index,
                 semaphore,
+                execution_budget_lease,
             )
         except TrialPrunedError as e:
             # Attach partial results that were collected before pruning
@@ -2646,6 +2952,7 @@ class BaseEvaluator(ABC):
         errors_by_index: dict[int, str | None],
         example_results_by_index: dict[int, ExampleResult | None],
         semaphore: asyncio.Semaphore,
+        execution_budget_lease: SampleBudgetLease | None = None,
     ) -> tuple[int, bool]:
         """Run concurrent task scheduling and processing loop."""
         pending_tasks: dict[asyncio.Task[Any], int] = {}
@@ -2664,10 +2971,25 @@ class BaseEvaluator(ABC):
                         dataset,
                         executor=None,
                         progress_callback=progress_callback,
+                        sample_lease=sample_lease,
+                        execution_budget_lease=execution_budget_lease,
                     )
-                return await self._execute_function(
-                    func, config, example.input_data, executor=None
+                cleanup_boundary = self._new_sample_lease_cleanup_boundary(
+                    sample_lease, execution_budget_lease
                 )
+                try:
+                    return await self._execute_function(
+                        func,
+                        config,
+                        example.input_data,
+                        executor=None,
+                        worker_started_callback=cleanup_boundary.worker_started,
+                        worker_done_callback=cleanup_boundary.worker_done,
+                        bound_lane_wait=True,
+                    )
+                except asyncio.CancelledError:
+                    cleanup_boundary.cancel()
+                    raise
 
         def schedule_more() -> bool:
             """Schedule more tasks. Returns True if budget exhausted."""
@@ -2683,29 +3005,33 @@ class BaseEvaluator(ABC):
 
         exhausted = schedule_more()
 
-        while pending_tasks:
-            done, _ = await asyncio.wait(
-                pending_tasks.keys(), return_when=asyncio.FIRST_COMPLETED
-            )
-
-            for task in done:
-                index = pending_tasks.pop(task)
-                await self._handle_task_result(
-                    task,
-                    index,
-                    examples,
-                    detailed,
-                    sample_lease,
-                    progress_callback,
-                    outputs_by_index,
-                    errors_by_index,
-                    example_results_by_index,
-                    pending_tasks,
+        try:
+            while pending_tasks:
+                done, _ = await asyncio.wait(
+                    pending_tasks.keys(), return_when=asyncio.FIRST_COMPLETED
                 )
-                consumed += 1
 
-            if not exhausted:
-                exhausted = schedule_more()
+                for task in done:
+                    index = pending_tasks.pop(task)
+                    await self._handle_task_result(
+                        task,
+                        index,
+                        examples,
+                        detailed,
+                        sample_lease,
+                        progress_callback,
+                        outputs_by_index,
+                        errors_by_index,
+                        example_results_by_index,
+                        pending_tasks,
+                    )
+                    consumed += 1
+
+                if not exhausted:
+                    exhausted = schedule_more()
+        except asyncio.CancelledError:
+            await self._cancel_pending_tasks(pending_tasks, sample_lease)
+            raise
 
         return consumed, exhausted
 
@@ -2804,22 +3130,46 @@ class BaseEvaluator(ABC):
         config: dict[str, Any],
         example: EvaluationExample,
         example_id: str,
+        worker_started_callback: Callable[[], None] | None = None,
+        worker_done_callback: Callable[[], None] | None = None,
     ) -> ExampleResult:
         """Run custom evaluator function with proper context."""
         from traigent.config.context import ConfigurationContext, get_trial_context
 
         if self.custom_eval_func is None:
             raise RuntimeError("custom_eval_func must be set before evaluation")
+        custom_eval_func = self.custom_eval_func
 
         trial_ctx = get_trial_context()
         capture_key = self._get_capture_key_context()
         with _maybe_restore_trial_context(trial_ctx):
             with ConfigurationContext(config):
                 with capture_key(example_id):
-                    if is_coroutine_callable(self.custom_eval_func):
-                        result = await self.custom_eval_func(func, config, example)
+                    if is_coroutine_callable(custom_eval_func):
+                        result = await custom_eval_func(func, config, example)
                     else:
-                        result = self.custom_eval_func(func, config, example)
+
+                        def run_custom_evaluator() -> Any:
+                            # ``capture_key`` uses threading.local, which is
+                            # not propagated by ``copy_context``.  Re-enter it
+                            # in the worker so captured responses keep their
+                            # per-example correlation key.
+                            with capture_key(example_id):
+                                return custom_eval_func(func, config, example)
+
+                        result, error = await self._execute_sync_in_thread(
+                            run_custom_evaluator,
+                            config,
+                            (),
+                            {},
+                            None,
+                            trial_ctx,
+                            worker_started_callback=worker_started_callback,
+                            worker_done_callback=worker_done_callback,
+                            apply_timeout=False,
+                        )
+                        if error is not None:
+                            raise RuntimeError(error)
 
         if not isinstance(result, ExampleResult):
             raise ValueError(
@@ -3173,6 +3523,8 @@ class BaseEvaluator(ABC):
         span: Any,
         example_index: int,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        sample_lease: SampleBudgetLease | None = None,
+        execution_budget_lease: SampleBudgetLease | None = None,
     ) -> ExampleResult:
         """Try running the custom evaluator, handling exceptions appropriately."""
         # Exceptions that should be re-raised without handling
@@ -3184,9 +3536,21 @@ class BaseEvaluator(ABC):
             CoreTraigentError,
             ConfigurationError,
         )
+        cleanup_boundary = self._new_sample_lease_cleanup_boundary(
+            sample_lease, execution_budget_lease
+        )
         try:
-            result = await self._run_custom_evaluator(func, config, example, example_id)
+            result = await self._run_custom_evaluator(
+                func,
+                config,
+                example,
+                example_id,
+                cleanup_boundary.worker_started,
+                cleanup_boundary.worker_done,
+            )
             self._record_example_trace(span, result)
+            if sample_lease:
+                sample_lease.mark_completed()
             if progress_callback:
                 progress_callback(
                     example_index,
@@ -3198,6 +3562,9 @@ class BaseEvaluator(ABC):
                     },
                 )
             return result
+        except asyncio.CancelledError:
+            cleanup_boundary.cancel()
+            raise
         except passthrough_exceptions:
             raise
         except Exception as e:
@@ -3205,6 +3572,8 @@ class BaseEvaluator(ABC):
             logger.warning(f"Custom evaluation failed for example {example_id}: {e}")
             result = self._create_failure_result(example_id, example, execution_time, e)
             self._record_example_trace(span, result)
+            if sample_lease:
+                sample_lease.mark_completed()
             return result
 
     async def _evaluate_single_detailed(
@@ -3216,6 +3585,8 @@ class BaseEvaluator(ABC):
         dataset: Dataset,
         executor: Any | None = None,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
+        sample_lease: SampleBudgetLease | None = None,
+        execution_budget_lease: SampleBudgetLease | None = None,
     ) -> ExampleResult:
         """Evaluate function on single example with detailed tracking.
 
@@ -3246,14 +3617,29 @@ class BaseEvaluator(ABC):
                     span,
                     example_index,
                     progress_callback,
+                    sample_lease,
+                    execution_budget_lease,
                 )
 
             # Default evaluation with correlation key
             capture_key = self._get_capture_key_context()
-            with capture_key(example_id):
-                raw_output, error = await self._execute_function(
-                    func, config, example.input_data, executor
-                )
+            cleanup_boundary = self._new_sample_lease_cleanup_boundary(
+                sample_lease, execution_budget_lease
+            )
+            try:
+                with capture_key(example_id):
+                    raw_output, error = await self._execute_function(
+                        func,
+                        config,
+                        example.input_data,
+                        executor,
+                        worker_started_callback=cleanup_boundary.worker_started,
+                        worker_done_callback=cleanup_boundary.worker_done,
+                        bound_lane_wait=True,
+                    )
+            except asyncio.CancelledError:
+                cleanup_boundary.cancel()
+                raise
             execution_time = time.time() - start_time
 
             # Strict 2-tuple unpack: a (output, numeric-metrics) return becomes
@@ -3278,6 +3664,8 @@ class BaseEvaluator(ABC):
             # Record to tracing span
             self._record_example_trace(span, result)
 
+            if sample_lease:
+                sample_lease.mark_completed()
             if progress_callback:
                 progress_payload = self._build_progress_payload(
                     example_id, example, result, config, error, dataset, example_index
@@ -3834,7 +4222,9 @@ class SimpleScoringEvaluator(BaseEvaluator):
             EvaluationError: If evaluation fails
         """
         execution_budget_lease, blocked_result = (
-            self._prepare_execution_budget_evaluation(budget, config)
+            self._prepare_execution_budget_evaluation(
+                budget, config, sample_lease=sample_lease
+            )
         )
         if blocked_result is not None:
             return blocked_result
@@ -3874,6 +4264,9 @@ class SimpleScoringEvaluator(BaseEvaluator):
                     i,
                 )
                 break
+            cleanup_boundary = self._new_sample_lease_cleanup_boundary(
+                sample_lease, execution_budget_lease
+            )
             try:
                 # Clear any previous captured responses before evaluation
                 if self.capture_llm_metrics and self._metrics_available:
@@ -3881,14 +4274,21 @@ class SimpleScoringEvaluator(BaseEvaluator):
 
                 # Track timing for this example
                 example_start_time = time.time()
-
                 # Execute function with configuration context
-                with _maybe_restore_trial_context(trial_ctx):
-                    with ConfigurationContext(config):
-                        if is_coroutine_callable(func):
-                            raw_output = await func(**example.input_data)
-                        else:
-                            raw_output = func(**example.input_data)
+                try:
+                    with _maybe_restore_trial_context(trial_ctx):
+                        with ConfigurationContext(config):
+                            # Preserve SimpleScoringEvaluator's historical
+                            # contract: expand dataset fields as kwargs,
+                            # execute sync callables in the caller task, and
+                            # do not apply BaseEvaluator's dormant timeout.
+                            if is_coroutine_callable(func):
+                                raw_output = await func(**example.input_data)
+                            else:
+                                raw_output = func(**example.input_data)
+                except asyncio.CancelledError:
+                    cleanup_boundary.cancel()
+                    raise
 
                 # Strict 2-tuple unpack: a (output, numeric-metrics) return
                 # becomes output[0] for ALL downstream purposes; the metrics
@@ -3934,6 +4334,8 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 )
 
                 example_results.append(example_result)
+                if sample_lease:
+                    sample_lease.mark_completed()
                 if progress_callback:
                     progress_callback(
                         i,
@@ -3949,6 +4351,11 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 errors.append(None)
 
             except asyncio.CancelledError:
+                # Scoring and metric callbacks run after admission and may
+                # raise cancellation directly.  Clean up here as well as at
+                # awaited-operation boundaries because an outer orchestrator
+                # can catch this cancellation and return a partial result.
+                cleanup_boundary.cancel()
                 raise
             except TrialPrunedError as e:
                 if example_results or e.example_results:
@@ -3958,6 +4365,8 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 logger.warning(f"Evaluation failed for example {i}: {e}")
                 failed_result = self._create_failed_example_result(example, i, e)
                 example_results.append(failed_result)
+                if sample_lease:
+                    sample_lease.mark_completed()
                 if progress_callback:
                     progress_callback(
                         i,
@@ -3973,10 +4382,16 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 errors.append(str(e))
 
         if budget_exhausted and progress_callback:
-            progress_callback(
-                len(example_results),
-                {"success": None, "stop_reason": "sample_budget_exhausted"},
-            )
+            try:
+                progress_callback(
+                    len(example_results),
+                    {"success": None, "stop_reason": "sample_budget_exhausted"},
+                )
+            except asyncio.CancelledError:
+                self._cleanup_sample_lease_on_cancel(
+                    sample_lease, execution_budget_lease
+                )
+                raise
 
         duration = time.time() - start_time
 

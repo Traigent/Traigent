@@ -27,7 +27,7 @@ from traigent.utils.batch_processing import (
     PartialResultsManager,
     process_with_retry_and_recovery,
 )
-from traigent.utils.retry import RetryConfig, RetryStrategy
+from traigent.utils.retry import RetryConfig, RetryHandler, RetryResult, RetryStrategy
 
 # Test fixtures
 
@@ -693,20 +693,75 @@ class TestProcessWithRetryAndRecovery:
     """Test process_with_retry_and_recovery function."""
 
     @pytest.mark.asyncio
-    async def test_basic_retry_and_recovery(self, mock_batch_processor_function):
+    async def test_basic_retry_and_recovery(
+        self, mock_batch_processor_function, caplog
+    ):
         """Test basic retry and recovery functionality."""
         items = [{"id": f"item_{i}", "value": i, "complexity": 1} for i in range(10)]
 
-        results = await process_with_retry_and_recovery(
-            items=items,
-            processor_func=mock_batch_processor_function,
-            max_retries=3,
-            retry_delay=0.1,
-            checkpoint_interval=5,
-        )
+        with caplog.at_level("INFO", logger="traigent.utils.batch_processing"):
+            results = await process_with_retry_and_recovery(
+                items=items,
+                processor_func=mock_batch_processor_function,
+                max_retries=3,
+                retry_delay=0.1,
+                checkpoint_interval=5,
+            )
 
         assert len(results) == len(items)
         assert all(isinstance(r, InvocationResult) for r in results)
+        assert any(
+            "Batch processing completed successfully" in record.message
+            for record in caplog.records
+        )
+
+    @pytest.mark.parametrize(
+        ("retry_success", "expected_level", "expected_message"),
+        [
+            (False, "ERROR", "Batch processing failed after 2 attempts"),
+            (
+                True,
+                "WARNING",
+                "Batch processing completed with partial results after 2 attempts",
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_retry_result_failure_logs_partial_and_synthesizes_failures(
+        self,
+        monkeypatch,
+        caplog,
+        retry_success,
+        expected_level,
+        expected_message,
+    ):
+        """Retry failure/partial results log accurately and synthesize failures."""
+        items = [{"id": "item-0"}, {"id": "item-1"}]
+
+        async def failed_retry_result(self, func, *args, **kwargs):
+            return RetryResult(success=retry_success, result=False, attempts=2)
+
+        monkeypatch.setattr(
+            RetryHandler, "execute_async_with_result", failed_retry_result
+        )
+
+        with caplog.at_level("WARNING", logger="traigent.utils.batch_processing"):
+            results = await process_with_retry_and_recovery(
+                items=items,
+                processor_func=lambda _batch: [],
+                max_retries=1,
+                retry_delay=0.0,
+            )
+
+        assert len(results) == len(items)
+        assert all(not result.is_successful for result in results)
+        assert all(
+            result.metadata.get("max_retries_exceeded") is True for result in results
+        )
+        assert any(
+            record.levelname == expected_level and expected_message in record.message
+            for record in caplog.records
+        )
 
     @pytest.mark.asyncio
     async def test_retry_with_failures(self, mock_batch_processor_function):

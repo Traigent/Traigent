@@ -1846,7 +1846,9 @@ class LocalEvaluator(BaseEvaluator):
         self.validate_config(config)
 
         execution_budget_lease, blocked_result = (
-            self._prepare_execution_budget_evaluation(budget, config)
+            self._prepare_execution_budget_evaluation(
+                budget, config, sample_lease=sample_lease
+            )
         )
         if blocked_result is not None:
             return blocked_result
@@ -1876,13 +1878,19 @@ class LocalEvaluator(BaseEvaluator):
             example_results,
             consumed_examples,
             budget_exhausted,
-        ) = await self._evaluate_batch(
-            func,
-            config,
-            dataset,
-            sample_lease=sample_lease,
-            detailed=self.detailed,
-            progress_callback=progress_callback,
+        ) = await self._await_with_sample_lease_cleanup(
+            self._evaluate_batch(
+                func,
+                config,
+                dataset,
+                sample_lease=sample_lease,
+                detailed=self.detailed,
+                progress_callback=progress_callback,
+                execution_budget_lease=execution_budget_lease,
+            ),
+            sample_lease,
+            execution_budget_lease,
+            cleanup_on_cancel=False,
         )
 
         # Collect expected outputs
@@ -1931,16 +1939,20 @@ class LocalEvaluator(BaseEvaluator):
 
         # Track metrics for each example output using helper method
         for i, output in enumerate(outputs):
-            example_metric = await self._process_single_output(
-                output=output,
-                index=i,
-                config=config,
-                dataset=dataset,
-                errors=errors,
-                example_results=example_results,
-                all_captured_responses=all_captured_responses,
-                progress_callback=progress_callback,
-                metric_errors=metric_errors,
+            example_metric = await self._await_with_sample_lease_cleanup(
+                self._process_single_output(
+                    output=output,
+                    index=i,
+                    config=config,
+                    dataset=dataset,
+                    errors=errors,
+                    example_results=example_results,
+                    all_captured_responses=all_captured_responses,
+                    progress_callback=progress_callback,
+                    metric_errors=metric_errors,
+                ),
+                sample_lease,
+                execution_budget_lease,
             )
             metrics_tracker.add_example_metrics(example_metric)
 

@@ -735,7 +735,9 @@ class SyncManager:
         # Step 1: create the typed session. The session is NOT name-deduped by
         # the backend, so reusing a saved id on resume is what prevents a
         # duplicate session/experiment.
-        session_cloud_id = prior_state.get("cloud_session_id") if reuse else None
+        session_cloud_id = self._optional_context_id(
+            prior_state.get("cloud_session_id") if reuse else None
+        )
         experiment_id = prior_state.get("cloud_experiment_id") if reuse else None
         experiment_run_id = (
             prior_state.get("cloud_experiment_run_id") if reuse else None
@@ -748,11 +750,17 @@ class SyncManager:
                     f"Session create failed: {create_result['error']}"
                 )
                 return
-            session_cloud_id = create_result["session_id"]
+            session_cloud_id = str(create_result["session_id"])
             experiment_id = create_result["experiment_id"]
             experiment_run_id = create_result["experiment_run_id"]
             project_id = create_result.get("project_id")
             tenant_id = create_result.get("tenant_id")
+
+        # A resumed state can predate the persisted experiment id. Apply the
+        # same session-id fallback as _sync_create_session; never build a
+        # successful URL with ``/None``.
+        experiment_id = self._experiment_id_for_session(experiment_id, session_cloud_id)
+        experiment_run_id = self._optional_context_id(experiment_run_id)
         sync_result["cloud_session_id"] = session_cloud_id
         sync_result["cloud_experiment_id"] = experiment_id
         sync_result["cloud_experiment_run_id"] = experiment_run_id
@@ -1043,6 +1051,11 @@ class SyncManager:
             return None
         normalized = str(value).strip()
         return normalized or None
+
+    @staticmethod
+    def _experiment_id_for_session(experiment_id: Any, session_id: str) -> str:
+        """Use the session id when a legacy state lacks its experiment id."""
+        return SyncManager._optional_context_id(experiment_id) or session_id
 
     def _sync_next_trial(self, session_id: str) -> dict[str, Any]:
         """Allocate a backend-minted trial slot for a backend_guided session.
