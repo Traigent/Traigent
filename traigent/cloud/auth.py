@@ -1737,6 +1737,17 @@ class AuthManager:
             return _BackendKeyValidationFailure("backend reported key invalid")
 
         payload = _parse_validation_payload(data, raw_body)
+        # Every /keys/validate failure body carries a static setup-guidance
+        # envelope under "remediation" whose key names alone - "required_scopes",
+        # "required_permissions" - satisfy the scope markers below and in
+        # _classify_session_creation_failure, turning every generic 401 into
+        # "insufficient scope" and steering users to grant scopes that
+        # /keys/validate never checks. The guidance is request-independent, so
+        # drop it before it can reach the marker haystack, the propagated
+        # detail, or the excerpt.
+        if "remediation" in payload:
+            payload = {k: v for k, v in payload.items() if k != "remediation"}
+            raw_body = json.dumps(payload)
         message = _payload_message(payload)
         code = payload.get("error_code") or payload.get("code")
         body_text = " ".join(
