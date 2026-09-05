@@ -200,6 +200,8 @@ class InteractiveOptimizer(BaseOptimizer):
         fingerprint_meta: dict[str, Any] | None = None,
         evaluator_definition_id: str | None = None,
         task_type: str | None = None,
+        *,
+        dataset: Any = None,
         **kwargs: Any,
     ) -> None:
         """Initialize interactive optimizer.
@@ -211,6 +213,21 @@ class InteractiveOptimizer(BaseOptimizer):
             dataset_metadata: Metadata about the dataset (size, type, etc.)
             optimization_strategy: Strategy for optimization
             context: Optional TraigentConfig for global settings
+            artifact_fingerprints: Explicit content-free fingerprints
+                (``{"dataset": ..., "agent": ..., "evaluator": ...,
+                "config_space": ...}``). Takes precedence over `dataset`
+                below -- if you pass this, it is used as-is.
+            dataset: Optional materialized dataset (a ``Dataset`` instance,
+                a list of examples, or a mapping with an ``examples``
+                list) used ONLY to compute the ``dataset`` slot of
+                `artifact_fingerprints` when `artifact_fingerprints` is not
+                already given. Never sent over the wire -- only its
+                content-addressed sha256 fingerprint is. A bare
+                generator/iterator is treated as unmaterialized and is
+                never consumed here; pass a list or `Dataset` to get a
+                fingerprint. Absent/unmaterialized data yields no
+                fingerprint -- it is never invented from `dataset_metadata`
+                alone.
             **kwargs: Additional optimizer configuration
 
         Raises:
@@ -225,6 +242,17 @@ class InteractiveOptimizer(BaseOptimizer):
         self.remote_service = remote_service
         self.dataset_metadata = dataset_metadata or {}
         self.optimization_strategy = optimization_strategy
+        if artifact_fingerprints is None and dataset is not None:
+            from traigent.utils.artifact_fingerprints import (
+                build_dataset_only_fingerprint_payload,
+            )
+
+            fingerprint_payload = build_dataset_only_fingerprint_payload(dataset)
+            if fingerprint_payload is not None:
+                artifact_fingerprints = fingerprint_payload["artifact_fingerprints"]
+                fingerprint_meta = (
+                    fingerprint_meta or fingerprint_payload["fingerprint_meta"]
+                )
         self.artifact_fingerprints = artifact_fingerprints
         self.fingerprint_meta = fingerprint_meta
         self.evaluator_definition_id = evaluator_definition_id

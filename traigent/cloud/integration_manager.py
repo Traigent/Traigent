@@ -351,6 +351,7 @@ class IntegrationManager:
                 objectives=optimization_request.objectives,
                 dataset_metadata=privacy_metadata,
                 max_trials=optimization_request.max_trials,
+                dataset=optimization_request.dataset,
             )
 
             # Step 5: Register with session lifecycle manager

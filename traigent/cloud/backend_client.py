@@ -1519,6 +1519,8 @@ class BackendIntegratedClient:
         dataset_metadata: dict[str, Any],
         max_trials: int = 50,
         user_id: str | None = None,
+        *,
+        dataset: Any = None,
     ) -> tuple[str, str, str]:
         """Create privacy-first optimization session.
         Delegates to privacy_operations module."""
@@ -1531,6 +1533,7 @@ class BackendIntegratedClient:
                 dataset_metadata,
                 max_trials,
                 user_id,
+                dataset=dataset,
             ),
         )
 
@@ -1542,6 +1545,8 @@ class BackendIntegratedClient:
         dataset_metadata: dict[str, Any],
         max_trials: int = 50,
         user_id: str | None = None,
+        *,
+        dataset: Any = None,
     ) -> tuple[str, str, str]:
         """Compatibility shim for legacy tests expecting the deprecated method name."""
 
@@ -1555,6 +1560,7 @@ class BackendIntegratedClient:
             dataset_metadata,
             max_trials,
             user_id,
+            dataset=dataset,
         )
 
     async def get_next_privacy_trial(

@@ -72,6 +72,41 @@ def _extract_examples(dataset_or_examples: Any) -> list[Any]:
     return []
 
 
+def is_dataset_materialized(dataset_or_examples: Any) -> bool:
+    """Return True when the dataset's example content is already realized in
+    memory (a list, or a Dataset-like object/mapping whose ``examples`` is
+    already a list) -- i.e. safe to fingerprint without draining a
+    single-use iterator the caller may still need to consume itself.
+
+    A bare ``Iterable`` with no realized ``examples`` attribute (a
+    generator, a database cursor, ...) returns False: fingerprinting it
+    would silently consume it via :func:`_extract_examples`'s
+    ``list(...)`` fallback. Callers that only have such an iterable MUST
+    send ``None`` for the dataset fingerprint rather than draining it.
+    """
+    if dataset_or_examples is None or isinstance(
+        dataset_or_examples, (str, bytes, bytearray)
+    ):
+        return False
+
+    if isinstance(dataset_or_examples, list):
+        return True
+
+    if isinstance(dataset_or_examples, Mapping):
+        examples = dataset_or_examples.get("examples")
+        if examples is None:
+            # Falls through to `_extract_examples`'s "wrap self in a list"
+            # branch -- no iteration, so nothing to drain.
+            return True
+        return isinstance(examples, list)
+
+    examples = getattr(dataset_or_examples, "examples", None)
+    if examples is not None:
+        return isinstance(examples, list)
+
+    return False
+
+
 def _example_input_expected(example: Any) -> tuple[Any, Any]:
     if isinstance(example, Mapping):
         input_data = example.get("input", example.get("input_data"))
@@ -114,6 +149,87 @@ def compute_dataset_fingerprint(dataset_or_examples: Any) -> str | None:
     """Return the fp1 dataset fingerprint, or None when unavailable."""
 
     return _compute_dataset_fingerprint_and_count(dataset_or_examples)[0]
+
+
+def _has_example_content(dataset_or_examples: Any) -> bool:
+    """Return True when at least one extracted example carries real content.
+
+    "Content" is an input or an expected output -- the only two fields
+    :func:`_example_input_expected` canonicalizes, and therefore the only two
+    the dataset digest is computed over. An example that yields ``(None,
+    None)`` contributes nothing that distinguishes one dataset from another,
+    so a set consisting entirely of such examples is not fingerprintable
+    content and must produce no fingerprint at all.
+
+    Safe to call only after :func:`is_dataset_materialized` returns True --
+    it extracts examples, which would drain a single-use iterator.
+    """
+    for example in _extract_examples(dataset_or_examples):
+        input_data, expected_output = _example_input_expected(example)
+        if input_data is not None or expected_output is not None:
+            return True
+    return False
+
+
+def build_dataset_only_fingerprint_payload(
+    dataset_or_examples: Any,
+) -> dict[str, dict[str, Any]] | None:
+    """Build the additive session-create fingerprint payload for callers
+    that have ONLY a (possibly materialized) dataset and no func/evaluator/
+    configuration_space to fingerprint -- e.g. the hybrid/privacy
+    create-session path and the direct ``InteractiveOptimizer`` path, where
+    the SDK never receives the decorated function or evaluator at all.
+
+    Unlike :func:`build_artifact_fingerprints`, this never fills the
+    ``evaluator`` slot with the "no evaluator provided" sentinel fingerprint
+    (``compute_evaluator_fingerprint``'s fallback to ``fingerprint_text(
+    "none")``) -- callers here have no evaluator information one way or the
+    other, so that slot stays genuinely absent rather than a fixed
+    placeholder value.
+
+    Returns ``None`` (send nothing) when `dataset_or_examples` is not
+    already materialized (see :func:`is_dataset_materialized`), carries no
+    example CONTENT, or produces no fingerprint -- "missing is absence":
+    never invent a fingerprint from metadata, and never drain a single-use
+    iterator to get one.
+
+    The content check is load-bearing, not defensive padding. A bare mapping
+    with no ``examples`` key -- a metadata-only descriptor such as
+    ``{"name": ..., "size": ...}``, which is exactly the shape the typed
+    session already sends as ``dataset_metadata`` -- falls through
+    :func:`_extract_examples`'s "wrap self as one example" branch and
+    fingerprints as a single example whose input and expected output are both
+    ``None``. Every such descriptor therefore hashes to the SAME digest, so
+    unrelated datasets would collide onto one identity. Since the backend
+    keys dataset identity off this digest, that would silently merge distinct
+    datasets into a single optimization history -- the precise defect this
+    fingerprint exists to prevent. No content, no fingerprint.
+    """
+    if not is_dataset_materialized(dataset_or_examples):
+        return None
+
+    if not _has_example_content(dataset_or_examples):
+        return None
+
+    dataset_fingerprint, dataset_example_count = _compute_dataset_fingerprint_and_count(
+        dataset_or_examples
+    )
+    if dataset_fingerprint is None:
+        return None
+
+    return {
+        "artifact_fingerprints": {
+            "dataset": dataset_fingerprint,
+            "agent": None,
+            "evaluator": None,
+            "config_space": None,
+        },
+        "fingerprint_meta": {
+            "algorithm": FP_ALGORITHM,
+            "dataset_example_count": dataset_example_count,
+            "source_available": False,
+        },
+    }
 
 
 def _compute_agent_fingerprint_and_source(
