@@ -89,7 +89,8 @@ except ImportError:
 
     def _mlflow_unavailable(*args: Any, **kwargs: Any) -> Any:
         raise ImportError(
-            "MLflow integration is unavailable. Install the optional `mlflow` dependency."
+            "MLflow integration is unavailable. Install `traigent[integrations]` "
+            "or install `mlflow-skinny` and `pandas`."
         )
 
     compare_traigent_runs = _mlflow_unavailable
@@ -181,7 +182,8 @@ except (ImportError, KeyError, RuntimeError):
 
     def _dspy_unavailable(*args: Any, **kwargs: Any) -> Any:
         raise ImportError(
-            "DSPy integration is unavailable. Install the optional `dspy-ai` dependency."
+            "DSPy integration is unavailable. Traigent does not bundle DSPy; bring your "
+            "own compatible installation only after reviewing its dependency security."
         )
 
     DSPyPromptOptimizer = _dspy_unavailable  # type: ignore[assignment, misc]
