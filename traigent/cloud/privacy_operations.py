@@ -112,7 +112,8 @@ class PrivacyOperations:
 
         logger.info(f"Creating privacy-first optimization session for {function_name}")
 
-        # Dataset identity for portal grouping is the content fingerprint
+        # Dataset identity for portal grouping is the DECLARED `dataset_id`; the
+        # fingerprint below is provenance only. The content fingerprint
         # alone (never the name/label) -- and only when the caller actually
         # handed us materialized content. Missing stays missing: never
         # invent a fingerprint from dataset_metadata, and never drain a

@@ -142,8 +142,9 @@ async def test_no_materialized_dataset_leaves_fingerprint_absent():
 
 @pytest.mark.asyncio
 async def test_same_content_different_names_same_fingerprint_on_the_wire():
-    """Owner decision: dataset identity is the content fingerprint alone,
-    never the name/label."""
+    """The fingerprint is content-derived PROVENANCE: same content, same digest,
+    regardless of what the dataset is called. Identity is the declared
+    `dataset_id` (see test_dataset_declared_identity.py), never this digest."""
     examples = [_example({"question": "a"}, "answer-a")]
 
     client_a = _CapturingClient()

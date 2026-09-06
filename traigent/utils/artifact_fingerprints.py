@@ -200,10 +200,12 @@ def build_dataset_only_fingerprint_payload(
     :func:`_extract_examples`'s "wrap self as one example" branch and
     fingerprints as a single example whose input and expected output are both
     ``None``. Every such descriptor therefore hashes to the SAME digest, so
-    unrelated datasets would collide onto one identity. Since the backend
-    keys dataset identity off this digest, that would silently merge distinct
-    datasets into a single optimization history -- the precise defect this
-    fingerprint exists to prevent. No content, no fingerprint.
+    unrelated datasets would collide onto one digest. Dataset IDENTITY is the
+    client's declared id, not this digest -- a content hash cannot be identity
+    because it changes whenever the dataset is edited. But a digest that is
+    identical for every metadata-only descriptor is worthless as PROVENANCE
+    too: it would report "content unchanged" across genuinely different
+    datasets. No content, no fingerprint.
     """
     if not is_dataset_materialized(dataset_or_examples):
         return None

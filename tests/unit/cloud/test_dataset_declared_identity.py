@@ -20,6 +20,7 @@ since the label-derivation rule only depends on
 """
 
 from __future__ import annotations
+from types import SimpleNamespace
 
 from unittest.mock import Mock
 
@@ -228,3 +229,34 @@ def test_session_creation_request_rejects_oversized_dataset_id():
 def test_session_creation_request_strips_dataset_id():
     request = SessionCreationRequest(function_name="f", dataset_id="  padded-id  ")
     assert request.dataset_id == "padded-id"
+
+
+def test_cloud_brain_serializer_also_emits_the_declared_identity():
+    """The OTHER typed serializer must not drop half the identity.
+
+    There are two typed session-create serializers: ``ApiOperations.
+    _build_typed_session_payload`` (local/hybrid execution) and
+    ``TraigentCloudClient._serialize_session_request`` (the cloud-brain /
+    smart-algorithm path). History is grouped by (agent, dataset), so a
+    serializer that emits the agent half and drops the dataset half fragments
+    the cohort exactly as dropping ``agent_key`` once did -- the very drift the
+    comment above that call site warns about. Both must emit the same fields.
+    """
+    from traigent.cloud.client import TraigentCloudClient
+
+    request = SessionCreationRequest(
+        function_name="qa_agent",
+        configuration_space={"temperature": [0.0, 1.0]},
+        objectives=[{"name": "accuracy", "orientation": "maximize", "weight": 1.0}],
+        dataset_metadata={"name": "my-declared-eval", "size": 3},
+    )
+    # The serializer only needs owner-metadata passthrough from `self`; a stand-in
+    # keeps this a unit test of the wire shape rather than of client construction.
+    stub = SimpleNamespace(_ensure_owner_metadata=lambda metadata: metadata or {})
+    payload = TraigentCloudClient._serialize_session_request(stub, request)
+
+    assert payload.get("dataset_id_source") == "declared"
+    assert payload.get("dataset_id") == "my-declared-eval", (
+        "the cloud-brain serializer dropped the declared dataset identity; rows "
+        "created through this path would still render 'No dataset'"
+    )

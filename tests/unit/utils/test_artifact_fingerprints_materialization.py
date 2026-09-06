@@ -1,7 +1,7 @@
 """Tests for the materialization guard used by the typed/interactive
 session-create paths (privacy_operations.py, interactive_optimizer.py).
 
-Dataset identity for portal grouping is the content fingerprint ALONE --
+The fingerprint is content-derived PROVENANCE, never identity --
 never the dataset's name/label (owner decision, see traigent/cloud/privacy_operations.py
 and traigent/optimizers/interactive_optimizer.py). These tests pin that
 semantic and the "never drain a single-use iterator" safety guard that
@@ -25,7 +25,7 @@ def _example(input_data, expected_output):
 
 
 def test_same_content_different_names_yield_the_same_fingerprint() -> None:
-    """Owner decision: dataset identity is content only, never name/label."""
+    """The fingerprint tracks CONTENT, never the name/label."""
     examples = [
         _example({"question": "a"}, "answer-a"),
         _example({"question": "b"}, "answer-b"),
@@ -129,7 +129,7 @@ def test_metadata_only_mapping_produces_no_fingerprint() -> None:
     sends as ``dataset_metadata``. It has no ``examples`` key, so it falls through
     ``_extract_examples``'s "wrap self as one example" branch and canonicalizes to
     an example whose input and expected output are both ``None`` -- meaning EVERY
-    such descriptor hashes identically. The backend keys dataset identity off this
+    such descriptor hashes identically. As provenance that is useless off this
     digest, so emitting one here would merge unrelated datasets into a single
     optimization history.
     """
