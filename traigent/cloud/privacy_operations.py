@@ -52,6 +52,7 @@ class PrivacyOperations:
         user_id: str | None = None,
         *,
         dataset: Any = None,
+        dataset_id: str | None = None,
     ) -> tuple[str, str, str]:
         """Create a backend-tracked session for local/hybrid optimization.
 
@@ -71,14 +72,24 @@ class PrivacyOperations:
                 Never sent over the wire -- only its content-addressed
                 sha256 fingerprint is (see
                 ``traigent.utils.artifact_fingerprints``). Datasets are
-                deliberately never uploaded on this path; the fingerprint is
-                the only usable dataset identity for portal grouping (agent
-                x dataset). Pass ``None`` (the default) when no materialized
-                dataset is available -- an absent fingerprint stays absent,
-                it is never invented from ``dataset_metadata`` alone. A bare
+                deliberately never uploaded on this path; the fingerprint
+                remains valuable PROVENANCE (did the content drift?) but is
+                NOT dataset identity -- see ``dataset_id`` below. Pass
+                ``None`` (the default) when no materialized dataset is
+                available -- an absent fingerprint stays absent, it is never
+                invented from ``dataset_metadata`` alone. A bare
                 generator/iterator is treated as unmaterialized and is never
                 consumed here; pass a list or a ``Dataset`` to get a
                 fingerprint.
+            dataset_id: Optional DECLARED, stable dataset identity for portal
+                grouping (agent x dataset). Unlike the content fingerprint,
+                this must stay the same across content edits -- exactly like
+                an agent's identity does not change when its code changes.
+                When omitted, a label-derived default is used if available
+                (``dataset_metadata["name"]`` or the ``evaluation_set``
+                metadata key); when neither is available no identity is sent
+                at all -- absence stays absence, nothing is invented from
+                example content.
 
         Returns:
             Tuple of (session_id, experiment_id, experiment_run_id)
@@ -124,6 +135,7 @@ class PrivacyOperations:
                 billing_tier="privacy",  # Special tier for privacy mode
                 artifact_fingerprints=artifact_fingerprints,
                 fingerprint_meta=fingerprint_meta,
+                dataset_id=dataset_id,
             )
 
             # Always use session endpoints for tracking

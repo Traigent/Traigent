@@ -202,6 +202,7 @@ class InteractiveOptimizer(BaseOptimizer):
         task_type: str | None = None,
         *,
         dataset: Any = None,
+        dataset_id: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize interactive optimizer.
@@ -226,8 +227,16 @@ class InteractiveOptimizer(BaseOptimizer):
                 generator/iterator is treated as unmaterialized and is
                 never consumed here; pass a list or `Dataset` to get a
                 fingerprint. Absent/unmaterialized data yields no
-                fingerprint -- it is never invented from `dataset_metadata`
-                alone.
+                fingerprint -- it remains PROVENANCE only (did the content
+                drift?), never dataset identity -- see `dataset_id` below.
+            dataset_id: Optional DECLARED, stable dataset identity for portal
+                grouping (agent x dataset). Must stay the same across content
+                edits -- exactly like an agent's identity does not change
+                when its code changes. When omitted, a label-derived default
+                is used if available (`dataset_metadata["name"]` or the
+                `evaluation_set` metadata key); when neither is available no
+                identity is sent at all -- it is never invented from example
+                content.
             **kwargs: Additional optimizer configuration
 
         Raises:
@@ -255,6 +264,7 @@ class InteractiveOptimizer(BaseOptimizer):
                 )
         self.artifact_fingerprints = artifact_fingerprints
         self.fingerprint_meta = fingerprint_meta
+        self.dataset_id = dataset_id
         self.evaluator_definition_id = evaluator_definition_id
         self.task_type = task_type
         self.optimizer_ready_timeout = _resolve_optimizer_ready_timeout(
@@ -304,6 +314,7 @@ class InteractiveOptimizer(BaseOptimizer):
                 billing_tier=billing_tier,
                 artifact_fingerprints=self.artifact_fingerprints,
                 fingerprint_meta=self.fingerprint_meta,
+                dataset_id=self.dataset_id,
                 evaluator_definition_id=self.evaluator_definition_id,
                 task_type=self.task_type,
             )

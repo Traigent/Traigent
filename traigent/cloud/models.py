@@ -277,6 +277,96 @@ def session_task_type_to_wire(session_request: Any) -> dict[str, str]:
     return {"task_type": cleaned} if cleaned else {}
 
 
+DATASET_ID_MAX_LENGTH = 255
+
+# Placeholder values other SDK code paths fall back to when the caller never
+# supplied a real label (``Dataset.name`` defaults to the literal ``"dataset"``;
+# various call sites default ``evaluation_set`` to ``"default"`` /
+# ``"default_evaluation"``). Promoting one of these to a declared dataset
+# identity would be exactly the collision bug this feature exists to prevent:
+# every unnamed dataset would share one fabricated identity instead of sending
+# no identity at all. Compared case-insensitively, stripped.
+_DEFAULT_DATASET_LABEL_SENTINELS = frozenset(
+    {"dataset", "unknown", "default", "default_evaluation"}
+)
+
+
+def _is_real_dataset_label(value: Any) -> bool:
+    """True for a non-empty, non-placeholder string label."""
+    if not isinstance(value, str):
+        return False
+    cleaned = value.strip()
+    if not cleaned:
+        return False
+    return cleaned.lower() not in _DEFAULT_DATASET_LABEL_SENTINELS
+
+
+def _derive_default_dataset_id(session_request: Any) -> str | None:
+    """Derive a stable dataset id from a declared LABEL only -- never from
+    example content. Two labels checked, in order:
+
+    1. ``dataset_metadata["name"]`` -- the SDK's own ``Dataset.name``, when
+       the caller propagated it (e.g. via
+       ``dataset_converter.create_privacy_metadata``).
+    2. ``metadata["evaluation_set"]`` -- an explicit caller-set eval-set tag.
+
+    Either is blessed by the owner as a legitimate declared identity: it is
+    computed from a label/path, not content, so editing the dataset's
+    examples never changes it. Placeholder defaults (see
+    ``_DEFAULT_DATASET_LABEL_SENTINELS``) are never promoted to an identity --
+    absence must stay absence.
+    """
+    dataset_metadata = getattr(session_request, "dataset_metadata", None) or {}
+    if isinstance(dataset_metadata, dict):
+        name = dataset_metadata.get("name")
+        if _is_real_dataset_label(name):
+            return name.strip()
+
+    metadata = getattr(session_request, "metadata", None) or {}
+    if isinstance(metadata, dict):
+        evaluation_set = metadata.get("evaluation_set")
+        if _is_real_dataset_label(evaluation_set):
+            return evaluation_set.strip()
+
+    return None
+
+
+def session_dataset_identity_to_wire(session_request: Any) -> dict[str, str]:
+    """Serialize the declared dataset identity for the TYPED /api/v1/sessions
+    contract only (the backend validates ``dataset_id``/``dataset_id_source``
+    only on the typed create path -- see ``_validate_identity_fields`` in
+    ``traigent_session_routes.py``, gated ``if typed``).
+
+    Correction from the content-fingerprint-as-identity design: identity must
+    be DECLARED and STABLE, exactly like agent identity. A content fingerprint
+    changes every time an example is added or a label is fixed, which would
+    silently split a user's optimization history. So this function NEVER
+    reads example content -- only ``session_request.dataset_id`` (explicit,
+    wins) or a label-derived default (see ``_derive_default_dataset_id``).
+    The content fingerprint keeps shipping separately, in
+    ``artifact_fingerprints["dataset"]`` -- it remains valuable PROVENANCE
+    (did the content drift?) but is no longer identity.
+
+    Emits ``{"dataset_id_source": "declared", "dataset_id": <id>}`` when an
+    id is available (explicit or derived), truncated to the backend's
+    255-character cap. Emits nothing when there is no explicit id and no
+    label to derive one from -- absence stays absence, no identity is
+    invented.
+    """
+    explicit = getattr(session_request, "dataset_id", None)
+    dataset_id = (
+        explicit.strip() if isinstance(explicit, str) and explicit.strip() else None
+    )
+    if dataset_id is None:
+        dataset_id = _derive_default_dataset_id(session_request)
+    if not dataset_id:
+        return {}
+    return {
+        "dataset_id_source": "declared",
+        "dataset_id": dataset_id[:DATASET_ID_MAX_LENGTH],
+    }
+
+
 @dataclass
 class SessionCreationRequest:
     """Request to create a new optimization session."""
@@ -320,6 +410,16 @@ class SessionCreationRequest:
     #: maps it to an evaluator-quality anchor policy; the client never names an
     #: anchor. Serialized by ``session_task_type_to_wire`` on every path.
     task_type: str | None = None
+    # Explicit, DECLARED dataset identity -- a label or path the caller keeps
+    # stable across content edits, exactly like agent identity is never
+    # derived from an agent's code. Never synthesize this from example
+    # content: that was the bug (a content fingerprint silently changes
+    # identity when a dataset is edited). When unset, a label-derived default
+    # is computed at serialization time (see
+    # ``_derive_default_dataset_id`` / ``session_dataset_identity_to_wire``).
+    # The content fingerprint keeps shipping separately as
+    # artifact_fingerprints["dataset"] -- provenance, not identity.
+    dataset_id: str | None = None
     # Alternative parameter names for test compatibility
     problem_type: str | None = None
 
@@ -349,6 +449,14 @@ class SessionCreationRequest:
         self.evaluator_definition_id = normalized_evaluator_ids[
             "evaluator_definition_id"
         ]
+        if self.dataset_id is not None:
+            if not isinstance(self.dataset_id, str) or not self.dataset_id.strip():
+                raise ValueError("dataset_id must be a non-blank string")
+            if len(self.dataset_id.strip()) > DATASET_ID_MAX_LENGTH:
+                raise ValueError(
+                    f"dataset_id must be at most {DATASET_ID_MAX_LENGTH} characters"
+                )
+            self.dataset_id = self.dataset_id.strip()
         if self.function_name is None:
             self.function_name = "test_function"
         if self.configuration_space is None:

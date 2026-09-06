@@ -144,3 +144,42 @@ async def test_generator_dataset_is_not_consumed_and_yields_no_fingerprint(
     # Caller can still read every item -- construction never drained it.
     remaining = list(generator)
     assert len(remaining) == 2
+
+
+@pytest.mark.asyncio
+async def test_dataset_id_kwarg_threads_into_session_request(mock_remote_service):
+    """Correction: declared dataset identity (dataset_id=) is independent of
+    the content fingerprint -- both can be carried on the same request, and
+    dataset_id must reach the SessionCreationRequest unchanged."""
+    dataset = Dataset(examples=[_example({"question": "a"}, "answer-a")])
+
+    optimizer = InteractiveOptimizer(
+        config_space={"temperature": (0.0, 1.0)},
+        objectives=["accuracy"],
+        remote_service=mock_remote_service,
+        dataset_metadata={"size": 1},
+        dataset=dataset,
+        dataset_id="my-stable-dataset-id",
+    )
+
+    await optimizer.initialize_session(function_name="qa_agent", max_trials=10)
+
+    request = mock_remote_service.create_session.call_args[0][0]
+    assert request.dataset_id == "my-stable-dataset-id"
+    # The fingerprint keeps shipping too -- it is provenance, not identity.
+    assert request.artifact_fingerprints["dataset"] is not None
+
+
+@pytest.mark.asyncio
+async def test_no_dataset_id_kwarg_leaves_it_none(mock_remote_service):
+    optimizer = InteractiveOptimizer(
+        config_space={"temperature": (0.0, 1.0)},
+        objectives=["accuracy"],
+        remote_service=mock_remote_service,
+        dataset_metadata={"size": 1},
+    )
+
+    await optimizer.initialize_session(function_name="qa_agent", max_trials=10)
+
+    request = mock_remote_service.create_session.call_args[0][0]
+    assert request.dataset_id is None

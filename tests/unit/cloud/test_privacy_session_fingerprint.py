@@ -236,3 +236,27 @@ async def test_generator_dataset_is_not_consumed_and_yields_no_fingerprint():
     assert len(remaining) == 2
     assert remaining[0].expected_output == "answer-a"
     assert remaining[1].expected_output == "answer-b"
+
+
+@pytest.mark.asyncio
+async def test_dataset_id_kwarg_threads_into_captured_request():
+    """Correction (see tests/unit/cloud/test_dataset_declared_identity.py):
+    declared identity is a SEPARATE keyword from the content fingerprint --
+    both may be set on the same call."""
+    client = _CapturingClient()
+    ops = PrivacyOperations(client)
+    dataset = Dataset(examples=[_example({"question": "a"}, "answer-a")])
+
+    await ops.create_privacy_optimization_session(
+        function_name="qa_agent",
+        configuration_space={"temperature": [0.0, 1.0]},
+        objectives=["accuracy"],
+        dataset_metadata={"size": 1},
+        max_trials=5,
+        dataset=dataset,
+        dataset_id="my-stable-dataset-id",
+    )
+
+    assert client.captured_request is not None
+    assert client.captured_request.dataset_id == "my-stable-dataset-id"
+    assert client.captured_request.artifact_fingerprints["dataset"] is not None
