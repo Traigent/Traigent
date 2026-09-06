@@ -6,6 +6,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`SafetyValidator.validate()` ignored the constraint operator, so `below()` safety
+  gates were trivially satisfiable** (#2204). Aggregate validation compared the
+  Clopper-Pearson lower bound on the per-trial compliance rate directly against the
+  constraint's raw metric threshold, regardless of `above()`/`below()`. That comparison
+  happened to read sensibly for `above()`, but for `below()` a *strict* (small) metric
+  threshold produced a *lenient* compliance bar — e.g. `hallucination_rate().below(0.1)`
+  only required ~10-18% of trials to comply. **Behavior change existing users will
+  notice: any `below()` safety gate that was reporting "satisfied" may now correctly
+  report "not satisfied"** — this is the fix, not a regression, but it changes the
+  pass/fail verdict of runs that rely on it. `above()`/`>=`/`>` gates are unaffected: the
+  required compliance rate for those operators is unchanged. See the PR that closes #2204
+  for the exact compliance-rate rule now used for `below()`/`<=`/`<`, and an open question
+  for a future owner decision about whether that rule should become an explicit API
+  parameter.
+
 ### Added
 
 - **`EvaluationOptions(task_type=...)`** — a coarse task category for the run
