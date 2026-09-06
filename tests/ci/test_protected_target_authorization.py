@@ -12,7 +12,6 @@ deny. Most cases below therefore assert denial.
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import textwrap
 from pathlib import Path
@@ -51,7 +50,7 @@ USES_ONLY_HUNK = """@@ -21,7 +21,7 @@ jobs:
          with:
            fetch-depth: 0"""
 
-ACTION_BUMP_PATCHES = {f: USES_ONLY_HUNK for f in GITHUB_ACTIONS_BUMP}
+ACTION_BUMP_PATCHES = dict.fromkeys(GITHUB_ACTIONS_BUMP, USES_ONLY_HUNK)
 
 PIP_BUMP = ["pyproject.toml", "uv.lock", "requirements/base.txt"]
 
@@ -369,7 +368,10 @@ def test_action_bump_alongside_manifests_is_authorised(tmp_path):
             "an `if:` condition decides whether a guard runs at all",
         ),
         (
-            ["-          TOKEN: ${{ secrets.LOW }}", "+          TOKEN: ${{ secrets.HIGH }}"],
+            [
+                "-          TOKEN: ${{ secrets.LOW }}",
+                "+          TOKEN: ${{ secrets.HIGH }}",
+            ],
             "an `env:` value can swap which secret reaches the step",
         ),
         (
@@ -486,8 +488,10 @@ def test_composite_action_files_use_the_same_lane(tmp_path):
 def test_the_workflow_lane_does_not_widen_the_identity_checks(tmp_path):
     """A perfect action bump still needs the bot identity and a same-repo head."""
     wf = ".github/workflows/ci.yml"
-    common = dict(files=[wf], patches={wf: USES_ONLY_HUNK}, PR_AUTHOR=DEPENDABOT)
-    assert not _allows(tmp_path, **common, PR_AUTHOR_TYPE="User", TRIGGERING_ACTOR=DEPENDABOT)
+    common = {"files": [wf], "patches": {wf: USES_ONLY_HUNK}, "PR_AUTHOR": DEPENDABOT}
+    assert not _allows(
+        tmp_path, **common, PR_AUTHOR_TYPE="User", TRIGGERING_ACTOR=DEPENDABOT
+    )
     assert not _allows(
         tmp_path, **common, PR_AUTHOR_TYPE="Bot", TRIGGERING_ACTOR="some-other-writer"
     )
