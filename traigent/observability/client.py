@@ -57,7 +57,30 @@ logger = get_logger(__name__)
 _TRACE_BATCH_PREFIX_BYTES = len(b'{"traces": [')
 _TRACE_BATCH_SUFFIX_BYTES = len(b"]}")
 _TRACE_BATCH_ITEM_SEPARATOR_BYTES = len(b", ")
-_HEALTH_DISPATCH_STOP = object()
+
+
+class _HealthDispatchStop:
+    """Typed sentinel that terminates the per-transport health dispatcher."""
+
+
+_HEALTH_DISPATCH_STOP = _HealthDispatchStop()
+
+
+class _ClientErrorWithRetryAfter(ClientError):
+    """Client error carrying a parsed retry delay."""
+
+    retry_after: float
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int,
+        details: dict[str, Any],
+        retry_after: float,
+    ) -> None:
+        super().__init__(message, status_code=status_code, details=details)
+        self.retry_after = retry_after
 
 
 class _NoRedirectHandler(request.HTTPRedirectHandler):
@@ -173,7 +196,7 @@ class _SyncBatchTransport:
         self._lock = threading.RLock()
         self._send_lock = threading.Lock()
         self._health_event_queue: deque[
-            tuple[int, str, dict[str, Any]] | threading.Event | object
+            tuple[int, str, dict[str, Any]] | threading.Event | _HealthDispatchStop
         ] = deque()
         self._health_event_condition = threading.Condition(self._lock)
         self._next_health_event_sequence = 0
@@ -814,7 +837,7 @@ class _SyncBatchTransport:
                 while not self._health_event_queue:
                     self._health_event_condition.wait()
                 queued = self._health_event_queue.popleft()
-            if queued is _HEALTH_DISPATCH_STOP:
+            if isinstance(queued, _HealthDispatchStop):
                 return
             if isinstance(queued, threading.Event):
                 queued.set()
@@ -2077,11 +2100,15 @@ class ObservabilityClient:
         details: dict[str, Any],
         headers: Any,
     ) -> ClientError:
-        exc = ClientError(message, status_code=status_code, details=details)
         retry_after = _parse_retry_after(headers)
         if retry_after is not None:
-            exc.retry_after = retry_after
-        return exc
+            return _ClientErrorWithRetryAfter(
+                message,
+                status_code=status_code,
+                details=details,
+                retry_after=retry_after,
+            )
+        return ClientError(message, status_code=status_code, details=details)
 
     def _read_http_error_body(self, exc: error.HTTPError) -> str:
         try:

@@ -1406,6 +1406,43 @@ class TestSyncManager:
         finalize_posts = [url for url in post_urls if url.endswith("/finalize")]
         assert finalize_posts == [f"{base}/sessions/session-id/finalize"]
 
+    def test_sync_resume_missing_experiment_id_uses_session_id_fallback(
+        self, sync_manager: SyncManager, sample_session: OptimizationSession
+    ) -> None:
+        """A legacy resume state never reports success with a ``/None`` URL."""
+        payload_hash = sync_manager._compute_payload_hash(
+            sync_manager.convert_session_to_traigent_format(sample_session)
+        )
+        sample_session.sync_state = {
+            "status": "partial",
+            "payload_hash": payload_hash,
+            "cloud_session_id": "session-id",
+            "cloud_experiment_run_id": "experiment-run-id",
+            "trials": {
+                "cfg_0": {"status": "synced"},
+                "cfg_1": {"status": "synced"},
+                "cfg_2": {"status": "synced"},
+            },
+        }
+        sync_manager.storage.load_session.return_value = sample_session
+        sync_manager._session.post.return_value = backend_response(
+            status_code=200, payload={"status": "finalized"}
+        )
+
+        with patch(
+            "traigent.cloud.sync_manager.BackendConfig.get_cloud_web_url",
+            return_value="https://portal.traigent.ai/",
+        ):
+            result = sync_manager.sync_session_to_cloud("test_session_123")
+
+        assert result["status"] == "success"
+        assert result["cloud_experiment_id"] == "session-id"
+        assert "/None" not in result["cloud_url"]
+        assert result["cloud_url"] == (
+            "https://portal.traigent.ai/experiments/view/session-id"
+            "?run_id=experiment-run-id"
+        )
+
     # Sync All Sessions Tests
 
     def test_sync_all_sessions_dry_run(self, sync_manager: SyncManager) -> None:

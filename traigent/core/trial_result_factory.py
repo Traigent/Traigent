@@ -7,7 +7,7 @@ from __future__ import annotations
 import copy
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from traigent.api.types import (
     ComparabilityInfo,
@@ -44,7 +44,7 @@ def _redact_example_results_with_signals(raw_example_results: list[Any]) -> list
         _to_redactable_payloads(raw_example_results)
     )
     if not isinstance(redacted_payloads, list):
-        return redacted_payloads
+        return cast(list[Any], redacted_payloads)
     for payload, raw_example in zip(
         redacted_payloads, raw_example_results, strict=False
     ):
@@ -355,7 +355,9 @@ def _provider_failure_summary(
     if fatal_failures == 0:
         return None
 
-    dominant_category = max(category_counts, key=category_counts.get)
+    dominant_category = max(
+        category_counts, key=lambda category: category_counts[category]
+    )
     return {
         "attempted_calls": attempted,
         "fatal_failures": fatal_failures,

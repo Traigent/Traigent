@@ -482,7 +482,7 @@ async def _call_backend(coro_factory: Any, *, what: str) -> dict[str, Any]:
         logger.debug(
             "Analytics %s request returned HTTP status %s",
             what,
-            exc.response.status_code,
+            getattr(getattr(exc, "response", None), "status_code", None),
         )
         return _http_status_failure(exc, what=what, backend_url=backend_url)
     except _HTTP_TRANSPORT_ERRORS as exc:

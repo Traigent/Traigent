@@ -6,6 +6,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`EvaluationOptions(task_type=...)`** — a coarse task category for the run
+  (`multiple_choice`, `exact_match`, `text2sql`, `code_generation`, `summarization`, …)
+  sent as `task_type` on `POST /api/v1/sessions` from both session-create paths. The
+  Traigent service maps it to an evaluator-quality anchor policy — which verifiable
+  ground truth, if any, an audit of your evaluator may use. You never name an anchor;
+  unknown values resolve to "no anchor". Without it the evaluator-quality audit abstains
+  as `no_anchor_designation` on every run, which is what the first real audit did on
+  2026-09-03.
+
 ## [0.27.0] - 2026-08-22
 
 ### Removed

@@ -146,6 +146,13 @@ class EvaluationOptions(BaseModel):
     #: remain content-addressed by their evaluator fingerprint.
     evaluator_id: str | None = None
     evaluator_definition_id: str | None = None
+    #: Coarse task category for the run -- ``multiple_choice``, ``exact_match``,
+    #: ``text2sql``, ``code_generation``, ``summarization``, ... The Traigent
+    #: service maps it to an evaluator-quality anchor policy (which verifiable
+    #: ground truth, if any, an audit of your evaluator may use). You never name
+    #: an anchor; unknown values simply resolve to "no anchor". Without this,
+    #: the evaluator-quality audit abstains on every run.
+    task_type: str | None = None
     #: Optional cheap "surrogate" (pre-screen) scorer applied to the SAME outputs
     #: the primary evaluator already produced, per example. It scores captured
     #: outputs only and NEVER re-executes the decorated function. Same calling
@@ -257,7 +264,7 @@ def _coerce_winner_stability_reps(value: Any) -> int:
         raise ValueError("winner_stability_reps must be an int")
     if value < 0 or value > 1000:
         raise ValueError("winner_stability_reps must be between 0 (off) and 1000")
-    return value
+    return cast(int, value)
 
 
 class ExecutionOptions(BaseModel):
@@ -401,7 +408,7 @@ class ExecutionOptions(BaseModel):
             # Field-assignment path (validate_assignment=True): preserve the
             # legacy keys captured at construction time.
             model._legacy_options = dict(carried_stash)
-        return model
+        return cast(ExecutionOptions, model)
 
     @field_validator("reps_per_trial")
     @classmethod
@@ -2966,6 +2973,7 @@ def optimize(  # NOSONAR(S107)
         if evaluation_bundle is not None
         else None
     )
+    task_type = evaluation_bundle.task_type if evaluation_bundle is not None else None
     if surrogate_evaluator is not None:
         _validate_surrogate_evaluator_signature(surrogate_evaluator)
 
@@ -3261,6 +3269,7 @@ def optimize(  # NOSONAR(S107)
             scoring_function=scoring_function,
             metric_functions=metric_functions,
             evaluator_definition_id=evaluator_definition_id,
+            task_type=task_type,
             requested_execution_mode=requested_execution_mode,
             execution_policy=execution_policy,
             # Multi-agent configuration

@@ -462,6 +462,16 @@ class InvalidCredentialsError(AuthenticationError):
     pass
 
 
+class _InvalidCredentialsWithSessionFailure(InvalidCredentialsError):
+    """Invalid credentials error carrying structured session failure detail."""
+
+    session_creation_failure: SessionCreationFailureDetail
+
+    def __init__(self, message: str, failure: SessionCreationFailureDetail) -> None:
+        super().__init__(message)
+        self.session_creation_failure = failure
+
+
 # ============================================================================
 # Secure Token Management
 # ============================================================================
@@ -1100,13 +1110,17 @@ class AuthManager:
                 # Fail closed: never emit headers built from an unverified or
                 # backend-rejected API key. Doing so would defeat backend
                 # validation by allowing the SDK to send the raw key anyway.
-                exc = InvalidCredentialsError(
+                failure_detail = auth_result.session_creation_failure
+                if failure_detail is not None:
+                    raise _InvalidCredentialsWithSessionFailure(
+                        auth_result.error_message
+                        or "Authentication failed; refusing to emit auth headers.",
+                        failure_detail,
+                    )
+                raise InvalidCredentialsError(
                     auth_result.error_message
                     or "Authentication failed; refusing to emit auth headers."
                 )
-                if auth_result.session_creation_failure is not None:
-                    exc.session_creation_failure = auth_result.session_creation_failure
-                raise exc
 
         if not self._credentials:
             self._authenticated = False
@@ -1723,6 +1737,17 @@ class AuthManager:
             return _BackendKeyValidationFailure("backend reported key invalid")
 
         payload = _parse_validation_payload(data, raw_body)
+        # Every /keys/validate failure body carries a static setup-guidance
+        # envelope under "remediation" whose key names alone - "required_scopes",
+        # "required_permissions" - satisfy the scope markers below and in
+        # _classify_session_creation_failure, turning every generic 401 into
+        # "insufficient scope" and steering users to grant scopes that
+        # /keys/validate never checks. The guidance is request-independent, so
+        # drop it before it can reach the marker haystack, the propagated
+        # detail, or the excerpt.
+        if "remediation" in payload:
+            payload = {k: v for k, v in payload.items() if k != "remediation"}
+            raw_body = json.dumps(payload)
         message = _payload_message(payload)
         code = payload.get("error_code") or payload.get("code")
         body_text = " ".join(

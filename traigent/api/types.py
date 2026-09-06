@@ -2565,7 +2565,8 @@ class ParetoFront:
 
         for i, maximize in enumerate(self.is_maximized):
             col = normalized[:, i]
-            min_val, max_val = col.min(), col.max()
+            min_val: float = float(col.min())
+            max_val: float = float(col.max())
             if max_val > min_val:
                 if maximize:
                     normalized[:, i] = (col - min_val) / (max_val - min_val)

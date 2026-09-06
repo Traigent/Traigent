@@ -8,11 +8,14 @@ name: Protected Target Authorization
 #
 #   1. The Principal Engineer, unconditionally.
 #   2. Dependabot, ONLY for pull requests whose entire diff is dependency
-#      manifests. Everything else Dependabot can open -- notably the
-#      `github-actions` and `docker` ecosystems configured in
-#      .github/dependabot.yml -- still requires the Principal Engineer, because
-#      those pull requests edit CI definitions and image build inputs, which are
-#      exactly the surfaces this gate exists to protect.
+#      manifests, OR whose workflow-file changes are action-version bumps and
+#      nothing else. A workflow file is admitted only when EVERY changed line in
+#      it is a `uses:` action reference -- which is exactly the shape of a
+#      `github-actions` ecosystem bump. A changed `run:`, `if:`, `permissions:`,
+#      `env:` or `on:` line still requires the Principal Engineer, because those
+#      alter what CI executes or with what privileges. The `docker` ecosystem
+#      remains Principal-only: a Dockerfile has no equivalent line-level shape
+#      that separates a base-image pin from a build instruction.
 #
 # The Dependabot lane is fail-closed: every identity condition must hold AND
 # every changed path must match the allowlist. Any API error, any unrecognised
@@ -127,10 +130,87 @@ jobs:
             deny "enumerated $seen files but the pull request reports $PR_CHANGED_FILES; the diff was not fully retrieved."
           fi
 
-          # Allowlist: dependency manifests for the `pip` ecosystem only.
+          # ---- Workflow lane: action-version bumps, verified line by line. ----
+          #
+          # A `github-actions` ecosystem bump changes one thing per hunk: a
+          # `uses:` reference. Anything else in a workflow file -- a `run:`
+          # body, an `if:` condition, a `permissions:` grant, an `env:` value,
+          # an `on:` trigger -- changes what CI executes or with what
+          # privileges, and stays Principal-only.
+          #
+          # So the path is not the unit of authorization here; the LINE is.
+          # Every added and removed line in a workflow path must be a `uses:`
+          # reference or the whole pull request is denied. This is fail-closed
+          # in each direction: a status other than `modified` (added, removed,
+          # renamed) cannot be line-verified and denies; a missing hunk denies;
+          # a hunk the second API call did not return denies at the allowlist
+          # below, because the path never reaches `verified_workflows`.
+          verified_workflows=""
+          touches_workflow=0
+          while IFS= read -r f; do
+            case "$f" in
+              .github/workflows/*|.github/actions/*) touches_workflow=1 ;;
+            esac
+          done <<< "$files"
+
+          if [ "$touches_workflow" -eq 1 ]; then
+            # @tsv escapes newlines and tabs, so each file is one record even
+            # though a patch is multi-line. `printf %b` reverses it below.
+            if ! records="$(gh api --paginate "repos/$BASE_REPO/pulls/$PR_NUMBER/files" \
+                  --jq '.[] | [.filename, .status, (.patch // "")] | @tsv')"; then
+              deny "could not read the diff hunks; refusing to authorize a workflow change without them."
+            fi
+            if [ -z "$records" ]; then
+              deny "the API returned no diff hunks; a workflow change cannot be line-verified."
+            fi
+
+            # Tab is an IFS whitespace character, so `read -r a b c` would
+            # COLLAPSE adjacent tabs and shift the fields when one is empty.
+            # Split the record explicitly so an empty status stays empty and is
+            # rejected below rather than silently taking the patch's place.
+            while IFS= read -r record; do
+              [ -z "$record" ] && continue
+              name="${record%%$'\t'*}"
+              rest="${record#*$'\t'}"
+              status="${rest%%$'\t'*}"
+              patch="${rest#*$'\t'}"
+              case "$name" in
+                .github/workflows/*|.github/actions/*) ;;
+                *) continue ;;
+              esac
+
+              if [ "$status" != "modified" ]; then
+                deny "workflow path '$name' has status '$status'; only an in-place modification can be line-verified."
+              fi
+              if [ -z "$patch" ]; then
+                deny "workflow path '$name' carries no diff hunk; its changed lines cannot be verified."
+              fi
+
+              bad=0
+              while IFS= read -r line; do
+                case "$line" in
+                  '+++'*|'---'*|'@@'*|'\'*|' '*|'') continue ;;
+                  '+'*|'-'*) ;;
+                  *) continue ;;
+                esac
+                body="${line#?}"
+                if ! printf '%s\n' "$body" | grep -Eq '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*[^[:space:]]+@[^[:space:]]+[[:space:]]*(#.*)?$'; then
+                  echo "::error file=$name::changed line is not a uses: action reference -- $body"
+                  bad=$((bad + 1))
+                fi
+              done <<< "$(printf '%b' "$patch")"
+
+              if [ "$bad" -gt 0 ]; then
+                deny "$bad changed line(s) in '$name' are not uses: action references; a workflow change beyond an action pin requires the Principal Engineer."
+              fi
+              verified_workflows="$(printf '%s\n%s' "$verified_workflows" "$name")"
+            done <<< "$records"
+          fi
+
+          # Allowlist: dependency manifests for the `pip` ecosystem, plus the
+          # workflow paths the lane above verified line by line.
           #
           # Deliberately excluded, and therefore denied by omission:
-          #   .github/workflows/**, .github/actions/**  (github-actions ecosystem)
           #   Dockerfile*                               (docker ecosystem)
           #   setup.py, setup.cfg, Makefile, *.sh, scripts/**
           # Those execute at build or install time, so a bumped pin there is a
@@ -142,6 +222,13 @@ jobs:
               pyproject.toml|uv.lock|requirements.txt) ;;
               requirements/*.txt) ;;
               constraints.txt|constraints-*.txt) ;;
+              .github/workflows/*|.github/actions/*)
+                # Admitted only if the lane above put it in verified_workflows.
+                if ! printf '%s\n' "$verified_workflows" | grep -Fxq -- "$f"; then
+                  echo "::error file=$f::workflow path was not line-verified as a uses:-only change"
+                  violations=$((violations + 1))
+                fi
+                ;;
               *)
                 echo "::error file=$f::path is outside the Dependabot manifest allowlist"
                 violations=$((violations + 1))
@@ -150,7 +237,7 @@ jobs:
           done <<< "$files"
 
           if [ "$violations" -gt 0 ]; then
-            deny "$violations of $seen changed path(s) are outside the dependency-manifest allowlist. Dependabot pull requests that touch CI workflows, Dockerfiles, or build scripts require the Principal Engineer."
+            deny "$violations of $seen changed path(s) are outside the allowlist. Dependabot pull requests that touch Dockerfiles or build scripts, or that change a workflow line other than a uses: action reference, require the Principal Engineer."
           fi
 
-          echo "Authorized: Dependabot manifest-only pull request ($seen path(s) verified)."
+          echo "Authorized: Dependabot pull request, $seen path(s) verified (manifests, and workflow files whose every changed line is a uses: reference)."
