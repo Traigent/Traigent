@@ -407,7 +407,9 @@ def build_backend_metadata(
 
     if not traigent_config.minimal_logging:
         trial_metadata["timestamp"] = trial_result.timestamp.isoformat()
-        trial_metadata["all_metrics"] = copy.deepcopy(trial_result.metrics)
+        trial_metadata["all_metrics"] = _numeric_metrics_only(
+            trial_result.metrics, where="metadata.all_metrics"
+        )
 
     mode_enum = traigent_config.execution_mode_enum
     _add_summary_stats(trial_metadata, trial_result, mode_enum)
@@ -438,13 +440,24 @@ def build_backend_metadata(
         cast(str, traigent_config.execution_mode),
     )
 
-    # Add additional metrics (excluding primary objective)
+    # Add additional metrics (excluding primary objective). Same numeric-only
+    # filter as ``all_metrics``: these flattened copies are the second way a
+    # string metric reached the wire around the ``measures`` guard.
     if trial_result.metrics:
-        for metric_key, metric_value in trial_result.metrics.items():
+        flattened = _numeric_metrics_only(
+            trial_result.metrics, where="trial metadata (flattened metric)"
+        )
+        for metric_key, metric_value in flattened.items():
             if metric_key != primary_objective:
-                trial_metadata[metric_key] = copy.deepcopy(metric_value)
+                trial_metadata[metric_key] = metric_value
 
-    _add_aggregation_summary(trial_metadata, primary_objective, trial_result.metrics)
+    _add_aggregation_summary(
+        trial_metadata,
+        primary_objective,
+        _numeric_metrics_only(
+            trial_result.metrics, where="summary_stats.metadata.aggregation_summary"
+        ),
+    )
 
     # Remove example_results in privacy mode
     if privacy_on and "example_results" in trial_metadata:
@@ -533,6 +546,45 @@ def _is_measure_metric_value(value: Any) -> bool:
     )
 
 
+def _numeric_metrics_only(
+    metrics: Mapping[str, Any] | None, *, where: str
+) -> dict[str, Any]:
+    """Drop non-numeric trial metrics before they can reach the backend.
+
+    ``MeasuresDict`` enforces the numeric-only metric contract on the
+    ``measures`` array, but the trial metadata carried three unguarded copies of
+    the same ``TrialResult.metrics`` dict -- ``metadata.all_metrics``, the
+    flattened per-metric keys, and ``summary_stats.metadata.aggregation_summary``
+    -- so an evaluator returning ``{"rationale": "<model's explanation>"}``
+    shipped that text to the Traigent backend even though the primary guard
+    rejects it. Metrics are numeric by contract precisely so that no text
+    content ever leaves the machine, so a non-numeric value is dropped here (the
+    primary guard has already raised for the metrics dict itself) and the drop
+    is warned about by key, never silently sent.
+
+    ``bool`` is excluded for parity with the wire contract, matching
+    :func:`_is_measure_metric_value`.
+    """
+    if not metrics:
+        return {}
+
+    kept: dict[str, Any] = {}
+    for key, value in metrics.items():
+        if _is_measure_metric_value(value):
+            kept[key] = copy.deepcopy(value)
+            continue
+        logger.warning(
+            "Dropping non-numeric metric %r (%s) from %s: metrics are sent to "
+            "the Traigent backend and are numeric-only by contract, so no text "
+            "content ever leaves this machine. Return numbers only from "
+            "evaluators and keep rationale/explanation text local.",
+            key,
+            type(value).__name__,
+            where,
+        )
+    return kept
+
+
 def _coerce_non_empty_example_id(value: Any) -> str | None:
     if value is None or isinstance(value, bool):
         return None
@@ -544,41 +596,45 @@ def _coerce_non_empty_example_id(value: Any) -> str | None:
     return None
 
 
-def _metadata_example_id(metadata: Any) -> str | None:
-    if not isinstance(metadata, Mapping):
-        return None
-
-    id_keys = ("example_id", "dataset_example_id", "input_id", "row_id", "id")
-    for key in id_keys:
-        example_id = _coerce_non_empty_example_id(metadata.get(key))
-        if example_id is not None:
-            return example_id
-
-    for container_key in ("dataset", "source", "provenance"):
-        nested = metadata.get(container_key)
-        if isinstance(nested, Mapping):
-            for key in id_keys:
-                nested_example_id = _coerce_non_empty_example_id(nested.get(key))
-                if nested_example_id is not None:
-                    return nested_example_id
-
-    return None
+#: The id the SDK's own evaluators mint for the example at position ``idx``
+#: (``traigent/evaluators/base.py`` ``_example_correlation_key``,
+#: ``core/evaluator_wrapper.py``, ``evaluators/local.py``). It encodes the
+#: index and nothing else.
+_SDK_MINTED_EXAMPLE_ID = "example_{idx}"
 
 
 def _resolve_measure_example_id(
     example_result: Any, idx: int, dataset_hash: str
 ) -> str:
-    """Prefer the evaluator/dataset example_id, falling back to synthetic IDs."""
-    for key in ("example_id", "dataset_example_id", "input_id"):
-        example_id = _coerce_non_empty_example_id(_example_field(example_result, key))
-        if example_id is not None:
-            return example_id
+    """Return an example id the SDK minted itself -- never the customer's.
 
-    metadata_example_id = _metadata_example_id(
-        _example_field(example_result, "metadata")
+    A dataset row id is CONTENT. Customers key rows by the question text, a
+    support-ticket subject, a patient or account number; #1563 made the wire
+    ``measures[].example_id`` prefer whatever string the row carried
+    (``example_id`` / ``dataset_example_id`` / ``input_id``, then nested
+    metadata ids), so those strings crossed to the Traigent backend verbatim on
+    every online trial. Nothing derived from the customer's dataset may ride in
+    an id field, so this resolver no longer reads one.
+
+    The only value accepted from ``example_result`` is the SDK's own
+    ``example_<idx>`` mint FOR THIS EXACT INDEX: its whole information content
+    is the index, which the position in ``measures[]`` already carries, so zero
+    customer bits cross. Keeping it (rather than switching every run to
+    ``ex_<hash>_<idx>``) leaves the default wire byte-identical and preserves
+    comparability with every example id already stored backend-side.
+
+    Anything else -- a customer-authored id, an unrecognised shape, an index
+    that does not line up -- falls back to the opaque, dataset-stable
+    ``ex_<hash>_<idx>`` from :mod:`traigent.utils.example_id`. That id is
+    deterministic from the dataset name and the row index, so a customer can
+    recompute it locally to join backend insights back to their rows; their own
+    id is untouched on ``ExampleResult`` and in the on-disk trial logs.
+    """
+    candidate = _coerce_non_empty_example_id(
+        _example_field(example_result, "example_id")
     )
-    if metadata_example_id is not None:
-        return metadata_example_id
+    if candidate is not None and candidate == _SDK_MINTED_EXAMPLE_ID.format(idx=idx):
+        return candidate
 
     return generate_stable_example_id(dataset_hash, idx)
 
