@@ -514,6 +514,7 @@ class SessionOperations:
         agent_key: str | None = None,
         run_title: str | None = None,
         run_description: str | None = None,
+        task_type: str | None = None,
     ) -> SessionCreationResult:
         """Create a session with backend metadata submission.
 
@@ -682,6 +683,7 @@ class SessionOperations:
                 fingerprint_meta=fingerprint_meta,
                 evaluator_id=evaluator_id,
                 evaluator_definition_id=evaluator_definition_id,
+                task_type=task_type,
             )
 
             try:

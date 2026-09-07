@@ -1374,6 +1374,7 @@ class BackendSessionManager:
         evaluator_definition_id: str | None = None,
         cost_limit: float | None = None,
         optimization_strategy: dict[str, Any] | None = None,
+        task_type: str | None = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -1549,6 +1550,7 @@ class BackendSessionManager:
                 evaluator_definition_id=evaluator_definition_id,
                 cost_limit=cost_limit,
                 optimization_strategy=optimization_strategy,
+                task_type=task_type,
             )
             result = self.normalize_session_creation_result(raw_result)
             session_id = self.handle_session_creation_result(

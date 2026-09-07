@@ -64,6 +64,7 @@ def _redact_config_for_log(config: dict[str, Any]) -> dict[str, Any]:
 
 
 if TYPE_CHECKING:
+    from traigent.core.execution_budget import ExecutionBudget
     from traigent.core.sample_budget import SampleBudgetLease
 
 
@@ -420,6 +421,25 @@ class CustomEvaluatorWrapper(BaseEvaluator):
 
         return aggregated
 
+    @staticmethod
+    def _raise_for_interface_mismatch(error: Exception) -> None:
+        """Raise the legacy custom-evaluator guidance error when signatures mismatch."""
+        error_str = str(error).lower()
+        if not (
+            "has no attribute 'get'" in error_str
+            or "'function' object" in error_str
+            or "got multiple values for argument" in error_str
+            or ("takes" in error_str and "positional argument" in error_str)
+        ):
+            return
+        raise ValueError(
+            f"custom_evaluator interface mismatch detected.\n\n"
+            f"Expected signature: custom_evaluator(func, config, example) -> ExampleResult\n"
+            f"But your evaluator appears to expect: (prediction, expected, input_data) -> dict\n\n"
+            f"Did you mean to use metric_functions instead of custom_evaluator?\n"
+            f"Original error: {error}"
+        ) from error
+
     async def evaluate(
         self,
         func: Callable[..., Any],
@@ -428,6 +448,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         *,
         sample_lease: SampleBudgetLease | None = None,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
+        budget: ExecutionBudget | None = None,
     ) -> EvaluationResult:
         """Evaluate function using custom evaluator.
 
@@ -442,6 +463,16 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         Raises:
             EvaluationError: If evaluation fails
         """
+        execution_budget_lease, blocked_result = (
+            self._prepare_execution_budget_evaluation(
+                budget, config, sample_lease=sample_lease
+            )
+        )
+        if blocked_result is not None:
+            return blocked_result
+        if sample_lease is None:
+            sample_lease = execution_budget_lease
+
         logger.info(
             "Starting custom evaluation with %d examples, config: %s",
             len(dataset.examples),
@@ -474,6 +505,9 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                     i,
                 )
                 break
+            cleanup_boundary = self._new_sample_lease_cleanup_boundary(
+                sample_lease, execution_budget_lease
+            )
             try:
                 # Clear any previous captured responses before evaluation
                 if self.capture_llm_metrics and self._metrics_available:
@@ -483,20 +517,44 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 with _maybe_restore_trial_context(trial_ctx):
                     with ConfigurationContext(config):
                         per_example_start = time.time()
-                        if is_coroutine_callable(self.custom_evaluator):
-                            example_result = await self.custom_evaluator(
-                                func, config, example
-                            )
-                        else:
-                            # Run blocking custom evaluators off the main event loop so
-                            # concurrent async tasks (progress callbacks, heartbeats)
-                            # are not starved while long-running per-example work runs.
-                            example_result = await asyncio.to_thread(
-                                self.custom_evaluator,
-                                func,
-                                config,
-                                example,
-                            )
+                        try:
+                            if is_coroutine_callable(self.custom_evaluator):
+                                try:
+                                    example_result = await self.custom_evaluator(
+                                        func, config, example
+                                    )
+                                except asyncio.CancelledError:
+                                    cleanup_boundary.cancel()
+                                    raise
+                            else:
+                                # Run blocking custom evaluators off the main event loop so
+                                # concurrent async tasks (progress callbacks, heartbeats)
+                                # are not starved while long-running per-example work runs.
+                                def run_custom_evaluator(
+                                    example: EvaluationExample = example,
+                                ) -> Any:
+                                    return self.custom_evaluator(func, config, example)
+
+                                (
+                                    output,
+                                    execution_error,
+                                ) = await self._execute_sync_in_thread(
+                                    run_custom_evaluator,
+                                    config,
+                                    (),
+                                    {},
+                                    None,
+                                    trial_ctx,
+                                    worker_started_callback=cleanup_boundary.worker_started,
+                                    worker_done_callback=cleanup_boundary.worker_done,
+                                    apply_timeout=False,
+                                )
+                                if execution_error is not None:
+                                    raise RuntimeError(execution_error)
+                                example_result = output
+                        except asyncio.CancelledError:
+                            cleanup_boundary.cancel()
+                            raise
                         per_example_duration = time.time() - per_example_start
 
                 # Ensure we got an ExampleResult
@@ -515,6 +573,8 @@ class CustomEvaluatorWrapper(BaseEvaluator):
 
                 example_results.append(example_result)
                 consumed_examples += 1
+                if sample_lease:
+                    sample_lease.mark_completed()
                 if progress_callback:
                     progress_callback(
                         i,
@@ -533,28 +593,25 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 outputs.append(example_result.actual_output)
                 errors.append(example_result.error_message)
 
+            except asyncio.CancelledError:
+                # Progress/metric handling occurs after admission too; an
+                # outer orchestrator may catch this and return partial output.
+                cleanup_boundary.cancel()
+                raise
             except Exception as e:
                 # Check for signature mismatch errors (fail fast with helpful message)
-                error_str = str(e).lower()
-                if (
-                    "has no attribute 'get'" in error_str
-                    or "'function' object" in error_str
-                    or "got multiple values for argument" in error_str
-                    or "takes" in error_str
-                    and "positional argument" in error_str
-                ):
-                    raise ValueError(
-                        f"custom_evaluator interface mismatch detected.\n\n"
-                        f"Expected signature: custom_evaluator(func, config, example) -> ExampleResult\n"
-                        f"But your evaluator appears to expect: (prediction, expected, input_data) -> dict\n\n"
-                        f"Did you mean to use metric_functions instead of custom_evaluator?\n"
-                        f"Original error: {e}"
-                    ) from e
+                try:
+                    self._raise_for_interface_mismatch(e)
+                except ValueError:
+                    self._abort_execution_budget_evaluation(execution_budget_lease)
+                    raise
 
                 logger.warning(f"Custom evaluation failed for example {i}: {e}")
                 failed_result = self._create_failed_example_result(example, i, e)
                 example_results.append(failed_result)
                 consumed_examples += 1
+                if sample_lease:
+                    sample_lease.mark_completed()
                 if progress_callback:
                     progress_callback(
                         i,
@@ -590,7 +647,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             f"duration: {duration:.2f}s, metrics: {aggregated_metrics}"
         )
 
-        return EvaluationResult(
+        result = EvaluationResult(
             config=config,
             example_results=example_results,
             aggregated_metrics=aggregated_metrics,
@@ -602,4 +659,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             metrics=aggregated_metrics,
             outputs=outputs,
             errors=errors,
+        )
+        return self._finalize_execution_budget_evaluation(
+            budget, result, execution_budget_lease
         )

@@ -36,6 +36,7 @@ jobs:
       - name: Checkout Python SDK
         uses: actions/checkout@v7
         with:
+          persist-credentials: false
           path: Traigent
 
       # Mint a spine-dispatch App installation token instead of a PAT
@@ -82,6 +83,7 @@ jobs:
         if: steps.cross-repo-token.outputs.available == 'true'
         uses: actions/checkout@v7
         with:
+          persist-credentials: false
           repository: Traigent/traigent-js
           ref: main
           path: traigent-js
@@ -91,6 +93,7 @@ jobs:
         if: steps.cross-repo-token.outputs.available == 'true'
         uses: actions/checkout@v7
         with:
+          persist-credentials: false
           repository: Traigent/TraigentSchema
           ref: main
           path: TraigentSchema

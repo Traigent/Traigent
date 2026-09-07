@@ -196,7 +196,7 @@ class ObservabilityConfig:
         }
         # Blank explicit credentials are treated as absent so they can never
         # overwrite working auth supplied through extra_headers.
-        if nonblank_credential(self.api_key):
+        if self.api_key is not None and nonblank_credential(self.api_key):
             headers["X-API-Key"] = self.api_key
         if nonblank_credential(self.jwt_token):
             headers["Authorization"] = f"Bearer {self.jwt_token}"

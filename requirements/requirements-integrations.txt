@@ -13,8 +13,8 @@ langchain-google-genai>=2.1.4
 openai>=2.0.0
 anthropic>=0.18.0
 rank_bm25>=0.2.2
-mlflow-skinny>=3.11.1,<4.0
-pandas>=1.3.0
+mlflow-skinny>=3.11.1,<4.0  # tracking-only; full mlflow pins cryptography<50 (#2183)
+pandas>=1.3.0  # main-only (#2206): preserves the DataFrame surface full mlflow supplied transitively
 wandb>=0.15.0
 python-dotenv>=1.2.2
 

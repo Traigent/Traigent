@@ -6,6 +6,8 @@ import re
 import tomllib
 from pathlib import Path
 
+import pytest
+
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import Version
@@ -26,10 +28,31 @@ _BARE_MLFLOW_INSTALL_PATTERNS = (
 )
 
 
+def _strip_inline_comment(line: str) -> str:
+    """Drop a pip-style trailing comment.
+
+    pip's requirements format allows a comment after a requirement when the
+    ``#`` is preceded by whitespace, and this repository uses that to record
+    WHY a floor exists -- e.g. ``yarl>=1.24.5,<2  # AIKIDO-2026-181733`` and
+    ``mlflow-skinny>=3.11.1,<4.0  # tracking-only; full mlflow pins
+    cryptography<50 (#2183)``. ``packaging.Requirement`` does not accept those,
+    so parsing the raw line raises ``InvalidRequirement`` on a file pip reads
+    happily.
+
+    A bare ``#`` with no leading whitespace is NOT a comment -- it appears
+    inside URL fragments such as ``...#egg=name`` -- so only ``<space>#``
+    starts one.
+    """
+    head, sep, _ = line.partition(" #")
+    if not sep:
+        head, sep, _ = line.partition("\t#")
+    return head.strip() if sep else line
+
+
 def _requirements(path: Path) -> dict[str, Requirement]:
     parsed = {}
     for raw_line in path.read_text().splitlines():
-        line = raw_line.strip()
+        line = _strip_inline_comment(raw_line.strip())
         if not line or line.startswith(("#", "-r ")):
             continue
         requirement = Requirement(line)
@@ -158,3 +181,34 @@ def test_current_release_records_cryptography_advisory_closure() -> None:
     assert "cryptography 50.0.1" in current_release_lower
     assert "CVE-2026-69247" in current_release
     assert "GHSA-g6cj-pr64-35w5" in current_release
+
+
+def test_the_floor_is_still_enforced_through_an_inline_comment(tmp_path) -> None:
+    """The comment-stripper must not become a way to smuggle a bad floor past.
+
+    Both branches were green in isolation and the merge was not: `main` added
+    this guard while `develop` added the provenance comments it could not
+    parse. Stripping comments is the fix, but it would be worthless if it also
+    made the specifier unreadable -- so assert the floor still bites on a line
+    that carries a comment.
+    """
+    good = tmp_path / "good.txt"
+    good.write_text("cryptography>=50.0.0  # CVE-2026-69247, PKCS#7 oracle\n")
+    _assert_cryptography_floor(_requirements(good)["cryptography"], str(good))
+
+    bad = tmp_path / "bad.txt"
+    bad.write_text("cryptography>=49.0.0  # AIKIDO-0000-000000; deliberately too low\n")
+    with pytest.raises(AssertionError):
+        _assert_cryptography_floor(_requirements(bad)["cryptography"], str(bad))
+
+
+def test_a_url_fragment_is_not_treated_as_a_comment(tmp_path) -> None:
+    """`#egg=` has no leading space, so it must survive the stripper."""
+    path = tmp_path / "vcs.txt"
+    url = "https://example.invalid/c.tar.gz#sha256=deadbeef"
+    path.write_text(f"cryptography @ {url}\n")
+    parsed = _requirements(path)["cryptography"]
+    # Asserting the NAME survives is not enough: partitioning on a bare "#"
+    # also leaves a parseable requirement, just one that has silently lost its
+    # hash. The URL is what must come through whole.
+    assert parsed.url == url, f"URL fragment was eaten: {parsed.url}"

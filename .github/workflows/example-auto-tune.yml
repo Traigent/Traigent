@@ -51,6 +51,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+        # create-pull-request pushes a branch, so this job keeps checkout credentials.
         with:
           fetch-depth: 0  # Needed for DVC
 

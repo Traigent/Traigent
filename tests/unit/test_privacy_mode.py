@@ -150,6 +150,11 @@ class TestPrivacyCompliance:
             # TraigentSchema, which is what governs redaction downstream.
             "run_title",
             "run_description",
+            # Coarse task category ("multiple_choice", "text2sql", ...) chosen from a
+            # server-owned vocabulary. It names the KIND of task, never anything about
+            # the dataset or its examples, and the content scanner above still runs
+            # over it -- so it is allowed here for the same reason run_title is.
+            "task_type",
         }
 
         for req in dummy_server.received_data:

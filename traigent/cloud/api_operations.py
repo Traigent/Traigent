@@ -30,6 +30,7 @@ from traigent.cloud.models import (
     SessionCreationResponse,
     TrialResultSubmission,
     session_narrative_to_wire,
+    session_task_type_to_wire,
 )
 from traigent.cloud.session_budgets import remember_cost_budget_armed_session
 from traigent.cloud.session_objectives import normalize_typed_objectives
@@ -727,6 +728,7 @@ class ApiOperations:
         # contract caps, and never used for identity. Shared with CloudClient's
         # direct serializer so the two session-create paths cannot drift.
         payload.update(session_narrative_to_wire(session_request))
+        payload.update(session_task_type_to_wire(session_request))
 
         # CHOKE POINT (review round 2): the allowlist serializer runs on the
         # actual request body, not only on the orchestrator path — a direct

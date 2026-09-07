@@ -5,3 +5,4 @@
 
 # Hybrid mode - HTTP/2 client for external service communication
 httpx[http2]>=0.24.0
+h2>=4.4.1,<5  # GHSA-6hr6-w5qg-qmwg HTTP/2 request smuggling; httpx floors only h2>=3

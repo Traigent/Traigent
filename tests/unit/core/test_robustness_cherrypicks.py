@@ -20,17 +20,23 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-import inspect
 import time
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from traigent.api.types import OptimizationStatus, TrialResult, TrialStatus
+from traigent.api.types import (
+    ExampleResult,
+    OptimizationStatus,
+    TrialResult,
+    TrialStatus,
+)
 from traigent.config.types import TraigentConfig
 from traigent.core.backend_session_manager import BackendSessionManager
+from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
 from traigent.core.objectives import create_default_objectives
+from traigent.evaluators.base import Dataset, EvaluationExample
 
 
 @pytest.fixture
@@ -262,13 +268,53 @@ class TestBlockingEvaluatorOffloading:
         # to_thread they overlap and total ~0.25-0.3s.
         assert elapsed < 0.4, f"elapsed={elapsed:.3f}s suggests event-loop starvation"
 
-    def test_evaluator_wrapper_wraps_blocking_evaluator_in_to_thread(self) -> None:
-        """Source-level guard against accidental regression: the wrapper's
-        sync-evaluator branch must stay on asyncio.to_thread."""
-        from traigent.core import evaluator_wrapper
+    @pytest.mark.asyncio
+    async def test_evaluator_wrapper_offloads_blocking_sync_evaluator(self) -> None:
+        """A blocking wrapper evaluator must not starve the event loop."""
+        heartbeats: list[float] = []
 
-        source = inspect.getsource(evaluator_wrapper.CustomEvaluatorWrapper)
-        assert "asyncio.to_thread(" in source, (
-            "CustomEvaluatorWrapper must use asyncio.to_thread to run blocking "
-            "custom evaluators off the main event loop"
+        def blocking_evaluator(
+            func: object, config: dict[str, object], example: EvaluationExample
+        ) -> ExampleResult:
+            time.sleep(0.2)
+            return ExampleResult(
+                example_id="example-0",
+                input_data=example.input_data,
+                expected_output=example.expected_output,
+                actual_output="done",
+                metrics={"score": 1.0},
+                execution_time=0.2,
+                success=True,
+            )
+
+        async def heartbeat() -> None:
+            for _ in range(5):
+                heartbeats.append(time.monotonic())
+                await asyncio.sleep(0.05)
+
+        async def identity(value: str) -> str:
+            return value
+
+        wrapper = CustomEvaluatorWrapper(
+            blocking_evaluator,
+            metrics=["score"],
+            capture_llm_metrics=False,
         )
+        dataset = Dataset(
+            examples=[
+                EvaluationExample(
+                    input_data={"value": "input"},
+                    expected_output="done",
+                )
+            ]
+        )
+
+        start = time.monotonic()
+        _, result = await asyncio.gather(
+            heartbeat(), wrapper.evaluate(identity, {}, dataset)
+        )
+        elapsed = time.monotonic() - start
+
+        assert result.outputs == ["done"]
+        assert len(heartbeats) == 5
+        assert elapsed < 0.4, f"elapsed={elapsed:.3f}s suggests event-loop starvation"

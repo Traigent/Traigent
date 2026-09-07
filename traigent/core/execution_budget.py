@@ -53,6 +53,12 @@ import time
 from dataclasses import dataclass
 from typing import Literal
 
+from traigent.core.sample_budget import (
+    BudgetMetrics,
+    LeaseClosure,
+    SampleBudgetLease,
+    SampleBudgetManager,
+)
 from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.logging import get_logger
 
@@ -65,6 +71,63 @@ _DIM_COST = "cost"
 _DIM_EXAMPLES = "examples"
 _DIM_DEADLINE = "deadline"
 _DIM_UNTRACKED_COST = "untracked_cost"
+
+
+class _ExecutionBudgetSampleManager(SampleBudgetManager):
+    """Adapt a budget-owned atomic example admission lease to sample APIs."""
+
+    def __init__(self, budget: ExecutionBudget) -> None:
+        super().__init__(total_budget=None)
+        self._budget = budget
+
+    def remaining(self) -> float:
+        return self._budget.remaining_examples
+
+    def _remaining_for_lease(self, lease: SampleBudgetLease) -> float:
+        ceiling_remaining = float("inf")
+        if lease._ceiling is not None:  # noqa: SLF001
+            ceiling_remaining = max(lease._ceiling - lease._consumed, 0)  # noqa: SLF001
+        return min(ceiling_remaining, self._budget.remaining_examples)
+
+    def consumed(self) -> int:
+        """Return the shared execution-budget example count."""
+        return self._budget.snapshot().consumed_examples
+
+    def snapshot(self) -> BudgetMetrics:
+        """Return metrics reflecting the shared execution-budget example pool."""
+        # Keep the manager-side waste counter and budget-side consumption from
+        # being observed mid-release.  ``_release`` takes these locks in this
+        # same order (manager -> budget), so snapshots cannot race or deadlock.
+        with self._lock:
+            snapshot = self._budget.snapshot()
+            return BudgetMetrics(
+                total_budget=snapshot.max_examples,
+                consumed=snapshot.consumed_examples,
+                wasted=self._wasted,
+            )
+
+    def _acquire(self, lease: SampleBudgetLease, count: int) -> bool:
+        ceiling = lease._ceiling  # noqa: SLF001
+        if ceiling is not None and lease._consumed + count > ceiling:  # noqa: SLF001
+            return False
+        return self._budget._acquire_execution_examples(count)  # noqa: SLF001
+
+    def _release(self, lease: SampleBudgetLease, count: int) -> None:
+        with self._lock:
+            self._budget._release_execution_examples(count)  # noqa: SLF001
+            self._wasted += count
+
+    def _finalize(self, lease: SampleBudgetLease) -> LeaseClosure:
+        consumed = lease._consumed  # noqa: SLF001
+        self._leases.pop(lease.trial_id, None)
+        return LeaseClosure(
+            trial_id=lease.trial_id,
+            consumed=consumed,
+            exhausted=lease._exhausted  # noqa: SLF001
+            or self._budget.exhausted_dimension == _DIM_EXAMPLES,
+            global_remaining=self.remaining(),
+            wasted=lease._wasted,  # noqa: SLF001
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,6 +343,30 @@ class ExecutionBudget:
             self._external_untracked = True
 
     # -- locked computations ---------------------------------------------------
+
+    def _acquire_execution_examples(self, count: int) -> bool:
+        """Atomically admit examples for a direct evaluator lease."""
+        with self._lock:
+            if count <= 0:
+                raise ValueError("count must be a positive integer")
+            if (
+                self.max_examples is not None
+                and self._consumed_examples + count > self.max_examples
+            ):
+                return False
+            self._consumed_examples += count
+            return True
+
+    def _release_execution_examples(self, count: int) -> None:
+        """Refund admitted examples when a lease rolls work back."""
+        with self._lock:
+            self._consumed_examples = max(self._consumed_examples - count, 0)
+
+    def _create_example_lease(self) -> SampleBudgetLease:
+        """Create an internal lease whose admissions are atomic on this budget."""
+        return _ExecutionBudgetSampleManager(self).create_lease(
+            "execution-budget-evaluation"
+        )
 
     def _elapsed_seconds_locked(self) -> float:
         if self._start_monotonic is None:

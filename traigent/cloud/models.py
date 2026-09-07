@@ -255,6 +255,28 @@ def session_narrative_to_wire(session_request: Any) -> dict[str, str]:
     return wire
 
 
+def session_task_type_to_wire(session_request: Any) -> dict[str, str]:
+    """Serialize the coarse ``task_type`` hint for /api/v1/sessions.
+
+    ONE serializer for both session-create paths, for the same reason
+    ``session_narrative_to_wire`` exists: a field declared on the request
+    dataclass but dropped by one serializer looks like it works and does not.
+    This hint is what lets the backend's anchor policy designate a verifiable
+    anchor (``mcq_exact`` today) for a run -- without it every real run audits
+    as ``no_anchor_designation``, which is what happened to the first outcome
+    cells ever written on 2026-09-03.
+
+    Whitespace is stripped; an empty hint is omitted (the schema forbids the
+    empty string). Nothing else is normalized here -- the server owns the
+    vocabulary and maps unknown values to "no anchor".
+    """
+    value = getattr(session_request, "task_type", None)
+    if not isinstance(value, str):
+        return {}
+    cleaned = value.strip()
+    return {"task_type": cleaned} if cleaned else {}
+
+
 @dataclass
 class SessionCreationRequest:
     """Request to create a new optimization session."""
@@ -294,6 +316,10 @@ class SessionCreationRequest:
     # content-addressed through artifact_fingerprints.evaluator.
     evaluator_id: str | None = None
     evaluator_definition_id: str | None = None
+    #: Coarse task category (``multiple_choice``, ``text2sql``, ...). The server
+    #: maps it to an evaluator-quality anchor policy; the client never names an
+    #: anchor. Serialized by ``session_task_type_to_wire`` on every path.
+    task_type: str | None = None
     # Alternative parameter names for test compatibility
     problem_type: str | None = None
 

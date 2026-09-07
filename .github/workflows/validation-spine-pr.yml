@@ -74,6 +74,7 @@ jobs:
       - name: Checkout product repo
         uses: actions/checkout@v7
         with:
+          persist-credentials: false
           fetch-depth: 1
           path: Traigent
 
@@ -102,6 +103,7 @@ jobs:
         if: steps.spine-app-token.outputs.token != ''
         uses: actions/checkout@v7
         with:
+          persist-credentials: false
           repository: Traigent/traigent-validation-spine
           ref: ${{ env.SPINE_REF }}
           path: .spine

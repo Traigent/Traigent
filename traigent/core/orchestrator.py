@@ -895,7 +895,7 @@ class OptimizationOrchestrator:
         """Return the backend strategy for named managed algorithms."""
 
         policy = policy_from_config(self.traigent_config)
-        if not policy_is_cloud_required(policy):
+        if policy is None or not policy_is_cloud_required(policy):
             return None
         strategy = backend_optimization_strategy_for_algorithm(policy.algorithm)
         if strategy is None:
@@ -1659,7 +1659,7 @@ class OptimizationOrchestrator:
             return None
 
         attempted = extract_examples_attempted(trial_result, default=1)
-        if attempted <= 0:
+        if attempted is None or attempted <= 0:
             attempted = 1
         return {
             "attempted_calls": attempted,
@@ -2882,6 +2882,7 @@ class OptimizationOrchestrator:
             evaluator_definition_id=self.evaluator_definition_id,
             cost_limit=self.config.get("cost_limit"),
             optimization_strategy=optimization_strategy_payload,
+            task_type=getattr(self, "task_type", None),
         )
         session_id: str | None = session_context.session_id
         self._active_session_id = session_id
@@ -3056,6 +3057,7 @@ class OptimizationOrchestrator:
                 artifact_fingerprints=self.artifact_fingerprints,
                 fingerprint_meta=self.fingerprint_meta,
                 evaluator_definition_id=self.evaluator_definition_id,
+                task_type=getattr(self, "task_type", None),
             )
             session_id = self.backend_session_manager.handle_session_creation_result(
                 self.backend_session_manager.normalize_session_creation_result(
