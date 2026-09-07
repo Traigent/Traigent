@@ -269,7 +269,7 @@ jobs:
       - name: Initialize CodeQL
         id: codeql_init
         continue-on-error: true
-        uses: github/codeql-action/init@v4.37.6
+        uses: github/codeql-action/init@v4.37.9
         with:
           languages: python
           # security-extended adds CodeQL's deeper data-flow/taint queries on
@@ -279,7 +279,7 @@ jobs:
       - name: Perform CodeQL analysis
         id: codeql_analyze
         continue-on-error: true
-        uses: github/codeql-action/analyze@v4.37.6
+        uses: github/codeql-action/analyze@v4.37.9
       - name: Capture CodeQL status
         id: codeql_status
         if: always()
