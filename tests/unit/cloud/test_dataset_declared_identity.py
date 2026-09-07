@@ -349,7 +349,9 @@ def test_cloud_brain_serializer_also_bounds_the_over_long_label():
             objectives=[{"name": "accuracy", "orientation": "maximize", "weight": 1.0}],
             dataset_metadata={"name": _long_label(suffix), "size": 3},
         )
-        return TraigentCloudClient._serialize_session_request(stub, request)["dataset_id"]
+        return TraigentCloudClient._serialize_session_request(stub, request)[
+            "dataset_id"
+        ]
 
     first, second = _emit("A"), _emit("B")
     assert first != second
