@@ -21,11 +21,14 @@
 # WHY A COMMIT PIN AND NOT A VERSION
 # ----------------------------------
 # traigent/economics/schema.py fingerprints the exact economics contract, so the
-# SDK needs one specific TraigentSchema build. 5.0.0 is not on PyPI (the newest
-# published traigent-schema is 4.8.0), and the newer 5.4.0 on TraigentSchema
-# main is NOT interchangeable — the SDK's economics suite fails 73 tests against
-# it. Until 5.0.0 (or a reconciled newer contract) is published to PyPI, the
-# exact commit is the only correct source.
+# SDK needs one specific TraigentSchema build. This pin is 5.8.0-line (build
+# 93030ccef7f50acbd205078b7da3e701f5b1dcf4, TraigentSchema develop tip as of
+# 2026-09-07), not on PyPI (the newest published traigent-schema is 4.8.0).
+# Bumping the pin means recomputing EXPECTED_ECONOMICS_SCHEMA_FINGERPRINT in
+# traigent/economics/schema.py against the newly pinned build (see that
+# module's docstring) -- a byte-exact mismatch fails closed even when the
+# contract itself did not change in substance. Until a reconciled contract is
+# published to PyPI, the exact commit is the only correct source.
 #
 # HOW IT IS CONSUMED
 # ------------------
@@ -37,4 +40,4 @@
 # requirement string on failure and caches it, and Dependabot PRs never receive
 # org secrets, so a token here breaks them. This file is the single source of
 # truth for the pin — update it here only, and keep uv.lock in step.
-traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@01f3e2a2bbc1ca7d1b1cc8dde94f82d73dbe822a
+traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@93030ccef7f50acbd205078b7da3e701f5b1dcf4
