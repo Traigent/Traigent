@@ -9,6 +9,7 @@ are reserved for a future cloud release.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -331,6 +332,35 @@ def _derive_default_dataset_id(session_request: Any) -> str | None:
     return None
 
 
+# A derived identity is a LABEL, and a label can be longer than the backend's
+# 255-character cap on ``dataset_id`` (``_validate_identity_scalars`` in
+# ``traigent_session_routes.py`` rejects anything longer). Cutting the label to
+# fit is what this constant used to be for, and cutting is a correctness bug:
+# two labels sharing a 255-character prefix cut down to the SAME identity, so
+# two unrelated datasets converge on one Benchmark row and their optimization
+# histories silently merge. Paths make that concrete rather than theoretical --
+# a deeply nested path is blessed as an identity, and sibling paths differ only
+# in their final segment.
+#
+# So an over-long label is folded into a digest of the WHOLE label instead.
+# That keeps every property identity requires: deterministic (the same label
+# always yields the same id), stable across content edits (it reads the label,
+# never the examples), and collision-free in practice.
+#
+# Only the over-long case is folded. Hashing every derived label would remint
+# the identity of every dataset already linked with a plain label and split its
+# history at the upgrade -- the exact damage this guards against.
+_DERIVED_DATASET_ID_DIGEST_PREFIX = "lbl1:"
+
+
+def _bounded_derived_dataset_id(label: str) -> str:
+    """Return ``label`` when it fits the backend cap, else a digest of all of it."""
+    if len(label) <= DATASET_ID_MAX_LENGTH:
+        return label
+    digest = hashlib.sha256(label.encode("utf-8")).hexdigest()
+    return f"{_DERIVED_DATASET_ID_DIGEST_PREFIX}{digest}"
+
+
 def session_dataset_identity_to_wire(session_request: Any) -> dict[str, str]:
     """Serialize the declared dataset identity for the TYPED /api/v1/sessions
     contract only (the backend validates ``dataset_id``/``dataset_id_source``
@@ -348,10 +378,12 @@ def session_dataset_identity_to_wire(session_request: Any) -> dict[str, str]:
     (did the content drift?) but is no longer identity.
 
     Emits ``{"dataset_id_source": "declared", "dataset_id": <id>}`` when an
-    id is available (explicit or derived), truncated to the backend's
-    255-character cap. Emits nothing when there is no explicit id and no
-    label to derive one from -- absence stays absence, no identity is
-    invented.
+    id is available. An explicit id is sent verbatim (already length-validated
+    at construction); a DERIVED label longer than the backend's 255-character
+    cap is folded into a digest of the whole label rather than cut to fit --
+    see ``_bounded_derived_dataset_id``. Emits nothing when there is no
+    explicit id and no label to derive one from -- absence stays absence, no
+    identity is invented.
     """
     explicit = getattr(session_request, "dataset_id", None)
     dataset_id = (
@@ -359,11 +391,18 @@ def session_dataset_identity_to_wire(session_request: Any) -> dict[str, str]:
     )
     if dataset_id is None:
         dataset_id = _derive_default_dataset_id(session_request)
+        if dataset_id:
+            # Only a DERIVED label is folded. An explicit id is the caller's own
+            # assertion and is length-validated at construction
+            # (``SessionCreationRequest.__post_init__``), so it is never rewritten
+            # here -- silently substituting a digest for an id the caller chose
+            # would make their identity unpredictable.
+            dataset_id = _bounded_derived_dataset_id(dataset_id)
     if not dataset_id:
         return {}
     return {
         "dataset_id_source": "declared",
-        "dataset_id": dataset_id[:DATASET_ID_MAX_LENGTH],
+        "dataset_id": dataset_id,
     }
 
 
