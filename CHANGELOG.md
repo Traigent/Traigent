@@ -30,10 +30,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   contract so that no text ever crosses to the Traigent service, but a metric holding a
   string (an LLM judge's rationale, a captured response, an error excerpt) was only
   warned about and then submitted — including through two secondary copies of the trial
-  metrics that skipped the check entirely. Returning a non-numeric metric now raises a
-  `TypeError` naming the metric, and any non-numeric value in the trial-metric copies is
-  dropped with a warning. Keep rationale and explanation text local, in your own logging
-  or the on-disk trial logs.
+  metrics that skipped the check entirely. A non-numeric metric in a trial's measures now
+  causes that trial's submission to be rejected and logged at error level — the trial will
+  not appear on the backend until the evaluator returns a number for that metric. You will
+  not see a raised exception; look for "Rejecting submission (measures contract
+  violation)" in your logs. Any non-numeric value in the secondary trial-metric copies is
+  dropped with a warning instead, key by key, rather than rejecting the whole trial. Keep
+  rationale and explanation text local, in your own logging or the on-disk trial logs.
 
 - **`offline=True` and OpenTelemetry.** Documented, in `docs/api-reference/telemetry.md`,
   that `offline=True` does not turn off OpenTelemetry export: with
