@@ -229,7 +229,9 @@ it, because they are never sent. Your prompts are not part of it **unless you
 tune them as configuration values** - a prompt variant used as a tuned
 configuration value is sent on the default path (see *Data Boundary and
 No-Egress Runs* above) and is therefore inside this aggregate set;
-privacy-mode redaction is the lever that withholds it. And **example
+`offline=True` is the only lever that withholds it - privacy-mode redaction
+applies to per-trial submissions, not to the configuration space sent at
+session creation. And **example
 identifiers are not used this way** - an identifier names a row in your
 dataset and means nothing outside it, so it carries no signal to aggregate.
 
@@ -244,7 +246,7 @@ model's responses are never sent, so neither exists on Traigent's side to be
 used for anything, including training or fine-tuning a model - what was never
 received cannot be used. A tuned prompt variant is different: because it is
 sent as a configuration value, that same assurance does not cover it; use
-privacy-mode redaction or `offline=True` if you need it excluded.
+`offline=True` if you need it excluded.
 
 Two things this section deliberately does not claim. It does not say the four
 older bullets were wrong about Traigent's *intentions* - it says they were not
