@@ -198,9 +198,12 @@ calling telemetry local-only, so the file gave two answers and a reader could
 pick either. Both are rewritten here and below, scoped by path, because the path
 is what decides whether Traigent receives anything at all.
 
-**No-egress runs** (`offline=True`, or `TRAIGENT_DISABLE_TELEMETRY=true`):
-Traigent receives nothing. Everything above is written to your disk and used by
-your own run. There is nothing here for Traigent to use.
+**No-egress runs** (`offline=True`): Traigent receives nothing. Everything above
+is written to your disk and used by your own run. There is nothing here for
+Traigent to use. `TRAIGENT_DISABLE_TELEMETRY=true` is a different lever: it
+silences SDK observability-telemetry emission but does not stop portal-backed
+session and trial egress. Use `offline=True` when the requirement is no
+Traigent backend egress at all.
 
 **Portal-backed runs**: Traigent receives the identifier of each example, the
 numeric measures recorded for it, and the tuned configuration values under
@@ -221,20 +224,27 @@ Beyond your run, the **numeric measures and tuned configuration values** may
 also be used in aggregate across customers: which settings tend to help which
 kinds of agent, and the statistics that inform how Traigent searches in future.
 Two things bound that, and they are the reason it stays private rather than a
-promise that it does. Your dataset, your prompts and your model's responses are
-not part of it, because they are never sent. And **example identifiers are not
-used this way** - an identifier names a row in your dataset and means nothing
-outside it, so it carries no signal to aggregate.
+promise that it does. Your dataset and your model's responses are not part of
+it, because they are never sent. Your prompts are not part of it **unless you
+tune them as configuration values** - a prompt variant used as a tuned
+configuration value is sent on the default path (see *Data Boundary and
+No-Egress Runs* above) and is therefore inside this aggregate set;
+privacy-mode redaction is the lever that withholds it. And **example
+identifiers are not used this way** - an identifier names a row in your
+dataset and means nothing outside it, so it carries no signal to aggregate.
 
-What crosses that boundary is therefore a knob name, a value, and a number.
-Nothing in it is yours to recognise.
+What crosses that boundary is therefore a knob name, a value, a number, and -
+if you chose to tune one - a prompt string you put there yourself. The first
+three carry no signal to recognise; a tuned prompt variant is exactly
+something you would recognise.
 
 That aggregate is statistical: which settings tended to help which kinds of
-agent, counted over those names, values and numbers. Because a dataset, a
-prompt or a model response is never sent, none of that material exists on
-Traigent's side to be used for anything, including training or fine-tuning a
-model. This is a consequence of the boundary above rather than a separate
-promise: what was never received cannot be used.
+agent, counted over those names, values and numbers. Your dataset and your
+model's responses are never sent, so neither exists on Traigent's side to be
+used for anything, including training or fine-tuning a model - what was never
+received cannot be used. A tuned prompt variant is different: because it is
+sent as a configuration value, that same assurance does not cover it; use
+privacy-mode redaction or `offline=True` if you need it excluded.
 
 Two things this section deliberately does not claim. It does not say the four
 older bullets were wrong about Traigent's *intentions* - it says they were not
