@@ -27,7 +27,12 @@ from unittest.mock import Mock
 import pytest
 
 from traigent.cloud.api_operations import ApiOperations
-from traigent.cloud.models import OptimizationSession, SessionCreationRequest
+from traigent.cloud.models import (
+    DATASET_ID_MAX_LENGTH,
+    OptimizationSession,
+    SessionCreationRequest,
+    session_dataset_identity_to_wire,
+)
 from traigent.cloud.privacy_operations import PrivacyOperations
 from traigent.evaluators.base import Dataset, EvaluationExample
 
@@ -260,3 +265,108 @@ def test_cloud_brain_serializer_also_emits_the_declared_identity():
         "the cloud-brain serializer dropped the declared dataset identity; rows "
         "created through this path would still render 'No dataset'"
     )
+
+
+# ---------------------------------------------------------------------------
+# Over-long derived labels must not collide (codex review, 2026-09-07)
+# ---------------------------------------------------------------------------
+
+
+def _long_label(suffix: str) -> str:
+    """A label whose first 255 characters are identical to its sibling's."""
+    return "x" * DATASET_ID_MAX_LENGTH + suffix
+
+
+def test_two_labels_sharing_a_255_char_prefix_get_distinct_identities():
+    """Cutting a label to fit the backend cap merged unrelated datasets.
+
+    The backend rejects a ``dataset_id`` over 255 characters, and this
+    serializer used to cut the label down to fit. Two labels agreeing on their
+    first 255 characters therefore produced the SAME declared identity, so two
+    unrelated datasets converged on one Benchmark row and their optimization
+    histories merged -- the precise failure this feature exists to prevent,
+    inverted. Sibling paths are the realistic shape: a path is a blessed
+    identity, and siblings differ only in their final segment.
+    """
+    first = session_dataset_identity_to_wire(
+        SimpleNamespace(dataset_id=None, dataset_metadata={"name": _long_label("A")})
+    )
+    second = session_dataset_identity_to_wire(
+        SimpleNamespace(dataset_id=None, dataset_metadata={"name": _long_label("B")})
+    )
+
+    assert first["dataset_id"] != second["dataset_id"], (
+        "two datasets whose labels share a 255-character prefix collapsed onto "
+        "one identity; their histories would silently merge"
+    )
+    for emitted in (first, second):
+        assert len(emitted["dataset_id"]) <= DATASET_ID_MAX_LENGTH, (
+            "the emitted identity exceeds the backend's cap and the session "
+            "create would be rejected outright"
+        )
+
+
+def test_over_long_label_identity_is_deterministic_across_calls():
+    """Identity is computed from the label, so it must not drift per call."""
+    label = _long_label("stable")
+    first = session_dataset_identity_to_wire(
+        SimpleNamespace(dataset_id=None, dataset_metadata={"name": label})
+    )
+    second = session_dataset_identity_to_wire(
+        SimpleNamespace(dataset_id=None, dataset_metadata={"name": label})
+    )
+    assert first == second
+
+
+def test_labels_within_the_cap_keep_their_plain_readable_identity():
+    """Only the over-long case is folded.
+
+    Folding every label would remint the identity of every dataset already
+    linked with a plain label and split its history at the upgrade.
+    """
+    emitted = session_dataset_identity_to_wire(
+        SimpleNamespace(dataset_id=None, dataset_metadata={"name": "my-eval-set"})
+    )
+    assert emitted["dataset_id"] == "my-eval-set"
+
+
+def test_cloud_brain_serializer_also_bounds_the_over_long_label():
+    """The second typed serializer must carry the fix too.
+
+    Both typed serializers share ``session_dataset_identity_to_wire``, and this
+    asserts that sharing rather than assuming it: a future refactor that
+    re-implements the wire shape on one path would reintroduce the collision on
+    exactly one of the two lanes.
+    """
+    from traigent.cloud.client import TraigentCloudClient
+
+    stub = SimpleNamespace(_ensure_owner_metadata=lambda metadata: metadata or {})
+
+    def _emit(suffix: str) -> str:
+        request = SessionCreationRequest(
+            function_name="qa_agent",
+            configuration_space={"temperature": [0.0, 1.0]},
+            objectives=[{"name": "accuracy", "orientation": "maximize", "weight": 1.0}],
+            dataset_metadata={"name": _long_label(suffix), "size": 3},
+        )
+        return TraigentCloudClient._serialize_session_request(stub, request)["dataset_id"]
+
+    first, second = _emit("A"), _emit("B")
+    assert first != second
+    assert len(first) <= DATASET_ID_MAX_LENGTH
+    assert len(second) <= DATASET_ID_MAX_LENGTH
+
+
+def test_an_explicit_over_long_id_is_rejected_rather_than_quietly_folded():
+    """An explicit id is the caller's assertion; it is never rewritten.
+
+    Substituting a digest for an id the caller chose would make their identity
+    unpredictable, so the length rule stays a loud construction-time error.
+    """
+    with pytest.raises(ValueError, match="at most 255 characters"):
+        SessionCreationRequest(
+            function_name="qa_agent",
+            configuration_space={"temperature": [0.0, 1.0]},
+            objectives=[{"name": "accuracy", "orientation": "maximize", "weight": 1.0}],
+            dataset_id="y" * (DATASET_ID_MAX_LENGTH + 1),
+        )
