@@ -2914,17 +2914,6 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#gdpr" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        GDPR
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#hipaa-and-sensitive-data" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3012,6 +3001,17 @@
     <span class="md-ellipsis">
       
         Q: Where can I see what telemetry data was collected?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#q-does-any-of-this-reach-traigent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Q: Does any of this reach Traigent?
       
     </span>
   </a>
@@ -4452,17 +4452,6 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#gdpr" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        GDPR
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#hipaa-and-sensitive-data" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4550,6 +4539,17 @@
     <span class="md-ellipsis">
       
         Q: Where can I see what telemetry data was collected?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#q-does-any-of-this-reach-traigent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Q: Does any of this reach Traigent?
       
     </span>
   </a>
@@ -4753,13 +4753,51 @@ workflow trace manager exists, it logs at debug level and returns. Metadata is
 limited to safe numeric values, sensitive keys such as prompt/response/output
 are dropped, and model identifiers are validated before emission.</p>
 <h2 id="how-telemetry-is-used">How Telemetry is Used<a class="headerlink" href="#how-telemetry-is-used" title="Permanent link">&para;</a></h2>
-<p>Telemetry data is used for:</p>
+<p>This section used to list four uses - optimization improvements, bug detection,
+performance analysis, usage analytics - without saying who holds the data or
+which runs it described. The FAQ then answered the same question the other way,
+calling telemetry local-only, so the file gave two answers and a reader could
+pick either. Both are rewritten here and below, scoped by path, because the path
+is what decides whether Traigent receives anything at all.</p>
+<p><strong>No-egress runs</strong> (<code>offline=True</code>): Traigent receives nothing. Everything above
+is written to your disk and used by your own run. There is nothing here for
+Traigent to use. <code>TRAIGENT_DISABLE_TELEMETRY=true</code> is a different lever: it
+silences SDK observability-telemetry emission but does not stop portal-backed
+session and trial egress. Use <code>offline=True</code> when the requirement is no
+Traigent backend egress at all.</p>
+<p><strong>Portal-backed runs</strong>: Traigent receives the data described in <em>What Data is
+Collected</em> above, minus the content listed in <em>What is NOT Collected</em>. That
+material is used to:</p>
 <ol>
-<li><strong>Optimization Improvements</strong>: Understanding which optimization strategies work best</li>
-<li><strong>Bug Detection</strong>: Identifying errors and failures to improve reliability</li>
-<li><strong>Performance Analysis</strong>: Measuring and improving SDK performance</li>
-<li><strong>Usage Analytics</strong>: Understanding how features are used to prioritize development</li>
+<li><strong>Run your optimization</strong> - the backend coordinates which configurations to
+   try next, which is what a managed search is.</li>
+<li><strong>Record what each trial tried and achieved</strong>, so the portal can show you
+   the winning configuration and how the others compared.</li>
+<li><strong>Tell you about your own dataset</strong> - which examples were too easy to
+   separate configurations, which were too few to support a reliable
+   comparison, and which look inconsistent.</li>
 </ol>
+<p>Those three are scoped to your own run and reported back to you.</p>
+<p>Beyond your run, the <strong>numeric measures and tuned configuration values</strong> may
+also be used in aggregate across customers: which settings tend to help which
+kinds of agent, and the statistics that inform how Traigent searches in future.
+Two things bound that, and they are the reason it stays private rather than a
+promise that it does. Your dataset and your model's responses are not part of
+it, because they are never sent. Your prompts are not part of it <strong>unless you
+tune them as configuration values</strong> - a prompt variant used as a tuned
+configuration value is sent on the default path (see <em>Data Boundary and
+No-Egress Runs</em> above) and is therefore inside this aggregate set;
+<code>offline=True</code> is the only lever that withholds it - privacy-mode redaction
+applies to per-trial submissions, not to the configuration space sent at
+session creation.</p>
+<p>That aggregate is statistical: which settings tended to help which kinds of
+agent, counted over those names, values and numbers.</p>
+<p>Two things this section deliberately does not claim. It does not say the four
+older bullets were wrong about Traigent's <em>intentions</em> - it says they were not
+a description of where the data is. And it makes no statement about training or
+fine-tuning models on this material; that answer belongs to Traigent's published
+policy rather than to an SDK reference, and this file will link it rather than
+paraphrase it.</p>
 <h2 id="data-retention">Data Retention<a class="headerlink" href="#data-retention" title="Permanent link">&para;</a></h2>
 <p><strong>No-egress runs</strong>:
 - All data is stored <strong>locally</strong> on your machine
@@ -4869,15 +4907,6 @@ all string/free-text config values are redacted while preserving the tuned keys.
 <li>Telemetry is defensive and isolated from core functionality</li>
 </ul>
 <h2 id="compliance">Compliance<a class="headerlink" href="#compliance" title="Permanent link">&para;</a></h2>
-<h3 id="gdpr">GDPR<a class="headerlink" href="#gdpr" title="Permanent link">&para;</a></h3>
-<p>Traigent SDK is designed to be GDPR-compliant:</p>
-<ul>
-<li><strong>Right to Access</strong>: All data is stored locally by default</li>
-<li><strong>Right to Deletion</strong>: Delete files in <code>~/.traigent/</code> at any time</li>
-<li><strong>Right to Opt-Out</strong>: Set <code>TRAIGENT_DISABLE_TELEMETRY=true</code></li>
-<li><strong>Data Minimization</strong>: Only essential optimization metadata is collected</li>
-<li><strong>No PII Collection</strong>: Prompts, responses, and PII are not collected</li>
-</ul>
 <h3 id="hipaa-and-sensitive-data">HIPAA and Sensitive Data<a class="headerlink" href="#hipaa-and-sensitive-data" title="Permanent link">&para;</a></h3>
 <p>For HIPAA compliance or handling sensitive data:</p>
 <ol>
@@ -4977,8 +5006,18 @@ Use <code>offline=True</code> when you need to disable Traigent backend egress f
 <h3 id="q-where-can-i-see-what-telemetry-data-was-collected">Q: Where can I see what telemetry data was collected?<a class="headerlink" href="#q-where-can-i-see-what-telemetry-data-was-collected" title="Permanent link">&para;</a></h3>
 <p><strong>A</strong>: With <code>offline=True</code>, check the JSON files in <code>~/.traigent/sessions/</code>. They
 contain the same trial metadata and metrics emitted to telemetry listeners.</p>
+<h3 id="q-does-any-of-this-reach-traigent">Q: Does any of this reach Traigent?<a class="headerlink" href="#q-does-any-of-this-reach-traigent" title="Permanent link">&para;</a></h3>
+<p><strong>A</strong>: Only on the portal-backed path - see <em>What Data is Collected</em> and <em>What
+is NOT Collected</em> above for what that path sends. A no-egress run
+(<code>offline=True</code>) sends nothing. This answer used to read "telemetry is local-only in the
+open-source version", which was true of a no-egress run and wrong about the
+default portal-backed one, and it sat one page below a section listing what
+Traigent does with the data it receives. Two answers to one question is worse
+than either.</p>
 <h3 id="q-can-i-contribute-telemetry-data-to-improve-traigent">Q: Can I contribute telemetry data to improve Traigent?<a class="headerlink" href="#q-can-i-contribute-telemetry-data-to-improve-traigent" title="Permanent link">&para;</a></h3>
-<p><strong>A</strong>: Currently, telemetry is local-only in the open-source version. Future versions may offer optional anonymous telemetry reporting with explicit opt-in.</p>
+<p><strong>A</strong>: There is no opt-in channel for contributing telemetry beyond what a
+portal-backed run already sends for your own optimization. If that changes it
+will be opt-in and documented here.</p>
 <h2 id="related-documentation">Related Documentation<a class="headerlink" href="#related-documentation" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../decorator-reference/">Decorator Reference</a> - Configuration options</li>
