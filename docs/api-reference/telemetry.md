@@ -519,9 +519,9 @@ contain the same trial metadata and metrics emitted to telemetry listeners.
 
 ### Q: Does any of this reach Traigent?
 
-**A**: Only on the portal-backed path, and only the ids, numeric measures and
-tuned configuration values described above. A no-egress run (`offline=True`)
-sends nothing. This answer used to read "telemetry is local-only in the
+**A**: Only on the portal-backed path - see *What Data is Collected* and *What
+is NOT Collected* above for what that path sends. A no-egress run
+(`offline=True`) sends nothing. This answer used to read "telemetry is local-only in the
 open-source version", which was true of a no-egress run and wrong about the
 default portal-backed one, and it sat one page below a section listing what
 Traigent does with the data it receives. Two answers to one question is worse
