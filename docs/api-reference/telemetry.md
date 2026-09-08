@@ -84,6 +84,13 @@ Use `offline=True` when your policy requires no Traigent backend egress at all:
 No-egress runs keep Traigent optimization metadata local while still allowing your
 own function to call LLM providers or other services.
 
+`offline=True` does not disable OpenTelemetry export: if you have set
+`TRAIGENT_TRACE_ENABLED=true` and `OTEL_EXPORTER_OTLP_ENDPOINT`, evaluation
+spans — including truncated model output — are still exported to the collector
+you configured. The observability lanes (`@observe`, `TRAIGENT_TRACE_ENABLED`)
+have their own content controls, described below, and carry no privacy
+guarantee.
+
 Use `TRAIGENT_DISABLE_TELEMETRY=true` for SDK telemetry opt-out, effective
 `TraigentConfig.privacy_enabled` privacy mode to redact tuned string config
 values on privacy-mode submissions, and `offline=True` for zero Traigent backend

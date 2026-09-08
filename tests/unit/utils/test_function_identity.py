@@ -616,3 +616,84 @@ class TestResolveDescriptorPathHandling:
 
         assert desc.identifier is not None
         assert desc.relative_path is not None
+
+
+class TestSourcePathNeverEscapesTheProject:
+    """Privacy canary: the descriptor must not carry the machine's paths.
+
+    ``relative_path`` is sent to the Traigent backend as
+    ``metadata.function_relative_path`` and also feeds ``function_module``,
+    ``function_name`` and ``function_slug``. Before this guard, a function
+    defined outside both the cwd and the traigent package fell back to the
+    ABSOLUTE path -- which contains the OS username and the layout above the
+    project -- and, for a ``__main__`` script, produced a module name like
+    ``home.<user>.projects.train``. Both were witnessed on the wire.
+    """
+
+    @staticmethod
+    def _function_outside_cwd(tmpdir: str):
+        import importlib.util
+
+        source = Path(tmpdir) / "outside_project_entry.py"
+        source.write_text("def entry_point():\n    return 'out-of-tree'\n")
+
+        spec = importlib.util.spec_from_file_location(
+            "outside_project_entry", str(source)
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.entry_point, source
+
+    def test_out_of_tree_source_yields_basename_not_absolute_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            func, source = self._function_outside_cwd(tmpdir)
+
+            desc = resolve_function_descriptor(func)
+
+            assert desc.relative_path == "outside_project_entry.py"
+            emitted = " ".join(
+                [
+                    desc.relative_path,
+                    desc.module,
+                    desc.display_name,
+                    desc.identifier,
+                    desc.slug,
+                ]
+            )
+            # Nothing from above the project root may cross the wire.
+            assert str(source.parent) not in emitted
+            assert str(Path.home()) not in emitted
+            assert "/home/" not in emitted
+            assert Path(tmpdir).name not in emitted
+
+    def test_main_script_module_is_not_derived_from_an_absolute_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            func, source = self._function_outside_cwd(tmpdir)
+            # A script run as ``python /somewhere/else/entry.py`` has no real
+            # module name, so the module component is derived from the path.
+            func.__module__ = "__main__"
+
+            desc = resolve_function_descriptor(func)
+
+            assert desc.module == "outside_project_entry"
+            assert str(source.parent) not in desc.module
+            assert "/home/" not in desc.module
+            assert desc.relative_path == "outside_project_entry.py"
+
+    def test_slug_stays_stable_for_the_value_actually_emitted(self):
+        """The slug hashes what is emitted, so it is deterministic post-fix."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            func, _ = self._function_outside_cwd(tmpdir)
+
+            first = resolve_function_descriptor(func)
+
+        with tempfile.TemporaryDirectory() as other_tmpdir:
+            func_again, _ = self._function_outside_cwd(other_tmpdir)
+
+            second = resolve_function_descriptor(func_again)
+
+        # Two runs from different scratch directories now produce the same
+        # identity, because the directory above the project no longer feeds it.
+        assert first.slug == second.slug
+        assert first.identifier == second.identifier
