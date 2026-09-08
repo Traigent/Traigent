@@ -279,8 +279,9 @@
     zero actual cost through the ordinary accounting path. The flag must not
     grant unconditional permits or suppress enforcement-state updates.
   acceptance_criteria:
-    - TRAIGENT_MOCK_LLM is not consulted by cost enforcement; no mock-mode flag is cached at CostEnforcer init.
-    - Cost approval, permit acquisition, reservation and release, and cost tracking run identically regardless of TRAIGENT_MOCK_LLM.
+    - TRAIGENT_MOCK_LLM is not consulted by CostEnforcer; no mock-mode flag is cached at CostEnforcer init.
+    - Within CostEnforcer, cost approval, permit acquisition, reservation and release, and cost tracking run identically regardless of TRAIGENT_MOCK_LLM.
+    - The single documented exception is CostEstimator's optimized-function pricing preflight, which is skipped under TRAIGENT_MOCK_LLM while runtime CostEnforcer permits and accounting remain active.
     - No permit is granted on account of mock mode; admission denials still occur when the admission check fails.
     - Mock providers MAY report zero actual cost through the ordinary track_cost accounting path; when they do, enforcement state is mutated as usual.
   tags: [cost, mock, testing]
