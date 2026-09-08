@@ -282,8 +282,8 @@
     - TRAIGENT_MOCK_LLM is not consulted by cost enforcement; no mock-mode flag is cached at CostEnforcer init.
     - Cost approval, permit acquisition, reservation and release, and cost tracking run identically regardless of TRAIGENT_MOCK_LLM.
     - No permit is granted on account of mock mode; admission denials still occur when the admission check fails.
-    - Mock providers report zero actual cost through the ordinary track_cost accounting path, mutating enforcement state as usual.
-  tags: [cost, mock, safety, testing]
+    - Mock providers MAY report zero actual cost through the ordinary track_cost accounting path; when they do, enforcement state is mutated as usual.
+  tags: [cost, mock, testing]
   priority: medium
   type: functional
   status: active
