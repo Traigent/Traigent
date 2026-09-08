@@ -388,16 +388,6 @@ Telemetry failures never crash your optimization:
 
 ## Compliance
 
-### GDPR
-
-Traigent SDK is designed to be GDPR-compliant:
-
-- **Right to Access**: All data is stored locally by default
-- **Right to Deletion**: Delete files in `~/.traigent/` at any time
-- **Right to Opt-Out**: Set `TRAIGENT_DISABLE_TELEMETRY=true`
-- **Data Minimization**: Only essential optimization metadata is collected
-- **No PII Collection**: Prompts, responses, and PII are not collected
-
 ### HIPAA and Sensitive Data
 
 For HIPAA compliance or handling sensitive data:
