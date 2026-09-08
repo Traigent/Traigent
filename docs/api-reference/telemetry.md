@@ -205,10 +205,9 @@ silences SDK observability-telemetry emission but does not stop portal-backed
 session and trial egress. Use `offline=True` when the requirement is no
 Traigent backend egress at all.
 
-**Portal-backed runs**: Traigent receives the identifier of each example, the
-numeric measures recorded for it, and the tuned configuration values under
-test - the set described in *What Data is Collected*, minus the content listed
-in *What is NOT Collected*. That material is used to:
+**Portal-backed runs**: Traigent receives the data described in *What Data is
+Collected* above, minus the content listed in *What is NOT Collected*. That
+material is used to:
 
 1. **Run your optimization** - the backend coordinates which configurations to
    try next, which is what a managed search is.
@@ -231,22 +230,10 @@ configuration value is sent on the default path (see *Data Boundary and
 No-Egress Runs* above) and is therefore inside this aggregate set;
 `offline=True` is the only lever that withholds it - privacy-mode redaction
 applies to per-trial submissions, not to the configuration space sent at
-session creation. And **example
-identifiers are not used this way** - an identifier names a row in your
-dataset and means nothing outside it, so it carries no signal to aggregate.
-
-What crosses that boundary is therefore a knob name, a value, a number, and -
-if you chose to tune one - a prompt string you put there yourself. The first
-three carry no signal to recognise; a tuned prompt variant is exactly
-something you would recognise.
+session creation.
 
 That aggregate is statistical: which settings tended to help which kinds of
-agent, counted over those names, values and numbers. Your dataset and your
-model's responses are never sent, so neither exists on Traigent's side to be
-used for anything, including training or fine-tuning a model - what was never
-received cannot be used. A tuned prompt variant is different: because it is
-sent as a configuration value, that same assurance does not cover it; use
-`offline=True` if you need it excluded.
+agent, counted over those names, values and numbers.
 
 Two things this section deliberately does not claim. It does not say the four
 older bullets were wrong about Traigent's *intentions* - it says they were not
