@@ -1,5 +1,13 @@
 name: SonarQube Local Gate
 
+# DISABLED 2026-09-08: this public repo cannot reach the org's private ARC
+# runners (jobs queue for exactly 24h, then GitHub expires them; 0/58 runs
+# ever started), and the in-cluster SonarQube has no ingress a hosted runner
+# could reach either. See runs/finops-2026-09-08/b3-dead-gates.md (lane 3).
+# Re-enable the `schedule`/`push` triggers below once either a hosted-runner-
+# reachable Sonar endpoint exists, or an org runner group admits this repo.
+# workflow_dispatch is kept live so this can be re-enabled without re-review.
+
 # Quality gate against the in-cluster, scale-to-zero SonarQube on triagent-dev
 # (clouds/aws/modules/sonarqube). Runs on the self-hosted ARC runner `large`:
 # scales the SonarQube StatefulSet 0->1 (via the runner's in-cluster SA, which
@@ -15,10 +23,13 @@ name: SonarQube Local Gate
 # SonarCloud workflow instead. Local Sonar runs only for trusted main commits,
 # nightly, or an explicit dispatch of a trusted ref.
 on:
-  push:
-    branches: [main]
-  schedule:
-    - cron: "0 7 * * *"
+  # push:[main] and schedule('0 7 * * *') disabled 2026-09-08 (see note above) —
+  # this public repo's jobs cannot reach the org's private ARC runner group and
+  # queue for 24h with 0 steps before GitHub expires them (0/58 successes).
+  # push:
+  #   branches: [main]
+  # schedule:
+  #   - cron: "0 7 * * *"
   workflow_dispatch:
 
 permissions:
