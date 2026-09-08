@@ -191,12 +191,56 @@ are dropped, and model identifiers are validated before emission.
 
 ## How Telemetry is Used
 
-Telemetry data is used for:
+This section used to list four uses - optimization improvements, bug detection,
+performance analysis, usage analytics - without saying who holds the data or
+which runs it described. The FAQ then answered the same question the other way,
+calling telemetry local-only, so the file gave two answers and a reader could
+pick either. Both are rewritten here and below, scoped by path, because the path
+is what decides whether Traigent receives anything at all.
 
-1. **Optimization Improvements**: Understanding which optimization strategies work best
-2. **Bug Detection**: Identifying errors and failures to improve reliability
-3. **Performance Analysis**: Measuring and improving SDK performance
-4. **Usage Analytics**: Understanding how features are used to prioritize development
+**No-egress runs** (`offline=True`): Traigent receives nothing. Everything above
+is written to your disk and used by your own run. There is nothing here for
+Traigent to use. `TRAIGENT_DISABLE_TELEMETRY=true` is a different lever: it
+silences SDK observability-telemetry emission but does not stop portal-backed
+session and trial egress. Use `offline=True` when the requirement is no
+Traigent backend egress at all.
+
+**Portal-backed runs**: Traigent receives the data described in *What Data is
+Collected* above, minus the content listed in *What is NOT Collected*. That
+material is used to:
+
+1. **Run your optimization** - the backend coordinates which configurations to
+   try next, which is what a managed search is.
+2. **Record what each trial tried and achieved**, so the portal can show you
+   the winning configuration and how the others compared.
+3. **Tell you about your own dataset** - which examples were too easy to
+   separate configurations, which were too few to support a reliable
+   comparison, and which look inconsistent.
+
+Those three are scoped to your own run and reported back to you.
+
+Beyond your run, the **numeric measures and tuned configuration values** may
+also be used in aggregate across customers: which settings tend to help which
+kinds of agent, and the statistics that inform how Traigent searches in future.
+Two things bound that, and they are the reason it stays private rather than a
+promise that it does. Your dataset and your model's responses are not part of
+it, because they are never sent. Your prompts are not part of it **unless you
+tune them as configuration values** - a prompt variant used as a tuned
+configuration value is sent on the default path (see *Data Boundary and
+No-Egress Runs* above) and is therefore inside this aggregate set;
+`offline=True` is the only lever that withholds it - privacy-mode redaction
+applies to per-trial submissions, not to the configuration space sent at
+session creation.
+
+That aggregate is statistical: which settings tended to help which kinds of
+agent, counted over those names, values and numbers.
+
+Two things this section deliberately does not claim. It does not say the four
+older bullets were wrong about Traigent's *intentions* - it says they were not
+a description of where the data is. And it makes no statement about training or
+fine-tuning models on this material; that answer belongs to Traigent's published
+policy rather than to an SDK reference, and this file will link it rather than
+paraphrase it.
 
 ## Data Retention
 
@@ -473,9 +517,21 @@ Use `offline=True` when you need to disable Traigent backend egress for a run.
 **A**: With `offline=True`, check the JSON files in `~/.traigent/sessions/`. They
 contain the same trial metadata and metrics emitted to telemetry listeners.
 
+### Q: Does any of this reach Traigent?
+
+**A**: Only on the portal-backed path - see *What Data is Collected* and *What
+is NOT Collected* above for what that path sends. A no-egress run
+(`offline=True`) sends nothing. This answer used to read "telemetry is local-only in the
+open-source version", which was true of a no-egress run and wrong about the
+default portal-backed one, and it sat one page below a section listing what
+Traigent does with the data it receives. Two answers to one question is worse
+than either.
+
 ### Q: Can I contribute telemetry data to improve Traigent?
 
-**A**: Currently, telemetry is local-only in the open-source version. Future versions may offer optional anonymous telemetry reporting with explicit opt-in.
+**A**: There is no opt-in channel for contributing telemetry beyond what a
+portal-backed run already sends for your own optimization. If that changes it
+will be opt-in and documented here.
 
 ## Related Documentation
 
