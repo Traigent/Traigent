@@ -40,4 +40,4 @@
 # requirement string on failure and caches it, and Dependabot PRs never receive
 # org secrets, so a token here breaks them. This file is the single source of
 # truth for the pin — update it here only, and keep uv.lock in step.
-traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@93030ccef7f50acbd205078b7da3e701f5b1dcf4
+traigent-schema @ git+https://github.com/Traigent/TraigentSchema.git@8f8bb5882b0a04525a21888b190fc7fb04b7d430
