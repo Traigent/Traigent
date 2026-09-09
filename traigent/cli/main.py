@@ -16,6 +16,7 @@ from rich.table import Table
 from traigent import get_version_info
 from traigent.api.types import PresetSelection
 from traigent.cli.auth_commands import auth
+from traigent.cli.certify_commands import certify
 from traigent.cli.hooks_commands import hooks
 from traigent.cli.local_commands import register_local_commands
 from traigent.cli.sync_commands import register_sync_command
@@ -2354,6 +2355,7 @@ register_local_commands(cli)
 register_sync_command(cli)
 
 cli.add_command(auth)
+cli.add_command(certify)
 cli.add_command(hooks)
 from traigent.cli.detect_tvars_command import detect_tvars  # noqa: E402
 

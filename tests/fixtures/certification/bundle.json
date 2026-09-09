@@ -1,0 +1,759 @@
+{
+  "assertion": {
+    "assertion_digest": "sha256:3fc70f1235006d9a8381c524156bb424ae0895fc9fac762037c853260375e67d",
+    "assertion_template_id": "process_record_correctness_v1",
+    "capture_policy": {
+      "policy_digest": "sha256:ab7cd0277dd494515d884aad2970365389849a1ef7a5cdb78005dda8646bd10f",
+      "policy_id": "traigent.capture_policy.asap.v1",
+      "policy_version": "1.0.0"
+    },
+    "claim_id": "PROC1",
+    "rendered_text": "For capture policy traigent.capture_policy.asap.v1@1.0.0, this certificate records the five declared process steps; uncaptured steps are not detectable; client-reported receipts are attestations, not independent evidence.",
+    "schema_version": "traigent.process_record.assertion.v1"
+  },
+  "base_certificate_v0": {
+    "audit_report": {
+      "build_session_ref": "bsn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "claim_support_rows": [
+        {
+          "claim_id": "B1",
+          "claim_material_digest": "sha256:5a4ec21b6b6eac95005b11c0eb6eb188f94ce447cbb759d4a1a8e17652674b36",
+          "evidence_basis": "issuer_verified",
+          "verifier": {
+            "result": "PASS",
+            "verifier_id": "ver.cert.seal_signature",
+            "verifier_version": "0.1.0"
+          }
+        },
+        {
+          "abstention_code": "unregistered_claim_id",
+          "claim_id": "REG1",
+          "evidence_basis": "abstained"
+        },
+        {
+          "abstention_code": "verifier_not_run_or_not_pass",
+          "claim_id": "C1",
+          "evidence_basis": "abstained"
+        },
+        {
+          "abstention_code": "verifier_not_run_or_not_pass",
+          "claim_id": "D2",
+          "evidence_basis": "abstained"
+        },
+        {
+          "abstention_code": "verifier_not_run_or_not_pass",
+          "claim_id": "F1",
+          "evidence_basis": "abstained"
+        },
+        {
+          "abstention_code": "verifier_not_run_or_not_pass",
+          "claim_id": "G1",
+          "evidence_basis": "abstained"
+        },
+        {
+          "abstention_code": "verifier_not_run_or_not_pass",
+          "claim_id": "G3",
+          "evidence_basis": "abstained"
+        }
+      ],
+      "client_evidence_manifest_root": null,
+      "compiler_register_versions": {
+        "claim_template_catalog_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "compiler_version": "0.1.0",
+        "non_claim_reason_catalog_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "prohibited_register_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "semantics_manifest_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "verifier_catalog_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "ledger_seal_statement_digest": "sha256:e3b3efa53bf9225e82261d4a2c0dbe950c1450d5a27aa4510ef1f6dd23d8b01a",
+      "schema_version": "traigent.certificate_audit_report.v0"
+    },
+    "build_session_scope_line": "Build-session scope: this certificate concerns a build session, not the deployed agent. It makes no deployment-identity, deployment-binding, drift-detection, or deployed-runtime claim.",
+    "certificate_scope_line": "Scope: Certified Agent v0 verifies signatures, build-session binding, and an unopened client declaration. It does not certify the contents, quality, correctness, correspondence, possession, or completeness of the agent, evaluation dataset, evaluator, or build-process evidence.",
+    "certificate_title": "Agent Certificate",
+    "claims": [
+      {
+        "claim_id": "B1",
+        "evidence_refs": [
+          {
+            "evidence_digest": "sha256:e3b3efa53bf9225e82261d4a2c0dbe950c1450d5a27aa4510ef1f6dd23d8b01a",
+            "evidence_kind": "seal_statement"
+          },
+          {
+            "evidence_digest": "sha256:4b0397ce2d31b58a78fb9c4b43a003b1ca56b7012002600de38fe624ba65bae8",
+            "evidence_kind": "audit_report_digest"
+          }
+        ],
+        "payload": {
+          "claim_id": "B1",
+          "params": {
+            "seal_ref": "seal:abcdef0123456789",
+            "seal_statement_digest": "sha256:e3b3efa53bf9225e82261d4a2c0dbe950c1450d5a27aa4510ef1f6dd23d8b01a"
+          },
+          "template_id": "tmpl.cert.b1.issuer_signed_seal_statement.v1"
+        },
+        "record_type": "claim",
+        "rendered_text": "The issuer signed this seal statement: seal seal:abcdef0123456789, canonical seal-statement digest sha256:e3b3efa53bf9225e82261d4a2c0dbe950c1450d5a27aa4510ef1f6dd23d8b01a.",
+        "tier": 3,
+        "verifier": {
+          "result": "PASS",
+          "verifier_id": "ver.cert.seal_signature",
+          "verifier_version": "0.1.0"
+        }
+      }
+    ],
+    "disclosure_profile": {
+      "profile_id": "customer_internal",
+      "selective_disclosure_line": "Data omitted from this disclosure profile is simply absent; selective disclosure is not proven."
+    },
+    "ledger_seal_projection": {
+      "build_session_ref": "bsn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "chain_schema_version": "traigent.cert_build_ledger.v0",
+      "expected_stream_projection": {
+        "decision_stream": {
+          "chain_status": "empty_sealed",
+          "root_commitment": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "stream_family": "decision"
+        },
+        "receipt_event_stream": {
+          "chain_status": "sealed",
+          "root_commitment": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "stream_family": "receipt_event"
+        },
+        "transition_stream": {
+          "chain_status": "sealed",
+          "root_commitment": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "stream_family": "transition"
+        }
+      },
+      "seal_ref": "seal:abcdef0123456789",
+      "seal_statement_digest": "sha256:e3b3efa53bf9225e82261d4a2c0dbe950c1450d5a27aa4510ef1f6dd23d8b01a"
+    },
+    "non_claims": [
+      {
+        "non_claim_id": "A3",
+        "reason_template_id": "tmpl.noncert.a3_no_deployment_binding.v1",
+        "record_type": "non_claim"
+      },
+      {
+        "non_claim_id": "A4",
+        "reason_template_id": "tmpl.noncert.a4_no_drift_detection.v1",
+        "record_type": "non_claim"
+      },
+      {
+        "non_claim_id": "B2",
+        "reason_template_id": "tmpl.noncert.b2_no_closeout_reconciliation.v1",
+        "record_type": "non_claim"
+      },
+      {
+        "non_claim_id": "E2",
+        "reason_template_id": "tmpl.noncert.e2_statistical_validity_suspended.v1",
+        "record_type": "non_claim"
+      },
+      {
+        "non_claim_id": "E3",
+        "reason_template_id": "tmpl.noncert.e3_winner_stability_suspended.v1",
+        "record_type": "non_claim"
+      },
+      {
+        "non_claim_id": "F3",
+        "reason_template_id": "tmpl.noncert.f3_no_offline_verifiability.v1",
+        "record_type": "non_claim"
+      },
+      {
+        "non_claim_id": "G2",
+        "reason_template_id": "tmpl.noncert.g2_no_selective_disclosure.v1",
+        "record_type": "non_claim"
+      },
+      {
+        "non_claim_id": "H1",
+        "reason_template_id": "tmpl.noncert.h1_no_criteria_epochs.v1",
+        "record_type": "non_claim"
+      },
+      {
+        "non_claim_id": "NC_STEP_CAPTURE",
+        "reason_template_id": "tmpl.noncert.nc_step_capture.v1",
+        "record_type": "non_claim"
+      },
+      {
+        "non_claim_id": "NC_PRESEAL_RECORDER",
+        "reason_template_id": "tmpl.noncert.nc_preseal_recorder.v1",
+        "record_type": "non_claim"
+      },
+      {
+        "non_claim_id": "NC_TIER4_GAPCHECKED",
+        "reason_template_id": "tmpl.noncert.nc_tier4_gapchecked.v1",
+        "record_type": "non_claim"
+      },
+      {
+        "non_claim_id": "NC_TARGET_MINIMIZED",
+        "reason_template_id": "tmpl.noncert.nc_target_minimized.v1",
+        "record_type": "non_claim"
+      },
+      {
+        "non_claim_id": "NC_CURRENT_ONLINE_FREETEXT",
+        "reason_template_id": "tmpl.noncert.nc_current_online_freetext.v1",
+        "record_type": "non_claim"
+      },
+      {
+        "non_claim_id": "NC_BUILD_SESSION_SCOPE",
+        "reason_template_id": "tmpl.noncert.nc_build_session_scope.v1",
+        "record_type": "non_claim"
+      }
+    ],
+    "schema_version": "traigent.agent_certificate.v0",
+    "semantics": {
+      "claim_template_catalog_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "non_claim_reason_catalog_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "prohibited_register_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "semantics_manifest_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "verifier_catalog_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "signatures": {
+      "issuer_signature": {
+        "algorithm": "ed25519",
+        "issuer_key_ref": "ikey:abcdef0123456789",
+        "signature": "DMYXj9bundlnP3ID/MVExMnqTiTzmW8YxMZm+DGX2tcU2PjcbaAxvfuwz9qJDlrXmfm9cYAYnxUs58M33GZ5BA==",
+        "signed_payload": [
+          "unsigned_manifest"
+        ],
+        "trust_ring_ref": "ring:abcdef0123456789"
+      },
+      "unsigned_manifest": {
+        "coverage": [
+          "subject",
+          "seal",
+          "claims",
+          "tiers",
+          "evidence_digests",
+          "non_claims",
+          "disclosure_profile",
+          "privacy_mode",
+          "sdk_identity",
+          "compiler_register_versions",
+          "key_ring_identifiers",
+          "freshness"
+        ],
+        "document": {
+          "claims": [
+            {
+              "claim_id": "B1",
+              "evidence_refs": [
+                {
+                  "evidence_digest": "sha256:e3b3efa53bf9225e82261d4a2c0dbe950c1450d5a27aa4510ef1f6dd23d8b01a",
+                  "evidence_kind": "seal_statement"
+                },
+                {
+                  "evidence_digest": "sha256:4b0397ce2d31b58a78fb9c4b43a003b1ca56b7012002600de38fe624ba65bae8",
+                  "evidence_kind": "audit_report_digest"
+                }
+              ],
+              "payload": {
+                "claim_id": "B1",
+                "params": {
+                  "seal_ref": "seal:abcdef0123456789",
+                  "seal_statement_digest": "sha256:e3b3efa53bf9225e82261d4a2c0dbe950c1450d5a27aa4510ef1f6dd23d8b01a"
+                },
+                "template_id": "tmpl.cert.b1.issuer_signed_seal_statement.v1"
+              },
+              "record_type": "claim",
+              "rendered_text": "The issuer signed this seal statement: seal seal:abcdef0123456789, canonical seal-statement digest sha256:e3b3efa53bf9225e82261d4a2c0dbe950c1450d5a27aa4510ef1f6dd23d8b01a.",
+              "tier": 3,
+              "verifier": {
+                "result": "PASS",
+                "verifier_id": "ver.cert.seal_signature",
+                "verifier_version": "0.1.0"
+              }
+            }
+          ],
+          "compiler_register_versions": {
+            "claim_template_catalog_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "compiler_version": "0.1.0",
+            "non_claim_reason_catalog_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "prohibited_register_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "semantics_manifest_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "verifier_catalog_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "disclosure_profile": {
+            "profile_id": "customer_internal",
+            "selective_disclosure_line": "Data omitted from this disclosure profile is simply absent; selective disclosure is not proven."
+          },
+          "evidence_digests": [
+            {
+              "evidence_digest": "sha256:4b0397ce2d31b58a78fb9c4b43a003b1ca56b7012002600de38fe624ba65bae8",
+              "evidence_kind": "audit_report_digest"
+            },
+            {
+              "evidence_digest": "sha256:e3b3efa53bf9225e82261d4a2c0dbe950c1450d5a27aa4510ef1f6dd23d8b01a",
+              "evidence_kind": "seal_statement"
+            }
+          ],
+          "freshness": {
+            "nonce": "abababababababababababababababab"
+          },
+          "key_ring_identifiers": {
+            "issuer_key_ref": "ikey:abcdef0123456789",
+            "issuer_signature_algorithm": "ed25519",
+            "trust_ring_ref": "ring:abcdef0123456789"
+          },
+          "non_claims": [
+            {
+              "non_claim_id": "A3",
+              "reason_template_id": "tmpl.noncert.a3_no_deployment_binding.v1",
+              "record_type": "non_claim"
+            },
+            {
+              "non_claim_id": "A4",
+              "reason_template_id": "tmpl.noncert.a4_no_drift_detection.v1",
+              "record_type": "non_claim"
+            },
+            {
+              "non_claim_id": "B2",
+              "reason_template_id": "tmpl.noncert.b2_no_closeout_reconciliation.v1",
+              "record_type": "non_claim"
+            },
+            {
+              "non_claim_id": "E2",
+              "reason_template_id": "tmpl.noncert.e2_statistical_validity_suspended.v1",
+              "record_type": "non_claim"
+            },
+            {
+              "non_claim_id": "E3",
+              "reason_template_id": "tmpl.noncert.e3_winner_stability_suspended.v1",
+              "record_type": "non_claim"
+            },
+            {
+              "non_claim_id": "F3",
+              "reason_template_id": "tmpl.noncert.f3_no_offline_verifiability.v1",
+              "record_type": "non_claim"
+            },
+            {
+              "non_claim_id": "G2",
+              "reason_template_id": "tmpl.noncert.g2_no_selective_disclosure.v1",
+              "record_type": "non_claim"
+            },
+            {
+              "non_claim_id": "H1",
+              "reason_template_id": "tmpl.noncert.h1_no_criteria_epochs.v1",
+              "record_type": "non_claim"
+            },
+            {
+              "non_claim_id": "NC_STEP_CAPTURE",
+              "reason_template_id": "tmpl.noncert.nc_step_capture.v1",
+              "record_type": "non_claim"
+            },
+            {
+              "non_claim_id": "NC_PRESEAL_RECORDER",
+              "reason_template_id": "tmpl.noncert.nc_preseal_recorder.v1",
+              "record_type": "non_claim"
+            },
+            {
+              "non_claim_id": "NC_TIER4_GAPCHECKED",
+              "reason_template_id": "tmpl.noncert.nc_tier4_gapchecked.v1",
+              "record_type": "non_claim"
+            },
+            {
+              "non_claim_id": "NC_TARGET_MINIMIZED",
+              "reason_template_id": "tmpl.noncert.nc_target_minimized.v1",
+              "record_type": "non_claim"
+            },
+            {
+              "non_claim_id": "NC_CURRENT_ONLINE_FREETEXT",
+              "reason_template_id": "tmpl.noncert.nc_current_online_freetext.v1",
+              "record_type": "non_claim"
+            },
+            {
+              "non_claim_id": "NC_BUILD_SESSION_SCOPE",
+              "reason_template_id": "tmpl.noncert.nc_build_session_scope.v1",
+              "record_type": "non_claim"
+            }
+          ],
+          "privacy_mode": {
+            "declared_mode": "offline"
+          },
+          "sdk_identity": {
+            "sdk_ref": "e97b030f88d78a22dddb482d2aecf94a515b1938",
+            "sdk_version": "0.1.0"
+          },
+          "seal": {
+            "build_session_ref": "bsn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "chain_schema_version": "traigent.cert_build_ledger.v0",
+            "expected_stream_projection": {
+              "decision_stream": {
+                "chain_status": "empty_sealed",
+                "root_commitment": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "stream_family": "decision"
+              },
+              "receipt_event_stream": {
+                "chain_status": "sealed",
+                "root_commitment": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "stream_family": "receipt_event"
+              },
+              "transition_stream": {
+                "chain_status": "sealed",
+                "root_commitment": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "stream_family": "transition"
+              }
+            },
+            "seal_ref": "seal:abcdef0123456789",
+            "seal_statement_digest": "sha256:e3b3efa53bf9225e82261d4a2c0dbe950c1450d5a27aa4510ef1f6dd23d8b01a"
+          },
+          "subject": {
+            "build_session_ref": "bsn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "hash_algorithm": "v1",
+            "project_ref": "project_contract001",
+            "session_commitment_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "subject_kind": "build_session"
+          },
+          "tiers": [
+            {
+              "claim_id": "B1",
+              "tier": 3
+            }
+          ]
+        },
+        "manifest_digest": "sha256:1cf85c93435caa3ee3c278a08e9e2cb68c5b6e4e939ed0607e6acfa213bca2a8"
+      }
+    },
+    "subject": {
+      "build_session_ref": "bsn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "hash_algorithm": "v1",
+      "project_ref": "project_contract001",
+      "session_commitment_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "subject_kind": "build_session"
+    }
+  },
+  "claim_support_rows": [
+    {
+      "assertion_digest": "sha256:3fc70f1235006d9a8381c524156bb424ae0895fc9fac762037c853260375e67d",
+      "claim_id": "PROC1",
+      "claim_material_digest": "sha256:767c3b121da1f860d25872132d1f71f9f4e49f8ee05ee3cd43c99c06aa564a85",
+      "evidence_basis": "issuer_verified",
+      "process_report_digest": "sha256:2cd39755117fd80f4c6361abcc845bb292caf4a00d1297ba912aff420e6238a2",
+      "receipt_bundle_digest": "sha256:77e5cdd734c3743caab76537996adce01cb2a0eb438a06ed31012f6fedf68747",
+      "verifier_result": "pass"
+    }
+  ],
+  "receipts": {
+    "decision_stream": [
+      {
+        "build_session_ref": "bsn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observation_basis": "backend_observed",
+        "observed_at": "2026-09-08T10:00:00Z",
+        "project_ref": "project_contract001",
+        "receipt_digest": "sha256:3f9ced61df03c8f2f0e093e6f118c23e288aa709abcb41a55fefd3acf6668aa8",
+        "receipt_ref": "procrcpt:9cd6f3ec23df4adbb19985230ac8228a",
+        "registered_values": {
+          "status_code": "completed"
+        },
+        "schema_version": "traigent.process_record.receipt.v1",
+        "seq": 0,
+        "step_id": "prepare",
+        "stream_id": "decision_stream"
+      },
+      {
+        "build_session_ref": "bsn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observation_basis": "backend_observed",
+        "observed_at": "2026-09-08T10:01:00Z",
+        "project_ref": "project_contract001",
+        "receipt_digest": "sha256:972e2429b8bc3ed6e6af4065723505615b19550de07568700dc1730195a5325f",
+        "receipt_ref": "procrcpt:a0dfe0023abf42728c5a308aca6d3003",
+        "registered_values": {
+          "accuracy_ppm": 120000,
+          "status_code": "completed"
+        },
+        "schema_version": "traigent.process_record.receipt.v1",
+        "seq": 1,
+        "step_id": "evaluate",
+        "stream_id": "decision_stream"
+      }
+    ],
+    "receipt_bundle_digest": "sha256:77e5cdd734c3743caab76537996adce01cb2a0eb438a06ed31012f6fedf68747",
+    "receipt_event_stream": [
+      {
+        "build_session_ref": "bsn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observation_basis": "backend_observed",
+        "observed_at": "2026-09-08T10:02:00Z",
+        "project_ref": "project_contract001",
+        "receipt_digest": "sha256:1139fecb2970651212e7a7d0b0c76fe5cfb2f0892e1a406543bdfa51dce84e30",
+        "receipt_ref": "procrcpt:686a929b01c94584ac70318da46c4ab4",
+        "registered_values": {
+          "accuracy_ppm": 880000,
+          "evaluated_count": 250,
+          "status_code": "completed"
+        },
+        "schema_version": "traigent.process_record.receipt.v1",
+        "seq": 0,
+        "step_id": "evaluate",
+        "stream_id": "receipt_event_stream"
+      },
+      {
+        "build_session_ref": "bsn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observation_basis": "client_attested",
+        "observed_at": "2026-09-08T10:03:00Z",
+        "project_ref": "project_contract001",
+        "receipt_digest": "sha256:8d4f3cada7ac62f77f7aaaf476b04ee2e63c6b4edf7b693e515f426baaf6c140",
+        "receipt_ref": "procrcpt:3b0ba39b9e1843808ece88df17352070",
+        "registered_values": {
+          "cost_microusd": 4210,
+          "status_code": "completed"
+        },
+        "schema_version": "traigent.process_record.receipt.v1",
+        "seq": 1,
+        "step_id": "aggregate",
+        "stream_id": "receipt_event_stream"
+      }
+    ],
+    "schema_version": "traigent.process_record.receipt_bundle.v1",
+    "transition_stream": [
+      {
+        "build_session_ref": "bsn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observation_basis": "backend_observed",
+        "observed_at": "2026-09-08T10:04:00Z",
+        "project_ref": "project_contract001",
+        "receipt_digest": "sha256:9235a0d4811c8c7cfb17f54a271c474744b39ce3cbdcad82edaa5c40c513526c",
+        "receipt_ref": "procrcpt:b10c951882c54692a82d256fbd17f34b",
+        "registered_values": {
+          "latency_us": 91234,
+          "status_code": "completed"
+        },
+        "schema_version": "traigent.process_record.receipt.v1",
+        "seq": 0,
+        "step_id": "select",
+        "stream_id": "transition_stream"
+      },
+      {
+        "build_session_ref": "bsn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observation_basis": "backend_observed",
+        "observed_at": "2026-09-08T10:05:00Z",
+        "project_ref": "project_contract001",
+        "receipt_digest": "sha256:ea623aa93e79542e26a474ee744f00e0f879be623dcbf06d5cd55d40ec8b32d7",
+        "receipt_ref": "procrcpt:9d7fbfb0e04a48dbb3275a2f17cc5eeb",
+        "registered_values": {
+          "status_code": "completed"
+        },
+        "schema_version": "traigent.process_record.receipt.v1",
+        "seq": 1,
+        "step_id": "finalize",
+        "stream_id": "transition_stream"
+      }
+    ]
+  },
+  "report": {
+    "backend_observed_present_count": 4,
+    "build_session_ref": "bsn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "capture_policy": {
+      "policy_digest": "sha256:ab7cd0277dd494515d884aad2970365389849a1ef7a5cdb78005dda8646bd10f",
+      "policy_id": "traigent.capture_policy.asap.v1",
+      "policy_version": "1.0.0"
+    },
+    "client_attested_present_count": 1,
+    "expected_step_count": 5,
+    "missing_count": 0,
+    "present_count": 5,
+    "process_definition": {
+      "definition_digest": "sha256:1ffea9cef9cf15fe8f7a5e95b2d2128da12bb8d3e549cec8c830746fa1b3d5c7",
+      "definition_id": "traigent.process_definition.asap.v1",
+      "definition_version": "1.0.0"
+    },
+    "project_ref": "project_contract001",
+    "report_digest": "sha256:2cd39755117fd80f4c6361abcc845bb292caf4a00d1297ba912aff420e6238a2",
+    "rows": [
+      {
+        "observation_kind": "backend_observed",
+        "receipt_digest": "sha256:3f9ced61df03c8f2f0e093e6f118c23e288aa709abcb41a55fefd3acf6668aa8",
+        "registered_values": {
+          "status_code": "completed"
+        },
+        "status": "present",
+        "step_id": "prepare"
+      },
+      {
+        "observation_kind": "backend_observed",
+        "receipt_digest": "sha256:1139fecb2970651212e7a7d0b0c76fe5cfb2f0892e1a406543bdfa51dce84e30",
+        "registered_values": {
+          "accuracy_ppm": 880000,
+          "evaluated_count": 250,
+          "status_code": "completed"
+        },
+        "status": "present",
+        "step_id": "evaluate"
+      },
+      {
+        "observation_kind": "client_attested",
+        "receipt_digest": "sha256:8d4f3cada7ac62f77f7aaaf476b04ee2e63c6b4edf7b693e515f426baaf6c140",
+        "registered_values": {
+          "cost_microusd": 4210,
+          "status_code": "completed"
+        },
+        "status": "present",
+        "step_id": "aggregate"
+      },
+      {
+        "observation_kind": "backend_observed",
+        "receipt_digest": "sha256:9235a0d4811c8c7cfb17f54a271c474744b39ce3cbdcad82edaa5c40c513526c",
+        "registered_values": {
+          "latency_us": 91234,
+          "status_code": "completed"
+        },
+        "status": "present",
+        "step_id": "select"
+      },
+      {
+        "observation_kind": "backend_observed",
+        "receipt_digest": "sha256:ea623aa93e79542e26a474ee744f00e0f879be623dcbf06d5cd55d40ec8b32d7",
+        "registered_values": {
+          "status_code": "completed"
+        },
+        "status": "present",
+        "step_id": "finalize"
+      }
+    ],
+    "schema_version": "traigent.process_record.report.v1"
+  },
+  "schema_version": "traigent.process_record.certificate_bundle.v1",
+  "signature": {
+    "algorithm": "ed25519",
+    "issuer_key_ref": "ikey:abcdef0123456789",
+    "schema_version": "traigent.process_record.signature.v1",
+    "signature": "NMmeRipmre4CzhcLorJ6V6CanpUqYvCht3zTxW5onpCM4P/hi2ZodBtVjdKrGteGTe48cG9aDExZKobZE19qBA==",
+    "signed_payload": "unsigned_process_manifest",
+    "trust_ring_ref": "ring:abcdef0123456789",
+    "unsigned_manifest_digest": "sha256:14c16ea362d4eab69df54961fc78b3d231cf9702cad7f69fb218a402614153e2"
+  },
+  "unsigned_manifest": {
+    "agent_commitment_ref": "sha256:d4f0bc5a29de06b510f9aa428f1eedba926012b591fef7a518e776a7c9bd1824",
+    "assertion_digest": "sha256:3fc70f1235006d9a8381c524156bb424ae0895fc9fac762037c853260375e67d",
+    "base_unsigned_manifest_digest": "sha256:1cf85c93435caa3ee3c278a08e9e2cb68c5b6e4e939ed0607e6acfa213bca2a8",
+    "build_definition_commitment_ref": "sha256:8b187aabc04f0b1be10b20a7b056b164fdb6aa129f97013a950314eebf3475cf",
+    "build_session_ref": "bsn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "capture_policy": {
+      "policy_digest": "sha256:ab7cd0277dd494515d884aad2970365389849a1ef7a5cdb78005dda8646bd10f",
+      "policy_id": "traigent.capture_policy.asap.v1",
+      "policy_version": "1.0.0"
+    },
+    "client_evidence_manifest_digest": null,
+    "coverage": [
+      "base_unsigned_manifest_digest",
+      "capture_policy",
+      "process_definition",
+      "project_ref",
+      "build_session_ref",
+      "agent_commitment_ref",
+      "dataset_commitment_ref",
+      "evaluator_commitment_ref",
+      "build_definition_commitment_ref",
+      "expected_steps",
+      "expected_steps_digest",
+      "decision_stream",
+      "receipt_event_stream",
+      "transition_stream",
+      "assertion_digest",
+      "process_report_digest",
+      "receipt_bundle_digest",
+      "client_evidence_manifest_digest",
+      "process_claim_support_rows_digest",
+      "trust_ring_ref",
+      "issuer_key_ref",
+      "issuer_signature_algorithm"
+    ],
+    "dataset_commitment_ref": "sha256:b277fd623676a525c29b9eb155afc8c9010681814ceafb2d7627f47b9a232576",
+    "decision_stream": {
+      "first_seq": 0,
+      "last_seq": 1,
+      "receipt_count": 2,
+      "receipt_digests": [
+        "sha256:3f9ced61df03c8f2f0e093e6f118c23e288aa709abcb41a55fefd3acf6668aa8",
+        "sha256:972e2429b8bc3ed6e6af4065723505615b19550de07568700dc1730195a5325f"
+      ],
+      "sequence_values": [
+        0,
+        1
+      ]
+    },
+    "evaluator_commitment_ref": "sha256:27f6343f980c4c0ab821d9c72d211d0eb76b0853825cefd80476a05e43cab27e",
+    "expected_steps": [
+      "prepare",
+      "evaluate",
+      "aggregate",
+      "select",
+      "finalize"
+    ],
+    "expected_steps_digest": "sha256:1aa220acaab7575a4db0b46e602a1df8086d7ad8f234b1242aa2173b1b2bc5b1",
+    "issuer_key_ref": "ikey:abcdef0123456789",
+    "issuer_signature_algorithm": "ed25519",
+    "process_claim_support_rows_digest": "sha256:946333a7ac344ce09534737beb090a13ccf898cc3f1a8214e9046e8bd2abcd39",
+    "process_definition": {
+      "definition_digest": "sha256:1ffea9cef9cf15fe8f7a5e95b2d2128da12bb8d3e549cec8c830746fa1b3d5c7",
+      "definition_id": "traigent.process_definition.asap.v1",
+      "definition_version": "1.0.0"
+    },
+    "process_report_digest": "sha256:2cd39755117fd80f4c6361abcc845bb292caf4a00d1297ba912aff420e6238a2",
+    "project_ref": "project_contract001",
+    "receipt_bundle_digest": "sha256:77e5cdd734c3743caab76537996adce01cb2a0eb438a06ed31012f6fedf68747",
+    "receipt_event_stream": {
+      "first_seq": 0,
+      "last_seq": 1,
+      "receipt_count": 2,
+      "receipt_digests": [
+        "sha256:1139fecb2970651212e7a7d0b0c76fe5cfb2f0892e1a406543bdfa51dce84e30",
+        "sha256:8d4f3cada7ac62f77f7aaaf476b04ee2e63c6b4edf7b693e515f426baaf6c140"
+      ],
+      "sequence_values": [
+        0,
+        1
+      ]
+    },
+    "schema_version": "traigent.process_record.unsigned_manifest.v1",
+    "transition_stream": {
+      "first_seq": 0,
+      "last_seq": 1,
+      "receipt_count": 2,
+      "receipt_digests": [
+        "sha256:9235a0d4811c8c7cfb17f54a271c474744b39ce3cbdcad82edaa5c40c513526c",
+        "sha256:ea623aa93e79542e26a474ee744f00e0f879be623dcbf06d5cd55d40ec8b32d7"
+      ],
+      "sequence_values": [
+        0,
+        1
+      ]
+    },
+    "trust_ring_ref": "ring:abcdef0123456789"
+  },
+  "verification_materials_v0": {
+    "certificate_ref": "certificate:opaque0001",
+    "distribution_role": "discovery_only",
+    "issuer": {
+      "algorithm": "ed25519",
+      "key_ref": "ikey:abcdef0123456789",
+      "public_key_der_b64": "MCowBQYDK2VwAyEAA6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+      "public_key_digest": "sha256:fd1f1c852e591b62f39172ebf98774fd4adea7c6ce0fa3ff83a2837897f5f8b3",
+      "trust_ring_ref": "ring:abcdef0123456789"
+    },
+    "materials_digest": "sha256:fbe585ee8fc6dfa1a59b2ab38d88dd955de1b10b826953ac6b6be89203390a14",
+    "relying_party_policy": {
+      "compiler_register_versions": {
+        "claim_template_catalog_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "compiler_version": "0.1.0",
+        "non_claim_reason_catalog_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "prohibited_register_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "semantics_manifest_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "verifier_catalog_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "verifier_bindings": [
+        {
+          "verifier_id": "B1",
+          "verifier_ref": "ver.cert.seal_signature",
+          "verifier_version": "0.1.0"
+        },
+        {
+          "verifier_id": "G1",
+          "verifier_ref": "ver.cert.manifest_commitment",
+          "verifier_version": "0.1.0"
+        }
+      ]
+    },
+    "requires_independent_pins": true,
+    "schema_version": "traigent.certificate_verification_materials.v0"
+  }
+}
