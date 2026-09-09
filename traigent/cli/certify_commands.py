@@ -4,23 +4,59 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
 
 import click
-from traigent_schema.certification import (
-    DatasetRecordVerificationContext,
-    ProcessRecordVerificationContext,
-    TrustAnchorKeyV1,
-    verify_dataset_record_certificate,
-    verify_process_record_certificate,
-)
-from traigent_schema.certification.dataset_record_verifier import (
-    DatasetRecordVerificationError,
-)
-from traigent_schema.certification.process_record_verifier import (
-    ProcessRecordVerificationError,
-)
-from traigent_schema.certification.relying_party_verifier import VerificationContext
+
+if TYPE_CHECKING:
+    from traigent_schema.certification import (
+        DatasetRecordVerificationContext,
+        ProcessRecordVerificationContext,
+        TrustAnchorKeyV1,
+    )
+
+
+def _load_certification_schema() -> SimpleNamespace:
+    """Lazily import traigent_schema.certification, called only inside `verify`.
+
+    traigent-schema is deliberately not a declared dependency (PyPI rejects a
+    direct-URL git dependency; see scripts/ci/schema-pin.txt), so importing it
+    at module import time would break `traigent --help` for anyone who
+    installed the SDK the supported way (plain `pip install`).
+    """
+    try:
+        from traigent_schema.certification import (
+            DatasetRecordVerificationContext,
+            ProcessRecordVerificationContext,
+            TrustAnchorKeyV1,
+            verify_dataset_record_certificate,
+            verify_process_record_certificate,
+        )
+        from traigent_schema.certification.dataset_record_verifier import (
+            DatasetRecordVerificationError,
+        )
+        from traigent_schema.certification.process_record_verifier import (
+            ProcessRecordVerificationError,
+        )
+        from traigent_schema.certification.relying_party_verifier import (
+            VerificationContext,
+        )
+    except ImportError as exc:
+        raise click.UsageError(
+            "traigent-schema is not installed; the offline verifier needs the "
+            "pinned TraigentSchema package (see scripts/ci/schema-pin.txt)"
+        ) from exc
+    return SimpleNamespace(
+        DatasetRecordVerificationContext=DatasetRecordVerificationContext,
+        ProcessRecordVerificationContext=ProcessRecordVerificationContext,
+        TrustAnchorKeyV1=TrustAnchorKeyV1,
+        verify_dataset_record_certificate=verify_dataset_record_certificate,
+        verify_process_record_certificate=verify_process_record_certificate,
+        DatasetRecordVerificationError=DatasetRecordVerificationError,
+        ProcessRecordVerificationError=ProcessRecordVerificationError,
+        VerificationContext=VerificationContext,
+    )
 
 
 def _read_json(path: Path, description: str) -> dict[str, Any]:
@@ -40,9 +76,9 @@ def _required(payload: dict[str, Any], name: str) -> Any:
     return payload[name]
 
 
-def _anchor(payload: dict[str, Any]) -> TrustAnchorKeyV1:
+def _anchor(payload: dict[str, Any], schema: SimpleNamespace) -> TrustAnchorKeyV1:
     try:
-        return TrustAnchorKeyV1(
+        return schema.TrustAnchorKeyV1(
             key_ref=_required(payload, "key_ref"),
             algorithm=_required(payload, "algorithm"),
             public_key_der_b64=_required(payload, "public_key_der_b64"),
@@ -53,12 +89,12 @@ def _anchor(payload: dict[str, Any]) -> TrustAnchorKeyV1:
 
 
 def _process_context(
-    payload: dict[str, Any], anchor: TrustAnchorKeyV1
+    payload: dict[str, Any], anchor: TrustAnchorKeyV1, schema: SimpleNamespace
 ) -> ProcessRecordVerificationContext:
     base = _required(payload, "base_context")
     if not isinstance(base, dict):
         raise click.UsageError("context.base_context must be a JSON object")
-    base_context = VerificationContext(
+    base_context = schema.VerificationContext(
         expected_nonce=_required(base, "expected_nonce"),
         expected_build_session_ref=_required(base, "expected_build_session_ref"),
         expected_issuer_key_ref=_required(base, "expected_issuer_key_ref"),
@@ -71,7 +107,7 @@ def _process_context(
     )
     allow_unchecked = _required(payload, "allow_unchecked_base_status")
     try:
-        return ProcessRecordVerificationContext(
+        return schema.ProcessRecordVerificationContext(
             expected_materials_digest=_required(payload, "expected_materials_digest"),
             certificate_ref=_required(payload, "certificate_ref"),
             base_context=base_context,
@@ -98,14 +134,14 @@ def _process_context(
 
 
 def _dataset_context(
-    payload: dict[str, Any], anchor: TrustAnchorKeyV1
+    payload: dict[str, Any], anchor: TrustAnchorKeyV1, schema: SimpleNamespace
 ) -> DatasetRecordVerificationContext:
     process_payload = _required(payload, "process_context")
     if not isinstance(process_payload, dict):
         raise click.UsageError("context.process_context must be a JSON object")
-    process_context = _process_context(process_payload, anchor)
+    process_context = _process_context(process_payload, anchor, schema)
     try:
-        return DatasetRecordVerificationContext(
+        return schema.DatasetRecordVerificationContext(
             process_context=process_context,
             expected_project_ref=_required(payload, "expected_project_ref"),
             expected_build_session_ref=_required(payload, "expected_build_session_ref"),
@@ -174,10 +210,11 @@ def verify(
     process_record: Path | None,
 ) -> None:
     """Verify BUNDLE using independently supplied context and public anchor."""
+    schema = _load_certification_schema()
     bundle_payload = _read_json(bundle, "bundle")
     context_payload = _read_json(context_path, "context")
     anchor_payload = _read_json(anchor, "anchor")
-    anchor_value = _anchor(anchor_payload)
+    anchor_value = _anchor(anchor_payload, schema)
     _check_context_anchor(context_payload, anchor_value)
     trust_status_payload = (
         _read_json(trust_status, "trust status") if trust_status is not None else None
@@ -189,9 +226,9 @@ def verify(
                 raise click.UsageError(
                     "dataset-record verification requires --process-record"
                 )
-            result = verify_dataset_record_certificate(
+            result = schema.verify_dataset_record_certificate(
                 bundle_payload,
-                context=_dataset_context(context_payload, anchor_value),
+                context=_dataset_context(context_payload, anchor_value, schema),
                 process_record_bundle=_read_json(process_record, "process record"),
                 leaf_lists=context_payload.get("leaf_lists"),
             )
@@ -204,14 +241,17 @@ def verify(
                     "--trust-status cannot be used with "
                     "allow_unchecked_base_status=true"
                 )
-            result = verify_process_record_certificate(
+            result = schema.verify_process_record_certificate(
                 bundle_payload,
-                context=_process_context(context_payload, anchor_value),
+                context=_process_context(context_payload, anchor_value, schema),
                 trust_status=trust_status_payload,
             )
     except click.UsageError:
         raise
-    except (ProcessRecordVerificationError, DatasetRecordVerificationError) as exc:
+    except (
+        schema.ProcessRecordVerificationError,
+        schema.DatasetRecordVerificationError,
+    ) as exc:
         click.echo(exc.code)
         raise click.exceptions.Exit(1) from None
 

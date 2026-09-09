@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import copy
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -20,6 +22,24 @@ from traigent.cli.certify_commands import certify
 
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "certification"
+
+# Installed as a sys.meta_path finder in a subprocess to simulate a user
+# environment where the SDK was installed the supported way (plain
+# `pip install`) and traigent-schema (an internal-only pinned dependency,
+# see scripts/ci/schema-pin.txt) is absent.
+_BLOCK_TRAIGENT_SCHEMA = """
+import sys
+
+
+class _Blocker:
+    def find_spec(self, name, path, target=None):
+        if name == "traigent_schema" or name.startswith("traigent_schema."):
+            raise ModuleNotFoundError(f"No module named {name!r}")
+        return None
+
+
+sys.meta_path.insert(0, _Blocker())
+"""
 
 
 def _load(name: str) -> dict:
@@ -118,3 +138,74 @@ def test_tamper_controls_have_discriminating_closed_codes() -> None:
         assert exc.code != "REPORT_MISMATCH"
     else:
         raise AssertionError("tampered context unexpectedly verified")
+
+
+def test_cli_help_works_without_traigent_schema_installed() -> None:
+    """traigent-schema is not a declared dependency (scripts/ci/schema-pin.txt);
+    the whole CLI must stay usable when it is absent, not just `certify`."""
+    script = (
+        _BLOCK_TRAIGENT_SCHEMA
+        + """
+from click.testing import CliRunner
+from traigent.cli.main import cli
+
+runner = CliRunner()
+
+top_level = runner.invoke(cli, ["--help"])
+assert top_level.exit_code == 0, top_level.output
+
+certify_help = runner.invoke(cli, ["certify", "--help"])
+assert certify_help.exit_code == 0, certify_help.output
+assert "verify" in certify_help.output
+
+print("PROBE-OK")
+"""
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "PROBE-OK" in completed.stdout
+
+
+def test_verify_without_traigent_schema_installed_exits_with_usage_error() -> None:
+    script = (
+        _BLOCK_TRAIGENT_SCHEMA
+        + f"""
+import sys
+
+sys.argv = [
+    "traigent",
+    "certify",
+    "verify",
+    {str(FIXTURES / "bundle.json")!r},
+    "--context",
+    {str(FIXTURES / "context.json")!r},
+    "--anchor",
+    {str(FIXTURES / "anchor.json")!r},
+    "--trust-status",
+    {str(FIXTURES / "trust_status.json")!r},
+]
+
+from traigent.cli.main import cli
+
+cli()
+"""
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert completed.returncode == 2, (
+        completed.returncode,
+        completed.stdout,
+        completed.stderr,
+    )
+    assert "Traceback" not in completed.stderr
+    assert "traigent-schema is not installed" in completed.stderr
+    assert "scripts/ci/schema-pin.txt" in completed.stderr
