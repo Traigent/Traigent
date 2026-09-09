@@ -1,0 +1,29 @@
+{
+  "allow_unchecked_base_status": false,
+  "base_context": {
+    "client_public_key": null,
+    "expected_build_session_ref": "bsn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "expected_client_algorithm": null,
+    "expected_client_key_ref": null,
+    "expected_issuer_algorithm": "ed25519",
+    "expected_issuer_key_ref": "ikey:abcdef0123456789",
+    "expected_nonce": "abababababababababababababababab",
+    "expected_project_ref": "project_contract001",
+    "expected_trust_ring_ref": "ring:abcdef0123456789"
+  },
+  "certificate_ref": "certificate:opaque0001",
+  "expected_agent_commitment_ref": "sha256:d4f0bc5a29de06b510f9aa428f1eedba926012b591fef7a518e776a7c9bd1824",
+  "expected_build_definition_commitment_ref": "sha256:8b187aabc04f0b1be10b20a7b056b164fdb6aa129f97013a950314eebf3475cf",
+  "expected_build_session_ref": "bsn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "expected_dataset_commitment_ref": "sha256:b277fd623676a525c29b9eb155afc8c9010681814ceafb2d7627f47b9a232576",
+  "expected_evaluator_commitment_ref": "sha256:27f6343f980c4c0ab821d9c72d211d0eb76b0853825cefd80476a05e43cab27e",
+  "expected_materials_digest": "sha256:fbe585ee8fc6dfa1a59b2ab38d88dd955de1b10b826953ac6b6be89203390a14",
+  "expected_project_ref": "project_contract001",
+  "trust_anchor": {
+    "algorithm": "ed25519",
+    "key_ref": "anchor:aaaaaaaa",
+    "public_key_der_b64": "MCowBQYDK2VwAyEAF0VTtFbd38aQjsqxwQH+arIeK6oGF3lbfUOmNIKZP9U=",
+    "public_key_digest": "sha256:993d8b97bee2d55d852e17b023ef5dffabf55a1887fa676b90bb751c5550baed"
+  },
+  "verification_time": "2026-09-08T10:10:00Z"
+}
