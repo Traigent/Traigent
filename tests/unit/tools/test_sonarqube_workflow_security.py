@@ -27,8 +27,15 @@ def test_privileged_sonarqube_job_has_only_trusted_triggers() -> None:
     assert isinstance(triggers, dict)
     assert "pull_request" not in triggers
     assert "pull_request_target" not in triggers
-    assert triggers["push"]["branches"] == ["main"]
-    assert "schedule" in triggers
+    # The lane's push:[main] and schedule triggers were disabled on 2026-09-08
+    # (#2252) because no runner could reach it; workflow_dispatch was kept so
+    # it can be re-enabled without re-review. The invariant is therefore: every
+    # trigger present is a trusted one, push (when present) is limited to main,
+    # and the manual trigger is always available -- never a PR-driven event.
+    trusted_triggers = {"push", "schedule", "workflow_dispatch"}
+    assert set(triggers) <= trusted_triggers, sorted(set(triggers) - trusted_triggers)
+    if "push" in triggers:
+        assert triggers["push"]["branches"] == ["main"]
     assert "workflow_dispatch" in triggers
     assert "if" not in job
 
