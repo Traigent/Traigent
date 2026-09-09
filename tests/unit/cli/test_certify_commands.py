@@ -6,19 +6,41 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
-from traigent_schema.certification import (
-    PROCESS_RECORD_ERROR_CODES,
-    ProcessRecordVerificationContext,
-    TrustAnchorKeyV1,
-    verify_process_record_certificate,
-)
-from traigent_schema.certification.process_record_verifier import (
-    ProcessRecordVerificationError,
-)
-from traigent_schema.certification.relying_party_verifier import VerificationContext
 
 from traigent.cli.certify_commands import certify
+
+# ``traigent_schema`` is the git-pinned internal contract package (see
+# scripts/ci/schema-pin.txt); it is deliberately not a dev extra, so "absent
+# locally and in the collection lane, present in the unit lane" is the normal
+# state. Same guard shape as tests/unit/economics/test_schema.py: only an error
+# whose ``name`` identifies ``traigent_schema`` itself is eligible for the skip
+# (a broken install of the package must still propagate), and the skip is a
+# test-level marker so collection of this module never depends on the pin.
+try:
+    from traigent_schema.certification import (
+        PROCESS_RECORD_ERROR_CODES,
+        ProcessRecordVerificationContext,
+        TrustAnchorKeyV1,
+        verify_process_record_certificate,
+    )
+    from traigent_schema.certification.process_record_verifier import (
+        ProcessRecordVerificationError,
+    )
+    from traigent_schema.certification.relying_party_verifier import VerificationContext
+except ModuleNotFoundError as exc:  # pragma: no cover - environment-dependent
+    _missing = exc.name or ""
+    if _missing != "traigent_schema" and not _missing.startswith("traigent_schema."):
+        raise
+    _SCHEMA_AVAILABLE = False
+else:
+    _SCHEMA_AVAILABLE = True
+
+requires_schema = pytest.mark.skipif(
+    not _SCHEMA_AVAILABLE,
+    reason="traigent_schema (scripts/ci/schema-pin.txt) is not installed in this lane",
+)
 
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "certification"
@@ -65,6 +87,7 @@ def _context(payload: dict, anchor: dict) -> ProcessRecordVerificationContext:
     )
 
 
+@requires_schema
 def test_verify_fixture_reports_checked_active() -> None:
     result = CliRunner().invoke(
         certify,
@@ -87,6 +110,7 @@ def test_verify_fixture_reports_checked_active() -> None:
     ]
 
 
+@requires_schema
 def test_verify_requires_process_record_for_dataset_context(tmp_path: Path) -> None:
     context = _load("context.json")
     context["process_context"] = context.copy()
@@ -107,6 +131,7 @@ def test_verify_requires_process_record_for_dataset_context(tmp_path: Path) -> N
     assert result.exit_code == 2
 
 
+@requires_schema
 def test_tamper_controls_have_discriminating_closed_codes() -> None:
     bundle = _load("bundle.json")
     context_payload = _load("context.json")
