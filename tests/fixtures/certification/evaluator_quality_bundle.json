@@ -1,0 +1,929 @@
+{
+  "claim_material": [
+    {
+      "assertion_template_id": "tmpl.evq.identity_commitment.v1",
+      "claim_id": "EVQ1",
+      "declared_plan_digest": "sha256:4b9cd89c0f5a53202a30b9713cc50dd92d371b94a4d0ba290d10a5ffb63c9f4f",
+      "descriptor_digest": "sha256:2a9d56fadc57ede0883715a097984e1f8a6f16a8e56a8fd19ec3711771601f8d",
+      "evaluation_scope_digest": "sha256:e886635cbd1893264cd155f680e73dc8656c618478ad871118c008a3ea22f7fd",
+      "reference_standard_digest": "sha256:6176874b27bb88aad1b89e35c1b196002cb4e67fc9c67e4812fe32ed80424172",
+      "tier": 1,
+      "verdict": "directional"
+    },
+    {
+      "assertion_template_id": "tmpl.evq.agreement_with_reference.v1",
+      "claim_id": "EVQ2",
+      "declared_plan_digest": "sha256:4b9cd89c0f5a53202a30b9713cc50dd92d371b94a4d0ba290d10a5ffb63c9f4f",
+      "descriptor_digest": "sha256:2a9d56fadc57ede0883715a097984e1f8a6f16a8e56a8fd19ec3711771601f8d",
+      "evaluation_scope_digest": "sha256:e886635cbd1893264cd155f680e73dc8656c618478ad871118c008a3ea22f7fd",
+      "reference_standard_digest": "sha256:6176874b27bb88aad1b89e35c1b196002cb4e67fc9c67e4812fe32ed80424172",
+      "tier": 3,
+      "verdict": "passed"
+    },
+    {
+      "assertion_template_id": "tmpl.evq.calibration_against_reference.v1",
+      "claim_id": "EVQ3",
+      "declared_plan_digest": "sha256:4b9cd89c0f5a53202a30b9713cc50dd92d371b94a4d0ba290d10a5ffb63c9f4f",
+      "descriptor_digest": "sha256:2a9d56fadc57ede0883715a097984e1f8a6f16a8e56a8fd19ec3711771601f8d",
+      "evaluation_scope_digest": "sha256:e886635cbd1893264cd155f680e73dc8656c618478ad871118c008a3ea22f7fd",
+      "reference_standard_digest": "sha256:6176874b27bb88aad1b89e35c1b196002cb4e67fc9c67e4812fe32ed80424172",
+      "tier": 3,
+      "verdict": "passed"
+    },
+    {
+      "assertion_template_id": "tmpl.evq.sensitivity_two_sided.v1",
+      "claim_id": "EVQ4",
+      "declared_plan_digest": "sha256:4b9cd89c0f5a53202a30b9713cc50dd92d371b94a4d0ba290d10a5ffb63c9f4f",
+      "descriptor_digest": "sha256:2a9d56fadc57ede0883715a097984e1f8a6f16a8e56a8fd19ec3711771601f8d",
+      "evaluation_scope_digest": "sha256:e886635cbd1893264cd155f680e73dc8656c618478ad871118c008a3ea22f7fd",
+      "reference_standard_digest": "sha256:6176874b27bb88aad1b89e35c1b196002cb4e67fc9c67e4812fe32ed80424172",
+      "tier": 3,
+      "verdict": "passed"
+    },
+    {
+      "assertion_template_id": "tmpl.evq.reliability_declared_probe_set.v1",
+      "claim_id": "EVQ5",
+      "declared_plan_digest": "sha256:4b9cd89c0f5a53202a30b9713cc50dd92d371b94a4d0ba290d10a5ffb63c9f4f",
+      "descriptor_digest": "sha256:2a9d56fadc57ede0883715a097984e1f8a6f16a8e56a8fd19ec3711771601f8d",
+      "evaluation_scope_digest": "sha256:e886635cbd1893264cd155f680e73dc8656c618478ad871118c008a3ea22f7fd",
+      "reference_standard_digest": "sha256:6176874b27bb88aad1b89e35c1b196002cb4e67fc9c67e4812fe32ed80424172",
+      "tier": 3,
+      "verdict": "passed"
+    }
+  ],
+  "claim_support_rows": [
+    {
+      "claim_id": "EVQ1",
+      "claim_material_digest": "sha256:74ae369e2c3ea0009d708fe429eb5c3ef040ad9602fb9034f7e5d9a38ca3c38a",
+      "declared_plan_digest": "sha256:4b9cd89c0f5a53202a30b9713cc50dd92d371b94a4d0ba290d10a5ffb63c9f4f",
+      "descriptor_digest": "sha256:2a9d56fadc57ede0883715a097984e1f8a6f16a8e56a8fd19ec3711771601f8d",
+      "evidence_basis": "client_declared",
+      "tier": 1,
+      "verdict": "directional"
+    },
+    {
+      "claim_id": "EVQ2",
+      "claim_material_digest": "sha256:74ae369e2c3ea0009d708fe429eb5c3ef040ad9602fb9034f7e5d9a38ca3c38a",
+      "declared_plan_digest": "sha256:4b9cd89c0f5a53202a30b9713cc50dd92d371b94a4d0ba290d10a5ffb63c9f4f",
+      "descriptor_digest": "sha256:2a9d56fadc57ede0883715a097984e1f8a6f16a8e56a8fd19ec3711771601f8d",
+      "evaluation_scope_digest": "sha256:e886635cbd1893264cd155f680e73dc8656c618478ad871118c008a3ea22f7fd",
+      "evidence_basis": "issuer_verified",
+      "measurement_set_digest": "sha256:46c0ab7a5e2f7c065a81f1cf001e2cf139fd7a541a9ef4236211341cc4d1429e",
+      "reference_standard_digest": "sha256:6176874b27bb88aad1b89e35c1b196002cb4e67fc9c67e4812fe32ed80424172",
+      "tier": 3,
+      "verdict": "passed",
+      "verifier_result": "pass"
+    },
+    {
+      "claim_id": "EVQ3",
+      "claim_material_digest": "sha256:74ae369e2c3ea0009d708fe429eb5c3ef040ad9602fb9034f7e5d9a38ca3c38a",
+      "declared_plan_digest": "sha256:4b9cd89c0f5a53202a30b9713cc50dd92d371b94a4d0ba290d10a5ffb63c9f4f",
+      "descriptor_digest": "sha256:2a9d56fadc57ede0883715a097984e1f8a6f16a8e56a8fd19ec3711771601f8d",
+      "evaluation_scope_digest": "sha256:e886635cbd1893264cd155f680e73dc8656c618478ad871118c008a3ea22f7fd",
+      "evidence_basis": "issuer_verified",
+      "measurement_set_digest": "sha256:46c0ab7a5e2f7c065a81f1cf001e2cf139fd7a541a9ef4236211341cc4d1429e",
+      "reference_standard_digest": "sha256:6176874b27bb88aad1b89e35c1b196002cb4e67fc9c67e4812fe32ed80424172",
+      "tier": 3,
+      "verdict": "passed",
+      "verifier_result": "pass"
+    },
+    {
+      "claim_id": "EVQ4",
+      "claim_material_digest": "sha256:74ae369e2c3ea0009d708fe429eb5c3ef040ad9602fb9034f7e5d9a38ca3c38a",
+      "declared_plan_digest": "sha256:4b9cd89c0f5a53202a30b9713cc50dd92d371b94a4d0ba290d10a5ffb63c9f4f",
+      "descriptor_digest": "sha256:2a9d56fadc57ede0883715a097984e1f8a6f16a8e56a8fd19ec3711771601f8d",
+      "evaluation_scope_digest": "sha256:e886635cbd1893264cd155f680e73dc8656c618478ad871118c008a3ea22f7fd",
+      "evidence_basis": "issuer_verified",
+      "measurement_set_digest": "sha256:46c0ab7a5e2f7c065a81f1cf001e2cf139fd7a541a9ef4236211341cc4d1429e",
+      "reference_standard_digest": "sha256:6176874b27bb88aad1b89e35c1b196002cb4e67fc9c67e4812fe32ed80424172",
+      "tier": 3,
+      "verdict": "passed",
+      "verifier_result": "pass"
+    },
+    {
+      "claim_id": "EVQ5",
+      "claim_material_digest": "sha256:74ae369e2c3ea0009d708fe429eb5c3ef040ad9602fb9034f7e5d9a38ca3c38a",
+      "declared_plan_digest": "sha256:4b9cd89c0f5a53202a30b9713cc50dd92d371b94a4d0ba290d10a5ffb63c9f4f",
+      "descriptor_digest": "sha256:2a9d56fadc57ede0883715a097984e1f8a6f16a8e56a8fd19ec3711771601f8d",
+      "evaluation_scope_digest": "sha256:e886635cbd1893264cd155f680e73dc8656c618478ad871118c008a3ea22f7fd",
+      "evidence_basis": "issuer_verified",
+      "measurement_set_digest": "sha256:46c0ab7a5e2f7c065a81f1cf001e2cf139fd7a541a9ef4236211341cc4d1429e",
+      "reference_standard_digest": "sha256:6176874b27bb88aad1b89e35c1b196002cb4e67fc9c67e4812fe32ed80424172",
+      "tier": 3,
+      "verdict": "passed",
+      "verifier_result": "pass"
+    }
+  ],
+  "declared_plan": {
+    "aggregation_policy": {
+      "efficiency_offset_forbidden": true,
+      "rounding_mode": "round_half_even",
+      "schema_version": "traigent.evaluator_quality.aggregation_policy.v1",
+      "weights": [
+        {
+          "axis": "calibration",
+          "maximum_interval_width_ppm": 200000,
+          "minimum_sample_size_n": 30,
+          "required_axis": true,
+          "weight_ppm": 250000
+        },
+        {
+          "axis": "agreement",
+          "maximum_interval_width_ppm": 200000,
+          "minimum_sample_size_n": 30,
+          "required_axis": true,
+          "weight_ppm": 250000
+        },
+        {
+          "axis": "sensitivity",
+          "maximum_interval_width_ppm": 200000,
+          "minimum_sample_size_n": 30,
+          "required_axis": true,
+          "weight_ppm": 250000
+        },
+        {
+          "axis": "reliability",
+          "maximum_interval_width_ppm": 200000,
+          "minimum_sample_size_n": 30,
+          "required_axis": true,
+          "weight_ppm": 250000
+        },
+        {
+          "axis": "efficiency",
+          "maximum_interval_width_ppm": 200000,
+          "minimum_sample_size_n": 30,
+          "required_axis": false,
+          "weight_ppm": 0
+        }
+      ]
+    },
+    "bin_count": 10,
+    "binning_policy": "equal_width",
+    "declared_plan_digest": "sha256:4b9cd89c0f5a53202a30b9713cc50dd92d371b94a4d0ba290d10a5ffb63c9f4f",
+    "evaluation_scope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "evaluator_commitment_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "measurement_registry_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "perturbation_set_digest": "sha256:4f3723cfc6ef71df5be54e2637e14b02534420512c4751ba894d33853570ac65",
+    "planned_measurements": [
+      {
+        "estimator_id": "expected_calibration_error",
+        "estimator_parameters": {
+          "direction": "lower_is_better",
+          "interval_side": "two_sided",
+          "label_kind": "binary",
+          "score_scale": "binary"
+        },
+        "interval_params": {
+          "canonicalization_profile": "jcs_v1",
+          "commitment_scheme": "sha256_secret_blinded_v1",
+          "interval_kind": "bootstrap_percentile",
+          "replicate_count": 2000,
+          "resample_seed_commitment": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "resample_unit": "evaluation_item"
+        },
+        "maximum_interval_width_ppm": 200000,
+        "measurement_role": "calibration_ece",
+        "minimum_sample_size_n": 30,
+        "nominal_coverage_ppm": 950000,
+        "sample_unit": "evaluation_item",
+        "threshold_comparison": "interval_high_le",
+        "threshold_value": 500000,
+        "value_unit": "ppm_unsigned"
+      },
+      {
+        "estimator_id": "calibration_slope",
+        "estimator_parameters": {
+          "direction": "higher_is_better",
+          "interval_side": "two_sided",
+          "label_kind": "binary",
+          "score_scale": "binary"
+        },
+        "interval_params": {
+          "continuity_correction": "none",
+          "interval_kind": "normal_approximation"
+        },
+        "maximum_interval_width_ppm": 200000,
+        "measurement_role": "calibration_slope",
+        "minimum_sample_size_n": 30,
+        "nominal_coverage_ppm": 950000,
+        "sample_unit": "evaluation_item",
+        "threshold_comparison": "interval_low_ge",
+        "threshold_value": 500000,
+        "value_unit": "ppm_unsigned"
+      },
+      {
+        "estimator_id": "cohens_kappa",
+        "estimator_parameters": {
+          "direction": "higher_is_better",
+          "interval_side": "two_sided",
+          "label_kind": "binary",
+          "score_scale": "binary"
+        },
+        "interval_params": {
+          "continuity_correction": "none",
+          "interval_kind": "wilson_score"
+        },
+        "maximum_interval_width_ppm": 200000,
+        "measurement_role": "agreement_primary",
+        "minimum_sample_size_n": 30,
+        "nominal_coverage_ppm": 950000,
+        "sample_unit": "evaluation_item",
+        "threshold_comparison": "interval_low_ge",
+        "threshold_value": 500000,
+        "value_unit": "ppm_unsigned"
+      },
+      {
+        "estimator_id": "discrimination_rate",
+        "estimator_parameters": {
+          "direction": "higher_is_better",
+          "interval_side": "two_sided",
+          "label_kind": "binary",
+          "score_scale": "binary"
+        },
+        "interval_params": {
+          "continuity_correction": "none",
+          "interval_kind": "wilson_score"
+        },
+        "maximum_interval_width_ppm": 200000,
+        "measurement_role": "sensitivity_discriminating_power",
+        "minimum_sample_size_n": 30,
+        "nominal_coverage_ppm": 950000,
+        "sample_unit": "item_pair",
+        "threshold_comparison": "interval_low_ge",
+        "threshold_value": 500000,
+        "value_unit": "ppm_unsigned"
+      },
+      {
+        "estimator_id": "false_difference_rate",
+        "estimator_parameters": {
+          "direction": "lower_is_better",
+          "interval_side": "two_sided",
+          "label_kind": "binary",
+          "score_scale": "binary"
+        },
+        "interval_params": {
+          "continuity_correction": "none",
+          "interval_kind": "wilson_score"
+        },
+        "maximum_interval_width_ppm": 200000,
+        "measurement_role": "sensitivity_false_difference_rate",
+        "minimum_sample_size_n": 30,
+        "nominal_coverage_ppm": 950000,
+        "sample_unit": "item_pair",
+        "threshold_comparison": "interval_high_le",
+        "threshold_value": 500000,
+        "value_unit": "ppm_unsigned"
+      },
+      {
+        "estimator_id": "perturbation_agreement_rate",
+        "estimator_parameters": {
+          "direction": "higher_is_better",
+          "interval_side": "two_sided",
+          "label_kind": "binary",
+          "score_scale": "binary"
+        },
+        "interval_params": {
+          "continuity_correction": "none",
+          "interval_kind": "wilson_score"
+        },
+        "maximum_interval_width_ppm": 200000,
+        "measurement_role": "reliability_probe_constant_output",
+        "minimum_sample_size_n": 30,
+        "nominal_coverage_ppm": 950000,
+        "sample_unit": "perturbation_pair",
+        "threshold_comparison": "interval_low_ge",
+        "threshold_value": 500000,
+        "value_unit": "ppm_unsigned"
+      },
+      {
+        "estimator_id": "perturbation_agreement_rate",
+        "estimator_parameters": {
+          "direction": "higher_is_better",
+          "interval_side": "two_sided",
+          "label_kind": "binary",
+          "score_scale": "binary"
+        },
+        "interval_params": {
+          "continuity_correction": "none",
+          "interval_kind": "wilson_score"
+        },
+        "maximum_interval_width_ppm": 200000,
+        "measurement_role": "reliability_probe_verbosity",
+        "minimum_sample_size_n": 30,
+        "nominal_coverage_ppm": 950000,
+        "sample_unit": "perturbation_pair",
+        "threshold_comparison": "interval_low_ge",
+        "threshold_value": 500000,
+        "value_unit": "ppm_unsigned"
+      },
+      {
+        "estimator_id": "perturbation_agreement_rate",
+        "estimator_parameters": {
+          "direction": "higher_is_better",
+          "interval_side": "two_sided",
+          "label_kind": "binary",
+          "score_scale": "binary"
+        },
+        "interval_params": {
+          "continuity_correction": "none",
+          "interval_kind": "wilson_score"
+        },
+        "maximum_interval_width_ppm": 200000,
+        "measurement_role": "reliability_probe_position",
+        "minimum_sample_size_n": 30,
+        "nominal_coverage_ppm": 950000,
+        "sample_unit": "perturbation_pair",
+        "threshold_comparison": "interval_low_ge",
+        "threshold_value": 500000,
+        "value_unit": "ppm_unsigned"
+      },
+      {
+        "estimator_id": "perturbation_agreement_rate",
+        "estimator_parameters": {
+          "direction": "higher_is_better",
+          "interval_side": "two_sided",
+          "label_kind": "binary",
+          "score_scale": "binary"
+        },
+        "interval_params": {
+          "continuity_correction": "none",
+          "interval_kind": "wilson_score"
+        },
+        "maximum_interval_width_ppm": 200000,
+        "measurement_role": "reliability_probe_self_preference",
+        "minimum_sample_size_n": 30,
+        "nominal_coverage_ppm": 950000,
+        "sample_unit": "perturbation_pair",
+        "threshold_comparison": "interval_low_ge",
+        "threshold_value": 500000,
+        "value_unit": "ppm_unsigned"
+      },
+      {
+        "estimator_id": "perturbation_agreement_rate",
+        "estimator_parameters": {
+          "direction": "higher_is_better",
+          "interval_side": "two_sided",
+          "label_kind": "binary",
+          "score_scale": "binary"
+        },
+        "interval_params": {
+          "continuity_correction": "none",
+          "interval_kind": "wilson_score"
+        },
+        "maximum_interval_width_ppm": 200000,
+        "measurement_role": "reliability_probe_one_token_fool",
+        "minimum_sample_size_n": 30,
+        "nominal_coverage_ppm": 950000,
+        "sample_unit": "perturbation_pair",
+        "threshold_comparison": "interval_low_ge",
+        "threshold_value": 500000,
+        "value_unit": "ppm_unsigned"
+      }
+    ],
+    "reference_standard_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "schema_version": "traigent.evaluator_quality.declared_plan.v1",
+    "sensitivity_pair_set": {
+      "equivalence_basis": "identical_configuration",
+      "known_different_pair_count": 100,
+      "known_equivalent_pair_count": 50,
+      "pair_set_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "descriptor": {
+    "component_commitments": [
+      {
+        "canonicalization": "jcs_v1",
+        "commitment_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "commitment_scheme": "sha256_secret_blinded_v1",
+        "component": "implementation"
+      },
+      {
+        "canonicalization": "jcs_v1",
+        "commitment_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "commitment_scheme": "sha256_secret_blinded_v1",
+        "component": "rubric"
+      },
+      {
+        "canonicalization": "jcs_v1",
+        "commitment_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "commitment_scheme": "sha256_secret_blinded_v1",
+        "component": "model_identity"
+      },
+      {
+        "canonicalization": "jcs_v1",
+        "commitment_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "commitment_scheme": "sha256_secret_blinded_v1",
+        "component": "parameters"
+      },
+      {
+        "canonicalization": "jcs_v1",
+        "commitment_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "commitment_scheme": "sha256_secret_blinded_v1",
+        "component": "harness"
+      }
+    ],
+    "descriptor_digest": "sha256:2a9d56fadc57ede0883715a097984e1f8a6f16a8e56a8fd19ec3711771601f8d",
+    "determinism": "deterministic",
+    "disclosure_mode": "private_commitment",
+    "evaluator_kind": "llm_judge_rubric",
+    "evaluator_version": "1.0.0",
+    "schema_version": "traigent.evaluator_quality.descriptor.v1"
+  },
+  "evaluation_scope": {
+    "estimation_set_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "evaluation_item_count": 1000,
+    "evaluation_scope_digest": "sha256:e886635cbd1893264cd155f680e73dc8656c618478ad871118c008a3ea22f7fd",
+    "evaluation_set_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "held_out_status": "held_out_disjoint",
+    "sampling_frame": "full_declared_dataset",
+    "sampling_policy_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "schema_version": "traigent.evaluator_quality.evaluation_scope.v1",
+    "selection_set_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "measurements": {
+    "agreement": {
+      "agreement": {
+        "basis": "issuer_attested_v1",
+        "computation_transcript_digest": null,
+        "estimator_id": "cohens_kappa",
+        "estimator_parameters": {
+          "direction": "higher_is_better",
+          "interval_side": "two_sided",
+          "label_kind": "binary",
+          "score_scale": "binary"
+        },
+        "interval_high_value": 930000,
+        "interval_low_value": 910000,
+        "interval_params": {
+          "continuity_correction": "none",
+          "interval_kind": "wilson_score"
+        },
+        "measurement_role": "agreement_primary",
+        "nominal_coverage_ppm": 950000,
+        "point_value": 920000,
+        "sample_size_n": 100,
+        "sample_unit": "evaluation_item",
+        "value_unit": "ppm_unsigned"
+      }
+    },
+    "calibration": {
+      "bin_count": 10,
+      "binning_policy": "equal_width",
+      "calibration_slope": {
+        "basis": "issuer_attested_v1",
+        "computation_transcript_digest": null,
+        "estimator_id": "calibration_slope",
+        "estimator_parameters": {
+          "direction": "higher_is_better",
+          "interval_side": "two_sided",
+          "label_kind": "binary",
+          "score_scale": "binary"
+        },
+        "interval_high_value": 910000,
+        "interval_low_value": 890000,
+        "interval_params": {
+          "continuity_correction": "none",
+          "interval_kind": "normal_approximation"
+        },
+        "measurement_role": "calibration_slope",
+        "nominal_coverage_ppm": 950000,
+        "point_value": 900000,
+        "sample_size_n": 100,
+        "sample_unit": "evaluation_item",
+        "value_unit": "ppm_unsigned"
+      },
+      "expected_calibration_error": {
+        "basis": "issuer_attested_v1",
+        "computation_transcript_digest": null,
+        "estimator_id": "expected_calibration_error",
+        "estimator_parameters": {
+          "direction": "lower_is_better",
+          "interval_side": "two_sided",
+          "label_kind": "binary",
+          "score_scale": "binary"
+        },
+        "interval_high_value": 110000,
+        "interval_low_value": 90000,
+        "interval_params": {
+          "canonicalization_profile": "jcs_v1",
+          "commitment_scheme": "sha256_secret_blinded_v1",
+          "interval_kind": "bootstrap_percentile",
+          "replicate_count": 2000,
+          "resample_seed_commitment": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "resample_unit": "evaluation_item"
+        },
+        "measurement_role": "calibration_ece",
+        "nominal_coverage_ppm": 950000,
+        "point_value": 100000,
+        "sample_size_n": 100,
+        "sample_unit": "evaluation_item",
+        "value_unit": "ppm_unsigned"
+      }
+    },
+    "evaluation_scope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "measurement_set_digest": "sha256:46c0ab7a5e2f7c065a81f1cf001e2cf139fd7a541a9ef4236211341cc4d1429e",
+    "measurement_window_end": "2026-09-05T11:11:12Z",
+    "measurement_window_start": "2026-09-05T10:11:12Z",
+    "reliability": {
+      "perturbation_set_digest": "sha256:4f3723cfc6ef71df5be54e2637e14b02534420512c4751ba894d33853570ac65",
+      "probe_results": [
+        {
+          "measurement": {
+            "basis": "issuer_attested_v1",
+            "computation_transcript_digest": null,
+            "estimator_id": "perturbation_agreement_rate",
+            "estimator_parameters": {
+              "direction": "higher_is_better",
+              "interval_side": "two_sided",
+              "label_kind": "binary",
+              "score_scale": "binary"
+            },
+            "interval_high_value": 970000,
+            "interval_low_value": 950000,
+            "interval_params": {
+              "continuity_correction": "none",
+              "interval_kind": "wilson_score"
+            },
+            "measurement_role": "reliability_probe_constant_output",
+            "nominal_coverage_ppm": 950000,
+            "point_value": 960000,
+            "sample_size_n": 100,
+            "sample_unit": "perturbation_pair",
+            "value_unit": "ppm_unsigned"
+          },
+          "probe_id": "constant_output",
+          "status": "measured"
+        },
+        {
+          "measurement": {
+            "basis": "issuer_attested_v1",
+            "computation_transcript_digest": null,
+            "estimator_id": "perturbation_agreement_rate",
+            "estimator_parameters": {
+              "direction": "higher_is_better",
+              "interval_side": "two_sided",
+              "label_kind": "binary",
+              "score_scale": "binary"
+            },
+            "interval_high_value": 970000,
+            "interval_low_value": 950000,
+            "interval_params": {
+              "continuity_correction": "none",
+              "interval_kind": "wilson_score"
+            },
+            "measurement_role": "reliability_probe_verbosity",
+            "nominal_coverage_ppm": 950000,
+            "point_value": 960000,
+            "sample_size_n": 100,
+            "sample_unit": "perturbation_pair",
+            "value_unit": "ppm_unsigned"
+          },
+          "probe_id": "verbosity",
+          "status": "measured"
+        },
+        {
+          "measurement": {
+            "basis": "issuer_attested_v1",
+            "computation_transcript_digest": null,
+            "estimator_id": "perturbation_agreement_rate",
+            "estimator_parameters": {
+              "direction": "higher_is_better",
+              "interval_side": "two_sided",
+              "label_kind": "binary",
+              "score_scale": "binary"
+            },
+            "interval_high_value": 970000,
+            "interval_low_value": 950000,
+            "interval_params": {
+              "continuity_correction": "none",
+              "interval_kind": "wilson_score"
+            },
+            "measurement_role": "reliability_probe_position",
+            "nominal_coverage_ppm": 950000,
+            "point_value": 960000,
+            "sample_size_n": 100,
+            "sample_unit": "perturbation_pair",
+            "value_unit": "ppm_unsigned"
+          },
+          "probe_id": "position",
+          "status": "measured"
+        },
+        {
+          "measurement": {
+            "basis": "issuer_attested_v1",
+            "computation_transcript_digest": null,
+            "estimator_id": "perturbation_agreement_rate",
+            "estimator_parameters": {
+              "direction": "higher_is_better",
+              "interval_side": "two_sided",
+              "label_kind": "binary",
+              "score_scale": "binary"
+            },
+            "interval_high_value": 970000,
+            "interval_low_value": 950000,
+            "interval_params": {
+              "continuity_correction": "none",
+              "interval_kind": "wilson_score"
+            },
+            "measurement_role": "reliability_probe_self_preference",
+            "nominal_coverage_ppm": 950000,
+            "point_value": 960000,
+            "sample_size_n": 100,
+            "sample_unit": "perturbation_pair",
+            "value_unit": "ppm_unsigned"
+          },
+          "probe_id": "self_preference",
+          "status": "measured"
+        },
+        {
+          "measurement": {
+            "basis": "issuer_attested_v1",
+            "computation_transcript_digest": null,
+            "estimator_id": "perturbation_agreement_rate",
+            "estimator_parameters": {
+              "direction": "higher_is_better",
+              "interval_side": "two_sided",
+              "label_kind": "binary",
+              "score_scale": "binary"
+            },
+            "interval_high_value": 970000,
+            "interval_low_value": 950000,
+            "interval_params": {
+              "continuity_correction": "none",
+              "interval_kind": "wilson_score"
+            },
+            "measurement_role": "reliability_probe_one_token_fool",
+            "nominal_coverage_ppm": 950000,
+            "point_value": 960000,
+            "sample_size_n": 100,
+            "sample_unit": "perturbation_pair",
+            "value_unit": "ppm_unsigned"
+          },
+          "probe_id": "one_token_fool",
+          "status": "measured"
+        }
+      ]
+    },
+    "schema_version": "traigent.evaluator_quality.measurement_set.v1",
+    "sensitivity": {
+      "discriminating_power": {
+        "basis": "issuer_attested_v1",
+        "computation_transcript_digest": null,
+        "estimator_id": "discrimination_rate",
+        "estimator_parameters": {
+          "direction": "higher_is_better",
+          "interval_side": "two_sided",
+          "label_kind": "binary",
+          "score_scale": "binary"
+        },
+        "interval_high_value": 890000,
+        "interval_low_value": 870000,
+        "interval_params": {
+          "continuity_correction": "none",
+          "interval_kind": "wilson_score"
+        },
+        "measurement_role": "sensitivity_discriminating_power",
+        "nominal_coverage_ppm": 950000,
+        "point_value": 880000,
+        "sample_size_n": 100,
+        "sample_unit": "item_pair",
+        "value_unit": "ppm_unsigned"
+      },
+      "false_difference_rate": {
+        "basis": "issuer_attested_v1",
+        "computation_transcript_digest": null,
+        "estimator_id": "false_difference_rate",
+        "estimator_parameters": {
+          "direction": "lower_is_better",
+          "interval_side": "two_sided",
+          "label_kind": "binary",
+          "score_scale": "binary"
+        },
+        "interval_high_value": 110000,
+        "interval_low_value": 90000,
+        "interval_params": {
+          "continuity_correction": "none",
+          "interval_kind": "wilson_score"
+        },
+        "measurement_role": "sensitivity_false_difference_rate",
+        "nominal_coverage_ppm": 950000,
+        "point_value": 100000,
+        "sample_size_n": 100,
+        "sample_unit": "item_pair",
+        "value_unit": "ppm_unsigned"
+      },
+      "pair_set": {
+        "equivalence_basis": "identical_configuration",
+        "known_different_pair_count": 100,
+        "known_equivalent_pair_count": 50,
+        "pair_set_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  },
+  "non_claims": [
+    {
+      "non_claim_id": "NC_EVQ_NOT_GROUND_TRUTH",
+      "reason_template_id": "tmpl.noncert.evq_agreement_is_not_correctness.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NC_EVQ_REFERENCE_SCOPE",
+      "reason_template_id": "tmpl.noncert.evq_relative_to_pinned_reference.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NC_EVQ_EVALUATION_SET_SCOPE",
+      "reason_template_id": "tmpl.noncert.evq_pinned_evaluation_set_only.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NC_EVQ_NO_DISTRIBUTION_SHIFT",
+      "reason_template_id": "tmpl.noncert.evq_no_distribution_shift.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NC_EVQ_NO_ADAPTIVE_ADVERSARY",
+      "reason_template_id": "tmpl.noncert.evq_no_adaptive_adversary.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NC_EVQ_PERTURBATION_SET_CLOSED",
+      "reason_template_id": "tmpl.noncert.evq_unprobed_failure_not_detectable.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NC_EVQ_DESCRIPTOR_UNOPENED",
+      "reason_template_id": "tmpl.noncert.evq_descriptor_commitment_unopened.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NC_EVQ_NO_SELECTION_UNBIASEDNESS",
+      "reason_template_id": "tmpl.noncert.evq_no_selection_unbiasedness_claim.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NC_EVQ_NOMINAL_COVERAGE_ONLY",
+      "reason_template_id": "tmpl.noncert.evq_nominal_coverage_only.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NC_EVQ_FRONTIER_NOT_CAUSAL",
+      "reason_template_id": "tmpl.noncert.evq_frontier_descriptive_only.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NC_EVQ_COST_MEASURED_NOT_QUOTED",
+      "reason_template_id": "tmpl.noncert.evq_cost_at_pinned_price_list.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NC_EVQ_PLAN_ORDERING_OUT_OF_SCOPE",
+      "reason_template_id": "tmpl.noncert.evq_plan_ordering_out_of_scope.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NC_EVQ_NO_SAFETY_CLAIM",
+      "reason_template_id": "tmpl.noncert.evq_no_safety_claim.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NC_EVQ_INTERVALS_NOT_RECOMPUTED",
+      "reason_template_id": "tmpl.noncert.evq_intervals_not_recomputed.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NC_EVQ_EFFICIENCY_NOT_CLAIMED",
+      "reason_template_id": "tmpl.noncert.evq_efficiency_not_claimed.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NC_EVQ_FRONTIER_NOT_CLAIMED",
+      "reason_template_id": "tmpl.noncert.evq_frontier_not_claimed.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NC_EVQ_REF_MINTING_IS_AN_ISSUER_OBLIGATION",
+      "reason_template_id": "tmpl.noncert.evq_ref_minting_is_an_issuer_obligation.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NC_EVQ_REFS_ARE_A_LINKABILITY_CHANNEL",
+      "reason_template_id": "tmpl.noncert.evq_refs_are_a_linkability_channel.v1",
+      "record_type": "non_claim"
+    }
+  ],
+  "reference_standard": {
+    "adjudication_policy": "not_applicable",
+    "agreement_ceiling_ppm": 950000,
+    "error_floor_ppm": 50000,
+    "label_count": 1000,
+    "rater_count": 0,
+    "reference_commitment_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "reference_independence": "evaluator_independent",
+    "reference_kind": "verifiable_execution",
+    "reference_standard_digest": "sha256:6176874b27bb88aad1b89e35c1b196002cb4e67fc9c67e4812fe32ed80424172",
+    "schema_version": "traigent.evaluator_quality.reference_standard.v1"
+  },
+  "schema_version": "traigent.evaluator_quality.certificate_bundle.v1",
+  "signature": {
+    "algorithm": "ed25519",
+    "issuer_key_ref": "issuerkey:aaaaaaaa",
+    "schema_version": "traigent.evaluator_quality.signature.v1",
+    "signature": "21PGNz4JDd7asnNGYK2Mlu24A1u/xzJDBOLI++4DgiRqeHRniOKqIs2A4xRzncTvXYN8xYFKGWaZEn/n4yD0BA==",
+    "signed_payload": "unsigned_evaluator_quality_manifest",
+    "trust_ring_ref": "trustring:aaaaaaaa",
+    "unsigned_manifest_digest": "sha256:4648ba5ab15a25c09d1d24184c969dbede2591e58e25d0f6320442e2c25f60d7"
+  },
+  "unsigned_manifest": {
+    "assertion_templates_digest": "sha256:e21c0266aca15a57ebfd9ccbc03ece5a347d65506c4d8214bdde2c4c374b5091",
+    "claim_material_digest": "sha256:74ae369e2c3ea0009d708fe429eb5c3ef040ad9602fb9034f7e5d9a38ca3c38a",
+    "claim_support_rows_digest": "sha256:5573cd78182f4acbd6e201214fdbadfd45fbe05a4f5b095f2282c0e3c26e72fa",
+    "coverage": [
+      "scope_binding_digest",
+      "evaluator_commitment_ref",
+      "evaluator_commitment",
+      "descriptor_digest",
+      "descriptor_opening_digest",
+      "reference_standard_digest",
+      "evaluation_scope_digest",
+      "declared_plan_digest",
+      "measurement_registry_digest",
+      "perturbation_set_digest",
+      "assertion_templates_digest",
+      "measurement_set_digest",
+      "frontier_digest",
+      "claim_material_digest",
+      "claim_support_rows_digest",
+      "non_claims_digest",
+      "overall",
+      "trust_ring_ref",
+      "issuer_key_ref",
+      "issuer_signature_algorithm"
+    ],
+    "declared_plan_digest": "sha256:4b9cd89c0f5a53202a30b9713cc50dd92d371b94a4d0ba290d10a5ffb63c9f4f",
+    "descriptor_digest": "sha256:2a9d56fadc57ede0883715a097984e1f8a6f16a8e56a8fd19ec3711771601f8d",
+    "descriptor_opening_digest": null,
+    "evaluation_scope_digest": "sha256:e886635cbd1893264cd155f680e73dc8656c618478ad871118c008a3ea22f7fd",
+    "evaluator_commitment": {
+      "artifact_kind": "evaluator",
+      "canonicalization": "jcs_v1",
+      "commitment_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "commitment_scheme": "sha256_secret_blinded_v1",
+      "schema_version": "traigent.evaluator_quality.commitment.v1"
+    },
+    "evaluator_commitment_ref": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "frontier_digest": null,
+    "issuer_key_ref": "issuerkey:aaaaaaaa",
+    "issuer_signature_algorithm": "ed25519",
+    "measurement_registry_digest": "sha256:3f04a0a3fa92ecddc9c70bbdbe987bb7fcf0465bd8540d4bd3f5ddfba69e1da6",
+    "measurement_set_digest": "sha256:46c0ab7a5e2f7c065a81f1cf001e2cf139fd7a541a9ef4236211341cc4d1429e",
+    "non_claims_digest": "sha256:5e7d87c3ffbccbbc15c99b454e80926be328eb4a8def80e37c15bd1c19dbb157",
+    "overall": {
+      "aggregation_policy_digest": "sha256:8f1657bab4a01846324e35d4e4076d2293ff2c7a057e4a6df2941d467d022e5f",
+      "instrument_adequacy_verdict": "passed",
+      "overall_quality_ppm": 915000,
+      "verdict": "passed"
+    },
+    "perturbation_set_digest": "sha256:4f3723cfc6ef71df5be54e2637e14b02534420512c4751ba894d33853570ac65",
+    "reference_standard_digest": "sha256:6176874b27bb88aad1b89e35c1b196002cb4e67fc9c67e4812fe32ed80424172",
+    "schema_version": "traigent.evaluator_quality.unsigned_manifest.v1",
+    "scope_binding_digest": "sha256:b663001db1cd6ff1133c293736defcd90396ebf5717b202e86e260e11eacd5e1",
+    "trust_ring_ref": "trustring:aaaaaaaa"
+  },
+  "verification_materials_v0": {
+    "certificate_ref": "trustring:aaaaaaaa",
+    "distribution_role": "discovery_only",
+    "issuer": {
+      "algorithm": "ed25519",
+      "key_ref": "issuerkey:aaaaaaaa",
+      "public_key_der_b64": "MCowBQYDK2VwAyEAA6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+      "public_key_digest": "sha256:fd1f1c852e591b62f39172ebf98774fd4adea7c6ce0fa3ff83a2837897f5f8b3",
+      "trust_ring_ref": "trustring:aaaaaaaa"
+    },
+    "materials_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "relying_party_policy": {
+      "compiler_register_versions": {
+        "claim_template_catalog_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "compiler_version": "1.0.0",
+        "non_claim_reason_catalog_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "prohibited_register_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "semantics_manifest_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "verifier_catalog_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "verifier_bindings": [
+        {
+          "verifier_id": "B1",
+          "verifier_ref": "ver.cert.b1",
+          "verifier_version": "1.0.0"
+        },
+        {
+          "verifier_id": "G1",
+          "verifier_ref": "ver.cert.g1",
+          "verifier_version": "1.0.0"
+        }
+      ]
+    },
+    "requires_independent_pins": true,
+    "schema_version": "traigent.certificate_verification_materials.v0"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "allow_unchecked_trust_status": true,
+  "expected_evaluator_commitment_ref": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "expected_project_ref": "demo_project",
+  "verification_time": "2026-09-10T00:00:00Z"
+}
