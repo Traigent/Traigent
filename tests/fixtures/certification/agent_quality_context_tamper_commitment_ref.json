@@ -1,0 +1,35 @@
+{
+  "accept_abstained_bundle": false,
+  "expected_agent_commitment_ref": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "expected_build_definition_commitment_ref": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+  "expected_build_session_ref": "bsn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "expected_dataset_commitment_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "expected_declared_plan_digest": "sha256:d37d01ea201453d30e3c5da4499ff1cfb4d7fa6a7082813112c810ef50291f52",
+  "expected_evaluator_commitment_ref": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "expected_measurement_contract_record_digest": "sha256:a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+  "expected_measurement_contract_ref": "measurement:mmmmmmmm",
+  "expected_project_ref": "project_contract001",
+  "process_record_context": {
+    "allow_unchecked_base_status": true,
+    "base_context": {
+      "client_public_key": null,
+      "expected_build_session_ref": "bsn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected_client_algorithm": null,
+      "expected_client_key_ref": null,
+      "expected_issuer_algorithm": "ed25519",
+      "expected_issuer_key_ref": "ikey:abcdef0123456789",
+      "expected_nonce": "abababababababababababababababab",
+      "expected_project_ref": "project_contract001",
+      "expected_trust_ring_ref": "ring:abcdef0123456789"
+    },
+    "certificate_ref": "certificate:opaque0001",
+    "expected_agent_commitment_ref": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "expected_build_definition_commitment_ref": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    "expected_build_session_ref": "bsn:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "expected_dataset_commitment_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "expected_evaluator_commitment_ref": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "expected_materials_digest": "sha256:fbe585ee8fc6dfa1a59b2ab38d88dd955de1b10b826953ac6b6be89203390a14",
+    "expected_project_ref": "project_contract001",
+    "verification_time": "2026-09-05T10:11:12.123456Z"
+  }
+}

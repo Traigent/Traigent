@@ -12,6 +12,7 @@ import click
 
 if TYPE_CHECKING:
     from traigent_schema.certification import (
+        AgentQualityVerificationContext,
         DatasetRecordVerificationContext,
         EvaluatorQualityVerificationContext,
         ProcessRecordVerificationContext,
@@ -64,9 +65,9 @@ EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY = "EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY
 # this comment and `EVALUATOR_QUALITY_POLICY_DISPOSITION` in the same PR --
 # that dict IS the reviewed disposition record.
 EVALUATOR_QUALITY_POLICY_DISPOSITION = {
-    "schema_pin": "4b3373925cee6bd57071980285c58044165c90a4",
+    "schema_pin": "321d98133645d343297545a155b9549650e3152d",
     "verifier_revision": "a2fd2e4e1222dc9e1589d26adcbb12b40dcbd5473e5c23cfb1e8e01ea39e333c",
-    "reviewed_by": "spine-trail:st_46ecde7dd286",
+    "reviewed_by": "spine-trail:st_9868d6cc69c4",
     "date": "2026-09-10",
 }
 
@@ -113,6 +114,86 @@ def evaluator_quality_verifier_revision(files: list[Path] | None = None) -> str:
     return digest.hexdigest()
 
 
+# --- Agent-quality (pillar 1) eligibility policy ----------------------------
+#
+# Unlike evaluator-quality (pillar 3), `--kind agent-quality` composes the
+# process-record verification INSIDE the real verifier
+# (`verify_agent_quality_certificate` verifies `--process-record` in full
+# before checking anything else), so there is no cross-bundle composition gap
+# here -- see the module-level comment above `verify` for the full contrast.
+# `certification_eligible` is conditional only on the one thing the result
+# type itself cannot express: whether the embedded process record's base
+# status was independently checked against a trust anchor
+# (`process_record_base_status=checked`) or merely accepted unchecked
+# (`=not_checked`). A VERIFIED result over an unchecked process record is
+# still printed, but never eligible.
+#
+# Same pinned-disposition discipline as evaluator-quality:
+# `tests/unit/cli/test_certify_agent_quality.py::
+# test_eligibility_policy_pin_matches_installed_schema` fails closed if
+# either the Schema pin or the hashed verifier artifacts drift from
+# `AGENT_QUALITY_POLICY_DISPOSITION` below -- a Schema pin bump or a
+# `traigent_schema` release that changes `agent_quality_verifier.py`, the
+# agent-quality JSON schema, or any of the four registry documents (and their
+# digest sidecars) forces a human to revisit this comment and that dict in
+# the same PR.
+AGENT_QUALITY_POLICY_DISPOSITION = {
+    "schema_pin": "321d98133645d343297545a155b9549650e3152d",
+    "verifier_revision": "e7c9541459f15f2c267122428fbd4cbcebefc2306f469b098866fc6bdd73519e",
+    "reviewed_by": "spine-trail:st_9868d6cc69c4",
+    "date": "2026-09-10",
+}
+
+
+def _agent_quality_artifact_paths() -> list[Path]:
+    """The installed agent-quality verification artifacts hashed by
+    `agent_quality_verifier_revision`: the verifier module, the
+    agent-quality JSON schema, and the four registry documents
+    (`_load_agent_quality_document`'s "objective_registry",
+    "aggregation_policy", "non_claim_catalog", "quantile_table" stems) each
+    with its pinned `.digest.json` sidecar."""
+    import traigent_schema
+    from traigent_schema.certification import agent_quality_verifier as module
+
+    root = Path(traigent_schema.__file__).parent
+    data_dir = root / "data" / "certification"
+    stems = (
+        "objective_registry",
+        "aggregation_policy",
+        "non_claim_catalog",
+        "quantile_table",
+    )
+    paths = [
+        Path(module.__file__),
+        root / "schemas" / "certification" / "agent_quality_v1_schema.json",
+    ]
+    for stem in stems:
+        paths.append(data_dir / f"agent_quality_{stem}.json")
+        paths.append(data_dir / f"agent_quality_{stem}.digest.json")
+    return paths
+
+
+def agent_quality_verifier_revision(files: list[Path] | None = None) -> str:
+    """SHA-256 over the installed agent-quality verification artifacts.
+
+    Mirrors `evaluator_quality_verifier_revision` exactly: used only as a
+    guard-test comparison key against
+    `AGENT_QUALITY_POLICY_DISPOSITION["verifier_revision"]`, never at runtime
+    by the CLI itself. `files` overrides the artifact list -- tests use this
+    to hash tmp copies of the installed artifacts instead of mutating the
+    install.
+    """
+    if files is None:
+        files = _agent_quality_artifact_paths()
+    digest = hashlib.sha256()
+    for file in sorted(files, key=lambda p: p.name):
+        digest.update(file.name.encode("utf-8"))
+        digest.update(b"\x00")
+        digest.update(file.read_bytes())
+        digest.update(b"\x00")
+    return digest.hexdigest()
+
+
 def _load_certification_schema() -> SimpleNamespace:
     """Lazily import traigent_schema.certification, called only inside `verify`.
 
@@ -123,13 +204,20 @@ def _load_certification_schema() -> SimpleNamespace:
     """
     try:
         from traigent_schema.certification import (
+            AGENT_QUALITY_CLAIM_ABSTAINED,
+            AGENT_QUALITY_VERIFIED,
+            AgentQualityVerificationContext,
             DatasetRecordVerificationContext,
             EvaluatorQualityVerificationContext,
             ProcessRecordVerificationContext,
             TrustAnchorKeyV1,
+            verify_agent_quality_certificate,
             verify_dataset_record_certificate,
             verify_evaluator_quality_certificate,
             verify_process_record_certificate,
+        )
+        from traigent_schema.certification.agent_quality_verifier import (
+            AgentQualityVerificationError,
         )
         from traigent_schema.certification.dataset_record_verifier import (
             DatasetRecordVerificationError,
@@ -149,13 +237,18 @@ def _load_certification_schema() -> SimpleNamespace:
             "pinned TraigentSchema package (see scripts/ci/schema-pin.txt)"
         ) from exc
     return SimpleNamespace(
+        AGENT_QUALITY_CLAIM_ABSTAINED=AGENT_QUALITY_CLAIM_ABSTAINED,
+        AGENT_QUALITY_VERIFIED=AGENT_QUALITY_VERIFIED,
+        AgentQualityVerificationContext=AgentQualityVerificationContext,
         DatasetRecordVerificationContext=DatasetRecordVerificationContext,
         EvaluatorQualityVerificationContext=EvaluatorQualityVerificationContext,
         ProcessRecordVerificationContext=ProcessRecordVerificationContext,
         TrustAnchorKeyV1=TrustAnchorKeyV1,
+        verify_agent_quality_certificate=verify_agent_quality_certificate,
         verify_dataset_record_certificate=verify_dataset_record_certificate,
         verify_evaluator_quality_certificate=verify_evaluator_quality_certificate,
         verify_process_record_certificate=verify_process_record_certificate,
+        AgentQualityVerificationError=AgentQualityVerificationError,
         DatasetRecordVerificationError=DatasetRecordVerificationError,
         EvaluatorQualityVerificationError=EvaluatorQualityVerificationError,
         ProcessRecordVerificationError=ProcessRecordVerificationError,
@@ -284,8 +377,53 @@ def _evaluator_quality_context(
         raise click.UsageError("context is invalid") from exc
 
 
+def _agent_quality_context(
+    payload: dict[str, Any],
+    anchor: TrustAnchorKeyV1,
+    schema: SimpleNamespace,
+    trust_status_payload: dict[str, Any] | None,
+) -> AgentQualityVerificationContext:
+    process_record_payload = _required(payload, "process_record_context")
+    if not isinstance(process_record_payload, dict):
+        raise click.UsageError("context.process_record_context must be a JSON object")
+    _check_context_anchor(process_record_payload, anchor)
+    process_record_context = _process_context(process_record_payload, anchor, schema)
+    try:
+        return schema.AgentQualityVerificationContext(
+            process_record_context=process_record_context,
+            expected_project_ref=_required(payload, "expected_project_ref"),
+            expected_build_session_ref=_required(payload, "expected_build_session_ref"),
+            expected_agent_commitment_ref=_required(
+                payload, "expected_agent_commitment_ref"
+            ),
+            expected_dataset_commitment_ref=_required(
+                payload, "expected_dataset_commitment_ref"
+            ),
+            expected_evaluator_commitment_ref=_required(
+                payload, "expected_evaluator_commitment_ref"
+            ),
+            expected_build_definition_commitment_ref=_required(
+                payload, "expected_build_definition_commitment_ref"
+            ),
+            expected_measurement_contract_ref=_required(
+                payload, "expected_measurement_contract_ref"
+            ),
+            expected_measurement_contract_record_digest=_required(
+                payload, "expected_measurement_contract_record_digest"
+            ),
+            accept_abstained_bundle=_required(payload, "accept_abstained_bundle"),
+            expected_declared_plan_digest=_required(
+                payload, "expected_declared_plan_digest"
+            ),
+            trust_status=trust_status_payload,
+        )
+    except (TypeError, ValueError) as exc:
+        raise click.UsageError("context is invalid") from exc
+
+
 def _resolve_kind(kind: str | None, context_payload: dict[str, Any]) -> str:
-    """Pick the verification family, refusing to guess evaluator-quality.
+    """Pick the verification family, refusing to guess evaluator-quality or
+    agent-quality.
 
     `--kind evaluator-quality` is never auto-detected. Its context marker is
     `allow_unchecked_trust_status` (the S10 opt-in unique to
@@ -295,6 +433,12 @@ def _resolve_kind(kind: str | None, context_payload: dict[str, Any]) -> str:
     used to distinguish the families. A context carrying the
     evaluator-quality marker without an explicit `--kind` is refused
     outright rather than routed into the wrong verifier.
+
+    `--kind agent-quality` is likewise never auto-detected. Its markers are
+    `accept_abstained_bundle` and `process_record_context` -- both unique to
+    `AgentQualityVerificationContext` (a legitimate dataset-record context's
+    nested key is `process_context`, singular and without "_record", and a
+    process-record context has neither key at its own top level).
     """
     if kind is not None:
         return kind
@@ -303,6 +447,12 @@ def _resolve_kind(kind: str | None, context_payload: dict[str, Any]) -> str:
             "context contains allow_unchecked_trust_status (an "
             "evaluator-quality marker); pass --kind evaluator-quality "
             "explicitly -- it is never auto-detected"
+        )
+    if "accept_abstained_bundle" in context_payload or "process_record_context" in context_payload:
+        raise click.UsageError(
+            "context contains accept_abstained_bundle or process_record_context "
+            "(an agent-quality marker); pass --kind agent-quality explicitly "
+            "-- it is never auto-detected"
         )
     if "process_context" in context_payload:
         return "dataset-record"
@@ -351,9 +501,14 @@ def certify() -> None:
 )
 @click.option(
     "--kind",
-    type=click.Choice(["dataset-record", "process-record", "evaluator-quality"]),
+    type=click.Choice(
+        ["dataset-record", "process-record", "evaluator-quality", "agent-quality"]
+    ),
     default=None,
-    help="Verification family. Required for evaluator-quality (never guessed).",
+    help=(
+        "Verification family. Required for evaluator-quality and "
+        "agent-quality (never guessed)."
+    ),
 )
 @click.option(
     "--development-integration",
@@ -365,7 +520,10 @@ def certify() -> None:
         "never reported certification_eligible=true (see "
         "EVALUATOR_QUALITY_POLICY_DISPOSITION's comment). Exit codes for "
         "--kind evaluator-quality: 1 = refused or verification failed, "
-        "2 = usage error, 3 = technically valid, not certification-eligible."
+        "2 = usage error, 3 = technically valid, not certification-eligible. "
+        "--kind agent-quality does not use this flag; its exit codes are "
+        "0 = verified and eligible, 1 = refused or verification failed, "
+        "2 = usage error, 3 = technically valid, not eligible."
     ),
 )
 @click.option(
@@ -412,6 +570,20 @@ def verify(
             anchor_value,
             trust_status_payload,
             development_integration=development_integration,
+            as_json=as_json,
+        )
+        return
+
+    if resolved_kind == "agent-quality":
+        if process_record is None:
+            raise click.UsageError("--kind agent-quality requires --process-record")
+        _verify_agent_quality(
+            schema,
+            bundle_payload,
+            context_payload,
+            _read_json(process_record, "process record"),
+            anchor_value,
+            trust_status_payload,
             as_json=as_json,
         )
         return
@@ -536,6 +708,113 @@ def _verify_evaluator_quality(
 def _emit_evaluator_quality(
     as_json: bool, payload: dict[str, Any], lines: list[str]
 ) -> None:
+    if as_json:
+        click.echo(json.dumps(payload, sort_keys=True))
+    else:
+        for line in lines:
+            click.echo(line)
+
+
+def _verify_agent_quality(
+    schema: SimpleNamespace,
+    bundle_payload: dict[str, Any],
+    context_payload: dict[str, Any],
+    process_record_payload: dict[str, Any],
+    anchor_value: TrustAnchorKeyV1,
+    trust_status_payload: dict[str, Any] | None,
+    *,
+    as_json: bool,
+) -> None:
+    """Run agent-quality (pillar 1) verification.
+
+    Unlike evaluator-quality, this composes the process-record verification
+    INSIDE the real verifier (`verify_agent_quality_certificate` verifies
+    `--process-record` in full, first, before checking anything else) -- see
+    `AGENT_QUALITY_POLICY_DISPOSITION`'s comment for why that removes the
+    composition gap evaluator-quality has. `certification_eligible` is true
+    only for a VERIFIED result over a process record whose base status was
+    independently checked (`context.process_record_context.
+    allow_unchecked_base_status is False`) -- an
+    `AgentQualityVerificationResult` carries no trust-status evidence of its
+    own, so a VERIFIED result looks identical whether or not that check ran;
+    the eligibility gate supplies the missing condition.
+    """
+    process_record_context_payload = _required(context_payload, "process_record_context")
+    if not isinstance(process_record_context_payload, dict):
+        raise click.UsageError("context.process_record_context must be a JSON object")
+    if (
+        process_record_context_payload.get("allow_unchecked_base_status") is True
+        and trust_status_payload is not None
+    ):
+        raise click.UsageError(
+            "--trust-status cannot be used with "
+            "context.process_record_context.allow_unchecked_base_status=true"
+        )
+
+    context = _agent_quality_context(
+        context_payload, anchor_value, schema, trust_status_payload
+    )
+
+    try:
+        result = schema.verify_agent_quality_certificate(
+            bundle_payload,
+            context=context,
+            process_record_bundle=process_record_payload,
+        )
+    except schema.ProcessRecordVerificationError as exc:
+        _emit_agent_quality(
+            as_json,
+            {"code": exc.code, "certification_eligible": False},
+            [exc.code, "certification_eligible=false"],
+        )
+        raise click.exceptions.Exit(1) from None
+    except schema.AgentQualityVerificationError as exc:
+        _emit_agent_quality(
+            as_json,
+            {"code": exc.code, "certification_eligible": False},
+            [exc.code, "certification_eligible=false"],
+        )
+        raise click.exceptions.Exit(1) from None
+
+    base_status_checked = (
+        context.process_record_context.allow_unchecked_base_status is False
+    )
+    process_record_base_status = "checked" if base_status_checked else "not_checked"
+    certification_eligible = (
+        result.code == schema.AGENT_QUALITY_VERIFIED and base_status_checked
+    )
+
+    payload = {
+        "code": result.code,
+        "primary_objective_id": result.primary_objective_id,
+        "nominal_coverage_ppm": result.nominal_coverage_ppm,
+        "holdout_item_count": result.holdout_item_count,
+        "interval_verification_level": result.interval_verification_level,
+        "split_verification_level": result.split_verification_level,
+        "dataset_condition_code": result.dataset_condition_code,
+        "evaluator_condition_code": result.evaluator_condition_code,
+        "plan_ordering_note": result.plan_ordering_note,
+        "process_record_base_status": process_record_base_status,
+        "certification_eligible": certification_eligible,
+    }
+    lines = [
+        result.code,
+        f"primary_objective_id={result.primary_objective_id}",
+        f"nominal_coverage_ppm={result.nominal_coverage_ppm}",
+        f"holdout_item_count={result.holdout_item_count}",
+        f"interval_verification_level={result.interval_verification_level}",
+        f"split_verification_level={result.split_verification_level}",
+        f"dataset_condition_code={result.dataset_condition_code}",
+        f"evaluator_condition_code={result.evaluator_condition_code}",
+        f"plan_ordering_note={result.plan_ordering_note}",
+        f"process_record_base_status={process_record_base_status}",
+        f"certification_eligible={'true' if certification_eligible else 'false'}",
+    ]
+    _emit_agent_quality(as_json, payload, lines)
+    raise click.exceptions.Exit(0 if certification_eligible else 3)
+
+
+def _emit_agent_quality(as_json: bool, payload: dict[str, Any], lines: list[str]) -> None:
     if as_json:
         click.echo(json.dumps(payload, sort_keys=True))
     else:
