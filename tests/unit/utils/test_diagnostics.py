@@ -319,6 +319,7 @@ class TestTraigentDiagnostics:
         assert len(report.warnings) == 1
         msg = report.warnings[0]["message"]
         assert "Optional Package is not installed (optional)" in msg
+        assert "pip install" not in msg
         assert len(report.issues) == 0
 
     @patch("importlib.import_module")
@@ -439,9 +440,10 @@ class TestTraigentDiagnostics:
         TraigentDiagnostics._check_permissions(report)
 
         # Should succeed for all test paths and exercise write/unlink mocks
-        assert mock_write.called, (
+        write_assertion_message = (
             "write_text should have been called to test permissions"
         )
+        assert mock_write.called, write_assertion_message
         assert len(report.successes) >= 1
         assert any("Can write to" in s["message"] for s in report.successes)
 

@@ -15,7 +15,6 @@ pip install "traigent[recommended]"
 | `analytics`     | Analytics and intelligence features                | numpy, pandas, matplotlib                                                    |
 | `bayesian`      | Bayesian optimization dependencies (used by the Traigent cloud; not available for local runs) | scikit-learn, scipy                                                          |
 | `integrations`  | Framework integrations                             | LangChain (+ community/anthropic/openai/google), OpenAI, Anthropic, Groq, Google GenAI, MLflow, W&B, python-dotenv, boto3, faiss-cpu |
-| `dspy`          | DSPy prompt optimization                           | dspy-ai                                                                      |
 | `pydanticai`    | PydanticAI agent framework                         | pydantic-ai-slim                                                             |
 | `security`      | Enterprise security features                       | passlib, FastAPI, Starlette, uvicorn, redis, defusedxml, pyotp               |
 | `visualization` | Visualization and plotting                         | matplotlib, plotly                                                           |
@@ -41,7 +40,6 @@ pip install "traigent[recommended]"
 pip install 'traigent[analytics]'
 pip install 'traigent[bayesian]'
 pip install 'traigent[integrations]'
-pip install 'traigent[dspy]'
 pip install 'traigent[pydanticai]'
 pip install 'traigent[security]'
 pip install 'traigent[visualization]'
@@ -60,6 +58,17 @@ pip install 'traigent[all]'
 # Multiple extras at once
 pip install 'traigent[integrations,analytics,visualization]'
 ```
+
+## DSPy Adapter (Bring Your Own)
+
+Traigent's DSPy adapter remains import-optional, but Traigent no longer ships a
+`dspy` extra or locks DSPy and its transitive dependencies. Applications that need
+the adapter must provide a compatible DSPy installation separately.
+
+The current DSPy dependency chain includes `diskcache`, for which
+CVE-2025-69872 has no patched release at the time of this release. Review and
+accept that dependency risk before installing DSPy yourself; a user-managed DSPy
+installation is not attested safe by Traigent.
 
 ## Core Dependencies (Always Installed)
 
