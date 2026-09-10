@@ -139,7 +139,7 @@ def evaluator_quality_verifier_revision(files: list[Path] | None = None) -> str:
 # the same PR.
 AGENT_QUALITY_POLICY_DISPOSITION = {
     "schema_pin": "321d98133645d343297545a155b9549650e3152d",
-    "verifier_revision": "e7c9541459f15f2c267122428fbd4cbcebefc2306f469b098866fc6bdd73519e",
+    "verifier_revision": "521fc89738136dad05a63bf5467e0a72077493aadfb90982e4da2b0e20694c57",
     "reviewed_by": "spine-trail:st_9868d6cc69c4",
     "date": "2026-09-10",
 }
@@ -148,7 +148,11 @@ AGENT_QUALITY_POLICY_DISPOSITION = {
 def _agent_quality_artifact_paths() -> list[Path]:
     """The installed agent-quality verification artifacts hashed by
     `agent_quality_verifier_revision`: the verifier module, the
-    agent-quality JSON schema, and the four registry documents
+    agent-quality JSON schema, the three schemas it `$ref`s (`certification_
+    common_v0`, `certificate_audit_report_v0`, `certificate_evidence_refs_v0`
+    -- the verifier resolves these at validation time, so a change to any of
+    them changes verified behavior without touching agent_quality_v1_schema.
+    json's own bytes), and the four registry documents
     (`_load_agent_quality_document`'s "objective_registry",
     "aggregation_policy", "non_claim_catalog", "quantile_table" stems) each
     with its pinned `.digest.json` sidecar."""
@@ -156,6 +160,7 @@ def _agent_quality_artifact_paths() -> list[Path]:
     from traigent_schema.certification import agent_quality_verifier as module
 
     root = Path(traigent_schema.__file__).parent
+    schema_dir = root / "schemas" / "certification"
     data_dir = root / "data" / "certification"
     stems = (
         "objective_registry",
@@ -165,7 +170,10 @@ def _agent_quality_artifact_paths() -> list[Path]:
     )
     paths = [
         Path(module.__file__),
-        root / "schemas" / "certification" / "agent_quality_v1_schema.json",
+        schema_dir / "agent_quality_v1_schema.json",
+        schema_dir / "certification_common_v0_schema.json",
+        schema_dir / "certificate_audit_report_v0_schema.json",
+        schema_dir / "certificate_evidence_refs_v0_schema.json",
     ]
     for stem in stems:
         paths.append(data_dir / f"agent_quality_{stem}.json")
@@ -412,11 +420,11 @@ def _agent_quality_context(
                 payload, "expected_measurement_contract_record_digest"
             ),
             accept_abstained_bundle=_required(payload, "accept_abstained_bundle"),
-            expected_declared_plan_digest=_required(
-                payload, "expected_declared_plan_digest"
-            ),
+            expected_declared_plan_digest=payload.get("expected_declared_plan_digest"),
             trust_status=trust_status_payload,
         )
+    except schema.AgentQualityVerificationError:
+        raise
     except (TypeError, ValueError) as exc:
         raise click.UsageError("context is invalid") from exc
 
@@ -448,7 +456,10 @@ def _resolve_kind(kind: str | None, context_payload: dict[str, Any]) -> str:
             "evaluator-quality marker); pass --kind evaluator-quality "
             "explicitly -- it is never auto-detected"
         )
-    if "accept_abstained_bundle" in context_payload or "process_record_context" in context_payload:
+    if (
+        "accept_abstained_bundle" in context_payload
+        or "process_record_context" in context_payload
+    ):
         raise click.UsageError(
             "context contains accept_abstained_bundle or process_record_context "
             "(an agent-quality marker); pass --kind agent-quality explicitly "
@@ -577,6 +588,10 @@ def verify(
     if resolved_kind == "agent-quality":
         if process_record is None:
             raise click.UsageError("--kind agent-quality requires --process-record")
+        if development_integration:
+            raise click.UsageError(
+                "--kind agent-quality does not use --development-integration"
+            )
         _verify_agent_quality(
             schema,
             bundle_payload,
@@ -739,7 +754,9 @@ def _verify_agent_quality(
     own, so a VERIFIED result looks identical whether or not that check ran;
     the eligibility gate supplies the missing condition.
     """
-    process_record_context_payload = _required(context_payload, "process_record_context")
+    process_record_context_payload = _required(
+        context_payload, "process_record_context"
+    )
     if not isinstance(process_record_context_payload, dict):
         raise click.UsageError("context.process_record_context must be a JSON object")
     if (
@@ -751,11 +768,10 @@ def _verify_agent_quality(
             "context.process_record_context.allow_unchecked_base_status=true"
         )
 
-    context = _agent_quality_context(
-        context_payload, anchor_value, schema, trust_status_payload
-    )
-
     try:
+        context = _agent_quality_context(
+            context_payload, anchor_value, schema, trust_status_payload
+        )
         result = schema.verify_agent_quality_certificate(
             bundle_payload,
             context=context,
@@ -814,7 +830,9 @@ def _verify_agent_quality(
     raise click.exceptions.Exit(0 if certification_eligible else 3)
 
 
-def _emit_agent_quality(as_json: bool, payload: dict[str, Any], lines: list[str]) -> None:
+def _emit_agent_quality(
+    as_json: bool, payload: dict[str, Any], lines: list[str]
+) -> None:
     if as_json:
         click.echo(json.dumps(payload, sort_keys=True))
     else:

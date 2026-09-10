@@ -17,7 +17,6 @@ an exit code, which is exercised with the real exception type.
 
 from __future__ import annotations
 
-import base64
 import copy
 import json
 import re
@@ -134,6 +133,18 @@ def test_no_kind_agent_quality_context_is_never_auto_detected() -> None:
 
 
 @requires_schema
+def test_kind_agent_quality_with_development_integration_is_usage_error() -> None:
+    """`--development-integration` is an evaluator-quality-only flag (see
+    its help text); passing it with --kind agent-quality is refused before
+    any verification runs, not silently ignored."""
+    result = _invoke(
+        _base_args(kind="agent-quality", as_json=True) + ["--development-integration"]
+    )
+    assert result.exit_code == 2, result.output
+    assert "--development-integration" in result.output
+
+
+@requires_schema
 def test_kind_agent_quality_without_process_record_is_usage_error() -> None:
     result = _invoke(
         [
@@ -238,6 +249,71 @@ def test_abstained_bundle_not_accepted_is_claim_not_verified(tmp_path: Path) -> 
     assert result.exit_code == 1, result.output
     payload = json.loads(result.output)
     assert payload["code"] == "CLAIM_NOT_VERIFIED"
+    assert payload["certification_eligible"] is False
+
+
+@requires_schema
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda ctx: ctx.pop("expected_declared_plan_digest"),
+        lambda ctx: ctx.__setitem__("expected_declared_plan_digest", None),
+        lambda ctx: ctx.__setitem__("expected_declared_plan_digest", "sha256:xyz"),
+    ],
+    ids=["missing", "null", "malformed"],
+)
+def test_declared_plan_digest_context_defect_is_context_error(
+    tmp_path: Path, mutate: object
+) -> None:
+    """A missing, null, or malformed `expected_declared_plan_digest` is a
+    CONTEXT-construction defect -- the verifier's own code for a bad context
+    field, not a bare CLI usage error -- and exits 1, not 2."""
+    context = _load("agent_quality_context_unchecked.json")
+    mutate(context)
+    context_path = _write(tmp_path, "context.json", context)
+
+    result = _invoke(
+        _base_args(context=context_path, kind="agent-quality", as_json=True)
+    )
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.output)
+    assert payload["code"] == "CONTEXT"
+    assert payload["certification_eligible"] is False
+
+
+@requires_schema
+def test_declared_plan_digest_wrong_but_valid_is_pin_mismatch(tmp_path: Path) -> None:
+    """A well-formed but wrong `expected_declared_plan_digest` passes context
+    construction and is refused by the real verifier's pin check, not by
+    context validation."""
+    context = _load("agent_quality_context_unchecked.json")
+    context["expected_declared_plan_digest"] = "sha256:" + "9" * 64
+    context_path = _write(tmp_path, "context.json", context)
+
+    result = _invoke(
+        _base_args(context=context_path, kind="agent-quality", as_json=True)
+    )
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.output)
+    assert payload["code"] == "DECLARED_PLAN_PIN_MISMATCH"
+    assert payload["certification_eligible"] is False
+
+
+@requires_schema
+def test_accept_abstained_bundle_as_string_is_context_error(tmp_path: Path) -> None:
+    """`accept_abstained_bundle` must be a JSON boolean; a string like
+    "false" is truthy-shaped but fails the dataclass's strict `is not bool`
+    check, reported as CONTEXT rather than silently coerced."""
+    context = _load("agent_quality_context_unchecked.json")
+    context["accept_abstained_bundle"] = "false"
+    context_path = _write(tmp_path, "context.json", context)
+
+    result = _invoke(
+        _base_args(context=context_path, kind="agent-quality", as_json=True)
+    )
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.output)
+    assert payload["code"] == "CONTEXT"
     assert payload["certification_eligible"] is False
 
 
@@ -357,7 +433,8 @@ def test_tampered_process_record_surfaces_its_own_code_unrelabeled() -> None:
 
     result = _invoke(
         _base_args(
-            process_record=FIXTURES / "agent_quality_process_record_tamper_receipt.json",
+            process_record=FIXTURES
+            / "agent_quality_process_record_tamper_receipt.json",
             kind="agent-quality",
             as_json=True,
         )
@@ -422,15 +499,13 @@ def _installed_schema_commit() -> str | None:
     return direct_url.get("vcs_info", {}).get("commit_id")
 
 
-@requires_schema
-def test_eligibility_policy_pin_matches_installed_schema() -> None:
-    """Guard test (mirrors evaluator-quality's). Fails closed if the Schema
-    pin, the installed agent_quality_verifier module source, the
-    agent-quality JSON schema, or any of the four registry documents (and
-    their digest sidecars) drift from the reviewed disposition recorded in
-    AGENT_QUALITY_POLICY_DISPOSITION in traigent/cli/certify_commands.py --
-    forcing that record to be revisited (and, if the disposition still
-    holds, updated) in the same PR that moves any of them."""
+def _assert_agent_quality_eligibility_policy_pin() -> None:
+    """The guard body, factored out so `test_eligibility_policy_pin_mutation_
+    alone_fails_the_guard` can run it against a monkeypatched disposition and
+    prove it actually raises -- not just assert that made-up values differ
+    from the pin in isolation. Reads AGENT_QUALITY_POLICY_DISPOSITION off the
+    module at call time (not a captured reference) so monkeypatching the
+    module attribute is visible here."""
     disposition = certify_commands.AGENT_QUALITY_POLICY_DISPOSITION
     assert disposition["schema_pin"] == _pinned_schema_sha()
     assert (
@@ -444,15 +519,36 @@ def test_eligibility_policy_pin_matches_installed_schema() -> None:
 
 
 @requires_schema
-def test_eligibility_policy_pin_mutation_alone_fails_the_guard() -> None:
-    mutated_pin = "1111111111111111111111111111111111111111"
-    assert mutated_pin != _pinned_schema_sha()
-    installed_commit = _installed_schema_commit()
-    if installed_commit is not None:
-        assert mutated_pin != installed_commit
+def test_eligibility_policy_pin_matches_installed_schema() -> None:
+    """Guard test (mirrors evaluator-quality's). Fails closed if the Schema
+    pin, the installed agent_quality_verifier module source, the
+    agent-quality JSON schema, or any of the four registry documents (and
+    their digest sidecars) drift from the reviewed disposition recorded in
+    AGENT_QUALITY_POLICY_DISPOSITION in traigent/cli/certify_commands.py --
+    forcing that record to be revisited (and, if the disposition still
+    holds, updated) in the same PR that moves any of them."""
+    _assert_agent_quality_eligibility_policy_pin()
 
-    mutated_revision = "0" * 64
-    assert mutated_revision != certify_commands.agent_quality_verifier_revision()
+
+@requires_schema
+def test_eligibility_policy_pin_mutation_alone_fails_the_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Not vacuous: actually runs the guard against a disposition mutated in
+    place (monkeypatched onto the module) and asserts it raises, rather than
+    only checking that made-up comparison values differ from the pin."""
+    mutated = dict(certify_commands.AGENT_QUALITY_POLICY_DISPOSITION)
+    mutated["schema_pin"] = "1111111111111111111111111111111111111111"
+    mutated["verifier_revision"] = "0" * 64
+    assert mutated["schema_pin"] != _pinned_schema_sha()
+    assert (
+        mutated["verifier_revision"]
+        != certify_commands.agent_quality_verifier_revision()
+    )
+
+    monkeypatch.setattr(certify_commands, "AGENT_QUALITY_POLICY_DISPOSITION", mutated)
+    with pytest.raises(AssertionError):
+        _assert_agent_quality_eligibility_policy_pin()
 
 
 @requires_schema
@@ -473,6 +569,40 @@ def test_verifier_revision_covers_schema_json_not_only_verifier_module(
 
     schema_copy = tmp_path / "agent_quality_v1_schema.json"
     schema_copy.write_bytes(schema_copy.read_bytes() + b" ")
+    mutated = certify_commands.agent_quality_verifier_revision(copies)
+    assert mutated != unaltered
+
+
+@requires_schema
+@pytest.mark.parametrize(
+    "ref_schema_name",
+    [
+        "certification_common_v0_schema.json",
+        "certificate_audit_report_v0_schema.json",
+        "certificate_evidence_refs_v0_schema.json",
+    ],
+)
+def test_verifier_revision_covers_ref_schemas_not_only_agent_quality_schema(
+    tmp_path: Path, ref_schema_name: str
+) -> None:
+    """The agent-quality JSON schema `$ref`s three shared certification
+    schemas (`certification_common_v0`, `certificate_audit_report_v0`,
+    `certificate_evidence_refs_v0`) that the real verifier resolves at
+    validation time. The hash must move if any of them changes, even though
+    agent_quality_v1_schema.json's own bytes are untouched -- otherwise a
+    Schema release could change verified behavior through a `$ref` target
+    without moving AGENT_QUALITY_POLICY_DISPOSITION."""
+    installed_files = certify_commands._agent_quality_artifact_paths()
+    baseline = certify_commands.agent_quality_verifier_revision()
+
+    copies = [tmp_path / file.name for file in installed_files]
+    for source, dest in zip(installed_files, copies, strict=True):
+        dest.write_bytes(source.read_bytes())
+    unaltered = certify_commands.agent_quality_verifier_revision(copies)
+    assert unaltered == baseline
+
+    ref_copy = tmp_path / ref_schema_name
+    ref_copy.write_bytes(ref_copy.read_bytes() + b" ")
     mutated = certify_commands.agent_quality_verifier_revision(copies)
     assert mutated != unaltered
 
