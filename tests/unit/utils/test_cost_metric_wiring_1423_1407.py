@@ -267,6 +267,9 @@ async def test_unpriced_fixed_in_code_model_surfaces_warning(
     The model is NOT in the configuration space (preflight cannot see it), so the
     only signal is the runtime collection lifted onto the OptimizationResult.
     """
+    # Cost is an objective here, which now makes runtime accounting strict by
+    # default; this test covers the non-strict path, so select it explicitly.
+    monkeypatch.setenv("TRAIGENT_STRICT_COST_ACCOUNTING", "false")
     monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")  # no interactive prompt
     dataset = [{"input": {"question": "q"}, "expected_output": "A"}]
 
@@ -410,6 +413,9 @@ async def test_unpriced_runtime_warning_is_quantified_and_not_treated_as_free(
     be quantitative (how many calls were affected), not just a bare model-id
     mention, and must say the reported cost is a lower bound.
     """
+    # Cost is an objective here, which now makes runtime accounting strict by
+    # default; this test covers the non-strict path, so select it explicitly.
+    monkeypatch.setenv("TRAIGENT_STRICT_COST_ACCOUNTING", "false")
     monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")  # no interactive prompt
     dataset = [
         {"input": {"question": "q1"}, "expected_output": "A"},

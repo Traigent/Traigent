@@ -1382,6 +1382,14 @@ class LocalEvaluator(BaseEvaluator):
         if "usage" in meta:
             self._inject_usage_from_meta(cast(dict, meta["usage"]), metrics)
 
+        # A validated ``__traigent_meta__`` carries a user-reported cost (and
+        # optionally usage): that is a real measurement, reported by the agent
+        # rather than extracted from a response object, so it counts as
+        # captured usage for the cost-objective guard.
+        from traigent.utils.cost_calculator import record_captured_usage
+
+        record_captured_usage()
+
         # Inject cost
         try:
             total_cost = meta["total_cost"]

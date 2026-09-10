@@ -48,7 +48,11 @@ from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING
 
-from traigent.utils.env_config import is_truthy
+from traigent.utils.env_config import (
+    is_strict_cost_accounting,
+    is_truthy,
+    strict_cost_accounting_origin,
+)
 from traigent.utils.exceptions import ConfigurationError, CostLimitExceeded
 
 if TYPE_CHECKING:
@@ -368,6 +372,10 @@ class CostEnforcer:
         self._require_cost_tracking_cached: bool = (
             self._check_require_cost_tracking_mode()
         )
+        # Latched with the mode so the failure message names the real cause.
+        self._require_cost_tracking_reason: str = (
+            self._describe_require_cost_tracking_reason()
+        )
         # Cache divergence threshold at init for consistent run semantics.
         # Invalid values fail-fast instead of silently defaulting in hot path checks.
         self._cost_divergence_threshold: float = self._check_cost_divergence_threshold()
@@ -380,8 +388,21 @@ class CostEnforcer:
     def _check_require_cost_tracking_mode() -> bool:
         """Read strict cost-tracking mode from environment."""
         require_tracking = is_truthy(os.environ.get("TRAIGENT_REQUIRE_COST_TRACKING"))
-        strict_accounting = is_truthy(os.environ.get("TRAIGENT_STRICT_COST_ACCOUNTING"))
+        # Shared helper: explicit env wins, else the run-scoped cost-objective default.
+        strict_accounting = is_strict_cost_accounting()
         return require_tracking or strict_accounting
+
+    @staticmethod
+    def _describe_require_cost_tracking_reason() -> str:
+        """Explain which setting made cost tracking mandatory."""
+        if is_truthy(os.environ.get("TRAIGENT_REQUIRE_COST_TRACKING")):
+            return "TRAIGENT_REQUIRE_COST_TRACKING=true"
+        if strict_cost_accounting_origin() == "cost_objective":
+            return (
+                "strict cost accounting is on because 'cost' is an objective "
+                "of this run"
+            )
+        return "TRAIGENT_STRICT_COST_ACCOUNTING=true"
 
     def _require_cost_tracking(self) -> bool:
         """Return latched strict cost-tracking mode for this instance."""
@@ -1147,10 +1168,15 @@ Options:
         """Handle unknown cost under the lock, including strict-mode failure."""
         if require_cost_tracking:
             raise CostTrackingRequiredError(
-                f"Cost extraction failed for {trial_desc} but "
-                "TRAIGENT_REQUIRE_COST_TRACKING=true or "
-                "TRAIGENT_STRICT_COST_ACCOUNTING=true. "
-                "Set to 'false' or fix cost extraction."
+                f"Cost extraction failed for {trial_desc} and "
+                f"{self._require_cost_tracking_reason}. An unpriced call is "
+                "not recorded as $0, because the optimizer would rank it "
+                "cheapest. Provide per-token pricing with "
+                "TRAIGENT_CUSTOM_MODEL_PRICING_JSON or "
+                "TRAIGENT_CUSTOM_MODEL_PRICING_FILE, or set "
+                "TRAIGENT_STRICT_COST_ACCOUNTING=false (and "
+                "TRAIGENT_REQUIRE_COST_TRACKING=false) to accept $0 for "
+                "unpriced calls."
             )
 
         if not self._unknown_cost_mode:
