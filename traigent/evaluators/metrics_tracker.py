@@ -1668,6 +1668,28 @@ def _calculate_cost_for_metrics(
         return
 
     if not model_name:
+        # Tokens were captured, so there WAS spend: recording $0 here is the
+        # same "unpriced call scores free" defect as an unknown model, and
+        # under strict accounting it must fail instead. A response with no
+        # tokens at all is a different case (nothing to price) and stays a
+        # warning in both modes.
+        if strict_cost_accounting and (
+            metrics.tokens.input_tokens > 0 or metrics.tokens.output_tokens > 0
+        ):
+            from traigent.utils.cost_calculator import UnknownModelError
+
+            raise UnknownModelError(
+                "Cost accounting is strict for this run and tokens were "
+                f"captured (in={metrics.tokens.input_tokens}, "
+                f"out={metrics.tokens.output_tokens}) but no model name was "
+                "available to price them, so the call is not recorded as $0. "
+                "Fix by choosing one of: 1) expose the model name on the LLM "
+                "response (a 'model' or 'model_name' attribute or key, or "
+                "LangChain response_metadata/llm_output), 2) include a "
+                "'model' key in the optimization configuration, 3) set "
+                "TRAIGENT_STRICT_COST_ACCOUNTING=false to accept $0 for "
+                "calls that cannot be priced."
+            )
         logger.warning(
             "Cost calculation skipped: model_name is None/empty. "
             "Ensure the optimization config includes a 'model' key or "
@@ -2023,6 +2045,21 @@ def extract_llm_metrics(
         # the chain, but kept fail-safe rather than fail-silent.
         metrics = ExampleMetrics(measured=False)
         logger.warning("No handler could process the response, using empty metrics")
+
+    # Record whether this response carried a real measurement, BEFORE any
+    # downstream estimation (``LocalEvaluator._estimate_string_tokens`` fills
+    # token counts from character counts for plain-string outputs, which is
+    # indistinguishable from a measurement once it lands on the trial). A run
+    # that never gets here with real usage has an UNMEASURED cost column, not
+    # a cheap one.
+    if (
+        metrics.tokens.input_tokens > 0
+        or metrics.tokens.output_tokens > 0
+        or metrics.cost.total_cost > 0
+    ):
+        from traigent.utils.cost_calculator import record_captured_usage
+
+        record_captured_usage()
 
     # Calculate cost using canonical cost_from_tokens path. Fall back to the
     # model name carried on the response itself when the config supplies none

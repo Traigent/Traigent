@@ -110,8 +110,14 @@ from traigent.utils.artifact_fingerprints import build_artifact_fingerprints
 from traigent.utils.cost_calculator import (
     UnknownModelError,
     find_models_missing_price_coverage,
+    get_pricing_provenance,
 )
-from traigent.utils.env_config import is_mock_llm, is_strict_cost_accounting
+from traigent.utils.env_config import (
+    is_mock_llm,
+    is_strict_cost_accounting,
+    strict_cost_accounting_origin,
+    strict_cost_accounting_run_default,
+)
 from traigent.utils.exceptions import (
     AuthenticationError,
     ConfigurationError,
@@ -440,6 +446,157 @@ def _fallback_reason_text(exc: Exception) -> str:
     if isinstance(reason_attr, str) and reason_attr:
         return reason_attr
     return _safe_exception_text(exc)
+
+
+_COST_OBJECTIVE_NAMES = frozenset({"cost", "total_cost", "cost_per_1k"})
+
+
+def _objectives_include_cost(objective_names: Sequence[str] | None) -> bool:
+    """Return True when any objective is a cost objective."""
+    return any(
+        str(name).strip().lower() in _COST_OBJECTIVE_NAMES
+        for name in (objective_names or [])
+    )
+
+
+# Cost keys a completed trial carries in ``metrics`` (the evaluator's
+# ``format_for_backend`` keys, copied verbatim by
+# ``trial_result_factory.build_success_result``). The token keys are NOT usable
+# for this question: ``LocalEvaluator._estimate_string_tokens`` fills them from
+# character counts when the function returns a plain string, so a run that made
+# no LLM call still shows non-zero tokens. Measured spend is the one signal a
+# trial cannot fabricate.
+_TRIAL_COST_METRIC_KEYS = ("cost", "total_cost")
+
+COST_OBJECTIVE_NO_USAGE_WARNING_CODE = "COST_OBJECTIVE_NO_USAGE_CAPTURED"
+
+_NO_USAGE_CAPTURED_MESSAGE = (
+    "A cost objective was declared but no LLM usage was captured on any "
+    "trial: every trial recorded $0, so the cost column is UNMEASURED rather "
+    "than zero, and any cost ranking over these trials is meaningless. "
+    "Traigent captures usage from the response object the optimized function "
+    "returns and from `litellm.completion` calls it intercepts; calls made "
+    "through a client object the interceptor does not wrap (a provider SDK "
+    "client you constructed yourself, an HTTP call, a framework that hides "
+    "the response) are not captured. Return the provider response object "
+    "from the optimized function, or route the call through "
+    "`litellm.completion`."
+)
+
+
+def _any_trial_reported_cost(result: Any) -> bool:
+    """Return True when at least one trial recorded non-zero spend."""
+    for trial in getattr(result, "trials", None) or []:
+        metrics = getattr(trial, "metrics", None)
+        if not isinstance(metrics, dict):
+            continue
+        for key in _TRIAL_COST_METRIC_KEYS:
+            value = metrics.get(key)
+            if value is None or isinstance(value, bool):
+                continue
+            try:
+                if float(value) > 0.0:
+                    return True
+            except (TypeError, ValueError):
+                continue
+    return False
+
+
+def _run_captured_usage(result: Any) -> bool:
+    """Return True when this run measured LLM usage or real spend.
+
+    Two independent signals, either sufficient: the extraction sites recorded
+    a real token count or reported cost for at least one example (see
+    ``cost_calculator.record_captured_usage``), or some trial came back with
+    non-zero spend — which covers lanes that assemble trials without going
+    through the local extraction path.
+    """
+    try:
+        from traigent.utils.cost_calculator import any_usage_captured
+
+        if any_usage_captured():
+            return True
+    except Exception:  # pragma: no cover - defensive; never break a run
+        logger.debug("Usage-capture registry unreadable", exc_info=True)
+        return True
+    return _any_trial_reported_cost(result)
+
+
+def _guard_cost_objective_without_usage(
+    result: Any, objective_names: Sequence[str] | None
+) -> None:
+    """Fail (or warn) when a cost objective ran with no measured usage at all.
+
+    A run that captured no tokens on any trial records $0 everywhere. That $0
+    is the absence of a measurement, not a cheap configuration, so stamping
+    the run as strictly cost-accounted would make an unmeasured $0 look
+    audited. Under strict accounting this fails the run; otherwise it attaches
+    ``COST_OBJECTIVE_NO_USAGE_CAPTURED`` so the caller can see the cost column
+    is unmeasured.
+
+    A run where no trial ran at all is left alone — other guards own that.
+    Mock-LLM runs warn instead of failing: there is no spend to measure in the
+    first place, which is why the pre-run cost preflight already skips them
+    (``cost_estimator``: "Skipping optimized-function pricing preflight in mock
+    LLM mode"), and the shipped mock walkthroughs would otherwise stop with
+    remediation advice about intercepting calls that were never made.
+    """
+    if not _objectives_include_cost(objective_names):
+        return
+    if not (getattr(result, "trials", None) or []):
+        return
+    if _run_captured_usage(result):
+        return
+
+    if is_strict_cost_accounting() and not is_mock_llm():
+        raise UnknownModelError(
+            _NO_USAGE_CAPTURED_MESSAGE
+            + " Set TRAIGENT_STRICT_COST_ACCOUNTING=false to accept an "
+            "unmeasured $0 cost column."
+        )
+
+    warning_codes = getattr(result, "warning_codes", None)
+    if isinstance(warning_codes, list):
+        if COST_OBJECTIVE_NO_USAGE_WARNING_CODE not in warning_codes:
+            warning_codes.append(COST_OBJECTIVE_NO_USAGE_WARNING_CODE)
+    result_warnings = getattr(result, "warnings", None)
+    if isinstance(result_warnings, list):
+        if _NO_USAGE_CAPTURED_MESSAGE not in result_warnings:
+            result_warnings.append(_NO_USAGE_CAPTURED_MESSAGE)
+    logger.warning(
+        "%s (%s)",
+        _NO_USAGE_CAPTURED_MESSAGE,
+        COST_OBJECTIVE_NO_USAGE_WARNING_CODE,
+    )
+
+
+def _record_pricing_provenance(
+    result: Any, *, strict_effective: bool, strict_origin: str
+) -> None:
+    """Attach price-table provenance to the returned result's metadata.
+
+    Local only: this runs after the run (and any backend sync) has finished,
+    so it adds nothing to what crosses the wire.
+    """
+    metadata = getattr(result, "metadata", None)
+    if not isinstance(metadata, dict):
+        return
+    provenance = get_pricing_provenance()
+    provenance["strict_cost_accounting"] = strict_effective
+    provenance["strict_cost_accounting_origin"] = strict_origin
+    # Whether the run measured any LLM usage at all. Without it, a strict $0
+    # is indistinguishable from an audited $0 (see
+    # ``_guard_cost_objective_without_usage``).
+    provenance["usage_captured"] = _run_captured_usage(result)
+    metadata["pricing"] = provenance
+    logger.info(
+        "Pricing provenance: price table=%s, strict cost accounting=%s (%s), "
+        "usage captured=%s",
+        provenance.get("price_table_source"),
+        strict_effective,
+        strict_origin,
+        provenance["usage_captured"],
+    )
 
 
 class OptimizedFunction(Generic[_P, _R]):
@@ -1743,18 +1900,34 @@ class OptimizedFunction(Generic[_P, _R]):
 
         try:
             validate_objectives(self.objectives)
-            result = await self._execute_optimization(
-                algorithm=algorithm,
-                max_trials=max_trials,
-                timeout=timeout,
-                save_to=save_to,
-                custom_evaluator=custom_evaluator,
-                surrogate_evaluator=surrogate_evaluator,
-                surrogate_evaluator_name=surrogate_evaluator_name,
-                callbacks=callbacks,
-                configuration_space=configuration_space,
-                algorithm_kwargs=algorithm_kwargs,
-                execution_budget=budget,
+            # When cost is an objective, a model with no price must not be
+            # recorded as free: the optimizer would rank it cheapest. Make
+            # runtime cost accounting strict for this run unless the user set
+            # TRAIGENT_STRICT_COST_ACCOUNTING explicitly (``false`` opts out).
+            with strict_cost_accounting_run_default(
+                _objectives_include_cost(self.objectives)
+            ):
+                strict_origin = strict_cost_accounting_origin()
+                strict_effective = is_strict_cost_accounting()
+                result = await self._execute_optimization(
+                    algorithm=algorithm,
+                    max_trials=max_trials,
+                    timeout=timeout,
+                    save_to=save_to,
+                    custom_evaluator=custom_evaluator,
+                    surrogate_evaluator=surrogate_evaluator,
+                    surrogate_evaluator_name=surrogate_evaluator_name,
+                    callbacks=callbacks,
+                    configuration_space=configuration_space,
+                    algorithm_kwargs=algorithm_kwargs,
+                    execution_budget=budget,
+                )
+                # Inside the run scope: a cost objective that measured no
+                # usage at all recorded $0 everywhere, which is an absent
+                # measurement, not a cheap run.
+                _guard_cost_objective_without_usage(result, self.objectives)
+            _record_pricing_provenance(
+                result, strict_effective=strict_effective, strict_origin=strict_origin
             )
         finally:
             if runtime_schema is not None:
@@ -2137,9 +2310,15 @@ class OptimizedFunction(Generic[_P, _R]):
         # tokens (e.g. a model hard-coded in the optimized function body that no
         # pricing table covers, invisible to the config-space preflight); we drain
         # it onto the result below to surface a user-visible warning (#1407).
-        from traigent.utils.cost_calculator import reset_unpriced_runtime_models
+        from traigent.utils.cost_calculator import (
+            reset_captured_usage,
+            reset_unpriced_runtime_models,
+        )
 
         reset_unpriced_runtime_models()
+        # Same lifetime, opposite question: did this run measure ANY usage at
+        # all? Drained by ``_guard_cost_objective_without_usage`` below.
+        reset_captured_usage()
 
         # Set state to OPTIMIZING before starting
         self._state = OptimizationState.OPTIMIZING
@@ -2594,7 +2773,12 @@ class OptimizedFunction(Generic[_P, _R]):
             return
 
         formatted = _format_model_id_list(missing)
-        if is_strict_cost_accounting():
+        # Explicit setting only. The run-scoped cost-objective default is
+        # deliberately ignored here: this check runs before any response
+        # exists, so it cannot see provider-reported costs (e.g. OpenRouter)
+        # and would block models whose trials would be priced correctly.
+        # Runtime cost paths still fail fast on a truly unpriced call.
+        if is_strict_cost_accounting(include_run_default=False):
             raise UnknownModelError(
                 "Cost coverage preflight failed before any optimization trial "
                 f"started: pricing is unavailable for {formatted}. "

@@ -6,6 +6,28 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **A model with no price is no longer scored as free when you optimize for cost.**
+  Previously a call whose model had no price table entry and no provider-reported cost
+  was recorded as `$0.00`, and because the optimizer minimizes cost it ranked that
+  configuration cheapest: an unpriced model won `best_config` over a priced one of
+  equal accuracy. When `TRAIGENT_STRICT_COST_ACCOUNTING` is unset, runs whose
+  objectives include `cost` are now strict at runtime and stop at the first such call
+  with the fix in the message. Provider-reported costs (OpenRouter) still price the
+  call, and the pre-run coverage preflight is unchanged. Set
+  `TRAIGENT_STRICT_COST_ACCOUNTING=false` to restore the previous behavior, which
+  records `$0` and warns (`UNPRICED_MODEL_RUNTIME`). Runs without a cost objective are
+  unchanged. Two more ways a cost run recorded `$0` are covered: a response that carries
+  token counts but no model name to price them now fails the same way, and a cost-objective
+  run that captured no LLM usage at all fails too (`COST_OBJECTIVE_NO_USAGE_CAPTURED` as a
+  warning when not strict, and in mock-LLM runs, which have no spend to measure), because
+  an unmeasured `$0` is not a cheap configuration;
+  `result.metadata["pricing"]["usage_captured"]` reports whether any usage was measured.
+  `cost_per_1k` now counts as a cost objective. The LangChain and Pydantic AI callback
+  handlers read the setting when constructed, so set
+  `TRAIGENT_STRICT_COST_ACCOUNTING=true` explicitly when optimizing through them.
+
 ### Fixed
 
 - **Dataset row ids you wrote yourself were sent to the Traigent service.** If your
@@ -60,6 +82,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Each run records where its prices came from.** `result.metadata["pricing"]` holds
+  the LiteLLM price-table source (`local` or `remote`, from LiteLLM 1.93), any fetch
+  fallback reason, and whether strict cost accounting was on and why. It is attached
+  after the run and is not sent to the Traigent service.
+- **Docs: restricted networks and reproducible cost.** The environment-variable
+  reference now explains LiteLLM's import-time GitHub fetch, the Hugging Face
+  tokenizer download for Llama-family models, and the variables that turn both off.
 - **`EvaluationOptions(task_type=...)`** — a coarse task category for the run
   (`multiple_choice`, `exact_match`, `text2sql`, `code_generation`, `summarization`, …)
   sent as `task_type` on `POST /api/v1/sessions` from both session-create paths. The

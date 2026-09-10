@@ -12,6 +12,13 @@ models are detected from the configuration space or current/default config.
 With `TRAIGENT_STRICT_COST_ACCOUNTING=true`, unpriced models always raise
 `UnknownModelError` before any trial and no prompt is shown.
 
+When the variable is unset, runs whose objectives include `cost` are strict at
+runtime only: this preflight still follows the approval rules below, because it runs
+before any response exists and cannot see provider-reported costs such as
+OpenRouter's. An approved run then stops at the first call that has neither a table
+price nor a reported cost, instead of recording `$0` for it. Set
+`TRAIGENT_STRICT_COST_ACCOUNTING=false` to keep recording `$0` with a warning.
+
 To proceed after acknowledging that affected results will report `$0` cost while
 your provider may still bill you, use one explicit approval:
 
