@@ -1,0 +1,6 @@
+{
+  "algorithm": "ed25519",
+  "key_ref": "issuerkey:aaaaaaaa",
+  "public_key_der_b64": "MCowBQYDK2VwAyEAA6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+  "public_key_digest": "sha256:fd1f1c852e591b62f39172ebf98774fd4adea7c6ce0fa3ff83a2837897f5f8b3"
+}

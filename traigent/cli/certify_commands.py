@@ -42,8 +42,9 @@ EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY = "EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY
 # 2. `EVQ6` (efficiency) and `EVQ7` (agreement-per-cost frontier) are
 #    registered claim ids the v1 Schema deliberately makes unrepresentable
 #    (`claim_material` is a fixed 5-tuple of EVQ1..EVQ5 by JSON-Schema
-#    position) -- a bundle can never claim them, so this SDK issues no
-#    disposition beyond "unsupported" if one somehow reached this CLI.
+#    position) -- a bundle can never claim them; a bundle that tries is
+#    refused by the real verifier's own schema validation, reported as
+#    `EVALUATOR_SCHEMA` (there is no separate "unsupported" disposition).
 #
 # Until a relying-party composition step is added (verifying the referenced
 # process record in the same invocation and rejecting a mismatched
@@ -52,30 +53,54 @@ EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY = "EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY
 # see its verdicts, but never treat the result as a certification decision.
 #
 # This disposition is PINNED to an exact (Schema pin, verifier revision)
-# pair. `tests/unit/cli/test_certify_evaluator_quality.py::
+# pair, recorded as data (not just prose) in
+# `EVALUATOR_QUALITY_POLICY_DISPOSITION` below.
+# `tests/unit/cli/test_certify_evaluator_quality.py::
 # test_eligibility_policy_pin_matches_installed_schema` fails closed if
-# either drifts, so a Schema pin bump or a `traigent_schema` release that
-# changes `evaluator_quality_verifier.py` forces a human to revisit this
-# comment and the two constants below in the same PR -- this comment block
-# IS the reviewed disposition record.
-EVALUATOR_QUALITY_POLICY_SCHEMA_PIN = "4b3373925cee6bd57071980285c58044165c90a4"
-EVALUATOR_QUALITY_POLICY_VERIFIER_REVISION = (
-    "038f7fb6e361866c1dcdded2cd034990d943a52c353cd9b5b17d60e3757b77c4"
-)
+# either the Schema pin or the hashed verifier artifacts drift from that
+# record, so a Schema pin bump or a `traigent_schema` release that changes
+# `evaluator_quality_verifier.py`, the evaluator-quality JSON schema, or any
+# of the three evaluator registry digest files forces a human to revisit
+# this comment and `EVALUATOR_QUALITY_POLICY_DISPOSITION` in the same PR --
+# that dict IS the reviewed disposition record.
+EVALUATOR_QUALITY_POLICY_DISPOSITION = {
+    "schema_pin": "4b3373925cee6bd57071980285c58044165c90a4",
+    "verifier_revision": "a2fd2e4e1222dc9e1589d26adcbb12b40dcbd5473e5c23cfb1e8e01ea39e333c",
+    "reviewed_by": "spine-trail:st_46ecde7dd286",
+    "date": "2026-09-10",
+}
 
 
 def evaluator_quality_verifier_revision() -> str:
-    """SHA-256 of the installed `evaluator_quality_verifier` module source.
+    """SHA-256 over the installed evaluator-quality verification artifacts.
 
-    Used only as a guard-test comparison key against
-    `EVALUATOR_QUALITY_POLICY_VERIFIER_REVISION` -- never at runtime by the
-    CLI itself, so an absent `traigent_schema` install never breaks anything
-    other than that one test.
+    Covers `evaluator_quality_verifier.py`, the evaluator-quality JSON
+    schema, and the three evaluator registry digest files -- not just the
+    verifier module -- so a Schema release that changes emittable-claim
+    semantics or registry bindings without touching the verifier's own
+    source still moves this hash. Used only as a guard-test comparison key
+    against `EVALUATOR_QUALITY_POLICY_DISPOSITION["verifier_revision"]` --
+    never at runtime by the CLI itself, so an absent `traigent_schema`
+    install never breaks anything other than that one test.
     """
+    import traigent_schema
     from traigent_schema.certification import evaluator_quality_verifier as module
 
-    with open(module.__file__, "rb") as handle:  # noqa: PTH123
-        return hashlib.sha256(handle.read()).hexdigest()
+    root = Path(traigent_schema.__file__).parent
+    files = [
+        Path(module.__file__),
+        root / "schemas" / "certification" / "evaluator_quality_v1_schema.json",
+        root / "data" / "certification" / "evaluator_assertion_templates.digest.json",
+        root / "data" / "certification" / "evaluator_measurement_registry.digest.json",
+        root / "data" / "certification" / "evaluator_perturbation_set.digest.json",
+    ]
+    digest = hashlib.sha256()
+    for file in sorted(files, key=lambda p: p.name):
+        digest.update(file.name.encode("utf-8"))
+        digest.update(b"\x00")
+        digest.update(file.read_bytes())
+        digest.update(b"\x00")
+    return digest.hexdigest()
 
 
 def _load_certification_schema() -> SimpleNamespace:
@@ -328,7 +353,9 @@ def certify() -> None:
         "Required to run --kind evaluator-quality at all. Technical "
         "verification runs and prints its verdicts, but the result is "
         "never reported certification_eligible=true (see "
-        "EVALUATOR_QUALITY_POLICY_SCHEMA_PIN's comment)."
+        "EVALUATOR_QUALITY_POLICY_DISPOSITION's comment). Exit codes for "
+        "--kind evaluator-quality: 1 = refused or verification failed, "
+        "2 = usage error, 3 = technically valid, not certification-eligible."
     ),
 )
 @click.option(
@@ -362,6 +389,12 @@ def verify(
     resolved_kind = _resolve_kind(kind, context_payload)
 
     if resolved_kind == "evaluator-quality":
+        if process_record is not None:
+            raise click.UsageError(
+                "--kind evaluator-quality does not accept --process-record "
+                "(this CLI performs no relying-party composition step; see "
+                "EVALUATOR_QUALITY_POLICY_DISPOSITION's comment)"
+            )
         _verify_evaluator_quality(
             schema,
             bundle_payload,
@@ -438,7 +471,7 @@ def _verify_evaluator_quality(
     """Run (or refuse) evaluator-quality verification under the fixed policy.
 
     Never reports `certification_eligible: true` -- see
-    `EVALUATOR_QUALITY_POLICY_SCHEMA_PIN`'s comment for why. Exit codes are
+    `EVALUATOR_QUALITY_POLICY_DISPOSITION`'s comment for why. Exit codes are
     part of the contract: 1 for outright refusal or a technical verification
     failure, 3 for a technically-valid bundle that is still not eligible
     (the only reachable outcome today), 2 (Click's default) for a usage

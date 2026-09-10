@@ -1,6 +1,6 @@
 {
-    "expected_project_ref": "project_contract001",
-    "expected_evaluator_commitment_ref": "sha256:27f6343f980c4c0ab821d9c72d211d0eb76b0853825cefd80476a05e43cab27e",
-    "allow_unchecked_trust_status": true,
-    "verification_time": "2026-09-08T10:10:00Z"
+  "allow_unchecked_trust_status": true,
+  "expected_evaluator_commitment_ref": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "expected_project_ref": "demo_project",
+  "verification_time": "2026-09-10T00:00:00Z"
 }
