@@ -363,6 +363,22 @@ def test_kind_evaluator_quality_technical_failure_reports_code_and_ineligible(
     assert payload["certification_eligible"] is False
 
 
+def _installed_schema_commit() -> str | None:
+    """The commit id pip recorded for the installed `traigent-schema`
+    dist, read from dist-info `direct_url.json` -- the authority for what
+    is actually on disk, independent of any pin file or constant."""
+    from importlib.metadata import PackageNotFoundError, distribution
+
+    try:
+        direct_url_text = distribution("traigent-schema").read_text("direct_url.json")
+    except PackageNotFoundError:  # pragma: no cover - only if uninstalled
+        return None
+    if direct_url_text is None:
+        return None
+    direct_url = json.loads(direct_url_text)
+    return direct_url.get("vcs_info", {}).get("commit_id")
+
+
 @requires_schema
 def test_eligibility_policy_pin_matches_installed_schema() -> None:
     """Guard test (acceptance row: policy binding). Fails closed if the
@@ -383,49 +399,47 @@ def test_eligibility_policy_pin_matches_installed_schema() -> None:
         == certify_commands.evaluator_quality_verifier_revision()
     )
 
-    from importlib.metadata import PackageNotFoundError, distribution
-
-    try:
-        direct_url_text = distribution("traigent-schema").read_text("direct_url.json")
-    except PackageNotFoundError:  # pragma: no cover - only if uninstalled
-        direct_url_text = None
-    if direct_url_text is not None:
-        direct_url = json.loads(direct_url_text)
-        installed_commit = direct_url.get("vcs_info", {}).get("commit_id")
+    installed_commit = _installed_schema_commit()
+    if installed_commit is not None:
         assert installed_commit == disposition["schema_pin"]
 
 
 @requires_schema
-def test_eligibility_policy_pin_mutation_alone_fails_the_guard(tmp_path: Path) -> None:
-    """Proves the guard actually bites: a disposition whose schema_pin no
-    longer matches the pin file must fail the same comparison the guard test
-    above makes -- without needing a real scratch venv, since the guard
-    reads the pin file and the installed artifacts, not the disposition
-    dict's own internal consistency."""
-    mutated = dict(certify_commands.EVALUATOR_QUALITY_POLICY_DISPOSITION)
-    mutated["schema_pin"] = "1111111111111111111111111111111111111111"
-    assert mutated["schema_pin"] != _pinned_schema_sha()
+def test_eligibility_policy_pin_mutation_alone_fails_the_guard() -> None:
+    """Proves the guard actually bites: a schema_pin that no longer matches
+    reality must fail against BOTH of the guard's real, independent
+    sources -- `scripts/ci/schema-pin.txt` and the installed dist-info
+    `direct_url.json` -- not just against the disposition's own recorded
+    value, which would make this a tautology."""
+    mutated_pin = "1111111111111111111111111111111111111111"
+    assert mutated_pin != _pinned_schema_sha()
+    installed_commit = _installed_schema_commit()
+    if installed_commit is not None:
+        assert mutated_pin != installed_commit
 
-    mutated_revision = dict(certify_commands.EVALUATOR_QUALITY_POLICY_DISPOSITION)
-    mutated_revision["verifier_revision"] = "0" * 64
-    assert (
-        mutated_revision["verifier_revision"]
-        != certify_commands.evaluator_quality_verifier_revision()
-    )
+    mutated_revision = "0" * 64
+    assert mutated_revision != certify_commands.evaluator_quality_verifier_revision()
 
 
 @requires_schema
-def test_eligibility_policy_record_metadata_edit_alone_does_not_fail_the_guard() -> (
-    None
-):
-    """Editing only reviewed_by/date (not schema_pin or verifier_revision)
-    must not fail the guard -- the guard checks the technical pins against
-    real installed artifacts, not the review metadata."""
+def test_eligibility_policy_guard_ignores_review_metadata_fields() -> None:
+    """The guard's comparisons read only schema_pin and verifier_revision --
+    editing reviewed_by/date must not change whether the guard would pass.
+    Checked against the guard's real, independent sources (the pin file and
+    the installed dist-info direct_url.json), not the disposition's own
+    recorded value, and the edit itself is asserted to have actually taken
+    effect."""
     disposition = certify_commands.EVALUATOR_QUALITY_POLICY_DISPOSITION
     edited = dict(disposition)
     edited["reviewed_by"] = "someone-else"
     edited["date"] = "2099-01-01"
+    assert edited["reviewed_by"] != disposition["reviewed_by"]
+    assert edited["date"] != disposition["date"]
+
     assert edited["schema_pin"] == _pinned_schema_sha()
+    installed_commit = _installed_schema_commit()
+    if installed_commit is not None:
+        assert edited["schema_pin"] == installed_commit
     assert (
         edited["verifier_revision"]
         == certify_commands.evaluator_quality_verifier_revision()
@@ -433,27 +447,30 @@ def test_eligibility_policy_record_metadata_edit_alone_does_not_fail_the_guard()
 
 
 @requires_schema
-def test_verifier_revision_covers_schema_json_not_only_verifier_module() -> None:
+def test_verifier_revision_covers_schema_json_not_only_verifier_module(
+    tmp_path: Path,
+) -> None:
     """P2-3: the hash must move if the evaluator-quality JSON schema changes,
     not only if evaluator_quality_verifier.py changes -- otherwise a Schema
     release that re-widens the emittable claim-id enum without touching the
-    verifier's own source would leave the pinned revision valid."""
-    import traigent_schema
-
-    schema_path = (
-        Path(traigent_schema.__file__).parent
-        / "schemas"
-        / "certification"
-        / "evaluator_quality_v1_schema.json"
-    )
-    original = schema_path.read_bytes()
+    verifier's own source would leave the pinned revision valid. Hashes tmp
+    copies of the installed artifacts -- never writes to the installed
+    package, which the real suite runs under `-n auto` (a shared,
+    concurrently-read installed file would flake other workers) and which a
+    read-only install would turn into a hard error."""
+    installed_files = certify_commands._evaluator_quality_artifact_paths()
     baseline = certify_commands.evaluator_quality_verifier_revision()
-    try:
-        schema_path.write_bytes(original + b" ")
-        mutated = certify_commands.evaluator_quality_verifier_revision()
-    finally:
-        schema_path.write_bytes(original)
-    assert mutated != baseline
+
+    copies = [tmp_path / file.name for file in installed_files]
+    for source, dest in zip(installed_files, copies, strict=True):
+        dest.write_bytes(source.read_bytes())
+    unaltered = certify_commands.evaluator_quality_verifier_revision(copies)
+    assert unaltered == baseline
+
+    schema_copy = tmp_path / "evaluator_quality_v1_schema.json"
+    schema_copy.write_bytes(schema_copy.read_bytes() + b" ")
+    mutated = certify_commands.evaluator_quality_verifier_revision(copies)
+    assert mutated != unaltered
 
 
 @requires_schema

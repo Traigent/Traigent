@@ -71,7 +71,23 @@ EVALUATOR_QUALITY_POLICY_DISPOSITION = {
 }
 
 
-def evaluator_quality_verifier_revision() -> str:
+def _evaluator_quality_artifact_paths() -> list[Path]:
+    """The installed evaluator-quality verification artifacts hashed by
+    `evaluator_quality_verifier_revision`."""
+    import traigent_schema
+    from traigent_schema.certification import evaluator_quality_verifier as module
+
+    root = Path(traigent_schema.__file__).parent
+    return [
+        Path(module.__file__),
+        root / "schemas" / "certification" / "evaluator_quality_v1_schema.json",
+        root / "data" / "certification" / "evaluator_assertion_templates.digest.json",
+        root / "data" / "certification" / "evaluator_measurement_registry.digest.json",
+        root / "data" / "certification" / "evaluator_perturbation_set.digest.json",
+    ]
+
+
+def evaluator_quality_verifier_revision(files: list[Path] | None = None) -> str:
     """SHA-256 over the installed evaluator-quality verification artifacts.
 
     Covers `evaluator_quality_verifier.py`, the evaluator-quality JSON
@@ -82,18 +98,12 @@ def evaluator_quality_verifier_revision() -> str:
     against `EVALUATOR_QUALITY_POLICY_DISPOSITION["verifier_revision"]` --
     never at runtime by the CLI itself, so an absent `traigent_schema`
     install never breaks anything other than that one test.
-    """
-    import traigent_schema
-    from traigent_schema.certification import evaluator_quality_verifier as module
 
-    root = Path(traigent_schema.__file__).parent
-    files = [
-        Path(module.__file__),
-        root / "schemas" / "certification" / "evaluator_quality_v1_schema.json",
-        root / "data" / "certification" / "evaluator_assertion_templates.digest.json",
-        root / "data" / "certification" / "evaluator_measurement_registry.digest.json",
-        root / "data" / "certification" / "evaluator_perturbation_set.digest.json",
-    ]
+    `files` overrides the artifact list -- tests use this to hash tmp
+    copies of the installed artifacts instead of mutating the install.
+    """
+    if files is None:
+        files = _evaluator_quality_artifact_paths()
     digest = hashlib.sha256()
     for file in sorted(files, key=lambda p: p.name):
         digest.update(file.name.encode("utf-8"))
