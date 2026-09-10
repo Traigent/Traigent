@@ -96,7 +96,8 @@ class DSPyPromptOptimizer:
         if not DSPY_AVAILABLE:
             raise ImportError(
                 "DSPy is required for prompt optimization. "
-                "Install with: pip install dspy-ai"
+                "Traigent does not bundle DSPy; bring your own compatible installation "
+                "only after reviewing its dependency security."
             )
 
         self.method = method
@@ -363,7 +364,8 @@ class DSPyPromptOptimizer:
             else:
                 logger.debug(
                     "DSPy not available. Returning base prompts as choices. "
-                    "Install with: pip install traigent[dspy]"
+                    "Traigent does not bundle DSPy; bring your own compatible "
+                    "installation only after reviewing its dependency security."
                 )
 
         if return_choices:

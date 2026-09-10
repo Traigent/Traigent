@@ -6,9 +6,16 @@ Traigent provides the `DSPyPromptOptimizer` adapter for integrating DSPy's autom
 
 ## Installation
 
+Traigent keeps this adapter import-optional and does not bundle DSPy. If you need
+it, provide DSPy as an application-managed dependency:
+
 ```bash
 pip install traigent dspy
 ```
+
+Before doing so, review the DSPy dependency chain. Its current `diskcache`
+dependency has no patched release for CVE-2025-69872 at the time of this release;
+Traigent does not attest a user-managed DSPy installation as safe.
 
 ## DSPyPromptOptimizer
 
