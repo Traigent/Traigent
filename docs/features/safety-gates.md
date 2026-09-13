@@ -45,7 +45,7 @@ export TRAIGENT_CUSTOM_MODEL_PRICING_FILE=.traigent/model-pricing.json
 
 ## CI Run Approval
 
-Edge analytics optimization in CI requires explicit approval. The recommended
+Optimization in CI requires explicit approval. The recommended
 environment approval is:
 
 ```bash

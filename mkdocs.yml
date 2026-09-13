@@ -81,6 +81,7 @@ nav:
       - User Guide:
           - Overview: user-guide/README.md
           - Agent Optimization: user-guide/agent_optimization.md
+          - Execution Modes (local / cloud / hybrid_api): user-guide/execution-modes.md
           - Choosing an Optimization Model: user-guide/choosing_optimization_model.md
           - Evaluation Guide: user-guide/evaluation_guide.md
           - Injection Modes: user-guide/injection_modes.md

@@ -1,4 +1,4 @@
-{"input": {"question": "Which single execution mode runs the LLM calls locally but uses the cloud for optimization? Answer with one word."}, "output": "hybrid"}
+{"input": {"question": "Which single execution mode runs the LLM calls locally but uses the cloud for optimization? Answer with one word."}, "output": "cloud"}
 {"input": {"question": "Which optimization algorithm evaluates every combination in the configuration space? Answer with two words."}, "output": "grid search"}
 {"input": {"question": "Which optimization algorithm is the most sample-efficient? Answer with one word."}, "output": "Bayesian"}
 {"input": {"question": "How many of Traigent's execution modes keep raw data on the user's device? Number only."}, "output": "2"}
