@@ -1,6 +1,6 @@
-# Traigent Hybrid Mode - Client Integration Guide
+# Traigent Hybrid Mode API (`hybrid_api`): your agent as an external service — Client Integration Guide
 
-This guide explains how to integrate your external agentic service with Traigent for optimization.
+This guide explains how to integrate your external agentic service with Traigent for optimization. `hybrid_api` is one of Traigent's three execution modes — see the [Execution Modes matrix](user-guide/execution-modes.md) for how it compares to `local` and `cloud`.
 
 ## Overview
 

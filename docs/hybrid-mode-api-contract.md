@@ -1,6 +1,6 @@
-# Traigent Hybrid Mode - API Contract
+# Traigent Hybrid Mode API (`hybrid_api`): your agent as an external service
 
-This document defines the REST API contract for external services integrating with Traigent's Hybrid Mode optimization.
+This document defines the REST API contract for external services integrating with Traigent's Hybrid Mode optimization. `hybrid_api` is one of Traigent's three execution modes — see the [Execution Modes matrix](user-guide/execution-modes.md) for how it compares to `local` and `cloud`.
 
 ## Machine-Readable Specifications
 

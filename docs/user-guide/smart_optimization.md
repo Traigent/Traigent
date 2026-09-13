@@ -6,7 +6,9 @@ Traigent SDKs expose a small local optimizer surface by default:
 - `random`
 
 Smart optimization is backend-routed. Use a TraigentBackend typed session or
-hybrid SDK mode when you need guided search beyond the local defaults.
+cloud SDK mode when you need guided search beyond the local defaults. See
+[Execution Modes](execution-modes.md) for the full `local` / `cloud` /
+`hybrid_api` picture.
 
 ## Public Smart Strategies
 
@@ -29,7 +31,7 @@ hybrid SDK mode when you need guided search beyond the local defaults.
 Local SDK runs accept `grid` and `random`. Smart strategies listed above are
 validated by the SDK and routed to TraigentBackend.
 
-## Python Hybrid Session Example
+## Python Cloud Session Example
 
 ```python
 import traigent

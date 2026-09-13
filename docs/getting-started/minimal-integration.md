@@ -2,7 +2,7 @@
 
 This guide defines the minimum implementation needed for a new user to run one successful optimization flow.
 
-## Path A: API Integration (Hybrid Service)
+## Path A: API Integration (Hybrid Mode API — your agent as an external service)
 
 Implement these endpoints first:
 

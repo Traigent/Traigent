@@ -150,11 +150,12 @@ KNOWLEDGE_BASE = [
         "function with the @traigent.optimize decorator."
     ),
     (
-        "Traigent supports four execution modes: local, cloud, hybrid, and "
-        "edge_analytics. Local keeps all data on the user's own machine and sends "
-        "nothing externally. Cloud runs everything on Traigent servers. Hybrid runs "
-        "the LLM calls locally but uses the cloud for optimization intelligence. "
-        "Edge_analytics runs optimization locally and sends only anonymized analytics."
+        "Traigent supports three execution modes: local, cloud, and hybrid_api. "
+        "Local keeps all data on the user's own machine and sends nothing "
+        "externally. Cloud runs the agent on the user's machine but lets Traigent's "
+        "backend pick configurations, sending only run metrics. Hybrid_api calls "
+        "the user's agent as an external HTTP or MCP service that Traigent invokes "
+        "directly."
     ),
     (
         "Traigent provides three optimization algorithms: grid search, random "
@@ -188,9 +189,10 @@ KNOWLEDGE_BASE = [
         "that is used to score each candidate configuration."
     ),
     (
-        "Privacy: local mode and edge_analytics keep raw data on-device; the "
-        "privacy_enabled flag prevents prompts and outputs from being transmitted "
-        "when using hybrid mode."
+        "Privacy: local mode (offline=True) sends nothing externally; cloud mode "
+        "keeps prompts and outputs on the user's device and sends only metrics to "
+        "Traigent; hybrid_api mode sends requests to the external service "
+        "configured as the agent."
     ),
     (
         "Traigent's dashboard visualizes the Pareto frontier of accuracy versus cost "
@@ -454,7 +456,7 @@ async def main() -> None:
     total_trials = len(BEDROCK_GENERATOR_MODEL_IDS)
     print("Traigent Advanced Walkthrough: Bedrock Multi-Agent RAG")
     print("=" * 62)
-    print("Execution mode: edge_analytics")
+    print("Execution mode: local (offline=True, algorithm=grid)")
     print(f"Dataset: {DATASET_PATH}")
     print(f"Embedding model: {DEFAULT_EMBEDDING_MODEL}")
     print("Generator models:")

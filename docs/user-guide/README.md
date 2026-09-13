@@ -5,6 +5,7 @@ Comprehensive guides for using Traigent SDK features and capabilities.
 ## Contents
 
 - **[Agent Optimization](agent_optimization.md)** - Optimize AI agents and multi-step workflows
+- **[Execution Modes](execution-modes.md)** - The three modes (`local`, `cloud`, `hybrid_api`): where your agent runs, who picks configurations, what leaves the machine
 - **[Choosing Models](choosing_optimization_model.md)** - Select the right `algorithm` / `offline` routing model for your use case
 - **[Configuration Spaces](configuration-spaces.md)** - Define tunable variables, parameter ranges, and presets
 - **[Tuned Variables](tuned_variables.md)** - Auto-detect tunable parameters and use the callable discovery API

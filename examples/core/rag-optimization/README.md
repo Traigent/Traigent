@@ -37,7 +37,7 @@ Best score: 0.85
 
 - **Seamless injection**: Parameters auto-applied to LangChain
 - **Custom cost metric**: Realistic mock telemetry
-- **Edge analytics**: Local execution with no cloud dependency
+- **Local mode**: On-device execution with no cloud dependency (`offline=True`)
 
 ## Next Steps
 
