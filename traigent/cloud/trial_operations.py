@@ -656,13 +656,19 @@ class TrialOperations:
         config: dict[str, Any],
         clean_metrics: dict[str, Any],
         backend_status: str,
-        mode: str,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Build the trial result data dict."""
+        """Build the trial result data dict.
+
+        Traigent#2271 (P0): the legacy ``execution_mode`` selector is no
+        longer sent on this wire path — nothing derives a ``mode``/
+        ``execution_mode`` value from ``TraigentConfig.execution_mode``
+        here. Both keys are still stripped defensively from any
+        caller-supplied metadata so a stray value never rides along.
+        """
         result_metadata = copy.deepcopy(metadata or {})
         result_metadata.pop("execution_mode", None)
-        result_metadata["mode"] = mode
+        result_metadata.pop("mode", None)
         result_metadata["sdk_version"] = get_version()
         result_data: dict[str, Any] = {
             "trial_id": trial_id,
@@ -929,7 +935,6 @@ class TrialOperations:
         metrics: dict[str, Any],
         status: str,
         error_message: str | None = None,
-        execution_mode: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> bool | None | TrialSubmissionResult:
         """Submit trial results via the Traigent session endpoint.
@@ -941,7 +946,6 @@ class TrialOperations:
             metrics: Trial metrics
             status: Trial status
             error_message: Optional error message
-            execution_mode: Optional execution mode
             metadata: Optional additional metadata to merge into the result payload
 
         Returns:
@@ -969,7 +973,6 @@ class TrialOperations:
             backend_status = self.client._map_to_backend_status(
                 status, endpoint="config_run"
             )
-            mode = self.client._normalize_execution_mode(execution_mode)
 
             # Extract transport-only fields before validating trial metrics.
             measures, summary_stats, clean_metrics = (
@@ -1007,7 +1010,6 @@ class TrialOperations:
                 config,
                 validated_metrics,
                 backend_status,
-                mode,
                 metadata=metadata,
             )
 

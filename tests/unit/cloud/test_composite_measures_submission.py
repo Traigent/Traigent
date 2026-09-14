@@ -103,7 +103,6 @@ async def test_composite_measures_appear_in_posted_trial_metrics() -> None:
     mock_client.auth_manager = AsyncMock()
     mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
     mock_client._map_to_backend_status = Mock(return_value="COMPLETED")
-    mock_client._normalize_execution_mode = Mock(return_value="hybrid")
     mock_client._sanitize_error_message = Mock(return_value="")
 
     ops = TrialOperations(mock_client)
@@ -139,7 +138,6 @@ async def test_composite_measures_appear_in_posted_trial_metrics() -> None:
             config={"variant": "strong"},
             metrics=metrics,
             status="completed",
-            execution_mode="hybrid",
         )
 
     assert result is True
@@ -180,7 +178,6 @@ async def test_composite_metrics_pass_measuresdict_on_the_submission_path() -> N
     mock_client.auth_manager = AsyncMock()
     mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
     mock_client._map_to_backend_status = Mock(return_value="COMPLETED")
-    mock_client._normalize_execution_mode = Mock(return_value="hybrid")
     mock_client._sanitize_error_message = Mock(return_value="")
 
     ops = TrialOperations(mock_client)
@@ -208,7 +205,6 @@ async def test_composite_metrics_pass_measuresdict_on_the_submission_path() -> N
             config={"variant": "strong"},
             metrics=metrics,
             status="completed",
-            execution_mode="hybrid",
         )
 
     # No "Metrics validation warning" was emitted — composite keys validated.
@@ -286,7 +282,6 @@ async def test_tuple_returning_function_metrics_reach_posted_body() -> None:
     mock_client.auth_manager = AsyncMock()
     mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
     mock_client._map_to_backend_status = Mock(return_value="COMPLETED")
-    mock_client._normalize_execution_mode = Mock(return_value="hybrid")
     mock_client._sanitize_error_message = Mock(return_value="")
 
     ops = TrialOperations(mock_client)
@@ -312,7 +307,6 @@ async def test_tuple_returning_function_metrics_reach_posted_body() -> None:
             config={"variant": "strong"},
             metrics=trial_metrics,
             status="completed",
-            execution_mode="hybrid",
         )
 
     assert result is True
