@@ -312,6 +312,12 @@ class ExecutionOptions(BaseModel):
             guarantee. Distinct from the enterprise-gated ``reps_per_trial``
             (which repeats every trial during search); this reruns only the
             already-selected winner.
+        require_run_id: Fail session creation early with a ``RunIdMissingError``
+            when the backend returns no authoritative ``experiment_run_id``.
+            Default ``False`` changes nothing — the SDK still falls back to
+            ``TRAIGENT_REQUIRE_RUN_ID`` for this run. An explicit ``True``
+            overrides the environment variable; left at the default, the
+            environment variable governs.
     """
 
     model_config = ConfigDict(
@@ -345,6 +351,7 @@ class ExecutionOptions(BaseModel):
     reps_per_trial: int = 1
     reps_aggregation: str = "mean"
     winner_stability_reps: int = 0
+    require_run_id: bool = False
 
     @model_validator(mode="wrap")
     @classmethod
@@ -3024,6 +3031,12 @@ def optimize(  # NOSONAR(S107)
     smart_pruning_value = resolved_execution.smart_pruning
     winner_stability_reps_value = resolved_execution.winner_stability_reps
     legacy_execution_options = resolved_execution.legacy_options
+    # No direct @optimize(require_run_id=...) kwarg exists (execution-bundle-only
+    # option), so this reads straight from the bundle rather than going through
+    # _resolve_execution_bundle_options's direct-kwarg merge.
+    require_run_id_value = (
+        execution_bundle.require_run_id if execution_bundle is not None else False
+    )
     smart_pruning_config = _normalize_smart_pruning_options(smart_pruning_value)
     external_service_evaluator = _resolve_external_service_evaluator(
         evaluator_value,
@@ -3262,6 +3275,7 @@ def optimize(  # NOSONAR(S107)
             max_total_examples=max_total_examples,
             samples_include_pruned=samples_include_pruned,
             winner_stability_reps=winner_stability_reps_value,
+            require_run_id=require_run_id_value,
             smart_pruning=smart_pruning_config,
             parallel_config=combined_parallel_config,
             mock_mode_config=mock_mode_config,

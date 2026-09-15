@@ -1025,6 +1025,12 @@ class OptimizedFunction(Generic[_P, _R]):
         self.smart_pruning = self._store_optional_param(
             kwargs, sentinel, "smart_pruning", None
         )
+        # G1 v1.0.1 (g): explicit True forces the early RunIdMissingError
+        # regardless of TRAIGENT_REQUIRE_RUN_ID; default False changes nothing
+        # (see _build_optimization_orchestrator).
+        self.require_run_id = self._store_optional_param(
+            kwargs, sentinel, "require_run_id", False, as_bool=True
+        )
         self.optimization_history_limit = kwargs.pop("optimization_history_limit", 100)
         if (
             not isinstance(self.optimization_history_limit, int)
@@ -1077,6 +1083,7 @@ class OptimizedFunction(Generic[_P, _R]):
             "samples_include_pruned",
             "winner_stability_reps",
             "smart_pruning",
+            "require_run_id",
             # Multi-agent configuration
             "agents",
             "agent_prefixes",
@@ -2247,6 +2254,12 @@ class OptimizedFunction(Generic[_P, _R]):
         orchestrator_kwargs["winner_stability_reps"] = int(
             getattr(self, "winner_stability_reps", 0) or 0
         )
+        # G1 v1.0.1 (g): only set the key when explicitly True. Leaving it
+        # unset lets BackendSessionManager's tri-state require_run_id default
+        # (None) fall back to TRAIGENT_REQUIRE_RUN_ID, exactly as before this
+        # option existed.
+        if getattr(self, "require_run_id", False):
+            orchestrator_kwargs["require_run_id"] = True
 
         # Auto-initialize workflow traces tracker if backend is configured
         workflow_traces_tracker = create_workflow_traces_tracker(traigent_config)

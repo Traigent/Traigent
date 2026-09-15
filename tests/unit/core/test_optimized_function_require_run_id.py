@@ -124,22 +124,16 @@ class TestRequireRunIdEnvPrecedence:
         monkeypatch.delenv("TRAIGENT_REQUIRE_RUN_ID", raising=False)
         optimized_func = _make_optimized_function(require_run_id=True)
         orchestrator = _build_orchestrator(optimized_func)
-        assert (
-            orchestrator.backend_session_manager._effective_require_run_id() is True
-        )
+        assert orchestrator.backend_session_manager._effective_require_run_id() is True
 
     def test_default_defers_to_env_true(self, monkeypatch) -> None:
         monkeypatch.setenv("TRAIGENT_REQUIRE_RUN_ID", "true")
         optimized_func = _make_optimized_function()
         orchestrator = _build_orchestrator(optimized_func)
-        assert (
-            orchestrator.backend_session_manager._effective_require_run_id() is True
-        )
+        assert orchestrator.backend_session_manager._effective_require_run_id() is True
 
     def test_default_defers_to_env_absent(self, monkeypatch) -> None:
         monkeypatch.delenv("TRAIGENT_REQUIRE_RUN_ID", raising=False)
         optimized_func = _make_optimized_function()
         orchestrator = _build_orchestrator(optimized_func)
-        assert (
-            orchestrator.backend_session_manager._effective_require_run_id() is False
-        )
+        assert orchestrator.backend_session_manager._effective_require_run_id() is False
