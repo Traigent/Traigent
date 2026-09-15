@@ -20,9 +20,10 @@ since the label-derivation rule only depends on
 """
 
 from __future__ import annotations
+
 from types import SimpleNamespace
 
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -35,6 +36,40 @@ from traigent.cloud.models import (
 )
 from traigent.cloud.privacy_operations import PrivacyOperations
 from traigent.evaluators.base import Dataset, EvaluationExample
+import logging
+import time
+from typing import Any, cast
+
+from tests.unit.cloud.test_session_creation_warm_start import (
+    CapturingFakeClient,
+)
+from traigent.api.decorators import EvaluationOptions, optimize
+from traigent.api.types import OptimizationStatus
+from traigent.cloud.backend_client import BackendIntegratedClient
+from traigent.cloud.models import (
+    DECLARED_DATASET_IDENTITY_METADATA_KEY,
+    SessionCreationResponse,
+)
+from traigent.cloud.session_operations import SessionOperations
+from traigent.cloud.session_types import (
+    SessionCreationFailureReason,
+    SessionCreationResult,
+)
+from traigent.cloud.sync_manager import SyncManager
+from traigent.config.types import TraigentConfig
+from traigent.core.backend_session_manager import BackendSessionManager
+from traigent.evaluators.base import load_inline_dataset
+from traigent.optimizers.interactive_optimizer import (
+    InteractiveOptimizer,
+    RemoteGuidanceService,
+)
+from traigent.storage.local_storage import (
+    LocalStorageManager,
+)
+from traigent.storage.local_storage import (
+    OptimizationSession as LocalSession,
+)
+from traigent.utils.function_identity import resolve_function_descriptor
 
 # SDK #2033: opt into the connected/backend code paths (see pyproject markers).
 pytestmark = pytest.mark.backend_online
@@ -372,3 +407,393 @@ def test_an_explicit_over_long_id_is_rejected_rather_than_quietly_folded():
             objectives=[{"name": "accuracy", "orientation": "maximize", "weight": 1.0}],
             dataset_id="y" * (DATASET_ID_MAX_LENGTH + 1),
         )
+
+
+# ---------------------------------------------------------------------------
+# Public EvaluationOptions.dataset_id, inline-name sentinel, offline sync
+# ---------------------------------------------------------------------------
+
+_SECRET_EXAMPLE = "SECRET-EXAMPLE-CONTENT-7f3a"
+_INLINE = [{"input": {"text": _SECRET_EXAMPLE}, "output": "ok"}]
+
+
+def _typed_payload_via_session_ops(create_kwargs: dict[str, Any]) -> dict:
+    """Replay captured backend_client.create_session kwargs through the REAL
+    BackendIntegratedClient -> SessionOperations -> SessionCreationRequest ->
+    ApiOperations typed builder, returning the actual request body."""
+    fake = CapturingFakeClient()
+    client = object.__new__(BackendIntegratedClient)
+    client._session_ops = SessionOperations(cast(Any, fake))
+    kwargs = dict(create_kwargs)
+    client.create_session(
+        kwargs.pop("function_name"),
+        kwargs.pop("search_space"),
+        kwargs.pop("optimization_goal"),
+        kwargs.pop("metadata"),
+        **kwargs,
+    )
+    assert fake.captured_session_request is not None
+    return ApiOperations(Mock())._build_typed_session_payload(
+        fake.captured_session_request, max_trials=5
+    )
+
+
+class _RecordingBackendClient:
+    """Backend-client stub for a public connected grid run: records the
+    session-create kwargs and reports a local fallback so no further network
+    interaction is attempted."""
+
+    def __init__(self) -> None:
+        self.create_calls: list[dict[str, Any]] = []
+        self.no_egress = False
+        self.cloud_egress_intent = False
+        self.enable_fallback = True
+        self.local_storage = None
+        auth = Mock()
+        auth.has_api_key = Mock(return_value=True)
+        self.auth_manager = auth
+        self.auth = auth
+
+    def create_session(self, *args: Any, **kwargs: Any) -> SessionCreationResult:
+        assert not args, "create_session must be called with keywords"
+        self.create_calls.append(kwargs)
+        return SessionCreationResult.fallback(
+            session_id="local-fallback-1",
+            reason=SessionCreationFailureReason.SESSION_FAILED,
+            detail="recorded by test stub",
+        )
+
+    def __getattr__(self, name: str) -> Any:  # any other client call is inert
+        return Mock(return_value=None)
+
+
+async def _public_connected_grid_run(monkeypatch, tmp_path, evaluation) -> dict:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path / "results"))
+    monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
+    stub = _RecordingBackendClient()
+    monkeypatch.setattr(
+        BackendSessionManager,
+        "create_backend_client",
+        staticmethod(lambda _config: stub),
+    )
+
+    @optimize(
+        evaluation=evaluation,
+        objectives=["accuracy"],
+        configuration_space={"x": ["a", "b"]},
+        injection_mode="parameter",
+    )
+    def answer(text: str, config) -> str:
+        return "ok"
+
+    await answer.optimize(algorithm="grid")
+    assert len(stub.create_calls) == 1
+    return _typed_payload_via_session_ops(stub.create_calls[0])
+
+
+class TestInlineDatasetSentinel:
+    def test_generated_inline_name_declares_no_identity(self):
+        dataset = load_inline_dataset(_INLINE)
+        assert dataset.name == "inline_dataset"  # display name unchanged
+        payload = _wire(
+            _request(
+                dataset_metadata={"size": 1, "name": dataset.name},
+                metadata={"evaluation_set": dataset.name},
+            )
+        )
+        assert "dataset_id" not in payload
+        assert "dataset_id_source" not in payload
+
+    def test_explicit_id_spelled_inline_dataset_is_sent_verbatim(self):
+        payload = _wire(
+            _request(
+                dataset_id="inline_dataset",
+                dataset_metadata={"size": 1, "name": "inline_dataset"},
+            )
+        )
+        assert payload["dataset_id_source"] == "declared"
+        assert payload["dataset_id"] == "inline_dataset"
+
+    def test_real_named_dataset_identity_is_byte_identical_to_the_label(self):
+        payload = _wire(
+            _request(
+                dataset_metadata={"size": 1, "name": "support-v1"},
+                metadata={"evaluation_set": "support-v1"},
+            )
+        )
+        assert payload["dataset_id"] == "support-v1"
+
+
+class TestEvaluationOptionsDatasetId:
+    def test_strips_and_keeps_the_value(self):
+        assert EvaluationOptions(dataset_id="  support-v1 ").dataset_id == "support-v1"
+
+    def test_default_is_none(self):
+        assert EvaluationOptions().dataset_id is None
+
+    @pytest.mark.parametrize("bad", ["", "   "])
+    def test_blank_is_rejected(self, bad):
+        with pytest.raises(Exception, match="dataset_id must be a non-blank string"):
+            EvaluationOptions(dataset_id=bad)
+
+    def test_over_255_is_rejected_never_truncated(self):
+        with pytest.raises(Exception, match="at most 255 characters"):
+            EvaluationOptions(dataset_id="z" * (DATASET_ID_MAX_LENGTH + 1))
+        assert (
+            EvaluationOptions(dataset_id="z" * DATASET_ID_MAX_LENGTH).dataset_id
+            == "z" * DATASET_ID_MAX_LENGTH
+        )
+
+    def test_over_255_through_the_decorator_is_rejected(self):
+        with pytest.raises(Exception, match="at most 255 characters"):
+
+            @optimize(
+                evaluation={"dataset_id": "z" * (DATASET_ID_MAX_LENGTH + 1)},
+                configuration_space={"x": ["a", "b"]},
+            )
+            def answer(text: str) -> str:
+                return text
+
+    def test_decorator_threads_it_to_the_optimized_function(self):
+        @optimize(
+            evaluation={"dataset_id": " support-v1 "},
+            configuration_space={"x": ["a", "b"]},
+        )
+        def answer(text: str) -> str:
+            return text
+
+        assert answer.dataset_id == "support-v1"
+
+
+class TestConnectedGridDecoratorToWire:
+    """Public decorator -> orchestrator -> BackendSessionManager -> backend
+    client -> SessionOperations -> ApiOperations typed request body."""
+
+    @pytest.mark.asyncio
+    async def test_explicit_id_reaches_the_request_body(self, monkeypatch, tmp_path):
+        payload = await _public_connected_grid_run(
+            monkeypatch,
+            tmp_path,
+            {"eval_dataset": _INLINE, "dataset_id": "support-v1"},
+        )
+        assert payload["dataset_id_source"] == "declared"
+        assert payload["dataset_id"] == "support-v1"
+        # Control plane carries a label/identity, never example content.
+        import json
+
+        assert _SECRET_EXAMPLE not in json.dumps(payload, default=str)
+
+    @pytest.mark.asyncio
+    async def test_explicit_id_survives_content_change_and_rename(
+        self, monkeypatch, tmp_path
+    ):
+        v1 = Dataset(examples=[_example({"text": "a"}, "A")], name="support")
+        v2 = Dataset(
+            examples=[_example({"text": "a"}, "A"), _example({"text": "b"}, "B")],
+            name="support-renamed",
+        )
+        (tmp_path / "1").mkdir()
+        (tmp_path / "2").mkdir()
+        p1 = await _public_connected_grid_run(
+            monkeypatch, tmp_path / "1", {"eval_dataset": v1, "dataset_id": "ds-42"}
+        )
+        p2 = await _public_connected_grid_run(
+            monkeypatch, tmp_path / "2", {"eval_dataset": v2, "dataset_id": "ds-42"}
+        )
+        assert p1["dataset_id"] == p2["dataset_id"] == "ds-42"
+        assert p1["dataset_metadata"]["name"] == "support"
+        assert p2["dataset_metadata"]["name"] == "support-renamed"
+
+    @pytest.mark.asyncio
+    async def test_anonymous_inline_data_sends_no_identity_and_warns_once(
+        self, monkeypatch, tmp_path, caplog
+    ):
+        with caplog.at_level(logging.WARNING):
+            payload = await _public_connected_grid_run(
+                monkeypatch, tmp_path, {"eval_dataset": _INLINE}
+            )
+        assert "dataset_id" not in payload
+        assert "dataset_id_source" not in payload
+        hits = [r for r in caplog.records if "Dataset not linked" in r.getMessage()]
+        assert len(hits) == 1
+        assert "EvaluationOptions(dataset_id=" in hits[0].getMessage()
+
+
+def test_two_explicit_ids_stay_distinct_even_with_equal_names():
+    a = _wire(_request(dataset_id="ds-a", dataset_metadata={"size": 1, "name": "x"}))
+    b = _wire(_request(dataset_id="ds-b", dataset_metadata={"size": 1, "name": "x"}))
+    assert a["dataset_id"] == "ds-a"
+    assert b["dataset_id"] == "ds-b"
+
+
+def test_session_operations_threads_dataset_id_to_the_request():
+    fake = CapturingFakeClient()
+    SessionOperations(cast(Any, fake)).create_session(
+        "my_func",
+        {"model": ["a", "b"]},
+        metadata={"max_trials": 5, "dataset_size": 1, "evaluation_set": "lbl"},
+        dataset_id="ds-explicit",
+    )
+    assert fake.captured_session_request is not None
+    assert fake.captured_session_request.dataset_id == "ds-explicit"
+
+
+class TestManagedPaths:
+    @pytest.mark.asyncio
+    async def test_interactive_optimizer_request_serializes_the_explicit_id(self):
+        from traigent.cloud.client import TraigentCloudClient
+
+        service = Mock(spec=RemoteGuidanceService)
+        service.create_session = AsyncMock(
+            return_value=SessionCreationResponse(
+                session_id="s-1", status="active", optimization_strategy={}
+            )
+        )
+        optimizer = InteractiveOptimizer(
+            config_space={"temperature": (0.0, 1.0)},
+            objectives=["accuracy"],
+            remote_service=service,
+            dataset_metadata={"size": 1, "name": "inline_dataset"},
+            dataset_id="support-v1",
+        )
+        await optimizer.initialize_session(function_name="qa", max_trials=2)
+        request = service.create_session.call_args[0][0]
+        stub = SimpleNamespace(_ensure_owner_metadata=lambda m: m or {})
+        payload = TraigentCloudClient._serialize_session_request(stub, request)
+        assert payload["dataset_id_source"] == "declared"
+        assert payload["dataset_id"] == "support-v1"
+
+    @pytest.mark.asyncio
+    async def test_interactive_optimizer_inline_name_sends_no_identity(self):
+        from traigent.cloud.client import TraigentCloudClient
+
+        service = Mock(spec=RemoteGuidanceService)
+        service.create_session = AsyncMock(
+            return_value=SessionCreationResponse(
+                session_id="s-1", status="active", optimization_strategy={}
+            )
+        )
+        optimizer = InteractiveOptimizer(
+            config_space={"temperature": (0.0, 1.0)},
+            objectives=["accuracy"],
+            remote_service=service,
+            dataset_metadata={"size": 1, "name": "inline_dataset"},
+        )
+        await optimizer.initialize_session(function_name="qa", max_trials=2)
+        request = service.create_session.call_args[0][0]
+        stub = SimpleNamespace(_ensure_owner_metadata=lambda m: m or {})
+        payload = TraigentCloudClient._serialize_session_request(stub, request)
+        assert "dataset_id" not in payload
+
+
+class TestOfflineSyncIdentity:
+    def _offline_manager(self, monkeypatch, tmp_path) -> BackendSessionManager:
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+        monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path / "results"))
+        from traigent.optimizers.grid import GridSearchOptimizer
+
+        return BackendSessionManager(
+            backend_client=None,
+            traigent_config=TraigentConfig(),
+            objectives=["accuracy"],
+            objective_schema=None,
+            optimizer=GridSearchOptimizer({"x": ["a"]}, ["accuracy"]),
+            optimization_id="opt-ds",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+    def _create(self, manager, dataset, dataset_id=None) -> LocalSession:
+        def func(text):
+            return text
+
+        ctx = manager.create_session(
+            func=func,
+            dataset=dataset,
+            function_descriptor=resolve_function_descriptor(func),
+            max_trials=1,
+            start_time=time.time(),
+            dataset_id=dataset_id,
+        )
+        storage = LocalStorageManager(manager._traigent_config.get_local_storage_path())
+        session = storage.load_session(ctx.session_id)
+        assert session is not None
+        return session
+
+    def _sync_payload(self, session: LocalSession) -> dict:
+        sync = object.__new__(SyncManager)
+        return SyncManager.convert_session_to_traigent_format(sync, session)[
+            "session_create"
+        ]
+
+    def test_explicit_id_is_recorded_and_sent_on_sync(self, monkeypatch, tmp_path):
+        manager = self._offline_manager(monkeypatch, tmp_path)
+        session = self._create(manager, load_inline_dataset(_INLINE), "support-v1")
+        assert session.metadata[DECLARED_DATASET_IDENTITY_METADATA_KEY] == {
+            "dataset_id_source": "declared",
+            "dataset_id": "support-v1",
+        }
+        payload = self._sync_payload(session)
+        assert payload["dataset_id_source"] == "declared"
+        assert payload["dataset_id"] == "support-v1"
+        import json
+
+        assert _SECRET_EXAMPLE not in json.dumps(payload, default=str)
+
+    def test_named_dataset_label_is_recorded_like_the_live_path(
+        self, monkeypatch, tmp_path
+    ):
+        manager = self._offline_manager(monkeypatch, tmp_path)
+        session = self._create(
+            manager, Dataset(examples=[_example({"text": "a"}, "A")], name="support-v1")
+        )
+        assert self._sync_payload(session)["dataset_id"] == "support-v1"
+
+    def test_anonymous_inline_records_and_sends_no_identity(
+        self, monkeypatch, tmp_path
+    ):
+        manager = self._offline_manager(monkeypatch, tmp_path)
+        session = self._create(manager, load_inline_dataset(_INLINE))
+        assert DECLARED_DATASET_IDENTITY_METADATA_KEY not in session.metadata
+        payload = self._sync_payload(session)
+        assert "dataset_id" not in payload
+        assert "dataset_id_source" not in payload
+
+    def test_legacy_record_without_identity_sends_none(self):
+        legacy = LocalSession(
+            session_id="legacy-1",
+            function_name="qa",
+            created_at="2025-01-01T00:00:00Z",
+            updated_at="2025-01-01T00:00:00Z",
+            status="completed",
+            total_trials=0,
+            completed_trials=0,
+            optimization_config={"search_space": {"x": ["a"]}},
+            metadata={"evaluation_set": "support-v1"},
+        )
+        payload = self._sync_payload(legacy)
+        assert "dataset_id" not in payload
+        assert "dataset_id_source" not in payload
+
+
+def test_no_key_fallback_local_record_persists_identity(tmp_path):
+    """The no-API-key fallback record carries the identity the live create
+    would have declared, so a later sync can send it."""
+    storage = LocalStorageManager(str(tmp_path))
+    fake = CapturingFakeClient()
+    fake.local_storage = storage
+    fake.auth_manager.has_api_key = lambda: False
+    result = SessionOperations(cast(Any, fake)).create_session(
+        "my_func",
+        {"model": ["a", "b"]},
+        metadata={"max_trials": 5, "dataset_size": 1, "evaluation_set": "lbl"},
+        dataset_id="ds-explicit",
+    )
+    session = storage.load_session(result.session_id)
+    assert session is not None
+    assert session.metadata[DECLARED_DATASET_IDENTITY_METADATA_KEY] == {
+        "dataset_id_source": "declared",
+        "dataset_id": "ds-explicit",
+    }

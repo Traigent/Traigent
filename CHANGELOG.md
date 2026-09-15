@@ -8,6 +8,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Unrelated inline datasets no longer share one portal history.** Every inline
+  example list was named `inline_dataset`, and that name was sent as the dataset
+  identity, so all inline runs of one agent grouped together in history. The generated
+  name is no longer sent as an identity. New `EvaluationOptions(dataset_id="...")` lets you
+  declare a stable dataset id that survives content edits and `Dataset.name` renames
+  (stripped, 1-255 characters, otherwise a validation error). It is sent on the connected
+  grid/random and managed session-create paths. A run with neither an explicit id nor a
+  named `Dataset` logs one warning that its history will show "Dataset not linked".
+  Offline runs record the identity locally and `traigent sync` sends it; sessions recorded
+  before this change sync with no identity. A real `Dataset(name="support-v1")` keeps the
+  same identity as before.
+
 - **A model with no price is no longer scored as free when you optimize for cost.**
   Previously a call whose model had no price table entry and no provider-reported cost
   was recorded as `$0.00`, and because the optimizer minimizes cost it ranked that

@@ -17,6 +17,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent._version import get_version
+from traigent.cloud.models import (
+    DECLARED_DATASET_IDENTITY_METADATA_KEY,
+    declared_dataset_identity,
+)
 from traigent.api.types import (
     AgentConfiguration,
     OptimizationResult,
@@ -805,6 +809,28 @@ class BackendSessionManager:
         """Backend-supplied reason for the early session completion, if any."""
         return self._remote_early_complete_reason
 
+    def _warn_if_dataset_unlinked(self, dataset: Any, dataset_id: str | None) -> None:
+        """Log once per run when no dataset identity can be declared.
+
+        Anonymous data (e.g. an inline example list) with no explicit
+        ``dataset_id`` sends no identity, so portal history cannot group the
+        run with other runs on the same dataset.
+        """
+        if getattr(self, "_dataset_unlinked_warned", False):
+            return
+        label = getattr(dataset, "name", None)
+        if declared_dataset_identity(
+            dataset_id, label if isinstance(label, str) else None
+        ):
+            return
+        self._dataset_unlinked_warned = True
+        logger.warning(
+            "No dataset identity declared for this run, so its history will show "
+            '"Dataset not linked". Pass EvaluationOptions(dataset_id="<stable-id>") '
+            'or a named Dataset(name="<stable-name>") to group runs on the same '
+            "dataset."
+        )
+
     def _egress_disabled(self) -> bool:
         """Return true when this manager must not touch backend egress paths."""
 
@@ -1375,6 +1401,7 @@ class BackendSessionManager:
         cost_limit: float | None = None,
         optimization_strategy: dict[str, Any] | None = None,
         task_type: str | None = None,
+        dataset_id: str | None = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -1408,11 +1435,13 @@ class BackendSessionManager:
             # `traigent local list` sees them and `traigent sync` can upload
             # them later. Best-effort — a storage failure yields session_id
             # None exactly like the legacy behavior.
+            self._warn_if_dataset_unlinked(dataset, dataset_id)
             local_session_id = self._create_offline_local_session(
                 function_identifier=function_identifier,
                 function_display_name=function_display_name,
                 dataset=dataset,
                 max_trials=max_trials,
+                dataset_id=dataset_id,
             )
             return SessionContext(
                 session_id=local_session_id,
@@ -1424,6 +1453,7 @@ class BackendSessionManager:
 
         if self._backend_client:
             evaluation_set_name = getattr(dataset, "name", None) or "default_evaluation"
+            self._warn_if_dataset_unlinked(dataset, dataset_id)
             effective_smart_pruning = (
                 dict(smart_pruning)
                 if smart_pruning is not None
@@ -1551,6 +1581,7 @@ class BackendSessionManager:
                 cost_limit=cost_limit,
                 optimization_strategy=optimization_strategy,
                 task_type=task_type,
+                dataset_id=dataset_id,
             )
             result = self.normalize_session_creation_result(raw_result)
             session_id = self.handle_session_creation_result(
@@ -1614,6 +1645,7 @@ class BackendSessionManager:
         function_display_name: str | None,
         dataset: Dataset,
         max_trials: int | None,
+        dataset_id: str | None = None,
     ) -> str | None:
         """Create the syncable LOCAL session for a no-egress run (#1939).
 
@@ -1648,6 +1680,11 @@ class BackendSessionManager:
                 "algorithm": getattr(policy, "algorithm", None),
                 "created_with_version": get_version(),
             }
+            # Persist the identity the live create would have declared (explicit
+            # id, else a real label, else none) so `traigent sync` sends it.
+            identity = declared_dataset_identity(dataset_id, evaluation_set_name)
+            if identity:
+                metadata[DECLARED_DATASET_IDENTITY_METADATA_KEY] = identity
             session_id = storage.create_session(
                 function_name=function_identifier,
                 optimization_config=optimization_config,

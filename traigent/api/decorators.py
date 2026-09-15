@@ -153,6 +153,12 @@ class EvaluationOptions(BaseModel):
     #: an anchor; unknown values simply resolve to "no anchor". Without this,
     #: the evaluator-quality audit abstains on every run.
     task_type: str | None = None
+    #: Optional stable dataset identity for portal history, which groups runs by
+    #: (agent, dataset). Keep it the same across content edits and renames of
+    #: ``Dataset.name`` (the display label). When omitted, a real
+    #: ``Dataset(name=...)`` label is used; anonymous inline examples declare no
+    #: identity and show as "Dataset not linked". Stripped; 1-255 characters.
+    dataset_id: str | None = None
     #: Optional cheap "surrogate" (pre-screen) scorer applied to the SAME outputs
     #: the primary evaluator already produced, per example. It scores captured
     #: outputs only and NEVER re-executes the decorated function. Same calling
@@ -167,6 +173,14 @@ class EvaluationOptions(BaseModel):
     #: anonymous scorers). A runtime ``optimize(surrogate_evaluator_name=...)``
     #: overrides this decorator value.
     surrogate_evaluator_name: str | None = None
+
+    @field_validator("dataset_id", mode="before")
+    @classmethod
+    def validate_dataset_id(cls, value: Any) -> str | None:
+        """Stripped, non-blank, at most 255 characters; never truncated."""
+        from traigent.cloud.models import normalize_declared_dataset_id
+
+        return normalize_declared_dataset_id(value)
 
     @model_validator(mode="after")
     def validate_evaluator_identity(self) -> EvaluationOptions:
@@ -2974,6 +2988,7 @@ def optimize(  # NOSONAR(S107)
         else None
     )
     task_type = evaluation_bundle.task_type if evaluation_bundle is not None else None
+    dataset_id = evaluation_bundle.dataset_id if evaluation_bundle is not None else None
     if surrogate_evaluator is not None:
         _validate_surrogate_evaluator_signature(surrogate_evaluator)
 
@@ -3270,6 +3285,7 @@ def optimize(  # NOSONAR(S107)
             metric_functions=metric_functions,
             evaluator_definition_id=evaluator_definition_id,
             task_type=task_type,
+            dataset_id=dataset_id,
             requested_execution_mode=requested_execution_mode,
             execution_policy=execution_policy,
             # Multi-agent configuration

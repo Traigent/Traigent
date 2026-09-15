@@ -10,10 +10,11 @@ are reserved for a future cloud release.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from types import SimpleNamespace
 from typing import Any
 
 # Single source of truth for trial status (issue #1302 AC4): the public SDK
@@ -283,13 +284,80 @@ DATASET_ID_MAX_LENGTH = 255
 # Placeholder values other SDK code paths fall back to when the caller never
 # supplied a real label (``Dataset.name`` defaults to the literal ``"dataset"``;
 # various call sites default ``evaluation_set`` to ``"default"`` /
-# ``"default_evaluation"``). Promoting one of these to a declared dataset
-# identity would be exactly the collision bug this feature exists to prevent:
-# every unnamed dataset would share one fabricated identity instead of sending
-# no identity at all. Compared case-insensitively, stripped.
+# ``"default_evaluation"``; ``load_inline_dataset`` names every inline list
+# ``"inline_dataset"``). Promoting one of these to a declared dataset identity
+# would be exactly the collision bug this feature exists to prevent: every
+# unnamed dataset would share one fabricated identity instead of sending no
+# identity at all -- e.g. two unrelated inline example lists for one agent
+# would merge into a single history cohort. Compared case-insensitively,
+# stripped. An EXPLICIT ``dataset_id`` bypasses this set entirely.
 _DEFAULT_DATASET_LABEL_SENTINELS = frozenset(
-    {"dataset", "unknown", "default", "default_evaluation"}
+    {"dataset", "unknown", "default", "default_evaluation", "inline_dataset"}
 )
+
+#: Local-record metadata key holding the declared dataset identity a live
+#: session-create would have sent (the exact ``session_dataset_identity_to_wire``
+#: dict). Offline/fallback sessions persist it at creation so ``traigent sync``
+#: can send the same identity later without re-deriving it.
+DECLARED_DATASET_IDENTITY_METADATA_KEY = "declared_dataset_identity"
+
+
+def normalize_declared_dataset_id(value: Any) -> str | None:
+    """Validate an explicit dataset id: stripped, non-blank, <= 255 chars.
+
+    ``None`` stays ``None``. Anything else invalid raises ``ValueError`` --
+    an explicit id is the caller's assertion, so it is never truncated or
+    rewritten.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("dataset_id must be a non-blank string")
+    cleaned: str = value.strip()
+    if not cleaned:
+        raise ValueError("dataset_id must be a non-blank string")
+    if len(cleaned) > DATASET_ID_MAX_LENGTH:
+        raise ValueError(
+            f"dataset_id must be at most {DATASET_ID_MAX_LENGTH} characters"
+        )
+    return cleaned
+
+
+def declared_dataset_identity(
+    dataset_id: str | None, dataset_label: str | None
+) -> dict[str, str]:
+    """The identity a session-create would send for this explicit id / label.
+
+    Same rule as ``session_dataset_identity_to_wire`` applied to a request
+    whose ``dataset_metadata.name`` and ``metadata.evaluation_set`` both carry
+    ``dataset_label`` (which is how the connected path builds it).
+    """
+    return session_dataset_identity_to_wire(
+        SimpleNamespace(
+            dataset_id=dataset_id,
+            dataset_metadata={"name": dataset_label},
+            metadata={"evaluation_set": dataset_label},
+        )
+    )
+
+
+def dataset_identity_from_record(value: Any) -> dict[str, str]:
+    """Read a persisted declared identity back, never inventing one.
+
+    Returns the wire fields only when the record holds a well-formed declared
+    identity; a legacy record (key absent) or a malformed value yields ``{}``.
+    """
+    if not isinstance(value, Mapping):
+        return {}
+    if value.get("dataset_id_source") != "declared":
+        return {}
+    dataset_id = value.get("dataset_id")
+    if not isinstance(dataset_id, str):
+        return {}
+    cleaned = dataset_id.strip()
+    if not cleaned or len(cleaned) > DATASET_ID_MAX_LENGTH:
+        return {}
+    return {"dataset_id_source": "declared", "dataset_id": cleaned}
 
 
 def _is_real_dataset_label(value: Any) -> bool:
@@ -488,14 +556,7 @@ class SessionCreationRequest:
         self.evaluator_definition_id = normalized_evaluator_ids[
             "evaluator_definition_id"
         ]
-        if self.dataset_id is not None:
-            if not isinstance(self.dataset_id, str) or not self.dataset_id.strip():
-                raise ValueError("dataset_id must be a non-blank string")
-            if len(self.dataset_id.strip()) > DATASET_ID_MAX_LENGTH:
-                raise ValueError(
-                    f"dataset_id must be at most {DATASET_ID_MAX_LENGTH} characters"
-                )
-            self.dataset_id = self.dataset_id.strip()
+        self.dataset_id = normalize_declared_dataset_id(self.dataset_id)
         if self.function_name is None:
             self.function_name = "test_function"
         if self.configuration_space is None:

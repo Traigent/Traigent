@@ -450,6 +450,9 @@ class OptimizationOrchestrator:
         self.artifact_fingerprints: dict[str, str | None] | None = None
         self.fingerprint_meta: dict[str, Any] | None = None
         self.evaluator_definition_id: str | None = None
+        # Explicit stable dataset identity (EvaluationOptions.dataset_id), set by
+        # OptimizedFunction after construction like evaluator_definition_id.
+        self.dataset_id: str | None = None
 
         # Interactive pause prompt adapter (None in non-interactive environments)
         from traigent.core.exception_handler import (
@@ -2883,6 +2886,7 @@ class OptimizationOrchestrator:
             cost_limit=self.config.get("cost_limit"),
             optimization_strategy=optimization_strategy_payload,
             task_type=getattr(self, "task_type", None),
+            dataset_id=getattr(self, "dataset_id", None),
         )
         session_id: str | None = session_context.session_id
         self._active_session_id = session_id
@@ -3058,6 +3062,7 @@ class OptimizationOrchestrator:
                 fingerprint_meta=self.fingerprint_meta,
                 evaluator_definition_id=self.evaluator_definition_id,
                 task_type=getattr(self, "task_type", None),
+                dataset_id=getattr(self, "dataset_id", None),
             )
             session_id = self.backend_session_manager.handle_session_creation_result(
                 self.backend_session_manager.normalize_session_creation_result(

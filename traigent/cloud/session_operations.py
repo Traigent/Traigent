@@ -23,10 +23,12 @@ from traigent.cloud.client import (
     raise_if_cloud_egress_disabled,
 )
 from traigent.cloud.models import (
+    DECLARED_DATASET_IDENTITY_METADATA_KEY,
     OptimizationFinalizationResponse,
     OptimizationSession,
     OptimizationSessionStatus,
     SessionCreationRequest,
+    declared_dataset_identity,
 )
 from traigent.cloud.session_types import (
     SessionCreationFailureDetail,
@@ -97,6 +99,26 @@ _AUTH_REJECTION_MARKERS = (
     "expired",
     "permission",
 )
+
+
+def _with_declared_dataset_identity(
+    metadata: dict[str, Any] | None, dataset_id: str | None
+) -> dict[str, Any] | None:
+    """Metadata for a LOCAL session record, carrying the declared identity.
+
+    Uses exactly the identity the typed create would send (explicit id, else a
+    real ``evaluation_set`` label, else none). Returns ``metadata`` unchanged
+    when there is nothing to declare, so legacy records stay byte-identical.
+    """
+    label = metadata.get("evaluation_set") if isinstance(metadata, dict) else None
+    identity = declared_dataset_identity(
+        dataset_id, label if isinstance(label, str) else None
+    )
+    if not identity:
+        return metadata
+    enriched = dict(metadata or {})
+    enriched[DECLARED_DATASET_IDENTITY_METADATA_KEY] = identity
+    return enriched
 
 
 def _is_definitive_auth_rejection(exc: Exception) -> bool:
@@ -515,6 +537,7 @@ class SessionOperations:
         run_title: str | None = None,
         run_description: str | None = None,
         task_type: str | None = None,
+        dataset_id: str | None = None,
     ) -> SessionCreationResult:
         """Create a session with backend metadata submission.
 
@@ -539,6 +562,10 @@ class SessionOperations:
         if metadata is not None and not isinstance(metadata, dict):
             raise ValidationException("metadata must be a dictionary if provided")
         normalized_smart_pruning = normalize_smart_pruning_options(smart_pruning)
+        # Local records (no-key/offline fallback and connected mirrors) persist
+        # the declared dataset identity the live create would send, so a later
+        # `traigent sync` can send the same identity instead of none.
+        local_record_metadata = _with_declared_dataset_identity(metadata, dataset_id)
 
         # Phase 8 (review round 2): the local-availability fallback is for
         # NON-governed sessions only. A governed/strict session that cannot
@@ -583,7 +610,7 @@ class SessionOperations:
                 function_name,
             )
             fallback_id = self._create_local_fallback_session(
-                function_name, search_space, optimization_goal, metadata
+                function_name, search_space, optimization_goal, local_record_metadata
             )
             return SessionCreationResult.fallback(
                 session_id=fallback_id,
@@ -612,7 +639,10 @@ class SessionOperations:
                     "No API key configured — skipping backend session creation"
                 )
                 fallback_id = self._create_local_fallback_session(
-                    function_name, search_space, optimization_goal, metadata
+                    function_name,
+                    search_space,
+                    optimization_goal,
+                    local_record_metadata,
                 )
                 return SessionCreationResult.fallback(
                     session_id=fallback_id,
@@ -684,6 +714,7 @@ class SessionOperations:
                 evaluator_id=evaluator_id,
                 evaluator_definition_id=evaluator_definition_id,
                 task_type=task_type,
+                dataset_id=dataset_id,
             )
 
             try:
@@ -816,7 +847,7 @@ class SessionOperations:
                     function_name=function_name,
                     search_space=search_space,
                     optimization_goal=optimization_goal,
-                    metadata=metadata,
+                    metadata=local_record_metadata,
                 )
                 return SessionCreationResult.connected(
                     session_id=session_id,
@@ -833,7 +864,10 @@ class SessionOperations:
                     raise
                 failure_response = _get_session_creation_failure_detail(e)
                 fallback_id = self._create_local_fallback_session(
-                    function_name, search_space, optimization_goal, metadata
+                    function_name,
+                    search_space,
+                    optimization_goal,
+                    local_record_metadata,
                 )
                 detail = (
                     failure_response.one_line_summary()
@@ -867,7 +901,10 @@ class SessionOperations:
                 )
                 failure_response = _get_session_creation_failure_detail(e)
                 fallback_id = self._create_local_fallback_session(
-                    function_name, search_space, optimization_goal, metadata
+                    function_name,
+                    search_space,
+                    optimization_goal,
+                    local_record_metadata,
                 )
                 detail = (
                     failure_response.one_line_summary()
@@ -920,7 +957,7 @@ class SessionOperations:
             # The two auth sites are mutually exclusive per failure.
             failure_response = _get_session_creation_failure_detail(exc)
             fallback_id = self._create_local_fallback_session(
-                function_name, search_space, optimization_goal, metadata
+                function_name, search_space, optimization_goal, local_record_metadata
             )
             detail = (
                 failure_response.one_line_summary()
@@ -951,7 +988,7 @@ class SessionOperations:
             )
             failure_response = _get_session_creation_failure_detail(exc)
             fallback_id = self._create_local_fallback_session(
-                function_name, search_space, optimization_goal, metadata
+                function_name, search_space, optimization_goal, local_record_metadata
             )
             detail = (
                 failure_response.one_line_summary()
@@ -982,7 +1019,7 @@ class SessionOperations:
                 exc,
             )
             fallback_id = self._create_local_fallback_session(
-                function_name, search_space, optimization_goal, metadata
+                function_name, search_space, optimization_goal, local_record_metadata
             )
             return SessionCreationResult.fallback(
                 session_id=fallback_id,
