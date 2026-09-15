@@ -205,6 +205,39 @@ def _set_error_status(
             span.set_status("ERROR")
 
 
+# #1894: spans are opened with ``record_exception=False`` and
+# ``set_status_on_exception=False``. OpenTelemetry's defaults would attach the
+# raw exception message and stacktrace as an ``exception`` event and a raw
+# ``"<Type>: <message>"`` status description, bypassing ``_scrub_error_text``.
+# Mirrors ``traigent.core.tracing._SPAN_EXCEPTION_KWARGS``.
+_SPAN_EXCEPTION_KWARGS: dict[str, bool] = {
+    "record_exception": False,
+    "set_status_on_exception": False,
+}
+
+
+def _record_scrubbed_exception(span: Span | None, exc: BaseException) -> None:
+    """Record an exception escaping a span, with its text scrubbed.
+
+    Mirrors ``traigent.core.tracing._record_scrubbed_exception``: an
+    ``exception`` event with ``exception.type`` and a scrubbed
+    ``exception.message``, no stacktrace, and a scrubbed ERROR status.
+    """
+    if span is None:
+        return
+    is_recording = getattr(span, "is_recording", None)
+    if callable(is_recording) and not is_recording():
+        return
+    span.add_event(
+        "exception",
+        {
+            "exception.type": type(exc).__qualname__,
+            "exception.message": _scrub_error_text(exc),
+        },
+    )
+    _set_error_status(span, f"{type(exc).__name__}: {exc}")
+
+
 class SecureIdGenerator(IdGenerator if IdGenerator else object):  # type: ignore[misc]
     """ID generator using os.urandom for cryptographically secure random IDs.
 
@@ -403,7 +436,7 @@ def optimization_session_span(
     )
 
     try:
-        with tracer.start_as_current_span(span_name) as span:
+        with tracer.start_as_current_span(span_name, **_SPAN_EXCEPTION_KWARGS) as span:
             _set_session_span_attributes(
                 span,
                 function_name,
@@ -413,7 +446,11 @@ def optimization_session_span(
                 objectives,
                 config_space,
             )
-            yield span
+            try:
+                yield span
+            except BaseException as exc:
+                _record_scrubbed_exception(span, exc)
+                raise
     finally:
         if token is not None and otel_context:
             otel_context.detach(token)
@@ -555,7 +592,7 @@ def trial_span(
     else:
         span_name = f"trial {display_number}"
 
-    with tracer.start_as_current_span(span_name) as span:
+    with tracer.start_as_current_span(span_name, **_SPAN_EXCEPTION_KWARGS) as span:
         span.set_attribute("trial.id", trial_id)
         span.set_attribute(
             "trial.number", trial_number
@@ -568,7 +605,11 @@ def trial_span(
             span.set_attribute("trial.config", json.dumps(redacted_config))
         except (TypeError, ValueError):
             span.set_attribute("trial.config", str(redacted_config))
-        yield span
+        try:
+            yield span
+        except BaseException as exc:
+            _record_scrubbed_exception(span, exc)
+            raise
 
 
 def record_trial_result(
@@ -663,7 +704,7 @@ def example_evaluation_span(
     else:
         span_name = f"example {example_index}"
 
-    with tracer.start_as_current_span(span_name) as span:
+    with tracer.start_as_current_span(span_name, **_SPAN_EXCEPTION_KWARGS) as span:
         span.set_attribute("example.id", example_id)
         span.set_attribute("example.index", example_index)
         if input_data:
@@ -692,7 +733,11 @@ def example_evaluation_span(
                     "example.expected_output",
                     _scrub_pii_text(str(scrubbed_expected))[:200],
                 )
-        yield span
+        try:
+            yield span
+        except BaseException as exc:
+            _record_scrubbed_exception(span, exc)
+            raise
 
 
 def _serialize_output(output: Any, max_length: int) -> str:
