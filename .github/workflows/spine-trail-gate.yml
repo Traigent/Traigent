@@ -197,6 +197,28 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      # The spine keeps a develop/main split just like every core product
+      # repo, and ChangeSession receipts for develop-line product PRs are
+      # committed on the spine's `develop` branch, not `main` -- so a
+      # checkout scoped to `main` alone (however much history it fetches)
+      # never contains most real receipts, which would make the ancestry
+      # check below fail for essentially every governed PR. Checked out
+      # into its OWN separate directory, entirely as DATA: this working
+      # tree is never `pip install`ed and never executed, only read via
+      # `git cat-file`/`git show` in the verification step below.
+      - name: Checkout spine develop (trusted branch, data only, shadow)
+        id: spine_checkout_develop
+        if: ${{ steps.classify.outputs.need_checkout == 'true' }}
+        continue-on-error: true
+        uses: actions/checkout@v7
+        with:
+          repository: Traigent/traigent-validation-spine
+          ref: develop
+          token: ${{ steps.spine_app_token.outputs.token || github.token }}
+          path: .spine-shadow-develop
+          persist-credentials: false
+          fetch-depth: 0
+
       - name: Set up Python (shadow)
         id: setup_python
         if: ${{ steps.classify.outputs.need_checkout == 'true' && steps.spine_checkout.outcome == 'success' }}
@@ -215,12 +237,14 @@ jobs:
           EVENT_PATH: ${{ steps.classify.outputs.event_path }}
           NEED_CHECKOUT: ${{ steps.classify.outputs.need_checkout }}
           CHECKOUT_OUTCOME: ${{ steps.spine_checkout.outcome }}
+          CHECKOUT_DEVELOP_OUTCOME: ${{ steps.spine_checkout_develop.outcome }}
           BASE_REF: ${{ github.base_ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REPO_NAME: ${{ github.event.repository.name }}
         run: |
           set +e  # SHADOW: never fail.
           SPINE_DIR="$GITHUB_WORKSPACE/.spine-shadow"
+          SPINE_DEV_DIR="$GITHUB_WORKSPACE/.spine-shadow-develop"
 
           emit() {
             # $1=outcome $2=detail  (writes the single machine-greppable line)
@@ -255,29 +279,52 @@ jobs:
           # $SPINE_COMMIT came from the PR body and is untrusted: any PR
           # author can write an arbitrary 40-hex string there. We never
           # `git checkout`/build/execute it. Instead: (1) confirm it is a
-          # real commit object that is actually reachable from the trusted
-          # `main` branch we checked out above -- i.e. it is real spine
+          # real commit object that is actually reachable from EITHER
+          # trusted branch we checked out above (`main`, or `develop` --
+          # receipts for develop-line product PRs are committed on the
+          # spine's develop branch, not main) -- i.e. it is real spine
           # history, not a forged/foreign SHA -- and (2) if so, read the ONE
-          # referenced file's content straight out of the object database
-          # with `git show`, which is pure data extraction and never
-          # populates a working tree or runs anything from that commit.
-          if ! git -C "$SPINE_DIR" cat-file -e "${SPINE_COMMIT}^{commit}" 2>/dev/null; then
-            emit needs_attention "spine_commit_unknown:${SPINE_COMMIT}"; exit 0
+          # referenced file's content straight out of that branch's object
+          # database with `git show`, which is pure data extraction and
+          # never populates a working tree or runs anything from that
+          # commit. TRUSTED_DIR always resolves to one of the two
+          # already-checked-out trusted directories, never anything
+          # derived from $SPINE_COMMIT itself.
+          TRUSTED_DIR=""
+          commit_exists=false
+          if git -C "$SPINE_DIR" cat-file -e "${SPINE_COMMIT}^{commit}" 2>/dev/null; then
+            commit_exists=true
+            if git -C "$SPINE_DIR" merge-base --is-ancestor "$SPINE_COMMIT" HEAD 2>/dev/null; then
+              TRUSTED_DIR="$SPINE_DIR"
+            fi
           fi
-          if ! git -C "$SPINE_DIR" merge-base --is-ancestor "$SPINE_COMMIT" HEAD 2>/dev/null; then
-            emit needs_attention "spine_commit_not_on_trusted_branch:${SPINE_COMMIT}"; exit 0
+          if [ -z "$TRUSTED_DIR" ] && [ "$CHECKOUT_DEVELOP_OUTCOME" = "success" ]; then
+            if git -C "$SPINE_DEV_DIR" cat-file -e "${SPINE_COMMIT}^{commit}" 2>/dev/null; then
+              commit_exists=true
+              if git -C "$SPINE_DEV_DIR" merge-base --is-ancestor "$SPINE_COMMIT" HEAD 2>/dev/null; then
+                TRUSTED_DIR="$SPINE_DEV_DIR"
+              fi
+            fi
+          fi
+          if [ -z "$TRUSTED_DIR" ]; then
+            if [ "$commit_exists" = "true" ]; then
+              emit needs_attention "spine_commit_not_on_trusted_branch:${SPINE_COMMIT}"; exit 0
+            else
+              emit needs_attention "spine_commit_unknown:${SPINE_COMMIT}"; exit 0
+            fi
           fi
 
-          # (b) the event path must exist under receipts/ AT that commit.
+          # (b) the event path must exist under receipts/ AT that commit,
+          # read from whichever trusted branch actually contains it.
           case "$EVENT_PATH" in
             receipts/*) rel="$EVENT_PATH" ;;
             *)          rel="receipts/${EVENT_PATH#receipts/}" ;;
           esac
-          if ! git -C "$SPINE_DIR" cat-file -e "${SPINE_COMMIT}:${rel}" 2>/dev/null; then
+          if ! git -C "$TRUSTED_DIR" cat-file -e "${SPINE_COMMIT}:${rel}" 2>/dev/null; then
             emit needs_attention "event_path_absent:${rel}"; exit 0
           fi
           EVENT_FILE="$RUNNER_TEMP/spine_event.json"
-          if ! git -C "$SPINE_DIR" show "${SPINE_COMMIT}:${rel}" > "$EVENT_FILE" 2>/dev/null; then
+          if ! git -C "$TRUSTED_DIR" show "${SPINE_COMMIT}:${rel}" > "$EVENT_FILE" 2>/dev/null; then
             emit error "event_read_failed:${rel}"; exit 0
           fi
 
