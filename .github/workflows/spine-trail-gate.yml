@@ -172,14 +172,26 @@ jobs:
           private-key: ${{ secrets.SPINE_DISPATCH_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
-      - name: Checkout spine at receipt commit (shadow)
+      # Checks out the spine's TRUSTED default branch only -- never the
+      # PR-body-derived `spine_commit` (that value is attacker-controlled:
+      # any PR author can put an arbitrary 40-hex string in their own PR
+      # body). CodeQL correctly flagged the prior version of this step,
+      # which passed that untrusted value straight into `ref:`, as an
+      # untrusted checkout: it would let a PR author choose which commit's
+      # tree gets checked out and then installed (`pip install -e`) and
+      # executed with a privileged App-installation token. Reading the
+      # specific `spine_commit` is now done as plain data (git plumbing,
+      # `cat-file`/`show`, no working-tree checkout, no execution) in the
+      # verification step below, and only after confirming that commit is
+      # actually reachable from this trusted branch.
+      - name: Checkout spine main (trusted default branch, shadow)
         id: spine_checkout
         if: ${{ steps.classify.outputs.need_checkout == 'true' }}
         continue-on-error: true
         uses: actions/checkout@v7
         with:
           repository: Traigent/traigent-validation-spine
-          ref: ${{ steps.classify.outputs.spine_commit }}
+          ref: main
           token: ${{ steps.spine_app_token.outputs.token || github.token }}
           path: .spine-shadow
           persist-credentials: false
@@ -240,16 +252,37 @@ jobs:
             emit skipped_no_access "checkout=${CHECKOUT_OUTCOME:-none};commit=${SPINE_COMMIT}"; exit 0
           fi
 
-          # (b) the event path must exist under receipts/ in the checkout.
+          # $SPINE_COMMIT came from the PR body and is untrusted: any PR
+          # author can write an arbitrary 40-hex string there. We never
+          # `git checkout`/build/execute it. Instead: (1) confirm it is a
+          # real commit object that is actually reachable from the trusted
+          # `main` branch we checked out above -- i.e. it is real spine
+          # history, not a forged/foreign SHA -- and (2) if so, read the ONE
+          # referenced file's content straight out of the object database
+          # with `git show`, which is pure data extraction and never
+          # populates a working tree or runs anything from that commit.
+          if ! git -C "$SPINE_DIR" cat-file -e "${SPINE_COMMIT}^{commit}" 2>/dev/null; then
+            emit needs_attention "spine_commit_unknown:${SPINE_COMMIT}"; exit 0
+          fi
+          if ! git -C "$SPINE_DIR" merge-base --is-ancestor "$SPINE_COMMIT" HEAD 2>/dev/null; then
+            emit needs_attention "spine_commit_not_on_trusted_branch:${SPINE_COMMIT}"; exit 0
+          fi
+
+          # (b) the event path must exist under receipts/ AT that commit.
           case "$EVENT_PATH" in
             receipts/*) rel="$EVENT_PATH" ;;
             *)          rel="receipts/${EVENT_PATH#receipts/}" ;;
           esac
-          if [ ! -f "$SPINE_DIR/$rel" ]; then
+          if ! git -C "$SPINE_DIR" cat-file -e "${SPINE_COMMIT}:${rel}" 2>/dev/null; then
             emit needs_attention "event_path_absent:${rel}"; exit 0
           fi
+          EVENT_FILE="$RUNNER_TEMP/spine_event.json"
+          if ! git -C "$SPINE_DIR" show "${SPINE_COMMIT}:${rel}" > "$EVENT_FILE" 2>/dev/null; then
+            emit error "event_read_failed:${rel}"; exit 0
+          fi
 
-          # (c) install and run the spine's own verifier.
+          # (c) install and run the spine's own verifier -- from the TRUSTED
+          # main-branch working tree only, never from the untrusted commit.
           python3 -m pip install --quiet --upgrade pip >/dev/null 2>&1
           pip install -e "$SPINE_DIR" >/dev/null 2>&1 || true
           VOUT=$(validation change receipt verify "$SESSION" --spine-repo "$SPINE_DIR" 2>/dev/null)
@@ -363,7 +396,7 @@ jobs:
           out("binding_unverified", "head_sha_not_in_listed_shas;" + ";".join(bits))
           PY
           RESULT=$(python3 "$RUNNER_TEMP/spine_shadow_check.py" \
-            "$SPINE_DIR/$rel" "$SESSION" "$BASE_REF" "$HEAD_SHA" "$REPO_NAME" \
+            "$EVENT_FILE" "$SESSION" "$BASE_REF" "$HEAD_SHA" "$REPO_NAME" \
             "$RUNNER_TEMP/spine_verifier.json" 2>/dev/null)
           O=$(printf '%s' "$RESULT" | head -n1 | cut -f1)
           D=$(printf '%s' "$RESULT" | head -n1 | cut -f2-)
