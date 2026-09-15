@@ -30,6 +30,7 @@ import pytest
 from traigent.cloud.api_operations import ApiOperations
 from traigent.cloud.models import (
     DATASET_ID_MAX_LENGTH,
+    normalize_declared_dataset_id,
     OptimizationSession,
     SessionCreationRequest,
     session_dataset_identity_to_wire,
@@ -37,6 +38,8 @@ from traigent.cloud.models import (
 from traigent.cloud.privacy_operations import PrivacyOperations
 from traigent.evaluators.base import Dataset, EvaluationExample
 import logging
+import re
+import unicodedata
 import time
 from typing import Any, cast
 
@@ -797,3 +800,136 @@ def test_no_key_fallback_local_record_persists_identity(tmp_path):
         "dataset_id_source": "declared",
         "dataset_id": "ds-explicit",
     }
+
+
+# ---------------------------------------------------------------------------
+# Input hygiene: two visually identical ids must never be two identities
+# ---------------------------------------------------------------------------
+
+_NFC_CAFE = "caf\u00e9"  # composed: e-acute as one code point
+_NFD_CAFE = "cafe\u0301"  # decomposed: "e" + combining acute
+_ZWSP = "\u200b"
+
+
+class TestUnicodeNormalization:
+    """NFC and NFD spellings of one name are ONE identity, on both routes."""
+
+    def test_explicit_id_nfc_and_nfd_normalize_to_the_same_id(self):
+        assert normalize_declared_dataset_id(_NFD_CAFE) == _NFC_CAFE
+        assert normalize_declared_dataset_id(_NFC_CAFE) == _NFC_CAFE
+
+    def test_explicit_id_nfc_and_nfd_reach_the_wire_as_one_identity(self):
+        composed = _wire(_request(dataset_id=_NFC_CAFE, dataset_metadata={"size": 1}))
+        decomposed = _wire(_request(dataset_id=_NFD_CAFE, dataset_metadata={"size": 1}))
+        assert composed["dataset_id"] == decomposed["dataset_id"] == _NFC_CAFE
+
+    def test_derived_label_nfc_and_nfd_are_one_identity(self):
+        composed = _wire(_request(dataset_metadata={"size": 1, "name": _NFC_CAFE}))
+        decomposed = _wire(_request(dataset_metadata={"size": 1, "name": _NFD_CAFE}))
+        assert composed["dataset_id"] == decomposed["dataset_id"] == _NFC_CAFE
+
+    def test_explicit_and_derived_routes_share_one_canonical_space(self):
+        """Two clients naming one dataset -- one explicitly, one by label --
+        must not end up in two cohorts."""
+        explicit = _wire(_request(dataset_id=_NFD_CAFE, dataset_metadata={"size": 1}))
+        derived = _wire(_request(dataset_metadata={"size": 1, "name": _NFD_CAFE}))
+        assert explicit["dataset_id"] == derived["dataset_id"]
+
+
+class TestInvisibleCharacters:
+    """An explicit id is rejected; a user's dataset NAME is cleaned, never fatal."""
+
+    @pytest.mark.parametrize(
+        ("bad", "codepoint"),
+        [
+            ("a\u200bb", "U+200B"),  # zero-width space
+            ("a\nb\tc", "U+000A"),  # C0 controls
+            ("a\ufeffb", "U+FEFF"),  # BOM / zero-width no-break space
+            ("a\u200eb", "U+200E"),  # BiDi mark
+            ("a\u0085b", "U+0085"),  # C1 control
+        ],
+    )
+    def test_explicit_id_with_an_invisible_character_is_rejected(self, bad, codepoint):
+        with pytest.raises(ValueError, match="control or zero-width characters"):
+            normalize_declared_dataset_id(bad)
+        with pytest.raises(ValueError, match=re.escape(codepoint)):
+            normalize_declared_dataset_id(bad)
+
+    def test_a_zero_width_only_explicit_id_is_rejected_not_kept_whole(self):
+        with pytest.raises(ValueError, match="control or zero-width characters"):
+            SessionCreationRequest(function_name="f", dataset_id=_ZWSP)
+
+    def test_explicit_id_rejection_reaches_the_public_option(self):
+        with pytest.raises(Exception, match="control or zero-width characters"):
+            EvaluationOptions(dataset_id="support" + _ZWSP + "-v1")
+
+    def test_derived_label_with_a_zero_width_char_is_cleaned_not_rejected(self):
+        payload = _wire(
+            _request(dataset_metadata={"size": 1, "name": "sup" + _ZWSP + "port-v1"})
+        )
+        assert payload["dataset_id"] == "support-v1"
+
+    def test_derived_label_of_only_invisible_chars_declares_no_identity(self):
+        payload = _wire(
+            _request(dataset_metadata={"size": 1, "name": _ZWSP + "\ufeff"})
+        )
+        assert "dataset_id" not in payload
+        assert "dataset_id_source" not in payload
+
+    def test_cleaning_happens_before_the_sentinel_check(self):
+        """An invisibly-decorated placeholder is still the placeholder."""
+        payload = _wire(
+            _request(
+                dataset_metadata={"size": 1, "name": "inline" + _ZWSP + "_dataset"}
+            )
+        )
+        assert "dataset_id" not in payload
+
+    def test_a_cleaned_label_groups_with_its_plain_spelling(self):
+        decorated = _wire(
+            _request(dataset_metadata={"size": 1, "name": "supp" + _ZWSP + "ort"})
+        )
+        plain = _wire(_request(dataset_metadata={"size": 1, "name": "support"}))
+        assert decorated["dataset_id"] == plain["dataset_id"] == "support"
+
+
+class TestCapIsAppliedAfterNormalization:
+    def test_255_code_points_after_normalization_is_accepted(self):
+        """The decomposed spelling is 510 code points and composes to 255, so
+        measuring before normalizing would reject a legal id."""
+        composed = _NFC_CAFE[-1] * DATASET_ID_MAX_LENGTH
+        decomposed = unicodedata.normalize("NFD", composed)
+        assert len(decomposed) > DATASET_ID_MAX_LENGTH
+        normalized = normalize_declared_dataset_id(decomposed)
+        assert normalized == composed
+        assert len(normalized) == DATASET_ID_MAX_LENGTH
+
+    def test_256_code_points_after_normalization_is_rejected(self):
+        with pytest.raises(ValueError, match="at most 255 characters"):
+            normalize_declared_dataset_id(_NFC_CAFE[-1] * (DATASET_ID_MAX_LENGTH + 1))
+
+
+class TestPlainAsciiIsUnchanged:
+    """No reminting: an existing plain label keeps byte-identical identity."""
+
+    def test_explicit_plain_id_is_untouched(self):
+        assert normalize_declared_dataset_id("support-v1") == "support-v1"
+
+    def test_derived_plain_label_is_untouched(self):
+        payload = _wire(_request(dataset_metadata={"size": 1, "name": "support-v1"}))
+        assert payload["dataset_id"] == "support-v1"
+
+    def test_explicit_still_wins_and_is_never_folded(self):
+        payload = _wire(
+            _request(
+                dataset_id="explicit-id",
+                dataset_metadata={"size": 1, "name": "label-derived-name"},
+            )
+        )
+        assert payload["dataset_id"] == "explicit-id"
+
+    def test_sentinels_remain_case_insensitive(self):
+        payload = _wire(
+            _request(dataset_metadata={"size": 1, "name": "Inline_Dataset"})
+        )
+        assert "dataset_id" not in payload
