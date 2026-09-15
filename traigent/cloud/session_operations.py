@@ -1219,10 +1219,21 @@ class SessionOperations:
                 experiment_id = metadata.get("experiment_id")
                 experiment_run_id = metadata.get("experiment_run_id")
                 # Rebuild with nullable ids as soon as EITHER is present --
-                # requiring both was the bug (G1 §1, addendum F6). Neither
-                # present is unchanged: indistinguishable from stale/bogus
-                # active-session metadata, so recovery still declines.
-                if experiment_id or experiment_run_id:
+                # requiring both was the bug (G1 §1, addendum F6). A connected
+                # session created via the backend session-create API can
+                # legitimately have BOTH ids None (mode "session_api" or
+                # "hybrid" is the backend-created marker) -- requiring a
+                # truthy id in that case was a second instance of the same
+                # bug (G1 §1, addendum F10): it dropped a session the backend
+                # actually created, making zero finalize calls for it. A
+                # session with neither an id NOR a connected-session mode is
+                # unchanged: indistinguishable from stale/bogus active-session
+                # metadata (e.g. local-fallback), so recovery still declines.
+                if (
+                    experiment_id
+                    or experiment_run_id
+                    or metadata.get("mode") in ("session_api", "hybrid")
+                ):
                     mapping = self.client.session_bridge.create_session_mapping(
                         session_id=session_id,
                         experiment_id=str(experiment_id) if experiment_id else None,
