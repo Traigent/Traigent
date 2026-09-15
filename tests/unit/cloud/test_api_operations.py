@@ -1190,8 +1190,8 @@ class TestParseSessionResponse:
         assert result.tenant_id == "tenant_acme"
 
     @pytest.mark.asyncio
-    async def test_parse_response_with_fallback_ids(self):
-        """Test parsing response with missing experiment IDs falls back to session ID."""
+    async def test_parse_response_with_missing_ids_stays_none(self):
+        """Missing experiment IDs stay None -- never substituted with session_id."""
         mock_response = AsyncMock()
         mock_response.json = AsyncMock(
             return_value={
@@ -1203,8 +1203,8 @@ class TestParseSessionResponse:
             mock_response
         )
         assert session_id == "session_456"
-        assert exp_id == "session_456"
-        assert run_id == "session_456"
+        assert exp_id is None
+        assert run_id is None
 
 
 class TestUpdateConfigRunStatusSuccess:

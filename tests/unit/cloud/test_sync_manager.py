@@ -966,10 +966,10 @@ class TestSyncManager:
         assert result["project_id"] == "project-9"
         assert result["tenant_id"] == "tenant-7"
 
-    def test_sync_create_session_falls_back_to_session_id(
+    def test_sync_create_session_missing_ids_stay_none(
         self, sync_manager: SyncManager
     ) -> None:
-        """Missing experiment ids fall back to the session_id."""
+        """Missing experiment ids stay None -- never substituted with session_id."""
         sync_manager._session.post.return_value = backend_response(
             status_code=201, payload={"session_id": "sess-only"}
         )
@@ -978,8 +978,8 @@ class TestSyncManager:
 
         assert result["success"] is True
         assert result["session_id"] == "sess-only"
-        assert result["experiment_id"] == "sess-only"
-        assert result["experiment_run_id"] == "sess-only"
+        assert result["experiment_id"] is None
+        assert result["experiment_run_id"] is None
 
     def test_sync_create_session_http_failure(self, sync_manager: SyncManager) -> None:
         """A non-2xx create response is a structured failure."""
@@ -1436,7 +1436,7 @@ class TestSyncManager:
             result = sync_manager.sync_session_to_cloud("test_session_123")
 
         assert result["status"] == "success"
-        assert result["cloud_experiment_id"] == "session-id"
+        assert result["cloud_experiment_id"] is None
         assert "/None" not in result["cloud_url"]
         assert result["cloud_url"] == (
             "https://portal.traigent.ai/experiments/view/session-id"
