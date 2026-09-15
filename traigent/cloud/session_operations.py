@@ -1218,28 +1218,31 @@ class SessionOperations:
                 metadata = dict(getattr(active_session, "metadata", {}) or {})
                 experiment_id = metadata.get("experiment_id")
                 experiment_run_id = metadata.get("experiment_run_id")
-                # An existing active session is proof a connected session was
-                # created — rebuild the mapping regardless of whether either
-                # id is present; nullable ids are not a reason to skip
-                # recovery (G1 §1, addendum F6).
-                mapping = self.client.session_bridge.create_session_mapping(
-                    session_id=session_id,
-                    experiment_id=str(experiment_id) if experiment_id else None,
-                    experiment_run_id=(
-                        str(experiment_run_id) if experiment_run_id else None
-                    ),
-                    function_name=str(
-                        getattr(active_session, "function_name", "unknown_function")
-                    ),
-                    configuration_space=dict(
-                        getattr(active_session, "configuration_space", {}) or {}
-                    ),
-                    objectives=list(getattr(active_session, "objectives", []) or []),
-                )
-                logger.info(
-                    "Recovered session mapping for %s from active session metadata",
-                    session_id,
-                )
+                # Rebuild with nullable ids as soon as EITHER is present --
+                # requiring both was the bug (G1 §1, addendum F6). Neither
+                # present is unchanged: indistinguishable from stale/bogus
+                # active-session metadata, so recovery still declines.
+                if experiment_id or experiment_run_id:
+                    mapping = self.client.session_bridge.create_session_mapping(
+                        session_id=session_id,
+                        experiment_id=str(experiment_id) if experiment_id else None,
+                        experiment_run_id=(
+                            str(experiment_run_id) if experiment_run_id else None
+                        ),
+                        function_name=str(
+                            getattr(active_session, "function_name", "unknown_function")
+                        ),
+                        configuration_space=dict(
+                            getattr(active_session, "configuration_space", {}) or {}
+                        ),
+                        objectives=list(
+                            getattr(active_session, "objectives", []) or []
+                        ),
+                    )
+                    logger.info(
+                        "Recovered session mapping for %s from active session metadata",
+                        session_id,
+                    )
 
         # Try to finalize via backend API endpoint (POST /sessions/{id}/finalize).
         # backend_payload is dict on 2xx (possibly empty if the backend gave us
