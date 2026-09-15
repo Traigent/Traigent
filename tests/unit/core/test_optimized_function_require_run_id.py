@@ -22,7 +22,12 @@ from traigent.api.types import TrialResult
 from traigent.cloud.client import RunIdMissingError, SessionContractError
 from traigent.config.types import TraigentConfig
 from traigent.core.optimized_function import OptimizedFunction
-from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationExample, EvaluationResult
+from traigent.evaluators.base import (
+    BaseEvaluator,
+    Dataset,
+    EvaluationExample,
+    EvaluationResult,
+)
 from traigent.optimizers.base import BaseOptimizer
 
 
@@ -191,7 +196,9 @@ class TestRequireRunIdTriStateMatrix:
             (None, None, False),
         ],
     )
-    def test_effective_flag(self, monkeypatch, option_value, env_value, expected) -> None:
+    def test_effective_flag(
+        self, monkeypatch, option_value, env_value, expected
+    ) -> None:
         if env_value is None:
             monkeypatch.delenv("TRAIGENT_REQUIRE_RUN_ID", raising=False)
         else:
@@ -202,8 +209,7 @@ class TestRequireRunIdTriStateMatrix:
         orchestrator = _build_orchestrator(optimized_func)
 
         assert (
-            orchestrator.backend_session_manager._effective_require_run_id()
-            is expected
+            orchestrator.backend_session_manager._effective_require_run_id() is expected
         )
 
 
