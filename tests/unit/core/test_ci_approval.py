@@ -105,6 +105,25 @@ class TestCheckEnvVarApproval:
         ):
             assert _check_env_var_approval() is True
 
+    def test_env_approval_logs_identifier_not_approver(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """#2270: the env-var path must not log the raw approver principal."""
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "TRAIGENT_RUN_APPROVED": "1",
+                    "TRAIGENT_APPROVED_BY": "alice@example.com",
+                },
+            ),
+            caplog.at_level("INFO", logger="traigent.core.ci_approval"),
+        ):
+            assert _check_env_var_approval() is True
+
+        assert "approver_id=env-approver:" in caplog.text
+        assert "alice" not in caplog.text
+
     def test_approved_with_default_approver(self) -> None:
         env = {"TRAIGENT_RUN_APPROVED": "1"}
         # Remove TRAIGENT_APPROVED_BY if present
