@@ -40,7 +40,9 @@ def test_checkout_uses_only_the_exact_trusted_event_sha() -> None:
     steps = workflow["jobs"]["sonarqube-quality-gate"]["steps"]
 
     checkouts = [
-        step for step in steps if str(step.get("uses", "")).startswith("actions/checkout@")
+        step
+        for step in steps
+        if str(step.get("uses", "")).startswith("actions/checkout@")
     ]
     assert len(checkouts) == 1
     # Pinned to a full commit SHA, not a movable tag (SHA-pinned per supply-chain policy).
