@@ -12,6 +12,9 @@ on:
       - "tests/integration/backend/**"
       - "tests/conftest.py"
       - ".github/workflows/live-contract.yml"
+      - ".github/live-contract/compose.optuna-pool.override.yml"
+      - "scripts/ci/live_contract_fill_optuna_pool.sh"
+      - "scripts/ci/test_live_contract_fill_optuna_pool.sh"
 
 permissions:
   contents: read
@@ -137,6 +140,14 @@ jobs:
         working-directory: ${{ env.SDK_DIR }}
         run: uv lock --check
 
+      # Docker-free: exercises argument construction and failure handling for
+      # the Optuna pool-fill script (below) with a stubbed `docker`, so a
+      # regression here fails fast instead of only surfacing as a mystifying
+      # 503 later in this same job.
+      - name: Self-test the Optuna pool-fill script
+        working-directory: ${{ env.SDK_DIR }}
+        run: scripts/ci/test_live_contract_fill_optuna_pool.sh
+
       - name: Prepare compose environment
         run: |
           set -euo pipefail
@@ -158,12 +169,50 @@ jobs:
           write_masked_env TRAIGENT_MASTER_KEY
           write_masked_env TRAIGENT_ID_SECRET
 
+      # Generated before the stack starts so compose.optuna-pool.override.yml
+      # can inject them into the backend/postgres containers (see that file
+      # and scripts/ci/live_contract_fill_optuna_pool.sh). Filling the pool
+      # here, rather than leaving the fresh dev database unmapped, is what
+      # this whole workflow change is for -- Traigent#2243.
+      - name: Provision Optuna pool-fill credentials
+        working-directory: ${{ env.SDK_DIR }}
+        run: |
+          set -euo pipefail
+
+          write_masked_env() {
+            local name="$1"
+            local value
+            value="$(openssl rand -hex 32)"
+            if [ -z "$value" ]; then
+              echo "::error::openssl produced an empty value for ${name}." >&2
+              return 1
+            fi
+            printf '::add-mask::%s\n' "$value"
+            printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
+          }
+
+          # One maintenance password, reused as the Postgres superuser
+          # password, the backend's MIGRATION_DATABASE_URL, and the Optuna
+          # maintenance credential reference -- all three must authenticate
+          # as the same principal. See compose.optuna-pool.override.yml.
+          write_masked_env TRAIGENT_OPTUNA_CI_MAINTENANCE_PASSWORD
+          write_masked_env TRAIGENT_OPTUNA_CI_SLOT_0000_PASSWORD
+
+          # Not a secret -- the login-role name Postgres will actually carry
+          # -- but it must equal what the pool filler derives from
+          # (--name-prefix, slot index), or the runtime credential-split
+          # check fails the slot. slot-username is the one formula both
+          # sides use; see live_contract_fill_optuna_pool.sh.
+          slot_username="$(scripts/ci/live_contract_fill_optuna_pool.sh slot-username 0)"
+          printf 'TRAIGENT_OPTUNA_CI_SLOT_0000_USERNAME=%s\n' "$slot_username" >> "$GITHUB_ENV"
+
       - name: Start dockerized backend
         working-directory: ${{ env.BACKEND_DIR }}
         run: |
           docker compose \
             -p "$COMPOSE_PROJECT_NAME" \
             -f docker/docker-compose.dev.yml \
+            -f "$SDK_DIR/.github/live-contract/compose.optuna-pool.override.yml" \
             up -d --wait postgres redis backend
 
       - name: Poll backend health
@@ -178,8 +227,19 @@ jobs:
           docker compose \
             -p "$COMPOSE_PROJECT_NAME" \
             -f "$BACKEND_DIR/docker/docker-compose.dev.yml" \
+            -f "$SDK_DIR/.github/live-contract/compose.optuna-pool.override.yml" \
             ps
           exit 1
+
+      # Fills optuna_runtime_slots (TraigentBackend#3152/#3160) BEFORE any
+      # session create, so the project's lazy claim
+      # (StorageControlPlane.active_mapping) finds a plane instead of
+      # 503-ing typed_storage_mapping_unavailable (#3131, Traigent#2243).
+      # Must run before "Mint live-contract API key" -- everything after
+      # that step creates typed sessions/experiments.
+      - name: Fill Optuna runtime slot pool
+        working-directory: ${{ env.SDK_DIR }}
+        run: scripts/ci/live_contract_fill_optuna_pool.sh
 
       - name: Mint live-contract API key
         working-directory: ${{ env.BACKEND_DIR }}
@@ -192,7 +252,8 @@ jobs:
           # delete the file.
           compose() {
             docker compose -p "$COMPOSE_PROJECT_NAME" \
-              -f docker/docker-compose.dev.yml "$@"
+              -f docker/docker-compose.dev.yml \
+              -f "$SDK_DIR/.github/live-contract/compose.optuna-pool.override.yml" "$@"
           }
           compose exec -T backend python scripts/ci/mint_ci_api_key.py \
             --out /tmp/ci_api_key
@@ -267,6 +328,7 @@ jobs:
           docker compose \
             -p "$COMPOSE_PROJECT_NAME" \
             -f docker/docker-compose.dev.yml \
+            -f "$SDK_DIR/.github/live-contract/compose.optuna-pool.override.yml" \
             logs --tail=300 backend
 
       - name: Stop dockerized backend
@@ -276,4 +338,5 @@ jobs:
           docker compose \
             -p "$COMPOSE_PROJECT_NAME" \
             -f docker/docker-compose.dev.yml \
+            -f "$SDK_DIR/.github/live-contract/compose.optuna-pool.override.yml" \
             down -v --remove-orphans

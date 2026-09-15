@@ -1,0 +1,50 @@
+# Ephemeral, lane-scoped override for the sdk-backend-live-contract job.
+#
+# TraigentBackend#3131 makes typed session creation fail closed with 503
+# typed_storage_mapping_unavailable when a project has no Optuna storage
+# mapping, and a fresh docker/docker-compose.dev.yml database never has one
+# (Traigent#2243). This layers just enough onto the base dev compose file for
+# scripts/ci/live_contract_fill_optuna_pool.sh to fill the runtime-slot pool
+# that project creation lazily claims from, using the backend's own
+# scripts/maintenance/provision_optuna_project_storage.py -- never a change to
+# the 503 guard itself.
+#
+# Applied ONLY by this workflow (`docker compose -f docker-compose.dev.yml -f
+# this file ...`); it is not a committed backend default and must never be
+# used outside this ephemeral, single-run compose project.
+services:
+  postgres:
+    environment:
+      # Reused verbatim as the backend's MIGRATION_DATABASE_URL password and
+      # as the Optuna maintenance credential below -- one generated secret,
+      # three places it must match, or the pool filler's DDL connection
+      # cannot authenticate. See the "Provision Optuna pool-fill credentials"
+      # step in live-contract.yml.
+      POSTGRES_PASSWORD: ${TRAIGENT_OPTUNA_CI_MAINTENANCE_PASSWORD:?TRAIGENT_OPTUNA_CI_MAINTENANCE_PASSWORD must be set}
+
+  backend:
+    environment:
+      MIGRATION_DATABASE_URL: postgresql://traigent:${TRAIGENT_OPTUNA_CI_MAINTENANCE_PASSWORD:?TRAIGENT_OPTUNA_CI_MAINTENANCE_PASSWORD must be set}@postgres:5432/traigent
+      # The dockerized backend self-identifies as production despite
+      # ENVIRONMENT=development: EnvironmentDetector.is_production() also
+      # trips on the container's /app workdir and on the DATABASE_URL /
+      # REDIS_URL / SECRET_KEY signal bundle the dev compose file always sets
+      # (src/security/environment_detector.py). credential_ref_adapter.py
+      # therefore refuses "env:" credential references there unless this is
+      # set -- deliberately only in this ephemeral override, never as a
+      # backend default.
+      TRAIGENT_OPTUNA_ALLOW_ENV_CREDENTIAL_REFS: "true"
+      # Maintenance principal the pool filler uses for schema/role DDL and for
+      # Optuna's own table initialization. Same value as POSTGRES_PASSWORD
+      # above -- this is the Postgres superuser the dev stack already runs
+      # migrations as (MIGRATION_DATABASE_URL), reused rather than minted
+      # again, since a second superuser-equivalent principal would buy nothing.
+      TRAIGENT_OPTUNA_CI_MAINTENANCE_USERNAME: traigent
+      TRAIGENT_OPTUNA_CI_MAINTENANCE_PASSWORD: ${TRAIGENT_OPTUNA_CI_MAINTENANCE_PASSWORD:?TRAIGENT_OPTUNA_CI_MAINTENANCE_PASSWORD must be set}
+      # Slot 0's runtime login-role credential. The username MUST equal the
+      # login role name provision_optuna_project_storage.py derives from
+      # (--name-prefix, slot index) -- scripts/ci/live_contract_fill_optuna_pool.sh's
+      # slot-username subcommand is the single formula both this value and
+      # the filler's --name-prefix are derived from.
+      TRAIGENT_OPTUNA_CI_SLOT_0000_USERNAME: ${TRAIGENT_OPTUNA_CI_SLOT_0000_USERNAME:?TRAIGENT_OPTUNA_CI_SLOT_0000_USERNAME must be set}
+      TRAIGENT_OPTUNA_CI_SLOT_0000_PASSWORD: ${TRAIGENT_OPTUNA_CI_SLOT_0000_PASSWORD:?TRAIGENT_OPTUNA_CI_SLOT_0000_PASSWORD must be set}
