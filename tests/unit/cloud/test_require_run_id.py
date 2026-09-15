@@ -345,6 +345,66 @@ class TestFinalizeSessionAddressed:
 
         mock_session.post.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_recovers_connected_session_with_both_ids_none_via_mode_marker(
+        self, client: BackendIntegratedClient
+    ) -> None:
+        """F3 (G1 v1.0.1 (g)): a connected session created via the backend
+        session-create API can legitimately have BOTH experiment_id and
+        experiment_run_id None (metadata "mode": "session_api"/"hybrid" is
+        the backend-created marker). Losing the bridge mapping must still
+        recover and finalize session-addressed -- requiring a truthy id
+        dropped a session the backend actually created, making zero
+        finalize calls for it (addendum F10)."""
+        session_id = "sess-connected-no-ids"
+        assert client.session_bridge.get_session_mapping(session_id) is None
+        active_session = SimpleNamespace(
+            metadata={"mode": "session_api"},  # no experiment_id/experiment_run_id
+            function_name="f",
+            configuration_space={},
+            objectives=["accuracy"],
+        )
+        with client._active_sessions_lock:
+            client._active_sessions[session_id] = active_session
+        mock_session = self._mock_aiohttp_session()
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            await client._session_ops.finalize_session(session_id)
+
+        mock_session.post.assert_called_once()
+        call_args = mock_session.post.call_args
+        assert f"/sessions/{session_id}/finalize" in call_args[0][0]
+        assert "experiment_run_id" not in call_args[1]["json"]
+        recovered = client.session_bridge.get_session_mapping(session_id)
+        assert recovered is not None
+        assert recovered.experiment_id is None
+        assert recovered.experiment_run_id is None
+
+    @pytest.mark.asyncio
+    async def test_active_session_without_ids_or_mode_marker_makes_no_finalize_call(
+        self, client: BackendIntegratedClient
+    ) -> None:
+        """A local-fallback-shaped active session (no ids, no connected-
+        session mode marker) must still decline recovery and make zero
+        finalize calls -- this is what distinguishes it from the connected-
+        but-id-less case above."""
+        session_id = "sess-local-fallback-active"
+        assert client.session_bridge.get_session_mapping(session_id) is None
+        active_session = SimpleNamespace(
+            metadata={},
+            function_name="f",
+            configuration_space={},
+            objectives=["accuracy"],
+        )
+        with client._active_sessions_lock:
+            client._active_sessions[session_id] = active_session
+        mock_session = self._mock_aiohttp_session()
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            await client._session_ops.finalize_session(session_id)
+
+        mock_session.post.assert_not_called()
+
 
 class TestSyncFinalizeWireOmitsKey:
     @pytest.fixture
