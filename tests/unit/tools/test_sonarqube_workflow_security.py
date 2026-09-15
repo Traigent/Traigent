@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from pathlib import Path
 from typing import Any
 
@@ -44,8 +46,12 @@ def test_checkout_uses_only_the_exact_trusted_event_sha() -> None:
     workflow = _workflow()
     steps = workflow["jobs"]["sonarqube-quality-gate"]["steps"]
 
-    checkouts = [step for step in steps if step.get("uses") == "actions/checkout@v7"]
+    checkouts = [
+        step for step in steps if str(step.get("uses", "")).startswith("actions/checkout@")
+    ]
     assert len(checkouts) == 1
+    # Pinned to a full commit SHA, not a movable tag (SHA-pinned per supply-chain policy).
+    assert re.fullmatch(r"actions/checkout@[0-9a-f]{40}", checkouts[0]["uses"])
     trusted_checkout = checkouts[0]
     assert trusted_checkout["name"] == "Checkout trusted event ref"
     assert "if" not in trusted_checkout
