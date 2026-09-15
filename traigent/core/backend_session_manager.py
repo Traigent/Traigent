@@ -1623,9 +1623,7 @@ class BackendSessionManager:
                 # check (G1 §1, addendum F2/F3).
                 from traigent.cloud.client import RunIdMissingError
 
-                reason = (
-                    result.failure_reason.value if result.failure_reason else None
-                )
+                reason = result.failure_reason.value if result.failure_reason else None
                 raise RunIdMissingError(reason=reason)
             session_id = self.handle_session_creation_result(
                 result,

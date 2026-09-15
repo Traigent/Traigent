@@ -896,9 +896,7 @@ class ApiOperations:
         # normalize each independently and leave it None rather than fabricate
         # an id the backend never minted.
         experiment_id = self._optional_context_id(metadata.get("experiment_id"))
-        experiment_run_id = self._optional_context_id(
-            metadata.get("experiment_run_id")
-        )
+        experiment_run_id = self._optional_context_id(metadata.get("experiment_run_id"))
         missing_fields = [
             name
             for name, value in (

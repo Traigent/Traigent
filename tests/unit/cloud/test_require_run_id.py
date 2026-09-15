@@ -177,7 +177,9 @@ class TestIngressNormalizationSyncManager:
         assert len(warnings) == 1
         assert "sess-1" not in warnings[0].getMessage()
 
-    def test_both_ids_present_no_warning(self, sync_manager: SyncManager, caplog) -> None:
+    def test_both_ids_present_no_warning(
+        self, sync_manager: SyncManager, caplog
+    ) -> None:
         sync_manager._session.post.return_value = _backend_response(
             {
                 "session_id": "sess-2",
@@ -355,7 +357,9 @@ class TestSyncFinalizeWireOmitsKey:
         manager._session = MagicMock()
         return manager
 
-    def test_finalize_with_none_run_id_omits_key(self, sync_manager: SyncManager) -> None:
+    def test_finalize_with_none_run_id_omits_key(
+        self, sync_manager: SyncManager
+    ) -> None:
         sync_manager._session.post.return_value = _backend_response({}, status_code=200)
 
         sync_manager._sync_finalize_session("sess-1", None)
@@ -581,7 +585,9 @@ class TestRequireRunIdBackendSessionManager:
 
         assert session_ctx.session_id == "sess-ok"
 
-    def test_option_unset_defers_to_env_true(self, traigent_config, monkeypatch) -> None:
+    def test_option_unset_defers_to_env_true(
+        self, traigent_config, monkeypatch
+    ) -> None:
         """require_run_id=None (not supplied) falls back to the env flag."""
         monkeypatch.setenv("TRAIGENT_REQUIRE_RUN_ID", "true")
         client = Mock()
