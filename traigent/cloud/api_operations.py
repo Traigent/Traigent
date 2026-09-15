@@ -123,8 +123,8 @@ class TraigentSessionApiResult(tuple):
     def __new__(
         cls,
         session_id: str,
-        experiment_id: str,
-        experiment_run_id: str,
+        experiment_id: str | None,
+        experiment_run_id: str | None,
         *,
         project_id: str | None = None,
         tenant_id: str | None = None,
@@ -892,8 +892,27 @@ class ApiOperations:
         if not isinstance(metadata, dict):
             metadata = {}
         session_id = result.get("session_id")
-        experiment_id = metadata.get("experiment_id", session_id)
-        experiment_run_id = metadata.get("experiment_run_id", session_id)
+        # Never substitute session_id for a missing authoritative id (G1 §1):
+        # normalize each independently and leave it None rather than fabricate
+        # an id the backend never minted.
+        experiment_id = self._optional_context_id(metadata.get("experiment_id"))
+        experiment_run_id = self._optional_context_id(
+            metadata.get("experiment_run_id")
+        )
+        missing_fields = [
+            name
+            for name, value in (
+                ("experiment_id", experiment_id),
+                ("experiment_run_id", experiment_run_id),
+            )
+            if value is None
+        ]
+        if missing_fields:
+            logger.warning(
+                "Backend session-create response is missing %s; leaving "
+                "absent rather than substituting session_id.",
+                " and ".join(missing_fields),
+            )
         project_id = self._optional_context_id(
             result.get("project_id") or metadata.get("project_id")
         )

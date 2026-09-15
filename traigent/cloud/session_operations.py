@@ -1218,25 +1218,28 @@ class SessionOperations:
                 metadata = dict(getattr(active_session, "metadata", {}) or {})
                 experiment_id = metadata.get("experiment_id")
                 experiment_run_id = metadata.get("experiment_run_id")
-                if experiment_id and experiment_run_id:
-                    mapping = self.client.session_bridge.create_session_mapping(
-                        session_id=session_id,
-                        experiment_id=str(experiment_id),
-                        experiment_run_id=str(experiment_run_id),
-                        function_name=str(
-                            getattr(active_session, "function_name", "unknown_function")
-                        ),
-                        configuration_space=dict(
-                            getattr(active_session, "configuration_space", {}) or {}
-                        ),
-                        objectives=list(
-                            getattr(active_session, "objectives", []) or []
-                        ),
-                    )
-                    logger.info(
-                        "Recovered session mapping for %s from active session metadata",
-                        session_id,
-                    )
+                # An existing active session is proof a connected session was
+                # created — rebuild the mapping regardless of whether either
+                # id is present; nullable ids are not a reason to skip
+                # recovery (G1 §1, addendum F6).
+                mapping = self.client.session_bridge.create_session_mapping(
+                    session_id=session_id,
+                    experiment_id=str(experiment_id) if experiment_id else None,
+                    experiment_run_id=(
+                        str(experiment_run_id) if experiment_run_id else None
+                    ),
+                    function_name=str(
+                        getattr(active_session, "function_name", "unknown_function")
+                    ),
+                    configuration_space=dict(
+                        getattr(active_session, "configuration_space", {}) or {}
+                    ),
+                    objectives=list(getattr(active_session, "objectives", []) or []),
+                )
+                logger.info(
+                    "Recovered session mapping for %s from active session metadata",
+                    session_id,
+                )
 
         # Try to finalize via backend API endpoint (POST /sessions/{id}/finalize).
         # backend_payload is dict on 2xx (possibly empty if the backend gave us
@@ -1474,7 +1477,7 @@ class SessionOperations:
     async def _finalize_session_via_api(
         self,
         session_id: str,
-        experiment_run_id: str,
+        experiment_run_id: str | None,
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
@@ -1520,8 +1523,9 @@ class SessionOperations:
 
                 finalize_body: dict[str, Any] = {
                     "reason": "sdk_explicit_finalization",
-                    "experiment_run_id": experiment_run_id,
                 }
+                if experiment_run_id is not None:
+                    finalize_body["experiment_run_id"] = experiment_run_id
                 if certified_selection is not None:
                     # Phase 8: the client-attested, content-free certified-
                     # selection report — TOP-LEVEL key only (the backend

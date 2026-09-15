@@ -24,7 +24,7 @@ from traigent.api.types import (
     TrialResult,
     TrialStatus,
 )
-from traigent.config.types import ExecutionIntent, TraigentConfig
+from traigent.config.types import ExecutionIntent, TraigentConfig, _read_bool_env
 
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
@@ -647,6 +647,7 @@ class BackendSessionManager:
         optimization_id: str,
         optimization_status: OptimizationStatus,
         smart_pruning: dict[str, Any] | None = None,
+        require_run_id: bool | None = None,
     ) -> None:
         """Initialize backend session manager.
 
@@ -658,6 +659,11 @@ class BackendSessionManager:
             optimizer: Optimizer instance (for objectives and config_space)
             optimization_id: Unique optimization run identifier
             optimization_status: Current optimization status
+            require_run_id: Tri-state override for whether session creation
+                must fail closed when no authoritative experiment_run_id is
+                available. ``None`` means "not supplied" — the effective
+                value then falls back to ``TRAIGENT_REQUIRE_RUN_ID`` at
+                session-create time (G1 §1).
         """
         self._backend_client: BackendIntegratedClient | None = backend_client
         self._traigent_config = traigent_config
@@ -667,6 +673,7 @@ class BackendSessionManager:
         self._optimization_id = optimization_id
         self._optimization_status = optimization_status
         self._smart_pruning = dict(smart_pruning) if smart_pruning else None
+        self._require_run_id_option = require_run_id
 
         # Run-scoped circuit breaker — once disabled, all backend writes skip
         self._no_egress = backend_egress_disabled(traigent_config)
@@ -812,6 +819,52 @@ class BackendSessionManager:
             return True
         config = getattr(self, "_traigent_config", None)
         return bool(config is not None and backend_egress_disabled(config))
+
+    def _effective_require_run_id(self) -> bool:
+        """Resolve the tri-state require_run_id option against the env flag.
+
+        An explicit option (True or False) always wins; ``None`` (not
+        supplied) defers to ``TRAIGENT_REQUIRE_RUN_ID``, read fresh each call
+        rather than cached (G1 §1, addendum F9).
+        """
+        if self._require_run_id_option is not None:
+            return self._require_run_id_option
+        return _read_bool_env("TRAIGENT_REQUIRE_RUN_ID")
+
+    def get_recorded_experiment_run_id(self, session_id: str | None) -> str | None:
+        """Return the authoritative experiment_run_id recorded for a session.
+
+        ``None`` when there is no session, no mapping, or the mapping's run
+        id is itself absent.
+        """
+        if session_id is None:
+            return None
+        get_mapping = getattr(self._backend_client, "get_session_mapping", None)
+        if not callable(get_mapping):
+            return None
+        try:
+            mapping = get_mapping(session_id)
+        except Exception:
+            return None
+        if mapping is None:
+            return None
+        return getattr(mapping, "experiment_run_id", None)
+
+    def ensure_run_id_recorded(self, session_id: str | None) -> None:
+        """Fail closed if require_run_id is set but no run id was recorded.
+
+        Called immediately before the trial loop starts, as a guard on top
+        of the create_session-time enforcement (which already raises before
+        this point is ever reached under the same effective flag). Never
+        logs — create_session already emitted whatever warning the create
+        response warranted.
+        """
+        if not self._effective_require_run_id():
+            return
+        if self.get_recorded_experiment_run_id(session_id) is None:
+            from traigent.cloud.client import RunIdMissingError
+
+            raise RunIdMissingError()
 
     def _local_storage(self) -> LocalStorageManager | None:
         """Own local-storage handle, independent of any backend client (#1939).
@@ -1404,6 +1457,15 @@ class BackendSessionManager:
         function_slug = function_descriptor.slug
 
         if self._egress_disabled():
+            # A no-egress/offline run never contacts the backend, so it can
+            # never mint an authoritative run id. Fail closed before any
+            # local session is created — never contact the network to check
+            # (G1 §1, addendum F3).
+            if self._effective_require_run_id():
+                from traigent.cloud.client import RunIdMissingError
+
+                raise RunIdMissingError(reason=SOURCE_OFFLINE)
+
             # #1939: offline/no-egress runs still persist a LOCAL session so
             # `traigent local list` sees them and `traigent sync` can upload
             # them later. Best-effort — a storage failure yields session_id
@@ -1553,6 +1615,18 @@ class BackendSessionManager:
                 task_type=task_type,
             )
             result = self.normalize_session_creation_result(raw_result)
+            if self._effective_require_run_id() and not result.backend_connected:
+                # Any local-fallback create (no key, unreachable, offline,
+                # session-create failure) yields no authoritative run id.
+                # Raise before handle_session_creation_result emits its own
+                # local-fallback warning — never contact the network to
+                # check (G1 §1, addendum F2/F3).
+                from traigent.cloud.client import RunIdMissingError
+
+                reason = (
+                    result.failure_reason.value if result.failure_reason else None
+                )
+                raise RunIdMissingError(reason=reason)
             session_id = self.handle_session_creation_result(
                 result,
                 governed_session=bool(promotion_policy or tvl_governance),
@@ -1587,6 +1661,17 @@ class BackendSessionManager:
                             session_id,
                             exc,
                         )
+
+                if self._effective_require_run_id() and (
+                    session_mapping is None
+                    or getattr(session_mapping, "experiment_run_id", None) is None
+                ):
+                    # Connected, but the backend minted no authoritative run
+                    # id: fail before the feature upload and before return
+                    # (G1 §1, addendum F2).
+                    from traigent.cloud.client import RunIdMissingError
+
+                    raise RunIdMissingError()
 
                 if session_mapping is not None:
                     self._upload_dataset_features(

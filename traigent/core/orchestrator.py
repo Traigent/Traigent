@@ -484,6 +484,7 @@ class OptimizationOrchestrator:
             optimization_id=self._optimization_id,
             optimization_status=self._status,
             smart_pruning=self._smart_pruning,
+            require_run_id=self.config.get("require_run_id"),
         )
 
         self.cache_policy_handler = CachePolicyHandler(
@@ -4494,6 +4495,7 @@ class OptimizationOrchestrator:
                 # still capping wasted LLM spend on a true hang.
                 grace = min(max(self.timeout * 0.25, 1.0), 300.0)
                 watchdog_deadline = self.timeout + grace
+                self.backend_session_manager.ensure_run_id_recorded(session_id)
                 try:
                     await asyncio.wait_for(
                         self._run_optimization_loop(
@@ -4520,6 +4522,7 @@ class OptimizationOrchestrator:
                         len(self._trials),
                     )
             else:
+                self.backend_session_manager.ensure_run_id_recorded(session_id)
                 await self._run_optimization_loop(
                     func, dataset, session_id, function_identifier
                 )
