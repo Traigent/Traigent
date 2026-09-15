@@ -17,10 +17,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent._version import get_version
-from traigent.cloud.models import (
-    DECLARED_DATASET_IDENTITY_METADATA_KEY,
-    declared_dataset_identity,
-)
 from traigent.api.types import (
     AgentConfiguration,
     OptimizationResult,
@@ -819,6 +815,10 @@ class BackendSessionManager:
         if getattr(self, "_dataset_unlinked_warned", False):
             return
         label = getattr(dataset, "name", None)
+        from traigent.cloud.models import (  # local: traigent.cloud is optional
+            declared_dataset_identity,
+        )
+
         if declared_dataset_identity(
             dataset_id, label if isinstance(label, str) else None
         ):
@@ -1682,6 +1682,11 @@ class BackendSessionManager:
             }
             # Persist the identity the live create would have declared (explicit
             # id, else a real label, else none) so `traigent sync` sends it.
+            from traigent.cloud.models import (  # local: traigent.cloud is optional
+                DECLARED_DATASET_IDENTITY_METADATA_KEY,
+                declared_dataset_identity,
+            )
+
             identity = declared_dataset_identity(dataset_id, evaluation_set_name)
             if identity:
                 metadata[DECLARED_DATASET_IDENTITY_METADATA_KEY] = identity
