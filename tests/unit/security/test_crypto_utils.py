@@ -309,8 +309,9 @@ class TestSecureFileManager:
         # lives only in this test's isolated tmp_path directory, so we can
         # assert SecureFileManager.read_secure_file rejects it below. 0o644
         # is the narrowest mode that still sets a group/other bit, which is
-        # exactly what the permission check inspects.
-        os.chmod(temp_path, 0o644)  # lgtm[py/overly-permissive-file] -- intentional insecure fixture, rejection asserted immediately below
+        # exactly what the permission check inspects. Intentional insecure
+        # fixture; rejection is asserted immediately below.
+        os.chmod(temp_path, 0o644)  # lgtm[py/overly-permissive-file]
 
         # Should raise security error
         with pytest.raises(PermissionError, match="File permissions too permissive"):
