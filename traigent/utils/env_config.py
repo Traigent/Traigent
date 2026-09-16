@@ -565,12 +565,16 @@ def is_untracked_fallback_allowed() -> bool:
 def is_seamless_no_targets_allowed() -> bool:
     """Return True when a seamless run with zero injectable targets may proceed.
 
-    Default is fail-closed (raise ``ConfigurationError`` before the first
-    trial). Set ``TRAIGENT_SEAMLESS_ALLOW_NO_TARGETS=true`` to restore the
-    previous warning-only behavior for the rare intentional case.
+    Default is fail-closed: a once-per-run structural check
+    (``SeamlessParameterProvider.assert_injectable``) raises
+    ``SeamlessNoInjectableTargetsError`` before the first optimization trial
+    is created, and the same check inside the per-call path
+    (``_seamless_transform_and_run`` / ``_seamless_fallback``) raises again as
+    defence in depth. Set ``TRAIGENT_ALLOW_SEAMLESS_NO_TARGETS=true`` to
+    restore the previous warning-only behavior for the rare intentional case.
     """
 
-    return is_truthy(os.environ.get("TRAIGENT_SEAMLESS_ALLOW_NO_TARGETS"))
+    return is_truthy(os.environ.get("TRAIGENT_ALLOW_SEAMLESS_NO_TARGETS"))
 
 
 def raise_if_backend_offline(operation: str = "This backend request") -> None:

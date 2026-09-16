@@ -24,7 +24,7 @@ Complete reference of environment variables recognized by the Traigent SDK.
 | `ENVIRONMENT`                      | `development`   | Execution environment. Set to `production` for production deployments.                              |
 | `JWT_SECRET_KEY`                   | (none)          | Secret key for JWT token validation. Required for production security features.                     |
 | `TRAIGENT_API_KEY`                | (none)          | API key for authenticated backend/portal tracking. Use with `execution_mode="hybrid"` for portal-visible runs. `execution_mode="cloud"` is reserved for future remote execution. |
-| `TRAIGENT_SEAMLESS_ALLOW_NO_TARGETS` | `false`      | `injection_mode="seamless"` raises `ConfigurationError` before running the function when a non-empty `configuration_space` has no injectable target (no local assignment or parameter named after a config key), instead of silently running the unvaried code. Set `true` to restore the previous warning-only behavior for the rare intentional case. |
+| `TRAIGENT_ALLOW_SEAMLESS_NO_TARGETS` | `false`      | `injection_mode="seamless"` raises `ConfigurationError` before running the function when a non-empty `configuration_space` has no injectable target (no local assignment or parameter named after a config key), instead of silently running the unvaried code. Set `true` to restore the previous warning-only behavior for the rare intentional case. |
 
 ## LLM Provider API Keys
 

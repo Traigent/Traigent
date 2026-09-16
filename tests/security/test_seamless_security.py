@@ -260,7 +260,13 @@ class TestSeamlessParameterProvider:
         assert len(provider._compiled_cache) > 0
 
     def test_error_fallback(self):
-        """Test that errors fall back to original function."""
+        """A function whose AST transform fails and has no parameter matching
+        the config key must fail closed (issue #2298, I2), not silently fall
+        back to running it unvaried. This is the exact hazard I2 fixes: the
+        pre-#2298 fallback path built the runtime shim unconditionally, so a
+        builtin like ``__import__`` (no parameter named "something") ran with
+        original values and was counted as a successful ``runtime_shims``
+        hit -- indistinguishable from a real injection."""
         provider = SeamlessParameterProvider()
 
         # Function that can't be transformed (no source available)
@@ -269,11 +275,9 @@ class TestSeamlessParameterProvider:
         config = {"something": "value"}
         wrapped = provider.inject_config(import_func, config)
 
-        # Should fall back to original function
-        result = wrapped("math")
-        import math
-
-        assert result == math
+        with pytest.raises(ConfigurationError, match="no injectable target"):
+            wrapped("math")
+        assert provider.get_stats()["runtime_shims"] == 0
 
 
 class TestInjectionAttackVectors:

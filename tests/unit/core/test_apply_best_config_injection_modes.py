@@ -104,25 +104,66 @@ def test_apply_best_config_seamless_literal_call_fails_closed(
     sample_optimization_result,
 ) -> None:
     """Issue #2298: a literal call-site argument (no local assignment or
-    matching parameter) is still not rewritten, but calling the function now
-    fails closed instead of silently applying nothing. This overturns the
-    previous "still literal" no-op behavior this test used to assert."""
+    matching parameter) means the configuration_space has zero injectable
+    targets. Decoration still succeeds (a function that is only ever called
+    directly is unaffected), but once a config is applied every call raises
+    -- on the first call and on every later one (C1: the unvaried function is
+    never cached) -- and the body never runs."""
+    from traigent.config.providers import SeamlessNoInjectableTargetsError
+
+    calls: list[str] = []
 
     @traigent.optimize(
         configuration_space={"model": ["gpt-3.5", "gpt-4"]},
         injection_mode="seamless",
     )
     def fn(prompt: str) -> str:
-        # The literal argument isn't rewritten; with no injectable target,
-        # this must raise rather than silently run "gpt-3.5" unconditionally.
+        calls.append(prompt)
         return DummyLLM(model="gpt-3.5").invoke(prompt)
 
     opt_fn: OptimizedFunction = fn  # type: ignore[assignment]
     opt_fn._optimization_results = sample_optimization_result
-
     opt_fn.apply_best_config()
 
-    from traigent.utils.exceptions import ConfigurationError
+    for _ in range(3):
+        with pytest.raises(
+            SeamlessNoInjectableTargetsError, match="no injectable target"
+        ):
+            fn("hi")
+    assert calls == []
 
-    with pytest.raises(ConfigurationError, match="no injectable target"):
-        fn("test")
+
+def test_optimize_seamless_literal_call_aborts_before_first_trial(
+    tmp_path, monkeypatch
+) -> None:
+    """Issue #2298 direction 1: with zero injectable targets the run aborts
+    before the first trial -- no trial is created and the body never runs."""
+    import json
+
+    from traigent.config.providers import SeamlessNoInjectableTargetsError
+
+    monkeypatch.chdir(tmp_path)  # dataset paths must sit under the working directory
+    dataset = tmp_path / "ds.jsonl"
+    dataset.write_text(
+        "\n".join(
+            json.dumps({"input": {"prompt": f"q{i}"}, "expected_output": "a"})
+            for i in range(3)
+        )
+        + "\n"
+    )
+    calls: list[str] = []
+
+    @traigent.optimize(
+        eval_dataset="ds.jsonl",
+        configuration_space={"model": ["gpt-3.5", "gpt-4"]},
+        objectives=["accuracy"],
+        injection_mode="seamless",
+        offline=True,
+    )
+    def fn(prompt: str) -> str:
+        calls.append(prompt)
+        return DummyLLM(model="gpt-3.5").invoke(prompt)
+
+    with pytest.raises(SeamlessNoInjectableTargetsError, match="no injectable target"):
+        fn.optimize_sync(algorithm="grid", max_trials=2)
+    assert calls == []

@@ -145,10 +145,9 @@ def _redact(message: str, source: Any) -> str:
 def validate_evaluation_contract(
     *,
     func: Callable[..., Any] | OptimizedFunction,
-    dataset: Dataset
-    | str
-    | os.PathLike[str]
-    | Sequence[dict[str, Any] | EvaluationExample],
+    dataset: (
+        Dataset | str | os.PathLike[str] | Sequence[dict[str, Any] | EvaluationExample]
+    ),
     scoring_function: Callable[..., Any] | None = None,
     metric_functions: dict[str, Callable[..., Any]] | None = None,
     objectives: Sequence[str] = ("accuracy",),
@@ -450,15 +449,9 @@ def _resolve_injection(
     config_param: str | None,
     config_dict: dict[str, Any],
 ) -> tuple[InjectionSummary, str, str | None, bool, list[ContractFinding]]:
-    from traigent.config.providers import (
-        SeamlessParameterProvider,
-        get_provider,
-    )
+    from traigent.config.providers import SeamlessParameterProvider, get_provider
     from traigent.config.types import InjectionMode
-    from traigent.utils.exceptions import (
-        ConfigurationError,
-        FeatureNotAvailableError,
-    )
+    from traigent.utils.exceptions import ConfigurationError, FeatureNotAvailableError
 
     findings: list[ContractFinding] = []
     config_keys = tuple(sorted(str(key) for key in config_dict.keys()))
@@ -641,6 +634,43 @@ def _resolve_injection(
                         location="injection",
                     )
                 )
+
+            if config_dict:
+                # I1: mirror the runtime fail-closed check (issue #2298) in
+                # the no-execution contract -- `seamless_injected_names`
+                # alone under-reports because a parameter-name match (the
+                # runtime-shim path) injects without an AST rewrite.
+                try:
+                    seamless_signature: inspect.Signature | None = inspect.signature(
+                        underlying_func
+                    )
+                except (TypeError, ValueError):
+                    seamless_signature = None
+                satisfied_params = _seamless_satisfied_param_names(
+                    seamless_signature, config_dict
+                )
+                if not seamless_names and not satisfied_params:
+                    findings.append(
+                        ContractFinding(
+                            code=ContractCode.SEAMLESS_NO_INJECTABLE_TARGET,
+                            severity="warning",
+                            message=(
+                                "Seamless injection has no injectable target for "
+                                f"configuration keys {config_keys_desc}: no local "
+                                "assignment or parameter named after a config key "
+                                "matched (a `**kwargs` catch-all does not count). "
+                                "At runtime this fails closed with "
+                                "SeamlessNoInjectableTargetsError before the first "
+                                "trial."
+                            ),
+                            action=(
+                                "Rename a local variable or a parameter to match a "
+                                "config key, or use injection_mode='parameter' or "
+                                "'context' instead."
+                            ),
+                            location="injection",
+                        )
+                    )
 
     summary = InjectionSummary(
         effective_mode=effective_mode,

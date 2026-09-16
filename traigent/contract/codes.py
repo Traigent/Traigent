@@ -46,6 +46,12 @@ class ContractCode(StrEnum):
     INJECTION_PROVIDER_SETUP_FAILED = "INJECTION_PROVIDER_SETUP_FAILED"
     #: Seamless (AST) injection cannot transform this function (best-effort).
     SEAMLESS_INJECTION_UNAVAILABLE = "SEAMLESS_INJECTION_UNAVAILABLE"
+    #: Seamless injection has no injectable target for a non-empty config:
+    #: no local assignment or matching parameter name (issue #2298). Fails
+    #: closed at runtime; reported here as a warning, matching the seamless
+    #: best-effort policy this contract already applies to
+    #: SEAMLESS_INJECTION_UNAVAILABLE.
+    SEAMLESS_NO_INJECTABLE_TARGET = "SEAMLESS_NO_INJECTABLE_TARGET"
 
     # --- Agent (target function) call shape -----------------------------------
     #: The target function's signature could not be introspected.
