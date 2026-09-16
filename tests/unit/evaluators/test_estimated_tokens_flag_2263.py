@@ -72,9 +72,7 @@ class TestCostPricingExcludesEstimatedTokens:
 
     def test_estimated_tokens_are_never_priced(self):
         metrics = ExampleMetrics(
-            tokens=TokenMetrics(
-                input_tokens=1000, output_tokens=500, estimated=True
-            )
+            tokens=TokenMetrics(input_tokens=1000, output_tokens=500, estimated=True)
         )
 
         _calculate_cost_for_metrics(metrics, "gpt-4o-mini", None, None)
@@ -87,9 +85,7 @@ class TestCostPricingExcludesEstimatedTokens:
     def test_non_estimated_tokens_still_price_normally(self):
         """Negative control: the guard must not swallow real pricing."""
         metrics = ExampleMetrics(
-            tokens=TokenMetrics(
-                input_tokens=1000, output_tokens=500, estimated=False
-            )
+            tokens=TokenMetrics(input_tokens=1000, output_tokens=500, estimated=False)
         )
 
         _calculate_cost_for_metrics(metrics, "gpt-4o-mini", None, None)
@@ -112,9 +108,7 @@ class TestFormatForBackendTokensEstimated:
         # Same shape ``_estimate_string_tokens`` produces: non-zero tokens,
         # zero cost, flagged estimated.
         return ExampleMetrics(
-            tokens=TokenMetrics(
-                input_tokens=2, output_tokens=1, estimated=True
-            ),
+            tokens=TokenMetrics(input_tokens=2, output_tokens=1, estimated=True),
             response=ResponseMetrics(response_time_ms=5),
             cost=CostMetrics(input_cost=0.0, output_cost=0.0),
             success=True,
