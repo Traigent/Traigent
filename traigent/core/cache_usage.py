@@ -237,7 +237,16 @@ def normalize_cache_usage(usage: dict[str, Any] | None) -> CacheUsage:
     # Without this, the same three numbers mean two different costs depending on
     # which provider sent them.
     if input_is_inclusive and input_tokens is not None and read_tokens:
-        input_tokens = max(0, input_tokens - read_tokens)
+        if read_tokens > input_tokens:
+            # Traigent#2166: an internally inconsistent payload -- the provider
+            # claims more cached tokens than it reported as total input. Clamping
+            # via max(0, ...) would report a confident zero-fresh result,
+            # indistinguishable from "every token was cached", and downstream
+            # cost code treats that 0 as authoritative. An honest unknown is
+            # the correct answer here, same as any other unreported field.
+            input_tokens = None
+        else:
+            input_tokens = input_tokens - read_tokens
 
     unreported = tuple(
         name

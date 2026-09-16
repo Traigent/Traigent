@@ -120,6 +120,38 @@ def test_gemini_input_is_unknown_when_only_the_legacy_unrecognized_key_is_sent()
     assert usage.billable_input_tokens is None
 
 
+def test_gemini_cache_read_exceeding_input_is_unknown_not_a_false_zero():
+    """Traigent#2166: an inclusive payload can claim MORE cached tokens than it
+    reported as total input -- internally inconsistent, but real providers send
+    junk. The old behaviour (``max(0, input - read)``) reported a confident
+    ``input_tokens == 0``, indistinguishable from "every token was cached", and
+    downstream cost code treated that 0 as authoritative. The honest answer is
+    unknown, same as any other unreported field.
+    """
+    usage = normalize_cache_usage(
+        {"promptTokenCount": 100, "cachedContentTokenCount": 150}
+    )
+
+    assert usage.provider_shape == "gemini"
+    assert usage.cache_read_tokens == 150
+    assert usage.input_tokens is None
+    assert usage.billable_input_tokens is None
+
+
+def test_openai_cache_read_exceeding_prompt_tokens_is_unknown_not_a_false_zero():
+    """Same impossible-pair guarantee on the OpenAI inclusive shape, not just
+    Gemini -- the fix is in the shared inclusive-subtraction path, not per-shape.
+    """
+    usage = normalize_cache_usage(
+        {"prompt_tokens": 10, "prompt_tokens_details": {"cached_tokens": 20}}
+    )
+
+    assert usage.provider_shape == "openai_chat"
+    assert usage.cache_read_tokens == 20
+    assert usage.input_tokens is None
+    assert usage.billable_input_tokens is None
+
+
 def test_gemini_cache_field_renamed_away_withholds_the_discount_not_the_total():
     """Traigent#2160 pre-merge review: what happens if Google renames (or drops)
     ONLY ``cachedContentTokenCount`` while ``promptTokenCount`` is unchanged --
@@ -172,12 +204,18 @@ def test_the_same_numbers_mean_the_same_cost_across_conventions():
 
 
 def test_subtraction_cannot_drive_fresh_input_negative():
-    """A provider reporting more cached than total is malformed, not negative input."""
+    """A provider reporting more cached than total is malformed, not negative
+    input. Traigent#2166: it is also not a confident zero -- that used to be
+    what this test asserted, and a confident zero is a false result, not a
+    safe one. See ``test_openai_cache_read_exceeding_prompt_tokens_is_unknown_
+    not_a_false_zero`` for the full rationale; this test just guards that the
+    subtraction path itself cannot produce a negative number instead.
+    """
     usage = normalize_cache_usage(
         {"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 500}}
     )
 
-    assert usage.input_tokens == 0
+    assert usage.input_tokens is None
 
 
 # ---------------------------------------------------------------------------
