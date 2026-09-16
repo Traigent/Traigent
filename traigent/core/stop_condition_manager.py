@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING
 
+from traigent.api.safety import CompoundSafetyConstraint, SafetyConstraint
 from traigent.api.types import TrialResult
 
 if TYPE_CHECKING:
@@ -21,6 +22,7 @@ from traigent.core.stop_conditions import (
     MaxTrialsStopCondition,
     MetricLimitStopCondition,
     PlateauAfterNStopCondition,
+    SafetyConstraintStopCondition,
     SemanticSaturationStopCondition,
     StopCondition,
 )
@@ -44,6 +46,9 @@ class StopConditionManager:
         metric_name: str | None,
         metric_include_pruned: bool,
         semantic_saturation: bool | dict[str, object] | None = None,
+        safety_constraints: (
+            Sequence[SafetyConstraint | CompoundSafetyConstraint] | None
+        ) = None,
     ) -> None:
         self._conditions: list[StopCondition] = []
 
@@ -92,6 +97,9 @@ class StopConditionManager:
                     objective_schema=objective_schema,
                 )
             )
+
+        if safety_constraints:
+            self._conditions.append(SafetyConstraintStopCondition(safety_constraints))
 
     @property
     def conditions(self) -> tuple[StopCondition, ...]:

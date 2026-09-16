@@ -13,6 +13,11 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from traigent.api.safety import (
+    CompoundSafetyConstraint,
+    SafetyConstraint,
+    SafetyValidator,
+)
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.config.feature_flags import _coerce_bool as _coerce_config_bool_value
 from traigent.core.objectives import ObjectiveSchema
@@ -1100,6 +1105,90 @@ class ExecutionBudgetStopCondition(StopCondition):
         return "Execution budget exhausted"
 
 
+def _iter_safety_constraint_leaves(
+    constraints: Iterable[SafetyConstraint | CompoundSafetyConstraint],
+) -> Iterable[SafetyConstraint]:
+    """Flatten ``SafetyConstraint``/``CompoundSafetyConstraint`` trees to leaves.
+
+    ``SafetyValidator`` records and validates against individual
+    ``SafetyConstraint`` objects (one metric each); a ``CompoundSafetyConstraint``
+    is only a combinator for the boolean per-trial ``__call__`` path used by
+    ``_constraints_post_eval``. For the statistical stop condition every leaf
+    metric is tracked and evaluated independently, so a compound "A and B"
+    still halts the run if either A or B is chance-constraint violated.
+    """
+    for constraint in constraints:
+        if isinstance(constraint, CompoundSafetyConstraint):
+            yield from _iter_safety_constraint_leaves(constraint.constraints)
+        else:
+            yield constraint
+
+
+class SafetyConstraintStopCondition(StopCondition):
+    """Stop when a statistical (chance-constraint) safety constraint is violated.
+
+    Wraps ``traigent.api.safety.SafetyValidator``: each newly COMPLETED trial's
+    ``(config, metrics)`` is recorded against every leaf ``SafetyConstraint``,
+    then validated with a Clopper-Pearson lower bound on the per-trial
+    compliance rate (see ``SafetyValidator.validate``). This is the SDK's
+    existing, already-tested statistical engine (traigent-smartopt#26/#48's
+    chance-constraint evaluator is the same Clopper-Pearson primitive, owned
+    upstream for the backend/FrontierScout path; the SDK trial lifecycle wires
+    its own already-built local implementation rather than adding a new
+    dependency).
+
+    Each constraint's own ``threshold.min_samples`` is the evidence floor: below
+    it, ``should_stop`` never fires for that constraint (an unproven low sample
+    count is not a violation). At or above the floor, a statistically
+    unsatisfied lower bound is treated as a genuine violation and halts the run
+    with ``stop_reason="safety_constraint"`` (see
+    ``StopConditionManager``/``OptimizationOrchestrator._should_stop`` reason
+    mapping). A non-violated constraint never halts the run.
+    """
+
+    reason = "safety_constraint"
+
+    def __init__(
+        self,
+        constraints: Sequence[SafetyConstraint | CompoundSafetyConstraint],
+    ) -> None:
+        self._constraints: tuple[SafetyConstraint, ...] = tuple(
+            _iter_safety_constraint_leaves(constraints)
+        )
+        self._validator = SafetyValidator()
+        self._last_index = 0
+
+    def reset(self) -> None:
+        self._validator.reset()
+        self._last_index = 0
+
+    def should_stop(self, trials: Iterable[TrialResult]) -> bool:
+        if not self._constraints:
+            return False
+
+        trial_seq = trials if isinstance(trials, Sequence) else list(trials)
+
+        new_trials = trial_seq[self._last_index :]
+        for trial in new_trials:
+            if trial.status != TrialStatus.COMPLETED:
+                continue
+            metrics = trial.metrics or {}
+            config = trial.config or {}
+            for constraint in self._constraints:
+                self._validator.record_result(constraint, config, metrics)
+        self._last_index = len(trial_seq)
+
+        for constraint in self._constraints:
+            result = self._validator.validate(constraint)
+            if result.sample_count < constraint.threshold.min_samples:
+                # Not enough evidence yet for this constraint - never a violation.
+                continue
+            if not result.satisfied:
+                return True
+
+        return False
+
+
 class HypervolumeConvergenceStopCondition(StopCondition):
     """Stop when hypervolume improvement falls below threshold.
 
@@ -1419,6 +1508,7 @@ __all__ = [
     "MaxTrialsStopCondition",
     "MetricLimitStopCondition",
     "PlateauAfterNStopCondition",
+    "SafetyConstraintStopCondition",
     "SemanticSaturationStopCondition",
     "StopCondition",
 ]

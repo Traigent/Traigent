@@ -71,9 +71,7 @@ from traigent.api.parameter_ranges import (
     normalize_configuration_space,
 )
 from traigent.api.types import AgentDefinition
-from traigent.cloud.smart_pruning import (
-    SmartPruningOptions,
-)
+from traigent.cloud.smart_pruning import SmartPruningOptions
 from traigent.cloud.smart_pruning import (
     normalize_smart_pruning_options as _normalize_smart_pruning_options,
 )
@@ -2497,9 +2495,17 @@ def optimize(  # NOSONAR(S107)
                 ... def my_func(): ...
 
         constraints: Optional validators receiving ``config`` and ``metrics``. Return
-            True to accept a configuration or False to skip it.
-        safety_constraints: Not yet implemented - raises ``NotImplementedError``.
-            See traigent-smartopt#26.
+            True to accept a configuration or False to skip it. These are hard,
+            per-trial constraints: a config that fails one is rejected outright.
+        safety_constraints: Soft, statistical safety constraints built from
+            ``traigent.api.safety`` metrics (e.g. ``hallucination_rate().below(0.1)``).
+            Unlike ``constraints``, each one is validated with a Clopper-Pearson
+            statistical bound accumulated across completed trials; once a
+            constraint's ``min_samples`` evidence floor is reached and it is
+            statistically violated, the run halts with
+            ``OptimizationResult.stop_reason == "safety_constraint"``. Below the
+            evidence floor, or when satisfied, the run continues normally. See
+            traigent-smartopt#26.
 
         TVL integration:
             tvl_spec: Path to a TVL spec. When provided (and ``tvl`` opts allow it)
@@ -2794,12 +2800,6 @@ def optimize(  # NOSONAR(S107)
     default_config = combined_settings["default_config"]
     constraints = combined_settings["constraints"]
     safety_constraints = combined_settings["safety_constraints"]
-    if safety_constraints:
-        raise NotImplementedError(
-            "safety_constraints are not yet implemented. "
-            "Statistical chance-constraints are on the roadmap — track progress at "
-            "https://github.com/Traigent/traigent-smartopt/issues/26"
-        )
 
     # Process ConfigSpace constraints
     config_space_constraints, config_space_var_names, _ = (

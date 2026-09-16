@@ -22,6 +22,7 @@ from traigent.api.agent_inference import (
     build_agent_configuration,
     extract_parameter_agents,
 )
+from traigent.api.safety import CompoundSafetyConstraint, SafetyConstraint
 from traigent.api.types import (
     AgentConfiguration,
     AgentDefinition,
@@ -398,6 +399,13 @@ class OptimizationOrchestrator:
         combined_constraints = list(raw_constraints or [])
         combined_constraints.extend(raw_safety_constraints or [])
         self._init_constraints(combined_constraints)
+        # Kept separately (not just via _constraints_post_eval) so
+        # _configure_stop_conditions can wire the statistical chance-constraint
+        # halt (SafetyConstraintStopCondition, stop_reason="safety_constraint")
+        # in addition to the per-trial reject/accept behavior above.
+        self._safety_constraints: list[SafetyConstraint | CompoundSafetyConstraint] = (
+            list(raw_safety_constraints or [])
+        )
 
         self.objectives, self.objective_schema = prepare_objectives(
             objectives, objective_schema
@@ -819,6 +827,7 @@ class OptimizationOrchestrator:
             metric_name=metric_name,
             metric_include_pruned=metric_include_pruned,
             semantic_saturation=self.config.get("semantic_saturation"),
+            safety_constraints=self._safety_constraints,
         )
 
         self._setup_convergence_condition()
@@ -4835,6 +4844,7 @@ class OptimizationOrchestrator:
                 "metric_limit": "metric_limit",
                 "convergence": "convergence",
                 "semantic_saturation": "semantic_saturation",
+                "safety_constraint": "safety_constraint",
             }
             mapped_reason = reason_mapping.get(reason, "condition")
             if (
