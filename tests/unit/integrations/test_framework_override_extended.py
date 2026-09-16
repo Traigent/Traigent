@@ -774,11 +774,13 @@ class TestActivateOverrides:
         assert not override_manager.is_override_registered("nonexistent.Framework")
         # The overall override system stays enabled despite the per-target failure
         assert override_manager.is_override_active() is True
-        # A debug message documenting the unavailable framework must be logged
-        mock_logger.debug.assert_called_once()
-        debug_msg = mock_logger.debug.call_args.args[0]
-        assert "nonexistent.Framework" in debug_msg
-        assert "not available" in debug_msg
+        # Issue #2299: a genuine import failure for a well-formed target must be
+        # loud (WARNING with the exception text), not a swallowed debug line.
+        warning_messages = [call.args[0] for call in mock_logger.warning.call_args_list]
+        assert any(
+            "nonexistent.Framework" in msg and "not available" in msg
+            for msg in warning_messages
+        )
 
     @patch("traigent.integrations.framework_override.logger")
     def test_activate_overrides_pydantic_error(self, mock_logger, override_manager):
