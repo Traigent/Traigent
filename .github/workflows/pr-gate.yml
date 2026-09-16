@@ -473,6 +473,31 @@ jobs:
           pytest tests/unit/mcp/test_local_server.py \
             tests/unit/analytics_mcp/test_observability_mcp_tools.py -q --tb=short
 
+  release-version-identity:
+    name: release-version-identity
+    # Rejects a PR that still declares pyproject.toml's version equal to an
+    # already-published release tag (vX.Y.Z) while changing the public API
+    # since that tag (#2265: PR #2226 added EvaluationOptions.task_type
+    # after v0.27.0 was tagged, but pyproject.toml still read 0.27.0, so a
+    # source install and the PyPI wheel reported the same version while
+    # exposing different public APIs). Deliberately carries no `needs:` or
+    # `if:` -- unlike the classifier-gated jobs above, this must run on every
+    # PR regardless of which paths changed, because the defect it catches is
+    # about a state (version identity vs. the public API), not about which
+    # files a given diff touched.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # full history + tags: the check diffs against the latest matching release tag
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Check release version identity
+        run: python3 scripts/ci/check_release_version_identity.py
+
   required-pr-gate:
     name: required-pr-gate
     # Single synthetic required check: the branch ruleset should require ONLY
@@ -483,7 +508,7 @@ jobs:
     # (in TraigentBackend's own classifier) that motivated tightening this.
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, schema-types, preflight, collection, unit, mcp-contract]
+    needs: [changes, schema-types, preflight, collection, unit, mcp-contract, release-version-identity]
     if: ${{ !cancelled() }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
