@@ -29,6 +29,15 @@ class CostEstimator:
     extraction from metrics/metadata for cost enforcement tracking.
     """
 
+    # Class-level fallback for instances constructed via ``__new__`` that
+    # skip ``__init__`` (e.g. test doubles that only stub ``_cost_enforcer``
+    # and patch ``estimate_optimization_cost``). ``check_cost_approval``
+    # reads this attribute directly when building its declined-approval
+    # message, outside of the patched ``estimate_optimization_cost`` path, so
+    # it must resolve to a sane default even when ``__init__`` never ran
+    # (issue #1750 follow-up).
+    _estimated_calls_per_example: int = 1
+
     def __init__(
         self,
         cost_enforcer: CostEnforcer,
