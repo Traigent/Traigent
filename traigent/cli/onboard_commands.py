@@ -19,17 +19,19 @@ from traigent.cli.auth_commands import TraigentAuthCLI
 
 console = Console()
 
-AgentName = Literal["claude", "cursor", "codex"]
+AgentName = Literal["claude", "cursor", "codex", "copilot"]
 
 AGENT_LABELS: dict[AgentName, str] = {
     "claude": "Claude Code",
     "cursor": "Cursor",
     "codex": "Codex",
+    "copilot": "GitHub Copilot",
 }
 FIRST_PROMPT_TOOL_LINE: dict[AgentName, str] = {
     "claude": "Use Claude Code tools to inspect code and propose the smallest safe change.",
     "cursor": "Use Cursor agent tools to inspect code and propose the smallest safe change.",
     "codex": "Use Codex tools to inspect code and propose the smallest safe change.",
+    "copilot": "Use GitHub Copilot agent tools to inspect code and propose the smallest safe change.",
 }
 PLAN_JSON_BEGIN = "BEGIN_TRAIGENT_ONBOARD_PLAN_JSON"
 PLAN_JSON_END = "END_TRAIGENT_ONBOARD_PLAN_JSON"
@@ -78,14 +80,19 @@ def _dependency_command(project_markers: list[str]) -> list[str]:
 
 
 def _detect_coding_agents(cwd: Path, home: Path | None = None) -> list[AgentName]:
+    # Kept in sync with the plugin manifests published in Traigent/traigent-skills
+    # (.claude-plugin/, .codex-plugin/, .agents/plugins/): only auto-detect an
+    # agent that has a published manifest to install skills from. Cursor has no
+    # manifest there, so it is intentionally not auto-detected here; it remains
+    # a valid manual `--agent cursor` choice for `traigent first-prompt`.
     resolved_home = home or Path.home()
     agents: list[AgentName] = []
     if (resolved_home / ".claude").exists() or shutil.which("claude"):
         agents.append("claude")
-    if (resolved_home / ".cursor").exists() or (cwd / ".cursor").exists():
-        agents.append("cursor")
     if (resolved_home / ".codex").exists() or (cwd / "AGENTS.md").exists():
         agents.append("codex")
+    if (resolved_home / ".copilot").exists() or shutil.which("copilot"):
+        agents.append("copilot")
     return agents
 
 
@@ -554,7 +561,7 @@ def onboard(
 @click.command("first-prompt")
 @click.option(
     "--agent",
-    type=click.Choice(["claude", "cursor", "codex"], case_sensitive=False),
+    type=click.Choice(["claude", "cursor", "codex", "copilot"], case_sensitive=False),
     default=None,
     help="Coding agent flavor for the paste block.",
 )

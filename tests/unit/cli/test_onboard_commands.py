@@ -17,6 +17,7 @@ from traigent.cli.onboard_commands import (
     PLAN_JSON_BEGIN,
     PLAN_JSON_END,
     AgentName,
+    _detect_coding_agents,
     build_first_prompt,
 )
 
@@ -227,6 +228,10 @@ def test_onboard_non_tty_login_flag_runs_device_flow(
             "codex",
             "Use Codex tools to inspect code and propose the smallest safe change.",
         ),
+        (
+            "copilot",
+            "Use GitHub Copilot agent tools to inspect code and propose the smallest safe change.",
+        ),
     ],
 )
 def test_first_prompt_golden_outputs(agent: AgentName, tool_line: str) -> None:
@@ -244,6 +249,39 @@ def test_first_prompt_golden_outputs(agent: AgentName, tool_line: str) -> None:
     )
 
     assert build_first_prompt(agent, Path("/work/project")) == expected
+
+
+def test_detect_coding_agents_finds_copilot_via_home_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(onboard_commands.shutil, "which", lambda _name: None)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".copilot").mkdir()
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+
+    assert _detect_coding_agents(cwd, home=home) == ["copilot"]
+
+
+def test_detect_coding_agents_does_not_auto_detect_cursor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Cursor has no published plugin manifest in Traigent/traigent-skills
+    # (unlike claude/codex/copilot), so onboarding must not offer it here even
+    # when a `.cursor` marker is present. Manual `--agent cursor` still works
+    # for `traigent first-prompt` (see test_first_prompt_golden_outputs).
+    monkeypatch.setattr(onboard_commands.shutil, "which", lambda _name: None)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".cursor").mkdir()
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    (cwd / ".cursor").mkdir()
+
+    assert _detect_coding_agents(cwd, home=home) == []
 
 
 def test_first_prompt_command_outputs_selected_agent() -> None:
