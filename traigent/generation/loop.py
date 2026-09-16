@@ -98,7 +98,6 @@ class GuidanceLoop:
 
     def _apply_rewrite(
         self,
-        plan: GuidancePlan,
         config_space: dict[str, Any],
         prompt_param: str,
         weak_examples: Sequence[WeakExample],
@@ -108,7 +107,7 @@ class GuidanceLoop:
         existing = config_space.get(prompt_param)
         current = list(getattr(existing, "values", existing or []))
         current = [v for v in current if isinstance(v, str)]
-        candidates = self._rewriter.rewrite(current, weak_examples, plan)
+        candidates = self._rewriter.rewrite(current, weak_examples)
         if not candidates:
             return 0
         config_space[prompt_param] = merge_prompt_candidates(
@@ -199,7 +198,7 @@ class GuidanceLoop:
             added_examples = 0
             if is_rewrite and prompt_param and total_candidates < max_candidates:
                 added_candidates = self._apply_rewrite(
-                    plan, config_space, prompt_param, weak_examples
+                    config_space, prompt_param, weak_examples
                 )
                 total_candidates += added_candidates
             elif (
