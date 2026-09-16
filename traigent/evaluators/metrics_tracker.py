@@ -69,8 +69,8 @@ REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO = 0.5
 #: * ``MetricsTracker.format_for_backend`` outputs: ``score``, ``accuracy``,
 #:   ``duration``, ``input_tokens``, ``output_tokens``, ``total_tokens``,
 #:   ``response_time_ms``, ``cost`` (per-trial TOTAL),
-#:   ``cost_per_example_mean``, ``total_examples``, ``successful_examples``,
-#:   ``tokens_per_second``;
+#:   ``cost_per_example_mean``, ``tokens_estimated``, ``total_examples``,
+#:   ``successful_examples``, ``tokens_per_second``;
 #: * the LLM aggregation (``_aggregate_llm_metrics``): ``prompt_tokens``,
 #:   ``completion_tokens``, ``total_tokens``, ``input_cost``, ``output_cost``,
 #:   ``total_cost``, ``avg_response_time``, ``avg_response_time_ms``;
@@ -90,6 +90,11 @@ RESERVED_METRIC_KEYS: frozenset[str] = frozenset(
         # (finding T2). Reserved so a user tuple key cannot overwrite it and it is
         # never dropped under the measures ceiling.
         "cost_per_example_mean",
+        # True iff any measured example's token counts were fabricated from
+        # character length rather than captured usage (#2263). Reserved so a
+        # user tuple key can never overwrite it and it is never dropped under
+        # the measures ceiling.
+        "tokens_estimated",
         "latency",
         "score",
         # Diagnostic: the built-in exact-match scorer recorded alongside a custom
@@ -359,6 +364,17 @@ class TokenMetrics:
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+    # True when these counts were FABRICATED from character length
+    # (``LocalEvaluator._estimate_string_tokens``, Traigent#2263) rather than
+    # captured from a real provider response. A run whose optimized function
+    # returns a plain string with no captured LLM usage still needs SOME
+    # length-derived number for privacy-mode cost estimation, but that number
+    # must stay distinguishable from a measured one downstream -- an
+    # estimated-tokens row is not a smaller real bill, it is a guess with no
+    # bill behind it at all. Consumers (trial/result aggregation, cost
+    # pricing) must treat this as "not real usage", never merge it into the
+    # same fields as a measured count without a flag.
+    estimated: bool = False
 
     def __post_init__(self) -> None:
         # Ensure non-negative values and handle None
@@ -759,6 +775,22 @@ class MetricsTracker:
             # (None) and the normal contract (0.0) are preserved.
             cost_total = cost_per_example_mean
 
+        # True when ANY measured example's token counts were fabricated from
+        # character length (``LocalEvaluator._estimate_string_tokens``, #2263)
+        # rather than captured from real usage. ``input_tokens``/
+        # ``output_tokens``/``total_tokens`` above are means over the SAME
+        # measured rows, so this flag is the only signal that some of that
+        # mean is a length-derived guess rather than measured usage --
+        # without it a cost/token objective or the trial summary table
+        # cannot tell "no LLM call was captured" from "a cheap one was".
+        # Numeric (1.0/0.0), never a Python ``bool``: the wire-format
+        # ``MeasuresDict`` rejects bool measures for JSON Schema parity
+        # (``traigent.cloud.dtos.MeasuresDict``), same convention as
+        # ``CostMetrics.unpriced``/``cost_unpriced`` (#1597/#1741).
+        tokens_estimated = (
+            1.0 if any(m.tokens.estimated for m in measured_metrics) else 0.0
+        )
+
         formatted = {
             # Core metrics (single values)
             "score": accuracy_value,  # Use actual accuracy for score
@@ -778,6 +810,9 @@ class MetricsTracker:
             "cost": cost_total,
             # Per-example MEAN cost, preserved under a distinct key.
             "cost_per_example_mean": cost_per_example_mean,
+            # True iff any measured example's token counts are a length-derived
+            # estimate, not captured usage (#2263). See comment above.
+            "tokens_estimated": tokens_estimated,
             # Additional useful metrics
             "total_examples": aggregated["total_examples"],
             "successful_examples": aggregated["successful_examples"],
@@ -1648,6 +1683,16 @@ def _calculate_cost_for_metrics(
     Uses cost_from_tokens() as the canonical cost path when token counts are
     available, falling back to deprecated text-based functions otherwise.
     """
+    if metrics.tokens.estimated:
+        # Traigent#2263: character-length-derived counts (``LocalEvaluator.
+        # _estimate_string_tokens``) are a guess, not a measurement -- there
+        # is no real spend behind them to price. In the current call graph
+        # this function always runs BEFORE the estimate is written, so this
+        # is currently a no-op guard; it exists so a future reordering (or a
+        # new caller) cannot silently start pricing fabricated tokens as if
+        # they were real usage.
+        return
+
     from traigent.utils.env_config import is_strict_cost_accounting
 
     strict_cost_accounting = is_strict_cost_accounting()
