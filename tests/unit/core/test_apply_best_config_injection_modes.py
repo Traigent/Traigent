@@ -100,17 +100,21 @@ def test_apply_best_config_parameter_mode(sample_optimization_result) -> None:
     assert fn("hi") == ("gpt-4", 0.1)
 
 
-def test_apply_best_config_seamless_literal_call_still_literal(
+def test_apply_best_config_seamless_literal_call_fails_closed(
     sample_optimization_result,
 ) -> None:
-    """Literal call-site remains unchanged until call-site injection is implemented."""
+    """Issue #2298: a literal call-site argument (no local assignment or
+    matching parameter) is still not rewritten, but calling the function now
+    fails closed instead of silently applying nothing. This overturns the
+    previous "still literal" no-op behavior this test used to assert."""
 
     @traigent.optimize(
         configuration_space={"model": ["gpt-3.5", "gpt-4"]},
         injection_mode="seamless",
     )
     def fn(prompt: str) -> str:
-        # The literal argument isn't rewritten yet; this guards against regressions.
+        # The literal argument isn't rewritten; with no injectable target,
+        # this must raise rather than silently run "gpt-3.5" unconditionally.
         return DummyLLM(model="gpt-3.5").invoke(prompt)
 
     opt_fn: OptimizedFunction = fn  # type: ignore[assignment]
@@ -118,4 +122,7 @@ def test_apply_best_config_seamless_literal_call_still_literal(
 
     opt_fn.apply_best_config()
 
-    assert fn("test") == "gpt-3.5:test"
+    from traigent.utils.exceptions import ConfigurationError
+
+    with pytest.raises(ConfigurationError, match="no injectable target"):
+        fn("test")

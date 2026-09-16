@@ -11,6 +11,7 @@ import pytest
 
 from traigent.config.ast_transformer import ConfigTransformer, SafeASTCompiler
 from traigent.config.providers import SeamlessParameterProvider
+from traigent.utils.exceptions import ConfigurationError
 
 
 class TestASTTransformerSecurity:
@@ -342,7 +343,14 @@ class TestInjectionAttackVectors:
             assert result == attack
 
     def test_prototype_pollution_blocked(self):
-        """Test that prototype pollution attempts are blocked."""
+        """Test that prototype pollution attempts are blocked.
+
+        The transformer refuses to rewrite ``obj`` with the unsafe
+        ``__proto__`` payload, leaving zero injectable targets for a
+        non-empty config. Issue #2298: that now fails closed instead of
+        silently running with the original (unpolluted) value, so the
+        rejected attempt is never quietly swallowed.
+        """
         provider = SeamlessParameterProvider()
 
         def test_func():
@@ -354,7 +362,8 @@ class TestInjectionAttackVectors:
 
         # The transformer should not allow __proto__ in dict keys
         wrapped = provider.inject_config(test_func, config)
-        wrapped()
+        with pytest.raises(ConfigurationError, match="no injectable target"):
+            wrapped()
 
         # Should not pollute prototype
         assert not hasattr({}, "isAdmin")
@@ -381,7 +390,14 @@ class TestComplianceAndAudit:
         assert "Modified variables" in caplog.text or "transform" in caplog.text.lower()
 
     def test_no_sensitive_data_logged(self, caplog):
-        """Test that sensitive data is not logged."""
+        """Test that sensitive data is not logged.
+
+        ``test_func`` has no local assignment or parameter named after
+        ``api_key``/``password``, so this is a zero-injectable-target
+        config (issue #2298: fails closed rather than silently running
+        unvaried). The raised error's message must still not leak the
+        actual secret values.
+        """
         provider = SeamlessParameterProvider()
 
         def test_func():
@@ -391,12 +407,15 @@ class TestComplianceAndAudit:
 
         wrapped = provider.inject_config(test_func, config)
 
-        with caplog.at_level("DEBUG"):
+        with caplog.at_level("DEBUG"), pytest.raises(ConfigurationError) as exc:
             wrapped()
 
-        # Check that actual values are not in logs
+        # Check that actual values are not in logs or in the error message
+        # (only the config *keys* may be named, never the values).
         assert "placeholder_key" not in caplog.text
         assert "placeholder_password" not in caplog.text
+        assert "placeholder_key" not in str(exc.value)
+        assert "placeholder_password" not in str(exc.value)
 
     def test_safe_types_only(self):
         """Test that only safe types can be injected."""

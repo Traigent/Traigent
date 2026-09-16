@@ -90,7 +90,34 @@ def test_seamless_runtime_shim_keeps_assignment_path() -> None:
     assert wrapped("What is 2+2?") == "claude-3-sonnet"
 
 
-def test_seamless_warns_when_config_has_no_injectable_target(caplog) -> None:
+def test_seamless_fails_closed_when_config_has_no_injectable_target(
+    monkeypatch,
+) -> None:
+    """Issue #2298: a non-empty config space with zero injectable targets must
+    raise before running the (unvaried) function, instead of silently
+    completing the whole search with a phantom "best_config" (the #1451
+    WARNING-only behavior this overturns)."""
+    monkeypatch.delenv("TRAIGENT_SEAMLESS_ALLOW_NO_TARGETS", raising=False)
+    provider = _reset_provider()
+
+    def fn(question: str) -> str:
+        model_name = "claude-3-haiku"
+        return model_name
+
+    wrapped = provider.inject_config(fn, {"model": "claude-3-sonnet"})
+
+    with pytest.raises(ConfigurationError) as exc:
+        wrapped("What is 2+2?")
+
+    assert "no injectable target" in str(exc.value)
+    assert "model" in str(exc.value)
+    assert provider.get_stats()["fallback_triggers"]["no_injection"] == [["model"]]
+
+
+def test_seamless_no_injectable_target_opt_out_env_var(monkeypatch, caplog) -> None:
+    """TRAIGENT_SEAMLESS_ALLOW_NO_TARGETS restores the pre-#2298 warning-only
+    behavior for the rare intentional case."""
+    monkeypatch.setenv("TRAIGENT_SEAMLESS_ALLOW_NO_TARGETS", "true")
     provider = _reset_provider()
 
     def fn(question: str) -> str:
@@ -103,7 +130,6 @@ def test_seamless_warns_when_config_has_no_injectable_target(caplog) -> None:
         assert wrapped("What is 2+2?") == "claude-3-haiku"
 
     assert "found no injectable targets" in caplog.text
-    assert provider.get_stats()["fallback_triggers"]["no_injection"] == [["model"]]
 
 
 def test_seamless_does_not_warn_for_assignment_or_parameter_injection(caplog) -> None:

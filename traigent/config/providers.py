@@ -27,6 +27,7 @@ from traigent.config.context import (
 )
 from traigent.config.runtime_injector import create_runtime_shim
 from traigent.config.types import TraigentConfig
+from traigent.utils.env_config import is_seamless_no_targets_allowed
 from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.logging import get_logger
 
@@ -348,6 +349,17 @@ class ParameterBasedProvider(ConfigurationProvider):
         return self.default_param_name in sig.parameters
 
 
+class SeamlessNoInjectableTargetsError(ConfigurationError):
+    """Raised when seamless injection has no injectable target for a non-empty
+    configuration space.
+
+    Kept as a distinct type (rather than a bare :class:`ConfigurationError`)
+    so ``_seamless_run`` can let it propagate instead of routing it through
+    the runtime-shim fallback path, which would otherwise silently no-op the
+    same way and defeat the fail-closed behavior this exists for.
+    """
+
+
 class SeamlessParameterProvider(ConfigurationProvider):
     """Safe provider that seamlessly injects parameters using AST transformation.
 
@@ -581,6 +593,10 @@ class SeamlessParameterProvider(ConfigurationProvider):
             return self._seamless_transform_and_run(
                 func, active_config, args, kwargs, cache_key, _handle_injection_error
             )
+        except SeamlessNoInjectableTargetsError:
+            # Fail closed: do not fall back to a runtime shim, which would
+            # silently no-op the same way and defeat the point of this check.
+            raise
         except Exception as e:  # noqa: BLE001
             return self._seamless_fallback(
                 func, active_config, args, kwargs, cache_key, e, _handle_injection_error
@@ -642,13 +658,28 @@ class SeamlessParameterProvider(ConfigurationProvider):
                 sorted(active_config.keys())
             )
         if active_config:
-            logger.warning(
-                "Seamless provider found no injectable targets for %s; no local "
-                "assignment or parameter matched configuration keys %s, so the "
-                "function ran with original values.",
-                func.__name__,
-                sorted(active_config.keys()),
-            )
+            config_keys = sorted(active_config.keys())
+            if is_seamless_no_targets_allowed():
+                logger.warning(
+                    "Seamless provider found no injectable targets for %s; no local "
+                    "assignment or parameter matched configuration keys %s, so the "
+                    "function ran with original values. Continuing because "
+                    "TRAIGENT_SEAMLESS_ALLOW_NO_TARGETS is set.",
+                    func.__name__,
+                    config_keys,
+                )
+            else:
+                raise SeamlessNoInjectableTargetsError(
+                    "Seamless injection found no injectable target for "
+                    f"{func.__name__}: no local assignment (e.g. `model = "
+                    "...`) or parameter named after the config key matched "
+                    f"configuration keys {config_keys}. Every trial would run "
+                    "the original, unvaried code, producing a phantom "
+                    "'best_config' from an identical run repeated N times. "
+                    "Rename a local variable or a parameter to match a "
+                    "config key, or set TRAIGENT_SEAMLESS_ALLOW_NO_TARGETS=true "
+                    "to run anyway and keep the warning-only behavior."
+                )
         else:
             logger.debug(
                 "Seamless provider found no injectable targets for %s with empty "
