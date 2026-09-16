@@ -1612,13 +1612,27 @@ class LocalEvaluator(BaseEvaluator):
 
         A metric function (or an LLM-as-judge inside one) may call an
         intercepted provider (litellm.completion/acompletion). That call is
-        captured by the same global interceptor buffer the agent's own call
-        uses, but by the time this runs, the buffer holds *only* what was
-        captured since this example's metric functions started: `evaluate()`
-        drains the buffer into `all_captured_responses` and clears it before
-        the per-example loop begins, and every previous example already
-        cleared its own share here. So whatever is in the buffer now is this
-        example's judge/evaluator spend, and nothing else's (Traigent#2297).
+        captured by the same interceptor buffer the agent's own call uses.
+        Within a single trial, evaluated sequentially, the buffer holds
+        *only* what was captured since this example's metric functions
+        started: `evaluate()` drains the buffer into
+        `all_captured_responses` and clears it before the per-example loop
+        begins, and every previous example already cleared its own share
+        here. So in that sequential-within-a-trial case, whatever is in the
+        buffer now is this example's judge/evaluator spend, and nothing
+        else's (Traigent#2297).
+
+        CAVEAT -- this guarantee does NOT extend across concurrent trials.
+        The capture buffer (`LangChainMetadataCapture._all_responses` in
+        `utils/langchain_interceptor.py`) is a single process-global list
+        with no per-trial or per-task isolation (no `ContextVar`), and
+        `optimize(..., parallel_trials>1)` gathers multiple trial coroutines
+        on one event loop. An async judge call from one trial can therefore
+        drain (or be drained by) another concurrently-running trial's
+        buffer, misattributing judge cost between trials even though the
+        run-level total stays correct. Per-trial buffer isolation
+        (ContextVar-keyed capture) is a tracked follow-up, not implemented
+        here -- see the PR body.
 
         Folds that spend into `example_metric.cost`/`.tokens` so it enters
         the trial's actual cost and the permit-based cost-enforcement ledger
@@ -1653,16 +1667,36 @@ class LocalEvaluator(BaseEvaluator):
             return
         clear_captured_responses()
 
+        # A captured judge/evaluator response is a real measurement, even
+        # when the agent's own call never produced output (e.g. every
+        # example errors before the agent responds, so
+        # `_extract_llm_metrics_for_output` set `measured=False`). The judge
+        # still ran and its spend is real, so this example must not be
+        # excluded from measured-only aggregation
+        # (`MetricsTracker.aggregate_metrics`/`format_for_backend`) the way a
+        # genuinely never-measured example is (Traigent#2297 review).
+        example_metric.measured = True
+
         eval_input_cost = 0.0
         eval_output_cost = 0.0
         eval_total_cost = 0.0
+        eval_input_tokens = 0
+        eval_output_tokens = 0
         eval_tokens = 0
         for response in eval_responses:
             metrics = extract_llm_metrics(response=response, model_name=None)
             eval_input_cost += metrics.cost.input_cost
             eval_output_cost += metrics.cost.output_cost
             eval_total_cost += metrics.cost.total_cost
+            eval_input_tokens += metrics.tokens.input_tokens
+            eval_output_tokens += metrics.tokens.output_tokens
             eval_tokens += metrics.tokens.total_tokens
+            # Forward-compat with #2308: an unpriced judge call must not be
+            # silently reported as verified-free once folded into this
+            # example's totals.
+            example_metric.cost.unpriced = (
+                example_metric.cost.unpriced or metrics.cost.unpriced
+            )
 
         if eval_total_cost == 0.0 and eval_tokens == 0:
             return
@@ -1670,6 +1704,8 @@ class LocalEvaluator(BaseEvaluator):
         example_metric.cost.input_cost += eval_input_cost
         example_metric.cost.output_cost += eval_output_cost
         example_metric.cost.total_cost += eval_total_cost
+        example_metric.tokens.input_tokens += eval_input_tokens
+        example_metric.tokens.output_tokens += eval_output_tokens
         example_metric.tokens.total_tokens += eval_tokens
 
         # Keep the standard cost/token custom_metrics (written earlier in
@@ -1679,6 +1715,12 @@ class LocalEvaluator(BaseEvaluator):
         example_metric.custom_metrics["input_cost"] = example_metric.cost.input_cost
         example_metric.custom_metrics["output_cost"] = example_metric.cost.output_cost
         example_metric.custom_metrics["total_cost"] = example_metric.cost.total_cost
+        example_metric.custom_metrics["input_tokens"] = (
+            example_metric.tokens.input_tokens
+        )
+        example_metric.custom_metrics["output_tokens"] = (
+            example_metric.tokens.output_tokens
+        )
         example_metric.custom_metrics["total_tokens"] = (
             example_metric.tokens.total_tokens
         )
@@ -1687,6 +1729,10 @@ class LocalEvaluator(BaseEvaluator):
             example_result.metrics["input_cost"] = example_metric.cost.input_cost
             example_result.metrics["output_cost"] = example_metric.cost.output_cost
             example_result.metrics["total_cost"] = example_metric.cost.total_cost
+            example_result.metrics["input_tokens"] = example_metric.tokens.input_tokens
+            example_result.metrics["output_tokens"] = (
+                example_metric.tokens.output_tokens
+            )
             example_result.metrics["total_tokens"] = example_metric.tokens.total_tokens
             example_result.metrics["evaluation_cost"] = eval_total_cost
 

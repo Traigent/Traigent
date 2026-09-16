@@ -15,8 +15,12 @@ example's cost.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
+from traigent.api.types import TrialResult, TrialStatus
+from traigent.core.cost_estimator import CostEstimator
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.evaluators.local import LocalEvaluator
 
@@ -94,6 +98,79 @@ async def test_metric_function_llm_call_counted_in_total_cost(
     )
 
     # The judge's own share is surfaced separately (a metadata entry, not a
-    # new public field), never silently merged away.
+    # new public field), never silently merged away, and the run-level total
+    # is exactly the agent's cost plus every example's judge share -- not
+    # merely "some positive amount" (Traigent#2297 review, minor #7).
+    total_evaluation_cost = 0.0
     for example_result in with_judge_result.example_results:
+        evaluation_cost = example_result.metrics.get("evaluation_cost", 0.0)
+        assert evaluation_cost > 0.0
+        total_evaluation_cost += evaluation_cost
+
+        # Exact deterministic-mock token breakdown: the agent's own dummy
+        # response reports 20 prompt / 10 completion tokens
+        # (`_DummyRawResp`), and the judge call is served by
+        # `MockAdapter`'s fixed defaults (10 prompt / 20 completion). Both
+        # input_tokens/output_tokens (not just total_tokens) must reflect
+        # the judge's share (Traigent#2297 review, important #2).
+        assert example_result.metrics["input_tokens"] == pytest.approx(30)
+        assert example_result.metrics["output_tokens"] == pytest.approx(30)
+        assert example_result.metrics["total_tokens"] == pytest.approx(60)
+
+    assert with_judge_cost == pytest.approx(no_judge_cost + total_evaluation_cost)
+
+    # The value the permit-based cost enforcer actually reads
+    # (`CostEstimator.extract_trial_cost`) must agree with `metrics["cost"]`
+    # (Traigent#2297 review, minor #7).
+    trial_result = TrialResult(
+        trial_id="t0",
+        config={},
+        metrics=with_judge_result.metrics,
+        status=TrialStatus.COMPLETED,
+        duration=0.0,
+        timestamp=datetime.now(UTC),
+    )
+    extracted_cost = CostEstimator.extract_trial_cost(trial_result)
+    assert extracted_cost is not None
+    assert extracted_cost == pytest.approx(with_judge_cost)
+    assert extracted_cost > 0.0
+
+
+@pytest.mark.asyncio
+async def test_judge_cost_counted_even_when_every_example_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A judge call is real spend even when the agent never produces output.
+
+    ``_extract_llm_metrics_for_output`` marks a row ``measured=False`` when
+    the agent raises before producing any output at all, which excludes
+    that row from measured-only aggregation
+    (``MetricsTracker.aggregate_metrics``/``format_for_backend``). Before
+    this fix, that exclusion silently dropped the judge's real spend too:
+    the metric function still runs (on ``output=None``) and its LLM call is
+    captured and folded into the example's cost/tokens, but the row stayed
+    ``measured=False`` so the trial's aggregated ``cost`` stayed 0.0 even
+    though the per-example ``evaluation_cost`` was positive
+    (Traigent#2297 review, important #1).
+    """
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+
+    dataset = _make_dataset()
+
+    def _raising_agent(text: str, **config: object) -> dict:
+        raise ValueError("boom - agent never produces output")
+
+    evaluator = LocalEvaluator(
+        metrics=["cost"],
+        metric_functions={"judge": judge_metric},
+        detailed=True,
+    )
+    result = await evaluator.evaluate(_raising_agent, {}, dataset)
+
+    assert result.metrics["cost"] > 0.0, (
+        "judge spend must be counted in the trial's aggregated cost even "
+        f"when every example errors before producing output: "
+        f"cost={result.metrics['cost']}"
+    )
+    for example_result in result.example_results:
         assert example_result.metrics.get("evaluation_cost", 0.0) > 0.0
