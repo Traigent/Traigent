@@ -20,10 +20,11 @@ metadata:
   code_file: "traigent/core/cost_enforcement.py"
   protocol_file: "docs/traceability/verification/MODEL_CODE_REVIEW_PROTOCOL.md"
   total_items: 26
-  completed: 26
+  completed: 25
+  retired: 1
   gaps_found: 0
   partial_matches: 0
-  last_updated: "2026-04-24T10:25:19Z"
+  last_updated: "2026-09-16T00:00:00Z"
 
 # =============================================================================
 # CATEGORY A: State Variables (CRITICAL - 7 items)
@@ -366,16 +367,16 @@ items:
     category: E
     element: "Mock mode bypass"
     description: "Verify mock mode handling in model matches code"
-    alloy_location: "lines 206-215: mockModeBypass predicate"
-    code_location: "acquire_permit():443-445, release_permit():503-505, track_cost():697-699"
-    status: completed
+    alloy_location: "removed: mockModeBypass predicate no longer exists in cost_enforcement.als"
+    code_location: "removed: acquire_permit(), release_permit(), track_cost() no longer branch on mock mode"
+    status: retired
     agent_id: "Claude Code"
     agent_model: "Claude Opus 4.5"
     started_at: "2025-12-06T15:00:00Z"
     completed_at: "2025-12-06T15:06:00Z"
-    result: match
+    result: element_removed
     gap_id: null
-    notes: "Exact match: Both bypass state mutations when mock_mode=True. Python returns early with mock permits (id=0), Alloy predicates keep state unchanged. Mock mode cached at init prevents mid-run env var changes."
+    notes: "Retired, not re-verified: Sprint 2-B Round 3 removed the mock-mode bypass this record verified. The mockModeBypass Alloy predicate and the cited code lines no longer exist; CostEnforcer has no _check_mock_mode, is_mock_mode, or _mock_mode_cached (tests/unit/core/test_cost_enforcement.py:1221 test_mock_mode_method_and_property_are_removed). The verified element's meaning changed from 'mock mode bypasses tracking' to 'mock mode cannot bypass tracking' (REQ-COST-019); the absence is now pinned by tests/unit/core/test_cost_enforcement.py:267 TestCostEnforcerMockMode and tests/unit/core/test_cost_enforcement_no_bypass.py, not by this Alloy correspondence check."
 
   - id: EDGE-002
     category: E

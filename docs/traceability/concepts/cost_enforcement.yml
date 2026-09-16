@@ -108,7 +108,7 @@ operational_principle:
   - "The sum of active permit amounts always equals reserved_cost (I8 invariant)."
   - "Admission-time spend bound: before launching new work, accumulated_cost + reserved_cost + estimated_cost <= limit (I4 admission guard). Actual cost may exceed estimates after a permitted trial completes."
   - "All state mutations occur atomically under a single RLock."
-  - "Mock mode bypasses all tracking to enable zero-cost development/testing."
+  - "Mock configuration (TRAIGENT_MOCK_LLM) cannot disable cost enforcement: approval, permit admission, reservation/release, and actual-cost accounting run identically regardless of the flag."
   - "Denied permits have id=-1, amount=0.0, active=False (I7 invariant)."
   - "Permit IDs are monotonically increasing and never reused (I6 invariant)."
 
