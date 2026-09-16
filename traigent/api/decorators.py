@@ -71,9 +71,7 @@ from traigent.api.parameter_ranges import (
     normalize_configuration_space,
 )
 from traigent.api.types import AgentDefinition
-from traigent.cloud.smart_pruning import (
-    SmartPruningOptions,
-)
+from traigent.cloud.smart_pruning import SmartPruningOptions
 from traigent.cloud.smart_pruning import (
     normalize_smart_pruning_options as _normalize_smart_pruning_options,
 )
@@ -2835,6 +2833,13 @@ def optimize(  # NOSONAR(S107)
     config_param = combined_settings["config_param"]
     auto_override_frameworks = combined_settings["auto_override_frameworks"]
     framework_targets = combined_settings["framework_targets"]
+    if framework_targets:
+        # Fail at decoration, not on the first call: a bare name such as
+        # "langchain" can never be patched (#2299).
+        from traigent.integrations.framework_override import _validate_framework_target
+
+        for framework_target in framework_targets:
+            _validate_framework_target(framework_target)
     effectuation = combined_settings["effectuation"]
     algorithm_value = validate_algorithm_name(combined_settings["algorithm"])
     offline_value = combined_settings["offline"]

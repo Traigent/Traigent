@@ -778,7 +778,8 @@ class TestActivateOverrides:
         # loud (WARNING with the exception text), not a swallowed debug line.
         warning_messages = [call.args[0] for call in mock_logger.warning.call_args_list]
         assert any(
-            "nonexistent.Framework" in msg and "not available" in msg
+            "Could not override framework target: nonexistent.Framework" in msg
+            and "No module named" in msg
             for msg in warning_messages
         )
 

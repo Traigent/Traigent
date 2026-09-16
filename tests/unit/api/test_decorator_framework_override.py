@@ -57,6 +57,23 @@ class TestDecoratorWithFrameworkOverride:
         assert test_function.auto_override_frameworks
         assert "openai.OpenAI" in test_function.framework_targets
 
+    def test_bare_framework_target_is_rejected_at_decoration(self):
+        """A bare name like "langchain" fails when the decorator is applied,
+        not on the first call (#2299)."""
+        from traigent.utils.exceptions import ConfigurationError
+
+        with pytest.raises(ConfigurationError, match="langchain"):
+
+            @optimize(
+                eval_dataset=test_dataset,
+                objectives=["accuracy"],
+                configuration_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
+                auto_override_frameworks=True,
+                framework_targets=["langchain"],
+            )
+            def never_decorated(question: str) -> str:
+                return question
+
     def test_override_context_manager(self):
         """Test the override context manager directly."""
         mock_openai = Mock()

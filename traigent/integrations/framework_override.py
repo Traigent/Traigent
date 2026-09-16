@@ -24,7 +24,6 @@ import ast
 import functools
 import importlib
 import inspect
-import re
 from collections.abc import Callable, Generator
 from contextlib import AbstractContextManager, contextmanager
 from typing import Any, cast, get_type_hints
@@ -48,11 +47,15 @@ LegacyBaseOverrideManager = BaseOverrideManager
 # Names handled internally as built-in mock classes (never resolved via import).
 _BUILTIN_MOCK_TARGETS = frozenset({"MockOpenAI", "MockLangChainOpenAI"})
 
-# A valid framework target is a dotted `module.ClassName` path: every dot-separated
-# component (module segments and the trailing class name) must be a Python identifier.
-_VALID_FRAMEWORK_TARGET_RE = re.compile(
-    r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$"
-)
+
+def _is_dotted_class_path(target: str) -> bool:
+    """True for a dotted ``module.ClassName`` path whose parts are identifiers.
+
+    ``str.isidentifier`` (not an ASCII regex) so non-ASCII identifiers are
+    accepted and a trailing newline is rejected.
+    """
+    parts = target.split(".")
+    return len(parts) >= 2 and all(part.isidentifier() for part in parts)
 
 
 def _validate_framework_target(target: str) -> None:
@@ -78,7 +81,7 @@ def _validate_framework_target(target: str) -> None:
         )
     if target in _BUILTIN_MOCK_TARGETS:
         return
-    if not _VALID_FRAMEWORK_TARGET_RE.match(target):
+    if not _is_dotted_class_path(target):
         raise ConfigurationError(
             f"Invalid framework target '{target}': expected a dotted "
             "'module.ClassName' path (e.g. 'langchain_openai.ChatOpenAI'), "
@@ -609,9 +612,10 @@ class FrameworkOverrideManager(BaseOverrideManager):
 
             # Try to find and override the target class
             override_applied = False
+            failure_detail = ""
 
             # Handle built-in mock classes
-            if target in ["MockOpenAI", "MockLangChainOpenAI"]:
+            if target in _BUILTIN_MOCK_TARGETS:
                 # These are handled at the module level when demo is run
                 override_applied = True
 
@@ -654,8 +658,8 @@ class FrameworkOverrideManager(BaseOverrideManager):
                             f"Consider upgrading {target.split('.')[0]} package for Pydantic v2 compatibility"
                         )
                     else:
-                        logger.warning(f"Framework {target} not available: {error_msg}")
-                    # Framework not available, skip silently
+                        failure_detail = error_msg
+                    # Framework not available; reported once below
                 except Exception as e:
                     # Catch any other errors (including PydanticUserError)
                     error_msg = str(e)
@@ -677,7 +681,8 @@ class FrameworkOverrideManager(BaseOverrideManager):
                     # Skip silently to avoid breaking optimization
 
             if not override_applied:
-                logger.warning(f"Could not override framework target: {target}")
+                detail = f": {failure_detail}" if failure_detail else ""
+                logger.warning(f"Could not override framework target: {target}{detail}")
 
     @property
     def applied_targets(self) -> list[str]:
