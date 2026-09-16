@@ -20,7 +20,9 @@ In a terminal, onboarding can offer to:
 
 - add `traigent[integrations]` to the project
 - start device login unless `--no-login` is set
-- install Traigent agent skills through `npx skills add Traigent/traigent-skills`
+- install Traigent agent skills — `--profile beginner` (default) via
+  `npx skills add Traigent/traigent-first-run`, or `--profile advanced` via
+  `npx skills add Traigent/traigent-skills`
 - register MCP for detected agents when `traigent mcp --help` succeeds
 - run the packaged mock quickstart
 - print the first prompt for the detected coding agent
