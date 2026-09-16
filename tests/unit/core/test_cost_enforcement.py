@@ -29,6 +29,7 @@ from traigent.core.cost_enforcement import (
     OptimizationAborted,
     Permit,
     normalize_cost_approved,
+    normalize_estimated_calls_per_example,
 )
 from traigent.core.stop_conditions import CostLimitStopCondition
 from traigent.utils.exceptions import OptimizationError
@@ -83,11 +84,17 @@ class _StopConditionSink:
         self.cost_enforcer = cost_enforcer
 
 
-def _setup_orchestrator_cost_enforcer(cost_approved: object) -> CostEnforcer:
+def _setup_orchestrator_cost_enforcer(
+    cost_approved: object, *, estimated_calls_per_example: object = None
+) -> CostEnforcer:
     from traigent.core.orchestrator import OptimizationOrchestrator
 
     orchestrator = cast(Any, OptimizationOrchestrator.__new__(OptimizationOrchestrator))
-    orchestrator.config = {"cost_limit": 1.0, "cost_approved": cost_approved}
+    orchestrator.config = {
+        "cost_limit": 1.0,
+        "cost_approved": cost_approved,
+        "estimated_calls_per_example": estimated_calls_per_example,
+    }
     orchestrator.parallel_execution_manager = _CostEnforcerSink()
     orchestrator._stop_condition_manager = _StopConditionSink()
     orchestrator._setup_cost_enforcer()
@@ -150,6 +157,52 @@ class TestCostApprovalNormalization:
         enforcer = _setup_orchestrator_cost_enforcer(True)
 
         assert enforcer.config.approved is True
+
+
+class TestEstimatedCallsPerExampleNormalization:
+    """Tests for the issue #1750 calls-per-example hint validator."""
+
+    def test_accepts_positive_int(self) -> None:
+        assert normalize_estimated_calls_per_example(4) == 4
+        assert normalize_estimated_calls_per_example(1) == 1
+
+    def test_none_is_none(self) -> None:
+        assert normalize_estimated_calls_per_example(None) is None
+
+    @pytest.mark.parametrize("value", [0, -1, 2.5, True, "4"])
+    def test_rejects_invalid_values(
+        self, caplog: pytest.LogCaptureFixture, value: object
+    ) -> None:
+        with caplog.at_level("WARNING", logger="traigent.core.cost_enforcement"):
+            assert normalize_estimated_calls_per_example(value) is None
+        assert "estimated_calls_per_example" in caplog.text
+
+
+class TestSeedEstimatedCostPerTrial:
+    """Tests for CostEnforcer.seed_estimated_cost_per_trial (issue #1750)."""
+
+    def test_scales_ema_seed_by_multiplier(self) -> None:
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
+        base = enforcer.config.estimated_cost_per_trial
+        enforcer.seed_estimated_cost_per_trial(4)
+        assert enforcer.config.estimated_cost_per_trial == pytest.approx(base * 4)
+        assert enforcer._estimated_cost == pytest.approx(base * 4)
+
+    def test_single_call_is_a_no_op(self) -> None:
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
+        base = enforcer.config.estimated_cost_per_trial
+        enforcer.seed_estimated_cost_per_trial(1)
+        assert enforcer.config.estimated_cost_per_trial == pytest.approx(base)
+
+    def test_orchestrator_setup_seeds_ema_from_config(self) -> None:
+        """End-to-end through _setup_cost_enforcer, matching the decorator path."""
+        default_enforcer = _setup_orchestrator_cost_enforcer(False)
+        scaled_enforcer = _setup_orchestrator_cost_enforcer(
+            False, estimated_calls_per_example=4
+        )
+        assert scaled_enforcer.config.estimated_cost_per_trial == pytest.approx(
+            default_enforcer.config.estimated_cost_per_trial * 4
+        )
 
 
 class TestCostEnforcerBasic:

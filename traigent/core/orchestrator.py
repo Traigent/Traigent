@@ -53,6 +53,7 @@ from traigent.core.cost_enforcement import (
     CostEnforcerConfig,
     Permit,
     normalize_cost_approved,
+    normalize_estimated_calls_per_example,
     validate_cost_limit,
 )
 from traigent.core.cost_estimator import CostEstimator
@@ -515,6 +516,7 @@ class OptimizationOrchestrator:
             ),
             estimated_input_tokens_per_example=estimated_input_tokens,
             estimated_output_tokens_per_example=estimated_output_tokens,
+            estimated_calls_per_example=self._estimated_calls_per_example,
         )
 
         self._trial_lifecycle = TrialLifecycle(self)
@@ -792,6 +794,18 @@ class OptimizationOrchestrator:
                 approved=cost_approved,
             )
         self.cost_enforcer = CostEnforcer(config=cost_config)
+        # Declared calls-per-example lever (issue #1750): scales the EMA seed
+        # so a multi-call agent's early trials don't read as guaranteed
+        # divergence against a single-call warm-start. Resolved once here
+        # (whether cost_config came from the block above or from env-loaded
+        # defaults inside CostEnforcer) and reused for the pre-run estimator.
+        self._estimated_calls_per_example = normalize_estimated_calls_per_example(
+            self.config.get("estimated_calls_per_example")
+        )
+        if self._estimated_calls_per_example is not None:
+            self.cost_enforcer.seed_estimated_cost_per_trial(
+                self._estimated_calls_per_example
+            )
         self.parallel_execution_manager.set_cost_enforcer(self.cost_enforcer)
         self._stop_condition_manager.register_cost_limit_condition(self.cost_enforcer)
 

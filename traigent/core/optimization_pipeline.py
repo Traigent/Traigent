@@ -872,6 +872,7 @@ def collect_orchestrator_kwargs(
         "semantic_saturation",
         "cost_limit",
         "cost_approved",
+        "estimated_calls_per_example",
         "tie_breakers",
         "tvl_parameter_agents",
     ]

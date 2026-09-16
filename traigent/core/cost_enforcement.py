@@ -105,6 +105,33 @@ def normalize_cost_approved(value: object) -> bool:
     return False
 
 
+def normalize_estimated_calls_per_example(value: object) -> int | None:
+    """Validate an ``estimated_calls_per_example`` hint (issue #1750).
+
+    Declares how many LLM calls the optimized function makes per evaluated
+    example (self-consistency voting, repair passes, model cascades), so the
+    pre-run cost estimator and the runtime cost-divergence EMA seed can scale
+    with it instead of assuming exactly one call per example.
+
+    Returns the validated positive int, or ``None`` when unset/invalid. This
+    is a best-effort estimation hint, not a hard configuration gate: an
+    invalid value is logged and ignored (falls back to the 1-call-per-example
+    default) rather than raising, matching the existing
+    ``estimated_tokens_per_example`` hint contract.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        logger.warning(
+            "Ignoring invalid estimated_calls_per_example=%r (type: %s); "
+            "expected a positive int. Falling back to 1 call per example.",
+            value,
+            type(value).__name__,
+        )
+        return None
+    return value
+
+
 class CostTrackingRequiredError(Exception):
     """Raised when cost tracking fails but strict mode is enabled."""
 
@@ -443,6 +470,27 @@ class CostEnforcer:
                 logger.info("CostEnforcer: switching from async to sync methods")
             self._sync_used = True
 
+    def seed_estimated_cost_per_trial(self, calls_per_example: int) -> None:
+        """Scale the per-trial EMA seed by a declared calls-per-example multiplier.
+
+        Intended to be called once, at construction time, before any trial has
+        been tracked. Without this, the EMA warm-starts at a single-call
+        estimate (default $0.05) and every early trial of a multi-call agent
+        (self-consistency voting, repair passes, model cascades) diverges from
+        it by roughly the same multiplier — a structurally guaranteed false
+        positive from ``_check_cost_divergence``, not a real anomaly
+        (issue #1750).
+
+        Args:
+            calls_per_example: Expected LLM calls per evaluated example. Values
+                <= 1 are a no-op (the default already assumes one call).
+        """
+        if calls_per_example <= 1:
+            return
+        with self._lock:
+            self.config.estimated_cost_per_trial *= calls_per_example
+            self._estimated_cost = self.config.estimated_cost_per_trial
+
     def update_limit(self, new_limit: float) -> None:
         """Update the cost limit with synchronization.
 
@@ -651,7 +699,11 @@ class CostEnforcer:
                 "\nTraigent: Rough conservative upper-bound cost estimate "
                 f"${estimated:.2f} exceeds limit ${self.config.limit:.2f}.\n"
                 "Pre-run estimates use fixed token assumptions and conservative "
-                "fallback pricing when model pricing is unavailable.\n"
+                "fallback pricing when model pricing is unavailable, and by "
+                "default assume 1 LLM call per example (set "
+                "estimated_calls_per_example on @traigent.optimize for "
+                "multi-call agents such as self-consistency voting, repair "
+                "passes, or model cascades).\n"
                 "To proceed, raise TRAIGENT_RUN_COST_LIMIT, approve after review "
                 "with TRAIGENT_COST_APPROVED=true, or calibrate private/unpriced "
                 "model rates with TRAIGENT_CUSTOM_MODEL_PRICING_FILE or "
@@ -680,6 +732,9 @@ NOTE: This is an ESTIMATE based on maximum context. Actual billing is
 NOTE: Traigent limits are best-effort local guardrails, not provider billing caps.
 NOTE: If model pricing is private or unavailable, calibrate rates with
       TRAIGENT_CUSTOM_MODEL_PRICING_FILE or TRAIGENT_CUSTOM_MODEL_PRICING_JSON.
+NOTE: Defaults to 1 LLM call per example; set estimated_calls_per_example on
+      @traigent.optimize for multi-call agents (self-consistency, repair
+      passes, model cascades).
 
 Options:
   [y] Approve and continue with current limit

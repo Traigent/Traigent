@@ -38,6 +38,7 @@ class CostEstimator:
         candidate_models: Sequence[str] | None = None,
         estimated_input_tokens_per_example: int | None = None,
         estimated_output_tokens_per_example: int | None = None,
+        estimated_calls_per_example: int | None = None,
     ) -> None:
         """Initialize cost estimator.
 
@@ -52,6 +53,11 @@ class CostEstimator:
                 per-example input token estimate
             estimated_output_tokens_per_example: Optional service-provided
                 per-example output token estimate
+            estimated_calls_per_example: Optional declared number of LLM calls
+                the optimized function makes per evaluated example
+                (self-consistency voting, repair passes, model cascades).
+                Multiplies the per-example base cost. Defaults to 1 when
+                unset or invalid (issue #1750).
         """
         self._cost_enforcer = cost_enforcer
         self._max_trials = max_trials
@@ -77,6 +83,13 @@ class CostEstimator:
             and not isinstance(estimated_output_tokens_per_example, bool)
             and estimated_output_tokens_per_example > 0
             else None
+        )
+        self._estimated_calls_per_example = (
+            estimated_calls_per_example
+            if isinstance(estimated_calls_per_example, int)
+            and not isinstance(estimated_calls_per_example, bool)
+            and estimated_calls_per_example > 0
+            else 1
         )
 
     def _get_estimated_tokens_per_example(self) -> tuple[int, int]:
@@ -223,7 +236,11 @@ class CostEstimator:
                     f"estimate: ${estimated_cost:.2f}, limit: "
                     f"${limit:.2f}. "
                     "Pre-run estimates use fixed token assumptions and conservative "
-                    "fallback pricing when model pricing is unavailable. To proceed, "
+                    "fallback pricing when model pricing is unavailable, and assume "
+                    f"{self._estimated_calls_per_example} LLM call(s) per example "
+                    "(set estimated_calls_per_example on @traigent.optimize for "
+                    "multi-call agents such as self-consistency voting, repair "
+                    "passes, or model cascades). To proceed, "
                     "raise TRAIGENT_RUN_COST_LIMIT, approve after review with "
                     "TRAIGENT_COST_APPROVED=true or cost_approved=True, or calibrate "
                     "private/unpriced model rates with "
@@ -239,6 +256,8 @@ class CostEstimator:
         - Estimates total samples based on configuration and dataset size
         - Uses max_total_examples if configured (shared budget across trials)
         - Otherwise estimates samples_per_trial x max_trials
+        - Scales the per-example cost by estimated_calls_per_example (default
+          1 call per example; issue #1750)
         - Applies a flat 1.2x conservative buffer to the estimate
         - Uses conservative estimates for unknown models
 
@@ -251,6 +270,18 @@ class CostEstimator:
             Estimated cost in USD.
         """
         base_cost_per_example, pricing_source = self._estimate_base_cost_per_example()
+
+        # Scale by the declared calls-per-example multiplier (issue #1750).
+        # Without this, a multi-call agent (self-consistency voting, repair
+        # passes, model cascades) is estimated as if it made exactly one LLM
+        # call per example, structurally under-estimating cost at approval
+        # time by roughly the call count.
+        if self._estimated_calls_per_example > 1:
+            base_cost_per_example *= self._estimated_calls_per_example
+            pricing_source = (
+                f"{pricing_source}:calls_per_example="
+                f"{self._estimated_calls_per_example}"
+            )
 
         # Get dataset size
         dataset_size = len(dataset) if hasattr(dataset, "__len__") else 100
