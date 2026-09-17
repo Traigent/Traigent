@@ -27,6 +27,12 @@ EXAMPLE_ESTIMATED_TIMES: dict[str, int] = {
     "06_custom_evaluator.py": 73,  # ~1m 13s
     "07_multi_provider.py": 120,  # ~2m 0s (tests multiple providers)
     "08_privacy_modes.py": 104,  # ~1m 44s
+    # 09 is an "Optional Extras" example, not part of test_all_examples.sh,
+    # so unlike 01-08 this figure is DERIVED, not measured: 18 trials x 13
+    # rag_questions.jsonl rows = 234 sequential calls, at the ~1.5 s/call
+    # implied by 04 (10 trials x 20 rows = 200 calls in 300 s). Replace it
+    # with a measured value once 09 has a recorded real run.
+    "09_rag_multi_objective.py": 350,  # ~5m 50s (derived, see note above)
 }
 
 
