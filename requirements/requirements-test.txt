@@ -3,11 +3,14 @@ pytest>=9.0.3
 pytest-cov>=4.0.0
 pytest-mock>=3.10.0
 pytest-asyncio>=0.21.0
+pytest-timeout>=2.0.0
+pytest-xdist>=3.0.0
 coverage>=7.0.0
 click>=8.0.0
 requests>=2.33.0
 ragas>=0.3.6
 rapidfuzz>=3.14.0
+hypothesis>=6.100.0
 
 # Core dependencies needed for tests
 -r requirements.txt

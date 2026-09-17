@@ -1,6 +1,13 @@
 # Requirements Files Guide
 
-This directory contains all Traigent SDK dependencies organized by feature category. All files are synchronized with `pyproject.toml`.
+This directory mirrors a subset of the optional extras declared in `pyproject.toml` as
+plain `pip install -r` files. Every file below is kept in sync with its matching
+`pyproject.toml` extra — enforced by `scripts/ci/check_dep_floor_drift.py`, which fails
+the build if a file's floor lags or omits what `pyproject.toml` declares for it.
+
+Not every `pyproject.toml` extra has a dedicated file here (e.g. `mcp`, `docs`, `ml`,
+`deepeval`, `cloud`, `tracing`, `visualization`, `pydanticai`, `recommended`,
+`enterprise`) — install those via `pip install -e ".[<extra>]"` (Method 2 below).
 
 ## File Structure
 
@@ -8,8 +15,10 @@ This directory contains all Traigent SDK dependencies organized by feature categ
 requirements/
 ├── requirements.txt              # Core dependencies (required)
 ├── requirements-analytics.txt    # Analytics and intelligence features
+├── requirements-bayesian.txt     # Bayesian optimization features
 ├── requirements-integrations.txt # Framework integrations (LangChain, OpenAI, etc.)
 ├── requirements-security.txt     # Enterprise security features
+├── requirements-hybrid.txt       # Hybrid Mode (external agentic service optimization)
 ├── requirements-test.txt         # Testing dependencies
 ├── requirements-dev.txt          # Development tools + all features
 └── requirements-all.txt          # Safe broad optional features combined
