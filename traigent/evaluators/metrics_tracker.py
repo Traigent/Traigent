@@ -413,6 +413,15 @@ class CostMetrics:
     # (#2274). Distinct from ``unpriced``, which means no price was found at
     # all.
     cost_estimated: bool = False
+    # True when ``total_cost`` is an explicit provider-reported charge, so it
+    # is authoritative EVEN WHEN IT IS EXACTLY 0.0 (a provider telling us the
+    # call was free). Every downstream "did we find a cost?" test used to be
+    # ``total_cost > 0``, which cannot distinguish "provider said $0" from
+    # "nothing reported a cost", and so silently replaced an explicit $0 with
+    # a price-table estimate -- the exact inversion of the precedence this
+    # module documents (#2274). Carry this flag, not the magnitude, wherever
+    # that question is asked.
+    cost_explicit: bool = False
 
     def __post_init__(self) -> None:
         # Ensure non-negative costs and handle None
@@ -1156,7 +1165,9 @@ class ResponseHandler(ABC):
         2. ``response.usage.cost`` — LiteLLM's Usage object exposes ``cost``
            when the provider (e.g. OpenRouter) includes it in the usage
            block. This is an explicit provider-reported charge, so it is
-           retained even when it is exactly ``0.0``.
+           retained even when it is exactly ``0.0`` and flagged via
+           ``CostMetrics.cost_explicit`` so the downstream cost path keeps it
+           instead of substituting a price-table estimate.
         3. ``response._hidden_params['response_cost']`` — LiteLLM sets this
            for OpenRouter and other providers. On some routes LiteLLM copies
            the provider's own charge here; on others it is a local
@@ -1194,8 +1205,22 @@ class ResponseHandler(ABC):
         if usage is not None:
             try:
                 usage_cost = getattr(usage, "cost", None)
-                if isinstance(usage_cost, (int, float)):
+                # ``bool`` is a subclass of ``int``, so ``isinstance(True, int)``
+                # is True and a stray boolean would price a call at $1.00 now
+                # that the old ``> 0`` filter no longer rejects it. Reject it
+                # explicitly rather than relying on the magnitude.
+                if isinstance(usage_cost, (int, float)) and not isinstance(
+                    usage_cost, bool
+                ):
                     cost_metrics.total_cost = float(usage_cost)
+                    # litellm's own ``Usage`` object does NOT define ``cost``
+                    # (verified: ``hasattr(Usage(...), "cost") is False``), so
+                    # the attribute exists only because the provider supplied
+                    # it. An explicit 0.0 here therefore means "the provider
+                    # charged nothing", not "no cost was reported", and must
+                    # survive to the ledger instead of being overwritten by a
+                    # price-table guess (#2274).
+                    cost_metrics.cost_explicit = True
                     logger.debug(
                         "Extracted cost $%.6f from usage.cost "
                         "(explicit provider-reported cost).",
@@ -1278,7 +1303,12 @@ class ResponseHandler(ABC):
 
             # Extract cost from response if available
             response_cost = self.extract_metadata_cost(response)
-            if response_cost.total_cost > 0:
+            # ``or cost_explicit`` is load-bearing: without it an explicit
+            # provider-reported $0 was dropped here and ``metrics.cost`` kept
+            # its zero-valued default, which ``_calculate_cost_for_metrics``
+            # then read as "no cost found" and replaced with a price-table
+            # estimate (#2274).
+            if response_cost.total_cost > 0 or response_cost.cost_explicit:
                 metrics.cost = response_cost
 
             # Extract additional metadata
@@ -1706,6 +1736,25 @@ def _calculate_cost_for_metrics(
 
     if generate_mocks_env == "true":
         _handle_mock_mode(metrics, prompt_length, response_length)
+        return
+
+    if metrics.cost.cost_explicit and metrics.cost.total_cost <= 0.0:
+        # The provider explicitly reported a $0 charge (e.g. a free-tier
+        # OpenRouter route). Return before BOTH the price-table path below and
+        # ``_reconcile_reported_cost_with_tokens``: that reconciler clamps any
+        # reported total sitting below
+        # ``REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO`` of the token-derived
+        # estimate, which for $0 is every priced model -- so routing an
+        # explicit $0 through it would restore the very overwrite this fixes
+        # (#2274). ``unpriced`` stays False on purpose: this is verified free,
+        # not unknown spend.
+        logger.debug(
+            "Keeping explicit provider-reported $0 cost for model %r "
+            "(tokens: in=%d, out=%d); price-table estimate suppressed.",
+            model_name,
+            metrics.tokens.input_tokens,
+            metrics.tokens.output_tokens,
+        )
         return
 
     if metrics.cost.total_cost > 0.0:

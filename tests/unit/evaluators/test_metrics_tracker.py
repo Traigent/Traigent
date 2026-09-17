@@ -1,5 +1,6 @@
 """Unit tests for MetricsTracker and summary_stats functionality."""
 
+import os
 from unittest.mock import patch
 
 import pytest
@@ -894,3 +895,133 @@ class TestOpenRouterCostExtraction:
         assert metrics.tokens.total_tokens == 0
         assert metrics.cost.total_cost == pytest.approx(0.00000001)
         assert "implausibly below token-derived estimate" not in caplog.text
+
+
+class TestExplicitProviderCostEndToEnd:
+    """#2274 end-to-end: an explicit provider charge must survive the WHOLE
+    path, not just the extractor.
+
+    ``extract_metadata_cost`` returning an explicit ``$0`` proved nothing on
+    its own: ``ResponseHandler.handle`` kept the extracted cost only when
+    ``total_cost > 0`` and ``_calculate_cost_for_metrics`` then gated the
+    price-table path on the same ``> 0``, so an explicit ``usage.cost == 0.0``
+    was discarded one frame up and REPLACED by a LiteLLM/price-table estimate
+    -- the exact opposite of the documented precedence, while the
+    extractor-level test stayed green. These tests assert at
+    ``extract_llm_metrics``, the layer both frames sit under.
+    """
+
+    _PRICED_MODEL = "gpt-4o-mini"
+    _IN_TOKENS = 500
+    _OUT_TOKENS = 200
+
+    @pytest.fixture(autouse=True)
+    def _real_cost_path(self, monkeypatch):
+        """Run the REAL cost path, not the mock-recording one.
+
+        ``tests/conftest.py`` sets ``TRAIGENT_GENERATE_MOCKS=true`` for this
+        whole file (``_GENERATE_MOCKS_TEST_PATHS``), and
+        ``_calculate_cost_for_metrics``'s mock branch force-zeroes
+        input/output/total cost and returns BEFORE any precedence logic runs.
+        Left on, every cost assertion in this class would pass against a
+        blanket zero rather than against the fix -- i.e. the explicit-$0 test
+        would be tautological and the price-table control could not fail.
+        Clear it, as the sibling tests in this file do.
+        """
+        monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
+
+    def test_the_mock_recording_knob_is_off_for_this_class(self):
+        """Pin the fixture above: if the knob leaks back on, fail HERE rather
+        than letting every other assertion in this class pass vacuously."""
+        assert os.environ.get("TRAIGENT_GENERATE_MOCKS", "").lower() != "true"
+
+    def _response(self, *, usage_cost: object = "__absent__") -> object:
+        in_tokens, out_tokens = self._IN_TOKENS, self._OUT_TOKENS
+        model = self._PRICED_MODEL
+
+        class MockUsage:
+            prompt_tokens = in_tokens
+            completion_tokens = out_tokens
+            total_tokens = in_tokens + out_tokens
+
+        if usage_cost != "__absent__":
+            MockUsage.cost = usage_cost
+
+        class MockResponse:
+            usage = MockUsage()
+
+        MockResponse.model = model
+        return MockResponse()
+
+    def _table_estimate(self) -> float:
+        from traigent.utils.cost_calculator import cost_from_tokens
+
+        input_cost, output_cost = cost_from_tokens(
+            self._IN_TOKENS, self._OUT_TOKENS, self._PRICED_MODEL, strict=False
+        )
+        return input_cost + output_cost
+
+    def test_price_table_estimate_is_nonzero_for_this_model(self):
+        """Guard the guard: the control below is only meaningful while this
+        model actually prices to something > 0 in the offline table."""
+        assert self._table_estimate() > 0.0
+
+    def test_no_explicit_cost_falls_back_to_price_table_estimate(self):
+        """CONTROL. With no explicit provider charge the price-table estimate
+        is exactly what should be used -- and it is what the buggy code
+        produced for the explicit-$0 case too, which is why the assertion
+        below is the one that bites."""
+        from traigent.evaluators.metrics_tracker import extract_llm_metrics
+
+        metrics = extract_llm_metrics(self._response(), model_name=self._PRICED_MODEL)
+
+        assert metrics.cost.total_cost == pytest.approx(self._table_estimate())
+        assert metrics.cost.total_cost > 0.0
+        assert metrics.cost.cost_explicit is False
+
+    def test_explicit_zero_usage_cost_survives_to_the_ledger(self):
+        """An explicit ``usage.cost == 0.0`` (provider says the call was free)
+        must reach the trial ledger as $0 and suppress the estimate."""
+        from traigent.evaluators.metrics_tracker import extract_llm_metrics
+
+        metrics = extract_llm_metrics(
+            self._response(usage_cost=0.0), model_name=self._PRICED_MODEL
+        )
+
+        assert metrics.cost.total_cost == 0.0, (
+            "explicit provider-reported $0 was replaced by the price-table "
+            f"estimate ${self._table_estimate():.8f} (#2274)"
+        )
+        assert metrics.cost.cost_explicit is True
+        # Verified free, NOT unknown spend: `unpriced` would make aggregation
+        # report this as an unpriced model (#1597).
+        assert metrics.cost.unpriced is False
+        assert metrics.cost.cost_estimated is False
+        # Tokens are still real and still recorded.
+        assert metrics.tokens.total_tokens == self._IN_TOKENS + self._OUT_TOKENS
+
+    def test_explicit_nonzero_usage_cost_survives_to_the_ledger(self):
+        """A plausible explicit charge is also kept verbatim, not re-derived."""
+        from traigent.evaluators.metrics_tracker import extract_llm_metrics
+
+        explicit = self._table_estimate() * 2.0
+        metrics = extract_llm_metrics(
+            self._response(usage_cost=explicit), model_name=self._PRICED_MODEL
+        )
+
+        assert metrics.cost.total_cost == pytest.approx(explicit)
+        assert metrics.cost.cost_explicit is True
+
+    def test_boolean_usage_cost_is_not_a_one_dollar_charge(self):
+        """``bool`` is an ``int`` subclass, so dropping the old ``> 0`` filter
+        would let ``usage.cost = True`` price a call at $1.00. It must be
+        rejected and the model priced normally instead."""
+        from traigent.evaluators.metrics_tracker import extract_llm_metrics
+
+        metrics = extract_llm_metrics(
+            self._response(usage_cost=True), model_name=self._PRICED_MODEL
+        )
+
+        assert metrics.cost.total_cost != pytest.approx(1.0)
+        assert metrics.cost.total_cost == pytest.approx(self._table_estimate())
+        assert metrics.cost.cost_explicit is False
