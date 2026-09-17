@@ -289,10 +289,16 @@ def _collect_requirements_names(path: Path) -> set[str]:
 def _collect_extra_floors(extra: str) -> tuple[dict[str, str], dict[str, str]]:
     """Floors (and their own environment markers) for one optional-dependencies extra.
 
-    Excludes anything already listed in ``requirements/requirements.txt`` --
+    Excludes anything already FLOORED in ``requirements/requirements.txt`` --
     every extra mirror file starts with ``-r requirements.txt``, so a package
-    already there (floored or not) is core's job to enforce (check 3), not
-    this extra's. Matches the drift issue's own repro (#2211), which likewise
+    floored there is core's job to enforce (check 3), not this extra's.
+
+    The floor is what earns the exemption, not mere presence. Exempting a BARE
+    core name opened a hole: a package declared only under extras (``mcp`` is
+    declared under ``hybrid``/``mcp``) could have its core pin replaced by a
+    bare name and escape every check -- check 3 never sees it, because it is
+    not in pyproject's core dependencies, and this check skipped it because
+    the name appeared in the core mirror. Requiring a real floor closes that. Matches the drift issue's own repro (#2211), which likewise
     treats presence in the core mirror as "not this extra's problem" -- e.g.
     ``claude-code-sdk``/``mcp`` are declared under the ``hybrid`` extra in
     pyproject.toml but already floored directly in ``requirements.txt``
@@ -306,8 +312,11 @@ def _collect_extra_floors(extra: str) -> tuple[dict[str, str], dict[str, str]]:
     """
     data = tomllib.loads(PYPROJECT_PATH.read_text())
     deps = (data.get("project", {}).get("optional-dependencies") or {}).get(extra, [])
-    already_mirrored = _collect_requirements_names(
-        REQUIREMENTS_DIR / "requirements.txt"
+    core_mirror = REQUIREMENTS_DIR / "requirements.txt"
+    already_mirrored = (
+        set(_collect_requirements_floors(core_mirror))
+        if core_mirror.exists()
+        else set()
     )
     floors: dict[str, str] = {}
     markers: dict[str, str] = {}
