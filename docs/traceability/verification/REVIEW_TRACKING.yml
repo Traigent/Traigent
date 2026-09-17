@@ -20,8 +20,8 @@ metadata:
   code_file: "traigent/core/cost_enforcement.py"
   protocol_file: "docs/traceability/verification/MODEL_CODE_REVIEW_PROTOCOL.md"
   total_items: 26
-  completed: 25
-  retired: 1
+  completed: 24
+  retired: 2
   gaps_found: 0
   partial_matches: 0
   last_updated: "2026-09-16T00:00:00Z"
@@ -126,16 +126,16 @@ items:
     category: A
     element: "mock_mode state variable"
     description: "Verify mock_mode in Alloy maps to _mock_mode_cached in Python"
-    alloy_location: "line 62: mock_mode: one Bool"
-    code_location: "line 190: self._mock_mode_cached: bool = self._check_mock_mode()"
-    status: completed
+    alloy_location: "removed: mock_mode state variable no longer verified against this Python attribute"
+    code_location: "removed: CostEnforcer has no _mock_mode_cached or _check_mock_mode"
+    status: retired
     agent_id: "GitHub Copilot"
     agent_model: "Gemini 3 Pro (Preview)"
     started_at: "2025-12-06"
-    completed_at: "2025-12-06"
-    result: match
+    completed_at: "2026-09-16T00:00:00Z"
+    result: element_removed
     gap_id: null
-    notes: "Verified _mock_mode_cached is a bool initialized from env."
+    notes: "Retired, not re-verified: Sprint 2-B Round 3 removed the mock-mode bypass this record verified. CostEnforcer has no _check_mock_mode, is_mock_mode, or _mock_mode_cached (tests/unit/core/test_cost_enforcement.py:1221 test_mock_mode_method_and_property_are_removed). Sibling of EDGE-001, which retired the corresponding mockModeBypass predicate/behavior record."
 
   # =============================================================================
   # CATEGORY B: Operations (CRITICAL - 5 items)

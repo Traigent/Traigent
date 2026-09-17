@@ -26,9 +26,6 @@ state:
   - name: unknown_cost_mode
     type: "bool"
     description: "Fallback mode when cost extraction fails."
-  - name: mock_mode_cached
-    type: "bool"
-    description: "Mock mode cached at init to prevent mid-run env changes."
 
 actions:
   - name: acquire_permit
