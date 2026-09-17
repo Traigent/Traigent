@@ -69,11 +69,12 @@ REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO = 0.5
 #: * ``MetricsTracker.format_for_backend`` outputs: ``score``, ``accuracy``,
 #:   ``duration``, ``input_tokens``, ``output_tokens``, ``total_tokens``,
 #:   ``response_time_ms``, ``cost`` (per-trial TOTAL),
-#:   ``cost_per_example_mean``, ``total_examples``, ``successful_examples``,
-#:   ``tokens_per_second``;
+#:   ``cost_per_example_mean``, ``cost_unpriced``, ``total_examples``,
+#:   ``successful_examples``, ``tokens_per_second``;
 #: * the LLM aggregation (``_aggregate_llm_metrics``): ``prompt_tokens``,
 #:   ``completion_tokens``, ``total_tokens``, ``input_cost``, ``output_cost``,
-#:   ``total_cost``, ``avg_response_time``, ``avg_response_time_ms``;
+#:   ``total_cost``, ``cost_unpriced``, ``avg_response_time``,
+#:   ``avg_response_time_ms``;
 #: * standard/LLM per-example keys and lifecycle counters: ``input_cost``,
 #:   ``output_cost``, ``total_cost``, ``examples_attempted``,
 #:   ``examples_consumed``, ``execution_time_ms``.
@@ -90,6 +91,11 @@ RESERVED_METRIC_KEYS: frozenset[str] = frozenset(
         # (finding T2). Reserved so a user tuple key cannot overwrite it and it is
         # never dropped under the measures ceiling.
         "cost_per_example_mean",
+        # True iff any measured example in the trial had cost that could not be
+        # priced -- unknown spend recorded as $0, not verified-free $0 (#1597,
+        # #1741). Reserved so a user tuple key cannot overwrite it and it is
+        # never dropped under the measures ceiling.
+        "cost_unpriced",
         "latency",
         "score",
         # Diagnostic: the built-in exact-match scorer recorded alongside a custom
@@ -759,6 +765,19 @@ class MetricsTracker:
             # (None) and the normal contract (0.0) are preserved.
             cost_total = cost_per_example_mean
 
+        # True when ANY measured example's cost could not be priced
+        # (``ExampleMetrics.cost.unpriced``, #1597) -- the trial's ``cost``
+        # total above is a real sum, but part of it may be an unknown-spend
+        # $0 rather than verified-free $0. Threaded through so per-trial
+        # consumers (trial summary table, ``result.trials[i]``, Pareto/
+        # cost-objective logic) can tell the two apart instead of only
+        # seeing a bare $0 (#1741, follow-up to #1597/#1407).
+        # Wire-format ``MeasuresDict``/backend contract treats every measure
+        # as numeric (bool is rejected for JSON Schema parity, see
+        # ``traigent.cloud.dtos.MeasuresDict._validate_dict``) -- so this is
+        # 1.0/0.0, never a Python ``bool``.
+        cost_unpriced = 1.0 if any(m.cost.unpriced for m in measured_metrics) else 0.0
+
         formatted = {
             # Core metrics (single values)
             "score": accuracy_value,  # Use actual accuracy for score
@@ -778,6 +797,9 @@ class MetricsTracker:
             "cost": cost_total,
             # Per-example MEAN cost, preserved under a distinct key.
             "cost_per_example_mean": cost_per_example_mean,
+            # True iff any measured example's cost is unknown spend, not
+            # verified-free $0 (#1741). See comment above.
+            "cost_unpriced": cost_unpriced,
             # Additional useful metrics
             "total_examples": aggregated["total_examples"],
             "successful_examples": aggregated["successful_examples"],

@@ -320,13 +320,13 @@ def _derive_default_dataset_id(session_request: Any) -> str | None:
     dataset_metadata = getattr(session_request, "dataset_metadata", None) or {}
     if isinstance(dataset_metadata, dict):
         name = dataset_metadata.get("name")
-        if _is_real_dataset_label(name):
+        if isinstance(name, str) and _is_real_dataset_label(name):
             return name.strip()
 
     metadata = getattr(session_request, "metadata", None) or {}
     if isinstance(metadata, dict):
         evaluation_set = metadata.get("evaluation_set")
-        if _is_real_dataset_label(evaluation_set):
+        if isinstance(evaluation_set, str) and _is_real_dataset_label(evaluation_set):
             return evaluation_set.strip()
 
     return None
