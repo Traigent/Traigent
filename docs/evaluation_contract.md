@@ -113,6 +113,7 @@ plus a `CUSTOM_EVALUATOR_UNSUPPORTED` **warning** (it does not fail
 | `INJECTION_CONFIG_PARAM_MISSING` | error | Parameter mode needs a config param the function lacks. |
 | `INJECTION_PROVIDER_SETUP_FAILED` | error | Provider could not construct its wrapper. |
 | `SEAMLESS_INJECTION_UNAVAILABLE` | warning | Seamless AST injection cannot transform this function. |
+| `SEAMLESS_NO_INJECTABLE_TARGET` | warning | Seamless injection has no local assignment or matching parameter for any config key; fails closed at runtime (issue #2298). |
 | `AGENT_SIGNATURE_UNAVAILABLE` | warning | Target function signature could not be introspected. |
 | `AGENT_BIND_FAILED` | error | Resolved call shape does not bind to the function. |
 | `EVALUATOR_SIGNATURE_UNAVAILABLE` | warning | Metric signature could not be introspected. |

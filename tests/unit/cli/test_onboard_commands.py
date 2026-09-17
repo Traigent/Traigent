@@ -14,10 +14,13 @@ from click.testing import CliRunner
 from traigent.cli import onboard_commands
 from traigent.cli.main import cli
 from traigent.cli.onboard_commands import (
+    FIRST_RUN_SKILLS_COMMAND,
     PLAN_JSON_BEGIN,
     PLAN_JSON_END,
+    SKILLS_COMMAND,
     AgentName,
     _detect_coding_agents,
+    _skills_command_for_profile,
     build_first_prompt,
 )
 
@@ -89,6 +92,9 @@ def test_onboard_non_tty_emits_human_and_json_plan(
     assert plan["login_command"] == "traigent onboard --login"
     assert plan["detected_agents"] == ["codex"]
     assert plan["python_project"] is True
+    # Default profile is "beginner": route new users to the traigent-first-run
+    # guided journey before the advanced skill catalog (cold-start inversion fix).
+    assert plan["profile"] == "beginner"
 
     commands = plan["commands"]
     assert isinstance(commands, list)
@@ -101,7 +107,7 @@ def test_onboard_non_tty_emits_human_and_json_plan(
     assert command_by_id["device_login"]["command"] == "traigent onboard --login"
     assert (
         command_by_id["install_agent_skills"]["command"]
-        == "npx skills add Traigent/traigent-skills"
+        == "npx skills add Traigent/traigent-first-run"
     )
     assert command_by_id["verify_quickstart"]["command"] == "traigent quickstart"
     assert (
@@ -120,6 +126,38 @@ def test_onboard_non_tty_emits_human_and_json_plan(
         "verification",
         "first_prompt",
     }
+
+
+def test_skills_command_for_profile_routes_beginner_and_advanced() -> None:
+    assert _skills_command_for_profile("beginner") == FIRST_RUN_SKILLS_COMMAND
+    assert _skills_command_for_profile("advanced") == SKILLS_COMMAND
+
+
+def test_onboard_non_tty_profile_advanced_installs_full_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        onboard_commands, "_detect_coding_agents", lambda _cwd: ["codex"]
+    )
+    monkeypatch.setattr(onboard_commands, "_mcp_help_succeeds", lambda: False)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(cli, ["onboard", "--profile", "advanced"])
+
+    assert result.exit_code == 0
+    plan = _extract_plan(result.output)
+    assert plan["profile"] == "advanced"
+
+    commands = plan["commands"]
+    assert isinstance(commands, list)
+    command_by_id = {
+        command["id"]: command for command in commands if isinstance(command, dict)
+    }
+    assert (
+        command_by_id["install_agent_skills"]["command"]
+        == "npx skills add Traigent/traigent-skills"
+    )
 
 
 def test_onboard_non_tty_without_flags_does_not_call_network_or_write_credentials(

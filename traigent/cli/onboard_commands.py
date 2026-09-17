@@ -20,6 +20,7 @@ from traigent.cli.auth_commands import TraigentAuthCLI
 console = Console()
 
 AgentName = Literal["claude", "cursor", "codex", "copilot"]
+OnboardProfile = Literal["beginner", "advanced"]
 
 AGENT_LABELS: dict[AgentName, str] = {
     "claude": "Claude Code",
@@ -36,7 +37,9 @@ FIRST_PROMPT_TOOL_LINE: dict[AgentName, str] = {
 PLAN_JSON_BEGIN = "BEGIN_TRAIGENT_ONBOARD_PLAN_JSON"
 PLAN_JSON_END = "END_TRAIGENT_ONBOARD_PLAN_JSON"
 SKILLS_COMMAND = ["npx", "skills", "add", "Traigent/traigent-skills"]
+FIRST_RUN_SKILLS_COMMAND = ["npx", "skills", "add", "Traigent/traigent-first-run"]
 AUTH_STATUS_COMMAND = ["traigent", "auth", "status"]
+DEFAULT_ONBOARD_PROFILE: OnboardProfile = "beginner"
 
 
 def _stdin_is_tty() -> bool:
@@ -77,6 +80,19 @@ def _dependency_command(project_markers: list[str]) -> list[str]:
     ):
         return ["uv", "add", "traigent[integrations]"]
     return [sys.executable, "-m", "pip", "install", "traigent[integrations]"]
+
+
+def _skills_command_for_profile(profile: OnboardProfile) -> list[str]:
+    """Pick the skill catalog to install for the chosen onboarding profile.
+
+    ``beginner`` (the default) installs the guided ``traigent-first-run``
+    journey so new users build task-awareness with a first real run before
+    reaching for the advanced toolkit. ``advanced`` installs the full
+    18-skill optimization catalog directly (the previous, only, behavior).
+    """
+    if profile == "beginner":
+        return FIRST_RUN_SKILLS_COMMAND
+    return SKILLS_COMMAND
 
 
 def _detect_coding_agents(cwd: Path, home: Path | None = None) -> list[AgentName]:
@@ -191,6 +207,7 @@ def _build_non_tty_plan(
     auth_status: str,
     mcp_available: bool,
     login_command: list[str],
+    profile: OnboardProfile = DEFAULT_ONBOARD_PROFILE,
 ) -> dict[str, Any]:
     commands: list[dict[str, object]] = []
     steps: list[dict[str, object]] = [_python_version_step()]
@@ -250,21 +267,31 @@ def _build_non_tty_plan(
         )
 
     if detected_agents:
-        skills_text = _command_text(SKILLS_COMMAND)
+        skills_command = _skills_command_for_profile(profile)
+        skills_text = _command_text(skills_command)
         commands.append(
             {
                 "id": "install_agent_skills",
                 "command": skills_text,
-                "argv": SKILLS_COMMAND,
+                "argv": skills_command,
                 "requires_consent": True,
                 "agents": detected_agents,
+                "profile": profile,
             }
+        )
+        skills_description = (
+            "Offer installing the traigent-first-run beginner journey for each "
+            "detected coding agent (default; use --profile advanced for the "
+            "full skill catalog)."
+            if profile == "beginner"
+            else "Offer installing the full Traigent agent skills catalog for "
+            "each detected coding agent."
         )
         steps.append(
             {
                 "id": "agent_skills",
                 "status": "planned",
-                "description": "Offer installing Traigent agent skills for each detected coding agent.",
+                "description": skills_description,
                 "commands": [skills_text],
             }
         )
@@ -346,6 +373,7 @@ def _build_non_tty_plan(
         "python_project": bool(project_markers),
         "project_markers": project_markers,
         "detected_agents": detected_agents,
+        "profile": profile,
         "auth_status": auth_status,
         "auth_check_command": _command_text(AUTH_STATUS_COMMAND),
         "login_command": _command_text(login_command),
@@ -415,7 +443,10 @@ def _run_quickstart_verification() -> bool:
 
 
 def _run_interactive_onboard(
-    no_login: bool, backend_url: str | None, write_env: bool
+    no_login: bool,
+    backend_url: str | None,
+    write_env: bool,
+    profile: OnboardProfile = DEFAULT_ONBOARD_PROFILE,
 ) -> bool:
     cwd = Path.cwd().resolve()
     project_markers = _detect_python_project(cwd)
@@ -457,12 +488,18 @@ def _run_interactive_onboard(
             ):
                 return False
 
+    skills_command = _skills_command_for_profile(profile)
+    skills_prompt_label = (
+        "the Traigent first-run beginner journey"
+        if profile == "beginner"
+        else "Traigent agent skills"
+    )
     for agent in detected_agents:
         if click.confirm(
-            f"Install Traigent agent skills for {AGENT_LABELS[agent]}?",
+            f"Install {skills_prompt_label} for {AGENT_LABELS[agent]}?",
             default=False,
         ):
-            _run_command(SKILLS_COMMAND)
+            _run_command(skills_command)
 
     if _mcp_help_succeeds():
         for agent in detected_agents:
@@ -510,15 +547,27 @@ def _run_interactive_onboard(
     default=None,
     help="Backend URL to authenticate against during device login.",
 )
+@click.option(
+    "--profile",
+    type=click.Choice(["beginner", "advanced"], case_sensitive=False),
+    default=DEFAULT_ONBOARD_PROFILE,
+    help=(
+        "Skill catalog to install: 'beginner' (default) installs the guided "
+        "traigent-first-run journey; 'advanced' installs the full "
+        "optimization skill catalog directly."
+    ),
+)
 def onboard(
     no_login: bool,
     run_login: bool,
     write_env: bool,
     check_auth: bool,
     backend_url: str | None,
+    profile: str,
 ) -> None:
     """Run guided setup for Traigent in this project."""
     cwd = Path.cwd().resolve()
+    normalized_profile = cast(OnboardProfile, profile.lower())
     if no_login and run_login:
         raise click.ClickException("--login and --no-login cannot be used together.")
 
@@ -542,6 +591,7 @@ def onboard(
             auth_status=current_auth_status,
             mcp_available=mcp_available,
             login_command=login_command,
+            profile=normalized_profile,
         )
         _print_non_tty_plan(plan)
         if run_login:
@@ -559,6 +609,7 @@ def onboard(
         no_login=no_login,
         backend_url=backend_url,
         write_env=write_env,
+        profile=normalized_profile,
     )
     raise SystemExit(0 if success else 1)
 

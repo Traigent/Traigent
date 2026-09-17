@@ -89,6 +89,16 @@ def test_prompt_rewriter_caps_at_candidates_per_round() -> None:
     assert len(rw.rewrite(current_variants=["base"])) == 3
 
 
+def test_prompt_rewriter_rewrite_has_no_dead_plan_parameter() -> None:
+    """Regression for issue #2098: `rewrite()` took a `plan: GuidancePlan` it
+    never read, contradicting its own module docstring. Deleted rather than
+    wired in (JS SDK's PromptRewriter.rewrite already lacks it too)."""
+    import inspect
+
+    params = inspect.signature(PromptRewriter.rewrite).parameters
+    assert "plan" not in params
+
+
 def test_merge_prompt_candidates_unions_into_choices_purely() -> None:
     space = {
         "prompt": Choices(["base one", "base two"], default="base one", name="prompt")
