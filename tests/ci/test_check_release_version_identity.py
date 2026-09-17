@@ -187,6 +187,108 @@ class TestDerivedPublicApiPaths:
         assert "still accurate" in message
 
 
+def _init_conditional_extend_layout(root: Path) -> None:
+    """Mirrors the real traigent/__init__.py (round-3 review finding on
+    #2290): a name added to `__all__` conditionally via
+    `__all__.extend([...])` inside an `if <name> in globals():` guard --
+    the pattern that gates the optional `AgentCostBreakdown`,
+    `WorkflowCostSummary`, `MeasuresDict` cloud-DTO exports -- rather than
+    the top-level `__all__ = [...]` literal that `derive_public_api_paths`
+    already folded."""
+    (root / "traigent" / "api").mkdir(parents=True)
+    (root / "traigent" / "cloud").mkdir(parents=True)
+    (root / "traigent" / "__init__.py").write_text(
+        "try:\n"
+        "    from traigent.cloud.agent_dtos import AgentCostBreakdown\n"
+        "except ModuleNotFoundError:\n"
+        "    pass\n"
+        "\n"
+        '__all__ = ["Placeholder"]\n'
+        "\n"
+        'if "AgentCostBreakdown" in globals():\n'
+        "    __all__.extend(\n"
+        "        [\n"
+        '            "AgentCostBreakdown",\n'
+        "        ]\n"
+        "    )\n"
+    )
+    (root / "traigent" / "api" / "decorators.py").write_text("# decorators\n")
+    (root / "traigent" / "cloud" / "__init__.py").write_text("")
+    (root / "traigent" / "cloud" / "agent_dtos.py").write_text(
+        "class AgentCostBreakdown:\n    pass\n"
+    )
+
+
+class TestConditionalAllMutations:
+    """#2290 round-3 review: `__all__.extend([...])` / `__all__ += [...]`
+    inside a conditional must be folded into the derived public API paths,
+    same as the top-level `__all__ = [...]` literal."""
+
+    def test_fails_when_a_conditionally_extended_export_module_changes(self, tmp_path):
+        root = tmp_path
+        _init_repo(root)
+        _init_conditional_extend_layout(root)
+        _write_pyproject(root, "0.27.0")
+        _commit(root, "release 0.27.0")
+        _git(root, "tag", "v0.27.0")
+
+        # Widen the conditionally-exported DTO -- neither traigent/api/ nor
+        # the __all__ = [...] literal in traigent/__init__.py changes; only
+        # the module reached through __all__.extend([...]) does.
+        (root / "traigent" / "cloud" / "agent_dtos.py").write_text(
+            "class AgentCostBreakdown:\n    extra_field: int = 0\n"
+        )
+        _commit(root, "feat: widen AgentCostBreakdown")
+
+        ok, message = identity_check.check(root)
+
+        assert ok is False
+        assert "traigent/cloud/agent_dtos.py" in message
+
+    def test_derive_public_api_paths_folds_aug_assign_extension(self, tmp_path):
+        root = tmp_path
+        _init_repo(root)
+        (root / "traigent" / "api").mkdir(parents=True)
+        (root / "traigent" / "cloud").mkdir(parents=True)
+        (root / "traigent" / "__init__.py").write_text(
+            "from traigent.cloud.dtos import MeasuresDict\n"
+            '__all__ = ["Placeholder"]\n'
+            '__all__ += ["MeasuresDict"]\n'
+        )
+        (root / "traigent" / "api" / "decorators.py").write_text("# decorators\n")
+        (root / "traigent" / "cloud" / "__init__.py").write_text("")
+        (root / "traigent" / "cloud" / "dtos.py").write_text(
+            "class MeasuresDict:\n    pass\n"
+        )
+        _commit(root, "initial")
+
+        paths = identity_check.derive_public_api_paths(root)
+
+        assert "traigent/cloud/dtos.py" in paths
+
+    def test_raises_on_a_non_literal_extend_argument(self, tmp_path):
+        root = tmp_path
+        _init_repo(root)
+        (root / "traigent" / "api").mkdir(parents=True)
+        (root / "traigent" / "__init__.py").write_text(
+            '_extra = ["Something"]\n'
+            '__all__ = ["Placeholder"]\n'
+            "__all__.extend(_extra)\n"
+        )
+        (root / "traigent" / "api" / "decorators.py").write_text("# decorators\n")
+        _commit(root, "initial")
+
+        try:
+            identity_check.derive_public_api_paths(root)
+        except ValueError as exc:
+            assert "__all__.extend" in str(exc)
+        else:
+            raise AssertionError(
+                "expected derive_public_api_paths to raise on a non-literal "
+                "__all__.extend(...) argument"
+            )
+
+
 class TestBenignCases:
     def test_passes_when_head_is_exactly_the_release_tag(self, tmp_path):
         root = tmp_path

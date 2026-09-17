@@ -28,6 +28,7 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from typing import NoReturn
 
 # Repo root as invoked, not the script's own location: the CLI is meant to
 # run with cwd already at the repo root (that is how the pr-gate.yml and
@@ -110,6 +111,36 @@ def derive_public_api_paths(
             return (node.target,)
         return ()
 
+    def _string_list_literal(value: ast.expr) -> list[str] | None:
+        """Return the string constants in `value` if it is a literal
+        list/tuple of string constants, else None (meaning the caller must
+        not silently ignore it -- see the loud-failure callers below)."""
+        if not isinstance(value, (ast.List, ast.Tuple)):
+            return None
+        names: list[str] = []
+        for elt in value.elts:
+            if not (isinstance(elt, ast.Constant) and isinstance(elt.value, str)):
+                return None
+            names.append(elt.value)
+        return names
+
+    def _fail_non_literal(node: ast.AST, how: str) -> NoReturn:
+        # A conditional `__all__.extend([...])` / `__all__ += [...]` (e.g.
+        # traigent/__init__.py's optional-cloud-DTO export block, #2290
+        # round-3 review) is common and must be folded in, same as the
+        # top-level `__all__ = [...]`. But if the argument is *not* a
+        # literal list/tuple of string constants (e.g. built from a
+        # variable or a comprehension), silently skipping it would
+        # under-report the public API surface -- the exact failure mode
+        # this whole script exists to prevent (#2265). Raise instead of
+        # falling back to `base`, so a future non-literal `__all__` mutation
+        # breaks this check loudly rather than silently narrowing it.
+        raise ValueError(
+            f"derive_public_api_paths: traigent/__init__.py:{getattr(node, 'lineno', '?')} "
+            f"has a `{how}` whose argument is not a literal list/tuple of string "
+            "constants; cannot statically derive the public API surface"
+        )
+
     for node in ast.walk(tree):
         value = getattr(node, "value", None)
         for target in _assign_targets(node):
@@ -135,6 +166,27 @@ def derive_public_api_paths(
         if isinstance(node, ast.ImportFrom) and node.module:
             for alias in node.names:
                 name_to_module.setdefault(alias.asname or alias.name, node.module)
+        if (
+            isinstance(node, ast.AugAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "__all__"
+            and isinstance(node.op, ast.Add)
+        ):
+            names = _string_list_literal(node.value)
+            if names is None:
+                _fail_non_literal(node, "__all__ += ...")
+            all_names.update(names)
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "extend"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "__all__"
+        ):
+            names = _string_list_literal(node.args[0]) if len(node.args) == 1 else None
+            if names is None:
+                _fail_non_literal(node, "__all__.extend(...)")
+            all_names.update(names)
 
     modules = {
         module
