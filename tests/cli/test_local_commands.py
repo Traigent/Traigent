@@ -855,8 +855,16 @@ class TestLocalCommands:
 
     def test_file_permission_handling(self):
         """Test handling of file permission issues."""
-        # Make storage directory read-only
-        os.chmod(self.storage_path, 0o444)
+        # Deny traversal of the storage directory (no execute bit, so even
+        # the owner cannot list/open entries under it -- this is what
+        # actually produces the permission error below, not the missing
+        # write bit). self.storage_path is a private tmpdir owned solely by
+        # this test process, so restricting to owner-only read (no
+        # execute, no write, and critically no group/other bits at all) is
+        # the narrowest mode that still exercises the failure, unlike the
+        # previously-used 0o444 which also left the directory group/other
+        # readable.
+        os.chmod(self.storage_path, 0o400)
 
         try:
             with patch.dict(os.environ, self.env_vars):
@@ -870,8 +878,10 @@ class TestLocalCommands:
             assert "Error listing sessions" in result.output
             assert "Permission denied" in result.output
         finally:
-            # Restore permissions for cleanup
-            os.chmod(self.storage_path, 0o755)
+            # Restore to an owner-only private directory (matches
+            # tempfile.mkdtemp()'s own default of 0o700) rather than the
+            # previously-used 0o755, which left it group/other readable.
+            os.chmod(self.storage_path, 0o700)
 
     def test_large_dataset_handling(self):
         """Test handling of large datasets in commands."""

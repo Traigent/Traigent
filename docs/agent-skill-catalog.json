@@ -1,0 +1,27 @@
+{
+  "_comment": "Pinned snapshot of the traigent-skills catalog, used only to validate that skill IDs and skill links named in docs/agent-skill.md still exist. Refresh by re-copying catalog/skills.json's names from the pinned commit below and bumping the commit; do not hand-edit the name list without checking the source.",
+  "source_repo": "Traigent/traigent-skills",
+  "source_ref": "main",
+  "pinned_commit": "e95b175b28fbcfd762acfe8fb24be1113bb38d8d",
+  "skill_names": [
+    "traigent-analyze-guidance",
+    "traigent-analyze-results",
+    "traigent-analyze-variable-importance",
+    "traigent-boost-agent",
+    "traigent-ci-safety-gate",
+    "traigent-dataset-curate",
+    "traigent-debugging",
+    "traigent-eval-audit",
+    "traigent-eval-build",
+    "traigent-eval-choose-metric",
+    "traigent-js",
+    "traigent-optimize-composite-knobs",
+    "traigent-optimize-config-space",
+    "traigent-optimize-run",
+    "traigent-recipe-text2sql",
+    "traigent-setup-audit",
+    "traigent-setup-decorator",
+    "traigent-setup-integrations",
+    "traigent-setup-quickstart"
+  ]
+}

@@ -13,6 +13,11 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from traigent.api.safety import (
+    CompoundSafetyConstraint,
+    SafetyConstraint,
+    SafetyValidator,
+)
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.config.feature_flags import _coerce_bool as _coerce_config_bool_value
 from traigent.core.objectives import ObjectiveSchema
@@ -1100,6 +1105,79 @@ class ExecutionBudgetStopCondition(StopCondition):
         return "Execution budget exhausted"
 
 
+class SafetyConstraintStopCondition(StopCondition):
+    """Stop when a statistical (chance-constraint) safety constraint is violated.
+
+    Wraps ``traigent.api.safety.SafetyValidator``: each newly COMPLETED trial's
+    ``(config, metrics)`` is recorded against every top-level constraint --
+    each a ``SafetyConstraint`` (one metric) or a ``CompoundSafetyConstraint``
+    (its own AND/OR-combined boolean, evaluated as a single unit so OR
+    semantics are preserved -- see ``CompoundSafetyConstraint.threshold``) --
+    then validated with a Clopper-Pearson lower bound on the per-trial
+    compliance rate (see ``SafetyValidator.validate``). This reuses the SDK's
+    own already-tested statistical engine: the same Clopper-Pearson primitive
+    used by the backend's Pareto-frontier optimizer, wired here as the SDK
+    trial lifecycle's own local implementation rather than adding a new
+    dependency.
+
+    Each constraint's own ``threshold.min_samples`` is the evidence floor: below
+    it, ``should_stop`` never fires for that constraint (an unproven low sample
+    count is not a violation). At or above the floor, a statistically
+    unsatisfied lower bound is treated as a genuine violation and halts the run
+    with ``stop_reason="safety_constraint"`` (see
+    ``StopConditionManager``/``OptimizationOrchestrator._should_stop`` reason
+    mapping). A non-violated constraint never halts the run.
+
+    Trials only ever reach here as evidence if they stayed ``COMPLETED``: a
+    safety constraint's ``mode == "soft"`` excludes it from
+    ``OptimizationOrchestrator._constraints_post_eval``
+    (``_init_constraints``), so a per-trial violation is recorded as one
+    statistical sample instead of raising and failing the trial.
+    """
+
+    reason = "safety_constraint"
+
+    def __init__(
+        self,
+        constraints: Sequence[SafetyConstraint | CompoundSafetyConstraint],
+    ) -> None:
+        self._constraints: tuple[SafetyConstraint | CompoundSafetyConstraint, ...] = (
+            tuple(constraints)
+        )
+        self._validator = SafetyValidator()
+        self._last_index = 0
+
+    def reset(self) -> None:
+        self._validator.reset()
+        self._last_index = 0
+
+    def should_stop(self, trials: Iterable[TrialResult]) -> bool:
+        if not self._constraints:
+            return False
+
+        trial_seq = trials if isinstance(trials, Sequence) else list(trials)
+
+        new_trials = trial_seq[self._last_index :]
+        for trial in new_trials:
+            if trial.status != TrialStatus.COMPLETED:
+                continue
+            metrics = trial.metrics or {}
+            config = trial.config or {}
+            for constraint in self._constraints:
+                self._validator.record_result(constraint, config, metrics)
+        self._last_index = len(trial_seq)
+
+        for constraint in self._constraints:
+            result = self._validator.validate(constraint)
+            if result.sample_count < constraint.threshold.min_samples:
+                # Not enough evidence yet for this constraint - never a violation.
+                continue
+            if not result.satisfied:
+                return True
+
+        return False
+
+
 class HypervolumeConvergenceStopCondition(StopCondition):
     """Stop when hypervolume improvement falls below threshold.
 
@@ -1419,6 +1497,7 @@ __all__ = [
     "MaxTrialsStopCondition",
     "MetricLimitStopCondition",
     "PlateauAfterNStopCondition",
+    "SafetyConstraintStopCondition",
     "SemanticSaturationStopCondition",
     "StopCondition",
 ]

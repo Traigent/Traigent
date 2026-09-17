@@ -100,22 +100,70 @@ def test_apply_best_config_parameter_mode(sample_optimization_result) -> None:
     assert fn("hi") == ("gpt-4", 0.1)
 
 
-def test_apply_best_config_seamless_literal_call_still_literal(
+def test_apply_best_config_seamless_literal_call_fails_closed(
     sample_optimization_result,
 ) -> None:
-    """Literal call-site remains unchanged until call-site injection is implemented."""
+    """Issue #2298: a literal call-site argument (no local assignment or
+    matching parameter) means the configuration_space has zero injectable
+    targets. Decoration still succeeds (a function that is only ever called
+    directly is unaffected), but once a config is applied every call raises
+    -- on the first call and on every later one (C1: the unvaried function is
+    never cached) -- and the body never runs."""
+    from traigent.config.providers import SeamlessNoInjectableTargetsError
+
+    calls: list[str] = []
 
     @traigent.optimize(
         configuration_space={"model": ["gpt-3.5", "gpt-4"]},
         injection_mode="seamless",
     )
     def fn(prompt: str) -> str:
-        # The literal argument isn't rewritten yet; this guards against regressions.
+        calls.append(prompt)
         return DummyLLM(model="gpt-3.5").invoke(prompt)
 
     opt_fn: OptimizedFunction = fn  # type: ignore[assignment]
     opt_fn._optimization_results = sample_optimization_result
-
     opt_fn.apply_best_config()
 
-    assert fn("test") == "gpt-3.5:test"
+    for _ in range(3):
+        with pytest.raises(
+            SeamlessNoInjectableTargetsError, match="no injectable target"
+        ):
+            fn("hi")
+    assert calls == []
+
+
+def test_optimize_seamless_literal_call_aborts_before_first_trial(
+    tmp_path, monkeypatch
+) -> None:
+    """Issue #2298 direction 1: with zero injectable targets the run aborts
+    before the first trial -- no trial is created and the body never runs."""
+    import json
+
+    from traigent.config.providers import SeamlessNoInjectableTargetsError
+
+    monkeypatch.chdir(tmp_path)  # dataset paths must sit under the working directory
+    dataset = tmp_path / "ds.jsonl"
+    dataset.write_text(
+        "\n".join(
+            json.dumps({"input": {"prompt": f"q{i}"}, "expected_output": "a"})
+            for i in range(3)
+        )
+        + "\n"
+    )
+    calls: list[str] = []
+
+    @traigent.optimize(
+        eval_dataset="ds.jsonl",
+        configuration_space={"model": ["gpt-3.5", "gpt-4"]},
+        objectives=["accuracy"],
+        injection_mode="seamless",
+        offline=True,
+    )
+    def fn(prompt: str) -> str:
+        calls.append(prompt)
+        return DummyLLM(model="gpt-3.5").invoke(prompt)
+
+    with pytest.raises(SeamlessNoInjectableTargetsError, match="no injectable target"):
+        fn.optimize_sync(algorithm="grid", max_trials=2)
+    assert calls == []

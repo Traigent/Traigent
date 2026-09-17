@@ -15,10 +15,7 @@ from traigent.core.execution_budget import ExecutionBudget
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.core.parallel_execution_manager import PermittedTrialResult
-from traigent.core.stop_conditions import (
-    ExecutionBudgetStopCondition,
-    StopCondition,
-)
+from traigent.core.stop_conditions import ExecutionBudgetStopCondition, StopCondition
 from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationResult
 from traigent.utils.exceptions import VendorPauseError
 
@@ -236,6 +233,32 @@ def test_custom_stop_condition_maps_to_generic_condition_stop_reason():
 
     assert orchestrator._should_stop(trial_count=0)
     assert orchestrator._stop_reason == "condition"
+
+
+# ---------------------------------------------------------------------------
+# safety_constraint stop-reason contract (issue #1532)
+# ---------------------------------------------------------------------------
+
+
+def test_safety_constraint_is_in_stop_reason_literal():
+    """The public StopReason contract includes the safety-constraint reason."""
+    assert "safety_constraint" in get_args(StopReason)
+
+
+def test_violated_safety_constraint_maps_to_public_stop_reason():
+    """A statistically violated safety_constraints entry maps to the public
+    'safety_constraint' StopReason once its min_samples evidence floor is met."""
+    from traigent.api.safety import custom_safety
+
+    constraint = custom_safety(
+        "must_pass", lambda config, metrics: metrics.get("safety_score", 0.0)
+    ).above(0.5, min_samples=1, confidence=0.5)
+
+    orchestrator = _orchestrator(max_trials=10, safety_constraints=[constraint])
+    orchestrator._trials = [_trial("t1", {"safety_score": 0.0})]
+
+    assert orchestrator._should_stop(trial_count=1)
+    assert orchestrator._stop_reason == "safety_constraint"
 
 
 # ---------------------------------------------------------------------------

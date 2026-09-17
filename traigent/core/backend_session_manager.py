@@ -52,6 +52,7 @@ from traigent.core.execution_policy_runtime import (
 )
 from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.objectives import ObjectiveSchema
+from traigent.core.selection_receipt import sanitize_selection_receipt
 from traigent.core.session_context import SessionContext
 from traigent.core.session_types import (
     SessionCreationFailureClassification,
@@ -278,6 +279,10 @@ def sanitize_session_aggregation_payload(payload: Any) -> dict[str, Any] | None:
     exception (prompt text a customer tuned as a variable travels as config);
     they are passed through as a dict, and the builder omits them under
     privacy mode.
+
+    ``selection`` (the R3 selection receipt) is never passed through: it is
+    rebuilt from its own allowlist by ``sanitize_selection_receipt`` and the
+    key is omitted when nothing valid survives.
     """
     if not isinstance(payload, dict):
         return None
@@ -293,7 +298,7 @@ def sanitize_session_aggregation_payload(payload: Any) -> dict[str, Any] | None:
             and not isinstance(value, bool)
         }
     best_weighted_config = payload.get("best_weighted_config")
-    return {
+    sanitized: dict[str, Any] = {
         "selection_mode": _bounded_label(payload.get("selection_mode")),
         "primary_objective": _bounded_label(payload.get("primary_objective")),
         "metrics": _sanitized_numeric_dict(payload.get("metrics")),
@@ -312,6 +317,10 @@ def sanitize_session_aggregation_payload(payload: Any) -> dict[str, Any] | None:
         "execution_time": _bounded_number(payload.get("execution_time")),
         "sdk_version": _bounded_version(payload.get("sdk_version")),
     }
+    selection = sanitize_selection_receipt(payload.get("selection"))
+    if selection is not None:
+        sanitized["selection"] = selection
+    return sanitized
 
 
 def _sanitized_numeric_dict(value: Any) -> dict[str, Any]:
@@ -2706,7 +2715,10 @@ class BackendSessionManager:
             return 0
 
     def build_session_aggregation_payload(
-        self, result: OptimizationResult, session_id: str | None
+        self,
+        result: OptimizationResult,
+        session_id: str | None,
+        selection_receipt: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Build the content-free session-level rollup for POST .../finalize.
 
@@ -2727,6 +2739,11 @@ class BackendSessionManager:
         Args:
             result: Final optimization result
             session_id: Backend session identifier
+            selection_receipt: Optional R3 selection receipt built by
+                ``traigent.core.selection_receipt.build_selection_receipt``
+                from the same selection that produced ``result``. Re-run
+                through the receipt allowlist; the ``selection`` key is
+                omitted when it is ``None`` or does not survive.
 
         Returns:
             The allowlisted rollup dict, or ``None`` under the same skip
@@ -2807,7 +2824,7 @@ class BackendSessionManager:
         if not isinstance(success_rate, (int, float)) or isinstance(success_rate, bool):
             success_rate = None
 
-        return {
+        payload: dict[str, Any] = {
             "selection_mode": _bounded_label(session_summary.get("selection_mode")),
             "primary_objective": _bounded_label(
                 session_summary.get("primary_objective")
@@ -2826,6 +2843,10 @@ class BackendSessionManager:
             "execution_time": execution_time,
             "sdk_version": _bounded_version(get_version()),
         }
+        selection = sanitize_selection_receipt(selection_receipt)
+        if selection is not None:
+            payload["selection"] = selection
+        return payload
 
     def finalize_session(
         self,
