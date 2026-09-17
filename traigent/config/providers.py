@@ -955,6 +955,11 @@ class SeamlessParameterProvider(ConfigurationProvider):
             in (
                 inspect.Parameter.POSITIONAL_OR_KEYWORD,
                 inspect.Parameter.KEYWORD_ONLY,
+                # POSITIONAL_ONLY is injectable too: runtime_injector binds it
+                # by name into BoundArguments.arguments (it skips only
+                # VAR_POSITIONAL/VAR_KEYWORD). Omitting it here made this guard
+                # reject `def f(model="x", /)` that injection actually supports.
+                inspect.Parameter.POSITIONAL_ONLY,
             )
         }
 

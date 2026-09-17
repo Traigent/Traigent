@@ -710,6 +710,9 @@ def _seamless_satisfied_param_names(
         in (
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
             inspect.Parameter.KEYWORD_ONLY,
+            # Mirrors _matched_param_names in traigent/config/providers.py:
+            # positional-only parameters are injectable.
+            inspect.Parameter.POSITIONAL_ONLY,
         )
     )
 

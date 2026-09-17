@@ -513,3 +513,44 @@ def test_seamless_runtime_shim_stats_access() -> None:
     assert stats["runtime_shims"] >= 1
     assert "fallback_triggers" in stats
     assert isinstance(stats["fallback_triggers"], dict)
+
+
+def test_positional_only_parameters_are_injectable_not_rejected() -> None:
+    """A positional-only parameter is a real injection target, so the
+    fail-closed guard must not treat it as "no injectable targets".
+
+    ``runtime_injector`` binds by name into ``BoundArguments.arguments`` and
+    skips only ``VAR_POSITIONAL``/``VAR_KEYWORD``, so ``def f(model, /)`` is
+    injectable. An earlier revision of this guard listed only
+    POSITIONAL_OR_KEYWORD and KEYWORD_ONLY, which turned a working
+    optimization into ``SeamlessNoInjectableTargetsError`` — a hard failure
+    where the previous behaviour was correct.
+    """
+
+    def positional_only(model: str = "old", /) -> str:
+        return model
+
+    provider = SeamlessParameterProvider()
+
+    assert provider.inject_config(positional_only, {"model": "new"})() == "new"
+    provider.assert_injectable(positional_only, {"model": "new"})
+
+
+def test_matched_param_names_covers_every_injectable_kind() -> None:
+    """Keep the guard's notion of "injectable" identical to the injector's.
+
+    The injector rejects only the two variadic kinds; anything else it can
+    bind by name. Asserting on the complement makes a future narrowing of
+    either list fail here instead of at a user's call site.
+    """
+    import inspect
+
+    def every_kind(pos_only: int = 1, /, normal: int = 2, *args: int, kw_only: int = 3, **kwargs: int) -> None:
+        return None
+
+    signature = inspect.signature(every_kind)
+    config = {"pos_only": 9, "normal": 9, "kw_only": 9, "args": 9, "kwargs": 9}
+
+    matched = SeamlessParameterProvider()._matched_param_names(signature, config)
+
+    assert matched == {"pos_only", "normal", "kw_only"}
