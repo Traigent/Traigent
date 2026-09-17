@@ -5388,6 +5388,9 @@ class OptimizationOrchestrator:
             warning_codes=result_warning_codes,
             source=source,
             best_config_margin=best_config_margin,
+            # Thread the terminal selector's exact eligible set through so
+            # post-hoc range normalization shares its basis (issue #1704).
+            ranking_eligible_trial_ids=selection.ranking_eligible_trial_ids,
         )
         self._selection_receipt_binding = (optimization_result, selection_receipt)
 

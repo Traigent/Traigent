@@ -1728,3 +1728,229 @@ class TestIssue1846TieBreakParity:
         weighted = result.calculate_weighted_scores(objective_schema=schema)
         assert weighted["best_weighted_config"] == {"model": "best"}
         assert weighted["best_weighted_score"] == pytest.approx(1.0)
+
+
+class TestIssue1704RangeSourceUnification:
+    """Terminal selection and post-hoc weighted scoring must normalize over
+    the SAME observed range (#1704, follow-up to #1682/#1695's review
+    advisory).
+
+    Terminal ``select_best_configuration`` computes ``observed_metric_ranges``
+    over ``eligible_trials`` only; post-hoc
+    ``OptimizationResult.calculate_weighted_scores`` used to source its range
+    from every ``successful_trial`` (``trial.is_successful``, no
+    comparability gate). Under ``comparability_mode="legacy"`` the two sets
+    coincide (the #1682 agreement test); under "warn"/"strict" a trial can be
+    successful yet fail the ranking-eligibility gate (e.g. no recorded
+    comparability payload), so eligible can be a STRICT SUBSET of successful.
+    """
+
+    def _terminal_warn(self, trials, schema):
+        return select_best_configuration(
+            trials=trials,
+            primary_objective="accuracy",
+            config_space_keys={"model"},
+            aggregate_configs=False,
+            objective_order=["accuracy", "cost"],
+            comparability_mode="warn",
+            objective_schema=schema,
+        )
+
+    def test_warn_mode_agreement_when_eligible_equals_successful(self) -> None:
+        """Warn-mode agreement test (the issue's first ask): with every trial
+        ranking-eligible (the common case), warn mode agrees with post-hoc
+        exactly like legacy mode does — no divergence when eligible ==
+        successful."""
+        from traigent.api.types import OptimizationResult, OptimizationStatus
+
+        schema = _weighted_schema(1.0, 1.0)
+        trials = _tradeoff_trials()
+        terminal = self._terminal_warn(trials, schema)
+        assert terminal.best_config == {"model": "mid-analog"}
+        # Every FakeTrial from _tradeoff_trials() carries valid comparability
+        # metadata, so all three are ranking-eligible under warn mode too.
+        assert len(terminal.ranking_eligible_trial_ids) == len(trials)
+
+        real_trials = _real_trials([(t.trial_id, t.config, t.metrics) for t in trials])
+        result = OptimizationResult(
+            trials=real_trials,
+            best_config=terminal.best_config,
+            best_score=terminal.best_score,
+            optimization_id="opt_1704_warn_agree",
+            duration=1.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy", "cost"],
+            algorithm="grid",
+            timestamp=0.0,
+            ranking_eligible_trial_ids=terminal.ranking_eligible_trial_ids,
+        )
+        post_hoc = result.calculate_weighted_scores(objective_schema=schema)
+        assert post_hoc["best_weighted_config"] == terminal.best_config
+        assert post_hoc["normalization_ranges"] == _TRADEOFF_RANGES
+
+    def test_ineligible_successful_trial_no_longer_widens_post_hoc_range(self) -> None:
+        """The real divergence (#1704): an extra trial that IS successful but
+        carries no comparability payload is excluded from the terminal
+        selector's eligible set under warn mode. Pre-fix, it still widened the
+        post-hoc range because ``calculate_weighted_scores`` sourced from
+        every ``successful_trial`` regardless of eligibility — its outlier
+        cost (0.5, vs the real candidates' 0.001-0.010) balloons the observed
+        range enough to flip the weighted winner from mid-analog to
+        gpt-4o-analog once cost stops mattering. Post-fix, the post-hoc range
+        (and winner) matches terminal's exactly.
+        """
+        from traigent.api.types import OptimizationResult, OptimizationStatus
+
+        schema = _weighted_schema(1.0, 1.0)
+        trials = _tradeoff_trials()
+        outlier = FakeTrial(
+            metrics={"accuracy": 0.80, "cost": 0.5},
+            config={"model": "outlier-analog"},
+        )
+        del outlier.metadata["comparability"]  # no comparability payload recorded
+
+        terminal = self._terminal_warn([*trials, outlier], schema)
+        assert terminal.best_config == {"model": "mid-analog"}
+        eligible_ids = set(terminal.ranking_eligible_trial_ids)
+        assert outlier.trial_id not in eligible_ids
+        assert eligible_ids == {t.trial_id for t in trials}
+        assert terminal.session_summary["ranking"]["unknown_count"] == 1
+
+        real_trials = _real_trials(
+            [(t.trial_id, t.config, t.metrics) for t in [*trials, outlier]]
+        )
+        result = OptimizationResult(
+            trials=real_trials,
+            best_config=terminal.best_config,
+            best_score=terminal.best_score,
+            optimization_id="opt_1704_divergence",
+            duration=1.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy", "cost"],
+            algorithm="grid",
+            timestamp=0.0,
+            ranking_eligible_trial_ids=terminal.ranking_eligible_trial_ids,
+        )
+        post_hoc = result.calculate_weighted_scores(objective_schema=schema)
+
+        # Unified range excludes the outlier -> matches terminal's range, and
+        # the post-hoc winner agrees with terminal's best_config.
+        assert post_hoc["normalization_ranges"] == _TRADEOFF_RANGES
+        assert post_hoc["best_weighted_config"] == terminal.best_config
+
+    def test_without_eligible_ids_range_falls_back_to_all_successful(self) -> None:
+        """Backward compatibility: an ``OptimizationResult`` built without
+        ``ranking_eligible_trial_ids`` (every pre-#1704 call site, restored
+        persistence artifacts) keeps the pre-fix all-successful-trials range —
+        the fix is additive, gated on the new field being populated."""
+        from traigent.api.types import OptimizationResult, OptimizationStatus
+
+        schema = _weighted_schema(1.0, 1.0)
+        trials = _tradeoff_trials()
+        outlier = FakeTrial(
+            metrics={"accuracy": 0.80, "cost": 0.5},
+            config={"model": "outlier-analog"},
+        )
+        real_trials = _real_trials(
+            [(t.trial_id, t.config, t.metrics) for t in [*trials, outlier]]
+        )
+        result = OptimizationResult(
+            trials=real_trials,
+            best_config={"model": "mid-analog"},
+            best_score=0.82,
+            optimization_id="opt_1704_no_ids",
+            duration=1.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy", "cost"],
+            algorithm="grid",
+            timestamp=0.0,
+        )
+        post_hoc = result.calculate_weighted_scores(objective_schema=schema)
+        assert post_hoc["normalization_ranges"]["cost"] == (0.001, 0.5)
+
+
+class TestIssue1704WeightedPathDegenerateRange:
+    """Dedicated weighted-path degenerate-range (zero-span) test (the issue's
+    second ask): a secondary objective with zero observed span (every
+    eligible trial reports the identical value) must not raise and must not
+    silently zero out selection. ``ObjectiveSchema.normalize_value``'s
+    documented zero-span fallback (0.5, neutral) applies, so the winner is
+    still decided by whichever objective actually varies.
+    """
+
+    def test_weighted_selection_handles_constant_secondary_objective(self) -> None:
+        trials = [
+            FakeTrial(
+                metrics={"accuracy": 0.92, "cost": 0.01},
+                config={"model": "gpt-4o-analog"},
+            ),
+            FakeTrial(
+                metrics={"accuracy": 0.82, "cost": 0.01},
+                config={"model": "mid-analog"},
+            ),
+            FakeTrial(
+                metrics={"accuracy": 0.70, "cost": 0.01},
+                config={"model": "nano-analog"},
+            ),
+        ]
+        result = select_best_configuration(
+            trials=trials,
+            primary_objective="accuracy",
+            config_space_keys={"model"},
+            aggregate_configs=False,
+            objective_order=["accuracy", "cost"],
+            comparability_mode="warn",
+            objective_schema=_weighted_schema(1.0, 1.0),
+        )
+
+        # cost is degenerate (min == max): every trial normalizes it to the
+        # neutral 0.5, so the weighted aggregate is decided by accuracy alone.
+        assert result.best_config == {"model": "gpt-4o-analog"}
+        weighted = result.session_summary["weighted_selection"]
+        cost_low, cost_high = weighted["normalization_ranges"]["cost"]
+        assert cost_low == cost_high == pytest.approx(0.01)
+        assert weighted["best_weighted_score"] == pytest.approx(1.0 * 0.5 + 0.5 * 0.5)
+
+    def test_post_hoc_weighted_path_agrees_on_degenerate_range(self) -> None:
+        """Same degenerate scenario, checked on the post-hoc path with the
+        unified range source: terminal and post-hoc still agree when the
+        secondary objective is constant across the (here, fully eligible)
+        trial set."""
+        from traigent.api.types import OptimizationResult, OptimizationStatus
+
+        schema = _weighted_schema(1.0, 1.0)
+        spec = [
+            ("t_a", {"model": "gpt-4o-analog"}, {"accuracy": 0.92, "cost": 0.01}),
+            ("t_b", {"model": "mid-analog"}, {"accuracy": 0.82, "cost": 0.01}),
+            ("t_c", {"model": "nano-analog"}, {"accuracy": 0.70, "cost": 0.01}),
+        ]
+        terminal = select_best_configuration(
+            trials=_fake_trials(spec),
+            primary_objective="accuracy",
+            config_space_keys={"model"},
+            aggregate_configs=False,
+            objective_order=["accuracy", "cost"],
+            comparability_mode="warn",
+            objective_schema=schema,
+        )
+        assert terminal.best_config == {"model": "gpt-4o-analog"}
+
+        result = OptimizationResult(
+            trials=_real_trials(spec),
+            best_config=terminal.best_config,
+            best_score=terminal.best_score,
+            optimization_id="opt_1704_zero_span",
+            duration=1.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy", "cost"],
+            algorithm="grid",
+            timestamp=0.0,
+            ranking_eligible_trial_ids=terminal.ranking_eligible_trial_ids,
+        )
+        post_hoc = result.calculate_weighted_scores(objective_schema=schema)
+        assert post_hoc["normalization_ranges"]["cost"] == (0.01, 0.01)
+        assert post_hoc["best_weighted_config"] == terminal.best_config

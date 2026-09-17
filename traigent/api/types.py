@@ -1112,6 +1112,23 @@ class OptimizationResult:
     # ``experiment_run_id``. See the class docstring for the full contract.
     sync_session_id: str | None = None
 
+    # Exact ranking-eligible trial-id set the terminal selector chose
+    # ``best_config`` over (issue #1832's ``SelectionResult.ranking_eligible_
+    # trial_ids``, threaded through by the orchestrator). Under non-legacy
+    # ``comparability_mode`` ("warn"/"strict") this can be a strict subset of
+    # ``successful_trials`` — a trial can be ``is_successful`` yet fail the
+    # comparability/coverage gate, so it never entered the terminal selector's
+    # observed-range computation. Post-hoc range normalization
+    # (``_calculate_objective_ranges``) restricts to this set when present so
+    # ``calculate_weighted_scores``/``score_trials`` share the exact
+    # observed-range basis terminal selection used, instead of silently
+    # re-widening it over every successful trial (issue #1704). ``None`` for
+    # hand-built ``OptimizationResult`` instances (most unit tests, restored
+    # persistence artifacts) and for the legacy path, where eligible ==
+    # successful by construction — those keep the pre-#1704
+    # all-successful-trials range, unchanged.
+    ranking_eligible_trial_ids: list[str] | None = None
+
     _experiment_stats: ExperimentStats | None = field(
         default=None, init=False, repr=False
     )
@@ -1123,6 +1140,28 @@ class OptimizationResult:
         if self._experiment_stats is None:
             self._experiment_stats = self._calculate_experiment_stats()
         return self._experiment_stats
+
+    @property
+    def _ranking_source_trials(self) -> list[TrialResult]:
+        """Trials post-hoc range normalization sources from (issue #1704).
+
+        Restricts to ``ranking_eligible_trial_ids`` when the terminal
+        selector's exact eligible set was threaded through — the same set
+        ``result_selection.select_best_configuration`` computed its observed
+        ranges over — so post-hoc weighted scoring can't re-widen the range
+        with a trial the terminal selector excluded (non-legacy
+        ``comparability_mode`` where eligible is a strict subset of
+        successful). Falls back to ``successful_trials`` when the id set is
+        unset or matches nothing (hand-built results, restored artifacts,
+        legacy mode where the two sets coincide) — unchanged pre-#1704
+        behavior.
+        """
+        if self.ranking_eligible_trial_ids is not None:
+            eligible_ids = set(self.ranking_eligible_trial_ids)
+            restricted = [t for t in self.trials if t.trial_id in eligible_ids]
+            if restricted:
+                return restricted
+        return self.successful_trials
 
     @property
     def successful_trials(self) -> list[TrialResult]:
@@ -1346,7 +1385,9 @@ class OptimizationResult:
         return {}
 
     def _calculate_objective_ranges(self) -> dict[str, tuple[float, float]]:
-        """Calculate min/max ranges for each objective across all successful trials.
+        """Calculate min/max ranges for each objective across ranking-eligible
+        (falling back to all successful) trials — see ``_ranking_source_trials``
+        (issue #1704).
 
         Returns:
             Dictionary mapping objective names to (min, max) tuples
@@ -1355,7 +1396,7 @@ class OptimizationResult:
 
         for obj in self.objectives:
             values = []
-            for trial in self.successful_trials:
+            for trial in self._ranking_source_trials:
                 if trial.metrics and obj in trial.metrics:
                     value = trial.metrics[obj]
                     if value is not None:
