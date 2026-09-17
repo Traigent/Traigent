@@ -405,6 +405,14 @@ class CostMetrics:
     # Consumers (trial/result aggregation) must treat this as "unknown spend",
     # not "verified free".
     unpriced: bool = False
+    # True when ``total_cost`` came from a local/LiteLLM price-table estimate
+    # (``_hidden_params['response_cost']`` used as a fallback) rather than an
+    # explicit provider-reported charge (``response.cost`` or ``usage.cost``,
+    # including an explicit $0). Callers that need the observed charge, not a
+    # derived one, should treat this flag as provenance, not as "unpriced"
+    # (#2274). Distinct from ``unpriced``, which means no price was found at
+    # all.
+    cost_estimated: bool = False
 
     def __post_init__(self) -> None:
         # Ensure non-negative costs and handle None
@@ -1141,14 +1149,20 @@ class ResponseHandler(ABC):
     def extract_metadata_cost(self, response: Any) -> CostMetrics:
         """Extract cost information from response metadata if available.
 
-        Checks the following sources in order:
+        Checks the following sources in order, preferring an explicit
+        provider-reported charge — including an explicit ``$0`` — over a
+        LiteLLM/local price-table estimate (#2274):
         1. ``response.cost`` — generic cost attribute (dict or scalar).
-        2. ``response._hidden_params['response_cost']`` — LiteLLM sets this for
-           OpenRouter and other providers that return per-call cost directly.
-           OpenRouter models are often missing from LiteLLM's pricing table, so
-           their ``_hidden_params['response_cost']`` is the only reliable source.
-        3. ``response.usage.cost`` — LiteLLM's Usage object exposes ``cost`` when
-           the provider (e.g. OpenRouter) includes it in the usage block.
+        2. ``response.usage.cost`` — LiteLLM's Usage object exposes ``cost``
+           when the provider (e.g. OpenRouter) includes it in the usage
+           block. This is an explicit provider-reported charge, so it is
+           retained even when it is exactly ``0.0``.
+        3. ``response._hidden_params['response_cost']`` — LiteLLM sets this
+           for OpenRouter and other providers. On some routes LiteLLM copies
+           the provider's own charge here; on others it is a local
+           price-table estimate. Used only as a fallback when no explicit
+           charge was found above, and flagged via
+           ``CostMetrics.cost_estimated`` since its provenance is unknown.
         """
         cost_metrics = CostMetrics()
 
@@ -1167,8 +1181,26 @@ class ResponseHandler(ABC):
         if cost_metrics.total_cost > 0.0:
             return cost_metrics
 
-        # 2. LiteLLM hidden params — OpenRouter and other providers that report
-        #    per-call cost populate ``_hidden_params['response_cost']``.
+        # 2. LiteLLM Usage.cost field — an explicit provider-reported charge.
+        #    Checked before the hidden-params estimate below, and an explicit
+        #    0.0 is retained rather than treated as "no cost found" (#2274).
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            try:
+                usage_cost = getattr(usage, "cost", None)
+                if isinstance(usage_cost, (int, float)):
+                    cost_metrics.total_cost = float(usage_cost)
+                    logger.debug(
+                        "Extracted cost $%.6f from usage.cost "
+                        "(explicit provider-reported cost).",
+                        cost_metrics.total_cost,
+                    )
+                    return cost_metrics
+            except Exception as e:  # pragma: no cover
+                logger.debug(f"Failed to parse cost from usage.cost: {e}")
+
+        # 3. LiteLLM hidden params — used only as a fallback estimate when no
+        #    explicit charge was reported above; flagged as such (#2274).
         hidden_params = getattr(response, "_hidden_params", None)
         if hidden_params is not None:
             try:
@@ -1179,30 +1211,15 @@ class ResponseHandler(ABC):
                 )
                 if isinstance(response_cost, (int, float)) and response_cost > 0:
                     cost_metrics.total_cost = float(response_cost)
+                    cost_metrics.cost_estimated = True
                     logger.debug(
                         "Extracted cost $%.6f from _hidden_params.response_cost "
-                        "(OpenRouter/LiteLLM provider-reported cost).",
+                        "(LiteLLM fallback estimate, no explicit provider charge found).",
                         cost_metrics.total_cost,
                     )
                     return cost_metrics
             except Exception as e:  # pragma: no cover
                 logger.debug(f"Failed to parse cost from _hidden_params: {e}")
-
-        # 3. LiteLLM Usage.cost field — set for some provider responses.
-        usage = getattr(response, "usage", None)
-        if usage is not None:
-            try:
-                usage_cost = getattr(usage, "cost", None)
-                if isinstance(usage_cost, (int, float)) and usage_cost > 0:
-                    cost_metrics.total_cost = float(usage_cost)
-                    logger.debug(
-                        "Extracted cost $%.6f from usage.cost "
-                        "(LiteLLM provider-reported cost).",
-                        cost_metrics.total_cost,
-                    )
-                    return cost_metrics
-            except Exception as e:  # pragma: no cover
-                logger.debug(f"Failed to parse cost from usage.cost: {e}")
 
         return cost_metrics
 

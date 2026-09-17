@@ -538,9 +538,7 @@ class TestOpenRouterCostExtraction:
 
     def test_extract_cost_from_hidden_params_response_cost(self):
         """Cost in _hidden_params['response_cost'] is captured (OpenRouter via LiteLLM)."""
-        from traigent.evaluators.metrics_tracker import (
-            GenericResponseHandler,
-        )
+        from traigent.evaluators.metrics_tracker import GenericResponseHandler
 
         class MockUsage:
             prompt_tokens = 200
@@ -591,15 +589,19 @@ class TestOpenRouterCostExtraction:
             "usage.cost when _hidden_params is absent"
         )
 
-    def test_hidden_params_takes_precedence_over_usage_cost(self):
-        """_hidden_params.response_cost takes precedence over usage.cost."""
+    def test_usage_cost_takes_precedence_over_hidden_params_estimate(self):
+        """usage.cost (explicit provider charge) wins over _hidden_params'
+        estimate (#2274). ``_hidden_params.response_cost`` is a local/LiteLLM
+        price-table estimate on some routes and must not override an explicit
+        provider-reported charge, even a small one.
+        """
         from traigent.evaluators.metrics_tracker import GenericResponseHandler
 
         class MockUsage:
             prompt_tokens = 100
             completion_tokens = 50
             total_tokens = 150
-            cost = 0.0001  # Should be ignored — _hidden_params wins
+            cost = 0.0001  # Explicit provider charge — must win.
 
         class MockHiddenParams(dict):
             pass
@@ -607,15 +609,68 @@ class TestOpenRouterCostExtraction:
         class MockLiteLLMResponse:
             model = "openrouter/mistralai/mistral-7b-instruct"
             usage = MockUsage()
-            _hidden_params = MockHiddenParams(response_cost=0.00222)
+            _hidden_params = MockHiddenParams(response_cost=0.00222)  # Estimate.
             response_time_ms = 0.0
 
         handler = GenericResponseHandler()
         cost = handler.extract_metadata_cost(MockLiteLLMResponse())
 
-        assert cost.total_cost == pytest.approx(0.00222), (
-            "_hidden_params.response_cost must take precedence over usage.cost"
+        assert cost.total_cost == pytest.approx(0.0001), (
+            "usage.cost must take precedence over the _hidden_params estimate"
         )
+        assert cost.cost_estimated is False
+
+    def test_explicit_zero_usage_cost_is_retained_over_hidden_estimate(self):
+        """An explicit ``usage.cost == 0.0`` (provider reports free) must not
+        be replaced by a nonzero ``_hidden_params`` estimate (#2274)."""
+        from traigent.evaluators.metrics_tracker import GenericResponseHandler
+
+        class MockUsage:
+            prompt_tokens = 10
+            completion_tokens = 5
+            total_tokens = 15
+            cost = 0.0  # Explicit provider charge: free.
+
+        class MockHiddenParams(dict):
+            pass
+
+        class MockLiteLLMResponse:
+            model = "openrouter/some/free-model"
+            usage = MockUsage()
+            _hidden_params = MockHiddenParams(response_cost=0.01)  # Stale estimate.
+            response_time_ms = 0.0
+
+        handler = GenericResponseHandler()
+        cost = handler.extract_metadata_cost(MockLiteLLMResponse())
+
+        assert cost.total_cost == 0.0
+        assert cost.cost_estimated is False
+
+    def test_hidden_params_fallback_is_flagged_as_estimated(self):
+        """When no explicit provider charge exists, the _hidden_params
+        fallback is used and flagged via ``cost_estimated`` (#2274)."""
+        from traigent.evaluators.metrics_tracker import GenericResponseHandler
+
+        class MockUsage:
+            prompt_tokens = 10
+            completion_tokens = 5
+            total_tokens = 15
+            # No `cost` attribute — no explicit provider charge available.
+
+        class MockHiddenParams(dict):
+            pass
+
+        class MockLiteLLMResponse:
+            model = "openrouter/some/model"
+            usage = MockUsage()
+            _hidden_params = MockHiddenParams(response_cost=0.00456)
+            response_time_ms = 0.0
+
+        handler = GenericResponseHandler()
+        cost = handler.extract_metadata_cost(MockLiteLLMResponse())
+
+        assert cost.total_cost == pytest.approx(0.00456)
+        assert cost.cost_estimated is True
 
     def test_zero_response_cost_falls_through_to_usage_cost(self):
         """A zero response_cost in _hidden_params does not block usage.cost."""
