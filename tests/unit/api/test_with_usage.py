@@ -145,3 +145,121 @@ class TestWithUsage:
             assert isinstance(result["__traigent_meta__"]["usage"]["input_tokens"], int)
         finally:
             trial_context.reset(token)
+
+
+class TestWithUsageModelCosts:
+    """Per-call/per-model cost breakdown for multi-model agents (Traigent#1598)."""
+
+    def test_model_costs_included_as_calls(self):
+        """model_costs is threaded into __traigent_meta__['calls']."""
+        token = trial_context.set({"trial_id": 1})
+        try:
+            result = traigent.with_usage(
+                text="answer",
+                total_cost=0.01,
+                model_costs=[
+                    {
+                        "model": "gpt-4o-mini",
+                        "input_tokens": 200,
+                        "output_tokens": 40,
+                        "cost": 0.002,
+                    },
+                    {
+                        "model": "gpt-4o",
+                        "input_tokens": 500,
+                        "output_tokens": 300,
+                        "cost": 0.008,
+                    },
+                ],
+            )
+            assert result["__traigent_meta__"]["calls"] == [
+                {
+                    "model": "gpt-4o-mini",
+                    "input_tokens": 200,
+                    "output_tokens": 40,
+                    "cost": 0.002,
+                },
+                {
+                    "model": "gpt-4o",
+                    "input_tokens": 500,
+                    "output_tokens": 300,
+                    "cost": 0.008,
+                },
+            ]
+            # The blended total_cost stays the required, authoritative value.
+            assert result["__traigent_meta__"]["total_cost"] == 0.01
+        finally:
+            trial_context.reset(token)
+
+    def test_model_costs_defaults_missing_tokens_to_zero(self):
+        token = trial_context.set({"trial_id": 1})
+        try:
+            result = traigent.with_usage(
+                text="answer",
+                total_cost=0.01,
+                model_costs=[{"model": "gpt-4o-mini", "cost": 0.01}],
+            )
+            assert result["__traigent_meta__"]["calls"] == [
+                {
+                    "model": "gpt-4o-mini",
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cost": 0.01,
+                }
+            ]
+        finally:
+            trial_context.reset(token)
+
+    def test_model_costs_none_omits_calls_key(self):
+        token = trial_context.set({"trial_id": 1})
+        try:
+            result = traigent.with_usage(text="answer", total_cost=0.01)
+            assert "calls" not in result["__traigent_meta__"]
+        finally:
+            trial_context.reset(token)
+
+    def test_model_costs_not_a_list_raises(self):
+        token = trial_context.set({"trial_id": 1})
+        try:
+            with pytest.raises(TypeError, match="model_costs to be a list"):
+                traigent.with_usage(
+                    text="answer",
+                    total_cost=0.01,
+                    model_costs={"model": "gpt-4o-mini", "cost": 0.01},
+                )
+        finally:
+            trial_context.reset(token)
+
+    def test_model_costs_entry_missing_model_raises(self):
+        token = trial_context.set({"trial_id": 1})
+        try:
+            with pytest.raises(TypeError, match="non-empty string 'model' key"):
+                traigent.with_usage(
+                    text="answer",
+                    total_cost=0.01,
+                    model_costs=[{"cost": 0.01}],
+                )
+        finally:
+            trial_context.reset(token)
+
+    def test_model_costs_entry_missing_cost_raises(self):
+        token = trial_context.set({"trial_id": 1})
+        try:
+            with pytest.raises(TypeError, match="numeric 'cost' key"):
+                traigent.with_usage(
+                    text="answer",
+                    total_cost=0.01,
+                    model_costs=[{"model": "gpt-4o-mini"}],
+                )
+        finally:
+            trial_context.reset(token)
+
+    def test_model_costs_production_mode_returns_plain_text(self):
+        """Not in a trial: text is returned unwrapped, same as without model_costs."""
+        assert traigent.get_trial_context() is None
+        result = traigent.with_usage(
+            text="answer",
+            total_cost=0.01,
+            model_costs=[{"model": "gpt-4o-mini", "cost": 0.01}],
+        )
+        assert result == "answer"

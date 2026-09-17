@@ -481,6 +481,13 @@ class ExampleMetrics:
     # ``ExampleMetrics(...)`` calls elsewhere in the codebase) keeps its
     # current behavior unless it explicitly opts out.
     measured: bool = True
+    # Per-call/per-model token+cost attribution reported via
+    # ``__traigent_meta__["calls"]`` (``with_usage(model_costs=...)``) for
+    # multi-model / multi-step agents (Traigent#1598). Each entry is
+    # ``{"model", "input_tokens", "output_tokens", "cost"}``. Empty when the
+    # caller did not report a per-call breakdown -- the example still has its
+    # normal blended ``tokens``/``cost`` above either way.
+    call_breakdown: list[dict[str, Any]] = field(default_factory=list)
 
 
 class MetricsTracker:
@@ -517,6 +524,45 @@ class MetricsTracker:
     def end_tracking(self) -> None:
         """End tracking and calculate duration."""
         self.end_time = time.time()
+
+    def aggregate_call_breakdown(self) -> list[dict[str, Any]]:
+        """Aggregate per-call cost breakdowns into a per-trial, per-model total.
+
+        Sums the ``call_breakdown`` entries every example in this trial
+        reported via ``__traigent_meta__["calls"]`` (Traigent#1598), grouped
+        by ``model``, across every example -- not just successful ones, since
+        a call that errored downstream can still have burned real tokens.
+
+        Returns:
+            ``[{"model", "input_tokens", "output_tokens", "cost", "calls"},
+            ...]`` sorted by model name, one entry per distinct model seen.
+            Empty when no example reported a per-call breakdown -- callers
+            must not treat that as "zero cost", only as "no attribution was
+            reported" (the example's own blended ``cost``/``tokens`` still
+            hold the real spend).
+        """
+        totals: dict[str, dict[str, Any]] = {}
+        for example_metric in self.example_metrics:
+            for call in example_metric.call_breakdown:
+                model = call.get("model")
+                if not model:
+                    continue
+                entry = totals.setdefault(
+                    model,
+                    {
+                        "model": model,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "cost": 0.0,
+                        "calls": 0,
+                    },
+                )
+                entry["input_tokens"] += int(call.get("input_tokens", 0) or 0)
+                entry["output_tokens"] += int(call.get("output_tokens", 0) or 0)
+                entry["cost"] += float(call.get("cost", 0.0) or 0.0)
+                entry["calls"] += 1
+
+        return [totals[model] for model in sorted(totals)]
 
     def get_duration(self) -> float:
         """Get total duration in seconds."""

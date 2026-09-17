@@ -8,7 +8,6 @@ import warnings
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
-from traigent.core.cache_usage import normalize_cache_usage
 from traigent.api.types import OptimizationResult, StrategyConfig
 from traigent.config.api_keys import _API_KEY_MANAGER
 from traigent.config.context import get_applied_config
@@ -21,6 +20,7 @@ from traigent.config.parallel import (
     merge_parallel_configs,
 )
 from traigent.config.types import TraigentConfig, validate_execution_mode
+from traigent.core.cache_usage import normalize_cache_usage
 from traigent.optimizers import list_optimizers
 from traigent.optimizers.registry import _is_smart_algorithm
 from traigent.utils.exceptions import (
@@ -1015,6 +1015,7 @@ def with_usage(
     output_tokens: int | None = None,
     response_time_ms: float | None = None,
     provider_usage: dict[str, Any] | None = None,
+    model_costs: list[dict[str, Any]] | None = None,
 ) -> str | dict[str, Any]:
     """Wrap a response with usage metadata if in optimization mode.
 
@@ -1030,6 +1031,17 @@ def with_usage(
         output_tokens: Number of output tokens generated (informational, for UI display).
         response_time_ms: Response time in milliseconds (optional, for latency tracking).
             If only one token count is provided, the other defaults to 0.
+        model_costs: Optional per-call/per-model cost breakdown for multi-model
+            and multi-step agents (Traigent#1598) -- e.g. a cheap model that
+            decomposes a query and a strong model that generates the answer,
+            or a router that sends easy/hard queries to different models. Each
+            entry is ``{"model": str, "input_tokens": int, "output_tokens":
+            int, "cost": float}``. ``total_cost`` above stays the required,
+            authoritative blended total; this is additive attribution on top
+            of it, surfaced on the trial as ``metadata["model_costs"]``
+            (summed per model across the trial's examples) so downstream cost
+            analysis can attribute spend to the model that actually made each
+            call instead of falling back to a single dominant model.
 
     Returns:
         In production: text unchanged
@@ -1112,6 +1124,21 @@ def with_usage(
 
         In OSS-only builds, compute the aggregate totals directly and pass the
         numeric values to ``with_usage()`` without importing cloud DTOs.
+
+        To keep the SDK's trial measures attributable per model instead of
+        only a single blended total (Traigent#1598), also pass
+        ``model_costs``:
+
+        >>> return traigent.with_usage(
+        ...     text=answer,
+        ...     total_cost=cheap_cost + strong_cost,
+        ...     model_costs=[
+        ...         {"model": "gpt-4o-mini", "input_tokens": 200,
+        ...          "output_tokens": 40, "cost": cheap_cost},
+        ...         {"model": "gpt-4o", "input_tokens": 500,
+        ...          "output_tokens": 300, "cost": strong_cost},
+        ...     ],
+        ... )
     """
     # Enforce string type
     if not isinstance(text, str):
@@ -1171,6 +1198,44 @@ def with_usage(
             # asserting its own answer. Where a provider already reports disjointly
             # (Bedrock), the two values are equal and this changes nothing.
             meta.setdefault("usage", {})["input_tokens"] = cache_usage.input_tokens
+
+    # Per-call/per-model breakdown for multi-model/multi-step agents (#1598).
+    # Validated eagerly (TypeError on the caller's own line) rather than
+    # deferred to the evaluator's best-effort extraction, so a malformed
+    # breakdown fails loudly at the call site instead of being silently
+    # dropped several layers downstream.
+    if model_costs is not None:
+        if not isinstance(model_costs, list):
+            raise TypeError(
+                f"with_usage() requires model_costs to be a list of dicts, "
+                f"got {type(model_costs).__name__}."
+            )
+        normalized_calls: list[dict[str, Any]] = []
+        for i, call in enumerate(model_costs):
+            if not isinstance(call, dict):
+                raise TypeError(
+                    f"with_usage() model_costs[{i}] must be a dict, got "
+                    f"{type(call).__name__}."
+                )
+            model = call.get("model")
+            if not isinstance(model, str) or not model:
+                raise TypeError(
+                    f"with_usage() model_costs[{i}] requires a non-empty "
+                    f"string 'model' key."
+                )
+            if "cost" not in call or not isinstance(call["cost"], (int, float)):
+                raise TypeError(
+                    f"with_usage() model_costs[{i}] requires a numeric 'cost' key."
+                )
+            normalized_calls.append(
+                {
+                    "model": model,
+                    "input_tokens": int(call.get("input_tokens", 0) or 0),
+                    "output_tokens": int(call.get("output_tokens", 0) or 0),
+                    "cost": float(call["cost"]),
+                }
+            )
+        meta["calls"] = normalized_calls
 
     result["__traigent_meta__"] = meta
 

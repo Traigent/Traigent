@@ -968,6 +968,14 @@ class EvaluationResult:
     # is_objective}``. Empty when every metric computed cleanly.
     metric_errors: list[dict[str, Any]] = field(default_factory=list)
 
+    # Per-trial, per-model cost breakdown for multi-model/multi-step agents
+    # (Traigent#1598), aggregated from every example's
+    # ``__traigent_meta__["calls"]`` this trial reported (see
+    # ``MetricsTracker.aggregate_call_breakdown``). Each entry is
+    # ``{"model", "input_tokens", "output_tokens", "cost", "calls"}``. Empty
+    # when no example reported a per-call breakdown.
+    model_costs: list[dict[str, Any]] = field(default_factory=list)
+
     def __post_init__(self) -> None:
         # Backward compatibility mapping
         if self.metrics is None:
@@ -1021,6 +1029,7 @@ class EvaluationResult:
             "success_rate": self.success_rate,
             "has_errors": self.has_errors,
             "metric_errors": _safe_json_value(self.metric_errors),
+            "model_costs": _safe_json_value(self.model_costs),
         }
 
     @classmethod
@@ -1053,6 +1062,7 @@ class EvaluationResult:
             outputs=data.get("outputs"),
             errors=data.get("errors"),
             metric_errors=data.get("metric_errors") or [],
+            model_costs=data.get("model_costs") or [],
         )
 
 
