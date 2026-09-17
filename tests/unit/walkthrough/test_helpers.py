@@ -189,3 +189,43 @@ def test_mock_latency_override_is_milliseconds(walkthrough_on_path: None) -> Non
         get_mock_latency("gpt-4o-mini", "classification") * 1000.0
     )
     assert value > 1.0
+
+
+def test_every_real_example_has_an_estimated_time() -> None:
+    """``print_estimated_time`` is a silent no-op for an unlisted example.
+
+    ``print_estimated_time`` looks the file up in ``EXAMPLE_ESTIMATED_TIMES``
+    and only prints on a truthy hit, so a new ``walkthrough/real/NN_*.py`` that
+    calls it without adding its entry prints nothing and the omission is
+    invisible. Example 09 shipped exactly that way (Traigent/Traigent#1544
+    review). Pin the set so the next one fails a test instead.
+    """
+    from walkthrough.utils.helpers import EXAMPLE_ESTIMATED_TIMES
+
+    real_dir = REPO_ROOT / "walkthrough" / "real"
+    examples = sorted(p.name for p in real_dir.glob("[0-9][0-9]_*.py"))
+    assert examples, f"no numbered real examples found under {real_dir}"
+
+    missing = [
+        name
+        for name in examples
+        if name in _example_names_calling_estimated_time(real_dir)
+        and name not in EXAMPLE_ESTIMATED_TIMES
+    ]
+    assert not missing, (
+        "these real examples call print_estimated_time() but have no "
+        f"EXAMPLE_ESTIMATED_TIMES entry, so it prints nothing: {missing}"
+    )
+
+    stale = sorted(set(EXAMPLE_ESTIMATED_TIMES) - set(examples))
+    assert not stale, (
+        f"EXAMPLE_ESTIMATED_TIMES lists examples that no longer exist: {stale}"
+    )
+
+
+def _example_names_calling_estimated_time(real_dir: Path) -> set[str]:
+    return {
+        path.name
+        for path in real_dir.glob("[0-9][0-9]_*.py")
+        if "print_estimated_time(" in path.read_text(encoding="utf-8")
+    }
