@@ -340,7 +340,7 @@ class TestLoadDotenvFiles:
         exists, so the boundary lands on ``/tmp`` and this test failed for an
         ambient-filesystem reason rather than a code one. Substitute a marker
         name that cannot exist anywhere, so "no marker in the ancestry" holds by
-        construction and the ``boundary_index is None`` branch is what actually
+        construction and the ``boundary is None`` branch is what actually
         gets exercised.
         """
         _reset_env(monkeypatch)
