@@ -117,6 +117,76 @@ class TestPublicApiChangedAfterRelease:
         assert "0.28.0.dev0" in message
 
 
+def _init_lazy_export_layout(root: Path) -> None:
+    """A more realistic __init__.py: a name in `__all__` that is defined in
+    a module outside `traigent/__init__.py` and `traigent/api/` (mirrors how
+    `ObservationDTO`, `Dataset`, `ExecutionBudget`, etc. are actually
+    root-exported in the real package via `_LAZY_EXPORTS`)."""
+    (root / "traigent" / "api").mkdir(parents=True)
+    (root / "traigent" / "__init__.py").write_text(
+        "_LAZY_EXPORTS = {\n"
+        '    "ObservationDTO": ("traigent.observability", "ObservationDTO"),\n'
+        "}\n"
+        '__all__ = ["ObservationDTO"]\n'
+    )
+    (root / "traigent" / "api" / "decorators.py").write_text("# decorators\n")
+    (root / "traigent" / "observability.py").write_text(
+        "class ObservationDTO:\n    pass\n"
+    )
+
+
+class TestDerivedPublicApiPaths:
+    """#2290 review finding: PUBLIC_API_PATHS = two hand-picked paths misses
+    most of the real root-exported public surface, which is *defined* in
+    modules like traigent/observability.py, not traigent/__init__.py or
+    traigent/api/. The check must follow __all__ + _LAZY_EXPORTS there."""
+
+    def test_fails_when_a_lazy_exported_module_changes_but_version_is_reused(
+        self, tmp_path
+    ):
+        root = tmp_path
+        _init_repo(root)
+        _init_lazy_export_layout(root)
+        _write_pyproject(root, "0.27.0")
+        _commit(root, "release 0.27.0")
+        _git(root, "tag", "v0.27.0")
+
+        # Widen the exported DTO -- neither traigent/__init__.py (the
+        # _LAZY_EXPORTS mapping for the name already exists) nor
+        # traigent/api/ changes, exactly the gap the review found.
+        (root / "traigent" / "observability.py").write_text(
+            "class ObservationDTO:\n    task_type: str | None = None\n"
+        )
+        _commit(root, "feat: widen ObservationDTO")
+
+        ok, message = identity_check.check(root)
+
+        assert ok is False
+        assert "traigent/observability.py" in message
+
+    def test_passes_when_a_non_exported_module_changes(self, tmp_path):
+        root = tmp_path
+        _init_repo(root)
+        _init_lazy_export_layout(root)
+        (root / "traigent" / "core").mkdir(parents=True)
+        (root / "traigent" / "core" / "internal.py").write_text("# not public\n")
+        _commit(root, "add internal module")
+        _write_pyproject(root, "0.27.0")
+        _commit(root, "release 0.27.0")
+        _git(root, "tag", "v0.27.0")
+
+        # A module that exists but backs no name in __all__: not public.
+        (root / "traigent" / "core" / "internal.py").write_text(
+            "# not public\nFIX = 1\n"
+        )
+        _commit(root, "fix: internal-only bugfix")
+
+        ok, message = identity_check.check(root)
+
+        assert ok is True
+        assert "still accurate" in message
+
+
 class TestBenignCases:
     def test_passes_when_head_is_exactly_the_release_tag(self, tmp_path):
         root = tmp_path

@@ -23,6 +23,7 @@ further public API changes.
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 import tomllib
@@ -35,10 +36,11 @@ from pathlib import Path
 # check the real Traigent checkout even when invoked against a temp repo.
 REPO_ROOT = Path.cwd()
 
-# Paths that make up Traigent's public surface. Kept in sync by hand: a new
-# top-level public re-export module belongs here too when it is added.
-# traigent/__init__.py is the package's re-export surface; traigent/api/ is
-# where the decorator, config-space and constraints DSL public classes live.
+# Base paths that always make up Traigent's public surface, even when
+# traigent/__init__.py cannot be parsed (e.g. a throwaway fixture repo with
+# no real export table): traigent/__init__.py is the package's re-export
+# surface itself; traigent/api/ is where the decorator, config-space and
+# constraints DSL public classes live.
 PUBLIC_API_PATHS: tuple[str, ...] = ("traigent/__init__.py", "traigent/api/")
 
 
@@ -46,6 +48,105 @@ def _run(root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args], cwd=root, check=True, capture_output=True, text=True
     ).stdout
+
+
+def _resolve_module_path(root: Path, ref: str, module_name: str) -> str | None:
+    """Return the diff pathspec for `module_name` at `ref`: the flat module
+    file (`traigent/economics.py`) or, if `module_name` is a package, the
+    whole package directory (`traigent/admin/`) so a change anywhere inside
+    it counts -- not just to its `__init__.py`. None if neither exists at
+    `ref` (e.g. the module has since been renamed or removed)."""
+    base = module_name.replace(".", "/")
+    for candidate, pathspec in (
+        (f"{base}.py", f"{base}.py"),
+        (f"{base}/__init__.py", f"{base}/"),
+    ):
+        try:
+            _run(root, "cat-file", "-e", f"{ref}:{candidate}")
+        except subprocess.CalledProcessError:
+            continue
+        return pathspec
+    return None
+
+
+def derive_public_api_paths(
+    root: Path, ref: str = "HEAD", base: tuple[str, ...] = PUBLIC_API_PATHS
+) -> tuple[str, ...]:
+    """Return `base` plus the file path of every module that backs a name
+    exported through `traigent/__init__.py`'s `__all__` at `ref` -- via its
+    `_LAZY_EXPORTS` table or a module-level `from traigent.x import Name`.
+
+    Most of Traigent's actual root-exported public surface (`ExecutionBudget`,
+    `Dataset`, `ObservationDTO`, `ScoreRecordDTO`, ...) is *defined* outside
+    `traigent/__init__.py` and `traigent/api/`; a change to one of those
+    defining modules changes the public API without touching either base
+    path (#2290 review finding). This statically parses `__init__.py`'s
+    source at `ref` (no import -- the diff may span refs whose code cannot
+    be safely executed) and falls back to `base` alone when the file is
+    missing, unparseable, or (as in this script's own test fixtures) does
+    not define an `__all__`/`_LAZY_EXPORTS` at all -- so the check never
+    drops the two paths it has always protected.
+    """
+    try:
+        source = _run(root, "show", f"{ref}:traigent/__init__.py")
+    except subprocess.CalledProcessError:
+        return base
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return base
+
+    all_names: set[str] = set()
+    name_to_module: dict[str, str] = {}
+
+    def _assign_targets(node: ast.AST) -> tuple[ast.expr, ...]:
+        # `__all__ = [...]` is a plain Assign (possibly multiple targets);
+        # `_LAZY_EXPORTS: dict[str, tuple[str, str]] = {...}` is an
+        # AnnAssign (exactly one target). Both need handling.
+        if isinstance(node, ast.Assign):
+            return tuple(node.targets)
+        if isinstance(node, ast.AnnAssign):
+            return (node.target,)
+        return ()
+
+    for node in ast.walk(tree):
+        value = getattr(node, "value", None)
+        for target in _assign_targets(node):
+            if not isinstance(target, ast.Name):
+                continue
+            if target.id == "__all__" and isinstance(value, ast.List):
+                all_names.update(
+                    elt.value
+                    for elt in value.elts
+                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+                )
+            elif target.id == "_LAZY_EXPORTS" and isinstance(value, ast.Dict):
+                for key, val in zip(value.keys, value.values, strict=True):
+                    if (
+                        isinstance(key, ast.Constant)
+                        and isinstance(key.value, str)
+                        and isinstance(val, ast.Tuple)
+                        and val.elts
+                        and isinstance(val.elts[0], ast.Constant)
+                        and isinstance(val.elts[0].value, str)
+                    ):
+                        name_to_module[key.value] = val.elts[0].value
+        if isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                name_to_module.setdefault(alias.asname or alias.name, node.module)
+
+    modules = {
+        module
+        for name, module in name_to_module.items()
+        if name in all_names and module.startswith("traigent.")
+    }
+    derived = {
+        resolved
+        for module in modules
+        if (resolved := _resolve_module_path(root, ref, module)) is not None
+    }
+    return tuple(sorted(set(base) | derived))
 
 
 def read_current_version(pyproject_path: Path) -> str:
@@ -90,7 +191,8 @@ def check(root: Path) -> tuple[bool, str]:
             f"HEAD is exactly {tag}; version {version!r} correctly identifies it.",
         )
 
-    changed = public_api_changed_since(root, tag)
+    public_api_paths = derive_public_api_paths(root, "HEAD")
+    changed = public_api_changed_since(root, tag, paths=public_api_paths)
     if not changed:
         return True, (
             f"No public-API files changed since {tag}; version {version!r} is still accurate."
