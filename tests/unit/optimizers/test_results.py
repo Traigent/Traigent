@@ -2,15 +2,60 @@
 
 from dataclasses import asdict
 
-from traigent.optimizers.results import OptimizationResult, Trial
+from traigent.optimizers.results import BatchResult, BatchTrial
 
 
-class TestTrial:
-    """Test suite for Trial dataclass."""
+class TestNoNameCollisionWithPublicType:
+    """Regression tests for issue #1393 (Smell 1).
+
+    ``traigent.optimizers.results`` used to define its own ``OptimizationResult``
+    / ``Trial`` classes with the *same names* as the unrelated, much richer
+    public types in ``traigent.api.types`` but a structurally divergent shape
+    (e.g. ``successful_trials`` returned a ``list[TrialResult]`` on the public
+    type but a plain ``int`` count here) — a same-name-divergent-shape footgun.
+    The batch-optimizer types are now named ``BatchResult`` / ``BatchTrial``,
+    so importing ``OptimizationResult`` no longer silently gives you the wrong
+    (minimal) shape.
+    """
+
+    def test_batch_result_is_not_the_public_optimization_result(self):
+        from traigent.api.types import OptimizationResult as PublicOptimizationResult
+
+        assert BatchResult is not PublicOptimizationResult
+        assert BatchResult.__name__ == "BatchResult"
+
+    def test_batch_result_successful_trials_is_a_count_not_a_list(self):
+        """The batch type's own contract: ``successful_trials`` is a count.
+
+        (Unlike the public ``OptimizationResult.successful_trials``, which is a
+        ``list[TrialResult]`` — the exact divergence the issue flagged.)
+        """
+        result = BatchResult(
+            best_config={"x": 1},
+            best_score=0.9,
+            trials=[BatchTrial({"x": 1}, 0.9, 1.0)],
+            duration=1.0,
+        )
+        assert isinstance(result.successful_trials, int)
+
+    def test_legacy_dotted_names_still_resolve_for_pickle_backward_compat(self):
+        """``traigent.optimizers.results.OptimizationResult``/``.Trial`` must keep
+        resolving (as deprecated aliases) because
+        ``traigent/utils/persistence.py``'s ``RestrictedUnpickler`` allowlists
+        those exact dotted names for restoring legacy pickled trial artifacts.
+        """
+        import traigent.optimizers.results as results_module
+
+        assert results_module.OptimizationResult is BatchResult
+        assert results_module.Trial is BatchTrial
+
+
+class TestBatchTrial:
+    """Test suite for BatchTrial dataclass."""
 
     def test_initialization_minimal(self):
         """Test initialization with minimal parameters."""
-        trial = Trial(configuration={"x": 1, "y": 2}, score=0.85, duration=1.5)
+        trial = BatchTrial(configuration={"x": 1, "y": 2}, score=0.85, duration=1.5)
 
         assert trial.configuration == {"x": 1, "y": 2}
         assert trial.score == 0.85
@@ -20,7 +65,7 @@ class TestTrial:
     def test_initialization_with_metadata(self):
         """Test initialization with metadata."""
         metadata = {"optimizer": "random", "iteration": 5}
-        trial = Trial(
+        trial = BatchTrial(
             configuration={"learning_rate": 0.01},
             score=0.92,
             duration=10.3,
@@ -31,33 +76,35 @@ class TestTrial:
 
     def test_is_successful_normal_score(self):
         """Test is_successful with normal score."""
-        trial = Trial({"x": 1}, score=0.5, duration=1.0)
+        trial = BatchTrial({"x": 1}, score=0.5, duration=1.0)
         assert trial.is_successful is True
 
     def test_is_successful_negative_infinity_score(self):
         """Test is_successful with negative infinity score."""
-        trial = Trial({"x": 1}, score=float("-inf"), duration=1.0)
+        trial = BatchTrial({"x": 1}, score=float("-inf"), duration=1.0)
         assert trial.is_successful is False
 
     def test_is_successful_failed_metadata(self):
         """Test is_successful with failed flag in metadata."""
-        trial = Trial({"x": 1}, score=0.9, duration=1.0, metadata={"failed": True})
+        trial = BatchTrial({"x": 1}, score=0.9, duration=1.0, metadata={"failed": True})
         assert trial.is_successful is False
 
     def test_is_successful_failed_false(self):
         """Test is_successful with failed=False in metadata."""
-        trial = Trial({"x": 1}, score=0.9, duration=1.0, metadata={"failed": False})
+        trial = BatchTrial(
+            {"x": 1}, score=0.9, duration=1.0, metadata={"failed": False}
+        )
         assert trial.is_successful is True
 
     def test_dataclass_features(self):
         """Test dataclass features like repr and equality."""
-        trial1 = Trial({"x": 1}, 0.5, 1.0)
-        trial2 = Trial({"x": 1}, 0.5, 1.0)
-        trial3 = Trial({"x": 2}, 0.5, 1.0)
+        trial1 = BatchTrial({"x": 1}, 0.5, 1.0)
+        trial2 = BatchTrial({"x": 1}, 0.5, 1.0)
+        trial3 = BatchTrial({"x": 2}, 0.5, 1.0)
 
         # Test repr
         repr_str = repr(trial1)
-        assert "Trial" in repr_str
+        assert "BatchTrial" in repr_str
         assert "0.5" in repr_str
 
         # Test equality
@@ -66,7 +113,7 @@ class TestTrial:
 
     def test_asdict_conversion(self):
         """Test converting trial to dictionary."""
-        trial = Trial(
+        trial = BatchTrial(
             configuration={"param": "value"},
             score=0.75,
             duration=2.5,
@@ -84,8 +131,8 @@ class TestTrial:
 
     def test_metadata_default_factory(self):
         """Test that metadata uses default factory."""
-        trial1 = Trial({"x": 1}, 0.5, 1.0)
-        trial2 = Trial({"x": 2}, 0.6, 2.0)
+        trial1 = BatchTrial({"x": 1}, 0.5, 1.0)
+        trial2 = BatchTrial({"x": 2}, 0.6, 2.0)
 
         # Should have independent metadata dicts
         trial1.metadata["key"] = "value1"
@@ -97,17 +144,17 @@ class TestTrial:
     def test_various_score_types(self):
         """Test trials with various score types."""
         # Integer score
-        trial = Trial({"x": 1}, score=10, duration=1.0)
+        trial = BatchTrial({"x": 1}, score=10, duration=1.0)
         assert trial.score == 10
         assert trial.is_successful is True
 
         # Zero score
-        trial = Trial({"x": 1}, score=0, duration=1.0)
+        trial = BatchTrial({"x": 1}, score=0, duration=1.0)
         assert trial.score == 0
         assert trial.is_successful is True
 
         # Negative score
-        trial = Trial({"x": 1}, score=-0.5, duration=1.0)
+        trial = BatchTrial({"x": 1}, score=-0.5, duration=1.0)
         assert trial.score == -0.5
         assert trial.is_successful is True
 
@@ -124,23 +171,23 @@ class TestTrial:
             "use_dropout": True,
         }
 
-        trial = Trial(config, score=0.95, duration=120.5)
+        trial = BatchTrial(config, score=0.95, duration=120.5)
         assert trial.configuration == config
         assert trial.configuration["hyperparameters"]["batch_size"] == 32
 
 
-class TestOptimizationResult:
-    """Test suite for OptimizationResult dataclass."""
+class TestBatchResult:
+    """Test suite for BatchResult dataclass."""
 
     def test_initialization_minimal(self):
         """Test initialization with minimal parameters."""
         trials = [
-            Trial({"x": 1}, 0.7, 1.0),
-            Trial({"x": 2}, 0.8, 1.1),
-            Trial({"x": 3}, 0.75, 1.2),
+            BatchTrial({"x": 1}, 0.7, 1.0),
+            BatchTrial({"x": 2}, 0.8, 1.1),
+            BatchTrial({"x": 3}, 0.75, 1.2),
         ]
 
-        result = OptimizationResult(
+        result = BatchResult(
             best_config={"x": 2}, best_score=0.8, trials=trials, duration=3.3
         )
 
@@ -154,7 +201,7 @@ class TestOptimizationResult:
         """Test initialization with convergence info."""
         convergence_info = {"converged": True, "iterations": 50, "tolerance": 0.001}
 
-        result = OptimizationResult(
+        result = BatchResult(
             best_config={"x": 1},
             best_score=0.99,
             trials=[],
@@ -167,59 +214,59 @@ class TestOptimizationResult:
     def test_total_trials_property(self):
         """Test total_trials property."""
         # Empty trials
-        result = OptimizationResult({}, 0.0, [], 0.0)
+        result = BatchResult({}, 0.0, [], 0.0)
         assert result.total_trials == 0
 
         # Multiple trials
-        trials = [Trial({"x": i}, i * 0.1, 1.0) for i in range(5)]
-        result = OptimizationResult({}, 0.0, trials, 5.0)
+        trials = [BatchTrial({"x": i}, i * 0.1, 1.0) for i in range(5)]
+        result = BatchResult({}, 0.0, trials, 5.0)
         assert result.total_trials == 5
 
     def test_successful_trials_property(self):
         """Test successful_trials property."""
         trials = [
-            Trial({"x": 1}, 0.7, 1.0),  # Successful
-            Trial({"x": 2}, float("-inf"), 1.0),  # Failed (negative inf)
-            Trial({"x": 3}, 0.8, 1.0, metadata={"failed": True}),  # Failed
-            Trial({"x": 4}, 0.9, 1.0),  # Successful
-            Trial({"x": 5}, 0.6, 1.0, metadata={"failed": False}),  # Successful
+            BatchTrial({"x": 1}, 0.7, 1.0),  # Successful
+            BatchTrial({"x": 2}, float("-inf"), 1.0),  # Failed (negative inf)
+            BatchTrial({"x": 3}, 0.8, 1.0, metadata={"failed": True}),  # Failed
+            BatchTrial({"x": 4}, 0.9, 1.0),  # Successful
+            BatchTrial({"x": 5}, 0.6, 1.0, metadata={"failed": False}),  # Successful
         ]
 
-        result = OptimizationResult({}, 0.0, trials, 5.0)
+        result = BatchResult({}, 0.0, trials, 5.0)
         assert result.successful_trials == 3
 
     def test_success_rate_property(self):
         """Test success_rate property."""
         # Empty trials
-        result = OptimizationResult({}, 0.0, [], 0.0)
+        result = BatchResult({}, 0.0, [], 0.0)
         assert result.success_rate == 0.0
 
         # All successful
-        trials_success = [Trial({"x": i}, 0.5 + i * 0.1, 1.0) for i in range(4)]
-        result = OptimizationResult({}, 0.0, trials_success, 4.0)
+        trials_success = [BatchTrial({"x": i}, 0.5 + i * 0.1, 1.0) for i in range(4)]
+        result = BatchResult({}, 0.0, trials_success, 4.0)
         assert result.success_rate == 1.0
 
         # Mixed success
         trials_mixed = [
-            Trial({"x": 1}, 0.7, 1.0),  # Success
-            Trial({"x": 2}, float("-inf"), 1.0),  # Fail
-            Trial({"x": 3}, 0.8, 1.0),  # Success
-            Trial({"x": 4}, 0.9, 1.0, metadata={"failed": True}),  # Fail
+            BatchTrial({"x": 1}, 0.7, 1.0),  # Success
+            BatchTrial({"x": 2}, float("-inf"), 1.0),  # Fail
+            BatchTrial({"x": 3}, 0.8, 1.0),  # Success
+            BatchTrial({"x": 4}, 0.9, 1.0, metadata={"failed": True}),  # Fail
         ]
-        result = OptimizationResult({}, 0.0, trials_mixed, 4.0)
+        result = BatchResult({}, 0.0, trials_mixed, 4.0)
         assert result.success_rate == 0.5
 
     def test_dataclass_features(self):
         """Test dataclass features like repr and equality."""
-        trials = [Trial({"x": 1}, 0.5, 1.0)]
+        trials = [BatchTrial({"x": 1}, 0.5, 1.0)]
 
-        result1 = OptimizationResult({"x": 1}, 0.5, trials, 1.0)
-        result2 = OptimizationResult({"x": 1}, 0.5, trials, 1.0)
-        result3 = OptimizationResult({"x": 2}, 0.5, trials, 1.0)
+        result1 = BatchResult({"x": 1}, 0.5, trials, 1.0)
+        result2 = BatchResult({"x": 1}, 0.5, trials, 1.0)
+        result3 = BatchResult({"x": 2}, 0.5, trials, 1.0)
 
         # Test repr
         repr_str = repr(result1)
-        assert "OptimizationResult" in repr_str
+        assert "BatchResult" in repr_str
 
         # Test equality
         assert result1 == result2
@@ -228,11 +275,11 @@ class TestOptimizationResult:
     def test_asdict_conversion(self):
         """Test converting result to dictionary."""
         trials = [
-            Trial({"x": 1}, 0.7, 1.0, metadata={"iter": 1}),
-            Trial({"x": 2}, 0.8, 1.1, metadata={"iter": 2}),
+            BatchTrial({"x": 1}, 0.7, 1.0, metadata={"iter": 1}),
+            BatchTrial({"x": 2}, 0.8, 1.1, metadata={"iter": 2}),
         ]
 
-        result = OptimizationResult(
+        result = BatchResult(
             best_config={"x": 2},
             best_score=0.8,
             trials=trials,
@@ -250,8 +297,8 @@ class TestOptimizationResult:
 
     def test_convergence_info_default_factory(self):
         """Test that convergence_info uses default factory."""
-        result1 = OptimizationResult({}, 0.0, [], 0.0)
-        result2 = OptimizationResult({}, 0.0, [], 0.0)
+        result1 = BatchResult({}, 0.0, [], 0.0)
+        result2 = BatchResult({}, 0.0, [], 0.0)
 
         # Should have independent convergence_info dicts
         result1.convergence_info["key"] = "value1"
@@ -267,9 +314,9 @@ class TestOptimizationResult:
             score = 0.5 + (i % 10) * 0.05
             failed = i % 7 == 0  # Every 7th trial fails
             metadata = {"failed": failed} if failed else {}
-            trials.append(Trial({"x": i}, score, 0.1, metadata))
+            trials.append(BatchTrial({"x": i}, score, 0.1, metadata))
 
-        result = OptimizationResult(
+        result = BatchResult(
             best_config={"x": 999}, best_score=0.95, trials=trials, duration=100.0
         )
 
@@ -301,7 +348,7 @@ class TestOptimizationResult:
             },
         }
 
-        result = OptimizationResult(
+        result = BatchResult(
             best_config=best_config, best_score=0.95, trials=[], duration=3600.0
         )
 
@@ -311,12 +358,12 @@ class TestOptimizationResult:
     def test_negative_and_zero_scores(self):
         """Test result with negative and zero scores."""
         trials = [
-            Trial({"x": 1}, -10.5, 1.0),  # Negative score, still successful
-            Trial({"x": 2}, 0.0, 1.0),  # Zero score, still successful
-            Trial({"x": 3}, float("-inf"), 1.0),  # Failed
+            BatchTrial({"x": 1}, -10.5, 1.0),  # Negative score, still successful
+            BatchTrial({"x": 2}, 0.0, 1.0),  # Zero score, still successful
+            BatchTrial({"x": 3}, float("-inf"), 1.0),  # Failed
         ]
 
-        result = OptimizationResult(
+        result = BatchResult(
             best_config={"x": 2}, best_score=0.0, trials=trials, duration=3.0
         )
 
@@ -326,25 +373,25 @@ class TestOptimizationResult:
     def test_edge_cases(self):
         """Test various edge cases."""
         # Result with single trial
-        single_trial = [Trial({"x": 1}, 0.5, 1.0)]
-        result = OptimizationResult({"x": 1}, 0.5, single_trial, 1.0)
+        single_trial = [BatchTrial({"x": 1}, 0.5, 1.0)]
+        result = BatchResult({"x": 1}, 0.5, single_trial, 1.0)
         assert result.total_trials == 1
         assert result.successful_trials == 1
         assert result.success_rate == 1.0
 
         # Result with all failed trials
-        failed_trials = [Trial({"x": i}, float("-inf"), 1.0) for i in range(5)]
-        result = OptimizationResult({}, float("-inf"), failed_trials, 5.0)
+        failed_trials = [BatchTrial({"x": i}, float("-inf"), 1.0) for i in range(5)]
+        result = BatchResult({}, float("-inf"), failed_trials, 5.0)
         assert result.successful_trials == 0
         assert result.success_rate == 0.0
 
         # Result with zero duration
-        result = OptimizationResult({}, 0.0, [], 0.0)
+        result = BatchResult({}, 0.0, [], 0.0)
         assert result.duration == 0.0
 
 
 class TestIntegration:
-    """Test integration between Trial and OptimizationResult."""
+    """Test integration between BatchTrial and BatchResult."""
 
     def test_building_optimization_result_from_trials(self):
         """Test building an optimization result from a series of trials."""
@@ -363,7 +410,7 @@ class TestIntegration:
         scores = [0.75, 0.85, 0.82, 0.88]
 
         for i, (config, score) in enumerate(zip(configs, scores, strict=False)):
-            trial = Trial(
+            trial = BatchTrial(
                 configuration=config,
                 score=score,
                 duration=10.5 + i,
@@ -376,7 +423,7 @@ class TestIntegration:
                 best_config = config
 
         # Create result
-        result = OptimizationResult(
+        result = BatchResult(
             best_config=best_config,
             best_score=best_score,
             trials=trials,
@@ -395,12 +442,12 @@ class TestIntegration:
         """Test handling optimization with mixed trial outcomes."""
         trials = []
 
-        # Trial 1: Successful
-        trials.append(Trial({"model": "A", "param": 1}, score=0.7, duration=5.0))
+        # BatchTrial 1: Successful
+        trials.append(BatchTrial({"model": "A", "param": 1}, score=0.7, duration=5.0))
 
-        # Trial 2: Failed due to error
+        # BatchTrial 2: Failed due to error
         trials.append(
-            Trial(
+            BatchTrial(
                 {"model": "B", "param": 2},
                 score=float("-inf"),
                 duration=0.1,
@@ -408,12 +455,12 @@ class TestIntegration:
             )
         )
 
-        # Trial 3: Successful with best score
-        trials.append(Trial({"model": "A", "param": 3}, score=0.9, duration=6.0))
+        # BatchTrial 3: Successful with best score
+        trials.append(BatchTrial({"model": "A", "param": 3}, score=0.9, duration=6.0))
 
-        # Trial 4: Timeout (marked as failed)
+        # BatchTrial 4: Timeout (marked as failed)
         trials.append(
-            Trial(
+            BatchTrial(
                 {"model": "C", "param": 4},
                 score=0.0,
                 duration=30.0,
@@ -421,7 +468,7 @@ class TestIntegration:
             )
         )
 
-        result = OptimizationResult(
+        result = BatchResult(
             best_config={"model": "A", "param": 3},
             best_score=0.9,
             trials=trials,
