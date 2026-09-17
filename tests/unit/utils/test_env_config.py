@@ -25,6 +25,16 @@ def _reset_env(monkeypatch):
         "TRAIGENT_ENV",
         "TRAIGENT_ENVIRONMENT",
         "TRAIGENT_DEV_JWT_SECRET",
+        # Without this, an ambient TRAIGENT_SKIP_DOTENV (common in this
+        # workspace -- hermetic smokes and several suites export it) makes
+        # `_load_dotenv_files()` return immediately, so every test here that
+        # asserts a `.env` WAS read fails locally while CI, which sets nothing,
+        # stays green. Measured on this branch: with the var set,
+        # test_reads_project_root_env_via_cwd and
+        # test_project_dotenv_bounded_at_marker_directory both fail; with it
+        # unset the file passes. Tests that want the opt-out ON set it
+        # themselves after calling this helper.
+        "TRAIGENT_SKIP_DOTENV",
     ):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(env_config, "_GENERATED_DEV_JWT_SECRET", None, raising=False)
@@ -321,8 +331,24 @@ class TestLoadDotenvFiles:
     def test_no_marker_anywhere_checks_cwd_only(self, tmp_path, monkeypatch):
         """When no project marker exists in the whole ancestry, there is no
         trusted boundary, so only cwd itself is checked — an ancestor .env
-        with no marker between it and cwd is not loaded either."""
+        with no marker between it and cwd is not loaded either.
+
+        ``tmp_path`` alone cannot give us a markerless ancestry: the walk
+        continues past ``tmp_path`` into the REAL filesystem, and a marker
+        anywhere above it makes the search span the ancestor below that marker
+        and legitimately load ``parent/.env``. Measured on this box: ``/tmp/.git``
+        exists, so the boundary lands on ``/tmp`` and this test failed for an
+        ambient-filesystem reason rather than a code one. Substitute a marker
+        name that cannot exist anywhere, so "no marker in the ancestry" holds by
+        construction and the ``boundary_index is None`` branch is what actually
+        gets exercised.
+        """
         _reset_env(monkeypatch)
+        monkeypatch.setattr(
+            env_config,
+            "_PROJECT_MARKER_NAMES",
+            (".traigent-marker-that-cannot-exist",),
+        )
         parent = tmp_path / "parent"
         child = parent / "child"
         child.mkdir(parents=True)
