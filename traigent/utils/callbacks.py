@@ -275,9 +275,7 @@ class ProgressBarCallback(OptimizationCallback):
             if isinstance(result.metadata, dict):
                 timeout_value = result.metadata.get("timeout")
             timeout_hint = f" ({timeout_value}s)" if timeout_value else ""
-            _safe_print(
-                f"⚠️ Optimization stopped early: timeout reached{timeout_hint}."
-            )
+            _safe_print(f"⚠️ Optimization stopped: timeout reached{timeout_hint}.")
         else:
             _safe_print("✅ Optimization complete!")
         best_score_str = (
