@@ -230,6 +230,7 @@ class TestLoadDotenvFiles:
         """A .env in the caller's project root (not package-adjacent) is
         loaded once the SDK's own loader runs — the pip-installed-user
         scenario the issue reports as silently unmet before this fix."""
+        _reset_env(monkeypatch)
         self._write_project_env(tmp_path, "from-project-root")
         monkeypatch.delenv(self._MARKER_VAR, raising=False)
         monkeypatch.chdir(tmp_path)
@@ -243,6 +244,7 @@ class TestLoadDotenvFiles:
     def test_explicit_env_var_wins_over_project_dotenv(self, tmp_path, monkeypatch):
         """An already-exported real env var is never overridden by the
         project .env (load_dotenv's default, non-overriding behavior)."""
+        _reset_env(monkeypatch)
         self._write_project_env(tmp_path, "from-project-root")
         monkeypatch.setenv(self._MARKER_VAR, "from-real-shell-env")
         monkeypatch.chdir(tmp_path)
@@ -263,3 +265,70 @@ class TestLoadDotenvFiles:
             assert self._MARKER_VAR not in os.environ
         finally:
             os.environ.pop(self._MARKER_VAR, None)
+
+    def test_survives_deleted_cwd(self, tmp_path, monkeypatch):
+        """A deleted/unmounted cwd must degrade to 'no project .env found',
+        never crash the loader (review finding: os.getcwd() raising
+        FileNotFoundError inside find_dotenv(usecwd=True) used to propagate
+        straight out of _load_dotenv_files(), i.e. out of `import traigent`).
+        """
+        _reset_env(monkeypatch)
+        gone = tmp_path / "deleted"
+        gone.mkdir()
+        monkeypatch.chdir(gone)
+        gone.rmdir()
+
+        # Must not raise.
+        env_config._load_dotenv_files()
+
+    def test_project_dotenv_bounded_at_marker_directory(self, tmp_path, monkeypatch):
+        """A .env at the project marker directory (one level above cwd) is
+        still found — the bound is inclusive of the marker directory."""
+        _reset_env(monkeypatch)
+        project = tmp_path / "project"
+        subdir = project / "subdir"
+        subdir.mkdir(parents=True)
+        (project / "pyproject.toml").write_text("")
+        self._write_project_env(project, "from-marker-dir")
+        monkeypatch.delenv(self._MARKER_VAR, raising=False)
+        monkeypatch.chdir(subdir)
+
+        try:
+            env_config._load_dotenv_files()
+            assert os.environ.get(self._MARKER_VAR) == "from-marker-dir"
+        finally:
+            os.environ.pop(self._MARKER_VAR, None)
+
+    def test_project_dotenv_never_crosses_marker_into_ancestor(
+        self, tmp_path, monkeypatch
+    ):
+        """A .env belonging to an unrelated ancestor (past the project
+        marker, e.g. a monorepo/workspace root) must never be loaded —
+        the walk stops at the marker, it does not cross it."""
+        _reset_env(monkeypatch)
+        workspace = tmp_path / "workspace"
+        project = workspace / "project"
+        subdir = project / "subdir"
+        subdir.mkdir(parents=True)
+        self._write_project_env(workspace, "from-unrelated-ancestor")
+        (project / "pyproject.toml").write_text("")
+        monkeypatch.delenv(self._MARKER_VAR, raising=False)
+        monkeypatch.chdir(subdir)
+
+        env_config._load_dotenv_files()
+        assert self._MARKER_VAR not in os.environ
+
+    def test_no_marker_anywhere_checks_cwd_only(self, tmp_path, monkeypatch):
+        """When no project marker exists in the whole ancestry, there is no
+        trusted boundary, so only cwd itself is checked — an ancestor .env
+        with no marker between it and cwd is not loaded either."""
+        _reset_env(monkeypatch)
+        parent = tmp_path / "parent"
+        child = parent / "child"
+        child.mkdir(parents=True)
+        self._write_project_env(parent, "from-markerless-ancestor")
+        monkeypatch.delenv(self._MARKER_VAR, raising=False)
+        monkeypatch.chdir(child)
+
+        env_config._load_dotenv_files()
+        assert self._MARKER_VAR not in os.environ

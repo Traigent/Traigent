@@ -14,7 +14,7 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast, overload
 
-from dotenv import find_dotenv, load_dotenv
+from dotenv import load_dotenv
 
 from .logging import get_logger
 
@@ -109,6 +109,62 @@ def _check_mock_llm_prod_guard() -> None:
 _check_mock_llm_prod_guard()
 
 
+_PROJECT_MARKER_NAMES = (".git", "pyproject.toml", "setup.cfg", "setup.py")
+
+
+def _find_project_boundary(start: Path) -> Path | None:
+    """Return the nearest directory at or above ``start`` that carries a
+    project marker (``.git``, ``pyproject.toml``, ``setup.cfg``,
+    ``setup.py``), or ``None`` if none is found before the filesystem root.
+    """
+    for directory in (start, *start.parents):
+        if any((directory / marker).exists() for marker in _PROJECT_MARKER_NAMES):
+            return directory
+    return None
+
+
+def _find_bounded_project_dotenv() -> str:
+    """Return the caller's project-root ``.env`` path, or ``""`` if none.
+
+    Walks up from the current working directory looking for a ``.env``,
+    but the walk is **bounded** at the nearest project marker (``.git``,
+    ``pyproject.toml``, ``setup.cfg``, ``setup.py``), inclusive of that
+    marker directory — it never crosses it. Without a bound, a bare
+    ``find_dotenv(usecwd=True)`` walks all the way to the filesystem root
+    and can silently load an unrelated ancestor's ``.env`` in a monorepo or
+    nested workspace (Traigent/Traigent#1830 review finding). When no
+    marker exists anywhere in the ancestry, there is no project boundary to
+    trust, so only ``cwd`` itself is checked.
+
+    Resolving ``cwd`` is wrapped so a deleted/unmounted working directory
+    (``os.getcwd()`` raising ``FileNotFoundError``/``OSError``) degrades to
+    "no project ``.env`` found" instead of crashing ``import traigent`` —
+    dotenv loading is best-effort and must never be able to take down
+    import.
+    """
+    try:
+        cwd = Path.cwd()
+    except (FileNotFoundError, OSError):
+        return ""
+
+    ancestors = [cwd, *cwd.parents]
+    boundary_index = next(
+        (
+            index
+            for index, directory in enumerate(ancestors)
+            if any((directory / marker).exists() for marker in _PROJECT_MARKER_NAMES)
+        ),
+        None,
+    )
+    search_dirs = [cwd] if boundary_index is None else ancestors[: boundary_index + 1]
+
+    for directory in search_dirs:
+        candidate = directory / ".env"
+        if candidate.is_file():
+            return str(candidate)
+    return ""
+
+
 def _load_dotenv_files() -> None:
     """Load ``.env`` files, unless opted out via ``TRAIGENT_SKIP_DOTENV``.
 
@@ -118,10 +174,15 @@ def _load_dotenv_files() -> None:
     var always wins over both):
 
     1. The **caller's project** ``.env``, discovered by walking up from the
-       current working directory (``find_dotenv(usecwd=True)``). This is
-       the file a pip-installed user actually edits, per the quickstart
-       skill (Traigent/Traigent#1830) — without this, a project-root
-       ``.env`` is silently never read by the SDK's own loader.
+       current working directory, bounded at the nearest project marker
+       (``.git``, ``pyproject.toml``, ``setup.cfg``, ``setup.py``), inclusive
+       of that marker directory — see :func:`_find_bounded_project_dotenv`.
+       This is the file a pip-installed user actually edits, per the
+       quickstart skill (Traigent/Traigent#1830) — without this, a
+       project-root ``.env`` is silently never read by the SDK's own loader.
+       The walk never crosses the project boundary, so an unrelated
+       ancestor's ``.env`` in a monorepo/workspace is never loaded; when no
+       marker is found at all, only ``cwd`` itself is checked.
     2. The **package-adjacent** ``.env`` (``Path(__file__).parent.parent.parent
        / ".env"``) — the repo root in a source checkout, or ``site-packages/``
        when pip-installed. This is the historical dev-checkout convenience
@@ -143,7 +204,7 @@ def _load_dotenv_files() -> None:
     if _is_truthy_env_value(os.environ.get("TRAIGENT_SKIP_DOTENV")):
         return
 
-    project_env = find_dotenv(usecwd=True)
+    project_env = _find_bounded_project_dotenv()
     if project_env:
         load_dotenv(project_env)
         _check_mock_llm_prod_guard()
