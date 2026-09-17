@@ -4429,28 +4429,35 @@ class OptimizationOrchestrator:
         return result
 
     def _fail_closed_on_empty_smart_managed_run(self) -> None:
-        """Reject a cloud-required smart run that executed zero trials.
+        """Reject a cloud-required smart run that executed zero *successful*
+        trials.
 
         A smart algorithm (``bayesian``/``tpe``/``cmaes``/``nsga2``/
         ``optuna*``) resolves to a ``CLOUD_REQUIRED`` policy whose managed
-        cloud path must either run trials or raise. When that managed path
-        returns without executing a single trial, the run would otherwise be
-        finalized as a silent ``COMPLETED`` result with ``best_config=None`` —
-        the exact silent-empty failure of issue #1681. Surface it as an
-        actionable error instead of a hollow success.
+        cloud path must either produce a successful trial or raise. When that
+        managed path returns with no successful trial — whether because it
+        ran zero trials, or because every trial it did run FAILED or was
+        PRUNED — the run would otherwise be finalized as a silent
+        ``COMPLETED`` result with ``best_config=None`` — the exact
+        silent-empty failure of issue #1681 (follow-up: #1703). Surface it as
+        an actionable error instead of a hollow success.
 
         Deliberately narrow so it never hijacks a legitimate empty stop:
 
-        * only fires for a genuinely empty run (``len(self._trials) == 0``);
+        * only fires when no trial in ``self._trials`` is ``is_successful``
+          (a non-empty ``self._trials`` whose members are all FAILED/PRUNED
+          is the same silent-empty shape as truly zero trials — keying on
+          ``bool(self._trials)`` alone missed it, issue #1703);
         * only when the resolved policy is ``CLOUD_REQUIRED`` (a smart
           algorithm), never for local/hybrid/cloud-brain runs;
         * leaves an explicit ``max_trials<=0`` no-op run alone (mirrors the
           ``_try_cloud_execution`` guard for non-positive trial budgets);
         * defers to already-owned stop causes (timeout / user cancel / cost
-          limit #1684 / vendor or network error) rather than relabeling them.
+          limit #1684 / vendor or network error) rather than relabeling them,
+          whether or not trials were attempted.
         """
 
-        if self._trials:
+        if any(trial.is_successful for trial in self._trials):
             return
         policy = policy_from_config(self.traigent_config)
         if not policy_is_cloud_required(policy):
@@ -4461,6 +4468,19 @@ class OptimizationOrchestrator:
             return
 
         algorithm = getattr(policy, "algorithm", None) or "the requested algorithm"
+        executed = len(self._trials)
+        if executed:
+            raise OptimizationError(
+                f"Smart optimization ('{algorithm}') requires the Traigent "
+                "managed cloud service, but the run finished with "
+                f"{executed} executed trial(s), none of which succeeded (all "
+                "failed or were pruned) -- no best configuration. A "
+                "cloud-required run must not silently report success. The "
+                "local SDK runs only 'grid' and 'random'; connect to a "
+                "Traigent backend that provides smart optimization, or call "
+                "optimize(algorithm='grid') / optimize(algorithm='random') to "
+                "run locally."
+            )
         raise OptimizationError(
             f"Smart optimization ('{algorithm}') requires the Traigent managed "
             "cloud service, but the run finished without executing a single "
