@@ -300,3 +300,49 @@ class TestDecoratorValidation:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_decorator_accepts_a_registry_registered_bare_name() -> None:
+    """The decorator's #2299 validation must honour the same registry exemption
+    the override manager honours.
+
+    ``FrameworkOverrideManager.activate_overrides`` skips validation for any
+    target already in the registry ("Already overridden; shape was accepted
+    previously"). A name registered through the public
+    ``register_framework_mapping()`` + ``apply_mock_overrides()`` pair is such a
+    target, so rejecting it at decoration would break a registration path the
+    manager itself accepts.
+    """
+    from traigent.integrations.framework_override import (
+        _framework_override_manager,
+        apply_mock_overrides,
+        register_framework_mapping,
+    )
+
+    class MyMock:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+    register_framework_mapping("MyMock", {"model": "model"})
+    apply_mock_overrides({"MyMock": MyMock})
+    assert _framework_override_manager.is_override_registered("MyMock")
+
+    @optimize(framework_targets=["MyMock"], configuration_space={"model": ["a", "b"]})
+    def run(model: str = "a") -> str:
+        return model
+
+    assert run is not None
+
+
+def test_decorator_still_rejects_an_unregistered_bare_name() -> None:
+    """The exemption above must not weaken #2299: a bare name that nobody
+    registered can never be patched, and must still fail at decoration rather
+    than on the first call."""
+    with pytest.raises(ConfigurationError, match="Invalid framework target"):
+
+        @optimize(
+            framework_targets=["langchain"],
+            configuration_space={"model": ["a", "b"]},
+        )
+        def run(model: str = "a") -> str:
+            return model
