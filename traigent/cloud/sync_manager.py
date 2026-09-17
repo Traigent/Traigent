@@ -32,7 +32,7 @@ except ImportError:
     AIOHTTP_AVAILABLE = False
 
 from ..config.backend_config import BackendConfig, get_no_credentials_hint
-from ..config.types import TraigentConfig
+from ..config.types import TraigentConfig, _read_bool_env
 from ..storage.local_storage import (
     TRIAL_COST_FIELDS,
     LocalStorageManager,
@@ -769,10 +769,10 @@ class SyncManager:
             project_id = create_result.get("project_id")
             tenant_id = create_result.get("tenant_id")
 
-        # A resumed state can predate the persisted experiment id. Apply the
-        # same session-id fallback as _sync_create_session; never build a
-        # successful URL with ``/None``.
-        experiment_id = self._experiment_id_for_session(experiment_id, session_cloud_id)
+        # Normalize independently; never substitute session_id into the
+        # persisted id field. The session-id fallback is applied only at URL
+        # build time (below), as a display label, never persisted (G1 §1).
+        experiment_id = self._optional_context_id(experiment_id)
         experiment_run_id = self._optional_context_id(experiment_run_id)
         sync_result["cloud_session_id"] = session_cloud_id
         sync_result["cloud_experiment_id"] = experiment_id
@@ -878,7 +878,7 @@ class SyncManager:
             sync_result["status"] = "success"
             sync_result["cloud_url"] = build_experiment_url(
                 BackendConfig.get_cloud_web_url(),
-                experiment_id,
+                self._experiment_id_for_session(experiment_id, session_cloud_id),
                 run_id=experiment_run_id,
                 project_id=project_id,
                 tenant_id=tenant_id,
@@ -1007,8 +1007,9 @@ class SyncManager:
         Because the session binds no benchmark, the backend's EMPTY_DATASET
         guard hits its no-dataset pass-through, so a run whose server-side
         dataset would have zero examples imports cleanly. Parses the response
-        like ``api_operations._parse_session_response`` (experiment_id /
-        experiment_run_id fall back to session_id when absent).
+        like ``api_operations._parse_session_response``: experiment_id /
+        experiment_run_id are normalized independently and left ``None`` when
+        the backend did not mint one — never substituted with session_id.
         """
         self._raise_if_backend_egress_disabled("sync session create")
         try:
@@ -1038,8 +1039,32 @@ class SyncManager:
             metadata = payload.get("metadata")
             if not isinstance(metadata, Mapping):
                 metadata = {}
-            experiment_id = str(metadata.get("experiment_id") or session_id)
-            experiment_run_id = str(metadata.get("experiment_run_id") or session_id)
+            experiment_id = self._optional_context_id(metadata.get("experiment_id"))
+            experiment_run_id = self._optional_context_id(
+                metadata.get("experiment_run_id")
+            )
+            missing_fields = [
+                name
+                for name, value in (
+                    ("experiment_id", experiment_id),
+                    ("experiment_run_id", experiment_run_id),
+                )
+                if value is None
+            ]
+            if missing_fields:
+                logger.warning(
+                    "Backend session-create response is missing %s; leaving "
+                    "absent rather than substituting session_id.",
+                    " and ".join(missing_fields),
+                )
+            if experiment_run_id is None and _read_bool_env("TRAIGENT_REQUIRE_RUN_ID"):
+                return {
+                    "success": False,
+                    "error": (
+                        "Session create response did not include "
+                        "experiment_run_id, and TRAIGENT_REQUIRE_RUN_ID is set"
+                    ),
+                }
             project_id = self._optional_context_id(
                 payload.get("project_id") or metadata.get("project_id")
             )
@@ -1233,12 +1258,12 @@ class SyncManager:
         """
         self._raise_if_backend_egress_disabled("finalize session")
         try:
+            finalize_body: dict[str, Any] = {"reason": "offline_sync_finalization"}
+            if experiment_run_id is not None:
+                finalize_body["experiment_run_id"] = experiment_run_id
             response = self._session.post(
                 f"{self.base_url}/sessions/{session_id}/finalize",
-                json={
-                    "reason": "offline_sync_finalization",
-                    "experiment_run_id": experiment_run_id,
-                },
+                json=finalize_body,
                 timeout=self._request_timeout,
             )
             if response.status_code in (200, 201):

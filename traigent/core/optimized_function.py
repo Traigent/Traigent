@@ -1034,6 +1034,20 @@ class OptimizedFunction(Generic[_P, _R]):
         self.smart_pruning = self._store_optional_param(
             kwargs, sentinel, "smart_pruning", None
         )
+        # G1 v1.0.1 (g): explicit True forces the early RunIdMissingError
+        # regardless of TRAIGENT_REQUIRE_RUN_ID; explicit False forces it
+        # off regardless of TRAIGENT_REQUIRE_RUN_ID (see
+        # _build_optimization_orchestrator). Tri-state, stored directly
+        # rather than via _store_optional_param(as_bool=True): that helper's
+        # bool() coercion would collapse "unspecified" and explicit False to
+        # the same False, making an explicit False indistinguishable from
+        # "defer to the environment" (G1 v1.0.1 (g), F2).
+        require_run_id_raw = kwargs.pop("require_run_id", sentinel)
+        if require_run_id_raw is sentinel or require_run_id_raw is None:
+            self.require_run_id = None
+        else:
+            self.require_run_id = bool(require_run_id_raw)
+            kwargs["require_run_id"] = self.require_run_id
         self.optimization_history_limit = kwargs.pop("optimization_history_limit", 100)
         if (
             not isinstance(self.optimization_history_limit, int)
@@ -1086,6 +1100,7 @@ class OptimizedFunction(Generic[_P, _R]):
             "samples_include_pruned",
             "winner_stability_reps",
             "smart_pruning",
+            "require_run_id",
             # Multi-agent configuration
             "agents",
             "agent_prefixes",
@@ -2294,6 +2309,16 @@ class OptimizedFunction(Generic[_P, _R]):
         orchestrator_kwargs["winner_stability_reps"] = int(
             getattr(self, "winner_stability_reps", 0) or 0
         )
+        # G1 v1.0.1 (g), F2: only set the key when explicitly True or False.
+        # Leaving it unset for None (unspecified) lets BackendSessionManager's
+        # tri-state require_run_id default fall back to
+        # TRAIGENT_REQUIRE_RUN_ID, exactly as before this option existed. An
+        # explicit False must still be forwarded (not just True) -- omitting
+        # it collapsed explicit False into "unspecified", so it lost to the
+        # environment instead of overriding it.
+        require_run_id_value = getattr(self, "require_run_id", None)
+        if require_run_id_value is not None:
+            orchestrator_kwargs["require_run_id"] = require_run_id_value
 
         # Auto-initialize workflow traces tracker if backend is configured
         workflow_traces_tracker = create_workflow_traces_tracker(traigent_config)
@@ -3230,6 +3255,8 @@ Remediation:
         )
 
         # Phase 9: Run optimization and finalize
+        from traigent.cloud.client import SessionContractError
+
         try:
             return await self._run_and_finalize_optimization(
                 orchestrator=orchestrator,
@@ -3238,6 +3265,13 @@ Remediation:
                 save_to=save_to,
             )
         except OptimizationError:
+            raise
+        except SessionContractError:
+            # G1 v1.0.1 (g), F1: RunIdMissingError / SessionContractError ARE
+            # the public contract (session-create-time refusal to proceed
+            # without an authoritative run id) -- never dilute them into a
+            # generic OptimizationError the way an ordinary failure is below.
+            # Same rule as the ResolutionError branch a few lines down.
             raise
         except Exception as e:
             from traigent.knobs import ResolutionError

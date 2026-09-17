@@ -1255,11 +1255,28 @@ class SessionOperations:
                 metadata = dict(getattr(active_session, "metadata", {}) or {})
                 experiment_id = metadata.get("experiment_id")
                 experiment_run_id = metadata.get("experiment_run_id")
-                if experiment_id and experiment_run_id:
+                # Rebuild with nullable ids as soon as EITHER is present --
+                # requiring both was the bug (G1 §1, addendum F6). A connected
+                # session created via the backend session-create API can
+                # legitimately have BOTH ids None (mode "session_api" or
+                # "hybrid" is the backend-created marker) -- requiring a
+                # truthy id in that case was a second instance of the same
+                # bug (G1 §1, addendum F10): it dropped a session the backend
+                # actually created, making zero finalize calls for it. A
+                # session with neither an id NOR a connected-session mode is
+                # unchanged: indistinguishable from stale/bogus active-session
+                # metadata (e.g. local-fallback), so recovery still declines.
+                if (
+                    experiment_id
+                    or experiment_run_id
+                    or metadata.get("mode") in ("session_api", "hybrid")
+                ):
                     mapping = self.client.session_bridge.create_session_mapping(
                         session_id=session_id,
-                        experiment_id=str(experiment_id),
-                        experiment_run_id=str(experiment_run_id),
+                        experiment_id=str(experiment_id) if experiment_id else None,
+                        experiment_run_id=(
+                            str(experiment_run_id) if experiment_run_id else None
+                        ),
                         function_name=str(
                             getattr(active_session, "function_name", "unknown_function")
                         ),
@@ -1511,7 +1528,7 @@ class SessionOperations:
     async def _finalize_session_via_api(
         self,
         session_id: str,
-        experiment_run_id: str,
+        experiment_run_id: str | None,
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
@@ -1557,8 +1574,9 @@ class SessionOperations:
 
                 finalize_body: dict[str, Any] = {
                     "reason": "sdk_explicit_finalization",
-                    "experiment_run_id": experiment_run_id,
                 }
+                if experiment_run_id is not None:
+                    finalize_body["experiment_run_id"] = experiment_run_id
                 if certified_selection is not None:
                     # Phase 8: the client-attested, content-free certified-
                     # selection report — TOP-LEVEL key only (the backend

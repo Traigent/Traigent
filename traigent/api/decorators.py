@@ -324,6 +324,12 @@ class ExecutionOptions(BaseModel):
             guarantee. Distinct from the enterprise-gated ``reps_per_trial``
             (which repeats every trial during search); this reruns only the
             already-selected winner.
+        require_run_id: Fail session creation early with a ``RunIdMissingError``
+            when the backend returns no authoritative ``experiment_run_id``.
+            Tri-state: ``None`` (default) leaves the choice to
+            ``TRAIGENT_REQUIRE_RUN_ID`` for this run. An explicit ``True`` or
+            ``False`` always overrides the environment variable, including
+            explicit ``False`` against an environment set to ``true``.
     """
 
     model_config = ConfigDict(
@@ -357,6 +363,7 @@ class ExecutionOptions(BaseModel):
     reps_per_trial: int = 1
     reps_aggregation: str = "mean"
     winner_stability_reps: int = 0
+    require_run_id: bool | None = None
 
     @model_validator(mode="wrap")
     @classmethod
@@ -3065,6 +3072,17 @@ def optimize(  # NOSONAR(S107)
     smart_pruning_value = resolved_execution.smart_pruning
     winner_stability_reps_value = resolved_execution.winner_stability_reps
     legacy_execution_options = resolved_execution.legacy_options
+    # No direct @optimize(require_run_id=...) kwarg exists (execution-bundle-only
+    # option), so this reads straight from the bundle rather than going through
+    # _resolve_execution_bundle_options's direct-kwarg merge. Tri-state:
+    # ``None`` (no bundle, or a bundle that left the field unset) means
+    # "unspecified" and must stay distinguishable from an explicit ``False``
+    # all the way through (G1 v1.0.1 (g), F2) -- collapsing both to ``False``
+    # here would make an explicit ``False`` indistinguishable from "defer to
+    # TRAIGENT_REQUIRE_RUN_ID" downstream.
+    require_run_id_value = (
+        execution_bundle.require_run_id if execution_bundle is not None else None
+    )
     smart_pruning_config = _normalize_smart_pruning_options(smart_pruning_value)
     external_service_evaluator = _resolve_external_service_evaluator(
         evaluator_value,
@@ -3303,6 +3321,7 @@ def optimize(  # NOSONAR(S107)
             max_total_examples=max_total_examples,
             samples_include_pruned=samples_include_pruned,
             winner_stability_reps=winner_stability_reps_value,
+            require_run_id=require_run_id_value,
             smart_pruning=smart_pruning_config,
             parallel_config=combined_parallel_config,
             mock_mode_config=mock_mode_config,
