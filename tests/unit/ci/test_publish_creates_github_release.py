@@ -45,6 +45,44 @@ def test_release_job_only_runs_after_a_verified_tag_publish() -> None:
     assert "startsWith(github.ref, 'refs/tags/v')" in condition
 
 
+def test_release_job_also_runs_for_a_workflow_dispatch_pypi_publish() -> None:
+    # Regression for #2267 recurring on the workflow_dispatch->PyPI path:
+    # in this repo's history, 12 of 27 successful publishes were manual
+    # dispatches straight to production PyPI (never a tag push), and the
+    # `publish` job's own "Publish to PyPI" step already treats that path as
+    # a real production release (same condition, `publish.yml` line ~199).
+    # The release job must mirror it, not just the tag-push half.
+    job = _release_job()
+    condition = job["if"]
+    assert "github.event_name == 'workflow_dispatch'" in condition
+    assert "inputs.environment == 'pypi'" in condition
+
+    publish_job = _workflow()["jobs"]["publish"]
+    publish_step = next(
+        step
+        for step in publish_job["steps"]
+        if step.get("name") == "Publish to PyPI"
+    )
+    # Same production-publish test the upstream step already uses, so the
+    # release job can never drift narrower (or wider) than it again.
+    assert publish_step["if"] == (
+        "startsWith(github.ref, 'refs/tags/v') || "
+        "(github.event_name == 'workflow_dispatch' && inputs.environment == 'pypi')"
+    )
+    assert "startsWith(github.ref, 'refs/tags/v')" in publish_step["if"]
+    assert "github.event_name == 'workflow_dispatch'" in publish_step["if"]
+    assert "inputs.environment == 'pypi'" in publish_step["if"]
+
+
+def test_release_tag_is_derived_from_the_published_version_not_the_ref() -> None:
+    # A workflow_dispatch production publish never sets github.ref to a tag
+    # (github.ref_name would be a branch name), so the tag used to create
+    # the Release must come from the same version source verify-publication
+    # already trusts: needs.publish.outputs.package_version.
+    job = _release_job()
+    assert job["env"]["TAG"] == "v${{ needs.publish.outputs.package_version }}"
+
+
 def test_release_job_requests_only_contents_write() -> None:
     job = _release_job()
     # Minimum additional permission beyond the workflow-level `contents: read`
@@ -58,7 +96,13 @@ def test_release_job_is_idempotent_create_or_update() -> None:
     assert "gh release view" in steps_text
     assert "gh release edit" in steps_text
     assert "gh release create" in steps_text
-    assert "--verify-tag" in steps_text
+    # Not --verify-tag: on the workflow_dispatch->pypi path the derived tag
+    # (see test above) has no matching git tag yet, and --verify-tag would
+    # abort the release rather than mint one. --target lets `gh release
+    # create` mint the tag from this run's commit; for a real tag push the
+    # tag already exists there, so --target is a no-op.
+    assert "--target" in steps_text
+    assert "--verify-tag" not in steps_text
 
 
 def test_release_job_asserts_tag_pypi_and_latest_agree() -> None:
