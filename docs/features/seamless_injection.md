@@ -26,9 +26,25 @@ parameters or defaults.
 - **Direct call literals** are not rewritten:
   - Example: `ChatAnthropic(model="claude")` stays literal.
 - **Dynamic lookups** (for example `getattr`) are not modified.
+- A `**kwargs` catch-all parameter never counts as an injectable target, even
+  though a config key would bind into it at call time.
 
 If you need those patterns, use `injection_mode="parameter"` or read configs via
 `traigent.get_config()`.
+
+### Fails closed on zero injectable targets
+
+If a non-empty `configuration_space` has **no** injectable target for the
+target function -- no local assignment and no parameter named after any
+config key -- Traigent raises `SeamlessNoInjectableTargetsError` (a
+`ConfigurationError`) before the first optimization trial, instead of running
+every trial with the same unvaried code and returning a phantom
+`best_config`. Set `TRAIGENT_ALLOW_SEAMLESS_NO_TARGETS=true` to opt back into
+the previous warning-only behavior for the rare intentional case (for
+example, a config key that only gates behavior via `traigent.get_config()`
+inside the function body). Partial coverage -- some config keys injectable,
+others not -- logs a `WARNING` naming the uncovered keys and does **not**
+fail closed.
 
 ## Example
 
