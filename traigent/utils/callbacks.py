@@ -275,7 +275,9 @@ class ProgressBarCallback(OptimizationCallback):
             if isinstance(result.metadata, dict):
                 timeout_value = result.metadata.get("timeout")
             timeout_hint = f" ({timeout_value}s)" if timeout_value else ""
-            _safe_print(f"⚠️ Optimization stopped early: timeout reached{timeout_hint}.")
+            _safe_print(
+                f"⚠️ Optimization stopped early: timeout reached{timeout_hint}."
+            )
         else:
             _safe_print("✅ Optimization complete!")
         best_score_str = (
@@ -388,6 +390,64 @@ class ResultsTableCallback(OptimizationCallback):
                 _safe_print(self._table_footer_note)
         except Exception as exc:
             logger.warning("Failed to render results table: %s", exc)
+
+
+class ManagedProgressCallback(OptimizationCallback):
+    """Per-config heartbeat for the managed (hybrid) execution path (Traigent#1601).
+
+    The managed path had no client-side per-config progress: each config is
+    evaluated against Traigent's backend-guided optimizer, often for minutes
+    (reasoning models), and a managed run is commonly launched
+    non-interactively (a script, notebook, or background process) rather than
+    watched in a live terminal. ``ProgressBarCallback`` only auto-injects in
+    an interactive TTY (``sys.stdin.isatty()``), and ``ResultsTableCallback``
+    -- the non-interactive fallback -- only prints once, at the very end. So a
+    non-interactive managed run produced zero output between start and
+    finish, and the only way to tell a slow run from a hung one was manually
+    polling the portal API.
+
+    Emits one line per completed config via stdout (``_safe_print``, so it is
+    never silently dropped by a logger configured at WARNING+), with no
+    ``\\r`` redraws -- safe to redirect to a file or pipe. Never throttled:
+    managed configs are minutes apart, not the sub-second cadence a progress
+    bar throttles for.
+    """
+
+    def on_optimization_start(
+        self, config_space: dict[str, Any], objectives: list[str], algorithm: str
+    ) -> None:
+        """Called when optimization starts."""
+        _safe_print(
+            f"[traigent] managed run starting: algorithm={algorithm} "
+            f"objectives={', '.join(objectives)}"
+        )
+
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
+        """Called when a trial starts."""
+        return None  # Heartbeat fires on completion, like the progress bar.
+
+    def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
+        """Called when a trial completes."""
+        status = "OK" if trial.is_successful else "FAIL"
+        total = progress.total_trials if progress.total_trials else "?"
+        best_score_str = (
+            f"{progress.best_score:.4f}" if progress.best_score is not None else "N/A"
+        )
+        elapsed = time.strftime("%M:%S", time.gmtime(progress.elapsed_time))
+        _safe_print(
+            f"[traigent] config {progress.completed_trials}/{total} {status} "
+            f"best={best_score_str} elapsed={elapsed}"
+        )
+
+    def on_optimization_complete(self, result: OptimizationResult) -> None:
+        """Called when optimization completes."""
+        best_score_str = (
+            f"{result.best_score:.4f}" if result.best_score is not None else "N/A"
+        )
+        _safe_print(
+            f"[traigent] managed run complete: best={best_score_str} "
+            f"success_rate={result.success_rate:.1%} duration={result.duration:.1f}s"
+        )
 
 
 class LoggingCallback(OptimizationCallback):

@@ -28,6 +28,7 @@ from traigent.utils.callbacks import (
     CallbackManager,
     DetailedProgressCallback,
     LoggingCallback,
+    ManagedProgressCallback,
     OptimizationCallback,
     ProgressBarCallback,
     ProgressInfo,
@@ -343,6 +344,155 @@ class TestProgressBarCallback:
 
         captured = capsys.readouterr()
         assert "timeout" in captured.out.lower()
+
+
+class TestManagedProgressCallback:
+    """Tests for ManagedProgressCallback (Traigent#1601)."""
+
+    @pytest.fixture
+    def callback(self) -> ManagedProgressCallback:
+        return ManagedProgressCallback()
+
+    @pytest.fixture
+    def trial_result(self) -> TrialResult:
+        return TrialResult(
+            trial_id="trial_1",
+            config={"model": "gpt-4"},
+            metrics={"accuracy": 0.85},
+            status=TrialStatus.COMPLETED,
+            duration=10.0,
+            timestamp=datetime.now(UTC),
+        )
+
+    @pytest.fixture
+    def failed_trial_result(self) -> TrialResult:
+        return TrialResult(
+            trial_id="trial_2",
+            config={"model": "gpt-4"},
+            metrics={},
+            status=TrialStatus.FAILED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+            error_message="boom",
+        )
+
+    @pytest.fixture
+    def progress_info(self) -> ProgressInfo:
+        return ProgressInfo(
+            current_trial=5,
+            total_trials=10,
+            completed_trials=5,
+            successful_trials=4,
+            failed_trials=1,
+            best_score=0.85,
+            best_config={"model": "gpt-4"},
+            elapsed_time=50.0,
+            estimated_remaining=50.0,
+            current_algorithm="grid",
+        )
+
+    def test_on_optimization_start_prints_a_line(
+        self, callback: ManagedProgressCallback, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        callback.on_optimization_start(
+            {"model": ["gpt-4"]}, ["accuracy", "cost"], "grid"
+        )
+        captured = capsys.readouterr()
+        assert "managed run starting" in captured.out
+        assert "grid" in captured.out
+        assert "accuracy, cost" in captured.out
+
+    def test_on_trial_start_returns_none(
+        self, callback: ManagedProgressCallback
+    ) -> None:
+        assert callback.on_trial_start(1, {"model": "gpt-4"}) is None
+
+    def test_on_trial_complete_never_throttled(
+        self,
+        callback: ManagedProgressCallback,
+        trial_result: TrialResult,
+        progress_info: ProgressInfo,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Unlike ProgressBarCallback, back-to-back completions both print --
+        managed configs are minutes apart, not sub-second."""
+        callback.on_trial_complete(trial_result, progress_info)
+        callback.on_trial_complete(trial_result, progress_info)
+
+        captured = capsys.readouterr()
+        lines = [line for line in captured.out.splitlines() if line]
+        assert len(lines) == 2
+        assert "config 5/10 OK best=0.8500" in lines[0]
+
+    def test_on_trial_complete_reports_failure_status(
+        self,
+        callback: ManagedProgressCallback,
+        failed_trial_result: TrialResult,
+        progress_info: ProgressInfo,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        callback.on_trial_complete(failed_trial_result, progress_info)
+        captured = capsys.readouterr()
+        assert "FAIL" in captured.out
+
+    def test_on_trial_complete_handles_unknown_total(
+        self,
+        callback: ManagedProgressCallback,
+        trial_result: TrialResult,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """total_trials=0 (unknown ahead of time on the managed path) shows '?'."""
+        progress = ProgressInfo(
+            current_trial=1,
+            total_trials=0,
+            completed_trials=1,
+            successful_trials=1,
+            failed_trials=0,
+            best_score=None,
+            best_config=None,
+            elapsed_time=5.0,
+            estimated_remaining=None,
+            current_algorithm="hybrid",
+        )
+        callback.on_trial_complete(trial_result, progress)
+        captured = capsys.readouterr()
+        assert "config 1/?" in captured.out
+        assert "N/A" in captured.out
+
+    def test_on_optimization_complete_prints_summary(
+        self, callback: ManagedProgressCallback, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        result = OptimizationResult(
+            trials=[],
+            best_config={"model": "gpt-4"},
+            best_score=0.92,
+            optimization_id="opt_1",
+            duration=120.5,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy"],
+            algorithm="grid",
+            timestamp=datetime.now(UTC),
+        )
+
+        callback.on_optimization_complete(result)
+
+        captured = capsys.readouterr()
+        assert "managed run complete" in captured.out
+        assert "0.9200" in captured.out
+        assert "120.5s" in captured.out
+
+    def test_never_uses_carriage_return_redraws(
+        self,
+        callback: ManagedProgressCallback,
+        trial_result: TrialResult,
+        progress_info: ProgressInfo,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Safe to redirect to a file/pipe: no in-place \\r redraw like the bar."""
+        callback.on_trial_complete(trial_result, progress_info)
+        captured = capsys.readouterr()
+        assert "\r" not in captured.out
 
 
 class TestLoggingCallback:
@@ -2508,8 +2658,9 @@ class TestUnicodeOutputSafety:
         self, cp1252_stdout: _Cp1252Stdout
     ) -> None:
         """DetailedProgressCallback must not raise UnicodeEncodeError on cp1252 consoles."""
-        import traigent.utils.callbacks as _cb_mod
         import unittest.mock as _mock
+
+        import traigent.utils.callbacks as _cb_mod
 
         cp1252_stdout._buf.clear()
         with _mock.patch.object(_cb_mod, "sys") as mock_sys:

@@ -215,6 +215,7 @@ def _resolve_callbacks(
     explicit_callbacks: list[Any] | None,
     decorator_callbacks: list[Any] | None,
     progress_bar: bool | None,
+    execution_mode: str = ExecutionMode.LOCAL.value,
 ) -> list[Any]:
     """Resolve callbacks with optional auto-injection of ProgressBarCallback.
 
@@ -227,15 +228,31 @@ def _resolve_callbacks(
     table) so that users see a results summary even in non-interactive
     environments.
 
+    On the managed (``ExecutionMode.HYBRID``) path, ``ProgressBarCallback``
+    alone is not enough: managed runs are commonly launched non-interactively
+    (``sys.stdin.isatty()`` is False), where it never auto-injects, and the
+    non-interactive fallback (``ResultsTableCallback``) only prints once, at
+    the very end -- so a managed run gave zero client-side signal between
+    start and finish (Traigent#1601). Unless a progress-capable callback is
+    already present, a line-based :class:`ManagedProgressCallback` heartbeat
+    is appended for managed runs -- it is not gated on ``isatty()`` the way
+    the progress bar is, since it never redraws in place.
+
     Args:
         explicit_callbacks: Callbacks passed directly to optimize().
         decorator_callbacks: Callbacks stored on the decorator/OptimizedFunction.
         progress_bar: ``True`` to force, ``False`` to suppress, ``None`` for auto.
+        execution_mode: The resolved ``ExecutionMode`` value (``self.execution_mode``)
+            for this call, used only to decide managed-heartbeat injection.
 
     Returns:
         Resolved list of callback instances.
     """
-    from traigent.utils.callbacks import ProgressBarCallback, ResultsTableCallback
+    from traigent.utils.callbacks import (
+        ManagedProgressCallback,
+        ProgressBarCallback,
+        ResultsTableCallback,
+    )
 
     callbacks = list(explicit_callbacks or decorator_callbacks or [])
     has_progress = any(isinstance(cb, ProgressBarCallback) for cb in callbacks)
@@ -245,6 +262,18 @@ def _resolve_callbacks(
         if progress_bar is True or sys.stdin.isatty():
             callbacks.insert(0, ProgressBarCallback())
             has_progress = True
+
+    has_managed_progress = any(
+        isinstance(cb, ManagedProgressCallback) for cb in callbacks
+    )
+    if (
+        progress_bar is not False
+        and execution_mode == ExecutionMode.HYBRID.value
+        and not has_progress
+        and not has_managed_progress
+    ):
+        callbacks.append(ManagedProgressCallback())
+        has_managed_progress = True
 
     has_table = any(isinstance(cb, ResultsTableCallback) for cb in callbacks)
 
@@ -1957,7 +1986,10 @@ class OptimizedFunction(Generic[_P, _R]):
         timeout = timeout if timeout is not None else getattr(self, "timeout", None)
         save_to = save_to if save_to is not None else getattr(self, "save_to", None)
         callbacks = _resolve_callbacks(
-            callbacks, getattr(self, "callbacks", None), progress_bar
+            callbacks,
+            getattr(self, "callbacks", None),
+            progress_bar,
+            execution_mode=self.execution_mode,
         )
 
         try:
