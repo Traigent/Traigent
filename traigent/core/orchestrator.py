@@ -450,6 +450,7 @@ class OptimizationOrchestrator:
         self.artifact_fingerprints: dict[str, str | None] | None = None
         self.fingerprint_meta: dict[str, Any] | None = None
         self.evaluator_definition_id: str | None = None
+        self.task_type: str | None = None
 
         # Interactive pause prompt adapter (None in non-interactive environments)
         from traigent.core.exception_handler import (
