@@ -2150,6 +2150,195 @@ class TestBuildSessionAggregationPayload:
         assert payload is None
 
 
+class TestSessionAggregationSelectionReceipt:
+    """R3 stage 3: the finalize rollup carries the SDK's selection receipt.
+
+    The receipt rides ``session_aggregation.selection`` only when one was built
+    from the run's selection, is rebuilt from its allowlist at both the builder
+    and the egress sanitizer, and the whole payload validates (Draft 7) against
+    the installed pinned ``session_aggregation_schema.json``.
+    """
+
+    _SENTINEL = "SENTINEL_SELECTION_CONTENT_71ad"
+
+    @pytest.fixture(autouse=True)
+    def _backend_enabled_for_aggregation(self, monkeypatch):
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
+
+    @staticmethod
+    def _schema_validator():
+        import os
+
+        import traigent_schema
+        from jsonschema import Draft7Validator
+
+        path = os.path.join(
+            os.path.dirname(traigent_schema.__file__),
+            "schemas",
+            "optimization",
+            "session_aggregation_schema.json",
+        )
+        with open(path, encoding="utf-8") as handle:
+            schema = json.load(handle)
+        assert "selection" in schema["properties"]
+        return Draft7Validator(schema)
+
+    @staticmethod
+    def _receipt():
+        from traigent.core.result_selection import SelectionResult
+        from traigent.core.selection_receipt import build_selection_receipt
+
+        receipt = build_selection_receipt(
+            SelectionResult(
+                best_config={"model": "gpt-4o"},
+                best_score=0.95,
+                session_summary=None,
+                best_trial_id="trial_b",
+                ranking_eligible_trial_ids=["trial_b", "trial_a"],
+                best_config_margin={
+                    "runner_up": {"model": "gpt-4o-mini"},
+                    "runner_up_trial_id": "trial_a",
+                    "winner_trial_id": "trial_b",
+                    "delta": 0.05,
+                    "ci95": None,
+                    "p_value": None,
+                    "verdict": "na",
+                    "test": "none",
+                    "n_shared_examples": 0,
+                    "effective_alpha": 0.05,
+                    "n_configs": 2,
+                    "reason": "insufficient shared per-example data",
+                },
+            )
+        )
+        assert receipt is not None
+        return receipt
+
+    def _manager(self, mock_backend_client, mock_optimizer, objective_schema):
+        config = TraigentConfig()
+        config.execution_mode = "hybrid"
+        return BackendSessionManager(
+            backend_client=mock_backend_client,
+            traigent_config=config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-agg-selection",
+            optimization_status=OptimizationStatus.COMPLETED,
+        )
+
+    @staticmethod
+    def _result():
+        result = Mock(spec=OptimizationResult)
+        result.trials = []
+        result.best_config = {"model": "gpt-4o"}
+        result.best_score = 0.95
+        result.duration = 10.0
+        result.success_rate = 1.0
+        result.metrics = {"accuracy": 0.95}
+        result.metadata = {
+            "session_summary": {
+                "selection_mode": "aggregated_mean",
+                "primary_objective": "accuracy",
+                "metrics": {"accuracy": 0.95},
+                "samples_per_config": {"a1b2c3d4e5f60718": 5},
+            },
+        }
+        return result
+
+    def test_payload_carries_receipt_and_validates(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
+        receipt = self._receipt()
+
+        payload = manager.build_session_aggregation_payload(
+            self._result(), "test-session-id", selection_receipt=receipt
+        )
+
+        assert payload is not None
+        assert payload["selection"] == receipt
+        assert payload["selection"]["eligible_trial_ids"] == ["trial_a", "trial_b"]
+        errors = [e.message for e in self._schema_validator().iter_errors(payload)]
+        assert errors == []
+        # Egress re-sanitization is idempotent on builder output.
+        assert sanitize_session_aggregation_payload(payload) == payload
+
+    def test_no_receipt_means_no_selection_key(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
+
+        payload = manager.build_session_aggregation_payload(
+            self._result(), "test-session-id"
+        )
+
+        assert payload is not None
+        assert "selection" not in payload
+        assert "selection" not in sanitize_session_aggregation_payload(payload)
+
+    def test_builder_rebuilds_receipt_from_allowlist(
+        self, mock_backend_client, mock_optimizer, objective_schema
+    ):
+        manager = self._manager(mock_backend_client, mock_optimizer, objective_schema)
+        tampered = {
+            **self._receipt(),
+            "attestation": "client_attested_server_bound",
+            "free_text": self._SENTINEL,
+        }
+
+        payload = manager.build_session_aggregation_payload(
+            self._result(), "test-session-id", selection_receipt=tampered
+        )
+
+        assert payload["selection"] == self._receipt()
+        assert self._SENTINEL not in json.dumps(payload)
+
+    def test_sanitizer_strips_unknown_and_free_text_selection_keys(self):
+        receipt = self._receipt()
+        malicious = {
+            "selection_mode": "aggregated_mean",
+            "selection": {
+                **receipt,
+                "note": self._SENTINEL,
+                "selection_reason": f"because {self._SENTINEL}",
+                "margin": {
+                    **receipt["margin"],
+                    "runner_up": {"system_prompt": self._SENTINEL},
+                    "reason": self._SENTINEL,
+                },
+            },
+        }
+
+        out = sanitize_session_aggregation_payload(malicious)
+
+        assert self._SENTINEL not in json.dumps(out)
+        assert set(out["selection"]) == set(receipt)
+        assert out["selection"]["selection_reason"] is None
+        assert set(out["selection"]["margin"]) == set(receipt["margin"])
+
+    @pytest.mark.parametrize(
+        "selection",
+        [
+            {"disposition": "rejected_inconsistent", "reason": "invalid_receipt"},
+            "accepted",
+            None,
+            {"disposition": "accepted", "winner_trial_id": "trial_a"},
+        ],
+    )
+    def test_sanitizer_drops_unsendable_selection(self, selection):
+        out = sanitize_session_aggregation_payload(
+            {"selection_mode": "aggregated_mean", "selection": selection}
+        )
+        assert "selection" not in out
+
+    def test_sanitizer_drops_receipt_with_bad_digest(self):
+        receipt = {**self._receipt(), "eligible_trial_ids_digest": "sha256:" + "0" * 64}
+        out = sanitize_session_aggregation_payload({"selection": receipt})
+        assert "selection" not in out
+
+
 class TestHandleSessionCreationResult:
     """Verify handle_session_creation_result emits correct warnings."""
 

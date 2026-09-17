@@ -136,6 +136,8 @@ class MockBackendClient:
         self.sessions = []
         self.submissions = []
         self.finalized = []
+        # Finalize request-body kwargs (certified_selection, session_aggregation)
+        self.finalize_kwargs = []
         self.weighted_scores = []
 
     def create_session(self, **kwargs):
@@ -155,6 +157,7 @@ class MockBackendClient:
 
     def finalize_session_sync(self, session_id, succeeded=True, **kwargs):
         self.finalized.append({"id": session_id, "succeeded": succeeded})
+        self.finalize_kwargs.append(kwargs)
         return {"status": "ok", "succeeded": succeeded}
 
     def update_trial_weighted_scores(
@@ -759,6 +762,94 @@ async def test_hybrid_mode_session_aggregation():
     assert len(backend.submissions) > len(session_submissions), (
         "Should have trial submissions in addition to session aggregation"
     )
+
+
+@pytest.mark.asyncio
+async def test_finalize_payload_carries_selection_receipt(monkeypatch):
+    """R3 stage 3: the finalize session_aggregation carries the SDK's own
+    selection receipt, built from the same selection as the returned result.
+
+    Mocked backend: this proves the SDK sends an honest receipt end to end
+    through orchestrator -> BackendSessionManager -> backend client finalize.
+    The live Backend bind/reject round trip is the witness PR's job, not this
+    test's.
+    """
+    import hashlib
+    import json
+
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    monkeypatch.setenv("TRAIGENT_OFFLINE", "false")
+    sentinel = "SENTINEL_RECEIPT_PROMPT_c41e"
+    config = TraigentConfig(execution_mode="hybrid", privacy_enabled=False)
+
+    optimizer = DeterministicOptimizer(
+        config_space={"model": ["gpt-3.5", "gpt-4"], "temperature": [0.5, 0.7]},
+        objectives=["accuracy"],
+        n_trials=3,
+        context=config,
+    )
+    evaluator = ConfigurableEvaluator(
+        metrics_pattern=[
+            {"accuracy": 0.8, "latency": 100, "cost": 0.01},
+            {"accuracy": 0.9, "latency": 90, "cost": 0.015},
+            {"accuracy": 0.7, "latency": 80, "cost": 0.02},
+        ]
+    )
+    orchestrator = OptimizationOrchestrator(
+        optimizer=optimizer,
+        evaluator=evaluator,
+        max_trials=3,
+        config=config,
+        parallel_trials=1,
+    )
+    backend = MockBackendClient()
+    orchestrator.backend_client = backend
+
+    dataset = Dataset(
+        examples=[
+            EvaluationExample(input_data={"text": sentinel}),
+            EvaluationExample(input_data={"text": f"{sentinel}-2"}),
+        ]
+    )
+    result = await orchestrator.optimize(
+        func=dummy_func, dataset=dataset, function_name="test_selection_receipt"
+    )
+
+    aggregations = [
+        kwargs["session_aggregation"]
+        for kwargs in backend.finalize_kwargs
+        if kwargs.get("session_aggregation") is not None
+    ]
+    assert len(aggregations) == 1
+    selection = aggregations[0]["selection"]
+
+    # The third suggestion cycles back to the first config, so the run holds a
+    # repeated config: the receipt carries the unique, sorted id set.
+    assert len(result.trials) == 3
+    result_ids = sorted({trial.trial_id for trial in result.trials})
+    assert len(result_ids) == 2
+    best_trial_id = result.metadata.get("best_trial_id")
+    assert selection["disposition"] == "accepted"
+    assert "attestation" not in selection
+    assert selection["winner_trial_id"] == best_trial_id
+    assert selection["eligible_trial_ids"] == result_ids
+    assert selection["eligible_trial_count"] == len(result_ids)
+    preimage = json.dumps(result_ids, separators=(",", ":"), ensure_ascii=False)
+    assert selection["eligible_trial_ids_digest"] == (
+        "sha256:" + hashlib.sha256(preimage.encode("utf-8")).hexdigest()
+    )
+    margin = selection["margin"]
+    assert margin["winner_trial_id"] == best_trial_id
+    assert (
+        margin["runner_up_trial_id"]
+        == (result.best_config_margin["runner_up_trial_id"])
+    )
+    assert margin["verdict"] == result.best_config_margin["verdict"]
+    assert sentinel not in json.dumps(selection)
+
+    # The receipt is identity-bound to the result it was built with.
+    assert orchestrator._selection_receipt_for(result) == selection
+    assert orchestrator._selection_receipt_for(object()) is None
 
 
 if __name__ == "__main__":
