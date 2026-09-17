@@ -72,7 +72,7 @@ class TestCostEnforcerNoMockBypass:
             ) as request_approval:
                 # Estimated cost above limit, no auto-approve, no token.
                 assert enforcer.check_and_approve(1000.0) is False
-                request_approval.assert_called_once_with(1000.0)
+                request_approval.assert_called_once_with(1000.0, 1)
 
     def test_acquire_permit_does_not_return_bypass_id_zero(
         self, mock_env: dict[str, str]

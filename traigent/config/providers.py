@@ -27,6 +27,7 @@ from traigent.config.context import (
 )
 from traigent.config.runtime_injector import create_runtime_shim
 from traigent.config.types import TraigentConfig
+from traigent.utils.env_config import is_seamless_no_targets_allowed
 from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.logging import get_logger
 
@@ -348,6 +349,17 @@ class ParameterBasedProvider(ConfigurationProvider):
         return self.default_param_name in sig.parameters
 
 
+class SeamlessNoInjectableTargetsError(ConfigurationError):
+    """Raised when seamless injection has no injectable target for a non-empty
+    configuration space.
+
+    Kept as a distinct type (rather than a bare :class:`ConfigurationError`)
+    so ``_seamless_run`` can let it propagate instead of routing it through
+    the runtime-shim fallback path, which would otherwise silently no-op the
+    same way and defeat the fail-closed behavior this exists for.
+    """
+
+
 class SeamlessParameterProvider(ConfigurationProvider):
     """Safe provider that seamlessly injects parameters using AST transformation.
 
@@ -581,6 +593,10 @@ class SeamlessParameterProvider(ConfigurationProvider):
             return self._seamless_transform_and_run(
                 func, active_config, args, kwargs, cache_key, _handle_injection_error
             )
+        except SeamlessNoInjectableTargetsError:
+            # Fail closed: do not fall back to a runtime shim, which would
+            # silently no-op the same way and defeat the point of this check.
+            raise
         except Exception as e:  # noqa: BLE001
             return self._seamless_fallback(
                 func, active_config, args, kwargs, cache_key, e, _handle_injection_error
@@ -634,27 +650,50 @@ class SeamlessParameterProvider(ConfigurationProvider):
                 return result
 
         # No assignments were modified and no shim required
-        with self._cache_lock:
-            self._compiled_cache[cache_key] = func
-            self._cache_access_count[cache_key] = 1
         with self._stats_lock:
             self._stats["fallback_triggers"]["no_injection"].append(
                 sorted(active_config.keys())
             )
         if active_config:
-            logger.warning(
-                "Seamless provider found no injectable targets for %s; no local "
-                "assignment or parameter matched configuration keys %s, so the "
-                "function ran with original values.",
-                func.__name__,
-                sorted(active_config.keys()),
-            )
+            config_keys = sorted(active_config.keys())
+            if is_seamless_no_targets_allowed():
+                logger.warning(
+                    "Seamless provider found no injectable targets for %s; no local "
+                    "assignment or parameter matched configuration keys %s, so the "
+                    "function ran with original values. Continuing because "
+                    "TRAIGENT_ALLOW_SEAMLESS_NO_TARGETS is set.",
+                    func.__name__,
+                    config_keys,
+                )
+            else:
+                # C1: do NOT cache the pass-through below when we are about to
+                # fail closed. Caching it here would let the next call with
+                # the same (func, config) hit `_lookup_cached` and silently
+                # return the unvaried function with no raise at all.
+                raise SeamlessNoInjectableTargetsError(
+                    "Seamless injection found no injectable target for "
+                    f"{func.__name__}: no local assignment (e.g. `model = "
+                    "...`) or parameter named after the config key matched "
+                    f"configuration keys {config_keys} (a `**kwargs` "
+                    "catch-all does not count as a matching parameter). "
+                    "Every trial would run the original, unvaried code, "
+                    "producing a phantom 'best_config' from an identical run "
+                    "repeated N times. Rename a local variable or a "
+                    "parameter to match a config key, or set "
+                    "TRAIGENT_ALLOW_SEAMLESS_NO_TARGETS=true to run anyway "
+                    "and keep the warning-only behavior."
+                )
         else:
             logger.debug(
                 "Seamless provider found no injectable targets for %s with empty "
                 "configuration",
                 func.__name__,
             )
+        # Only reached when we are not failing closed (warning-only opt-out,
+        # or an empty config): safe to cache the unvaried pass-through.
+        with self._cache_lock:
+            self._compiled_cache[cache_key] = func
+            self._cache_access_count[cache_key] = 1
         return func(*args, **kwargs)
 
     def _seamless_fallback(
@@ -683,6 +722,49 @@ class SeamlessParameterProvider(ConfigurationProvider):
 
         try:
             signature = self._get_signature(func)
+        except Exception as shim_build_exc:  # noqa: BLE001
+            raise ConfigurationError(
+                "Failed to inject configuration via seamless provider"
+            ) from shim_build_exc
+
+        # I2: the AST transform failed (e.g. an `evaluate_*`/exec-defined
+        # function rejected by `_is_safe_function`, or no source), so there
+        # is no `modified_vars` here. Building the runtime shim
+        # unconditionally would silently run the unvaried function and still
+        # count it as a `runtime_shims` hit -- the same fail-open hole C1/C2
+        # close for the AST path. Apply the identical no-target check before
+        # building the shim.
+        if active_config and not self._matched_param_names(signature, active_config):
+            config_keys = sorted(active_config.keys())
+            if is_seamless_no_targets_allowed():
+                logger.warning(
+                    "Seamless provider found no injectable targets for %s "
+                    "after the AST transform failed (%s); no parameter "
+                    "matched configuration keys %s, so the runtime shim "
+                    "would run the function with original values. "
+                    "Continuing because TRAIGENT_ALLOW_SEAMLESS_NO_TARGETS "
+                    "is set.",
+                    func.__name__,
+                    type(original_exc).__name__,
+                    config_keys,
+                )
+            else:
+                with self._stats_lock:
+                    self._stats["fallback_triggers"]["no_injection"].append(config_keys)
+                raise SeamlessNoInjectableTargetsError(
+                    "Seamless injection found no injectable target for "
+                    f"{func.__name__} after the AST transform failed "
+                    f"({type(original_exc).__name__}): no parameter named "
+                    "after the config key matched configuration keys "
+                    f"{config_keys} (a `**kwargs` catch-all does not count "
+                    "as a matching parameter). Running the runtime-shim "
+                    "fallback would silently execute the original, unvaried "
+                    "code. Rename a parameter to match a config key, or set "
+                    "TRAIGENT_ALLOW_SEAMLESS_NO_TARGETS=true to run anyway "
+                    "and keep the warning-only behavior."
+                ) from original_exc
+
+        try:
             shimmed = create_runtime_shim(func, active_config, signature=signature)
         except Exception as shim_build_exc:  # noqa: BLE001
             raise ConfigurationError(
@@ -852,6 +934,35 @@ class SeamlessParameterProvider(ConfigurationProvider):
                 self._signature_cache[func] = signature
             return signature
 
+    def _matched_param_names(
+        self, signature: inspect.Signature, config: dict[str, Any]
+    ) -> set[str]:
+        """Parameter names *config* would actually satisfy by keyword.
+
+        Only ``POSITIONAL_OR_KEYWORD``/``KEYWORD_ONLY`` parameters count. A
+        ``**kwargs`` catch-all (``VAR_KEYWORD``) is deliberately excluded: it
+        can absorb any keyword at runtime, but it does not name a specific
+        target the way `runtime_injector.create_runtime_shim` needs, so it
+        must never count as a matching parameter (issue #2298, I4). This
+        mirrors ``traigent.contract.evaluation._seamless_satisfied_param_names``.
+        """
+        config_keys = set(config)
+        return {
+            name
+            for name, param in signature.parameters.items()
+            if name in config_keys
+            and param.kind
+            in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+                # POSITIONAL_ONLY is injectable too: runtime_injector binds it
+                # by name into BoundArguments.arguments (it skips only
+                # VAR_POSITIONAL/VAR_KEYWORD). Omitting it here made this guard
+                # reject `def f(model="x", /)` that injection actually supports.
+                inspect.Parameter.POSITIONAL_ONLY,
+            )
+        }
+
     def _should_apply_runtime_shim(
         self,
         func: Callable[..., Any],
@@ -866,13 +977,83 @@ class SeamlessParameterProvider(ConfigurationProvider):
             return False, None
 
         signature = self._get_signature(func)
-        param_names = set(signature.parameters.keys())
-        config_keys = set(config.keys())
-
-        if not (param_names & config_keys):
+        if not self._matched_param_names(signature, config):
             return False, signature
 
         return True, signature
+
+    def assert_injectable(
+        self, func: Callable[..., Any], sample_config: dict[str, Any]
+    ) -> set[str]:
+        """Once-per-run structural check: can *sample_config* ever be injected?
+
+        Runs the same AST probe ``_transform_function`` uses (compiles the
+        function body but NEVER executes it -- see
+        ``traigent.contract.evaluation`` ~618-625 for the same pattern) plus
+        the parameter-name match ``_should_apply_runtime_shim`` uses, and
+        raises ``SeamlessNoInjectableTargetsError`` up front -- before the
+        first optimization trial is created -- when neither would inject
+        anything for a non-empty *sample_config* (issue #2298, direction 1).
+        Call this once from the optimize path; the per-call checks in
+        ``_seamless_transform_and_run``/``_seamless_fallback`` remain as
+        defence in depth for configs this probe did not see (e.g. a later
+        trial's config differs in a way the sample did not exercise).
+
+        Returns the subset of *sample_config* keys that ARE covered (by AST
+        assignment or by a matching parameter), so callers can warn about
+        partial coverage of the rest (I5) without failing closed on it.
+        """
+        if not sample_config:
+            return set()
+        try:
+            _new_func, modified_vars = self._transform_function(func, sample_config)
+        except ConfigurationError:
+            modified_vars = set()
+        signature = self._get_signature(func)
+        matched_params = self._matched_param_names(signature, sample_config)
+        covered = set(modified_vars) | matched_params
+        config_keys = sorted(sample_config)
+        if covered:
+            uncovered = sorted(set(sample_config) - covered)
+            if uncovered:
+                # I5: partial coverage is silent otherwise -- some config keys
+                # land, others stay at their hard-coded values for every
+                # trial, and nothing here fails closed on that.
+                logger.warning(
+                    "Seamless provider will not inject configuration keys %s "
+                    "into %s: no local assignment or parameter named after "
+                    "the key matched (a `**kwargs` catch-all does not "
+                    "count), so those keys keep their original hard-coded "
+                    "values for every trial. Partial coverage does not fail "
+                    "closed; only a fully-uninjectable configuration does.",
+                    uncovered,
+                    func.__name__,
+                )
+            return covered
+        if is_seamless_no_targets_allowed():
+            logger.warning(
+                "Seamless provider found no injectable targets for %s before "
+                "the first trial; no local assignment or parameter named "
+                "after the config key matched configuration keys %s (a "
+                "`**kwargs` catch-all does not count as a matching "
+                "parameter). Continuing because "
+                "TRAIGENT_ALLOW_SEAMLESS_NO_TARGETS is set.",
+                func.__name__,
+                config_keys,
+            )
+            return covered
+        raise SeamlessNoInjectableTargetsError(
+            "Seamless injection found no injectable target for "
+            f"{func.__name__}: no local assignment (e.g. `model = ...`) or "
+            "parameter named after the config key matched configuration "
+            f"keys {config_keys} (a `**kwargs` catch-all does not count as "
+            "a matching parameter). Every trial would run the original, "
+            "unvaried code, producing a phantom 'best_config' from an "
+            "identical run repeated N times. Rename a local variable or a "
+            "parameter to match a config key, or set "
+            "TRAIGENT_ALLOW_SEAMLESS_NO_TARGETS=true to run anyway and keep "
+            "the warning-only behavior."
+        )
 
     def get_stats(self) -> dict[str, Any]:
         """Return a snapshot of injection statistics."""

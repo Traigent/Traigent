@@ -781,63 +781,67 @@ class TestAvailablePresets:
 class TestDecoratorIntegration:
     """Tests for integration with @optimize decorator."""
 
-    def test_safety_constraints_raises_not_implemented(self) -> None:
-        """safety_constraints raises NotImplementedError — feature is unimplemented."""
+    def test_safety_constraints_no_longer_raise(self) -> None:
+        """Issue #1532: safety_constraints are wired into the trial lifecycle and
+        must not raise NotImplementedError any more."""
         from traigent.api.decorators import optimize
 
         constraint = hallucination_rate().below(0.1)
 
-        with pytest.raises(
-            NotImplementedError, match="safety_constraints are not yet implemented"
-        ):
+        @optimize(
+            objectives=["accuracy"],
+            configuration_space={"model": ["gpt-4"]},
+            safety_constraints=[constraint],
+        )
+        def my_func(x: str) -> str:
+            return x
 
-            @optimize(
-                objectives=["accuracy"],
-                configuration_space={"model": ["gpt-4"]},
-                safety_constraints=[constraint],
-            )
-            def my_func(x: str) -> str:
-                return x
+        assert my_func is not None
 
-    def test_multiple_safety_constraints_raises_not_implemented(self) -> None:
-        """Multiple safety_constraints also raise NotImplementedError."""
+    def test_multiple_safety_constraints_no_longer_raise(self) -> None:
+        """Multiple safety_constraints are also accepted now (issue #1532)."""
         from traigent.api.decorators import optimize
 
         c1 = hallucination_rate().below(0.1)
         c2 = toxicity_score().below(0.05)
 
-        with pytest.raises(NotImplementedError, match="traigent-smartopt/issues/26"):
+        @optimize(
+            objectives=["accuracy"],
+            configuration_space={"model": ["gpt-4"]},
+            safety_constraints=[c1, c2],
+        )
+        def my_func(x: str) -> str:
+            return x
 
-            @optimize(
-                objectives=["accuracy"],
-                configuration_space={"model": ["gpt-4"]},
-                safety_constraints=[c1, c2],
-            )
-            def my_func(x: str) -> str:
-                return x
+        assert my_func is not None
 
-    def test_compound_safety_constraint_raises_not_implemented(self) -> None:
-        """Compound safety_constraint also raises NotImplementedError."""
+    def test_compound_safety_constraint_no_longer_raises(self) -> None:
+        """A compound safety_constraint is also accepted now (issue #1532)."""
         from traigent.api.decorators import optimize
 
         c1 = hallucination_rate().below(0.1)
         c2 = toxicity_score().below(0.05)
         combined = c1 & c2
 
-        with pytest.raises(
-            NotImplementedError, match="safety_constraints are not yet implemented"
-        ):
+        @optimize(
+            objectives=["accuracy"],
+            configuration_space={"model": ["gpt-4"]},
+            safety_constraints=[combined],
+        )
+        def my_func(x: str) -> str:
+            return x
 
-            @optimize(
-                objectives=["accuracy"],
-                configuration_space={"model": ["gpt-4"]},
-                safety_constraints=[combined],
-            )
-            def my_func(x: str) -> str:
-                return x
+        assert my_func is not None
 
-    def test_safety_constraints_are_post_eval_orchestrator_constraints(self) -> None:
-        """Safety constraints must be wired into runtime post-eval enforcement."""
+    def test_safety_constraints_are_soft_not_hard_post_eval_constraints(self) -> None:
+        """Review finding #1 regression: safety_constraints must NOT be wired
+        into the hard per-trial post-eval enforcement (that raises
+        TVLConstraintError and fails the trial on a single violation). They
+        are ``mode == "soft"`` and are excluded from
+        ``_constraints_post_eval`` by ``_init_constraints`` -- their per-trial
+        outcome is evidence for ``SafetyConstraintStopCondition`` instead (see
+        ``test_safety_constraint_violation_does_not_raise_via_enforce_constraints``
+        below for the real ``enforce_constraints`` path)."""
         from traigent.core.orchestrator import OptimizationOrchestrator
         from traigent.evaluators.local import LocalEvaluator
         from traigent.optimizers.random import RandomSearchOptimizer
@@ -854,8 +858,181 @@ class TestDecoratorIntegration:
             safety_constraints=[constraint],
         )
 
-        assert constraint in orchestrator._constraints_post_eval
+        assert constraint.mode == "soft"
+        assert constraint not in orchestrator._constraints_post_eval
+        assert constraint in orchestrator._safety_constraints
         assert constraint({"p": 1}, {"safety_score": 0.0}) is False
+
+    def test_safety_constraint_violation_does_not_raise_via_enforce_constraints(
+        self,
+    ) -> None:
+        """Review finding #1 regression: a violating safety_constraints metric
+        must not raise TVLConstraintError via the real ``enforce_constraints``
+        call ``traigent/core/trial_lifecycle.py`` makes at stage="post" with
+        the orchestrator's own ``_constraints_post_eval`` list -- that used to
+        be exactly where the hard per-trial gate marked the trial FAILED
+        before ``SafetyConstraintStopCondition`` ever saw the trial as
+        evidence."""
+        from traigent.core.orchestrator import OptimizationOrchestrator
+        from traigent.core.orchestrator_helpers import enforce_constraints
+        from traigent.evaluators.local import LocalEvaluator
+        from traigent.optimizers.random import RandomSearchOptimizer
+
+        constraint = custom_safety(
+            "must_pass",
+            lambda config, metrics: metrics.get("safety_score", 0.0),
+        ).above(0.5, min_samples=2, confidence=0.5)
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=RandomSearchOptimizer({"p": [1]}, ["accuracy"], max_trials=1),
+            evaluator=LocalEvaluator(metrics=["accuracy"]),
+            max_trials=1,
+            safety_constraints=[constraint],
+        )
+
+        # Violates the >0.5 bar -- pre-fix, this raised TVLConstraintError and
+        # the trial-lifecycle caller (trial_lifecycle.py:647) marked the trial
+        # FAILED, so it never reached SafetyValidator as a COMPLETED sample.
+        enforce_constraints(
+            {"p": 1},
+            {"safety_score": 0.0},
+            orchestrator._constraints_post_eval,
+            stage="post",
+        )  # must not raise
+
+    def test_violated_safety_constraint_halts_with_stop_reason(self) -> None:
+        """Issue #1532 acceptance: a deterministically violated chance
+        constraint halts the run with stop_reason == "safety_constraint" once
+        its evidence floor (min_samples) is reached."""
+        from datetime import UTC, datetime
+
+        from traigent.api.types import TrialResult, TrialStatus
+        from traigent.core.orchestrator import OptimizationOrchestrator
+        from traigent.evaluators.local import LocalEvaluator
+        from traigent.optimizers.random import RandomSearchOptimizer
+
+        constraint = custom_safety(
+            "must_pass", lambda config, metrics: metrics.get("safety_score", 0.0)
+        ).above(0.5, min_samples=2, confidence=0.5)
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=RandomSearchOptimizer({"p": [1]}, ["accuracy"], max_trials=10),
+            evaluator=LocalEvaluator(metrics=["accuracy"]),
+            max_trials=10,
+            safety_constraints=[constraint],
+        )
+
+        def completed(i: int, score: float) -> TrialResult:
+            return TrialResult(
+                trial_id=str(i),
+                config={"p": i},
+                metrics={"safety_score": score},
+                status=TrialStatus.COMPLETED,
+                duration=0.0,
+                timestamp=datetime.now(UTC),
+            )
+
+        # Every trial fails the 0.5 bar -> chance constraint is violated once
+        # min_samples=2 worth of evidence has accumulated.
+        orchestrator._trials = [completed(0, 0.0)]
+        assert orchestrator._should_stop(trial_count=1) is False
+
+        orchestrator._trials = [completed(0, 0.0), completed(1, 0.0)]
+        assert orchestrator._should_stop(trial_count=2) is True
+        assert orchestrator._stop_reason == "safety_constraint"
+
+    def test_satisfied_safety_constraint_does_not_halt(self) -> None:
+        """Issue #1532 acceptance: a non-violated safety constraint allows the
+        run to continue (default behavior preserved)."""
+        from datetime import UTC, datetime
+
+        from traigent.api.types import TrialResult, TrialStatus
+        from traigent.core.orchestrator import OptimizationOrchestrator
+        from traigent.evaluators.local import LocalEvaluator
+        from traigent.optimizers.random import RandomSearchOptimizer
+
+        constraint = custom_safety(
+            "must_pass", lambda config, metrics: metrics.get("safety_score", 0.0)
+        ).above(0.5, min_samples=2, confidence=0.5)
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=RandomSearchOptimizer({"p": [1]}, ["accuracy"], max_trials=10),
+            evaluator=LocalEvaluator(metrics=["accuracy"]),
+            max_trials=10,
+            safety_constraints=[constraint],
+        )
+
+        def completed(i: int, score: float) -> TrialResult:
+            return TrialResult(
+                trial_id=str(i),
+                config={"p": i},
+                metrics={"safety_score": score},
+                status=TrialStatus.COMPLETED,
+                duration=0.0,
+                timestamp=datetime.now(UTC),
+            )
+
+        # Every trial satisfies the 0.5 bar -> never violated, never halts.
+        orchestrator._trials = [completed(i, 1.0) for i in range(5)]
+        assert orchestrator._should_stop(trial_count=5) is False
+        assert orchestrator._stop_reason is None
+
+    def test_no_safety_constraints_preserves_default_behavior(self) -> None:
+        """Preserve default behavior when no safety_constraints are configured:
+        no SafetyConstraintStopCondition is registered at all."""
+        from traigent.core.orchestrator import OptimizationOrchestrator
+        from traigent.core.stop_conditions import SafetyConstraintStopCondition
+        from traigent.evaluators.local import LocalEvaluator
+        from traigent.optimizers.random import RandomSearchOptimizer
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=RandomSearchOptimizer({"p": [1]}, ["accuracy"], max_trials=1),
+            evaluator=LocalEvaluator(metrics=["accuracy"]),
+            max_trials=1,
+        )
+
+        assert not any(
+            isinstance(c, SafetyConstraintStopCondition)
+            for c in orchestrator._stop_condition_manager.conditions
+        )
+
+    def test_compound_or_constraint_satisfied_every_trial_never_halts(self) -> None:
+        """Review finding #2 regression: a ``c1 | c2`` compound must be
+        validated as one combinator-aware unit (``CompoundSafetyConstraint``
+        evaluated as a whole, not flattened to independent leaves). A leaf
+        that always fails its own threshold must not halt the run while the
+        OR-combination is satisfied on every single trial."""
+        from datetime import UTC, datetime
+
+        from traigent.api.types import TrialResult, TrialStatus
+        from traigent.core.stop_conditions import SafetyConstraintStopCondition
+
+        # toxicity=0.9 always fails the below(0.3) leaf on its own...
+        c1 = custom_safety(
+            "toxicity", lambda config, metrics: metrics.get("toxicity", 1.0)
+        ).below(0.3, min_samples=3, confidence=0.5)
+        # ...but relevance=0.9 always passes the above(0.3) leaf, so the OR is
+        # satisfied on every trial.
+        c2 = custom_safety(
+            "relevance", lambda config, metrics: metrics.get("relevance", 0.0)
+        ).above(0.3, min_samples=3, confidence=0.5)
+        combined = c1 | c2
+
+        condition = SafetyConstraintStopCondition([combined])
+
+        def completed(i: int) -> TrialResult:
+            return TrialResult(
+                trial_id=str(i),
+                config={"p": i},
+                metrics={"toxicity": 0.9, "relevance": 0.9},
+                status=TrialStatus.COMPLETED,
+                duration=0.0,
+                timestamp=datetime.now(UTC),
+            )
+
+        trials = [completed(i) for i in range(10)]
+        for count in range(1, len(trials) + 1):
+            assert condition.should_stop(trials[:count]) is False
 
 
 class TestAPIExports:

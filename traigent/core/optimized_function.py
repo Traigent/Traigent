@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any, Generic, ParamSpec, TypeVar, cast
 
 from traigent.api.types import OptimizationResult, OptimizationStatus
-from traigent.config import get_provider
+from traigent.config import SeamlessParameterProvider, get_provider
 from traigent.config.parallel import coerce_parallel_config, merge_parallel_configs
 from traigent.config.types import (
     ExecutionIntent,
@@ -91,10 +91,7 @@ from traigent.core.optimization_pipeline import (
     resolve_effective_parallel_config,
     resolve_execution_parameters,
 )
-from traigent.core.orchestrator import (
-    OptimizationOrchestrator,
-    _safe_exception_text,
-)
+from traigent.core.orchestrator import OptimizationOrchestrator, _safe_exception_text
 from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import (
     BaseEvaluator,
@@ -1207,6 +1204,28 @@ class OptimizedFunction(Generic[_P, _R]):
     def _best_config(self, value: dict[str, Any] | None) -> None:
         self._csm._best_config = value
 
+    def _representative_seamless_config(
+        self, configuration_space: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """A representative config for the once-per-run seamless check.
+
+        Prefers ``default_config`` (a real, user-provided config); otherwise
+        the first value of each ``configuration_space`` dimension, which is
+        what a real trial's config looks like.
+        """
+        if self.default_config:
+            return dict(self.default_config)
+        space = configuration_space or getattr(self, "configuration_space", None) or {}
+        if not isinstance(space, dict):
+            return {}
+        sample: dict[str, Any] = {}
+        for key, values in space.items():
+            if isinstance(values, (list, tuple)) and values:
+                sample[key] = values[0]
+            elif not isinstance(values, (list, tuple, set)):
+                sample[key] = values
+        return sample
+
     def _estimate_search_space_size(self) -> int:
         """Best-effort estimation of configuration combinations."""
 
@@ -1894,6 +1913,22 @@ class OptimizedFunction(Generic[_P, _R]):
             from traigent.api.parameter_ranges import normalize_configuration_space
 
             configuration_space, _ = normalize_configuration_space(configuration_space)
+
+        # Issue #2298 direction 1: for seamless injection, fail closed ONCE,
+        # before the first trial. A structural probe (AST compile + parameter
+        # name match; never runs the body) aborts the run with zero trials when
+        # nothing in a representative config could be injected, instead of
+        # every trial recording FAILED and the run completing with
+        # `best_config: None`. It runs here, not at decoration, so a decorated
+        # function that is only ever called directly is unaffected; the
+        # per-call checks in providers.py remain as defence in depth.
+        injection_mode_name = getattr(self.injection_mode, "value", self.injection_mode)
+        if injection_mode_name == "seamless" and isinstance(
+            self._provider, SeamlessParameterProvider
+        ):
+            sample_config = self._representative_seamless_config(configuration_space)
+            if sample_config:
+                self._provider.assert_injectable(self.func, sample_config)
 
         original_schema = self.objective_schema
         runtime_objective_input = (

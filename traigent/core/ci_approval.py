@@ -60,7 +60,12 @@ def _check_env_var_approval() -> bool:
     """Check if CI run is approved via environment variable."""
     if os.getenv("TRAIGENT_RUN_APPROVED") == "1":
         approved_by = os.getenv("TRAIGENT_APPROVED_BY", "environment_variable")
-        logger.info(f"CI optimization approved by: {approved_by}")
+        # #2270: log a stable hash of the approver, never the raw principal —
+        # matching the token-approval paths (9129247f).
+        logger.info(
+            "CI optimization approved by environment variable for approver_id=%s",
+            _identifier_for_log(approved_by, prefix="env-approver"),
+        )
         return True
     return False
 
