@@ -460,7 +460,7 @@ The local CLI includes these onboarding entry points:
 
 - `traigent onboard`
 - `traigent auth device-login`
-- `traigent first-prompt --agent claude|cursor|codex`
+- `traigent first-prompt --agent claude|cursor|codex|copilot`
 - `traigent quickstart`
 - `traigent mcp serve`
 

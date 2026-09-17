@@ -19,6 +19,7 @@ from traigent.cli.onboard_commands import (
     PLAN_JSON_END,
     SKILLS_COMMAND,
     AgentName,
+    _detect_coding_agents,
     _skills_command_for_profile,
     build_first_prompt,
 )
@@ -265,6 +266,10 @@ def test_onboard_non_tty_login_flag_runs_device_flow(
             "codex",
             "Use Codex tools to inspect code and propose the smallest safe change.",
         ),
+        (
+            "copilot",
+            "Use GitHub Copilot agent tools to inspect code and propose the smallest safe change.",
+        ),
     ],
 )
 def test_first_prompt_golden_outputs(agent: AgentName, tool_line: str) -> None:
@@ -282,6 +287,48 @@ def test_first_prompt_golden_outputs(agent: AgentName, tool_line: str) -> None:
     )
 
     assert build_first_prompt(agent, Path("/work/project")) == expected
+
+
+def test_detect_coding_agents_finds_copilot_via_home_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(onboard_commands.shutil, "which", lambda _name: None)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".copilot").mkdir()
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+
+    assert _detect_coding_agents(cwd, home=home) == ["copilot"]
+
+
+def test_detect_coding_agents_auto_detects_cursor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Cursor IS auto-detected, from either marker. Detection decides whether to
+    # offer the skills install, and SKILLS_COMMAND takes no `--agent` flag --
+    # `npx skills add` writes the universal `.agents/skills/` directory that
+    # Cursor reads -- so the install works for a Cursor user and the offer must
+    # not be withheld. Gating detection on a per-agent plugin manifest would
+    # drop that offer for no reason the install path cares about.
+    monkeypatch.setattr(onboard_commands.shutil, "which", lambda _name: None)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".cursor").mkdir()
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+
+    assert _detect_coding_agents(cwd, home=home) == ["cursor"]
+
+    home_only = tmp_path / "home2"
+    home_only.mkdir()
+    project_marker = tmp_path / "project2"
+    project_marker.mkdir()
+    (project_marker / ".cursor").mkdir()
+
+    assert _detect_coding_agents(project_marker, home=home_only) == ["cursor"]
 
 
 def test_first_prompt_command_outputs_selected_agent() -> None:

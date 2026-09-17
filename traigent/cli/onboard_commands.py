@@ -19,18 +19,20 @@ from traigent.cli.auth_commands import TraigentAuthCLI
 
 console = Console()
 
-AgentName = Literal["claude", "cursor", "codex"]
+AgentName = Literal["claude", "cursor", "codex", "copilot"]
 OnboardProfile = Literal["beginner", "advanced"]
 
 AGENT_LABELS: dict[AgentName, str] = {
     "claude": "Claude Code",
     "cursor": "Cursor",
     "codex": "Codex",
+    "copilot": "GitHub Copilot",
 }
 FIRST_PROMPT_TOOL_LINE: dict[AgentName, str] = {
     "claude": "Use Claude Code tools to inspect code and propose the smallest safe change.",
     "cursor": "Use Cursor agent tools to inspect code and propose the smallest safe change.",
     "codex": "Use Codex tools to inspect code and propose the smallest safe change.",
+    "copilot": "Use GitHub Copilot agent tools to inspect code and propose the smallest safe change.",
 }
 PLAN_JSON_BEGIN = "BEGIN_TRAIGENT_ONBOARD_PLAN_JSON"
 PLAN_JSON_END = "END_TRAIGENT_ONBOARD_PLAN_JSON"
@@ -94,6 +96,14 @@ def _skills_command_for_profile(profile: OnboardProfile) -> list[str]:
 
 
 def _detect_coding_agents(cwd: Path, home: Path | None = None) -> list[AgentName]:
+    # Detection decides whether to OFFER the skills install and which agent to
+    # suggest for `first-prompt`. It is deliberately NOT gated on a published
+    # plugin manifest: SKILLS_COMMAND is `npx skills add Traigent/traigent-skills`
+    # with no `--agent` flag, so the installer writes the universal
+    # `.agents/skills/` directory that Cursor and ~20 other agents read. Gating
+    # detection on per-agent manifests (.claude-plugin/, .codex-plugin/,
+    # .agents/plugins/) would silently drop the offer for a Cursor user whose
+    # install would have worked.
     resolved_home = home or Path.home()
     agents: list[AgentName] = []
     if (resolved_home / ".claude").exists() or shutil.which("claude"):
@@ -102,6 +112,8 @@ def _detect_coding_agents(cwd: Path, home: Path | None = None) -> list[AgentName
         agents.append("cursor")
     if (resolved_home / ".codex").exists() or (cwd / "AGENTS.md").exists():
         agents.append("codex")
+    if (resolved_home / ".copilot").exists() or shutil.which("copilot"):
+        agents.append("copilot")
     return agents
 
 
@@ -605,7 +617,7 @@ def onboard(
 @click.command("first-prompt")
 @click.option(
     "--agent",
-    type=click.Choice(["claude", "cursor", "codex"], case_sensitive=False),
+    type=click.Choice(["claude", "cursor", "codex", "copilot"], case_sensitive=False),
     default=None,
     help="Coding agent flavor for the paste block.",
 )
