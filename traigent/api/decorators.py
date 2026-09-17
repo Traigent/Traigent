@@ -973,6 +973,7 @@ _ALLOWED_RUNTIME_OVERRIDE_KEYS = frozenset(
         "semantic_saturation",
         "cost_limit",
         "cost_approved",
+        "estimated_calls_per_example",
         "tie_breakers",
         "tvl_parameter_agents",
     )
@@ -2576,6 +2577,13 @@ def optimize(  # NOSONAR(S107)
             cost_limit: Maximum USD spending per optimization run. Defaults to
                 TRAIGENT_RUN_COST_LIMIT env var or $2.00.
             cost_approved: Skip cost approval prompt. Use with caution in production.
+            estimated_calls_per_example: Expected LLM calls per evaluated
+                example (self-consistency voting, repair passes, model
+                cascades). Multiplies the per-example base cost in the
+                pre-run estimate and scales the runtime cost-divergence EMA
+                seed by the same factor, so per-trial actuals for a
+                multi-call agent are compared against a calibrated baseline
+                instead of a single-call default. Defaults to 1.
             metric_limit: Soft cumulative stop for a named completed-trial metric.
                 Requires metric_name. Use for counters such as total tokens or
                 cumulative latency, not hard money-spend control.
@@ -2595,8 +2603,8 @@ def optimize(  # NOSONAR(S107)
                 ``metric_limit``, ``metric_name``,
                 ``metric_include_pruned``, ``plateau_window``,
                 ``plateau_epsilon``, ``semantic_saturation``, ``cost_limit``,
-                ``cost_approved``, ``tie_breakers``, and
-                ``tvl_parameter_agents``.
+                ``cost_approved``, ``estimated_calls_per_example``,
+                ``tie_breakers``, and ``tvl_parameter_agents``.
                 Note: ``algorithm`` and ``max_trials`` are first-class
                 parameters of this decorator (not in ``**runtime_overrides``);
                 ``timeout`` is supported on

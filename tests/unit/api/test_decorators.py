@@ -284,6 +284,20 @@ class TestOptimizeDecorator:
         assert isinstance(ai_function, OptimizedFunction)
         assert ai_function.kwargs["cost_limit"] == 5.0
 
+    def test_decorator_accepts_estimated_calls_per_example_runtime_override(self):
+        """issue #1750: the calls-per-example lever must reach OptimizedFunction.kwargs."""
+
+        @optimize(
+            configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+            cost_limit=5.0,
+            estimated_calls_per_example=4,
+        )
+        def ai_function(prompt: str) -> str:
+            return prompt
+
+        assert isinstance(ai_function, OptimizedFunction)
+        assert ai_function.kwargs["estimated_calls_per_example"] == 4
+
     def test_decorator_accepts_metric_limit_runtime_override(self):
         """metric_limit should be accepted with a required metric_name."""
 
