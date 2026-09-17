@@ -265,23 +265,32 @@ def test_detect_coding_agents_finds_copilot_via_home_marker(
     assert _detect_coding_agents(cwd, home=home) == ["copilot"]
 
 
-def test_detect_coding_agents_does_not_auto_detect_cursor(
+def test_detect_coding_agents_auto_detects_cursor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Cursor has no published plugin manifest in Traigent/traigent-skills
-    # (unlike claude/codex/copilot), so onboarding must not offer it here even
-    # when a `.cursor` marker is present. Manual `--agent cursor` still works
-    # for `traigent first-prompt` (see test_first_prompt_golden_outputs).
+    # Cursor IS auto-detected, from either marker. Detection decides whether to
+    # offer the skills install, and SKILLS_COMMAND takes no `--agent` flag --
+    # `npx skills add` writes the universal `.agents/skills/` directory that
+    # Cursor reads -- so the install works for a Cursor user and the offer must
+    # not be withheld. Gating detection on a per-agent plugin manifest would
+    # drop that offer for no reason the install path cares about.
     monkeypatch.setattr(onboard_commands.shutil, "which", lambda _name: None)
     home = tmp_path / "home"
     home.mkdir()
     (home / ".cursor").mkdir()
     cwd = tmp_path / "project"
     cwd.mkdir()
-    (cwd / ".cursor").mkdir()
 
-    assert _detect_coding_agents(cwd, home=home) == []
+    assert _detect_coding_agents(cwd, home=home) == ["cursor"]
+
+    home_only = tmp_path / "home2"
+    home_only.mkdir()
+    project_marker = tmp_path / "project2"
+    project_marker.mkdir()
+    (project_marker / ".cursor").mkdir()
+
+    assert _detect_coding_agents(project_marker, home=home_only) == ["cursor"]
 
 
 def test_first_prompt_command_outputs_selected_agent() -> None:

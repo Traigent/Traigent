@@ -80,15 +80,20 @@ def _dependency_command(project_markers: list[str]) -> list[str]:
 
 
 def _detect_coding_agents(cwd: Path, home: Path | None = None) -> list[AgentName]:
-    # Kept in sync with the plugin manifests published in Traigent/traigent-skills
-    # (.claude-plugin/, .codex-plugin/, .agents/plugins/): only auto-detect an
-    # agent that has a published manifest to install skills from. Cursor has no
-    # manifest there, so it is intentionally not auto-detected here; it remains
-    # a valid manual `--agent cursor` choice for `traigent first-prompt`.
+    # Detection decides whether to OFFER the skills install and which agent to
+    # suggest for `first-prompt`. It is deliberately NOT gated on a published
+    # plugin manifest: SKILLS_COMMAND is `npx skills add Traigent/traigent-skills`
+    # with no `--agent` flag, so the installer writes the universal
+    # `.agents/skills/` directory that Cursor and ~20 other agents read. Gating
+    # detection on per-agent manifests (.claude-plugin/, .codex-plugin/,
+    # .agents/plugins/) would silently drop the offer for a Cursor user whose
+    # install would have worked.
     resolved_home = home or Path.home()
     agents: list[AgentName] = []
     if (resolved_home / ".claude").exists() or shutil.which("claude"):
         agents.append("claude")
+    if (resolved_home / ".cursor").exists() or (cwd / ".cursor").exists():
+        agents.append("cursor")
     if (resolved_home / ".codex").exists() or (cwd / "AGENTS.md").exists():
         agents.append("codex")
     if (resolved_home / ".copilot").exists() or shutil.which("copilot"):
