@@ -641,7 +641,9 @@ class CostEnforcer:
                 f"(estimated ${estimated:.2f} > limit ${self.config.limit:.2f})"
             )
 
-    def check_and_approve(self, estimated_cost: float) -> bool:
+    def check_and_approve(
+        self, estimated_cost: float, estimated_calls_per_example: int = 1
+    ) -> bool:
         """Pre-optimization handshake. Returns True if approved.
 
         This should be called before starting optimization to get user
@@ -652,6 +654,11 @@ class CostEnforcer:
 
         Args:
             estimated_cost: Estimated total cost in USD for the optimization run.
+            estimated_calls_per_example: The caller's resolved
+                ``estimated_calls_per_example`` (issue #1750), stated verbatim
+                in the approval prompts so they never contradict the
+                declined-approval exception message. Defaults to ``1`` to
+                match the pre-existing single-call assumption.
 
         Returns:
             True if approved to proceed, False if user declined or non-interactive abort.
@@ -670,7 +677,7 @@ class CostEnforcer:
             )
             return True
 
-        return self._request_user_approval(estimated_cost)
+        return self._request_user_approval(estimated_cost, estimated_calls_per_example)
 
     def _check_approval_token(self) -> bool:
         """Check for XDG approval token file.
@@ -684,11 +691,17 @@ class CostEnforcer:
         """
         return _check_approval_token_path(self._approval_token_path, config=self.config)
 
-    def _request_user_approval(self, estimated: float) -> bool:
+    def _request_user_approval(
+        self, estimated: float, estimated_calls_per_example: int = 1
+    ) -> bool:
         """Interactive approval prompt. Fail-safe: abort if non-interactive.
 
         Args:
             estimated: Estimated cost in USD.
+            estimated_calls_per_example: The caller's resolved
+                ``estimated_calls_per_example`` (issue #1750), stated verbatim
+                so this prompt never contradicts the declined-approval
+                exception message raised by the caller. Defaults to ``1``.
 
         Returns:
             True if user approved, False otherwise.
@@ -699,9 +712,9 @@ class CostEnforcer:
                 "\nTraigent: Rough conservative upper-bound cost estimate "
                 f"${estimated:.2f} exceeds limit ${self.config.limit:.2f}.\n"
                 "Pre-run estimates use fixed token assumptions and conservative "
-                "fallback pricing when model pricing is unavailable, and by "
-                "default assume 1 LLM call per example (set "
-                "estimated_calls_per_example on @traigent.optimize for "
+                "fallback pricing when model pricing is unavailable, and "
+                f"assume {estimated_calls_per_example} LLM call(s) per example "
+                "(set estimated_calls_per_example on @traigent.optimize for "
                 "multi-call agents such as self-consistency voting, repair "
                 "passes, or model cascades).\n"
                 "To proceed, raise TRAIGENT_RUN_COST_LIMIT, approve after review "
@@ -732,9 +745,9 @@ NOTE: This is an ESTIMATE based on maximum context. Actual billing is
 NOTE: Traigent limits are best-effort local guardrails, not provider billing caps.
 NOTE: If model pricing is private or unavailable, calibrate rates with
       TRAIGENT_CUSTOM_MODEL_PRICING_FILE or TRAIGENT_CUSTOM_MODEL_PRICING_JSON.
-NOTE: Defaults to 1 LLM call per example; set estimated_calls_per_example on
-      @traigent.optimize for multi-call agents (self-consistency, repair
-      passes, model cascades).
+NOTE: Assumes {estimated_calls_per_example} LLM call(s) per example; set
+      estimated_calls_per_example on @traigent.optimize for multi-call agents
+      (self-consistency, repair passes, model cascades).
 
 Options:
   [y] Approve and continue with current limit

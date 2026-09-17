@@ -1437,6 +1437,34 @@ class TestCostEnforcerApprovalToken:
         enforcer = CostEnforcer(config=CostEnforcerConfig(limit=1.0))
         assert enforcer.check_and_approve(2.0) is False
 
+    @patch("sys.stdin.isatty", return_value=False)
+    def test_check_and_approve_non_interactive_states_configured_calls_per_example(
+        self, mock_isatty, capsys
+    ) -> None:
+        """Non-interactive prompt states the caller's actual calls-per-example.
+
+        Issue #1750 (P2 follow-up): the estimator's declined-approval message
+        already interpolates the configured value; this prompt must not
+        contradict it by hardcoding "1" when the caller declared more.
+        """
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=1.0))
+        assert enforcer.check_and_approve(2.0, estimated_calls_per_example=4) is False
+        stderr = capsys.readouterr().err
+        assert "4 LLM call(s) per example" in stderr
+        assert "assume 1 LLM call per example" not in stderr
+
+    @patch("sys.stdin.isatty", return_value=True)
+    @patch("builtins.input", return_value="n")
+    def test_check_and_approve_interactive_states_configured_calls_per_example(
+        self, mock_input, mock_isatty, capsys
+    ) -> None:
+        """Interactive prompt states the caller's actual calls-per-example."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=1.0))
+        assert enforcer.check_and_approve(2.0, estimated_calls_per_example=4) is False
+        stderr = capsys.readouterr().err
+        assert "Assumes 4 LLM call(s) per example" in stderr
+        assert "Defaults to 1 LLM call per example" not in stderr
+
     def test_reset_full_state(self) -> None:
         """Verify reset clears ALL state."""
         enforcer = CostEnforcer()

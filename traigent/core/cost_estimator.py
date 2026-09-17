@@ -234,7 +234,10 @@ class CostEstimator:
             return
 
         estimated_cost = self.estimate_optimization_cost(dataset)
-        if not self._cost_enforcer.check_and_approve(estimated_cost):
+        if not self._cost_enforcer.check_and_approve(
+            estimated_cost,
+            estimated_calls_per_example=self._estimated_calls_per_example,
+        ):
             limit = self._cost_enforcer.config.limit
             raise CostLimitExceeded(
                 accumulated=0.0,
