@@ -42,7 +42,8 @@ def _write_pyproject(root: Path, *extras_by_name: tuple[str, list[str]]) -> None
         f"{name} = [{', '.join(repr(s) for s in specs)}]"
         for name, specs in extras_by_name
     )
-    (root / "pyproject.toml").write_text(textwrap.dedent(f"""
+    (root / "pyproject.toml").write_text(
+        textwrap.dedent(f"""
             [project]
             name = "traigent"
             version = "0.0.0"
@@ -55,7 +56,8 @@ def _write_pyproject(root: Path, *extras_by_name: tuple[str, list[str]]) -> None
 
             [project.optional-dependencies]
             {extras_block}
-            """).strip())
+            """).strip()
+    )
 
 
 def test_clean_tree_returns_zero(drift_module) -> None:
