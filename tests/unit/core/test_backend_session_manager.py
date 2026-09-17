@@ -2333,6 +2333,29 @@ class TestSessionAggregationSelectionReceipt:
         )
         assert "selection" not in out
 
+    @pytest.mark.parametrize(
+        "patch",
+        [
+            {"winner_trial_id": "trial_a"},
+            {"n_configs": 3},
+            {
+                "verdict": "clear",
+                "test": "paired_t",
+                "delta": 0.05,
+                "p_value": 0.01,
+                "n_shared_examples": 5,
+                "ci95": [0.2, 0.01],
+            },
+        ],
+    )
+    def test_sanitizer_omits_margin_the_backend_would_reject(self, patch):
+        receipt = self._receipt()
+        receipt["margin"] = {**receipt["margin"], **patch}
+        out = sanitize_session_aggregation_payload({"selection": receipt})
+        expected = self._receipt()
+        del expected["margin"]
+        assert out["selection"] == expected
+
     def test_sanitizer_drops_receipt_with_bad_digest(self):
         receipt = {**self._receipt(), "eligible_trial_ids_digest": "sha256:" + "0" * 64}
         out = sanitize_session_aggregation_payload({"selection": receipt})

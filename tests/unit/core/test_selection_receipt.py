@@ -289,6 +289,19 @@ class TestNoReceipt:
         assert "not in the ranking-eligible trial set" in messages
         assert "trial_zzz" not in messages and "trial_a" not in messages
 
+    def test_duplicate_eligible_ids_withhold_receipt_with_count_only_log(self, caplog):
+        # P3-3: duplicates are never silently merged — merging would misstate
+        # the eligible set the winner was chosen over.
+        selection = _synthetic(
+            ranking_eligible_trial_ids=["trial_c", "trial_b", "trial_a", "trial_c"]
+        )
+        with caplog.at_level(logging.WARNING, logger="traigent"):
+            receipt = build_selection_receipt(selection)
+        assert receipt is None
+        messages = " ".join(record.getMessage() for record in caplog.records)
+        assert "1 duplicate trial id(s)" in messages
+        assert "trial_c" not in messages and "trial_b" not in messages
+
     def test_non_wire_valid_id_returns_none(self):
         selection = _synthetic(
             ranking_eligible_trial_ids=["trial_b", f"trial {_SENTINEL}"]
@@ -333,6 +346,11 @@ class TestNonFiniteAndInvalidMargin:
             {"ci95": (0.0, math.inf)},
             {"ci95": (-math.inf, 0.1)},
             {"effective_alpha": math.nan},
+            {"effective_alpha": 1.5},
+            {"effective_alpha": -0.01},
+            {"ci95": (0.2, 0.01)},
+            {"winner_trial_id": "trial_a"},
+            {"n_configs": 4},
             {"verdict": "sure"},
             {"test": "paired t test"},
             {"p_value": 1.5},
@@ -361,6 +379,33 @@ class TestNonFiniteAndInvalidMargin:
         }
         receipt = build_selection_receipt(_synthetic(best_config_margin=margin))
         assert "margin" not in receipt
+
+    def test_na_with_shared_examples_is_omitted(self):
+        margin = {
+            **_synthetic().best_config_margin,
+            "verdict": "na",
+            "ci95": None,
+            "p_value": None,
+            "n_shared_examples": 3,
+            "delta": None,
+        }
+        receipt = build_selection_receipt(_synthetic(best_config_margin=margin))
+        assert receipt is not None
+        assert "margin" not in receipt
+        _assert_valid(receipt)
+
+    @pytest.mark.parametrize("alpha", [0, 1, 0.5])
+    def test_effective_alpha_bounds_are_inclusive(self, alpha):
+        margin = {**_synthetic().best_config_margin, "effective_alpha": alpha}
+        receipt = build_selection_receipt(_synthetic(best_config_margin=margin))
+        assert receipt["margin"]["effective_alpha"] == alpha
+        _assert_valid(receipt)
+
+    def test_margin_at_eligible_count_is_kept(self):
+        # n_configs == eligible_trial_count is consistent (one trial per config).
+        margin = {**_synthetic().best_config_margin, "n_configs": 3}
+        receipt = build_selection_receipt(_synthetic(best_config_margin=margin))
+        assert receipt["margin"]["n_configs"] == receipt["eligible_trial_count"] == 3
 
     def test_na_with_null_delta_is_kept(self):
         margin = {
@@ -441,6 +486,27 @@ class TestSanitizer:
         receipt = self._receipt()
         del receipt["margin"]
         assert "margin" not in sanitize_selection_receipt(receipt)
+
+    @pytest.mark.parametrize(
+        "patch",
+        [
+            {"winner_trial_id": "trial_a"},
+            {"ci95": [0.9, 0.1]},
+            {"n_configs": 4},
+        ],
+    )
+    def test_margin_the_backend_would_reject_is_omitted(self, patch):
+        # P3-2: a caller-supplied receipt keeps its selection but loses a margin
+        # that disagrees with its own winner / eligible set or has inverted ci95.
+        receipt = self._receipt()
+        receipt["margin"] = {**receipt["margin"], **patch}
+        out = sanitize_selection_receipt(receipt)
+        assert out is not None
+        assert "margin" not in out
+        expected = self._receipt()
+        del expected["margin"]
+        assert out == expected
+        _assert_valid(out)
 
     def test_free_text_reason_nulled(self):
         receipt = {**self._receipt(), "selection_reason": f"x {_SENTINEL}"}

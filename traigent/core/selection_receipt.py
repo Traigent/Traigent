@@ -109,6 +109,8 @@ def _project_margin(raw: Any) -> dict[str, Any] | None:
             if finite is None:
                 return None
             bounds.append(finite)
+        if bounds[0] > bounds[1]:
+            return None
         ci95: list[float | int] | None = bounds
         if n_shared < 1:
             return None
@@ -174,9 +176,15 @@ def _assemble(
         receipt["margin"] = None
         return receipt
     margin = _project_margin(margin_raw)
-    if margin is not None:
+    if (
+        margin is not None
+        and margin["winner_trial_id"] == winner
+        and margin["n_configs"] <= len(ids)
+    ):
         receipt["margin"] = margin
-    # else: omit margin entirely (invalid or non-finite), never null.
+    # else: omit margin entirely (invalid, non-finite, or inconsistent with the
+    # receipt's own winner / eligible set — the Backend would reject it), never
+    # null.
     return receipt
 
 
@@ -184,8 +192,10 @@ def build_selection_receipt(selection: Any) -> dict[str, Any] | None:
     """Project a ``SelectionResult`` onto the accepted ``selection`` receipt.
 
     Returns ``None`` (no ``selection`` key is sent) when there is no winner, no
-    eligible set, the ids are not wire-valid, or the winner is not in the
-    eligible set. Never raises.
+    eligible set, the eligible ids contain duplicates, the ids are not
+    wire-valid, or the winner is not in the eligible set. A margin whose winner
+    differs from the receipt winner, whose ``ci95`` is inverted, or whose
+    ``n_configs`` exceeds the eligible count is omitted. Never raises.
     """
     try:
         winner = getattr(selection, "best_trial_id", None)
@@ -193,6 +203,15 @@ def build_selection_receipt(selection: Any) -> dict[str, Any] | None:
         if winner is None or not isinstance(raw_ids, (list, tuple)) or not raw_ids:
             return None
         if not all(isinstance(trial_id, str) for trial_id in raw_ids):
+            return None
+        duplicates = len(raw_ids) - len(set(raw_ids))
+        if duplicates:
+            # Merging would misstate the eligible set. Content-free: count only.
+            logger.warning(
+                "selection receipt withheld: the ranking-eligible trial set has "
+                "%d duplicate trial id(s)",
+                duplicates,
+            )
             return None
         return _assemble(
             winner=winner,
