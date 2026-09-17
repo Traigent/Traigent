@@ -147,16 +147,12 @@ def _find_bounded_project_dotenv() -> str:
     except (FileNotFoundError, OSError):
         return ""
 
-    ancestors = [cwd, *cwd.parents]
-    boundary_index = next(
-        (
-            index
-            for index, directory in enumerate(ancestors)
-            if any((directory / marker).exists() for marker in _PROJECT_MARKER_NAMES)
-        ),
-        None,
-    )
-    search_dirs = [cwd] if boundary_index is None else ancestors[: boundary_index + 1]
+    boundary = _find_project_boundary(cwd)
+    if boundary is None:
+        search_dirs = [cwd]
+    else:
+        ancestors = [cwd, *cwd.parents]
+        search_dirs = ancestors[: ancestors.index(boundary) + 1]
 
     for directory in search_dirs:
         candidate = directory / ".env"
