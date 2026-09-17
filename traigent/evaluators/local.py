@@ -1638,8 +1638,23 @@ class LocalEvaluator(BaseEvaluator):
         the trial's actual cost and the permit-based cost-enforcement ledger
         (`core/cost_enforcement.py`), and records it separately under
         `custom_metrics["evaluation_cost"]` -- a one-line metadata entry, not
-        a new public field -- so a judge's share stays visible on the
-        receipt instead of being silently merged into the agent's cost.
+        a new public field -- so a judge's share is reported alongside the
+        agent's cost rather than silently merged into it.
+
+        CAVEAT on that visibility: `evaluation_cost` is NOT in
+        `metrics_tracker.RESERVED_METRIC_KEYS`, so it travels on the USER
+        metric channel. `enforce_user_metric_ceiling`
+        (`metrics_tracker.py:307`) drops only NON-reserved keys, in sorted
+        order, to fit the backend `MeasuresDict` ceiling of
+        `TOTAL_MEASURES_CEILING` total keys (`metrics_tracker.py:18`). So on a
+        run whose metric keys exceed that ceiling, `evaluation_cost` CAN be
+        dropped from the submitted measures -- the folded spend still lands in
+        `cost`/`tokens` (those keys ARE reserved), only the judge's separate
+        breakdown line is lost. Reserving the key would make it unconditional,
+        but that also changes user-key collision semantics on the measures
+        channel (a user metric of the same name would then be skipped with a
+        warning) and is deliberately left to a follow-up rather than widened
+        into this cost-attribution fix.
 
         Does not touch the pre-run cost estimator (`check_and_approve`);
         that estimator has no view of metric-function calls at all and is
@@ -1667,16 +1682,6 @@ class LocalEvaluator(BaseEvaluator):
             return
         clear_captured_responses()
 
-        # A captured judge/evaluator response is a real measurement, even
-        # when the agent's own call never produced output (e.g. every
-        # example errors before the agent responds, so
-        # `_extract_llm_metrics_for_output` set `measured=False`). The judge
-        # still ran and its spend is real, so this example must not be
-        # excluded from measured-only aggregation
-        # (`MetricsTracker.aggregate_metrics`/`format_for_backend`) the way a
-        # genuinely never-measured example is (Traigent#2297 review).
-        example_metric.measured = True
-
         eval_input_cost = 0.0
         eval_output_cost = 0.0
         eval_total_cost = 0.0
@@ -1699,7 +1704,28 @@ class LocalEvaluator(BaseEvaluator):
             )
 
         if eval_total_cost == 0.0 and eval_tokens == 0:
+            # Nothing priced and nothing tokenized: there is no judge spend to
+            # attribute, so ABANDON the fold and leave every field of
+            # ``example_metric`` exactly as it was.
             return
+
+        # Only now -- past the abandon-guard -- is this row genuinely measured.
+        # A captured judge/evaluator response is a real measurement even when
+        # the agent's own call never produced output (e.g. every example errors
+        # before the agent responds, so `_extract_llm_metrics_for_output` set
+        # `measured=False`). The judge still ran and its spend is real, so this
+        # example must not be excluded from measured-only aggregation
+        # (`MetricsTracker.aggregate_metrics`/`format_for_backend`) the way a
+        # genuinely never-measured example is (Traigent#2297 review).
+        #
+        # This assignment MUST stay below the guard. Above it, a captured judge
+        # response that priced to zero cost AND zero tokens flipped a genuinely
+        # unmeasured row to `measured=True` carrying all-zero cost/token
+        # metrics, which then re-entered the measured-only MEAN denominators at
+        # `metrics_tracker.py`'s `measured_metrics` filter and dragged every
+        # mean down -- precisely the defect `ExampleMetrics.measured`'s own
+        # docblock warns about.
+        example_metric.measured = True
 
         example_metric.cost.input_cost += eval_input_cost
         example_metric.cost.output_cost += eval_output_cost

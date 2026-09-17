@@ -23,6 +23,7 @@ from traigent.api.types import TrialResult, TrialStatus
 from traigent.core.cost_estimator import CostEstimator
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.evaluators.local import LocalEvaluator
+from traigent.evaluators.metrics_tracker import ExampleMetrics, MetricsTracker
 
 
 class _Usage:
@@ -174,3 +175,139 @@ async def test_judge_cost_counted_even_when_every_example_errors(
     )
     for example_result in result.example_results:
         assert example_result.metrics.get("evaluation_cost", 0.0) > 0.0
+
+
+class _EmptyCapturedResponse:
+    """A captured response that prices to zero cost AND zero tokens.
+
+    No ``usage``, no ``cost``, no ``model``: ``extract_llm_metrics`` extracts
+    nothing real from it, which is exactly the "the judge call was abandoned /
+    produced no usable measurement" shape the fold's zero-cost/zero-token
+    guard exists to detect.
+    """
+
+
+def _fold_with_captured(
+    monkeypatch: pytest.MonkeyPatch,
+    responses: list[object],
+    example_metric: ExampleMetrics,
+) -> None:
+    """Run ``_fold_metric_function_llm_cost`` against a seeded capture buffer."""
+    from traigent.evaluators import local as local_module
+
+    monkeypatch.setattr(
+        local_module, "get_all_captured_responses", lambda: list(responses)
+    )
+    monkeypatch.setattr(local_module, "clear_captured_responses", lambda: None)
+
+    evaluator = LocalEvaluator(metrics=["cost"])
+    evaluator._fold_metric_function_llm_cost(example_metric)
+
+
+def test_abandoned_judge_capture_leaves_the_row_unmeasured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A zero-cost, zero-token capture must NOT flip ``measured`` to True.
+
+    ``example_metric.measured = True`` used to be assigned ABOVE the
+    zero-cost/zero-token abandon-guard, so a captured judge response that
+    priced to nothing promoted a genuinely unmeasured row to ``measured=True``
+    while every cost/token field stayed 0.0 -- the exact "zeros that are the
+    ABSENCE of a measurement" case ``ExampleMetrics.measured``'s docblock says
+    must never enter measured-only aggregation (Traigent#2297 review round 2).
+    """
+    example_metric = ExampleMetrics(measured=False)
+
+    _fold_with_captured(monkeypatch, [_EmptyCapturedResponse()], example_metric)
+
+    assert example_metric.measured is False, (
+        "an abandoned (zero-cost, zero-token) judge capture must leave the row "
+        "unmeasured; marking it measured feeds all-zero metrics into the "
+        "measured-only MEAN denominators"
+    )
+    # The guard abandons the whole fold, so nothing else moved either.
+    assert example_metric.cost.total_cost == 0.0
+    assert example_metric.tokens.total_tokens == 0
+    assert "evaluation_cost" not in example_metric.custom_metrics
+
+
+def test_real_judge_capture_still_marks_the_row_measured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CONTROL for the test above: a capture with REAL usage must still set
+    ``measured=True``, which is what Traigent#2297's first review round fixed.
+    Without this, moving the assignment below the guard could silently undo it.
+    """
+    example_metric = ExampleMetrics(measured=False)
+
+    _fold_with_captured(monkeypatch, [_DummyRawResp()], example_metric)
+
+    assert example_metric.measured is True
+    assert example_metric.tokens.total_tokens == 30
+    assert example_metric.custom_metrics["evaluation_cost"] > 0.0
+
+
+def test_abandoned_capture_stays_out_of_the_measured_mean_denominator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The consequence that makes the ordering matter.
+
+    ``MetricsTracker.aggregate_metrics`` means over ``measured`` rows only. A
+    wrongly-promoted all-zero row halves the reported mean cost.
+    """
+    measured_row = ExampleMetrics(measured=True)
+    measured_row.cost.total_cost = 0.02
+    measured_row.tokens.total_tokens = 100
+
+    abandoned_row = ExampleMetrics(measured=False)
+    _fold_with_captured(monkeypatch, [_EmptyCapturedResponse()], abandoned_row)
+
+    tracker = MetricsTracker()
+    tracker.add_example_metrics(measured_row)
+    tracker.add_example_metrics(abandoned_row)
+    aggregated = tracker.aggregate_metrics()
+
+    assert aggregated["total_cost"]["mean"] == pytest.approx(0.02), (
+        "the abandoned row entered the MEAN denominator and halved the "
+        f"reported cost: {aggregated['total_cost']['mean']}"
+    )
+    assert aggregated["total_tokens"]["mean"] == pytest.approx(100)
+
+
+def test_evaluation_cost_is_droppable_under_the_measures_ceiling() -> None:
+    """Pin the docstring caveat: ``evaluation_cost`` is NOT reserved.
+
+    ``_fold_metric_function_llm_cost``'s docstring promises the judge's share
+    is *reported alongside* the agent's cost, not that it is unconditionally
+    present. It rides the USER metric channel, and
+    ``enforce_user_metric_ceiling`` drops only non-reserved keys — so on a run
+    that exceeds ``TOTAL_MEASURES_CEILING`` it can be dropped. If someone later
+    reserves the key, this test fails and the docstring caveat must be removed
+    with it.
+    """
+    from traigent.evaluators.metrics_tracker import (
+        RESERVED_METRIC_KEYS,
+        TOTAL_MEASURES_CEILING,
+        enforce_user_metric_ceiling,
+        is_reserved_metric_key,
+    )
+
+    assert "evaluation_cost" not in RESERVED_METRIC_KEYS
+    assert is_reserved_metric_key("evaluation_cost") is False
+
+    # One over the ceiling, with `evaluation_cost` sorting last among the
+    # user keys so it is the one dropped.
+    target: dict[str, object] = {"total_cost": 1.0, "evaluation_cost": 0.5}
+    filler = TOTAL_MEASURES_CEILING + 1 - len(target)
+    for i in range(filler):
+        target[f"aaa_user_metric_{i:03d}"] = float(i)
+    assert len(target) == TOTAL_MEASURES_CEILING + 1
+
+    enforce_user_metric_ceiling(target, context="test_2297_receipt_caveat")
+
+    assert len(target) == TOTAL_MEASURES_CEILING
+    assert "evaluation_cost" not in target, (
+        "evaluation_cost survived the ceiling — if it is now reserved, drop "
+        "the CAVEAT paragraph from _fold_metric_function_llm_cost's docstring"
+    )
+    assert "total_cost" in target, "reserved keys must never be dropped"
