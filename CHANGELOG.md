@@ -82,6 +82,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **The run's finalize request now carries a selection receipt.** In non-strict modes,
+  when the SDK selects a winner, the `session_aggregation` sent on session finalize
+  includes `selection`: the winning trial id, the exact ranking-eligible trial ids it
+  was chosen over (unique, sorted), their count and a `sha256:` digest, the SDK's selection reason code, and the
+  winner-vs-runner-up margin as already computed for `result.best_config_margin`. The
+  Backend binds it to the session's own trials; the SDK never recomputes ranking. The
+  receipt carries only ids, counts, a digest, bounded numbers and labels — no config
+  values, prompts, or example content — and is rebuilt from an allowlist at egress. No
+  winner means no `selection` key, and strict (certified) mode sends no receipt at all.
+  Duplicate ids in the eligible set are never merged: the receipt is withheld with a
+  count-only warning. A margin with a non-finite number, an inverted `ci95`, a winner
+  different from the receipt's, or more configs than eligible trials is omitted rather
+  than sent. Requires the TraigentSchema build pinned in `scripts/ci/schema-pin.txt`
+  (now `df06e6dc`).
 - **Each run records where its prices came from.** `result.metadata["pricing"]` holds
   the LiteLLM price-table source (`local` or `remote`, from LiteLLM 1.93), any fetch
   fallback reason, and whether strict cost accounting was on and why. It is attached
