@@ -323,3 +323,95 @@ jobs:
       run: |
         echo "✅ Package successfully published and verified on PyPI!" >> "$GITHUB_STEP_SUMMARY"
         echo "Users can now install with: \`pip install traigent\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # GitHub Latest drifted from PyPI (stuck at v0.12.0 while PyPI reached
+  # v0.27.0) because no job in this workflow ever creates a GitHub Release.
+  # This job closes that gap for the automatic, tag-triggered publish path:
+  # it creates (or, on a rerun, idempotently updates) the Release for the
+  # exact tag that was just verified on PyPI, then asserts the tag, the
+  # published PyPI version, and GitHub's "Latest" all agree.
+  github-release:
+    needs: [publish, verify-publication]
+    runs-on: ubuntu-latest
+    if: >-
+      always() &&
+      needs.publish.result == 'success' &&
+      needs.verify-publication.result == 'success' &&
+      startsWith(github.ref, 'refs/tags/v')
+    # Minimum permission beyond the workflow-level `contents: read`: this job
+    # is the only one that writes a GitHub Release.
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
+      REPO: ${{ github.repository }}
+      EXPECTED_VERSION: ${{ needs.publish.outputs.package_version }}
+
+    steps:
+    # Authenticate the `gh` CLI for this job's remaining steps. Logging in
+    # (rather than exporting an env var holding the value) persists the
+    # credential to the runner's gh config for the rest of the job, and
+    # GitHub Actions still masks the value in logs either way.
+    - name: Authenticate gh CLI for this job
+      run: gh auth login --with-token <<< "${{ github.token }}"
+
+    - name: Create or update the GitHub Release for this tag
+      run: |
+        set -euo pipefail
+
+        echo "Generating release notes for $TAG..."
+        gh api "repos/$REPO/releases/generate-notes" -f "tag_name=$TAG" \
+          > /tmp/generated-notes.json
+
+        python - <<'PY'
+        import json
+
+        with open("/tmp/generated-notes.json", encoding="utf-8") as handle:
+            data = json.load(handle)
+
+        with open("/tmp/release-title.txt", "w", encoding="utf-8") as handle:
+            handle.write(data.get("name") or "")
+        with open("/tmp/release-body.md", "w", encoding="utf-8") as handle:
+            handle.write(data.get("body") or "")
+        PY
+
+        TITLE="$(cat /tmp/release-title.txt)"
+        if [ -z "$TITLE" ]; then
+          TITLE="$TAG"
+        fi
+
+        if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+          # Idempotent rerun (e.g. a retried workflow_dispatch of this job,
+          # or a manually re-triggered run for the same tag): update the
+          # existing release instead of failing on "already exists".
+          echo "Release $TAG already exists — updating it."
+          gh release edit "$TAG" --repo "$REPO" \
+            --title "$TITLE" \
+            --notes-file /tmp/release-body.md \
+            --latest
+        else
+          echo "Creating release $TAG."
+          gh release create "$TAG" --repo "$REPO" \
+            --title "$TITLE" \
+            --notes-file /tmp/release-body.md \
+            --latest \
+            --verify-tag
+        fi
+
+    - name: Assert GitHub Latest, the tag, and PyPI agree
+      run: |
+        set -euo pipefail
+
+        TAG_VERSION="${TAG#v}"
+        if [ "$TAG_VERSION" != "$EXPECTED_VERSION" ]; then
+          echo "Error: tag $TAG (version $TAG_VERSION) does not match the published package version $EXPECTED_VERSION"
+          exit 1
+        fi
+
+        LATEST_TAG="$(gh release view --repo "$REPO" --json tagName -q .tagName)"
+        if [ "$LATEST_TAG" != "$TAG" ]; then
+          echo "Error: GitHub Latest release is $LATEST_TAG, expected $TAG"
+          exit 1
+        fi
+
+        echo "GitHub Latest ($LATEST_TAG), tag ($TAG), and PyPI ($EXPECTED_VERSION) agree."
