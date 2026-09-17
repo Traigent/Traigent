@@ -14,7 +14,7 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast, overload
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 from .logging import get_logger
 
@@ -108,20 +108,53 @@ def _check_mock_llm_prod_guard() -> None:
 # import, so late env mutation cannot bypass the guard.
 _check_mock_llm_prod_guard()
 
-# Load environment variables from .env file if it exists, unless the
-# caller has explicitly opted out via TRAIGENT_SKIP_DOTENV. Tests and
-# hermetic subprocess smokes set this so the repo's ``.env`` (which
-# typically contains TRAIGENT_BACKEND_URL=localhost:5000 etc.) does
-# NOT leak into a "clean env" run. Reuse ``_is_truthy_env_value`` so the
-# accepted-truthy set (``1``/``true``/``yes``/``on``, whitespace-tolerant)
-# matches the prod guard above — a value like ``" true"`` should opt out
-# here just as it would activate the prod guard.
-env_file = Path(__file__).parent.parent.parent / ".env"
-if env_file.exists() and not _is_truthy_env_value(
-    os.environ.get("TRAIGENT_SKIP_DOTENV")
-):
-    load_dotenv(env_file)
-    _check_mock_llm_prod_guard()
+
+def _load_dotenv_files() -> None:
+    """Load ``.env`` files, unless opted out via ``TRAIGENT_SKIP_DOTENV``.
+
+    Two locations are loaded, in precedence order (``load_dotenv`` never
+    overrides a key already present in ``os.environ``, so the first file
+    to set a key wins over the second, and an explicitly-exported real env
+    var always wins over both):
+
+    1. The **caller's project** ``.env``, discovered by walking up from the
+       current working directory (``find_dotenv(usecwd=True)``). This is
+       the file a pip-installed user actually edits, per the quickstart
+       skill (Traigent/Traigent#1830) — without this, a project-root
+       ``.env`` is silently never read by the SDK's own loader.
+    2. The **package-adjacent** ``.env`` (``Path(__file__).parent.parent.parent
+       / ".env"``) — the repo root in a source checkout, or ``site-packages/``
+       when pip-installed. This is the historical dev-checkout convenience
+       (the repo's own ``.env`` typically has ``TRAIGENT_BACKEND_URL=
+       localhost:5000`` etc.) and stays lower precedence than the project one
+       so a dev checkout's own defaults never shadow a real project's.
+
+    Tests and hermetic subprocess smokes set ``TRAIGENT_SKIP_DOTENV`` so
+    neither file leaks into a "clean env" run. Reuse ``_is_truthy_env_value``
+    so the accepted-truthy set (``1``/``true``/``yes``/``on``,
+    whitespace-tolerant) matches the prod guard above — a value like
+    ``" true"`` should opt out here just as it would activate the prod
+    guard. ``_check_mock_llm_prod_guard()`` runs again after each load that
+    actually found a file, matching the pre-existing defense-in-depth: no
+    module-level cache is read after import, so late env mutation from
+    either file cannot bypass the guard.
+    """
+
+    if _is_truthy_env_value(os.environ.get("TRAIGENT_SKIP_DOTENV")):
+        return
+
+    project_env = find_dotenv(usecwd=True)
+    if project_env:
+        load_dotenv(project_env)
+        _check_mock_llm_prod_guard()
+
+    package_env = Path(__file__).parent.parent.parent / ".env"
+    if package_env.exists():
+        load_dotenv(package_env)
+        _check_mock_llm_prod_guard()
+
+
+_load_dotenv_files()
 
 _MIN_JWT_SECRET_LENGTH = 32
 _PRODUCTION_ENV_NAMES = {"prod", "production"}

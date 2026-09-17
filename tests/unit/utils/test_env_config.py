@@ -1,12 +1,16 @@
 """Tests for environment configuration utilities."""
 
+import os
 import sys
 from types import SimpleNamespace
 
 import pytest
 
 if "dotenv" not in sys.modules:
-    sys.modules["dotenv"] = SimpleNamespace(load_dotenv=lambda *_args, **_kwargs: None)
+    sys.modules["dotenv"] = SimpleNamespace(
+        load_dotenv=lambda *_args, **_kwargs: None,
+        find_dotenv=lambda *_args, **_kwargs: "",
+    )
 
 from traigent.utils import env_config
 
@@ -208,3 +212,54 @@ def test_backend_offline_accepts_consolidated_offline_alias(monkeypatch):
     monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
     monkeypatch.setenv("TRAIGENT_OFFLINE", "1")
     assert env_config.is_backend_offline() is True
+
+
+class TestLoadDotenvFiles:
+    """Traigent/Traigent#1830: the SDK's own dotenv loader must also read a
+    project-root ``.env`` discovered from the caller's cwd, not only the
+    package-adjacent path (repo root in a dev checkout, ``site-packages/``
+    when pip-installed).
+    """
+
+    _MARKER_VAR = "TRAIGENT_TEST_1830_PROJECT_MARKER"
+
+    def _write_project_env(self, tmp_path, value):
+        (tmp_path / ".env").write_text(f"{self._MARKER_VAR}={value}\n")
+
+    def test_reads_project_root_env_via_cwd(self, tmp_path, monkeypatch):
+        """A .env in the caller's project root (not package-adjacent) is
+        loaded once the SDK's own loader runs — the pip-installed-user
+        scenario the issue reports as silently unmet before this fix."""
+        self._write_project_env(tmp_path, "from-project-root")
+        monkeypatch.delenv(self._MARKER_VAR, raising=False)
+        monkeypatch.chdir(tmp_path)
+
+        try:
+            env_config._load_dotenv_files()
+            assert os.environ.get(self._MARKER_VAR) == "from-project-root"
+        finally:
+            os.environ.pop(self._MARKER_VAR, None)
+
+    def test_explicit_env_var_wins_over_project_dotenv(self, tmp_path, monkeypatch):
+        """An already-exported real env var is never overridden by the
+        project .env (load_dotenv's default, non-overriding behavior)."""
+        self._write_project_env(tmp_path, "from-project-root")
+        monkeypatch.setenv(self._MARKER_VAR, "from-real-shell-env")
+        monkeypatch.chdir(tmp_path)
+
+        env_config._load_dotenv_files()
+        assert os.environ.get(self._MARKER_VAR) == "from-real-shell-env"
+
+    def test_skip_dotenv_opts_out_of_project_dotenv_too(self, tmp_path, monkeypatch):
+        """TRAIGENT_SKIP_DOTENV must still suppress the new cwd-discovered
+        file, exactly as it already suppresses the package-adjacent one."""
+        self._write_project_env(tmp_path, "from-project-root")
+        monkeypatch.delenv(self._MARKER_VAR, raising=False)
+        monkeypatch.setenv("TRAIGENT_SKIP_DOTENV", "1")
+        monkeypatch.chdir(tmp_path)
+
+        try:
+            env_config._load_dotenv_files()
+            assert self._MARKER_VAR not in os.environ
+        finally:
+            os.environ.pop(self._MARKER_VAR, None)
