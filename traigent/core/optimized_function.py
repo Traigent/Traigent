@@ -36,6 +36,7 @@ import time
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Generic, ParamSpec, TypeVar, cast
 
@@ -593,6 +594,30 @@ def _record_pricing_provenance(
         strict_effective,
         strict_origin,
         provenance["usage_captured"],
+    )
+
+
+@lru_cache(maxsize=1)
+def _decorator_only_optimize_params() -> frozenset[str]:
+    """Decorator-only ``@traigent.optimize`` options, derived (issue #1705).
+
+    Every ``_OPTIMIZE_DEFAULTS`` (decorator) key is decorator-only *unless*
+    it is one of ``.optimize()``'s own explicit signature parameters (which
+    can never reach ``**algorithm_kwargs``) or is on the call-time
+    allowlist. This makes the set self-updating: adding a new decorator-only
+    default to ``_OPTIMIZE_DEFAULTS`` gets it rejected at call time
+    automatically, with nothing else to remember to change.
+    """
+    # Local import: traigent.api.decorators imports OptimizedFunction at
+    # module scope, so importing it back at module scope here would be a
+    # circular import. Safe at call time -- both modules are fully loaded
+    # long before any .optimize() call happens.
+    from traigent.api.decorators import _OPTIMIZE_DEFAULTS
+
+    return (
+        frozenset(_OPTIMIZE_DEFAULTS)
+        - OptimizedFunction._EXPLICIT_OPTIMIZE_SIGNATURE_PARAMS
+        - OptimizedFunction._CALL_TIME_ALGORITHM_KWARGS_ALLOWLIST
     )
 
 
@@ -1361,71 +1386,94 @@ class OptimizedFunction(Generic[_P, _R]):
         )
         return cast(Callable[..., Any], application.wrapped_callable)
 
-    # Decorator-only parameters that MUST NOT be accepted as call-time
-    # ``.optimize(**algorithm_kwargs)`` keys. Before this guard they were
-    # silently absorbed into ``BaseOptimizer.algorithm_config`` with zero
-    # effect (issue #1683, Bug A: ``warm_start_from`` passed at call time was
-    # structurally dead but raised no error — no-silent-legacy policy).
+    # ------------------------------------------------------------------
+    # Call-time ``.optimize(**algorithm_kwargs)`` validation (issue #1705).
     #
-    # Keys listed here are the ``_OPTIMIZE_DEFAULTS`` decorator options that
-    # are (a) not explicit ``optimize()`` signature parameters and (b) never
-    # consumed from ``algorithm_kwargs`` anywhere downstream. Keys that ARE
-    # legitimately consumed downstream (``parallel_config``,
-    # ``max_total_examples``, ``samples_include_pruned``, ``max_examples``,
-    # ``plateau_window``, ``plateau_epsilon``, ``semantic_saturation``,
-    # ``cache_policy``, ``cost_limit``, ``cost_approved``, ``metric_*``,
-    # ``tie_breakers``, ``tvl_parameter_agents``, ``invocations_per_example``,
-    # algorithm-specific options like ``seed``/``parameter_order``) must stay
-    # OFF this list. General allowlist validation of every unknown kwarg is a
-    # tracked follow-up (see issue #1683).
-    _DECORATOR_ONLY_OPTIMIZE_PARAMS: frozenset[str] = frozenset(
+    # Source of truth is now an ALLOWLIST, not a hand-maintained denylist.
+    # Every name below is grep-verified as actually read from
+    # ``algorithm_kwargs``/``kwargs`` at call time somewhere downstream
+    # (this module, ``core/optimization_pipeline.py``,
+    # ``optimizers/grid.py``, ``optimizers/random.py``, ``optimizers/remote.py``,
+    # ``optimizers/interactive_optimizer.py``, ``api/decorators.py``'s
+    # ``_ALLOWED_RUNTIME_OVERRIDE_KEYS``). Everything else that used to reach
+    # ``.optimize()`` only because ``BaseOptimizer.__init__(**kwargs)``
+    # swallows unknown keys into ``algorithm_config`` with zero effect
+    # (issue #1683's root cause) is now rejected -- both a decorator-only
+    # option leaking to call time (the #1683/#1694 fix) and a plain typo of
+    # a real key (the general fix #1683 deferred, done here).
+    #
+    # Scope note (not fixed here): a cloud/"smart" algorithm (Bayesian,
+    # Optuna, ...) runs server-side and may accept algorithm-specific
+    # hyperparameters this repo has no local schema for (verified: no such
+    # hyperparameter name appears anywhere under ``traigent/``). ``seed`` is
+    # kept on the allowlist for exactly that reason, and because rejecting it
+    # would break the pre-existing call-time contract pinned by
+    # ``tests/unit/core/optimized_function_tests/test_optimize_calltime_kwarg_rejection.py``.
+    # A general schema for smart-algorithm kwargs is a further follow-up.
+    _CALL_TIME_ALGORITHM_KWARGS_ALLOWLIST: frozenset[str] = frozenset(
         {
-            "warm_start_from",
-            "eval_dataset",
-            "experiment_name",
-            "agent_name",
-            "run_title",
-            "run_description",
-            "default_config",
-            "constraints",
-            "safety_constraints",
-            "injection_mode",
-            "config_param",
-            "agents",
-            "agent_prefixes",
-            "agent_measures",
-            "global_measures",
-            "auto_load_best",
-            "load_from",
-            "config_id",
-            "best_config_source",
-            "best_config_strict",
-            "best_config_cache_dir",
-            "best_config_cache_ttl_seconds",
-            "best_config_stale_ok_ttl_seconds",
-            "enable_auto_load_dev_logs",
-            "smart_pruning",
-            "winner_stability_reps",
-            "mock_mode_config",
-            "evaluator",
-            "local_storage_path",
-            "minimal_logging",
-            "scoring_function",
-            "metric_functions",
-            "evaluation",
-            "injection",
-            "execution",
-            "mock",
-            "offline",
-            "framework_targets",
-            "auto_override_frameworks",
-            "effectuation",
-            "auto_detect_tvars",
-            "auto_detect_tvars_mode",
-            "auto_detect_tvars_min_confidence",
-            "auto_detect_tvars_include",
-            "auto_detect_tvars_exclude",
+            # Runtime overrides -- collect_orchestrator_kwargs() /
+            # api.decorators._ALLOWED_RUNTIME_OVERRIDE_KEYS.
+            "metric_limit",
+            "metric_name",
+            "metric_include_pruned",
+            "plateau_window",
+            "plateau_epsilon",
+            "semantic_saturation",
+            "cost_limit",
+            "cost_approved",
+            "estimated_calls_per_example",
+            "tie_breakers",
+            "tvl_parameter_agents",
+            # Decorator defaults that are ALSO legitimately re-applied at
+            # call time (dual-mode; must stay off the decorator-only set).
+            "parallel_config",
+            "max_total_examples",
+            "max_examples",  # optimization_pipeline.py: algorithm_kwargs.get("max_examples")
+            "samples_include_pruned",
+            # Algorithm-specific, call-time-only -- never a decorator default.
+            "cache_policy",  # collect_orchestrator_kwargs()
+            "invocations_per_example",  # popped before optimizer creation
+            "parameter_order",  # grid search iteration order
+            "order",  # alias of parameter_order
+            "max_grid_combinations",  # grid search
+            "random_seed",  # RandomSearchOptimizer
+            "seed",  # see scope note above
+            "objective_weights",  # BaseOptimizer; also the legacy call-time
+            # key _validate_objectives_input() pops and rejects with its own
+            # ValueError ("no longer supported") -- must reach that check,
+            # not be rejected here first.
+            "objective_orientations",  # legacy sibling of objective_weights,
+            # same pop-and-reject-downstream treatment.
+            "remote_client",  # RemoteOptimizer
+            "optimizer_ready_timeout",  # InteractiveOptimizer
+            "cloud_optimizer_ready_timeout",  # InteractiveOptimizer
         }
+    )
+
+    # ``.optimize()``'s own explicit signature parameters that also happen to
+    # be ``_OPTIMIZE_DEFAULTS`` decorator options. Python routes these to the
+    # named parameter, so they can never actually reach
+    # ``**algorithm_kwargs`` -- listed only so the derived decorator-only set
+    # below is provably exact (see ``_decorator_only_optimize_params``).
+    _EXPLICIT_OPTIMIZE_SIGNATURE_PARAMS: frozenset[str] = frozenset(
+        {
+            "algorithm",
+            "max_trials",
+            "custom_evaluator",
+            "configuration_space",
+            "objectives",
+            "tvl_spec",
+            "tvl_environment",
+            "tvl",
+        }
+    )
+
+    # Keys with their own dedicated rejection message below (not "unknown" --
+    # a removed/never-valid name with a specific, more helpful error).
+    # Excluded from the general allowlist check so that check fires.
+    _ALGORITHM_KWARGS_WITH_DEDICATED_REJECTION: frozenset[str] = frozenset(
+        {"parallel_trials"}
     )
 
     def _prepare_algorithm_kwargs(
@@ -1434,8 +1482,10 @@ class OptimizedFunction(Generic[_P, _R]):
         """Merge decorator overrides into algorithm kwargs and validate."""
         # Hard-fail on decorator-only params passed at call time (issue #1683
         # Bug A). Previously these were silently swallowed into the
-        # optimizer's algorithm_config and had no effect.
-        rejected = self._DECORATOR_ONLY_OPTIMIZE_PARAMS.intersection(algorithm_kwargs)
+        # optimizer's algorithm_config and had no effect. The rejected set is
+        # now derived from the allowlist above, not hand-maintained (#1705).
+        decorator_only = _decorator_only_optimize_params()
+        rejected = decorator_only.intersection(algorithm_kwargs)
         if rejected:
             rejected_names = ", ".join(sorted(rejected))
             raise TypeError(
@@ -1443,6 +1493,23 @@ class OptimizedFunction(Generic[_P, _R]):
                 "and is not accepted by .optimize() at call time; move it to "
                 f"the decorator: @traigent.optimize({sorted(rejected)[0]}=...). "
                 "Previously this was silently ignored (issue #1683)."
+            )
+
+        # General allowlist validation (issue #1705): a key that is neither a
+        # decorator option (handled above) nor on the call-time allowlist is
+        # unknown -- most likely a typo -- and must not be silently absorbed
+        # into BaseOptimizer.algorithm_config with zero effect.
+        unknown = (
+            set(algorithm_kwargs) - decorator_only
+        ) - self._CALL_TIME_ALGORITHM_KWARGS_ALLOWLIST
+        unknown -= self._ALGORITHM_KWARGS_WITH_DEDICATED_REJECTION
+        if unknown:
+            unknown_names = ", ".join(sorted(unknown))
+            raise TypeError(
+                f"Unknown keyword argument(s) to .optimize(): {unknown_names}. "
+                "Not a recognized @traigent.optimize decorator argument and not "
+                "consumed by any optimizer at call time; check for a typo "
+                "(issue #1705 -- previously silently ignored)."
             )
 
         decorator_overrides = getattr(self, "_decorator_runtime_overrides", {})
