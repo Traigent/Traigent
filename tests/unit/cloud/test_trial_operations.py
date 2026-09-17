@@ -147,7 +147,10 @@ class TestMeasuresDictValidationInSubmission:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Trial result metadata uses SDK version and does not emit raw execution_mode."""
+        """Traigent#2271 (P0): trial result metadata uses SDK version and
+        never emits a mode/execution_mode value derived from the legacy
+        execution_mode selector, even if a caller-supplied metadata dict
+        carries one."""
         monkeypatch.setenv("TRAIGENT_FORCE_VERSION", "9.8.6")
         mock_client = Mock()
         mock_client.backend_config = Mock()
@@ -159,15 +162,14 @@ class TestMeasuresDictValidationInSubmission:
             config={"temperature": 0.2},
             clean_metrics={"accuracy": 0.95},
             backend_status="COMPLETED",
-            mode="local",
-            metadata={"execution_mode": "local", "custom": "value"},
+            metadata={"execution_mode": "local", "mode": "local", "custom": "value"},
         )
 
         metadata = result_data["metadata"]
-        assert metadata["mode"] == "local"
         assert metadata["sdk_version"] == "9.8.6"
         assert metadata["custom"] == "value"
         assert "execution_mode" not in metadata
+        assert "mode" not in metadata
 
     def test_trial_result_data_snapshots_live_submission_dicts(self) -> None:
         """Submission payload dicts are detached before serialization."""
@@ -214,7 +216,6 @@ class TestMeasuresDictValidationInSubmission:
             config=config,
             clean_metrics=clean_metrics,
             backend_status="COMPLETED",
-            mode="local",
             metadata=backend_metadata,
         )
 
@@ -272,7 +273,6 @@ class TestMeasuresDictValidationInSubmission:
         mock_client.auth_manager = AsyncMock()
         mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
         mock_client._map_to_backend_status = Mock(return_value="COMPLETED")
-        mock_client._normalize_execution_mode = Mock(return_value="local")
         mock_client._sanitize_error_message = Mock(return_value="")
 
         ops = TrialOperations(mock_client)
@@ -312,7 +312,6 @@ class TestMeasuresDictValidationInSubmission:
                 config={"temperature": 0.2},
                 metrics={"accuracy": 0.95},
                 status="completed",
-                execution_mode="hybrid",
             )
 
         assert result is True
@@ -320,7 +319,9 @@ class TestMeasuresDictValidationInSubmission:
             mock_session.post.call_args.args[0]
             == "https://api.example.com/api/v1/sessions/session_123/results"
         )
-        mock_client._normalize_execution_mode.assert_called_once_with("hybrid")
+        posted_payload = mock_session.post.call_args.kwargs["json"]
+        assert "execution_mode" not in posted_payload
+        assert "mode" not in posted_payload.get("metadata", {})
 
     @pytest.mark.asyncio
     async def test_failed_trial_error_message_wire_key_is_error_message(self) -> None:
@@ -339,7 +340,6 @@ class TestMeasuresDictValidationInSubmission:
         mock_client.auth_manager = AsyncMock()
         mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
         mock_client._map_to_backend_status = Mock(return_value="FAILED")
-        mock_client._normalize_execution_mode = Mock(return_value="local")
         mock_client._sanitize_error_message = Mock(
             return_value="evaluation raised ValueError"
         )
@@ -399,7 +399,6 @@ class TestMeasuresDictValidationInSubmission:
         mock_client.auth_manager = AsyncMock()
         mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
         mock_client._map_to_backend_status = Mock(return_value="completed")
-        mock_client._normalize_execution_mode = Mock(return_value="local")
         mock_client._sanitize_error_message = Mock(return_value="")
 
         ops = TrialOperations(mock_client)
@@ -448,7 +447,6 @@ class TestMeasuresDictValidationInSubmission:
         mock_client.auth_manager = AsyncMock()
         mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
         mock_client._map_to_backend_status = Mock(return_value="completed")
-        mock_client._normalize_execution_mode = Mock(return_value="local")
         mock_client._sanitize_error_message = Mock(return_value="")
 
         ops = TrialOperations(mock_client)
@@ -499,7 +497,6 @@ class TestMeasuresDictValidationInSubmission:
         mock_client.auth_manager = AsyncMock()
         mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
         mock_client._map_to_backend_status = Mock(return_value="completed")
-        mock_client._normalize_execution_mode = Mock(return_value="local")
         mock_client._sanitize_error_message = Mock(return_value="")
 
         ops = TrialOperations(mock_client)
@@ -685,7 +682,6 @@ class TestPrivacyConfigRedactionSubmission:
         mock_client.auth_manager = AsyncMock()
         mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
         mock_client._map_to_backend_status = Mock(return_value="completed")
-        mock_client._normalize_execution_mode = Mock(return_value="hybrid")
         mock_client._sanitize_error_message = Mock(return_value="")
         return TrialOperations(mock_client)
 
@@ -840,7 +836,6 @@ class TestPrivacyConfigRedactionSubmission:
                 config={"system_prompt": sentinel, "temperature": 0.7},
                 metrics={"accuracy": 0.95},
                 status="completed",
-                execution_mode="hybrid",
             )
 
         assert result is True
@@ -970,7 +965,6 @@ class TestOfflineModeReturnsNone:
         mock_client.auth_manager = AsyncMock()
         mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
         mock_client._map_to_backend_status = Mock(return_value="ACTIVE")
-        mock_client._normalize_execution_mode = Mock(return_value="local")
         return TrialOperations(mock_client)
 
     @pytest.mark.asyncio
@@ -1337,7 +1331,6 @@ def _mk_submission_client(*, armed_sessions: set[str] | None = None):
             "failed": "FAILED",
         }.get(str(status).lower(), str(status).upper())
     )
-    mock_client._normalize_execution_mode = Mock(return_value="local")
     mock_client._sanitize_error_message = Mock(return_value="")
     return mock_client
 
@@ -1717,7 +1710,6 @@ class TestHandle400NotFound:
         mock_client.auth_manager = AsyncMock()
         mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
         mock_client._map_to_backend_status = Mock(return_value="COMPLETED")
-        mock_client._normalize_execution_mode = Mock(return_value="local")
         mock_client._sanitize_error_message = Mock(return_value="")
         return TrialOperations(mock_client)
 
@@ -1865,7 +1857,6 @@ class TestHandle400NotFound:
                 config={"temperature": 0.5},
                 metrics={"score": 0.8},
                 status="completed",
-                execution_mode="local",
             )
 
         # Must return None (transient/skipped), not False (hard failure)

@@ -2413,7 +2413,6 @@ class BackendSessionManager:
                 metrics=metrics_payload,
                 status=status,
                 error_message=trial_result.error_message,
-                execution_mode=cast(str | None, self._traigent_config.execution_mode),
                 metadata=metadata_payload,
             )
             submitted = (

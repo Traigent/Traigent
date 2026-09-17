@@ -934,18 +934,79 @@ class OptimizationOrchestrator:
             and not backend_egress_disabled(self.traigent_config)
         )
 
-    def _backend_optimization_strategy_for_run(self) -> dict[str, str] | None:
-        """Return the backend strategy for named managed algorithms."""
+    def _backend_optimization_strategy_for_run(self) -> dict[str, Any] | None:
+        """Return the ``optimization_strategy`` payload for backend session-create.
 
+        Traigent#2271: ALWAYS attaches canonical ``execution_options``
+        (``algorithm`` + ``offline``, plus a non-secret external-evaluator
+        marker when one is configured) for every backend-connected session —
+        not only named cloud-required smart algorithms. TraigentBackend #3255
+        labels each trial's mode from this session-level state
+        (``optimization_strategy.execution_options``); without it a connected
+        grid/random run defaulted to ``algorithm="auto"`` server-side and was
+        mislabeled "hybrid" instead of "local". Mirrors the JS SDK
+        (``traigent-js/src/optimization/hybrid.ts`` ``buildHybridOptimizationStrategy``),
+        which always sends the same nested shape.
+
+        Named cloud-required algorithms additionally keep the existing
+        top-level backend engine selection (``{"algorithm": "optuna",
+        "sampler": ...}``) — ``execution_options`` is merged in, never
+        replacing those keys.
+
+        Offline runs never reach here with effect: ``backend_session_manager
+        .create_session`` short-circuits to a local-only session before this
+        payload is ever sent (no new egress for ``offline=True``).
+        """
         policy = policy_from_config(self.traigent_config)
-        if policy is None or not policy_is_cloud_required(policy):
-            return None
-        strategy = backend_optimization_strategy_for_algorithm(policy.algorithm)
-        if strategy is None:
-            raise ConfigurationError(
-                unsupported_backend_smart_algorithm_message(policy.algorithm)
+
+        strategy: dict[str, Any] = {}
+        if policy is not None and policy_is_cloud_required(policy):
+            named_strategy = backend_optimization_strategy_for_algorithm(
+                policy.algorithm
             )
+            if named_strategy is None:
+                raise ConfigurationError(
+                    unsupported_backend_smart_algorithm_message(policy.algorithm)
+                )
+            strategy.update(named_strategy)
+
+        strategy["execution_options"] = self._canonical_execution_options(policy)
         return strategy
+
+    def _canonical_execution_options(self, policy: Any) -> dict[str, Any]:
+        """Build the canonical ``execution_options`` the backend's typed
+        session-create adapter reads (Traigent#2271):
+        ``TraigentBackend src/shared_infrastructure/types/execution_mode.py``
+        ``normalize_optimization_strategy_execution_surface`` /
+        ``canonicalize_execution_surface``, storing ``execution_options`` on
+        the session so #3255 can label every trial from it.
+        """
+        algorithm = policy.algorithm if policy is not None else "auto"
+        offline = bool(policy.offline) if policy is not None else False
+        options: dict[str, Any] = {"algorithm": algorithm, "offline": offline}
+        external_evaluator = self._external_evaluator_marker()
+        if external_evaluator is not None:
+            options["external_evaluator"] = external_evaluator
+        return options
+
+    def _external_evaluator_marker(self) -> dict[str, str] | None:
+        """Non-secret presence marker for a configured external-service
+        evaluator, in the shape TraigentBackend's ``_normalize_hybrid_api_options``
+        (same module) accepts.
+
+        That adapter requires the nested object to carry a non-empty
+        ``endpoint`` or ``transport_type`` — a bare boolean is rejected
+        (raises ``... must be an object``) — so this sends only
+        ``transport_type`` (a closed ``"http"``/``"mcp"``/``"auto"``
+        selector, never a secret or an address) and never ``endpoint`` or
+        ``auth_header``.
+        """
+        from traigent.evaluators.hybrid_api import HybridAPIEvaluator
+
+        evaluator = self.evaluator
+        if not isinstance(evaluator, HybridAPIEvaluator):
+            return None
+        return {"transport_type": evaluator.transport_type}
 
     def _optimizer_uses_remote_guidance(self) -> bool:
         """Whether the active optimizer would call remote next-trial guidance."""
