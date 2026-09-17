@@ -1954,3 +1954,75 @@ class TestIssue1704WeightedPathDegenerateRange:
         post_hoc = result.calculate_weighted_scores(objective_schema=schema)
         assert post_hoc["normalization_ranges"]["cost"] == (0.01, 0.01)
         assert post_hoc["best_weighted_config"] == terminal.best_config
+
+
+def _scoring_result():
+    """A result whose ranking eligibility EXCLUDES a trial that dominates on
+    both objectives — the shape that exposed the split between the range
+    source and the scored set."""
+    from traigent.api.types import OptimizationResult, TrialResult, TrialStatus
+
+    def trial(trial_id, accuracy, cost):
+        return TrialResult(
+            trial_id=trial_id,
+            config={},
+            metrics={"accuracy": accuracy, "cost": cost},
+            status=TrialStatus.COMPLETED,
+            duration=0.1,
+            timestamp=0.0,
+        )
+
+    result = OptimizationResult(
+        trials=[
+            trial("mid-analog", 0.80, 0.010),
+            trial("low", 0.60, 0.001),
+            trial("dominant-ineligible", 0.99, 0.0005),
+        ],
+        best_config={},
+        best_score=0.0,
+        optimization_id="p",
+        duration=1.0,
+        convergence_info={},
+        status="completed",
+        objectives=["accuracy", "cost"],
+        algorithm="grid",
+        timestamp=0.0,
+    )
+    result.ranking_eligible_trial_ids = {"mid-analog", "low"}
+    return result
+
+
+def test_score_trials_scores_only_ranking_eligible_trials() -> None:
+    """The scored set must be the set the objective ranges were built from.
+
+    Scoring a wider set normalizes an excluded trial against a range that does
+    not contain it, so a dominant ineligible trial outranks every legitimate
+    candidate post-hoc — disagreeing with the terminal winner.
+    """
+    result = _scoring_result()
+
+    scored = result.score_trials(
+        objective_weights={"accuracy": 0.5, "cost": 0.5},
+        minimize_objectives=["cost"],
+    )
+
+    assert [entry["trial_id"] for entry in scored] == ["mid-analog", "low"]
+
+
+def test_score_trials_never_exceeds_the_documented_normalized_range() -> None:
+    """`score_trials` documents per-objective values as normalized 0..1.
+
+    On the legacy no-schema path the normalizer does not clip, so scoring a
+    trial outside the range produced weighted scores above 1.0 — the docstring
+    and the output disagreed.
+    """
+    result = _scoring_result()
+
+    scored = result.score_trials(
+        objective_weights={"accuracy": 0.5, "cost": 0.5},
+        minimize_objectives=["cost"],
+    )
+
+    assert scored, "expected at least one scored trial"
+    for entry in scored:
+        assert 0.0 <= entry["weighted"] <= 1.0, entry

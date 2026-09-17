@@ -1970,11 +1970,18 @@ class OptimizationResult:
         minimize_objectives: list[str],
         objective_schema: Any | None,
     ) -> list[tuple[TrialResult, float]]:
-        """Compute weighted scores for each successful trial."""
+        """Compute weighted scores for each ranking-eligible trial.
+
+        Iterates ``_ranking_source_trials``, the same set the objective ranges
+        are computed from. Scoring a wider set than the ranges were built from
+        let an ineligible trial win: it is normalized against a range that
+        excludes it, so a dominant one scores above every eligible candidate --
+        and on the legacy path, above 1.0.
+        """
 
         weighted_scores: list[tuple[TrialResult, float]] = []
 
-        for trial in self.successful_trials:
+        for trial in self._ranking_source_trials:
             if not trial.metrics:
                 continue
 
@@ -2071,7 +2078,7 @@ class OptimizationResult:
                 - ``normalized``: Per-objective normalized values (0..1).
                 - ``weighted``: Weighted-sum score using sum-to-one weights.
         """
-        if not self.successful_trials:
+        if not self._ranking_source_trials:
             return []
 
         (
@@ -2085,7 +2092,8 @@ class OptimizationResult:
         ranges = self._calculate_objective_ranges()
 
         per_trial: list[dict[str, Any]] = []
-        for trial in self.successful_trials:
+        # Same set the ranges came from -- see _compute_weighted_scores.
+        for trial in self._ranking_source_trials:
             if not trial.metrics:
                 per_trial.append(
                     {"trial_id": trial.trial_id, "normalized": {}, "weighted": 0.0}
