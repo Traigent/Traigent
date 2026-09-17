@@ -34,6 +34,7 @@ from traigent.evaluators.metrics_tracker import (
     extract_llm_metrics,
     is_reserved_metric_key,
 )
+from traigent.utils.env_config import is_truthy
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
 from traigent.utils.exceptions import ConfigurationError, EvaluationError
@@ -1631,7 +1632,11 @@ class BaseEvaluator(ABC):
         This simulates realistic LLM latency in mock LLM mode to make parallel execution
         visible in traces. Uses asyncio.sleep to not block the event loop.
         """
-        if os.environ.get("TRAIGENT_MOCK_LLM", "").lower() not in ("true", "1", "yes"):
+        # Use the canonical truthy parser (accepts 1/true/yes/on,
+        # case-insensitive) so this agrees with env_config.is_mock_llm();
+        # the previous tuple omitted "on", silently dropping
+        # TRAIGENT_MOCK_DELAY_MS for that spelling (issue #1766).
+        if not is_truthy(os.environ.get("TRAIGENT_MOCK_LLM")):
             return
 
         delay_str = os.environ.get("TRAIGENT_MOCK_DELAY_MS", "")
