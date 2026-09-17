@@ -1166,19 +1166,25 @@ class ResponseHandler(ABC):
         """
         cost_metrics = CostMetrics()
 
-        # 1. Generic ``response.cost`` attribute (dict or scalar).
+        # 1. Generic ``response.cost`` attribute (dict or scalar). This is an
+        #    explicit provider-reported charge, so it is retained even when
+        #    it is exactly 0.0 (#2274) — return whenever a cost was actually
+        #    parsed, not only when it happens to be positive.
+        response_cost_found = False
         if hasattr(response, "cost"):
             try:
                 if isinstance(response.cost, dict):
                     cost_metrics.input_cost = response.cost.get("input", 0.0)
                     cost_metrics.output_cost = response.cost.get("output", 0.0)
                     cost_metrics.total_cost = response.cost.get("total", 0.0)
+                    response_cost_found = True
                 else:
                     cost_metrics.total_cost = float(response.cost)
+                    response_cost_found = True
             except (TypeError, ValueError) as e:
                 logger.debug(f"Failed to parse cost from response: {e}")
 
-        if cost_metrics.total_cost > 0.0:
+        if response_cost_found:
             return cost_metrics
 
         # 2. LiteLLM Usage.cost field — an explicit provider-reported charge.

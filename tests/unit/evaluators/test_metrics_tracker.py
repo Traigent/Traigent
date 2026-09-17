@@ -646,6 +646,31 @@ class TestOpenRouterCostExtraction:
         assert cost.total_cost == 0.0
         assert cost.cost_estimated is False
 
+    def test_explicit_zero_response_cost_is_retained_over_hidden_estimate(self):
+        """An explicit ``response.cost == 0.0`` (provider reports free) must
+        not be replaced by a nonzero ``_hidden_params`` estimate (#2274).
+
+        Same defect class as the ``usage.cost`` case above, but for the
+        generic ``response.cost`` source that is checked first in
+        ``extract_metadata_cost``.
+        """
+        from traigent.evaluators.metrics_tracker import GenericResponseHandler
+
+        class MockHiddenParams(dict):
+            pass
+
+        class MockLiteLLMResponse:
+            model = "openrouter/some/free-model"
+            cost = 0.0  # Explicit provider charge: free.
+            _hidden_params = MockHiddenParams(response_cost=0.01)  # Stale estimate.
+            response_time_ms = 0.0
+
+        handler = GenericResponseHandler()
+        cost = handler.extract_metadata_cost(MockLiteLLMResponse())
+
+        assert cost.total_cost == 0.0
+        assert cost.cost_estimated is False
+
     def test_hidden_params_fallback_is_flagged_as_estimated(self):
         """When no explicit provider charge exists, the _hidden_params
         fallback is used and flagged via ``cost_estimated`` (#2274)."""
@@ -672,8 +697,11 @@ class TestOpenRouterCostExtraction:
         assert cost.total_cost == pytest.approx(0.00456)
         assert cost.cost_estimated is True
 
-    def test_zero_response_cost_falls_through_to_usage_cost(self):
-        """A zero response_cost in _hidden_params does not block usage.cost."""
+    def test_usage_cost_is_returned_before_hidden_params_is_inspected(self):
+        """An explicit ``usage.cost`` short-circuits before ``_hidden_params``
+        is inspected at all — the zero ``response_cost`` here is never
+        reached, since ``usage.cost`` (checked first, #2274) already returns.
+        """
         from traigent.evaluators.metrics_tracker import GenericResponseHandler
 
         class MockUsage:
@@ -695,7 +723,7 @@ class TestOpenRouterCostExtraction:
         cost = handler.extract_metadata_cost(MockLiteLLMResponse())
 
         assert cost.total_cost == pytest.approx(0.00333), (
-            "A zero response_cost must be treated as absent so usage.cost is used"
+            "usage.cost must be returned directly without inspecting _hidden_params"
         )
 
     def test_no_provider_cost_returns_zero(self):
