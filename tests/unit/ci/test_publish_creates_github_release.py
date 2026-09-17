@@ -59,9 +59,7 @@ def test_release_job_also_runs_for_a_workflow_dispatch_pypi_publish() -> None:
 
     publish_job = _workflow()["jobs"]["publish"]
     publish_step = next(
-        step
-        for step in publish_job["steps"]
-        if step.get("name") == "Publish to PyPI"
+        step for step in publish_job["steps"] if step.get("name") == "Publish to PyPI"
     )
     # Same production-publish test the upstream step already uses, so the
     # release job can never drift narrower (or wider) than it again.
