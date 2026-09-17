@@ -545,7 +545,14 @@ def test_matched_param_names_covers_every_injectable_kind() -> None:
     """
     import inspect
 
-    def every_kind(pos_only: int = 1, /, normal: int = 2, *args: int, kw_only: int = 3, **kwargs: int) -> None:
+    def every_kind(
+        pos_only: int = 1,
+        /,
+        normal: int = 2,
+        *args: int,
+        kw_only: int = 3,
+        **kwargs: int,
+    ) -> None:
         return None
 
     signature = inspect.signature(every_kind)
