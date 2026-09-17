@@ -8,6 +8,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Unrelated inline datasets no longer share one portal history.** Every inline
+  example list was named `inline_dataset`, and that name was sent as the dataset
+  identity, so all inline runs of one agent grouped together in history. The generated
+  name is no longer sent as an identity. New `EvaluationOptions(dataset_id="...")` lets you
+  declare a stable dataset id that survives content edits and `Dataset.name` renames
+  (stripped and Unicode-NFC-normalized, 1-255 characters after normalization, otherwise a
+  validation error). Two spellings of one name — composed and decomposed — are therefore one
+  id, not two histories. An explicit id containing a control or zero-width character is
+  rejected naming the codepoint, rather than silently rewritten; the same characters in a
+  `Dataset.name` are cleaned out instead, so a dataset name can never fail a run. It is sent on the connected
+  grid/random and managed session-create paths. A run with neither an explicit id nor a
+  named `Dataset` logs one warning that its history will show "Dataset not linked".
+  Offline runs record the identity locally and `traigent sync` sends it; sessions recorded
+  before this change sync with no identity. A real `Dataset(name="support-v1")` keeps the
+  same identity as before.
+
 - **Breaking: `PromptRewriter.rewrite()` no longer accepts `plan`, and `TextDocument` no
   longer exposes `trainable`.** Both were dead: `rewrite()` ignored `plan` entirely and
   nothing in the package ever read `trainable`. `PromptRewriter` is exported from

@@ -633,6 +633,7 @@ class OptimizedFunction(Generic[_P, _R]):
         evaluator_definition_id: str | None = None,
         effectuation: bool = False,
         task_type: str | None = None,
+        dataset_id: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize optimized function wrapper.
@@ -727,6 +728,7 @@ class OptimizedFunction(Generic[_P, _R]):
             evaluator_definition_id,
             effectuation,
             task_type,
+            dataset_id,
         )
 
         # Handle configuration space
@@ -768,6 +770,7 @@ class OptimizedFunction(Generic[_P, _R]):
         evaluator_definition_id,
         effectuation,
         task_type=None,
+        dataset_id=None,
     ) -> None:
         """Store core initialization parameters."""
         self.func = func
@@ -832,6 +835,15 @@ class OptimizedFunction(Generic[_P, _R]):
             if isinstance(task_type, str) and task_type.strip()
             else None
         )
+        # Explicit, stable dataset identity for portal history (see
+        # EvaluationOptions.dataset_id). Validated here too so a direct
+        # OptimizedFunction caller fails loudly at construction, never mid-run.
+        from traigent.cloud.models import normalize_declared_dataset_id
+
+        try:
+            self.dataset_id: str | None = normalize_declared_dataset_id(dataset_id)
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
 
     def _is_cloud_execution_mode(self) -> bool:
         return False
@@ -2311,6 +2323,7 @@ class OptimizedFunction(Generic[_P, _R]):
         )
         orchestrator.evaluator_definition_id = self.evaluator_definition_id
         orchestrator.task_type = self.task_type
+        orchestrator.dataset_id = self.dataset_id
         # RFC 0001 §3.4: forward the user-attached knob resolver so the
         # public optimize() path resolves Fixed/CVAR bindings in-trial.
         # Attribute seam (like promotion_gate): set
@@ -2687,6 +2700,7 @@ class OptimizedFunction(Generic[_P, _R]):
                 fingerprint_meta=artifact_fingerprint_payload.get("fingerprint_meta"),
                 evaluator_definition_id=self.evaluator_definition_id,
                 task_type=self.task_type,
+                dataset_id=self.dataset_id,
                 context=traigent_config,
                 **optimizer_kwargs,
             )

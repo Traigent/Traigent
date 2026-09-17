@@ -18,6 +18,10 @@ import requests  # Always needed for synchronous operations
 
 from traigent.cloud.api_operations import _typed_configuration_space
 from traigent.cloud.client import raise_if_cloud_egress_disabled
+from traigent.cloud.models import (
+    DECLARED_DATASET_IDENTITY_METADATA_KEY,
+    dataset_identity_from_record,
+)
 from traigent.cloud.url_security import validate_cloud_base_url
 
 try:
@@ -373,6 +377,15 @@ class SyncManager:
                 "source": "offline_sync",
             },
         }
+        # Declared dataset identity: sent only when the local record persisted
+        # one at creation (the value the live create would have sent). Legacy
+        # records without it send none -- identity is never invented here, and
+        # the "Local Dataset <function>" display label above is never promoted.
+        session_create.update(
+            dataset_identity_from_record(
+                (session.metadata or {}).get(DECLARED_DATASET_IDENTITY_METADATA_KEY)
+            )
+        )
 
         return {
             "session_create": session_create,
