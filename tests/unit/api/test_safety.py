@@ -773,9 +773,9 @@ class TestAvailablePresets:
             "safety_score",
         }
         for key in non_ragas_keys:
-            assert (
-                key in presets
-            ), f"Expected '{key}' in presets, got {list(presets.keys())}"
+            assert key in presets, (
+                f"Expected '{key}' in presets, got {list(presets.keys())}"
+            )
 
 
 class TestDecoratorIntegration:
