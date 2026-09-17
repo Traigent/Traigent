@@ -469,8 +469,14 @@ class TestTextDocument:
         assert doc.to_config_value() == ["base skill"]
         assert normalize_config_value(doc) == ["base skill"]
         assert is_parameter_range(doc)
-        assert doc.trainable is True
         assert doc.get_default() is None
+
+    def test_text_document_has_no_dead_trainable_flag(self):
+        """Regression for issue #2098: `trainable` had zero consumers and was
+        removed; consumers detect a text-document parameter via isinstance."""
+        doc = TextDocument("base skill", name="doc")
+
+        assert not hasattr(doc, "trainable")
 
     def test_text_document_auto_naming(self):
         from traigent.api.parameter_ranges import _process_param_entry

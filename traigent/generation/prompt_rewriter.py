@@ -1,10 +1,12 @@
 """Client-side prompt rewrite.
 
 Builds a meta-prompt from the user's LOCALLY-held prompt variants and failing
-example tuples plus the plan's action verb, calls the user's own LLM, and folds
-validated candidates into the config space as new ``Choices``. The optimizer
-searches the expanded space with zero optimizer changes. No content leaves the
-client; Traigent only ever issued the opaque plan.
+example tuples, calls the user's own LLM, and folds validated candidates into
+the config space as new ``Choices``. The optimizer searches the expanded space
+with zero optimizer changes. No content leaves the client; Traigent only ever
+issued the opaque plan (fetched by the caller to keep the guided-generation
+loop's backend-plan-required invariant; a rewrite plan carries no content that
+would change how this meta-prompt is built, so it is not threaded in here).
 """
 
 from __future__ import annotations
@@ -15,7 +17,6 @@ from typing import Any
 from traigent.api.parameter_ranges import Choices
 
 from .llm_provider import RewriteLLM, resolve_rewrite_llm
-from .models import GuidancePlan
 from .options import PromptRewriteOptions
 from .validators import clean_prompt_candidates, extract_json_block
 
@@ -70,7 +71,6 @@ class PromptRewriter:
         self,
         current_variants: Sequence[str],
         weak_examples: Sequence[WeakExample] = (),
-        plan: GuidancePlan | None = None,
     ) -> list[str]:
         """Return validated, de-duplicated new prompt candidates (never the originals)."""
         n = self._options.candidates_per_round

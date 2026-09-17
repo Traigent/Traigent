@@ -8,6 +8,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Breaking: `PromptRewriter.rewrite()` no longer accepts `plan`, and `TextDocument` no
+  longer exposes `trainable`.** Both were dead: `rewrite()` ignored `plan` entirely and
+  nothing in the package ever read `trainable`. `PromptRewriter` is exported from
+  `traigent.generation` (`__all__`), so this is a source-breaking change for any caller
+  passing `plan=` or a third positional argument — those now raise `TypeError` rather
+  than being silently ignored, and reading `.trainable` raises `AttributeError`. The
+  TypeScript SDK's rewriter never had the parameter, so this restores cross-SDK parity.
+  Remove the argument at the call site; there is no replacement, because it never had an
+  effect.
+
 - **A model with no price is no longer scored as free when you optimize for cost.**
   Previously a call whose model had no price table entry and no provider-reported cost
   was recorded as `$0.00`, and because the optimizer minimizes cost it ranked that
