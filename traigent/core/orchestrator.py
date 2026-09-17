@@ -22,6 +22,7 @@ from traigent.api.agent_inference import (
     build_agent_configuration,
     extract_parameter_agents,
 )
+from traigent.api.safety import CompoundSafetyConstraint, SafetyConstraint
 from traigent.api.types import (
     AgentConfiguration,
     AgentDefinition,
@@ -398,7 +399,18 @@ class OptimizationOrchestrator:
         default_config = kwargs.pop("default_config", None)
         combined_constraints = list(raw_constraints or [])
         combined_constraints.extend(raw_safety_constraints or [])
+        # _init_constraints excludes mode == "soft" constraints (every
+        # safety_constraints entry) from the hard pre/post-eval lists below, so
+        # combining the two lists here is safe: a safety constraint never reaches
+        # enforce_constraints and cannot fail a trial on its own.
         self._init_constraints(combined_constraints)
+        # Kept separately (not just via _constraints_post_eval) so
+        # _configure_stop_conditions can wire the statistical chance-constraint
+        # halt (SafetyConstraintStopCondition, stop_reason="safety_constraint")
+        # in addition to the per-trial reject/accept behavior above.
+        self._safety_constraints: list[SafetyConstraint | CompoundSafetyConstraint] = (
+            list(raw_safety_constraints or [])
+        )
 
         self.objectives, self.objective_schema = prepare_objectives(
             objectives, objective_schema
@@ -601,12 +613,26 @@ class OptimizationOrchestrator:
     def _init_constraints(
         self, raw_constraints: list[Callable[..., bool]] | None
     ) -> None:
-        """Initialize pre and post evaluation constraints."""
+        """Initialize pre and post evaluation constraints.
+
+        A constraint whose ``mode`` attribute is ``"soft"`` (the statistical
+        chance-constraint family -- see ``traigent.api.safety.SafetyConstraint``)
+        is never added to ``_constraints_pre_eval``/``_constraints_post_eval``:
+        those lists feed ``enforce_constraints``, which raises on a single
+        failure and fails the trial. A soft constraint's per-trial outcome is
+        instead evidence for its own statistical stop condition
+        (``SafetyConstraintStopCondition``, wired separately in
+        ``_configure_stop_conditions``) -- one violating trial should not by
+        itself end the run. A plain constraint callable has no ``mode``
+        attribute and defaults to hard, unaffected by this check.
+        """
         self._constraints_pre_eval: list[Callable[..., bool]] = []
         self._constraints_post_eval: list[Callable[..., bool]] = []
         if not raw_constraints:
             return
         for constraint in raw_constraints:
+            if getattr(constraint, "mode", "hard") == "soft":
+                continue
             if constraint_requires_metrics(constraint):
                 self._constraints_post_eval.append(constraint)
             else:
@@ -820,6 +846,7 @@ class OptimizationOrchestrator:
             metric_name=metric_name,
             metric_include_pruned=metric_include_pruned,
             semantic_saturation=self.config.get("semantic_saturation"),
+            safety_constraints=self._safety_constraints,
         )
 
         self._setup_convergence_condition()
@@ -4873,6 +4900,7 @@ class OptimizationOrchestrator:
                 "metric_limit": "metric_limit",
                 "convergence": "convergence",
                 "semantic_saturation": "semantic_saturation",
+                "safety_constraint": "safety_constraint",
             }
             mapped_reason = reason_mapping.get(reason, "condition")
             if (
