@@ -275,7 +275,9 @@ class TestErrorScenarios:
             )
         finally:
             try:
-                os.chmod(restricted_file, 0o644)
+                # Restore owner-only access (no group/other bits) before
+                # cleanup -- only this process ever needs to touch the file.
+                os.chmod(restricted_file, 0o600)
                 os.unlink(restricted_file)
             except OSError:
                 pass

@@ -204,6 +204,7 @@ def test_stop_conditions_exports_are_explicit():
         "MaxTrialsStopCondition",
         "MetricLimitStopCondition",
         "PlateauAfterNStopCondition",
+        "SafetyConstraintStopCondition",
         "SemanticSaturationStopCondition",
         "StopCondition",
     }

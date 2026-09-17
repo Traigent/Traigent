@@ -24,6 +24,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   before this change sync with no identity. A real `Dataset(name="support-v1")` keeps the
   same identity as before.
 
+- **Breaking: `PromptRewriter.rewrite()` no longer accepts `plan`, and `TextDocument` no
+  longer exposes `trainable`.** Both were dead: `rewrite()` ignored `plan` entirely and
+  nothing in the package ever read `trainable`. `PromptRewriter` is exported from
+  `traigent.generation` (`__all__`), so this is a source-breaking change for any caller
+  passing `plan=` or a third positional argument — those now raise `TypeError` rather
+  than being silently ignored, and reading `.trainable` raises `AttributeError`. The
+  TypeScript SDK's rewriter never had the parameter, so this restores cross-SDK parity.
+  Remove the argument at the call site; there is no replacement, because it never had an
+  effect.
+
 - **A model with no price is no longer scored as free when you optimize for cost.**
   Previously a call whose model had no price table entry and no provider-reported cost
   was recorded as `$0.00`, and because the optimizer minimizes cost it ranked that
@@ -98,6 +108,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **The run's finalize request now carries a selection receipt.** In non-strict modes,
+  when the SDK selects a winner, the `session_aggregation` sent on session finalize
+  includes `selection`: the winning trial id, the exact ranking-eligible trial ids it
+  was chosen over (unique, sorted), their count and a `sha256:` digest, the SDK's selection reason code, and the
+  winner-vs-runner-up margin as already computed for `result.best_config_margin`. The
+  Backend binds it to the session's own trials; the SDK never recomputes ranking. The
+  receipt carries only ids, counts, a digest, bounded numbers and labels — no config
+  values, prompts, or example content — and is rebuilt from an allowlist at egress. No
+  winner means no `selection` key, and strict (certified) mode sends no receipt at all.
+  Duplicate ids in the eligible set are never merged: the receipt is withheld with a
+  count-only warning. A margin with a non-finite number, an inverted `ci95`, a winner
+  different from the receipt's, or more configs than eligible trials is omitted rather
+  than sent. Requires the TraigentSchema build pinned in `scripts/ci/schema-pin.txt`
+  (now `df06e6dc`).
 - **Each run records where its prices came from.** `result.metadata["pricing"]` holds
   the LiteLLM price-table source (`local` or `remote`, from LiteLLM 1.93), any fetch
   fallback reason, and whether strict cost accounting was on and why. It is attached

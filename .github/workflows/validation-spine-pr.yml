@@ -72,7 +72,7 @@ jobs:
       # `_PYTHON_REPOS` are simply absent from this CI checkout, which
       # the spine handles by skipping missing dirs.
       - name: Checkout product repo
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 1
@@ -101,7 +101,7 @@ jobs:
         id: spine-checkout
         continue-on-error: true
         if: steps.spine-app-token.outputs.token != ''
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           repository: Traigent/traigent-validation-spine
@@ -149,7 +149,7 @@ jobs:
 
       - name: Set up Python 3.11
         if: env.SPINE_AVAILABLE == 'true'
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
 
@@ -250,7 +250,7 @@ jobs:
 
       - name: Upload spine gap artifacts
         if: always() && env.SPINE_AVAILABLE == 'true'
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: validation-spine-gaps
           path: .spine-health/

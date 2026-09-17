@@ -19,7 +19,7 @@ npx skills add Traigent/traigent-skills --skill '*'
 
 **Install only the Python entry points:**
 ```bash
-npx skills add Traigent/traigent-skills --skill traigent --skill traigent-quickstart
+npx skills add Traigent/traigent-skills --skill traigent-boost-agent --skill traigent-setup-quickstart
 ```
 
 ## What the Skill Does
@@ -32,4 +32,4 @@ npx skills add Traigent/traigent-skills --skill traigent --skill traigent-quicks
 
 ## View the Skills
 
-[Read the canonical skill instructions →](https://github.com/Traigent/traigent-skills/tree/main/skills/traigent)
+[Read the canonical skill instructions →](https://github.com/Traigent/traigent-skills/tree/main/skills/traigent-boost-agent)

@@ -310,6 +310,39 @@ except ImportError:
             except TypeError:
                 span.set_status("ERROR")
 
+    # #1894: spans are opened with ``record_exception=False`` and
+    # ``set_status_on_exception=False``. OpenTelemetry's defaults would attach
+    # the raw exception message and stacktrace as an ``exception`` event and a
+    # raw ``"<Type>: <message>"`` status description, bypassing
+    # ``_scrub_error_text``. These kwargs are passed to every span below.
+    _SPAN_EXCEPTION_KWARGS: dict[str, bool] = {
+        "record_exception": False,
+        "set_status_on_exception": False,
+    }
+
+    def _record_scrubbed_exception(span: Span | None, exc: BaseException) -> None:
+        """Record an exception escaping a span, with its text scrubbed.
+
+        Replaces OpenTelemetry's automatic ``record_exception``: the event keeps
+        the ``exception`` name and ``exception.type`` so downstream consumers
+        still see a failed span, but ``exception.message`` goes through
+        ``_scrub_error_text`` and no stacktrace is attached (a formatted
+        traceback repeats the raw message and chained exception text).
+        """
+        if span is None:
+            return
+        is_recording = getattr(span, "is_recording", None)
+        if callable(is_recording) and not is_recording():
+            return
+        span.add_event(
+            "exception",
+            {
+                "exception.type": type(exc).__qualname__,
+                "exception.message": _scrub_error_text(exc),
+            },
+        )
+        _set_error_status(span, f"{type(exc).__name__}: {exc}")
+
     def _set_session_span_attributes(
         span: Span,
         function_name: str,
@@ -370,7 +403,9 @@ except ImportError:
         )
 
         try:
-            with tracer.start_as_current_span(span_name) as span:
+            with tracer.start_as_current_span(
+                span_name, **_SPAN_EXCEPTION_KWARGS
+            ) as span:
                 _set_session_span_attributes(
                     span,
                     function_name,
@@ -380,7 +415,11 @@ except ImportError:
                     objectives,
                     config_space,
                 )
-                yield span
+                try:
+                    yield span
+                except BaseException as exc:
+                    _record_scrubbed_exception(span, exc)
+                    raise
         finally:
             if token is not None and otel_context:
                 otel_context.detach(token)
@@ -474,7 +513,7 @@ except ImportError:
             if config_summary
             else f"trial {display_number}"
         )
-        with tracer.start_as_current_span(span_name) as span:
+        with tracer.start_as_current_span(span_name, **_SPAN_EXCEPTION_KWARGS) as span:
             span.set_attribute("trial.id", trial_id)
             span.set_attribute("trial.number", trial_number)
             span.set_attribute("trial.display_number", display_number)
@@ -483,7 +522,11 @@ except ImportError:
                 span.set_attribute("trial.config", json.dumps(redacted_config))
             except (TypeError, ValueError):
                 span.set_attribute("trial.config", str(redacted_config))
-            yield span
+            try:
+                yield span
+            except BaseException as exc:
+                _record_scrubbed_exception(span, exc)
+                raise
 
     def record_trial_result(
         span: Span | None,
@@ -544,7 +587,7 @@ except ImportError:
             if input_preview
             else f"example {example_index}"
         )
-        with tracer.start_as_current_span(span_name) as span:
+        with tracer.start_as_current_span(span_name, **_SPAN_EXCEPTION_KWARGS) as span:
             span.set_attribute("example.id", example_id)
             span.set_attribute("example.index", example_index)
             if input_data:
@@ -576,7 +619,11 @@ except ImportError:
                         "example.expected_output",
                         _scrub_pii_text(str(scrubbed_expected))[:200],
                     )
-            yield span
+            try:
+                yield span
+            except BaseException as exc:
+                _record_scrubbed_exception(span, exc)
+                raise
 
     def record_example_result(
         span: Span | None,

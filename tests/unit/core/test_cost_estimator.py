@@ -311,6 +311,49 @@ class TestEstimateOptimizationCost:
         # Total = 50 * 10 * 0.01 * 1.2 = 6.0
         assert cost == pytest.approx(6.0)
 
+    def test_estimated_calls_per_example_multiplies_cost(self) -> None:
+        """issue #1750: a declared calls-per-example multiplier scales the estimate."""
+        enforcer = MagicMock(is_mock_mode=False)
+        estimator = CostEstimator(
+            enforcer,
+            max_trials=5,
+            max_total_examples=None,
+            estimated_calls_per_example=4,
+        )
+        dataset = _FakeDataset()
+        cost = estimator.estimate_optimization_cost(dataset)
+        # 50 * 5 * 0.0675 * 4 calls * 1.2 = 81.0 (4x the single-call estimate)
+        assert cost == pytest.approx(81.0)
+
+    def test_default_calls_per_example_is_one(self) -> None:
+        """Omitting the hint must reproduce the pre-#1750 single-call estimate."""
+        enforcer = MagicMock(is_mock_mode=False)
+        with_default = CostEstimator(enforcer, max_trials=5, max_total_examples=None)
+        explicit_one = CostEstimator(
+            enforcer,
+            max_trials=5,
+            max_total_examples=None,
+            estimated_calls_per_example=1,
+        )
+        dataset = _FakeDataset()
+        assert with_default.estimate_optimization_cost(dataset) == pytest.approx(
+            explicit_one.estimate_optimization_cost(dataset)
+        )
+
+    @pytest.mark.parametrize("bad_value", [0, -1, 2.5, True, "4"])
+    def test_invalid_calls_per_example_falls_back_to_one(self, bad_value) -> None:
+        """Invalid hints must not silently zero out or corrupt the estimate."""
+        enforcer = MagicMock(is_mock_mode=False)
+        estimator = CostEstimator(
+            enforcer,
+            max_trials=5,
+            max_total_examples=None,
+            estimated_calls_per_example=bad_value,
+        )
+        dataset = _FakeDataset()
+        # 50 * 5 * 0.0675 * 1.2 = 20.25 (same as the untouched default)
+        assert estimator.estimate_optimization_cost(dataset) == pytest.approx(20.25)
+
 
 # ---------------------------------------------------------------------------
 # check_cost_approval
@@ -367,6 +410,28 @@ class TestCheckCostApproval:
         assert "cost_approved=True" in message
         assert "TRAIGENT_CUSTOM_MODEL_PRICING_FILE" in message
         assert "TRAIGENT_CUSTOM_MODEL_PRICING_JSON" in message
+
+    def test_declined_message_states_calls_per_example_assumption(self) -> None:
+        """issue #1750 item 5: the gate message must state its call-count assumption."""
+        enforcer = MagicMock(is_mock_mode=False)
+        enforcer.check_and_approve.return_value = False
+        enforcer.config.limit = 1.0
+        estimator = CostEstimator(
+            enforcer,
+            max_trials=5,
+            max_total_examples=None,
+            estimated_calls_per_example=4,
+        )
+
+        with (
+            patch("traigent.core.cost_estimator.is_mock_llm", return_value=False),
+            pytest.raises(CostLimitExceeded) as exc_info,
+        ):
+            estimator.check_cost_approval(_FakeDataset())
+
+        message = str(exc_info.value)
+        assert "4 LLM call(s) per example" in message
+        assert "estimated_calls_per_example" in message
 
     def test_declined_cost_limit_is_catchable_as_optimization_error(self) -> None:
         enforcer = MagicMock(is_mock_mode=False)
