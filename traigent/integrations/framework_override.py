@@ -30,6 +30,7 @@ from typing import Any, cast, get_type_hints
 
 from ..config.context import get_config
 from ..config.types import TraigentConfig
+from ..utils.exceptions import ConfigurationError
 from ..utils.logging import get_logger
 
 # Import BaseOverrideManager from the canonical location
@@ -42,6 +43,53 @@ logger = get_logger(__name__)
 
 # Backwards compatibility alias
 LegacyBaseOverrideManager = BaseOverrideManager
+
+# Names handled internally as built-in mock classes (never resolved via import).
+_BUILTIN_MOCK_TARGETS = frozenset({"MockOpenAI", "MockLangChainOpenAI"})
+
+
+def _is_dotted_class_path(target: str) -> bool:
+    """True for a dotted ``module.ClassName`` path whose parts are identifiers.
+
+    ``str.isidentifier`` (not an ASCII regex) so non-ASCII identifiers are
+    accepted and a trailing newline is rejected.
+    """
+    parts = target.split(".")
+    return len(parts) >= 2 and all(part.isidentifier() for part in parts)
+
+
+def _validate_framework_target(target: str) -> None:
+    """Validate a single ``framework_targets`` entry before it is patched.
+
+    A bare framework name (e.g. ``"langchain"``) has no module to import and no
+    class to patch: ``target.rsplit(".", 1)`` on it raises ``ValueError``, which
+    previously fell through to a broad ``except Exception`` and was reported as
+    a generic "could not override" warning while the caller's manager object was
+    still returned as if configured. That made a bare name a silent no-op.
+
+    Args:
+        target: The raw ``framework_targets`` entry.
+
+    Raises:
+        ConfigurationError: If ``target`` is not a dotted ``module.ClassName``
+            path (and not one of the built-in mock target names).
+    """
+    if not isinstance(target, str) or not target:
+        raise ConfigurationError(
+            f"Invalid framework target {target!r}: expected a dotted "
+            "'module.ClassName' path such as 'langchain_openai.ChatOpenAI'."
+        )
+    if target in _BUILTIN_MOCK_TARGETS:
+        return
+    if not _is_dotted_class_path(target):
+        raise ConfigurationError(
+            f"Invalid framework target '{target}': expected a dotted "
+            "'module.ClassName' path (e.g. 'langchain_openai.ChatOpenAI'), "
+            "not a bare framework name. A bare name like 'langchain' cannot "
+            "be resolved to an importable class, so it would otherwise be "
+            "silently skipped."
+        )
+
 
 # Import enhanced capabilities if available
 try:
@@ -540,7 +588,22 @@ class FrameworkOverrideManager(BaseOverrideManager):
 
         Args:
             framework_targets: List of framework class names to override
+
+        Raises:
+            ConfigurationError: If any entry in ``framework_targets`` is not a
+                dotted ``module.ClassName`` path (e.g. a bare name like
+                ``"langchain"``). Every new entry is validated up front, before
+                any override is applied, so a bad entry never results in a
+                partially-applied, silently-degraded configuration. An entry
+                that is already registered (e.g. pre-applied via
+                ``override_mock_classes`` for demos/tests) is left alone and
+                is not re-validated.
         """
+        for target in framework_targets:
+            if self.is_override_registered(target):
+                continue  # Already overridden; shape was accepted previously.
+            _validate_framework_target(target)
+
         self._override_active.enabled = True
 
         for target in framework_targets:
@@ -549,9 +612,10 @@ class FrameworkOverrideManager(BaseOverrideManager):
 
             # Try to find and override the target class
             override_applied = False
+            failure_detail = ""
 
             # Handle built-in mock classes
-            if target in ["MockOpenAI", "MockLangChainOpenAI"]:
+            if target in _BUILTIN_MOCK_TARGETS:
                 # These are handled at the module level when demo is run
                 override_applied = True
 
@@ -594,8 +658,8 @@ class FrameworkOverrideManager(BaseOverrideManager):
                             f"Consider upgrading {target.split('.')[0]} package for Pydantic v2 compatibility"
                         )
                     else:
-                        logger.debug(f"Framework {target} not available: {error_msg}")
-                    # Framework not available, skip silently
+                        failure_detail = error_msg
+                    # Framework not available; reported once below
                 except Exception as e:
                     # Catch any other errors (including PydanticUserError)
                     error_msg = str(e)
@@ -611,13 +675,25 @@ class FrameworkOverrideManager(BaseOverrideManager):
                             f"Skipping {target} due to Pydantic v2 compatibility issues. Consider upgrading the package."
                         )
                     else:
-                        logger.debug(
+                        logger.warning(
                             f"Unexpected error loading {target}: {error_type}: {error_msg}"
                         )
                     # Skip silently to avoid breaking optimization
 
             if not override_applied:
-                logger.warning(f"Could not override framework target: {target}")
+                detail = f": {failure_detail}" if failure_detail else ""
+                logger.warning(f"Could not override framework target: {target}{detail}")
+
+    @property
+    def applied_targets(self) -> list[str]:
+        """Names of the ``framework_targets`` entries currently patched.
+
+        Reuses the existing active-override registry (``register_active_override``
+        / ``get_active_overrides_copy``) rather than tracking a second, parallel
+        set of "applied" state, so callers can assert their configuration was
+        actually applied instead of trusting a return value alone.
+        """
+        return list(self.get_active_overrides_copy().keys())
 
     def deactivate_overrides(self) -> None:
         """Deactivate all framework overrides and restore original constructors and methods."""

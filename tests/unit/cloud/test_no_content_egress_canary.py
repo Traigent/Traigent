@@ -616,6 +616,46 @@ def test_cloud_brain_auto_does_not_egress_dataset_content(
     _assert_no_canaries_crossed_wire(capture)
 
 
+def test_submit_metrics_payload_omits_legacy_execution_mode_field(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Traigent#2271 (P0): the /results trial-submission payload must not
+    carry a value derived from the legacy ``TraigentConfig.execution_mode``
+    selector — neither a top-level ``execution_mode`` key nor the
+    ``metadata.mode`` key that used to be computed from it via
+    ``BackendIntegratedClient._normalize_execution_mode``.
+
+    This drives the real submission path end-to-end through the public
+    ``@optimize`` decorator; only the HTTP transport (aiohttp) is mocked.
+    """
+    capture = _OutboundCapture()
+    _allow_backend_egress_in_test(monkeypatch, tmp_path / "mode-canary")
+    _install_transport_capture(monkeypatch, capture)
+
+    result = _run_canary_optimization(local_storage_path=tmp_path / "mode-canary")
+
+    assert result.source == "cloud_brain"
+    _assert_required_production_bodies_were_captured(capture)
+
+    submit_metrics_bodies = [
+        entry["body"] for entry in capture.calls if entry["stage"] == "submit-metrics"
+    ]
+    assert submit_metrics_bodies, "no /results submission was captured"
+    for body in submit_metrics_bodies:
+        assert isinstance(body, dict)
+        assert "execution_mode" not in body, (
+            f"/results payload carried a top-level execution_mode key: {body}"
+        )
+        metadata = body.get("metadata") or {}
+        assert "mode" not in metadata, (
+            f"/results payload metadata carried a legacy mode key: {metadata}"
+        )
+        assert "execution_mode" not in metadata, (
+            f"/results payload metadata carried a legacy execution_mode key: {metadata}"
+        )
+
+
 def _dataset_with_customer_row_ids() -> Dataset:
     """A dataset whose rows carry the customer's OWN ids, as a customer writes them."""
     return Dataset(

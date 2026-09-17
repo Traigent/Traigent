@@ -204,9 +204,7 @@ class TestNewAPIExports:
 
     def test_wrappers_exports(self):
         """Test wrappers module exports are available from main __init__."""
-        from traigent.integrations import (
-            apply_parameter_overrides,
-        )
+        from traigent.integrations import apply_parameter_overrides
 
         # Test apply_parameter_overrides
         result = apply_parameter_overrides(
@@ -432,11 +430,13 @@ class TestOverrideActivationFlow:
                 MockLLMClient.was_original_called = True
                 self.model = model
 
-        # Register mapping
+        # Register mapping and apply the override the supported way for a
+        # locally-defined (non-importable) class: override_mock_classes().
+        # (Passing the class object itself to activate_overrides(), which
+        # expects a list[str] of dotted target paths, is not a supported
+        # call shape and is now rejected — see issue #2299.)
         manager._parameter_mappings["test.MockLLMClient"] = {"model": "model"}
-
-        # Activate and deactivate
-        manager.activate_overrides([MockLLMClient])
+        manager.override_mock_classes({"test.MockLLMClient": MockLLMClient})
         manager.deactivate_overrides()
 
         # After deactivation, the original constructor should be restored

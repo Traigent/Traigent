@@ -65,7 +65,7 @@ EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY = "EVALUATOR_QUALITY_DEV_INTEGRATION_ONLY
 # this comment and `EVALUATOR_QUALITY_POLICY_DISPOSITION` in the same PR --
 # that dict IS the reviewed disposition record.
 EVALUATOR_QUALITY_POLICY_DISPOSITION = {
-    "schema_pin": "321d98133645d343297545a155b9549650e3152d",
+    "schema_pin": "df06e6dcb926620e69b542314fe0b35365247c49",
     "verifier_revision": "a2fd2e4e1222dc9e1589d26adcbb12b40dcbd5473e5c23cfb1e8e01ea39e333c",
     "reviewed_by": "spine-trail:st_9868d6cc69c4",
     "date": "2026-09-10",
@@ -138,7 +138,7 @@ def evaluator_quality_verifier_revision(files: list[Path] | None = None) -> str:
 # digest sidecars) forces a human to revisit this comment and that dict in
 # the same PR.
 AGENT_QUALITY_POLICY_DISPOSITION = {
-    "schema_pin": "321d98133645d343297545a155b9549650e3152d",
+    "schema_pin": "df06e6dcb926620e69b542314fe0b35365247c49",
     "verifier_revision": "521fc89738136dad05a63bf5467e0a72077493aadfb90982e4da2b0e20694c57",
     "reviewed_by": "spine-trail:st_9868d6cc69c4",
     "date": "2026-09-10",

@@ -214,6 +214,48 @@ def test_seamless_on_plain_lambda_succeeds():
     assert find_finding(report, ContractCode.SEAMLESS_INJECTION_UNAVAILABLE) is None
 
 
+def test_seamless_no_injectable_target_warns():
+    """Issue #2298 (I1): the no-execution contract mirrors the runtime
+    fail-closed check -- neither an AST-assignment match nor a parameter-name
+    match exists for the config key, so it reports
+    ``SEAMLESS_NO_INJECTABLE_TARGET``. Kept a WARNING (report.ok stays True),
+    matching this contract's existing "seamless is best-effort" policy for
+    SEAMLESS_INJECTION_UNAVAILABLE (docs/evaluation_contract.md)."""
+
+    def agent(question):
+        return "x"
+
+    report = validate_evaluation_contract(
+        func=agent,
+        dataset=DATASET,
+        injection_mode="seamless",
+        config={"model": "gpt-4"},
+    )
+    finding = find_finding(report, ContractCode.SEAMLESS_NO_INJECTABLE_TARGET)
+    assert finding is not None
+    assert finding.severity == "warning"
+    assert report.ok is True
+
+
+def test_seamless_partial_coverage_does_not_warn_no_injectable_target():
+    """A parameter-name match (runtime-shim path, no AST rewrite) still
+    counts as *an* injectable target, so a config that is only partially
+    covered must not trigger the all-or-nothing
+    ``SEAMLESS_NO_INJECTABLE_TARGET`` finding (issue #2298, I5: partial
+    coverage is a silent-injection risk, not a zero-injection one)."""
+
+    def agent(question, model):
+        return model
+
+    report = validate_evaluation_contract(
+        func=agent,
+        dataset=DATASET,
+        injection_mode="seamless",
+        config={"model": "gpt-4", "temperature": 0.5},
+    )
+    assert find_finding(report, ContractCode.SEAMLESS_NO_INJECTABLE_TARGET) is None
+
+
 # --------------------------------------------------------------------------- #
 # OptimizedFunction path
 # --------------------------------------------------------------------------- #

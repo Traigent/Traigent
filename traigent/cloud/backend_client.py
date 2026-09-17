@@ -2231,7 +2231,6 @@ class BackendIntegratedClient:
         metrics: dict[str, float],
         status: str,
         error_message: str | None = None,
-        execution_mode: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> bool | None | TrialSubmissionResult:
         """Submit trial results via the Traigent session endpoint.
@@ -2252,7 +2251,6 @@ class BackendIntegratedClient:
                     metrics,
                     status,
                     error_message,
-                    execution_mode,
                 ),
             )
         return cast(
@@ -2264,7 +2262,6 @@ class BackendIntegratedClient:
                 metrics,
                 status,
                 error_message,
-                execution_mode,
                 metadata=metadata,
             ),
         )

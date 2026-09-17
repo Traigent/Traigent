@@ -71,9 +71,7 @@ from traigent.api.parameter_ranges import (
     normalize_configuration_space,
 )
 from traigent.api.types import AgentDefinition
-from traigent.cloud.smart_pruning import (
-    SmartPruningOptions,
-)
+from traigent.cloud.smart_pruning import SmartPruningOptions
 from traigent.cloud.smart_pruning import (
     normalize_smart_pruning_options as _normalize_smart_pruning_options,
 )
@@ -975,6 +973,7 @@ _ALLOWED_RUNTIME_OVERRIDE_KEYS = frozenset(
         "semantic_saturation",
         "cost_limit",
         "cost_approved",
+        "estimated_calls_per_example",
         "tie_breakers",
         "tvl_parameter_agents",
     )
@@ -2497,9 +2496,17 @@ def optimize(  # NOSONAR(S107)
                 ... def my_func(): ...
 
         constraints: Optional validators receiving ``config`` and ``metrics``. Return
-            True to accept a configuration or False to skip it.
-        safety_constraints: Not yet implemented - raises ``NotImplementedError``.
-            See traigent-smartopt#26.
+            True to accept a configuration or False to skip it. These are hard,
+            per-trial constraints: a config that fails one is rejected outright.
+        safety_constraints: Soft, statistical safety constraints built from
+            ``traigent.api.safety`` metrics (e.g. ``hallucination_rate().below(0.1)``).
+            Unlike ``constraints``, each one is validated with a Clopper-Pearson
+            statistical bound accumulated across completed trials; once a
+            constraint's ``min_samples`` evidence floor is reached and it is
+            statistically violated, the run halts with
+            ``OptimizationResult.stop_reason == "safety_constraint"``. Below the
+            evidence floor, or when satisfied, the run continues normally. See
+            traigent-smartopt#26.
 
         TVL integration:
             tvl_spec: Path to a TVL spec. When provided (and ``tvl`` opts allow it)
@@ -2570,6 +2577,13 @@ def optimize(  # NOSONAR(S107)
             cost_limit: Maximum USD spending per optimization run. Defaults to
                 TRAIGENT_RUN_COST_LIMIT env var or $2.00.
             cost_approved: Skip cost approval prompt. Use with caution in production.
+            estimated_calls_per_example: Expected LLM calls per evaluated
+                example (self-consistency voting, repair passes, model
+                cascades). Multiplies the per-example base cost in the
+                pre-run estimate and scales the runtime cost-divergence EMA
+                seed by the same factor, so per-trial actuals for a
+                multi-call agent are compared against a calibrated baseline
+                instead of a single-call default. Defaults to 1.
             metric_limit: Soft cumulative stop for a named completed-trial metric.
                 Requires metric_name. Use for counters such as total tokens or
                 cumulative latency, not hard money-spend control.
@@ -2589,8 +2603,8 @@ def optimize(  # NOSONAR(S107)
                 ``metric_limit``, ``metric_name``,
                 ``metric_include_pruned``, ``plateau_window``,
                 ``plateau_epsilon``, ``semantic_saturation``, ``cost_limit``,
-                ``cost_approved``, ``tie_breakers``, and
-                ``tvl_parameter_agents``.
+                ``cost_approved``, ``estimated_calls_per_example``,
+                ``tie_breakers``, and ``tvl_parameter_agents``.
                 Note: ``algorithm`` and ``max_trials`` are first-class
                 parameters of this decorator (not in ``**runtime_overrides``);
                 ``timeout`` is supported on
@@ -2794,12 +2808,6 @@ def optimize(  # NOSONAR(S107)
     default_config = combined_settings["default_config"]
     constraints = combined_settings["constraints"]
     safety_constraints = combined_settings["safety_constraints"]
-    if safety_constraints:
-        raise NotImplementedError(
-            "safety_constraints are not yet implemented. "
-            "Statistical chance-constraints are on the roadmap — track progress at "
-            "https://github.com/Traigent/traigent-smartopt/issues/26"
-        )
 
     # Process ConfigSpace constraints
     config_space_constraints, config_space_var_names, _ = (
@@ -2835,6 +2843,24 @@ def optimize(  # NOSONAR(S107)
     config_param = combined_settings["config_param"]
     auto_override_frameworks = combined_settings["auto_override_frameworks"]
     framework_targets = combined_settings["framework_targets"]
+    if framework_targets:
+        # Fail at decoration, not on the first call: a bare name such as
+        # "langchain" can never be patched (#2299).
+        #
+        # Exempt targets the override registry already knows, exactly as
+        # FrameworkOverrideManager.activate_overrides does: a name registered
+        # via register_framework_mapping() + apply_mock_overrides() has had its
+        # shape accepted already, and validating it here would reject a
+        # registration the manager itself honours.
+        from traigent.integrations.framework_override import (
+            _framework_override_manager,
+            _validate_framework_target,
+        )
+
+        for framework_target in framework_targets:
+            if _framework_override_manager.is_override_registered(framework_target):
+                continue
+            _validate_framework_target(framework_target)
     effectuation = combined_settings["effectuation"]
     algorithm_value = validate_algorithm_name(combined_settings["algorithm"])
     offline_value = combined_settings["offline"]

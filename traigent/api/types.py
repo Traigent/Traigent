@@ -194,6 +194,7 @@ StopReason = Literal[
     "plateau",
     "convergence",
     "semantic_saturation",
+    "safety_constraint",  # Statistical chance-constraint violated (issue #1532)
     "user_cancelled",
     "condition",  # Generic stop condition triggered
     "error",  # Optimization failed due to an exception

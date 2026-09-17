@@ -185,6 +185,18 @@ def rag_pipeline(documents: List[str], query: str) -> str:
 - ❌ Requires source code access (won't work with compiled code)
 - ❌ Less explicit than other modes
 
+### Fails Closed on Zero Injectable Targets
+
+If none of your function's local assignments or parameter names match any
+configuration key, seamless mode raises `SeamlessNoInjectableTargetsError`
+**before the first trial** rather than silently running every trial with the
+same unvaried code (which used to produce a phantom `best_config`). A
+`**kwargs` catch-all never counts as a match. Set
+`TRAIGENT_ALLOW_SEAMLESS_NO_TARGETS=true` to opt back into the previous
+warning-only behavior. If only *some* of your config keys are injectable, the
+run proceeds with a `WARNING` naming the uncovered keys -- partial coverage
+does not fail closed.
+
 ### When to Use (Seamless Mode)
 
 - Optimizing existing code without modifications

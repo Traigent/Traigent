@@ -9,6 +9,7 @@ This test suite covers:
 - CTD (Combinatorial Test Design) scenarios
 """
 
+import logging
 import threading
 
 import pytest
@@ -21,6 +22,7 @@ from traigent.integrations.framework_override import (
     disable_framework_overrides,
     enable_framework_overrides,
 )
+from traigent.utils.exceptions import ConfigurationError
 
 # Mock framework classes for testing
 
@@ -787,3 +789,70 @@ class TestCompatibilityScenarios:
             if "temperature" in anthropic_client.kwargs:
                 assert anthropic_client.kwargs["temperature"] == 0.8
         config_context.reset(token2)
+
+
+class TestFrameworkTargetValidation:
+    """Regression tests for issue #2299: a bare framework name (no dot) used
+    to raise ValueError inside a broad except, get logged as a debug-level
+    "could not override" message, and the manager was returned as if the
+    target had been configured — a silent no-op."""
+
+    def test_bare_name_raises_configuration_error(self, override_manager):
+        """A bare name like 'langchain' must raise, not be silently skipped."""
+        with pytest.raises(ConfigurationError, match="langchain"):
+            override_manager.activate_overrides(["langchain"])
+
+    def test_bare_name_raises_via_enable_framework_overrides(self):
+        """The public enable_framework_overrides() entry point must raise too."""
+        with pytest.raises(ConfigurationError, match="langchain_openai.ChatOpenAI"):
+            enable_framework_overrides(framework_targets=["langchain"])
+        # Cleanup: no override should have been left active.
+        disable_framework_overrides()
+
+    def test_validation_happens_up_front_for_whole_list(self, override_manager):
+        """A bad entry anywhere in the list must stop processing before any
+        target in the list is applied (not just the ones after it)."""
+        with pytest.raises(ConfigurationError):
+            override_manager.activate_overrides(["openai.OpenAI", "langchain"])
+        assert override_manager.applied_targets == []
+
+    def test_dotted_but_unimportable_target_degrades_with_warning(
+        self, override_manager, caplog
+    ):
+        """A well-formed but unimportable target (module does not exist) must
+        not raise, must log a WARNING containing the underlying exception
+        text, and must not appear in applied_targets."""
+        with caplog.at_level(
+            logging.WARNING, logger="traigent.integrations.framework_override"
+        ):
+            override_manager.activate_overrides(["nonexistent_pkg_xyz.SomeClass"])
+
+        assert override_manager.applied_targets == []
+        warning_messages = [
+            r.message for r in caplog.records if r.levelno >= logging.WARNING
+        ]
+        assert any("nonexistent_pkg_xyz" in m for m in warning_messages)
+        # The underlying exception text must be present, not just a generic
+        # "could not override" line.
+        assert any("No module named" in m for m in warning_messages)
+
+    def test_builtin_mock_names_still_allowed(self, override_manager):
+        """Bare names that are handled internally as built-in mocks must not
+        be rejected by the new validation (only genuinely unresolvable bare
+        names like 'langchain' should raise)."""
+        # Should not raise, unlike a bare name that isn't a known mock target.
+        override_manager.activate_overrides(["MockOpenAI"])
+
+    def test_applied_targets_exposes_successfully_patched_targets(
+        self, override_manager
+    ):
+        """applied_targets reflects only targets actually patched, reusing the
+        existing active-override registry rather than a new bookkeeping set."""
+
+        class MockOpenAI:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        assert override_manager.applied_targets == []
+        override_manager.override_mock_classes({"openai.OpenAI": MockOpenAI})
+        assert "openai.OpenAI" in override_manager.applied_targets
