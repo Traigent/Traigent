@@ -398,6 +398,10 @@ class OptimizationOrchestrator:
         default_config = kwargs.pop("default_config", None)
         combined_constraints = list(raw_constraints or [])
         combined_constraints.extend(raw_safety_constraints or [])
+        # _init_constraints excludes mode == "soft" constraints (every
+        # safety_constraints entry) from the hard pre/post-eval lists below, so
+        # combining the two lists here is safe: a safety constraint never reaches
+        # enforce_constraints and cannot fail a trial on its own.
         self._init_constraints(combined_constraints)
         # Kept separately (not just via _constraints_post_eval) so
         # _configure_stop_conditions can wire the statistical chance-constraint
@@ -608,12 +612,26 @@ class OptimizationOrchestrator:
     def _init_constraints(
         self, raw_constraints: list[Callable[..., bool]] | None
     ) -> None:
-        """Initialize pre and post evaluation constraints."""
+        """Initialize pre and post evaluation constraints.
+
+        A constraint whose ``mode`` attribute is ``"soft"`` (the statistical
+        chance-constraint family -- see ``traigent.api.safety.SafetyConstraint``)
+        is never added to ``_constraints_pre_eval``/``_constraints_post_eval``:
+        those lists feed ``enforce_constraints``, which raises on a single
+        failure and fails the trial. A soft constraint's per-trial outcome is
+        instead evidence for its own statistical stop condition
+        (``SafetyConstraintStopCondition``, wired separately in
+        ``_configure_stop_conditions``) -- one violating trial should not by
+        itself end the run. A plain constraint callable has no ``mode``
+        attribute and defaults to hard, unaffected by this check.
+        """
         self._constraints_pre_eval: list[Callable[..., bool]] = []
         self._constraints_post_eval: list[Callable[..., bool]] = []
         if not raw_constraints:
             return
         for constraint in raw_constraints:
+            if getattr(constraint, "mode", "hard") == "soft":
+                continue
             if constraint_requires_metrics(constraint):
                 self._constraints_post_eval.append(constraint)
             else:

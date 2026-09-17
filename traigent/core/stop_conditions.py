@@ -1105,37 +1105,20 @@ class ExecutionBudgetStopCondition(StopCondition):
         return "Execution budget exhausted"
 
 
-def _iter_safety_constraint_leaves(
-    constraints: Iterable[SafetyConstraint | CompoundSafetyConstraint],
-) -> Iterable[SafetyConstraint]:
-    """Flatten ``SafetyConstraint``/``CompoundSafetyConstraint`` trees to leaves.
-
-    ``SafetyValidator`` records and validates against individual
-    ``SafetyConstraint`` objects (one metric each); a ``CompoundSafetyConstraint``
-    is only a combinator for the boolean per-trial ``__call__`` path used by
-    ``_constraints_post_eval``. For the statistical stop condition every leaf
-    metric is tracked and evaluated independently, so a compound "A and B"
-    still halts the run if either A or B is chance-constraint violated.
-    """
-    for constraint in constraints:
-        if isinstance(constraint, CompoundSafetyConstraint):
-            yield from _iter_safety_constraint_leaves(constraint.constraints)
-        else:
-            yield constraint
-
-
 class SafetyConstraintStopCondition(StopCondition):
     """Stop when a statistical (chance-constraint) safety constraint is violated.
 
     Wraps ``traigent.api.safety.SafetyValidator``: each newly COMPLETED trial's
-    ``(config, metrics)`` is recorded against every leaf ``SafetyConstraint``,
+    ``(config, metrics)`` is recorded against every top-level constraint --
+    each a ``SafetyConstraint`` (one metric) or a ``CompoundSafetyConstraint``
+    (its own AND/OR-combined boolean, evaluated as a single unit so OR
+    semantics are preserved -- see ``CompoundSafetyConstraint.threshold``) --
     then validated with a Clopper-Pearson lower bound on the per-trial
-    compliance rate (see ``SafetyValidator.validate``). This is the SDK's
-    existing, already-tested statistical engine (traigent-smartopt#26/#48's
-    chance-constraint evaluator is the same Clopper-Pearson primitive, owned
-    upstream for the backend/FrontierScout path; the SDK trial lifecycle wires
-    its own already-built local implementation rather than adding a new
-    dependency).
+    compliance rate (see ``SafetyValidator.validate``). This reuses the SDK's
+    own already-tested statistical engine: the same Clopper-Pearson primitive
+    used by the backend's Pareto-frontier optimizer, wired here as the SDK
+    trial lifecycle's own local implementation rather than adding a new
+    dependency.
 
     Each constraint's own ``threshold.min_samples`` is the evidence floor: below
     it, ``should_stop`` never fires for that constraint (an unproven low sample
@@ -1144,6 +1127,12 @@ class SafetyConstraintStopCondition(StopCondition):
     with ``stop_reason="safety_constraint"`` (see
     ``StopConditionManager``/``OptimizationOrchestrator._should_stop`` reason
     mapping). A non-violated constraint never halts the run.
+
+    Trials only ever reach here as evidence if they stayed ``COMPLETED``: a
+    safety constraint's ``mode == "soft"`` excludes it from
+    ``OptimizationOrchestrator._constraints_post_eval``
+    (``_init_constraints``), so a per-trial violation is recorded as one
+    statistical sample instead of raising and failing the trial.
     """
 
     reason = "safety_constraint"
@@ -1152,8 +1141,8 @@ class SafetyConstraintStopCondition(StopCondition):
         self,
         constraints: Sequence[SafetyConstraint | CompoundSafetyConstraint],
     ) -> None:
-        self._constraints: tuple[SafetyConstraint, ...] = tuple(
-            _iter_safety_constraint_leaves(constraints)
+        self._constraints: tuple[SafetyConstraint | CompoundSafetyConstraint, ...] = (
+            tuple(constraints)
         )
         self._validator = SafetyValidator()
         self._last_index = 0
