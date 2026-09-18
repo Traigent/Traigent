@@ -739,7 +739,28 @@ def _coerce_dataset_example_mapping(
     source: str,
     location: str,
 ) -> tuple[Any, Any | None, dict[str, Any]]:
-    """Normalize a mapping-backed dataset example."""
+    """Normalize a mapping-backed dataset example.
+
+    Expected-output alias precedence is ``_EXPECTED_OUTPUT_FIELDS``, in order:
+    ``output`` > ``expected`` > ``expected_output`` > ``answer`` > ``target``
+    > ``label``. When a row carries more than one alias, the highest-
+    precedence one wins and a single ``logger.warning`` names the winner and
+    the loser(s) (issue #1768) -- every losing alias is DROPPED from the
+    resolved example, never routed into ``example.metadata``, where it would
+    otherwise masquerade as user metadata to metric functions that declare a
+    ``metadata`` parameter.
+
+    A row's own dict-valued ``metadata`` field is merged in as the example's
+    metadata (matching the ``EvaluationExample`` dataclass shape used by
+    JSONL rows and the JS SDK's ``Dataset`` class), instead of nesting under
+    ``metadata["metadata"]``. That nesting previously hid an ``example_id``
+    key inside the row's ``metadata`` dict from ``_example_correlation_key``,
+    which reads ``example.metadata["example_id"]`` at the top level -- the
+    example silently fell back to a positional ``example_N`` key. Any other
+    top-level row keys are kept alongside it; on a name collision the row's
+    explicit ``metadata`` dict wins (it is the user's deliberate metadata,
+    not an incidental extra field).
+    """
     if not isinstance(item, CollectionsMapping):
         raise ValidationError(f"{location} must be an object in {source}")
 
@@ -754,16 +775,40 @@ def _coerce_dataset_example_mapping(
             f"Missing 'input' (or 'input_data') field in {location} in {source}"
         )
 
-    expected_key = next(
-        (candidate for candidate in _EXPECTED_OUTPUT_FIELDS if candidate in item),
-        None,
-    )
+    expected_candidates = [
+        candidate for candidate in _EXPECTED_OUTPUT_FIELDS if candidate in item
+    ]
+    expected_key = expected_candidates[0] if expected_candidates else None
+    if len(expected_candidates) > 1:
+        losers = expected_candidates[1:]
+        logger.warning(
+            "%s in %s carries multiple expected-output aliases %s; using "
+            "%r (alias precedence order %s) and dropping %s rather than "
+            "leaking the losing alias(es) into example.metadata.",
+            location,
+            source,
+            expected_candidates,
+            expected_key,
+            _EXPECTED_OUTPUT_FIELDS,
+            losers,
+        )
 
-    metadata_keys = {input_key}
-    if expected_key is not None:
-        metadata_keys.add(expected_key)
+    metadata_keys = {input_key, "metadata"}
+    metadata_keys.update(expected_candidates)
 
-    metadata = {k: v for k, v in item.items() if k not in metadata_keys}
+    extra_metadata = {k: v for k, v in item.items() if k not in metadata_keys}
+
+    row_metadata = item.get("metadata")
+    if isinstance(row_metadata, CollectionsMapping):
+        metadata = {**extra_metadata, **row_metadata}
+    else:
+        metadata = extra_metadata
+        if row_metadata is not None:
+            # Non-dict "metadata" value: cannot merge as the metadata dict,
+            # so keep it as an ordinary extra field rather than silently
+            # dropping it.
+            metadata["metadata"] = row_metadata
+
     expected_output = item.get(expected_key) if expected_key is not None else None
     return item[input_key], expected_output, metadata
 
