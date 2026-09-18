@@ -210,6 +210,10 @@ def test_release_job_verifies_the_commit_is_on_main() -> None:
     assert "compare/main..." in guard["run"], (
         "the check must compare against main, not some other ref"
     )
+    assert "set -euo pipefail" in guard["run"], (
+        "without it, a failing command in the middle of the guard does not "
+        "abort the step and the release is cut anyway"
+    )
 
     names = [s.get("name", "") for s in steps]
     create_index = next(
@@ -237,13 +241,29 @@ def _on_main_guard_script() -> str:
     return guard["run"]
 
 
+GUARD_SHA = "0123456789abcdef0123456789abcdef01234567"
+
+
 def _run_on_main_guard(tmp_path: Path, gh_stdout: str, gh_exit: int = 0):
-    """Execute the guard step with `gh` stubbed, and return the CompletedProcess."""
+    """Execute the guard step with `gh` stubbed, and return the CompletedProcess.
+
+    The stub RECORDS its arguments to ``tmp_path/gh-args.log``. An earlier
+    version just printed a canned status and ignored ``$@``, which made the
+    behavioural tests blind to WHICH ref the guard compares: mutating
+    ``compare/main...$GITHUB_SHA`` to ``compare/main...main`` neutered the
+    guard entirely and the whole suite stayed green, because the only
+    assertion about the ref was a substring the mutant still contained.
+    ``.args`` on the result carries the recorded invocations.
+    """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
+    args_log = tmp_path / "gh-args.log"
     fake_gh = bin_dir / "gh"
     fake_gh.write_text(
-        f"#!/usr/bin/env bash\nprintf '%s\\n' {gh_stdout!r}\nexit {gh_exit}\n",
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$*" >> {args_log!s}\n'
+        f"printf '%s\\n' {gh_stdout!r}\n"
+        f"exit {gh_exit}\n",
         encoding="utf-8",
     )
     fake_gh.chmod(fake_gh.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
@@ -254,15 +274,19 @@ def _run_on_main_guard(tmp_path: Path, gh_stdout: str, gh_exit: int = 0):
     env = dict(os.environ)
     env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
     env["REPO"] = "Traigent/Traigent"
-    env["GITHUB_SHA"] = "0123456789abcdef0123456789abcdef01234567"
+    env["GITHUB_SHA"] = GUARD_SHA
     env["TAG"] = "v0.11.4"
-    return subprocess.run(
+    result = subprocess.run(
         ["bash", str(script)],
         env=env,
         capture_output=True,
         text=True,
         timeout=60,
     )
+    result.gh_calls = (  # type: ignore[attr-defined]
+        args_log.read_text(encoding="utf-8").splitlines() if args_log.exists() else []
+    )
+    return result
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
@@ -440,3 +464,58 @@ def test_tag_guard_allows_a_tag_that_does_not_exist_yet(tmp_path) -> None:
     """The workflow_dispatch path mints the tag; absence is not a failure."""
     result = _run_tag_identity_guard(tmp_path, {})
     assert result.returncode == 0, result.stderr
+
+
+# ---------------------------------------------------------------------------
+# What the guard ASKS, not just what it does with the answer.
+#
+# Mutation testing found three survivors, all from the same blind spot: the
+# `gh` stub ignored its arguments, so no behavioural test could see which ref
+# the guard actually compares. Mutating `compare/main...$GITHUB_SHA` to
+# `compare/main...main` turns the guard into an always-pass (a branch is always
+# identical to itself) and every test stayed green.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+def test_on_main_guard_compares_main_against_the_published_commit(tmp_path) -> None:
+    """The comparison must name $GITHUB_SHA, not a branch.
+
+    `compare/main...main` is `identical` by definition, so a guard that asks
+    that question can never refuse anything -- it looks like a check and is not
+    one. Asserted on the recorded `gh` invocation rather than on the script
+    text, because a substring assertion cannot tell the two apart.
+    """
+    result = _run_on_main_guard(tmp_path, "identical")
+
+    compare_calls = [c for c in result.gh_calls if "compare/" in c]
+    assert compare_calls, (
+        f"the guard never called `gh api ...compare/...`: {result.gh_calls}"
+    )
+
+    call = compare_calls[0]
+    assert f"compare/main...{GUARD_SHA}" in call, (
+        "the guard must compare main against the commit being published; "
+        f"it asked for: {call}"
+    )
+    assert "compare/main...main" not in call, (
+        "comparing main to itself is always `identical`, so the guard would "
+        "never refuse anything"
+    )
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+def test_on_main_guard_extracts_only_the_status_field(tmp_path) -> None:
+    """`--jq .status` is load-bearing.
+
+    Without it `gh api` returns the whole comparison document, and the `case`
+    match against `identical|behind` silently stops matching -- the guard then
+    refuses every legitimate release, or, depending on the shape, stops
+    discriminating. Either way the arm no longer means what it reads as.
+    """
+    result = _run_on_main_guard(tmp_path, "identical")
+    compare_calls = [c for c in result.gh_calls if "compare/" in c]
+    assert compare_calls
+    assert "--jq" in compare_calls[0] and ".status" in compare_calls[0], (
+        f"the guard must ask for just the status field; it asked: {compare_calls[0]}"
+    )
