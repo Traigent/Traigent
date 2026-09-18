@@ -276,6 +276,9 @@ def _run_on_main_guard(tmp_path: Path, gh_stdout: str, gh_exit: int = 0):
     env["REPO"] = "Traigent/Traigent"
     env["GITHUB_SHA"] = GUARD_SHA
     env["TAG"] = "v0.11.4"
+    # Per-test scratch dir, so two xdist workers cannot share the stderr
+    # capture file the guard writes.
+    env["RUNNER_TEMP"] = str(tmp_path)
     result = subprocess.run(
         ["bash", str(script)],
         env=env,
@@ -367,7 +370,9 @@ def _tag_identity_script() -> str:
     return guard["run"]
 
 
-def _run_tag_identity_guard(tmp_path: Path, responses: dict[str, str]):
+def _run_tag_identity_guard(
+    tmp_path: Path, responses: dict[str, str], gh_exit: int = 0, stderr: str = ""
+):
     """Execute the guard with `gh` stubbed to answer per API path."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -376,11 +381,13 @@ def _run_tag_identity_guard(tmp_path: Path, responses: dict[str, str]):
         f'  *"{path}"*) printf %s {payload!r}; exit 0 ;;'
         for path, payload in responses.items()
     )
+    args_log = tmp_path / "tag-gh-args.log"
     fake_gh = bin_dir / "gh"
     fake_gh.write_text(
-        "#!/usr/bin/env bash\n"
-        'args="$*"\n'
-        'case "$args" in\n'
+        f'#!/usr/bin/env bash\nargs="$*"\nprintf "%s\\n" "$args" >> {args_log!s}\n'
+        + (f'printf "%s\\n" {stderr!r} >&2\n' if stderr else "")
+        + (f"exit {gh_exit}\n" if gh_exit else "")
+        + 'case "$args" in\n'
         f"{cases}\n"
         "  *) exit 1 ;;\n"
         "esac\n",
@@ -396,9 +403,13 @@ def _run_tag_identity_guard(tmp_path: Path, responses: dict[str, str]):
     env["REPO"] = "Traigent/Traigent"
     env["GITHUB_SHA"] = PUBLISHED_SHA
     env["TAG"] = "v0.11.4"
-    return subprocess.run(
+    result = subprocess.run(
         ["bash", str(script)], env=env, capture_output=True, text=True, timeout=60
     )
+    result.gh_calls = (  # type: ignore[attr-defined]
+        args_log.read_text(encoding="utf-8").splitlines() if args_log.exists() else []
+    )
+    return result
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
@@ -461,8 +472,15 @@ def test_tag_guard_peels_an_annotated_tag_before_comparing(tmp_path) -> None:
 @pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
 @pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
 def test_tag_guard_allows_a_tag_that_does_not_exist_yet(tmp_path) -> None:
-    """The workflow_dispatch path mints the tag; absence is not a failure."""
-    result = _run_tag_identity_guard(tmp_path, {})
+    """The workflow_dispatch path mints the tag; absence is not a failure.
+
+    Absence is only knowable from a CONFIRMED 404 -- this test used to stub a
+    bare non-zero exit, which is how the guard came to treat every failed
+    lookup as "no such tag".
+    """
+    result = _run_tag_identity_guard(
+        tmp_path, {}, gh_exit=1, stderr="gh: Not Found (HTTP 404)"
+    )
     assert result.returncode == 0, result.stderr
 
 
@@ -518,4 +536,72 @@ def test_on_main_guard_extracts_only_the_status_field(tmp_path) -> None:
     assert compare_calls
     assert "--jq" in compare_calls[0] and ".status" in compare_calls[0], (
         f"the guard must ask for just the status field; it asked: {compare_calls[0]}"
+    )
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+@pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
+def test_tag_guard_looks_up_the_tag_being_published(tmp_path) -> None:
+    """The guard must ask about $TAG, not some other ref.
+
+    Found by a second reviewer's prediction and confirmed by mutation:
+    repointing the lookup at an unrelated tag left all 27 tests green on the
+    previous head, because the `gh` stub matched broad path substrings and
+    nothing asserted which ref was requested. Same blind spot the on-main
+    guard had, not carried across when that one was fixed.
+    """
+    result = _run_tag_identity_guard(
+        tmp_path,
+        {
+            "git/ref/tags": json.dumps(
+                {"object": {"sha": PUBLISHED_SHA, "type": "commit"}}
+            )
+        },
+    )
+
+    ref_calls = [c for c in result.gh_calls if "git/ref/tags" in c]
+    assert ref_calls, f"the guard never looked the tag up: {result.gh_calls}"
+    assert "git/ref/tags/v0.11.4" in ref_calls[0], (
+        f"the guard must look up $TAG; it asked for: {ref_calls[0]}"
+    )
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+@pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
+def test_tag_guard_fails_closed_when_the_lookup_errors(tmp_path) -> None:
+    """A transport failure must not be read as "the tag does not exist".
+
+    The previous form was `gh api ... || true` plus an empty-output check, so
+    any failure -- a network blip, a rate limit, an auth problem -- looked
+    exactly like a confirmed absence and skipped identity verification
+    entirely. That is a policy check failing OPEN, which is the one direction
+    this guard must never fail.
+    """
+    result = _run_tag_identity_guard(tmp_path, {}, gh_exit=1, stderr="connection reset")
+    assert result.returncode != 0, (
+        "a failed tag lookup was treated as 'tag absent' and the guard "
+        f"proceeded; stdout={result.stdout!r}"
+    )
+    assert "::error::" in (result.stdout + result.stderr)
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+@pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
+def test_tag_guard_rejects_a_response_with_no_object_sha(tmp_path) -> None:
+    """A 404 body echoed to stdout must not read as 'no existing tag'.
+
+    Dropping the explicit null-sha check still fails closed -- jq yields the
+    string "null", which compares unequal to $GITHUB_SHA -- so the assertion
+    here is on the DIAGNOSIS, not just the exit code. Without the check the
+    operator is told tag v0.11.4 points at commit "null" and goes looking for
+    a tag that does not exist; the real fault is an unparseable response.
+    """
+    result = _run_tag_identity_guard(
+        tmp_path, {"git/ref/tags": json.dumps({"message": "Not Found"})}
+    )
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert "no object sha" in combined, (
+        "an unparseable lookup response must be reported as unverifiable, not "
+        f"as a tag pointing at the wrong commit: {combined!r}"
     )

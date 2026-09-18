@@ -390,13 +390,40 @@ jobs:
     - name: Verify an existing tag points at the published commit
       run: |
         set -euo pipefail
-        REF_JSON="$(gh api "repos/$REPO/git/ref/tags/$TAG" 2>/dev/null || true)"
+        # Distinguish a CONFIRMED 404 (the tag genuinely does not exist yet,
+        # which is the normal workflow_dispatch path) from any other failure.
+        # The first version used `|| true` and treated empty output as
+        # "absent", so a transient transport error silently skipped identity
+        # verification entirely -- a policy check failing OPEN, which is the
+        # one direction this guard must never fail.
+        TAG_ERR="${RUNNER_TEMP:-/tmp}/tag-ref-$$.err"
+        set +e
+        REF_JSON="$(gh api "repos/$REPO/git/ref/tags/$TAG" 2>"$TAG_ERR")"
+        ref_rc=$?
+        set -e
+        if [ "$ref_rc" -ne 0 ]; then
+          if grep -qi 'HTTP 404' "$TAG_ERR"; then
+            echo "No existing $TAG; it will be created at $GITHUB_SHA."
+            exit 0
+          fi
+          echo "::error::Could not determine whether $TAG already exists (gh exited ${ref_rc}). Refusing to cut a release without verifying the tag's identity."
+          cat "$TAG_ERR" >&2
+          exit 1
+        fi
         if [ -z "$REF_JSON" ]; then
-          echo "No existing $TAG; it will be created at $GITHUB_SHA."
-          exit 0
+          echo "::error::Tag lookup for $TAG succeeded but returned nothing; refusing to proceed on an unverifiable result."
+          exit 1
         fi
         OBJ_SHA="$(printf '%s' "$REF_JSON" | jq -r '.object.sha')"
         OBJ_TYPE="$(printf '%s' "$REF_JSON" | jq -r '.object.type')"
+        # A null/absent sha means the response was not the shape we expect
+        # (a 404 body echoed to stdout, an error envelope, a schema change).
+        # Never read that as "no existing tag".
+        if [ -z "$OBJ_SHA" ] || [ "$OBJ_SHA" = "null" ]; then
+          echo "::error::Tag lookup for $TAG returned no object sha; refusing to proceed on an unverifiable result."
+          printf '%s\n' "$REF_JSON" >&2
+          exit 1
+        fi
         if [ "$OBJ_TYPE" = "tag" ]; then
           # Annotated tag: peel it to the commit it wraps.
           OBJ_SHA="$(gh api "repos/$REPO/git/tags/$OBJ_SHA" --jq '.object.sha')"
