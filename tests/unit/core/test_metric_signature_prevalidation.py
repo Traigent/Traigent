@@ -178,4 +178,4 @@ def test_kwargs_scorer_passes() -> None:
 
 def test_no_metric_functions_is_a_noop() -> None:
     """No metric_functions/scoring_function configured -> nothing to validate."""
-    validate_metric_function_bindability({})
+    validate_metric_function_bindability({}, objectives=["accuracy"])

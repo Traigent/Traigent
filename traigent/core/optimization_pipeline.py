@@ -518,7 +518,7 @@ def build_metric_functions(
 
 def validate_metric_function_bindability(
     effective_metric_functions: dict[str, Callable[..., Any]],
-    objectives: Sequence[str] = (),
+    objectives: Sequence[str],
 ) -> None:
     """Fail fast, before any LLM call, if a metric/scoring signature can't bind.
 
@@ -536,6 +536,10 @@ def validate_metric_function_bindability(
         effective_metric_functions: The dict built by
             :func:`build_metric_functions` (``metric_functions`` merged with
             ``scoring_function``).
+        objectives: The run's objective names. REQUIRED, with no default:
+            an empty set would downgrade every metric to a warning and
+            silently neuter this check, so a future caller must pass it
+            deliberately rather than inherit a permissive default.
 
     Raises:
         ValidationError: If a metric/scoring function's signature cannot be
