@@ -199,3 +199,157 @@ class TestConsumedAlgorithmKwargsStillAccepted:
     def test_parallel_trials_still_rejected_with_original_message(self, opt_func):
         with pytest.raises(ValueError, match="parallel_trials is not a valid"):
             opt_func._prepare_algorithm_kwargs({"parallel_trials": 4})
+
+
+class TestShippedCallSitesSurviveTheAllowlist:
+    """The allowlist makes ``.optimize()`` reject unknown kwargs, so every
+    shipped call site that passes one stops working the day it lands.
+
+    CI does not execute ``examples/``, ``walkthrough/`` or ``plugins/``, so a
+    unit-test-green PR can still ship a crash into our most-copied code. Two
+    such sites existed when this check was written, both passing a kwarg that
+    had never had any effect:
+
+      * ``plugins/traigent-ui/.../streamlit_core/optimization.py`` passed
+        ``algorithm_params={"n_initial_points": 2}`` -- a name that appeared
+        nowhere else in the repository, so the UI's bayesian hint was inert
+        and the UI would have raised ``TypeError`` on every run.
+      * ``examples/core/multi-objective-tradeoff/run_many_providers.py``
+        passed ``model=args.model`` behind a ``--model`` CLI flag; ``model``
+        is a *configuration_space* dimension, not an ``.optimize()``
+        parameter, so the flag never pinned anything.
+
+    This is the same defect class #2362 removed (``show_progress=``), which
+    is why it is worth a standing check rather than a one-time sweep.
+    """
+
+    # Receivers whose ``.optimize()`` is a DIFFERENT method with its own
+    # signature (orchestrator/optimizer/client APIs take func=, dataset=,
+    # function_name=, invoker=, evaluator=, ...). Only OptimizedFunction's
+    # ``.optimize()`` is governed by the allowlist.
+    _FOREIGN_RECEIVERS = frozenset(
+        {"orchestrator", "optimizer", "client", "mock_client", "self", "engine"}
+    )
+
+    _SHIPPED_DIRS = ("examples", "walkthrough", "plugins")
+
+    def _offending_call_sites(self):
+        import ast
+        from pathlib import Path
+
+        from traigent.core.optimized_function import (
+            OptimizedFunction,
+            _decorator_only_optimize_params,
+        )
+
+        repo_root = Path(__file__).resolve().parents[4]
+        allowed = (
+            OptimizedFunction._CALL_TIME_ALGORITHM_KWARGS_ALLOWLIST
+            | OptimizedFunction._EXPLICIT_OPTIMIZE_SIGNATURE_PARAMS
+        )
+        # Every explicit parameter of .optimize() is routed by Python to the
+        # named parameter and can never reach **algorithm_kwargs, so read the
+        # real signature rather than trusting the curated subset above.
+        import inspect
+
+        allowed = allowed | set(
+            inspect.signature(OptimizedFunction.optimize).parameters
+        )
+        decorator_only = _decorator_only_optimize_params()
+
+        offenders = []
+        for base in self._SHIPPED_DIRS:
+            root = repo_root / base
+            if not root.is_dir():
+                continue
+            for path in root.rglob("*.py"):
+                try:
+                    tree = ast.parse(path.read_text(encoding="utf-8"))
+                except (SyntaxError, UnicodeDecodeError):
+                    continue
+                decorated = {
+                    id(sub)
+                    for node in ast.walk(tree)
+                    for deco in getattr(node, "decorator_list", [])
+                    for sub in ast.walk(deco)
+                }
+                for node in ast.walk(tree):
+                    if id(node) in decorated:
+                        continue  # @traigent.optimize(...) is the decorator
+                    if not (
+                        isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Attribute)
+                        and node.func.attr == "optimize"
+                    ):
+                        continue
+                    recv = node.func.value
+                    if isinstance(recv, ast.Name) and (
+                        recv.id in {"traigent", "tg"}
+                        or recv.id in self._FOREIGN_RECEIVERS
+                    ):
+                        continue
+                    for kw in node.keywords:
+                        if kw.arg is None:
+                            continue
+                        if kw.arg in allowed:
+                            continue
+                        why = (
+                            "decorator-only" if kw.arg in decorator_only else "unknown"
+                        )
+                        offenders.append(
+                            f"{path.relative_to(repo_root)}:{node.lineno} "
+                            f"passes {kw.arg}= ({why})"
+                        )
+        return offenders
+
+    def test_no_shipped_call_site_passes_a_rejected_kwarg(self):
+        offenders = self._offending_call_sites()
+        assert not offenders, (
+            "These shipped .optimize() call sites pass a kwarg the allowlist "
+            "now rejects, so they raise TypeError at runtime even though CI "
+            "never executes them:\n  " + "\n  ".join(sorted(offenders))
+        )
+
+    def test_the_census_can_actually_find_an_offender(self, tmp_path):
+        """Red control: the walk above must FAIL on a known-bad call site.
+
+        Without this, an over-narrow receiver filter or a bad path root would
+        make the guard vacuously green -- the exact failure mode it exists to
+        prevent.
+        """
+        import ast
+
+        bad = tmp_path / "shipped_example.py"
+        bad.write_text(
+            "import traigent\n"
+            "@traigent.optimize(configuration_space={'t': [0.0]})\n"
+            "def answer(t: float = 0.0) -> str:\n"
+            "    return 'x'\n"
+            "r = answer.optimize(max_trials=2, algorithm_params={'n': 2})\n",
+            encoding="utf-8",
+        )
+        tree = ast.parse(bad.read_text(encoding="utf-8"))
+        decorated = {
+            id(sub)
+            for node in ast.walk(tree)
+            for deco in getattr(node, "decorator_list", [])
+            for sub in ast.walk(deco)
+        }
+        found = [
+            kw.arg
+            for node in ast.walk(tree)
+            if id(node) not in decorated
+            and isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "optimize"
+            and not (
+                isinstance(node.func.value, ast.Name)
+                and node.func.value.id in {"traigent", "tg"}
+            )
+            for kw in node.keywords
+            if kw.arg == "algorithm_params"
+        ]
+        assert found == ["algorithm_params"], (
+            "the AST walk used by the guard failed to spot a planted "
+            "offender, so a green guard would prove nothing"
+        )

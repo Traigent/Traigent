@@ -275,11 +275,11 @@ async def run_optimization(
                         max_trials=max_iterations,
                         callbacks=callbacks,
                         timeout=60.0,  # 1 minute timeout for faster feedback
-                        algorithm_params=(
-                            {"n_initial_points": 2}
-                            if algorithm == "bayesian"
-                            else None
-                        ),
+                        # algorithm_params= was removed: .optimize() never read
+                        # it (the name appeared nowhere else in the repo), so
+                        # the bayesian n_initial_points=2 hint has never taken
+                        # effect. It is dropped rather than renamed because
+                        # there is no call-time key that carries it today.
                     ),
                     timeout=90.0,
                 )
