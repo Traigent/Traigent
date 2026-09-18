@@ -63,6 +63,14 @@ from pydantic import (
     model_validator,
 )
 
+# Aliased on purpose. This module imports Traigent's own ``ValidationError`` from
+# ``traigent.utils.exceptions`` below, which binds that name for the rest of the
+# file, so a bare ``except ValidationError`` here would never catch a pydantic
+# failure. There are currently zero ``except ValidationError`` sites in this
+# module, so the shadowing is a latent trap for future code rather than a live
+# bug; the alias keeps the pydantic class reachable under an unambiguous name.
+from pydantic import ValidationError as PydanticValidationError
+
 from traigent.api.functions import _GLOBAL_CONFIG
 from traigent.api.parameter_ranges import (
     ParameterRange,
@@ -516,6 +524,111 @@ _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
 
+def _is_same_named_twin(value: Any, model_cls: type[BundleModel]) -> bool:
+    """Is ``value`` an instance of a *same-named twin* of ``model_cls``?
+
+    A twin is a second class object built from the same source class statement:
+    identical ``__qualname__``, identical defining module name, but a different
+    object, so ``isinstance(value, model_cls)`` is ``False``. The producer is
+    ``importlib.reload`` — reload re-executes the module body in the *same*
+    module object, minting brand-new class objects and rebinding the module
+    attributes, while every caller that already did ``from
+    traigent.api.decorators import ExecutionOptions`` keeps the pre-reload class.
+    A notebook running ``%autoreload``, a plugin that reloads SDK modules, and
+    the "reimport the module to pick up the env-var change" pattern all land a
+    user here holding a perfectly valid bundle object, with nothing in the
+    message to tell them what went wrong.
+
+    Deliberately narrow: the value must still be a pydantic model, and the name
+    and module basename must match exactly. Duck-typed objects, unrelated
+    models, ``str`` and ``list`` are NOT twins and must keep raising
+    ``TypeError``.
+    """
+    if not isinstance(value, BaseModel):
+        return False
+    value_cls = type(value)
+    if value_cls.__qualname__ != model_cls.__qualname__:
+        return False
+    return (
+        value_cls.__module__.rsplit(".", 1)[-1]
+        == model_cls.__module__.rsplit(".", 1)[-1]
+    )
+
+
+def _replayable_legacy_inputs(
+    value: BaseModel, model_cls: type[BundleModel]
+) -> dict[str, Any]:
+    """The deprecated *inputs* a twin recorded, for the live model to re-validate.
+
+    ``ExecutionOptions`` keeps the tolerated legacy spellings
+    (``execution_mode``, ``privacy_enabled``, ``cloud_fallback_policy``, the flat
+    ``hybrid_api_*`` keys) in the ``_legacy_options`` ``PrivateAttr``, filled by
+    the ``_split_legacy_execution_options`` wrap validator and read back through
+    ``legacy_option_values``. They are constructor *inputs*, not derived state,
+    so a rebuild can put them back in the payload and let the live wrap
+    validator populate the stash itself. That is the point: the rebuilt object's
+    private state is *derived* by the live validators from the original inputs —
+    including ``HybridAPIOptions.model_validate``, which rejects e.g.
+    ``hybrid_api_batch_size=0`` — instead of being transplanted out of the old
+    object's ``__dict__``/``__pydantic_private__``. Nothing private is copied,
+    no unknown private key is imported, and the two instances share no mutable
+    state.
+
+    Only this one documented stash is replayed. A model without the
+    ``_legacy_options`` private attribute contributes nothing.
+    """
+    if "_legacy_options" not in getattr(model_cls, "__private_attributes__", {}):
+        return {}
+    recorded = getattr(value, "legacy_option_values", None)
+    if not isinstance(recorded, Mapping):
+        return {}
+    return dict(recorded)
+
+
+def _revalidate_same_named_twin(
+    value: BaseModel, model_cls: type[BundleModel], parameter_name: str
+) -> BundleModel:
+    """Rebuild a twin instance as a real ``model_cls``, or raise ``TypeError``.
+
+    The name/module match alone is not enough to trust the object — a twin from
+    a genuinely different version of the class could carry different fields. So
+    the inputs are re-validated through the live ``model_cls``, which re-runs
+    every validator and the models' ``extra="forbid"``: a structurally wrong
+    twin still fails, an out-of-range legacy value still fails, and what is
+    returned is an instance of the class the rest of the decorator actually uses.
+
+    Field values are taken from ``__dict__`` rather than ``model_dump()`` on
+    purpose: these bundles set ``arbitrary_types_allowed=True`` and hold live
+    objects (``ParallelConfig``, an evaluator instance, callables), which
+    ``model_dump()`` would try to serialize.
+
+    Known limits, both of them pre-existing gaps in this tolerance rather than
+    regressions. Only the *outer* model is rebuilt, so a nested value that is
+    itself an instance of a reloaded type (an evaluator instance, say) keeps its
+    old class identity and is still unsupported. And raw field names are not a
+    general answer for models that rely on validation aliases, computed fields,
+    or non-default serialization settings; none of the bundles coerced here use
+    those today.
+    """
+    payload: dict[str, Any] = dict(value.__dict__)
+    extra = getattr(value, "__pydantic_extra__", None)
+    if extra:
+        payload.update(extra)
+    for key, legacy_value in _replayable_legacy_inputs(value, model_cls).items():
+        # A real field of the live class always wins over a replayed legacy
+        # spelling of the same name (they are disjoint in every bundle today).
+        payload.setdefault(key, legacy_value)
+    try:
+        return cast(BundleModel, model_cls.model_validate(payload))
+    except PydanticValidationError as exc:
+        raise TypeError(
+            f"{parameter_name} was given an instance of "
+            f"{type(value).__qualname__} that came from a different import of "
+            f"{model_cls.__module__} (a reloaded module), and its values "
+            f"do not validate against this one: {exc}"
+        ) from exc
+
+
 def _coerce_bundle(
     value: Any, model_cls: type[BundleModel], parameter_name: str
 ) -> BundleModel | None:
@@ -527,6 +640,8 @@ def _coerce_bundle(
         if model_cls is ExecutionOptions:
             _reject_removed_js_bridge_options(value)
         return cast(BundleModel, model_cls.model_validate(value))
+    if _is_same_named_twin(value, model_cls):
+        return _revalidate_same_named_twin(value, model_cls, parameter_name)
     raise TypeError(
         f"{parameter_name} must be a dict or {model_cls.__name__}, got {type(value).__name__}"
     )
