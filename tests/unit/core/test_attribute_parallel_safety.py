@@ -101,12 +101,12 @@ class TestTraigentDisabled:
         """When TRAIGENT_DISABLED=1, @optimize should return the original function."""
         monkeypatch.setenv("TRAIGENT_DISABLED", "1")
 
-        # Need to reimport to pick up the env var change
-        from importlib import reload
-
-        import traigent.api.decorators
-
-        reload(traigent.api.decorators)
+        # No reload: is_traigent_disabled() reads the env var on every optimize()
+        # call (traigent/config/types.py), so monkeypatch alone is enough. Reloading
+        # traigent.api.decorators here rebinds ExecutionOptions/EvaluationOptions in
+        # the shared module dict and leaves every already-imported test module holding
+        # the previous classes -- which then fail _coerce_bundle's isinstance with
+        # "must be a dict or ExecutionOptions, got ExecutionOptions".
         from traigent.api.decorators import optimize
 
         def my_func(question: str) -> str:
@@ -126,11 +126,6 @@ class TestTraigentDisabled:
         """TRAIGENT_DISABLED=true should also disable Traigent."""
         monkeypatch.setenv("TRAIGENT_DISABLED", "true")
 
-        from importlib import reload
-
-        import traigent.api.decorators
-
-        reload(traigent.api.decorators)
         from traigent.api.decorators import optimize
 
         def my_func(question: str) -> str:
@@ -147,11 +142,6 @@ class TestTraigentDisabled:
         """TRAIGENT_DISABLED=yes should also disable Traigent."""
         monkeypatch.setenv("TRAIGENT_DISABLED", "yes")
 
-        from importlib import reload
-
-        import traigent.api.decorators
-
-        reload(traigent.api.decorators)
         from traigent.api.decorators import optimize
 
         def my_func(question: str) -> str:
@@ -169,11 +159,6 @@ class TestTraigentDisabled:
         monkeypatch.delenv("TRAIGENT_DISABLED", raising=False)
         monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
 
-        from importlib import reload
-
-        import traigent.api.decorators
-
-        reload(traigent.api.decorators)
         from traigent.api.decorators import optimize
 
         def my_func(question: str) -> str:
