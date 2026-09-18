@@ -271,15 +271,19 @@
   status: active
 
 - id: REQ-COST-019
-  name: "Mock mode bypass"
-  title: "Mock mode bypasses all cost tracking"
+  name: "Mock configuration cannot disable cost enforcement"
+  title: "Mock mode cannot bypass cost enforcement"
   description: >
-    When TRAIGENT_MOCK_LLM=true, cost enforcement is bypassed to enable
-    zero-cost development and testing.
+    TRAIGENT_MOCK_LLM must not bypass cost approval, permit admission,
+    reservation/release or actual-cost accounting. Mock providers may report
+    zero actual cost through the ordinary accounting path. The flag must not
+    grant unconditional permits or suppress enforcement-state updates.
   acceptance_criteria:
-    - Mock mode cached at CostEnforcer init time.
-    - All permits granted (id=0) in mock mode.
-    - No state mutations occur in mock mode operations.
+    - TRAIGENT_MOCK_LLM is not consulted by CostEnforcer; no mock-mode flag is cached at CostEnforcer init.
+    - Within CostEnforcer, cost approval, permit acquisition, reservation and release, and cost tracking run identically regardless of TRAIGENT_MOCK_LLM.
+    - The single documented exception is CostEstimator's optimized-function pricing preflight, which is skipped under TRAIGENT_MOCK_LLM while runtime CostEnforcer permits and accounting remain active.
+    - No permit is granted on account of mock mode; admission denials still occur when the admission check fails.
+    - Mock providers MAY report zero actual cost through the ordinary track_cost accounting path; when they do, enforcement state is mutated as usual.
   tags: [cost, mock, testing]
   priority: medium
   type: functional

@@ -2076,6 +2076,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../user-guide/execution-modes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execution Modes (local / cloud / hybrid_api)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user-guide/choosing_optimization_model/" class="md-nav__link">
         
   
@@ -3912,6 +3940,12 @@ content.</p>
 models are detected from the configuration space or current/default config.</p>
 <p>With <code>TRAIGENT_STRICT_COST_ACCOUNTING=true</code>, unpriced models always raise
 <code>UnknownModelError</code> before any trial and no prompt is shown.</p>
+<p>When the variable is unset, runs whose objectives include <code>cost</code> are strict at
+runtime only: this preflight still follows the approval rules below, because it runs
+before any response exists and cannot see provider-reported costs such as
+OpenRouter's. An approved run then stops at the first call that has neither a table
+price nor a reported cost, instead of recording <code>$0</code> for it. Set
+<code>TRAIGENT_STRICT_COST_ACCOUNTING=false</code> to keep recording <code>$0</code> with a warning.</p>
 <p>To proceed after acknowledging that affected results will report <code>$0</code> cost while
 your provider may still bill you, use one explicit approval:</p>
 <ul>
@@ -3930,7 +3964,7 @@ billing bypass.</p>
 <span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_CUSTOM_MODEL_PRICING_FILE</span><span class="o">=</span>.traigent/model-pricing.json
 </code></pre></div>
 <h2 id="ci-run-approval">CI Run Approval<a class="headerlink" href="#ci-run-approval" title="Permanent link">&para;</a></h2>
-<p>Edge analytics optimization in CI requires explicit approval. The recommended
+<p>Optimization in CI requires explicit approval. The recommended
 environment approval is:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_RUN_APPROVED</span><span class="o">=</span><span class="m">1</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">TRAIGENT_APPROVED_BY</span><span class="o">=</span><span class="s2">"your_name"</span>

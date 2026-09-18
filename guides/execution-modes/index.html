@@ -2086,6 +2086,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../user-guide/execution-modes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execution Modes (local / cloud / hybrid_api)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user-guide/choosing_optimization_model/" class="md-nav__link">
         
   
@@ -3920,6 +3948,10 @@
 
 
 <h1 id="optimization-routing">Optimization Routing<a class="headerlink" href="#optimization-routing" title="Permanent link">&para;</a></h1>
+<p>This page covers the <code>algorithm</code> / <code>offline</code> routing knobs that choose between
+Traigent's <code>local</code> and <code>cloud</code> execution modes. If your agent is itself an
+external HTTP/MCP service Traigent calls (the <code>hybrid_api</code> mode), see the
+<a href="../../user-guide/execution-modes/">Execution Modes matrix</a> instead.</p>
 <p>Most users should not set routing options. Set <code>TRAIGENT_API_KEY</code>, decorate your
 function, and call <code>.optimize(...)</code>. The default uses Traigent's smart optimizer
 and syncs results to the portal.</p>
