@@ -628,6 +628,18 @@ class HybridAPIEvaluator(BaseEvaluator):
             if result.latency_ms > 0:
                 latency_values.append(float(result.latency_ms))
 
+            # A failed example is not a real measurement (issue #2192,
+            # mirroring the measured-vs-unmeasured distinction from #1964's
+            # local evaluator lane): the external agent service's
+            # ``metrics`` payload for an errored example is not a
+            # trustworthy measurement -- a quality metric it reports
+            # alongside an error may be a placeholder, not a real
+            # measurement, and averaging it in would silently depress the
+            # reported accuracy/quality stats. Only successful examples
+            # contribute a quality metric.
+            if not result.success:
+                continue
+
             per_example_accuracy = self._derive_accuracy_from_metrics(result.metrics)
             if per_example_accuracy is not None:
                 accuracy_values.append(float(per_example_accuracy))
@@ -1465,20 +1477,31 @@ class HybridAPIEvaluator(BaseEvaluator):
         metric_counts: dict[str, int] = {}
 
         for result in results:
+            # A failed example is not a real measurement (issue #2192,
+            # mirroring the measured-vs-unmeasured distinction from #1964's
+            # local evaluator lane): the external agent service's
+            # ``metrics`` payload for an errored example is not a
+            # trustworthy measurement -- e.g. an output scored before a
+            # downstream validation step raised an error may still carry a
+            # quality metric, and averaging that value in would silently
+            # depress the reported mean for an example that did not really
+            # complete. Only successful examples contribute a quality
+            # metric to the per-example means.
+            if not result.success:
+                continue
             for metric_name, value in result.metrics.items():
                 if metric_name not in metric_sums:
                     metric_sums[metric_name] = 0.0
                     metric_counts[metric_name] = 0
                 metric_sums[metric_name] += value
                 metric_counts[metric_name] += 1
-            if result.success:
-                for metric_name in (
-                    "cost",
-                    "total_cost",
-                    "latency",
-                    "response_time_ms",
-                ):
-                    metric_counts[metric_name] = metric_counts.get(metric_name, 0) + 1
+            for metric_name in (
+                "cost",
+                "total_cost",
+                "latency",
+                "response_time_ms",
+            ):
+                metric_counts[metric_name] = metric_counts.get(metric_name, 0) + 1
 
         # Compute means
         for metric_name, total in metric_sums.items():
