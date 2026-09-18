@@ -597,6 +597,47 @@ def _record_pricing_provenance(
     )
 
 
+def _registered_optimizer_init_params() -> frozenset[str]:
+    """Every explicit ``__init__`` parameter of every REGISTERED optimizer.
+
+    These are, by definition, consumed at call time: ``.optimize()`` forwards
+    ``**algorithm_kwargs`` into the chosen optimizer's constructor, so a name
+    in one of those signatures is a real option, not a typo.
+
+    Derived rather than curated, because the curated version was wrong. The
+    hand-written allowlist missed ``batch_config``, ``pareto_frontier_size``,
+    ``base_optimizer`` and ``remote_enabled`` -- all constructor parameters of
+    the batch and remote optimizers, all reachable today. Review proved the
+    break by running ``f.optimize(algorithm="multi_objective_batch",
+    pareto_frontier_size=7)``: it works on develop and the value reaches the
+    optimizer, and it raised ``TypeError`` on this branch with a message
+    claiming the kwarg is "not consumed by any optimizer at call time" -- which
+    was simply false. Deriving the set means registering a new optimizer, or
+    adding a parameter to an existing one, cannot silently break its callers.
+
+    NOT cached: the registry is mutable (``register_optimizer`` supports
+    plugins), so a cache here would pin whatever happened to be registered at
+    the first ``.optimize()`` call and reject a later plugin's options.
+    """
+    # Local import for the same circular-import reason as below.
+    from traigent.optimizers.registry import _OPTIMIZER_REGISTRY
+
+    names: set[str] = set()
+    for optimizer_cls in _OPTIMIZER_REGISTRY.values():
+        try:
+            parameters = inspect.signature(optimizer_cls.__init__).parameters
+        except (TypeError, ValueError):  # pragma: no cover - exotic callables
+            continue
+        names.update(
+            name
+            for name, parameter in parameters.items()
+            if name != "self"
+            and parameter.kind
+            not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        )
+    return frozenset(names)
+
+
 @lru_cache(maxsize=1)
 def _decorator_only_optimize_params() -> frozenset[str]:
     """Decorator-only ``@traigent.optimize`` options, derived (issue #1705).
@@ -1526,16 +1567,24 @@ class OptimizedFunction(Generic[_P, _R]):
         # decorator option (handled above) nor on the call-time allowlist is
         # unknown -- most likely a typo -- and must not be silently absorbed
         # into BaseOptimizer.algorithm_config with zero effect.
-        unknown = (
-            set(algorithm_kwargs) - decorator_only
-        ) - self._CALL_TIME_ALGORITHM_KWARGS_ALLOWLIST
+        # The curated set covers orchestrator/runtime overrides; the derived set
+        # covers every registered optimizer's own constructor parameters. The
+        # curated half alone was wrong -- it rejected batch_config,
+        # pareto_frontier_size, base_optimizer and remote_enabled, which the
+        # batch and remote optimizers genuinely accept.
+        accepted = (
+            self._CALL_TIME_ALGORITHM_KWARGS_ALLOWLIST
+            | _registered_optimizer_init_params()
+        )
+        unknown = (set(algorithm_kwargs) - decorator_only) - accepted
         unknown -= self._ALGORITHM_KWARGS_WITH_DEDICATED_REJECTION
         if unknown:
             unknown_names = ", ".join(sorted(unknown))
             raise TypeError(
                 f"Unknown keyword argument(s) to .optimize(): {unknown_names}. "
-                "Not a recognized @traigent.optimize decorator argument and not "
-                "consumed by any optimizer at call time; check for a typo "
+                "Not a recognized @traigent.optimize decorator argument, not an "
+                "orchestrator runtime override, and not a constructor parameter "
+                "of any registered optimizer; check for a typo "
                 "(issue #1705 -- previously silently ignored)."
             )
 

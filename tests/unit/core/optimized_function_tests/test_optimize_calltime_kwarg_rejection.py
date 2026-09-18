@@ -388,3 +388,99 @@ class TestShippedCallSitesSurviveTheAllowlist:
         )
         assert scanned == 1
         assert offenders == []
+
+
+class TestEveryRegisteredOptimizersOptionsAreAccepted:
+    """The check that was missing, and that would have caught the break.
+
+    ``.optimize()`` forwards ``**algorithm_kwargs`` into the chosen optimizer's
+    constructor, so every explicit parameter of every registered optimizer is
+    by definition consumed at call time. The first version of this PR checked
+    call-time kwargs against a HAND-WRITTEN allowlist and rejected four of them
+    -- ``batch_config``, ``pareto_frontier_size``, ``base_optimizer`` and
+    ``remote_enabled`` -- with an error message asserting they were "not
+    consumed by any optimizer at call time", which was false: on develop those
+    calls ran and the values reached the optimizer.
+
+    All 52 tests in this file passed while that was true, because none of them
+    derived anything from the optimizer registry. This class does.
+    """
+
+    @staticmethod
+    def _registry_params() -> dict[str, set[str]]:
+        import inspect
+
+        import traigent  # noqa: F401 - import populates the registry
+        from traigent.optimizers.registry import _OPTIMIZER_REGISTRY
+
+        out: dict[str, set[str]] = {}
+        for name, cls in _OPTIMIZER_REGISTRY.items():
+            try:
+                parameters = inspect.signature(cls.__init__).parameters
+            except (TypeError, ValueError):
+                continue
+            out[name] = {
+                p
+                for p, param in parameters.items()
+                if p != "self"
+                and param.kind
+                not in (
+                    inspect.Parameter.VAR_POSITIONAL,
+                    inspect.Parameter.VAR_KEYWORD,
+                )
+            }
+        return out
+
+    def test_the_registry_is_populated(self) -> None:
+        """Guard against a vacuous pass: an empty registry proves nothing."""
+        params = self._registry_params()
+        assert len(params) >= 4, (
+            f"only {len(params)} optimizers registered; the assertions below "
+            "would pass without checking anything"
+        )
+
+    def test_no_registered_optimizer_option_is_rejected(self, opt_func) -> None:
+        """Every constructor parameter of every registered optimizer is accepted."""
+        rejected: dict[str, str] = {}
+        for optimizer_name, parameters in self._registry_params().items():
+            for parameter in parameters:
+                try:
+                    opt_func._prepare_algorithm_kwargs({parameter: None})
+                except TypeError as exc:
+                    rejected[f"{optimizer_name}.{parameter}"] = str(exc)[:80]
+
+        assert not rejected, (
+            "these are real constructor parameters of registered optimizers, so "
+            "passing them to .optimize() works today and must keep working:\n  "
+            + "\n  ".join(f"{k}: {v}" for k, v in sorted(rejected.items()))
+        )
+
+    @pytest.mark.parametrize(
+        "kwarg,value",
+        [
+            ("batch_config", {"batch_size": 2}),
+            ("pareto_frontier_size", 7),
+            ("base_optimizer", "grid"),
+            ("remote_enabled", True),
+        ],
+    )
+    def test_the_four_that_regressed_specifically(self, opt_func, kwarg, value) -> None:
+        """Named individually so a future reader sees exactly what broke."""
+        opt_func._prepare_algorithm_kwargs({kwarg: value})
+
+    def test_a_typo_of_a_registry_option_is_still_rejected(self, opt_func) -> None:
+        """Widening to the registry must not turn the check off."""
+        with pytest.raises(TypeError, match=r"Unknown keyword argument"):
+            opt_func._prepare_algorithm_kwargs({"pareto_frontier_sizee": 7})
+
+    def test_the_error_message_no_longer_overclaims(self, opt_func) -> None:
+        """It used to say "not consumed by any optimizer", which was false.
+
+        The message is the thing a user acts on, so it has to describe the
+        actual test that was applied.
+        """
+        with pytest.raises(TypeError) as excinfo:
+            opt_func._prepare_algorithm_kwargs({"totally_unknown_option": 1})
+        text = str(excinfo.value)
+        assert "registered optimizer" in text
+        assert "runtime override" in text
