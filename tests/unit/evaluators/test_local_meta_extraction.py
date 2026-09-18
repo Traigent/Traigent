@@ -1,5 +1,7 @@
 """Unit tests for __traigent_meta__ extraction in LocalEvaluator."""
 
+import pytest
+
 from traigent.evaluators.local import LocalEvaluator
 from traigent.evaluators.metrics_tracker import ExampleMetrics
 
@@ -247,3 +249,180 @@ class TestMetaExtraction:
         assert output["citations"] == ["source1", "source2"]
         assert output["raw_response"] == "full response"
         assert output["text"] == "answer"
+
+
+class TestCallBreakdownExtraction:
+    """Per-call/per-model cost breakdown extraction (Traigent#1598)."""
+
+    def test_calls_breakdown_injected_into_call_breakdown(self):
+        """A valid 'calls' list is normalized onto metrics.call_breakdown."""
+        evaluator = LocalEvaluator()
+        metrics = ExampleMetrics()
+
+        output = {
+            "text": "answer",
+            "__traigent_meta__": {
+                "total_cost": 0.01,
+                "calls": [
+                    {
+                        "model": "gpt-4o-mini",
+                        "input_tokens": 200,
+                        "output_tokens": 40,
+                        "cost": 0.002,
+                    },
+                    {
+                        "model": "gpt-4o",
+                        "input_tokens": 500,
+                        "output_tokens": 300,
+                        "cost": 0.008,
+                    },
+                ],
+            },
+        }
+        meta = evaluator._extract_and_inject_traigent_meta(output, metrics)
+
+        assert meta is not None
+        assert metrics.call_breakdown == [
+            {
+                "model": "gpt-4o-mini",
+                "input_tokens": 200,
+                "output_tokens": 40,
+                "cost": 0.002,
+            },
+            {
+                "model": "gpt-4o",
+                "input_tokens": 500,
+                "output_tokens": 300,
+                "cost": 0.008,
+            },
+        ]
+        # The blended total_cost is unaffected -- it stays authoritative.
+        assert metrics.cost.total_cost == 0.01
+
+    def test_no_calls_key_leaves_call_breakdown_empty(self):
+        """Absence of 'calls' means no per-model attribution was reported."""
+        evaluator = LocalEvaluator()
+        metrics = ExampleMetrics()
+
+        output = {"text": "answer", "__traigent_meta__": {"total_cost": 0.01}}
+        meta = evaluator._extract_and_inject_traigent_meta(output, metrics)
+
+        assert meta is not None
+        assert metrics.call_breakdown == []
+
+    def test_negative_values_clamped_to_zero(self):
+        evaluator = LocalEvaluator()
+        metrics = ExampleMetrics()
+
+        output = {
+            "text": "answer",
+            "__traigent_meta__": {
+                "total_cost": 0.01,
+                "calls": [
+                    {
+                        "model": "gpt-4o-mini",
+                        "input_tokens": -50,
+                        "output_tokens": -10,
+                        "cost": -0.001,
+                    }
+                ],
+            },
+        }
+        evaluator._extract_and_inject_traigent_meta(output, metrics)
+
+        assert metrics.call_breakdown == [
+            {
+                "model": "gpt-4o-mini",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cost": 0.0,
+            }
+        ]
+
+    @pytest.mark.parametrize(
+        "bad_calls",
+        [
+            pytest.param([{"cost": 0.001}], id="missing-model"),
+            pytest.param([{"model": "m", "cost": float("nan")}], id="nan-cost"),
+            pytest.param([{"model": "m", "cost": float("inf")}], id="inf-cost"),
+            pytest.param([{"model": "m", "cost": True}], id="bool-cost"),
+            pytest.param("not-a-list", id="not-a-list"),
+        ],
+    )
+    def test_malformed_calls_drops_attribution_but_keeps_the_reported_cost(
+        self, bad_calls
+    ):
+        """A bad attribution entry must not throw away a valid total_cost.
+
+        `calls` says WHICH model spent the money; `total_cost` says HOW MUCH was
+        spent. An earlier version failed the type guard for the whole
+        ``__traigent_meta__`` and called that fail-closed -- but for money it is
+        fail-OPEN: a known $0.01 charge was recorded as $0.00, the run
+        under-reported spend, and that figure reaches ``format_for_backend`` and
+        budget accounting. Drop the attribution; keep the money.
+        """
+        evaluator = LocalEvaluator()
+        metrics = ExampleMetrics()
+
+        output = {
+            "text": "answer",
+            "__traigent_meta__": {"total_cost": 0.01, "calls": bad_calls},
+        }
+        evaluator._extract_and_inject_traigent_meta(output, metrics)
+
+        assert metrics.cost.total_cost == 0.01, (
+            "a malformed attribution discarded an authoritative reported cost"
+        )
+        assert metrics.call_breakdown == []
+
+    def test_valid_calls_keep_both_the_breakdown_and_the_cost(self):
+        """The severing must not cost us the feature it guards."""
+        evaluator = LocalEvaluator()
+        metrics = ExampleMetrics()
+
+        output = {
+            "text": "answer",
+            "__traigent_meta__": {
+                "total_cost": 0.01,
+                "calls": [
+                    {"model": "gpt-4o-mini", "cost": 0.002},
+                    {"model": "gpt-4o", "cost": 0.008},
+                ],
+            },
+        }
+        evaluator._extract_and_inject_traigent_meta(output, metrics)
+
+        assert metrics.cost.total_cost == 0.01
+        assert [entry["model"] for entry in metrics.call_breakdown] == [
+            "gpt-4o-mini",
+            "gpt-4o",
+        ]
+
+    def test_attribution_sum_never_moves_the_injected_total_cost(self):
+        """A huge per-model sum must leave the billed total untouched.
+
+        Both of this repo's recent cost regressions were an attribution path
+        feeding the billed total. The invariant held when this was written, but
+        no test pinned it -- a mutation adding sum(call costs) to
+        ``metrics.cost.total_cost`` passed the entire suite.
+        """
+        evaluator = LocalEvaluator()
+        metrics = ExampleMetrics()
+
+        output = {
+            "text": "answer",
+            "__traigent_meta__": {
+                "total_cost": 0.25,
+                "calls": [
+                    {"model": "gpt-4o", "cost": 5.0},
+                    {"model": "gpt-4o-mini", "cost": 7.0},
+                ],
+            },
+        }
+        evaluator._extract_and_inject_traigent_meta(output, metrics)
+
+        assert metrics.cost.total_cost == 0.25, (
+            "the per-model attribution sum leaked into the billed total: "
+            f"{metrics.cost.total_cost!r}"
+        )
+        assert sum(entry["cost"] for entry in metrics.call_breakdown) == 12.0

@@ -34,6 +34,7 @@ from traigent.evaluators.metrics_tracker import (
     extract_llm_metrics,
     is_reserved_metric_key,
 )
+from traigent.utils.env_config import is_truthy
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
 from traigent.utils.exceptions import ConfigurationError, EvaluationError
@@ -968,6 +969,14 @@ class EvaluationResult:
     # is_objective}``. Empty when every metric computed cleanly.
     metric_errors: list[dict[str, Any]] = field(default_factory=list)
 
+    # Per-trial, per-model cost breakdown for multi-model/multi-step agents
+    # (Traigent#1598), aggregated from every example's
+    # ``__traigent_meta__["calls"]`` this trial reported (see
+    # ``MetricsTracker.aggregate_call_breakdown``). Each entry is
+    # ``{"model", "input_tokens", "output_tokens", "cost", "calls"}``. Empty
+    # when no example reported a per-call breakdown.
+    model_costs: list[dict[str, Any]] = field(default_factory=list)
+
     def __post_init__(self) -> None:
         # Backward compatibility mapping
         if self.metrics is None:
@@ -1021,6 +1030,7 @@ class EvaluationResult:
             "success_rate": self.success_rate,
             "has_errors": self.has_errors,
             "metric_errors": _safe_json_value(self.metric_errors),
+            "model_costs": _safe_json_value(self.model_costs),
         }
 
     @classmethod
@@ -1053,6 +1063,7 @@ class EvaluationResult:
             outputs=data.get("outputs"),
             errors=data.get("errors"),
             metric_errors=data.get("metric_errors") or [],
+            model_costs=data.get("model_costs") or [],
         )
 
 
@@ -1631,7 +1642,11 @@ class BaseEvaluator(ABC):
         This simulates realistic LLM latency in mock LLM mode to make parallel execution
         visible in traces. Uses asyncio.sleep to not block the event loop.
         """
-        if os.environ.get("TRAIGENT_MOCK_LLM", "").lower() not in ("true", "1", "yes"):
+        # Use the canonical truthy parser (accepts 1/true/yes/on,
+        # case-insensitive) so this agrees with env_config.is_mock_llm();
+        # the previous tuple omitted "on", silently dropping
+        # TRAIGENT_MOCK_DELAY_MS for that spelling (issue #1766).
+        if not is_truthy(os.environ.get("TRAIGENT_MOCK_LLM")):
             return
 
         delay_str = os.environ.get("TRAIGENT_MOCK_DELAY_MS", "")

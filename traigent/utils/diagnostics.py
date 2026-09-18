@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from traigent.utils.console import _safe_print
+from traigent.utils.env_config import is_truthy
 
 
 class DiagnosticReport:
@@ -265,8 +266,11 @@ class TraigentDiagnostics:
             traigent.initialize(execution_mode="local")
             report.add_success("Traigent", "SDK initialized successfully")
 
-            # Check for mock LLM mode
-            if os.environ.get("TRAIGENT_MOCK_LLM", "").lower() == "true":
+            # Check for mock LLM mode. Use the canonical truthy parser so this
+            # agrees with the runtime's own is_mock_llm() (accepts
+            # 1/true/yes/on, case-insensitive) instead of matching only the
+            # exact string "true" (issue #1766).
+            if is_truthy(os.environ.get("TRAIGENT_MOCK_LLM")):
                 report.add_success(
                     "Traigent", "Mock LLM mode is enabled (good for testing)"
                 )
@@ -327,7 +331,10 @@ class TraigentDiagnostics:
         if report.issues:
             report.add_recommendation("Fix critical issues before proceeding")
 
-        if not os.environ.get("TRAIGENT_MOCK_LLM"):
+        # A truthy check here (not a bare presence check) so a value like
+        # TRAIGENT_MOCK_LLM=false or =0 is correctly treated as "not
+        # enabled" and still gets the recommendation (issue #1766).
+        if not is_truthy(os.environ.get("TRAIGENT_MOCK_LLM")):
             report.add_recommendation(
                 "Enable mock LLM mode for testing: export TRAIGENT_MOCK_LLM=true"
             )

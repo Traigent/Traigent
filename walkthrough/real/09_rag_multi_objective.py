@@ -2,9 +2,17 @@
 # ruff: noqa: E402
 """Example 9: RAG Multi-Objective - Balance accuracy, cost, and latency.
 
-Demonstrates how retrieving too little context, using CoT instructions that
-consume the context window, or picking the wrong temperature can tank
-accuracy - and how Traigent finds the sweet spot.
+Demonstrates how CoT instructions that burn a small max_tokens budget before
+reaching the answer, a minimal vs role-based prompt, the wrong temperature, or
+the wrong model can tank accuracy - and how Traigent finds the sweet spot
+across the three weighted objectives (accuracy 50%, cost 20%, latency 30%).
+
+Retrieval is deliberately held FIXED here (similarity search, k=3, see
+``rag_agent`` below): every axis this example sweeps is generation-side and
+listed in ``CONFIG_SPACE`` - model, prompt, temperature, instructions,
+max_tokens. For an example that sweeps the RETRIEVAL parameters themselves,
+see ``walkthrough/real/05_rag_parallel.py``, whose ``CONFIG_SPACE`` varies
+``k`` and ``retrieval_method``.
 
 Usage (run in a terminal from repo root, works without activating venv):
     export OPENAI_API_KEY="your-key"  # pragma: allowlist secret
@@ -120,8 +128,18 @@ def get_vectorstore() -> FAISS:
     return _vectorstore
 
 
+EVAL_DATASET = DATASETS / "rag_questions.jsonl"
+
+# Counted, not hardcoded: the printed cost estimate previously said 20 examples
+# against a 13-row dataset, overstating the spend by ~1.5x. Deriving it here
+# means the estimate cannot drift from the file again.
+EVAL_DATASET_SIZE = sum(
+    1 for line in EVAL_DATASET.read_text(encoding="utf-8").splitlines() if line.strip()
+)
+
+
 @traigent.optimize(
-    eval_dataset=str(DATASETS / "rag_questions.jsonl"),
+    eval_dataset=str(EVAL_DATASET),
     objectives=OBJECTIVES,
     scoring_function=semantic_overlap_score,
     configuration_space=CONFIG_SPACE,
@@ -132,7 +150,9 @@ def rag_agent(question: str) -> str:
     """RAG agent: retrieves context, answers with configurable generation settings."""
     config = traigent.get_config()
 
-    # Retrieve top-3 relevant documents
+    # Retrieve top-3 relevant documents. k is deliberately FIXED and not in
+    # CONFIG_SPACE: this example sweeps generation-side knobs only (see the
+    # module docstring); 05_rag_parallel.py is the retrieval sweep.
     vectorstore = get_vectorstore()
     docs = vectorstore.similarity_search(question, k=3)
     context = "\n".join(d.page_content for d in docs)
@@ -180,7 +200,7 @@ async def main() -> None:
     print_optimization_config(OBJECTIVES, CONFIG_SPACE)
     print_cost_estimate(
         models=CONFIG_SPACE["model"],
-        dataset_size=20,
+        dataset_size=EVAL_DATASET_SIZE,
         task_type="rag_qa",
         num_trials=18,
     )
