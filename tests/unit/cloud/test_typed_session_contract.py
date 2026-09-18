@@ -102,12 +102,12 @@ class TestContractGate:
     def test_typed_empty_objectives_default_to_score_maximize(self, monkeypatch):
         monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
         payload = _ops()._build_session_payload(_request(objectives=None), 5)
-        assert payload["objectives"] == [{"metric": "score", "direction": "maximize"}]
+        assert payload["objectives"] == [{"name": "score", "orientation": "maximize"}]
 
     def test_typed_direction_objective_uses_score_metric(self, monkeypatch):
         monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
         payload = _ops()._build_session_payload(_request(objectives=["minimize"]), 5)
-        assert payload["objectives"] == [{"metric": "score", "direction": "minimize"}]
+        assert payload["objectives"] == [{"name": "score", "orientation": "minimize"}]
 
     def test_typed_real_metric_objective_is_unchanged(self, monkeypatch):
         monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
@@ -120,14 +120,14 @@ class TestContractGate:
             _request(
                 objectives=[
                     "MAXIMIZE",
-                    {"metric": "score", "direction": "maximize"},
+                    {"name": "score", "orientation": "maximize"},
                     "accuracy",
                 ]
             ),
             5,
         )
         assert payload["objectives"] == [
-            {"metric": "score", "direction": "maximize"},
+            {"name": "score", "orientation": "maximize"},
             "accuracy",
         ]
 

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import asyncio
 import copy
 import inspect
@@ -82,7 +84,7 @@ from traigent.core.metrics_aggregator import (
     aggregate_metrics,
     build_safeguards_telemetry,
 )
-from traigent.core.objectives import ObjectiveSchema
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.core.orchestrator_helpers import (
     allocate_parallel_ceilings,
     constraint_requires_metrics,
@@ -330,6 +332,19 @@ def _format_inert_objective_warning(
         "no-LLM-scored, free, or unpriceable-model run. Real priced runs whose "
         "cost/latency varies across configs are unaffected."
     )
+
+
+# Read from the dataclass rather than re-typed here: if the default ever changes,
+# this follows it instead of silently starting to send the old value as if it were
+# meaningful.
+_DEFAULT_NORMALIZATION = next(
+    (
+        f.default
+        for f in dataclasses.fields(ObjectiveDefinition)
+        if f.name == "normalization"
+    ),
+    "min_max",
+)
 
 
 class OptimizationOrchestrator:
@@ -1310,14 +1325,60 @@ class OptimizationOrchestrator:
         """
         if self.objective_schema is not None and self.objective_schema.objectives:
             return [
-                {
-                    "name": objective.name,
-                    "orientation": objective.orientation,
-                    "weight": objective.weight,
-                }
+                self._session_objective_to_wire(objective)
                 for objective in self.objective_schema.objectives
             ]
         return list(self.optimizer.objectives or [])
+
+    @staticmethod
+    def _session_objective_to_wire(objective: Any) -> dict[str, Any]:
+        """One ObjectiveDefinition in the canonical session-create shape.
+
+        This used to emit only name/orientation/weight, which silently dropped the
+        band of a banded objective -- and the backend REJECTS an objective whose
+        orientation is "band" with neither band nor bounds, so a banded objective
+        declared through ObjectiveSchema failed at session create rather than
+        optimizing wrongly (#304).
+
+        normalization, unit and bounds are carried for the same reason: the backend
+        now persists them (TraigentBackend#3394) and cannot recover a value the SDK
+        never sent.
+        """
+        payload: dict[str, Any] = {
+            "name": objective.name,
+            "orientation": objective.orientation,
+            "weight": objective.weight,
+        }
+
+        band = getattr(objective, "band", None)
+        if band is not None and band.low is not None and band.high is not None:
+            # Canonical BandTarget only -- additionalProperties is false on it, so
+            # center/tol must not travel even though BandTarget accepts them as input.
+            band_payload: dict[str, Any] = {"target": [band.low, band.high]}
+            band_test = getattr(objective, "band_test", None)
+            band_alpha = getattr(objective, "band_alpha", None)
+            if band_test is not None:
+                band_payload["test"] = band_test
+            if band_alpha is not None:
+                band_payload["alpha"] = band_alpha
+            payload["band"] = band_payload
+
+        # `normalization` defaults to "min_max", so sending it unconditionally would
+        # echo a default the caller never set onto every objective. Send it only when
+        # it carries information -- i.e. when it differs from the default.
+        normalization = getattr(objective, "normalization", None)
+        if normalization is not None and normalization != _DEFAULT_NORMALIZATION:
+            payload["normalization"] = normalization
+
+        unit = getattr(objective, "unit", None)
+        if unit is not None:
+            payload["unit"] = unit
+
+        bounds = getattr(objective, "bounds", None)
+        if bounds is not None and "band" not in payload:
+            payload["bounds"] = list(bounds)
+
+        return payload
 
     def _build_session_default_config_payload(self) -> dict[str, Any] | None:
         """``default_config`` for the session-create wire payload.
