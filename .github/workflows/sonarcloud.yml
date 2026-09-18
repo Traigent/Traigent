@@ -56,16 +56,49 @@ jobs:
           pip install pytest pytest-cov pytest-timeout
           pip install -e ".[dev,analytics,test]"
 
+      - name: Install the pinned economics Schema
+        # Same step pr-gate.yml and publish.yml already run, and for the same
+        # reason: the economics contract-drift tests hard-require the exact
+        # TraigentSchema economics contract, traigent-schema is deliberately
+        # NOT a pyproject extra (a direct URL reference made traigent 0.26.0
+        # unpublishable -- see the NOTE in pyproject.toml), and the pin lives
+        # in scripts/ci/schema-pin.txt as the single source of truth.
+        #
+        # This lane was the one internal lane that never picked that up, so
+        # tests/unit/economics/* errored here and nowhere else, and the code
+        # they cover recorded as uncovered -- which is what drove SonarCloud's
+        # new-code coverage number, not the PRs it was failing.
+        #
+        # Credential-free on purpose: TraigentSchema is a PUBLIC repo, so no
+        # token is needed to resolve this pin (injecting one broke Dependabot
+        # PRs, which never receive org secrets).
+        run: |
+          pip install -r scripts/ci/schema-pin.txt
+
       - name: Run tests with coverage
         run: |
-          # Run unit tests to ensure coverage for all changed code
+          # Run unit tests to ensure coverage for all changed code.
+          #
+          # The run is still non-fatal: this lane exists to produce coverage,
+          # not to gate on tests (pr-gate.yml does that). But a bare `|| true`
+          # made a partial run INVISIBLE -- 114 failures and 20 errors once
+          # left this step green while the resulting partial coverage.xml
+          # drove SonarCloud to fail a PR's Quality Gate on "new code
+          # coverage", pointing the reader at the PR instead of at the lane.
+          # Capture the status and surface it as an annotation so the number
+          # below can be trusted, or knowingly not.
+          set +e
           pytest tests/unit/ \
             --cov=traigent \
             --cov-report=xml \
             --cov-report=term \
             -q \
-            --timeout=30 \
-            || true
+            --timeout=30
+          pytest_rc=$?
+          set -e
+          if [ "$pytest_rc" -ne 0 ]; then
+            echo "::error title=Coverage run was not clean::pytest exited ${pytest_rc}. The coverage.xml uploaded below is PARTIAL, so SonarCloud's new-code coverage is a lower bound on this commit, not a measurement of it. Fix the failures before reading the Quality Gate as a statement about the PR."
+          fi
         timeout-minutes: 10  # Step-level timeout for tests
         env:
           TRAIGENT_MOCK_LLM: "true"
@@ -73,7 +106,9 @@ jobs:
 
       - name: Run MCP coverage append
         run: |
+          # Same treatment as the step above: non-fatal, but never silent.
           pip install -e ".[mcp]"
+          set +e
           pytest tests/unit/mcp/test_local_server.py \
             tests/unit/analytics_mcp/test_observability_mcp_tools.py \
             --cov=traigent \
@@ -81,8 +116,12 @@ jobs:
             --cov-report=xml \
             --cov-report=term \
             -q \
-            --timeout=30 \
-            || true
+            --timeout=30
+          pytest_rc=$?
+          set -e
+          if [ "$pytest_rc" -ne 0 ]; then
+            echo "::error title=MCP coverage append was not clean::pytest exited ${pytest_rc}; the appended coverage is partial."
+          fi
         timeout-minutes: 5
         env:
           TRAIGENT_MOCK_LLM: "true"
