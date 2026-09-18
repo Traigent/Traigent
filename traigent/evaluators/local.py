@@ -1644,6 +1644,29 @@ class LocalEvaluator(BaseEvaluator):
                 metric_errors=metric_errors,
             )
 
+            # Fold LLM spend made *inside* a metric function / judge (e.g. an
+            # LLM-as-judge calling litellm.completion) into this example's
+            # cost/tokens. Without this, judge calls are captured by the same
+            # interceptor the agent call uses but are never read: this
+            # example's cost was already settled above by
+            # `_extract_llm_metrics_for_output`, before metric functions ran
+            # (Traigent#2297). Left uncorrected, `total_cost` and the
+            # permit-based cost enforcement in `core/cost_enforcement.py`
+            # never see judge spend.
+            target_result = (
+                example_results[index]
+                if (
+                    self.detailed
+                    and example_results
+                    and index < len(example_results)
+                    and example_results[index] is not None
+                )
+                else None
+            )
+            self._fold_metric_function_llm_cost(
+                example_metric, example_result=target_result
+            )
+
             # Transfer custom metrics to example_results if in detailed mode.
             # Iterate the keys actually produced (which include mapping
             # sub-keys and exclude any function name a mapping-returning
@@ -1680,6 +1703,166 @@ class LocalEvaluator(BaseEvaluator):
             progress_callback(index, payload)
 
         return example_metric
+
+    def _fold_metric_function_llm_cost(
+        self,
+        example_metric: ExampleMetrics,
+        *,
+        example_result: Any = None,
+    ) -> None:
+        """Attribute LLM spend made by a metric function to this example.
+
+        A metric function (or an LLM-as-judge inside one) may call an
+        intercepted provider (litellm.completion/acompletion). That call is
+        captured by the same interceptor buffer the agent's own call uses.
+        Within a single trial, evaluated sequentially, the buffer holds
+        *only* what was captured since this example's metric functions
+        started: `evaluate()` drains the buffer into
+        `all_captured_responses` and clears it before the per-example loop
+        begins, and every previous example already cleared its own share
+        here. So in that sequential-within-a-trial case, whatever is in the
+        buffer now is this example's judge/evaluator spend, and nothing
+        else's (Traigent#2297).
+
+        CAVEAT -- this guarantee does NOT extend across concurrent trials.
+        The capture buffer (`LangChainMetadataCapture._all_responses` in
+        `utils/langchain_interceptor.py`) is a single process-global list
+        with no per-trial or per-task isolation (no `ContextVar`), and
+        `optimize(..., parallel_trials>1)` gathers multiple trial coroutines
+        on one event loop. An async judge call from one trial can therefore
+        drain (or be drained by) another concurrently-running trial's
+        buffer, misattributing judge cost between trials even though the
+        run-level total stays correct. Per-trial buffer isolation
+        (ContextVar-keyed capture) is a tracked follow-up, not implemented
+        here -- see the PR body.
+
+        Folds that spend into `example_metric.cost`/`.tokens` so it enters
+        the trial's actual cost and the permit-based cost-enforcement ledger
+        (`core/cost_enforcement.py`), and records it separately under
+        `custom_metrics["evaluation_cost"]` -- a one-line metadata entry, not
+        a new public field -- so a judge's share is reported alongside the
+        agent's cost rather than silently merged into it.
+
+        CAVEAT on that visibility: `evaluation_cost` is NOT in
+        `metrics_tracker.RESERVED_METRIC_KEYS`, so it travels on the USER
+        metric channel. `enforce_user_metric_ceiling`
+        (`metrics_tracker.py:307`) drops only NON-reserved keys, in sorted
+        order, to fit the backend `MeasuresDict` ceiling of
+        `TOTAL_MEASURES_CEILING` total keys (`metrics_tracker.py:18`). So on a
+        run whose metric keys exceed that ceiling, `evaluation_cost` CAN be
+        dropped from the submitted measures -- the folded spend still lands in
+        `cost`/`tokens` (those keys ARE reserved), only the judge's separate
+        breakdown line is lost. Reserving the key would make it unconditional,
+        but that also changes user-key collision semantics on the measures
+        channel (a user metric of the same name would then be skipped with a
+        warning) and is deliberately left to a follow-up rather than widened
+        into this cost-attribution fix.
+
+        Does not touch the pre-run cost estimator (`check_and_approve`);
+        that estimator has no view of metric-function calls at all and is
+        tracked separately (see the issue's linked follow-up on
+        calls-per-example).
+
+        Pricing deliberately does NOT fall back to this example's agent-call
+        model: a judge commonly calls a different, cheaper model than the
+        agent under test (as in the issue's own repro), and each captured
+        response already carries its own ``model`` field, so
+        ``extract_llm_metrics`` infers per-response pricing directly
+        (mirroring the response-inference fallback ``_process_single_output``
+        already uses for the agent's own call).
+
+        Args:
+            example_metric: This example's metrics (mutated in place).
+            example_result: The detailed-mode ``ExampleResult`` for this
+                example, if any. ``_update_example_metric_from_result``
+                already transferred the pre-fold cost/tokens into its
+                ``metrics`` dict earlier in ``_process_single_output``; when
+                given, this refreshes that copy so it doesn't go stale.
+        """
+        eval_responses = get_all_captured_responses()
+        if not eval_responses:
+            return
+        clear_captured_responses()
+
+        eval_input_cost = 0.0
+        eval_output_cost = 0.0
+        eval_total_cost = 0.0
+        eval_input_tokens = 0
+        eval_output_tokens = 0
+        eval_tokens = 0
+        for response in eval_responses:
+            metrics = extract_llm_metrics(response=response, model_name=None)
+            eval_input_cost += metrics.cost.input_cost
+            eval_output_cost += metrics.cost.output_cost
+            eval_total_cost += metrics.cost.total_cost
+            eval_input_tokens += metrics.tokens.input_tokens
+            eval_output_tokens += metrics.tokens.output_tokens
+            eval_tokens += metrics.tokens.total_tokens
+            # Forward-compat with #2308: an unpriced judge call must not be
+            # silently reported as verified-free once folded into this
+            # example's totals.
+            example_metric.cost.unpriced = (
+                example_metric.cost.unpriced or metrics.cost.unpriced
+            )
+
+        if eval_total_cost == 0.0 and eval_tokens == 0:
+            # Nothing priced and nothing tokenized: there is no judge spend to
+            # attribute, so ABANDON the fold and leave every field of
+            # ``example_metric`` exactly as it was.
+            return
+
+        # Only now -- past the abandon-guard -- is this row genuinely measured.
+        # A captured judge/evaluator response is a real measurement even when
+        # the agent's own call never produced output (e.g. every example errors
+        # before the agent responds, so `_extract_llm_metrics_for_output` set
+        # `measured=False`). The judge still ran and its spend is real, so this
+        # example must not be excluded from measured-only aggregation
+        # (`MetricsTracker.aggregate_metrics`/`format_for_backend`) the way a
+        # genuinely never-measured example is (Traigent#2297 review).
+        #
+        # This assignment MUST stay below the guard. Above it, a captured judge
+        # response that priced to zero cost AND zero tokens flipped a genuinely
+        # unmeasured row to `measured=True` carrying all-zero cost/token
+        # metrics, which then re-entered the measured-only MEAN denominators at
+        # `metrics_tracker.py`'s `measured_metrics` filter and dragged every
+        # mean down -- precisely the defect `ExampleMetrics.measured`'s own
+        # docblock warns about.
+        example_metric.measured = True
+
+        example_metric.cost.input_cost += eval_input_cost
+        example_metric.cost.output_cost += eval_output_cost
+        example_metric.cost.total_cost += eval_total_cost
+        example_metric.tokens.input_tokens += eval_input_tokens
+        example_metric.tokens.output_tokens += eval_output_tokens
+        example_metric.tokens.total_tokens += eval_tokens
+
+        # Keep the standard cost/token custom_metrics (written earlier in
+        # `_process_single_output`, before metric functions ran) consistent
+        # with the now-updated totals, and surface the judge's own share.
+        example_metric.custom_metrics["evaluation_cost"] = eval_total_cost
+        example_metric.custom_metrics["input_cost"] = example_metric.cost.input_cost
+        example_metric.custom_metrics["output_cost"] = example_metric.cost.output_cost
+        example_metric.custom_metrics["total_cost"] = example_metric.cost.total_cost
+        example_metric.custom_metrics["input_tokens"] = (
+            example_metric.tokens.input_tokens
+        )
+        example_metric.custom_metrics["output_tokens"] = (
+            example_metric.tokens.output_tokens
+        )
+        example_metric.custom_metrics["total_tokens"] = (
+            example_metric.tokens.total_tokens
+        )
+
+        if example_result is not None:
+            example_result.metrics["input_cost"] = example_metric.cost.input_cost
+            example_result.metrics["output_cost"] = example_metric.cost.output_cost
+            example_result.metrics["total_cost"] = example_metric.cost.total_cost
+            example_result.metrics["input_tokens"] = example_metric.tokens.input_tokens
+            example_result.metrics["output_tokens"] = (
+                example_metric.tokens.output_tokens
+            )
+            example_result.metrics["total_tokens"] = example_metric.tokens.total_tokens
+            example_result.metrics["evaluation_cost"] = eval_total_cost
 
     def _log_dual_scorer_notice_once(self) -> None:
         """Emit a single run-level notice when both scorers appear (issue #1845).
