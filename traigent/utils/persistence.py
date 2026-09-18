@@ -67,6 +67,13 @@ _SAFE_PICKLE_GLOBALS = frozenset(
         ("traigent.core.types", "TrialStatus"),
         ("traigent.optimizers.results", "OptimizationResult"),
         ("traigent.optimizers.results", "Trial"),
+        # The renamed batch types. The old names above stay so existing
+        # artifacts keep loading; without the new ones a freshly pickled
+        # BatchTrial/BatchResult would be rejected by RestrictedUnpickler --
+        # the aliases would protect old data while new data of the same type
+        # became unrestorable.
+        ("traigent.optimizers.results", "BatchResult"),
+        ("traigent.optimizers.results", "BatchTrial"),
     }
 )
 
