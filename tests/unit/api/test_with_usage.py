@@ -145,3 +145,238 @@ class TestWithUsage:
             assert isinstance(result["__traigent_meta__"]["usage"]["input_tokens"], int)
         finally:
             trial_context.reset(token)
+
+
+class TestWithUsageModelCosts:
+    """Per-call/per-model cost breakdown for multi-model agents (Traigent#1598)."""
+
+    def test_model_costs_included_as_calls(self):
+        """model_costs is threaded into __traigent_meta__['calls']."""
+        ctx_handle = trial_context.set({"trial_id": 1})
+        try:
+            result = traigent.with_usage(
+                text="answer",
+                total_cost=0.01,
+                model_costs=[
+                    {
+                        "model": "gpt-4o-mini",
+                        "input_tokens": 200,
+                        "output_tokens": 40,
+                        "cost": 0.002,
+                    },
+                    {
+                        "model": "gpt-4o",
+                        "input_tokens": 500,
+                        "output_tokens": 300,
+                        "cost": 0.008,
+                    },
+                ],
+            )
+            assert result["__traigent_meta__"]["calls"] == [
+                {
+                    "model": "gpt-4o-mini",
+                    "input_tokens": 200,
+                    "output_tokens": 40,
+                    "cost": 0.002,
+                },
+                {
+                    "model": "gpt-4o",
+                    "input_tokens": 500,
+                    "output_tokens": 300,
+                    "cost": 0.008,
+                },
+            ]
+            # The blended total_cost stays the required, authoritative value.
+            assert result["__traigent_meta__"]["total_cost"] == 0.01
+        finally:
+            trial_context.reset(ctx_handle)
+
+    def test_model_costs_defaults_missing_tokens_to_zero(self):
+        ctx_handle = trial_context.set({"trial_id": 1})
+        try:
+            result = traigent.with_usage(
+                text="answer",
+                total_cost=0.01,
+                model_costs=[{"model": "gpt-4o-mini", "cost": 0.01}],
+            )
+            assert result["__traigent_meta__"]["calls"] == [
+                {
+                    "model": "gpt-4o-mini",
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cost": 0.01,
+                }
+            ]
+        finally:
+            trial_context.reset(ctx_handle)
+
+    def test_model_costs_none_omits_calls_key(self):
+        ctx_handle = trial_context.set({"trial_id": 1})
+        try:
+            result = traigent.with_usage(text="answer", total_cost=0.01)
+            assert "calls" not in result["__traigent_meta__"]
+        finally:
+            trial_context.reset(ctx_handle)
+
+    def test_model_costs_not_a_list_raises(self):
+        ctx_handle = trial_context.set({"trial_id": 1})
+        try:
+            with pytest.raises(TypeError, match="model_costs to be a list"):
+                traigent.with_usage(
+                    text="answer",
+                    total_cost=0.01,
+                    model_costs={"model": "gpt-4o-mini", "cost": 0.01},
+                )
+        finally:
+            trial_context.reset(ctx_handle)
+
+    def test_model_costs_entry_missing_model_raises(self):
+        ctx_handle = trial_context.set({"trial_id": 1})
+        try:
+            with pytest.raises(TypeError, match="non-empty string 'model' key"):
+                traigent.with_usage(
+                    text="answer",
+                    total_cost=0.01,
+                    model_costs=[{"cost": 0.01}],
+                )
+        finally:
+            trial_context.reset(ctx_handle)
+
+    def test_model_costs_entry_missing_cost_raises(self):
+        ctx_handle = trial_context.set({"trial_id": 1})
+        try:
+            with pytest.raises(TypeError, match="numeric 'cost' key"):
+                traigent.with_usage(
+                    text="answer",
+                    total_cost=0.01,
+                    model_costs=[{"model": "gpt-4o-mini"}],
+                )
+        finally:
+            trial_context.reset(ctx_handle)
+
+    def test_model_costs_production_mode_returns_plain_text(self):
+        """Not in a trial: text is returned unwrapped, same as without model_costs."""
+        assert traigent.get_trial_context() is None
+        result = traigent.with_usage(
+            text="answer",
+            total_cost=0.01,
+            model_costs=[{"model": "gpt-4o-mini", "cost": 0.01}],
+        )
+        assert result == "answer"
+
+    def test_model_costs_bool_cost_raises(self):
+        """``bool`` is a subclass of ``int``; ``float(True)`` is a $1.00 charge.
+
+        ``meta_types`` rejects bools, but it never sees one from this path --
+        ``with_usage`` normalises to ``float`` first, so the bool is already gone
+        by the time that validator runs. Measured before this guard:
+        ``cost=True`` produced ``{'cost': 1.0}`` with no error raised.
+        """
+        ctx_handle = trial_context.set({"trial_id": 1})
+        try:
+            with pytest.raises(TypeError, match="numeric 'cost' key"):
+                traigent.with_usage(
+                    text="answer",
+                    total_cost=0.01,
+                    model_costs=[{"model": "gpt-4o-mini", "cost": True}],
+                )
+        finally:
+            trial_context.reset(ctx_handle)
+
+    @pytest.mark.parametrize("field", ["input_tokens", "output_tokens"])
+    def test_model_costs_bool_token_counts_raise(self, field):
+        """Same subclass trap on the token counts: ``int(True)`` is 1."""
+        ctx_handle = trial_context.set({"trial_id": 1})
+        entry = {"model": "gpt-4o-mini", "cost": 0.01, field: True}
+        try:
+            with pytest.raises(TypeError, match=f"numeric '{field}' key"):
+                traigent.with_usage(text="answer", total_cost=0.01, model_costs=[entry])
+        finally:
+            trial_context.reset(ctx_handle)
+
+    def test_model_costs_non_numeric_token_counts_raise(self):
+        ctx_handle = trial_context.set({"trial_id": 1})
+        try:
+            with pytest.raises(TypeError, match="numeric 'input_tokens' key"):
+                traigent.with_usage(
+                    text="answer",
+                    total_cost=0.01,
+                    model_costs=[
+                        {"model": "gpt-4o-mini", "cost": 0.01, "input_tokens": "12"}
+                    ],
+                )
+        finally:
+            trial_context.reset(ctx_handle)
+
+    @pytest.mark.parametrize(
+        "bad_total",
+        [
+            pytest.param(True, id="bool-true"),
+            pytest.param(False, id="bool-false"),
+            pytest.param(None, id="none"),
+        ],
+    )
+    def test_non_numeric_total_cost_raises(self, bad_total):
+        """The BILLED field must be guarded at least as hard as the attribution.
+
+        Measured before this guard: ``total_cost=True`` was recorded as $1.00,
+        because ``bool`` subclasses ``int``. That is the same trap the
+        ``model_costs`` entries guard against, on the field that actually bills.
+        """
+        ctx_handle = trial_context.set({"trial_id": 1})
+        try:
+            with pytest.raises(TypeError, match="total_cost to be a number"):
+                traigent.with_usage(text="answer", total_cost=bad_total)
+        finally:
+            trial_context.reset(ctx_handle)
+
+    @pytest.mark.parametrize(
+        "bad_total",
+        [
+            pytest.param(float("nan"), id="nan"),
+            pytest.param(float("inf"), id="inf"),
+            pytest.param(-1.0, id="negative"),
+        ],
+    )
+    def test_non_finite_or_negative_total_cost_raises(self, bad_total):
+        """A negative total is a credit against a run's spend."""
+        ctx_handle = trial_context.set({"trial_id": 1})
+        try:
+            with pytest.raises(ValueError, match="finite and non-negative"):
+                traigent.with_usage(text="answer", total_cost=bad_total)
+        finally:
+            trial_context.reset(ctx_handle)
+
+    def test_explicit_zero_total_cost_is_still_accepted(self):
+        """The guard must not break an explicit, authoritative $0."""
+        ctx_handle = trial_context.set({"trial_id": 1})
+        try:
+            result = traigent.with_usage(text="answer", total_cost=0.0)
+            assert result["__traigent_meta__"]["total_cost"] == 0.0
+        finally:
+            trial_context.reset(ctx_handle)
+
+    def test_model_costs_never_change_the_billed_total(self):
+        """Attribution must not move the billed figure, however large it is.
+
+        Both of this repo's recent cost regressions were an attribution path
+        feeding the billed total. The invariant held when this was written, but
+        nothing pinned it: two feed-back mutations passed the whole suite.
+        """
+        ctx_handle = trial_context.set({"trial_id": 1})
+        try:
+            result = traigent.with_usage(
+                text="answer",
+                total_cost=0.01,
+                model_costs=[
+                    {"model": "gpt-4o", "cost": 5.0},
+                    {"model": "gpt-4o-mini", "cost": 7.0},
+                ],
+            )
+            meta = result["__traigent_meta__"]
+            assert meta["total_cost"] == 0.01, (
+                f"model_costs leaked into the billed total: {meta['total_cost']!r}"
+            )
+            assert sum(call["cost"] for call in meta["calls"]) == 12.0
+        finally:
+            trial_context.reset(ctx_handle)

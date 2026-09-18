@@ -1048,6 +1048,102 @@ class TestExplicitProviderCostEndToEnd:
         assert metrics.cost.cost_explicit is False
 
 
+class TestAggregateCallBreakdown:
+    """MetricsTracker.aggregate_call_breakdown (Traigent#1598)."""
+
+    def test_no_examples_returns_empty_list(self):
+        tracker = MetricsTracker()
+        assert tracker.aggregate_call_breakdown() == []
+
+    def test_examples_without_breakdown_return_empty_list(self):
+        tracker = MetricsTracker()
+        tracker.add_example_metrics(ExampleMetrics())
+        tracker.add_example_metrics(ExampleMetrics())
+        assert tracker.aggregate_call_breakdown() == []
+
+    def test_sums_per_model_across_examples(self):
+        tracker = MetricsTracker()
+        tracker.add_example_metrics(
+            ExampleMetrics(
+                call_breakdown=[
+                    {
+                        "model": "gpt-4o-mini",
+                        "input_tokens": 200,
+                        "output_tokens": 40,
+                        "cost": 0.002,
+                    },
+                    {
+                        "model": "gpt-4o",
+                        "input_tokens": 500,
+                        "output_tokens": 300,
+                        "cost": 0.008,
+                    },
+                ]
+            )
+        )
+        tracker.add_example_metrics(
+            ExampleMetrics(
+                call_breakdown=[
+                    {
+                        "model": "gpt-4o-mini",
+                        "input_tokens": 220,
+                        "output_tokens": 45,
+                        "cost": 0.0022,
+                    },
+                ]
+            )
+        )
+
+        result = tracker.aggregate_call_breakdown()
+
+        assert result == [
+            {
+                "model": "gpt-4o",
+                "input_tokens": 500,
+                "output_tokens": 300,
+                "cost": pytest.approx(0.008),
+                "calls": 1,
+            },
+            {
+                "model": "gpt-4o-mini",
+                "input_tokens": 420,
+                "output_tokens": 85,
+                "cost": pytest.approx(0.0042),
+                "calls": 2,
+            },
+        ]
+
+    def test_mixed_examples_with_and_without_breakdown(self):
+        """Examples that never reported a breakdown contribute nothing, but
+        don't block the ones that did."""
+        tracker = MetricsTracker()
+        tracker.add_example_metrics(ExampleMetrics())
+        tracker.add_example_metrics(
+            ExampleMetrics(
+                call_breakdown=[
+                    {
+                        "model": "claude-haiku",
+                        "input_tokens": 50,
+                        "output_tokens": 10,
+                        "cost": 0.0005,
+                    }
+                ]
+            )
+        )
+
+        result = tracker.aggregate_call_breakdown()
+
+        assert result == [
+            {
+                "model": "claude-haiku",
+                "input_tokens": 50,
+                "output_tokens": 10,
+                "cost": pytest.approx(0.0005),
+                "calls": 1,
+            }
+        ]
+
+
 class TestPlaceholderResponseCostDoesNotShadowRealCharge:
     """#2342 end-to-end: a placeholder ``response.cost`` must not shadow the
     authoritative ``usage.cost`` or the LiteLLM figure.

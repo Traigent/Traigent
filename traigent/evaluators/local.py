@@ -1361,6 +1361,58 @@ class LocalEvaluator(BaseEvaluator):
         except Exception as e:
             logger.error(f"Failed to inject response_time_ms: {e}")
 
+    def _inject_call_breakdown_from_meta(
+        self, calls: list[Any], metrics: ExampleMetrics
+    ) -> None:
+        """Inject the per-call/per-model cost breakdown from ``__traigent_meta__``.
+
+        Multi-model/multi-step agents (cascade, router) can report a
+        ``"calls"`` list -- one entry per LLM call, attributing tokens/cost to
+        the model that made that specific call -- alongside the existing
+        blended ``total_cost``/``usage`` (Traigent#1598). Each entry is
+        defensively normalized the same way ``_inject_usage_from_meta`` does:
+        negative values are clamped and a malformed entry is skipped (logged),
+        never allowed to raise and drop the whole example's measurement.
+
+        Args:
+            calls: Raw ``calls`` list from ``__traigent_meta__``.
+            metrics: ExampleMetrics to update (``call_breakdown`` field).
+        """
+        normalized: list[dict[str, Any]] = []
+        for call in calls:
+            if not isinstance(call, dict):
+                logger.error(f"Skipping non-dict call breakdown entry: {call!r}")
+                continue
+            try:
+                model = call.get("model")
+                if not isinstance(model, str) or not model:
+                    logger.error(
+                        f"Skipping call breakdown entry with no model: {call!r}"
+                    )
+                    continue
+                input_tokens = int(call.get("input_tokens", 0) or 0)
+                output_tokens = int(call.get("output_tokens", 0) or 0)
+                cost = float(call.get("cost", 0.0) or 0.0)
+                if input_tokens < 0 or output_tokens < 0 or cost < 0:
+                    logger.warning(
+                        f"Negative value(s) clamped to 0 in call breakdown entry "
+                        f"for model {model!r}"
+                    )
+                normalized.append(
+                    {
+                        "model": model,
+                        "input_tokens": max(0, input_tokens),
+                        "output_tokens": max(0, output_tokens),
+                        "cost": max(0.0, cost),
+                    }
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to inject call breakdown entry: {e}", extra={"call": call}
+                )
+
+        metrics.call_breakdown = normalized
+
     def _extract_and_inject_traigent_meta(
         self,
         output: Any,
@@ -1382,7 +1434,11 @@ class LocalEvaluator(BaseEvaluator):
         Returns:
             The meta dict if found, None otherwise.
         """
-        from traigent.core.meta_types import TraigentMetadata, is_traigent_metadata
+        from traigent.core.meta_types import (
+            TraigentMetadata,
+            is_traigent_metadata,
+            is_valid_call_breakdown,
+        )
 
         if not isinstance(output, dict):
             return None
@@ -1390,6 +1446,21 @@ class LocalEvaluator(BaseEvaluator):
         meta = output.get("__traigent_meta__")
         if meta is None:
             return None
+
+        # Sever a malformed `calls` before validating the envelope. `calls` is
+        # ATTRIBUTION (which model spent it); `total_cost` is the authoritative
+        # amount. Letting a bad attribution entry invalidate the whole envelope
+        # threw away a valid total_cost and the run under-reported spend -- which
+        # is fail-OPEN for a budget, whatever the old comment called it. Drop the
+        # attribution, keep the money.
+        if isinstance(meta, dict) and "calls" in meta:
+            if not is_valid_call_breakdown(meta["calls"]):
+                logger.error(
+                    "Invalid __traigent_meta__['calls'] attribution; dropping the "
+                    "per-model breakdown and keeping the reported total_cost.",
+                    extra={"calls": meta["calls"]},
+                )
+                meta = {k: v for k, v in meta.items() if k != "calls"}
 
         if not is_traigent_metadata(meta):
             logger.error(
@@ -1408,6 +1479,10 @@ class LocalEvaluator(BaseEvaluator):
         # Inject usage data (tokens, response time)
         if "usage" in meta:
             self._inject_usage_from_meta(cast(dict, meta["usage"]), metrics)
+
+        # Inject per-call/per-model cost breakdown for multi-model agents (#1598)
+        if "calls" in meta:
+            self._inject_call_breakdown_from_meta(cast(list, meta["calls"]), metrics)
 
         # A validated ``__traigent_meta__`` carries a user-reported cost (and
         # optionally usage): that is a real measurement, reported by the agent
@@ -2134,6 +2209,12 @@ class LocalEvaluator(BaseEvaluator):
                 len(dataset.examples),
             )
 
+        # Per-trial, per-model cost breakdown for multi-model/multi-step agents
+        # (Traigent#1598) -- aggregated from every example's
+        # __traigent_meta__["calls"] reported this trial. Empty when no
+        # example reported a breakdown.
+        model_costs = metrics_tracker.aggregate_call_breakdown()
+
         result = EvaluationResult(
             config=config,
             example_results=example_results if self.detailed else [],
@@ -2146,6 +2227,7 @@ class LocalEvaluator(BaseEvaluator):
             outputs=outputs,
             errors=errors,
             metric_errors=metric_errors,
+            model_costs=model_costs,
         )
 
         # Attach summary_stats if generated

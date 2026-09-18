@@ -311,6 +311,16 @@ def _build_success_trial_metadata(
         except (TypeError, ValueError):
             pass
 
+    # Per-model cost breakdown for multi-model/multi-step agents (Traigent#1598).
+    # Only added when at least one example reported a per-call breakdown via
+    # __traigent_meta__["calls"] -- absence means "not reported", not "zero".
+    # ``isinstance`` (not just truthiness) guards against a test/mock
+    # ``eval_result`` auto-vivifying a truthy ``Mock`` attribute here, the same
+    # way ``_provider_failure_summary`` above guards ``errors``.
+    model_costs = getattr(eval_result, "model_costs", None)
+    if isinstance(model_costs, list) and model_costs:
+        trial_metadata["model_costs"] = model_costs
+
     provider_summary = _provider_failure_summary(eval_result, examples_attempted)
     if provider_summary is not None:
         trial_metadata["provider_failure_summary"] = provider_summary
