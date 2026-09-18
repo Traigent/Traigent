@@ -149,14 +149,22 @@ class ObjectiveDefinition:
             "unit": self.unit,
         }
 
-        # Add banded objective fields if present
+        # Add banded objective fields if present.
+        #
+        # The wire shape is the canonical BandTarget: {target: [lower, upper], test, alpha}
+        # and nothing else -- objective_definition_schema.json declares
+        # additionalProperties: false on it. center/tol is an SDK INPUT convenience, not a
+        # second wire format, so it is translated here rather than forwarded.
+        #
+        # The translation itself already happened: BandTarget.__post_init__ sets
+        # low = center - tol and high = center + tol at construction, so low/high are always
+        # populated by the time we serialize. Emitting center/tol as well -- which this used
+        # to do whenever the caller supplied them -- produced a payload that FAILS schema
+        # validation, while the identical band expressed as low/high passed (#304).
         if self.band is not None:
             band_dict: dict[str, Any] = {}
             if self.band.low is not None and self.band.high is not None:
                 band_dict["target"] = [self.band.low, self.band.high]
-            if self.band.center is not None and self.band.tol is not None:
-                band_dict["center"] = self.band.center
-                band_dict["tol"] = self.band.tol
             band_dict["test"] = self.band_test
             band_dict["alpha"] = self.band_alpha
             result["band"] = band_dict
