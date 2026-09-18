@@ -203,6 +203,27 @@ async def test_issue_1772_end_to_end_structured_and_numeric_string_outputs() -> 
         }[input_data["case"]]
 
     result = await evaluator.evaluate(outputs, {}, dataset)
+@pytest.mark.asyncio
+async def test_issue_1771_non_detailed_aggregate_unwraps_strict_tuple_outputs() -> None:
+    """Non-detailed lane must unwrap a strict (output, metrics) tuple before
+    comparing accuracy, the same way the detailed per-example path already
+    does -- otherwise a mix of plain and tuple-shaped CORRECT outputs
+    understates the aggregate (Traigent#1771)."""
+    evaluator = LocalEvaluator(metrics=["accuracy"], detailed=False)
+    dataset = Dataset(
+        [
+            EvaluationExample({"q": "a"}, "Paris"),
+            EvaluationExample({"q": "b"}, "Rome"),
+        ],
+        name="issue_1771_mixed_shapes",
+    )
+
+    def mixed_shape_outputs(input_data: dict[str, str]) -> object:
+        if input_data["q"] == "a":
+            return "Paris"
+        return ("Rome", {"m": 1.0})
+
+    result = await evaluator.evaluate(mixed_shape_outputs, {}, dataset)
 
     assert result.metrics["accuracy"] == pytest.approx(1.0)
 
@@ -254,3 +275,54 @@ def test_issue_1772_ordinary_numeric_formatting_still_coerces(actual, expected) 
     undo the PR.
     """
     assert _accuracy_values_match(actual, expected) is True
+def test_issue_1771_compute_accuracy_aggregated_unwraps_tuple_and_dict_directly() -> (
+    None
+):
+    """Direct unit coverage for the aggregate-accuracy comparator itself."""
+    local = LocalEvaluator(metrics=["accuracy"])
+    dataset = Dataset(
+        [
+            EvaluationExample({"q": "a"}, "Paris"),
+            EvaluationExample({"q": "b"}, "Rome"),
+            EvaluationExample({"q": "c"}, "Berlin"),
+        ]
+    )
+    outputs = ["Paris", ("Rome", {"m": 1.0}), {"text": "Berlin"}]
+
+    accuracy, total = local._compute_accuracy_aggregated(outputs, dataset)
+
+    assert accuracy == pytest.approx(1.0)
+    assert total == 3
+
+
+def test_issue_1771_registry_compute_accuracy_unwraps_tuple_outputs() -> None:
+    """The registry ``_compute_accuracy`` (used by any non-Local caller of
+    ``compute_metrics``) must unwrap the strict tuple the same way."""
+    base = _DummyBaseEvaluator()
+    outputs = ["Paris", ("Rome", {"m": 1.0})]
+    expected = ["Paris", "Rome"]
+    errors = [None, None]
+
+    assert base._compute_accuracy(outputs, expected, errors) == pytest.approx(1.0)
+
+
+def test_issue_1771_progress_accuracy_metrics_unwraps_tuple_and_dict_outputs() -> None:
+    """Live progress accuracy must not stream a wrong 0.0 for a correct
+    tuple- or dict-shaped output (Traigent#1771)."""
+    base = _DummyBaseEvaluator()
+
+    tuple_metrics = base._build_progress_accuracy_metrics(
+        output=("Rome", {"m": 1.0}),
+        expected_output="Rome",
+        error=None,
+        example_id="ex-0",
+    )
+    dict_metrics = base._build_progress_accuracy_metrics(
+        output={"text": "Berlin"},
+        expected_output="Berlin",
+        error=None,
+        example_id="ex-1",
+    )
+
+    assert tuple_metrics["accuracy"] == pytest.approx(1.0)
+    assert dict_metrics["accuracy"] == pytest.approx(1.0)
