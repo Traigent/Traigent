@@ -750,8 +750,9 @@ class TestSyncManager:
         assert result["project_id"] == "proj-2"
         assert result["tenant_id"] == "tenant-2"
 
-    def test_sync_create_session_id_fallback(self):
-        """experiment_id / experiment_run_id fall back to session_id when absent."""
+    def test_sync_create_session_missing_ids_stay_none(self):
+        """experiment_id / experiment_run_id stay None when absent -- never
+        substituted with session_id."""
         with patch.object(self.sync_manager.session, "post") as mock_post:
             mock_post.return_value = backend_response(
                 payload={"session_id": "only-session"}
@@ -761,8 +762,8 @@ class TestSyncManager:
 
         assert result["success"] is True
         assert result["session_id"] == "only-session"
-        assert result["experiment_id"] == "only-session"
-        assert result["experiment_run_id"] == "only-session"
+        assert result["experiment_id"] is None
+        assert result["experiment_run_id"] is None
         assert result["project_id"] is None
         assert result["tenant_id"] is None
 

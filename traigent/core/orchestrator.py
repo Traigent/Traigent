@@ -464,6 +464,9 @@ class OptimizationOrchestrator:
         self.artifact_fingerprints: dict[str, str | None] | None = None
         self.fingerprint_meta: dict[str, Any] | None = None
         self.evaluator_definition_id: str | None = None
+        # Explicit stable dataset identity (EvaluationOptions.dataset_id), set by
+        # OptimizedFunction after construction like evaluator_definition_id.
+        self.dataset_id: str | None = None
         self.task_type: str | None = None
 
         # Interactive pause prompt adapter (None in non-interactive environments)
@@ -499,6 +502,7 @@ class OptimizationOrchestrator:
             optimization_id=self._optimization_id,
             optimization_status=self._status,
             smart_pruning=self._smart_pruning,
+            require_run_id=self.config.get("require_run_id"),
         )
 
         self.cache_policy_handler = CachePolicyHandler(
@@ -3002,6 +3006,7 @@ class OptimizationOrchestrator:
             cost_limit=self.config.get("cost_limit"),
             optimization_strategy=optimization_strategy_payload,
             task_type=getattr(self, "task_type", None),
+            dataset_id=getattr(self, "dataset_id", None),
         )
         session_id: str | None = session_context.session_id
         self._active_session_id = session_id
@@ -3177,6 +3182,7 @@ class OptimizationOrchestrator:
                 fingerprint_meta=self.fingerprint_meta,
                 evaluator_definition_id=self.evaluator_definition_id,
                 task_type=getattr(self, "task_type", None),
+                dataset_id=getattr(self, "dataset_id", None),
             )
             session_id = self.backend_session_manager.handle_session_creation_result(
                 self.backend_session_manager.normalize_session_creation_result(
@@ -4635,6 +4641,7 @@ class OptimizationOrchestrator:
                 # still capping wasted LLM spend on a true hang.
                 grace = min(max(self.timeout * 0.25, 1.0), 300.0)
                 watchdog_deadline = self.timeout + grace
+                self.backend_session_manager.ensure_run_id_recorded(session_id)
                 try:
                     await asyncio.wait_for(
                         self._run_optimization_loop(
@@ -4661,6 +4668,7 @@ class OptimizationOrchestrator:
                         len(self._trials),
                     )
             else:
+                self.backend_session_manager.ensure_run_id_recorded(session_id)
                 await self._run_optimization_loop(
                     func, dataset, session_id, function_identifier
                 )
