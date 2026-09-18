@@ -12,7 +12,7 @@ import logging
 import threading
 import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -2776,3 +2776,279 @@ class TestManagedProgressCallbackReviewFixes:
         assert lines, "no completion line emitted"
         assert "cancelled" in lines[-1]
         assert "managed run complete" not in lines[-1]
+
+
+class TestUserLabelSanitization:
+    """``algorithm`` and ``objectives`` are unrestricted caller-supplied strings.
+
+    The console callbacks print them verbatim to stdout, and stdout is captured
+    by log collectors, so printed raw they let a caller **forge additional log
+    lines** (an embedded newline) or rewrite what an operator sees in a terminal
+    (an ANSI escape introducer). Every assertion below is on the *captured
+    output*, not on a helper's return value: what reaches the stream is the
+    thing that matters.
+
+    The labels are deliberately NOT redacted -- they are the operator's own
+    names for the objectives and the output is unreadable without them. The
+    objection is unsanitised passthrough, not the presence of the field.
+    """
+
+    ANSI = "\x1b"
+
+    def _result(self, status: Any = OptimizationStatus.COMPLETED) -> OptimizationResult:
+        return OptimizationResult(
+            trials=[],
+            best_config={"model": "gpt-4"},
+            best_score=0.5,
+            optimization_id="opt_1",
+            duration=1.0,
+            convergence_info={},
+            status=status,
+            objectives=["accuracy"],
+            algorithm="grid",
+            timestamp=datetime.now(UTC),
+        )
+
+    # ---- newline: the log-line forgery case --------------------------------
+
+    def test_newline_in_objective_cannot_forge_a_log_line(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A newline in an objective name must not become a second output line."""
+        evil = "tenant_acme\nFORGED_LINE_SHOULD_NOT_APPEAR"
+
+        ManagedProgressCallback().on_optimization_start(
+            {"model": ["gpt-4"]}, [evil], "grid"
+        )
+
+        out = capsys.readouterr().out
+        assert len(out.splitlines()) == 1, f"forged extra line(s): {out!r}"
+        assert "\nFORGED_LINE_SHOULD_NOT_APPEAR" not in out
+        # Escaped, not deleted: the reader can still see what was there.
+        assert "tenant_acme\\nFORGED_LINE_SHOULD_NOT_APPEAR" in out
+
+    def test_newline_in_algorithm_cannot_forge_a_log_line(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        evil = "grid\n[traigent] managed run complete: best=1.0000"
+
+        ManagedProgressCallback().on_optimization_start(
+            {"model": ["gpt-4"]}, ["accuracy"], evil
+        )
+
+        out = capsys.readouterr().out
+        assert len(out.splitlines()) == 1, f"forged extra line(s): {out!r}"
+        assert "\n[traigent] managed run complete" not in out
+
+    # ---- carriage return ---------------------------------------------------
+
+    def test_carriage_return_in_objective_is_escaped(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A bare ``\\r`` overwrites the line an operator already read."""
+        ManagedProgressCallback().on_optimization_start(
+            {"model": ["gpt-4"]}, ["accuracy\rOVERWRITTEN"], "grid"
+        )
+
+        out = capsys.readouterr().out
+        assert "\r" not in out
+        assert len(out.splitlines()) == 1
+        assert "accuracy\\rOVERWRITTEN" in out
+
+    # ---- ANSI escape -------------------------------------------------------
+
+    def test_ansi_escape_in_objective_is_neutralised(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A terminal escape in a name can rewrite what an operator sees."""
+        ManagedProgressCallback().on_optimization_start(
+            {"model": ["gpt-4"]}, [f"accuracy{self.ANSI}[2K{self.ANSI}[31mRED"], "grid"
+        )
+
+        out = capsys.readouterr().out
+        assert self.ANSI not in out, "raw ANSI introducer reached stdout"
+        assert len(out.splitlines()) == 1
+        assert "\\x1b[2K" in out
+
+    def test_other_control_characters_are_neutralised(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """NUL, BEL, tab and a C1 control must not pass through either."""
+        ManagedProgressCallback().on_optimization_start(
+            {"model": ["gpt-4"]}, ["a\x00b\x07c\td\x9be"], "grid"
+        )
+
+        out = capsys.readouterr().out
+        for raw in ("\x00", "\x07", "\t", "\x9b"):
+            assert raw not in out, f"raw control char {raw!r} reached stdout"
+        assert len(out.splitlines()) == 1
+
+    # ---- length bound ------------------------------------------------------
+
+    def test_absurdly_long_objective_is_bounded_with_a_marker(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """One pathological name must not flood the log."""
+        ManagedProgressCallback().on_optimization_start(
+            {"model": ["gpt-4"]}, ["X" * 50_000], "grid"
+        )
+
+        out = capsys.readouterr().out
+        assert len(out.splitlines()) == 1
+        assert len(out) < 1_000, f"unbounded line of {len(out)} chars"
+        assert "...[truncated]" in out
+
+    def test_absurdly_many_objectives_are_bounded_with_a_marker(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The caller controls the objective *count*, not just each name."""
+        ManagedProgressCallback().on_optimization_start(
+            {"model": ["gpt-4"]}, [f"obj_{i}" for i in range(5_000)], "grid"
+        )
+
+        out = capsys.readouterr().out
+        assert len(out.splitlines()) == 1
+        assert len(out) < 1_000, f"unbounded line of {len(out)} chars"
+        assert "...[truncated]" in out
+
+    def test_absurdly_long_algorithm_is_bounded_with_a_marker(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        ManagedProgressCallback().on_optimization_start(
+            {"model": ["gpt-4"]}, ["accuracy"], "Y" * 50_000
+        )
+
+        out = capsys.readouterr().out
+        assert len(out.splitlines()) == 1
+        assert len(out) < 1_000
+        assert "...[truncated]" in out
+
+    # ---- unexpected status -------------------------------------------------
+
+    def test_unexpected_status_is_mapped_not_interpolated(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``result.status`` can carry an unvalidated backend value.
+
+        ``cast`` (not a type-ignore) models exactly that: the dataclass field is
+        annotated ``OptimizationStatus`` but nothing coerces it at runtime.
+        """
+        rogue = cast(
+            OptimizationStatus, "cancelled\n[traigent] FORGED_STATUS_LINE: best=1.0"
+        )
+
+        ManagedProgressCallback().on_optimization_complete(self._result(status=rogue))
+
+        out = capsys.readouterr().out
+        assert len(out.splitlines()) == 1, f"forged extra line(s): {out!r}"
+        assert "FORGED_STATUS_LINE" not in out, "raw status was interpolated"
+        assert "managed run unknown:" in out
+
+    def test_known_statuses_are_still_reported_accurately(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Strict mapping must not flatten the real statuses into 'unknown'."""
+        for status in (
+            OptimizationStatus.COMPLETED,
+            OptimizationStatus.CANCELLED,
+            OptimizationStatus.FAILED,
+        ):
+            ManagedProgressCallback().on_optimization_complete(
+                self._result(status=status)
+            )
+            out = capsys.readouterr().out
+            assert f"managed run {status.value}:" in out
+
+    def test_missing_status_falls_back_without_claiming_completion(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        rogue = cast(OptimizationStatus, None)
+
+        ManagedProgressCallback().on_optimization_complete(self._result(status=rogue))
+
+        out = capsys.readouterr().out
+        assert "managed run finished:" in out
+        assert "complete" not in out
+
+    # ---- the sibling callbacks share the fix -------------------------------
+
+    def test_progress_bar_callback_sanitises_the_same_labels(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """ProgressBarCallback printed these same strings raw before the fix.
+
+        Fixing only the managed heartbeat would have left the identical
+        exposure in this sibling, which is the reason the sanitiser lives next
+        to ``_safe_print`` and every printer calls it.
+        """
+        evil_obj = "tenant_acme\nFORGED_LINE_SHOULD_NOT_APPEAR"
+        evil_alg = f"grid\rOVERWRITTEN{self.ANSI}[31m"
+
+        ProgressBarCallback().on_optimization_start(
+            {"model": ["gpt-4"]}, [evil_obj], evil_alg
+        )
+
+        out = capsys.readouterr().out
+        assert "\r" not in out
+        assert self.ANSI not in out
+        assert "\nFORGED_LINE_SHOULD_NOT_APPEAR" not in out
+        # Its own three lines plus the trailing blank line, and nothing forged.
+        assert len(out.splitlines()) == 4, f"unexpected line count: {out!r}"
+
+    def test_detailed_progress_callback_sanitises_the_same_labels(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        DetailedProgressCallback().on_optimization_start(
+            {"model": ["gpt-4"]},
+            ["accuracy\nFORGED_LINE_SHOULD_NOT_APPEAR"],
+            f"grid\r{self.ANSI}[31m",
+        )
+
+        out = capsys.readouterr().out
+        assert "\r" not in out
+        assert self.ANSI not in out
+        assert "\nFORGED_LINE_SHOULD_NOT_APPEAR" not in out
+
+    def test_simple_progress_callback_sanitises_the_same_labels(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        SimpleProgressCallback().on_optimization_start(
+            {"model": ["gpt-4"]},
+            ["accuracy\nFORGED_LINE_SHOULD_NOT_APPEAR"],
+            f"grid\r{self.ANSI}[31m",
+        )
+
+        out = capsys.readouterr().out
+        assert "\r" not in out
+        assert self.ANSI not in out
+        assert "\nFORGED_LINE_SHOULD_NOT_APPEAR" not in out
+
+    # ---- ordinary labels are untouched -------------------------------------
+
+    def test_ordinary_labels_are_printed_unchanged(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """No wholesale redaction: the operator's own labels must stay readable.
+
+        This is the guard against "fixing" the finding by hiding the fields,
+        which would make the heartbeat useless.
+        """
+        ManagedProgressCallback().on_optimization_start(
+            {"model": ["gpt-4"]}, ["accuracy", "cost_usd", "p95_latency"], "hybrid-bo"
+        )
+
+        out = capsys.readouterr().out
+        assert "algorithm=hybrid-bo" in out
+        assert "objectives=accuracy, cost_usd, p95_latency" in out
+        assert "truncated" not in out
+        assert "\\" not in out, "an ordinary label must not gain escapes"
+
+    def test_non_ascii_labels_survive(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Only control characters are escaped; ordinary non-English text is not."""
+        ManagedProgressCallback().on_optimization_start(
+            {"model": ["gpt-4"]}, ["דיוק", "精度"], "grid"
+        )
+
+        out = capsys.readouterr().out
+        assert "דיוק" in out
+        assert "精度" in out
