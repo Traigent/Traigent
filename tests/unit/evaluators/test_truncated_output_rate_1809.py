@@ -132,6 +132,34 @@ def test_compute_truncated_output_rate_values() -> None:
     assert compute_truncated_output_rate(all_clean) == 0.0
 
 
+def test_the_denominator_is_examples_that_CARRIED_a_signal() -> None:
+    """The docstring's whole argument, which nothing tested.
+
+    ``compute_truncated_output_rate`` deliberately divides by the examples that
+    carried a recognizable finish/stop reason, NOT by every example in the
+    trial: privacy mode, a plain string return, or an unrecognized response
+    shape leaves ``finish_reason`` unset, and counting those as "not truncated"
+    understates the rate using a signal that was never available.
+
+    Every other case in this module gives every example a finish_reason, so the
+    two denominators agree and the choice is invisible. Measured: dropping the
+    ``if metric.finish_reason`` filter left all 11 tests green. This case is
+    the one where they disagree.
+    """
+    rows = [
+        ExampleMetrics(finish_reason="length"),  # truncated, has a signal
+        ExampleMetrics(finish_reason="stop"),  # clean, has a signal
+        ExampleMetrics(),  # no signal -- privacy mode / plain string
+        ExampleMetrics(),  # no signal
+    ]
+
+    assert compute_truncated_output_rate(rows) == pytest.approx(0.5), (
+        "1 of the 2 examples that reported a finish_reason was truncated; "
+        "dividing by all 4 would report 0.25 and understate the problem using "
+        "rows that never carried the signal"
+    )
+
+
 def test_openai_handler_extracts_truncated_finish_reason() -> None:
     handler = OpenAIResponseHandler()
     response = _FakeOpenAIResponse(finish_reason="length")
