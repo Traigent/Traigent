@@ -732,9 +732,9 @@ class TestSDKBackendBridge:
         with caplog.at_level(logging.WARNING, logger="traigent.cloud.backend_bridges"):
             measures = sdk_bridge._map_objectives_to_measures(["f1-score"])
         assert measures == ["accuracy"]
-        assert any(
-            "f1-score" in record.getMessage() for record in caplog.records
-        ), "expected a warning naming the rejected objective 'f1-score'"
+        assert any("f1-score" in record.getMessage() for record in caplog.records), (
+            "expected a warning naming the rejected objective 'f1-score'"
+        )
 
     def test_empty_objectives_default_is_logged(self, sdk_bridge, caplog):
         """Regression for issue #1619.
@@ -745,9 +745,9 @@ class TestSDKBackendBridge:
         with caplog.at_level(logging.WARNING, logger="traigent.cloud.backend_bridges"):
             measures = sdk_bridge._map_objectives_to_measures([])
         assert measures == ["accuracy"]
-        assert any(
-            "accuracy" in record.getMessage() for record in caplog.records
-        ), "expected a warning about the empty-objectives default"
+        assert any("accuracy" in record.getMessage() for record in caplog.records), (
+            "expected a warning about the empty-objectives default"
+        )
 
     def test_convert_dataset_to_examples_edge_cases(self, sdk_bridge):
         """Test dataset to examples conversion with edge cases."""
