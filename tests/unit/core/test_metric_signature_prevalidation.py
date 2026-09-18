@@ -10,6 +10,8 @@ unchanged.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from traigent.core.optimization_pipeline import (
@@ -58,14 +60,71 @@ def test_unbindable_required_keyword_only_param_raises_before_construction() -> 
     assert "output" in str(excinfo.value)  # recognized-name set mentioned
 
 
-def test_unbindable_metric_functions_entry_raises_with_metric_name() -> None:
+def test_unbindable_objective_metric_raises_with_metric_name() -> None:
     def unbindable(output: str, *, foobar: str) -> float:
         raise AssertionError("unbindable must never be invoked by this test")
 
     with pytest.raises(ValidationError, match="'my_metric'"):
         create_effective_evaluator(
-            **_make_common_kwargs(metric_functions={"my_metric": unbindable}),
+            **_make_common_kwargs(
+                metric_functions={"my_metric": unbindable},
+                objectives=["my_metric"],
+            ),
         )
+
+
+def test_unbindable_informational_metric_warns_and_still_constructs(caplog) -> None:
+    """A non-objective metric must NOT block the run.
+
+    ``LocalEvaluator`` raises only for an objective and refuses to substitute a
+    fabricated 0.0 for it (``traigent/evaluators/local.py:851``); an auxiliary
+    metric degrades to 0.0 with a ``metric_errors`` record. The no-execution
+    contract inspector mirrors that split deliberately
+    (``traigent/contract/evaluation.py:930-936``). Hard-failing here would
+    refuse runs that complete today, and would be the only place in the
+    codebase treating the two alike.
+    """
+
+    def unbindable(output: str, *, retrieval_context: str) -> float:
+        raise AssertionError("unbindable must never be invoked by this test")
+
+    def ok(output: str, expected: str) -> float:
+        return 1.0
+
+    with caplog.at_level(logging.WARNING):
+        evaluator, _ = create_effective_evaluator(
+            **_make_common_kwargs(
+                metric_functions={"ctx_check": unbindable},
+                scoring_function=ok,
+                objectives=["accuracy"],
+            ),
+        )
+
+    assert isinstance(evaluator, LocalEvaluator)
+    assert "ctx_check" in caplog.text
+    assert "not an optimization objective" in caplog.text
+
+
+def test_unbindable_report_omits_parameters_the_runtime_can_supply() -> None:
+    """The message must name only what the user has to fix.
+
+    ``MetricBinding.unmatched_parameters`` is every bindable name when nothing
+    bound, so it includes recognized ones like ``output``. Reporting those sends
+    the user after a parameter that is already correct.
+    """
+
+    def unbindable(output: str, *, foobar: str) -> float:
+        return 0.0
+
+    with pytest.raises(ValidationError) as excinfo:
+        validate_metric_function_bindability(
+            {"accuracy": unbindable}, objectives=["accuracy"]
+        )
+
+    message = str(excinfo.value)
+    cannot_bind = message.split("cannot be bound:")[1].split(".")[0]
+    assert "foobar" in cannot_bind
+    assert "output" not in cannot_bind
 
 
 def test_validate_metric_function_bindability_direct_unit() -> None:
@@ -75,7 +134,9 @@ def test_validate_metric_function_bindability_direct_unit() -> None:
         return 0.0
 
     with pytest.raises(ValidationError, match="foobar"):
-        validate_metric_function_bindability({"accuracy": unbindable})
+        validate_metric_function_bindability(
+            {"accuracy": unbindable}, objectives=["accuracy"]
+        )
 
 
 # ---------------------------------------------------------------------------

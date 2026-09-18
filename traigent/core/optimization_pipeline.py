@@ -518,6 +518,7 @@ def build_metric_functions(
 
 def validate_metric_function_bindability(
     effective_metric_functions: dict[str, Callable[..., Any]],
+    objectives: Sequence[str] = (),
 ) -> None:
     """Fail fast, before any LLM call, if a metric/scoring signature can't bind.
 
@@ -560,30 +561,65 @@ def validate_metric_function_bindability(
         | {"example", "input_data", "metadata", "config", "example_index"}
     )
 
+    objective_names = set(objectives)
+    recognized_set = set(recognized_names)
+
     for metric_name, metric_func in effective_metric_functions.items():
+        # An OBJECTIVE defines the search signal, so production's LocalEvaluator
+        # refuses to substitute a fabricated 0.0 for it and raises
+        # (traigent/evaluators/local.py:851). An auxiliary/informational metric
+        # only degrades to 0.0 with a `metric_errors` record. The no-execution
+        # contract inspector mirrors that split deliberately
+        # (traigent/contract/evaluation.py:930-936: objective -> "error",
+        # otherwise -> "warning"). Mirror it here too: hard-failing an
+        # informational metric at construction would refuse runs that complete
+        # today, and would be the one place in the codebase that treats the two
+        # alike.
+        is_objective = metric_name in objective_names
+
         try:
             binding = resolve_metric_call_binding(
                 metric_func, None, synthetic_example, {}, {}, 0
             )
         except (TypeError, ValueError) as exc:
-            raise ValidationError(
+            message = (
                 f"metric/scoring function '{metric_name}' signature could not "
                 f"be introspected ({type(exc).__name__}: {exc}). Fix its "
                 "signature before running -- this check runs before any LLM "
                 "call."
-            ) from exc
+            )
+            if is_objective:
+                raise ValidationError(message) from exc
+            logger.warning(
+                "%s Continuing: it is not an optimization objective.", message
+            )
+            continue
 
         if binding.bind_ok:
             continue
 
-        unmatched = ", ".join(binding.unmatched_parameters) or "(unknown)"
-        raise ValidationError(
+        # `unmatched_parameters` is every bindable name when nothing bound, so
+        # it includes recognized ones like `output`. Reporting those tells the
+        # user to fix a parameter that is already fine; show only the names the
+        # runtime cannot supply.
+        unbindable = [
+            p for p in binding.unmatched_parameters if p not in recognized_set
+        ]
+        unmatched = ", ".join(unbindable or binding.unmatched_parameters) or "(unknown)"
+        message = (
             f"metric/scoring function '{metric_name}' has required "
             f"parameter(s) that cannot be bound: {unmatched}. Accept "
             "(output, expected) positionally, use **kwargs, or name "
             f"parameters from the recognized set: {', '.join(recognized_names)}. "
             "This check runs before any LLM call, so a signature mismatch "
             "fails fast instead of costing a full run."
+        )
+        if is_objective:
+            raise ValidationError(message)
+        logger.warning(
+            "%s Continuing: it is not an optimization objective, so it degrades "
+            "to 0.0 with a metric_errors record as it does today.",
+            message,
         )
 
 
@@ -710,7 +746,7 @@ def _create_local_evaluator(
     effective_metric_fns = build_metric_functions(
         metric_functions, scoring_function, objectives
     )
-    validate_metric_function_bindability(effective_metric_fns)
+    validate_metric_function_bindability(effective_metric_fns, objectives)
     effective_workers = resolve_effective_workers(
         effective_batch_size, effective_thread_workers
     )
