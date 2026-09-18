@@ -17,6 +17,7 @@ Example usage:
 
 # Traceability: CONC-Layer-Core CONC-Quality-Reliability FUNC-EVAL-METRICS REQ-EVAL-005
 
+import math
 from typing import Any, TypedDict, TypeGuard
 
 try:
@@ -128,25 +129,46 @@ def is_traigent_metadata(obj: Any) -> TypeGuard[TraigentMetadata]:
             if not isinstance(usage["response_time_ms"], (int, float)):
                 return False
 
-    # Optional field: calls must be a list of per-call breakdown dicts
-    if "calls" in obj:
-        calls = obj["calls"]
-        if not isinstance(calls, list):
-            return False
-        for call in calls:
-            if not isinstance(call, dict):
-                return False
-            if "model" not in call or not isinstance(call["model"], str):
-                return False
-            if "cost" not in call or isinstance(call["cost"], bool):
-                return False
-            if not isinstance(call["cost"], (int, float)):
-                return False
-            for token_key in ("input_tokens", "output_tokens"):
-                if token_key in call and (
-                    isinstance(call[token_key], bool)
-                    or not isinstance(call[token_key], int)
-                ):
-                    return False
+    # Optional field: calls must be a list of per-call breakdown dicts.
+    if "calls" in obj and not is_valid_call_breakdown(obj["calls"]):
+        return False
 
+    return True
+
+
+def is_valid_call_breakdown(calls: Any) -> bool:
+    """Validate the optional per-model ``calls`` attribution list on its own.
+
+    Separate from :func:`is_traigent_metadata` on purpose. ``calls`` is
+    *attribution*: it says which model spent the money, while ``total_cost`` says
+    how much was spent. Letting a malformed attribution entry invalidate the whole
+    envelope discards an authoritative ``total_cost`` that is perfectly valid, and
+    a run then under-reports spend -- which is fail-OPEN for a budget, not
+    fail-closed. Callers validate the two independently and drop only ``calls``.
+    """
+    if not isinstance(calls, list):
+        return False
+    for call in calls:
+        if not isinstance(call, dict):
+            return False
+        if "model" not in call or not isinstance(call["model"], str):
+            return False
+        if "cost" not in call or isinstance(call["cost"], bool):
+            return False
+        if not isinstance(call["cost"], (int, float)):
+            return False
+        # Non-finite only. A NEGATIVE cost is left to the downstream clamp,
+        # which is existing documented behaviour (see
+        # test_negative_values_clamped_to_zero): clamping keeps the model names
+        # and loses nothing, and `total_cost` is separately authoritative. NaN
+        # and infinity cannot be clamped meaningfully -- max(0, nan) is nan --
+        # so they are the only values worth dropping the entry for.
+        if not math.isfinite(call["cost"]):
+            return False
+        for token_key in ("input_tokens", "output_tokens"):
+            if token_key in call and (
+                isinstance(call[token_key], bool)
+                or not isinstance(call[token_key], int)
+            ):
+                return False
     return True

@@ -1434,7 +1434,11 @@ class LocalEvaluator(BaseEvaluator):
         Returns:
             The meta dict if found, None otherwise.
         """
-        from traigent.core.meta_types import TraigentMetadata, is_traigent_metadata
+        from traigent.core.meta_types import (
+            TraigentMetadata,
+            is_traigent_metadata,
+            is_valid_call_breakdown,
+        )
 
         if not isinstance(output, dict):
             return None
@@ -1442,6 +1446,21 @@ class LocalEvaluator(BaseEvaluator):
         meta = output.get("__traigent_meta__")
         if meta is None:
             return None
+
+        # Sever a malformed `calls` before validating the envelope. `calls` is
+        # ATTRIBUTION (which model spent it); `total_cost` is the authoritative
+        # amount. Letting a bad attribution entry invalidate the whole envelope
+        # threw away a valid total_cost and the run under-reported spend -- which
+        # is fail-OPEN for a budget, whatever the old comment called it. Drop the
+        # attribution, keep the money.
+        if isinstance(meta, dict) and "calls" in meta:
+            if not is_valid_call_breakdown(meta["calls"]):
+                logger.error(
+                    "Invalid __traigent_meta__['calls'] attribution; dropping the "
+                    "per-model breakdown and keeping the reported total_cost.",
+                    extra={"calls": meta["calls"]},
+                )
+                meta = {k: v for k, v in meta.items() if k != "calls"}
 
         if not is_traigent_metadata(meta):
             logger.error(

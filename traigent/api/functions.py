@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
@@ -1153,8 +1154,30 @@ def with_usage(
 
     result: dict[str, Any] = {"text": text}
 
-    # Build metadata - always include total_cost (required)
-    meta: dict[str, Any] = {"total_cost": float(total_cost)}
+    # Build metadata - always include total_cost (required).
+    #
+    # Validate the BILLED field at least as hard as the attribution below it.
+    # Measured before this guard: `total_cost=True` was recorded as $1.00
+    # (bool subclasses int), and nan / inf / -1.0 all reached the ledger as-is.
+    # A negative total is a credit against a run's spend, which is the same
+    # defect class as the usage.cost regression fixed in #2342.
+    if isinstance(total_cost, bool) or not isinstance(total_cost, (int, float, str)):
+        raise TypeError(
+            "with_usage() requires total_cost to be a number, got "
+            f"{type(total_cost).__name__}."
+        )
+    try:
+        normalized_total_cost = float(total_cost)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(
+            f"with_usage() requires total_cost to be a number, got {total_cost!r}."
+        ) from exc
+    if not math.isfinite(normalized_total_cost) or normalized_total_cost < 0:
+        raise ValueError(
+            "with_usage() requires total_cost to be finite and non-negative, got "
+            f"{total_cost!r}."
+        )
+    meta: dict[str, Any] = {"total_cost": normalized_total_cost}
 
     # Only include usage metadata if any field is explicitly provided (not None)
     # This avoids overwriting existing extracted values with zeros
@@ -1234,23 +1257,37 @@ def with_usage(
                 "cost" not in call
                 or isinstance(cost, bool)
                 or not isinstance(cost, (int, float))
+                or not math.isfinite(cost)
+                or cost < 0
             ):
                 raise TypeError(
-                    f"with_usage() model_costs[{i}] requires a numeric 'cost' key."
+                    f"with_usage() model_costs[{i}] requires a finite, "
+                    f"non-negative numeric 'cost' key."
                 )
-            input_tokens = call.get("input_tokens", 0) or 0
-            output_tokens = call.get("output_tokens", 0) or 0
-            for field_name, field_value in (
-                ("input_tokens", input_tokens),
-                ("output_tokens", output_tokens),
-            ):
-                if isinstance(field_value, bool) or not isinstance(
-                    field_value, (int, float)
+            # Validate the RAW values, before any `or 0` coercion: `False or 0`
+            # evaluates to 0, so a coerced value can no longer be recognised as
+            # a bool and the check below would never fire for it. Measured
+            # before this ordering: `input_tokens=False` was accepted.
+            raw_tokens = (
+                ("input_tokens", call.get("input_tokens", 0)),
+                ("output_tokens", call.get("output_tokens", 0)),
+            )
+            for field_name, field_value in raw_tokens:
+                if field_value is None:
+                    continue
+                if (
+                    isinstance(field_value, bool)
+                    or not isinstance(field_value, (int, float))
+                    or not math.isfinite(field_value)
+                    or field_value < 0
                 ):
                     raise TypeError(
-                        f"with_usage() model_costs[{i}] requires a numeric "
-                        f"'{field_name}' key, got {type(field_value).__name__}."
+                        f"with_usage() model_costs[{i}] requires a finite, "
+                        f"non-negative numeric '{field_name}' key, got "
+                        f"{field_value!r}."
                     )
+            input_tokens = call.get("input_tokens", 0) or 0
+            output_tokens = call.get("output_tokens", 0) or 0
             normalized_calls.append(
                 {
                     "model": model,

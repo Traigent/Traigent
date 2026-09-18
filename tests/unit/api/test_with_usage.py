@@ -307,3 +307,76 @@ class TestWithUsageModelCosts:
                 )
         finally:
             trial_context.reset(ctx_handle)
+
+    @pytest.mark.parametrize(
+        "bad_total",
+        [
+            pytest.param(True, id="bool-true"),
+            pytest.param(False, id="bool-false"),
+            pytest.param(None, id="none"),
+        ],
+    )
+    def test_non_numeric_total_cost_raises(self, bad_total):
+        """The BILLED field must be guarded at least as hard as the attribution.
+
+        Measured before this guard: ``total_cost=True`` was recorded as $1.00,
+        because ``bool`` subclasses ``int``. That is the same trap the
+        ``model_costs`` entries guard against, on the field that actually bills.
+        """
+        ctx_handle = trial_context.set({"trial_id": 1})
+        try:
+            with pytest.raises(TypeError, match="total_cost to be a number"):
+                traigent.with_usage(text="answer", total_cost=bad_total)
+        finally:
+            trial_context.reset(ctx_handle)
+
+    @pytest.mark.parametrize(
+        "bad_total",
+        [
+            pytest.param(float("nan"), id="nan"),
+            pytest.param(float("inf"), id="inf"),
+            pytest.param(-1.0, id="negative"),
+        ],
+    )
+    def test_non_finite_or_negative_total_cost_raises(self, bad_total):
+        """A negative total is a credit against a run's spend."""
+        ctx_handle = trial_context.set({"trial_id": 1})
+        try:
+            with pytest.raises(ValueError, match="finite and non-negative"):
+                traigent.with_usage(text="answer", total_cost=bad_total)
+        finally:
+            trial_context.reset(ctx_handle)
+
+    def test_explicit_zero_total_cost_is_still_accepted(self):
+        """The guard must not break an explicit, authoritative $0."""
+        ctx_handle = trial_context.set({"trial_id": 1})
+        try:
+            result = traigent.with_usage(text="answer", total_cost=0.0)
+            assert result["__traigent_meta__"]["total_cost"] == 0.0
+        finally:
+            trial_context.reset(ctx_handle)
+
+    def test_model_costs_never_change_the_billed_total(self):
+        """Attribution must not move the billed figure, however large it is.
+
+        Both of this repo's recent cost regressions were an attribution path
+        feeding the billed total. The invariant held when this was written, but
+        nothing pinned it: two feed-back mutations passed the whole suite.
+        """
+        ctx_handle = trial_context.set({"trial_id": 1})
+        try:
+            result = traigent.with_usage(
+                text="answer",
+                total_cost=0.01,
+                model_costs=[
+                    {"model": "gpt-4o", "cost": 5.0},
+                    {"model": "gpt-4o-mini", "cost": 7.0},
+                ],
+            )
+            meta = result["__traigent_meta__"]
+            assert meta["total_cost"] == 0.01, (
+                f"model_costs leaked into the billed total: {meta['total_cost']!r}"
+            )
+            assert sum(call["cost"] for call in meta["calls"]) == 12.0
+        finally:
+            trial_context.reset(ctx_handle)
