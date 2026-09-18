@@ -24,6 +24,24 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   before this change sync with no identity. A real `Dataset(name="support-v1")` keeps the
   same identity as before.
 
+- **Breaking: `.optimize()` now rejects a keyword argument it does not recognize.** A
+  call-time keyword that is neither a `@traigent.optimize` decorator option nor consumed by
+  an optimizer was absorbed into the optimizer's `algorithm_config` and had no effect, so a
+  typo silently ran a different optimization from the one you wrote. Such a keyword now
+  raises `TypeError` naming it. Remove the argument at the call site, or correct the
+  spelling if you meant a real option; there is no compatibility flag, because a keyword
+  that reaches this error never had an effect.
+  **Options of the optimizer you selected still work**, including every batch- and
+  remote-optimizer option (`batch_config`, `pareto_frontier_size`, `base_optimizer`,
+  `remote_enabled`, ...). The accepted set is derived from the registered optimizers'
+  constructor signatures rather than hand-written, so registering a plugin optimizer — or
+  adding a parameter to an existing one — cannot break its callers.
+  The shipped `walkthrough/` examples passed
+  `show_progress=` to `.optimize()`, which was never a parameter of it and never did
+  anything; it is removed from all 21 example call sites and no example's behaviour changes.
+  The parameter that does control the live progress bar is `progress_bar`: `True` forces one,
+  `False` suppresses it, `None` (the default) auto-enables it in an interactive terminal.
+
 - **Breaking: `PromptRewriter.rewrite()` no longer accepts `plan`, and `TextDocument` no
   longer exposes `trainable`.** Both were dead: `rewrite()` ignored `plan` entirely and
   nothing in the package ever read `trainable`. `PromptRewriter` is exported from

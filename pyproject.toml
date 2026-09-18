@@ -506,6 +506,19 @@ known-third-party = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+# The traigent-ui plugin is a SEPARATE distribution with its own
+# `requires-python = ">=3.10"` (plugins/traigent-ui/pyproject.toml), while this
+# config targets py311 for the SDK. Two pyupgrade rules rewrite code into
+# 3.11-only forms and are therefore wrong for that subtree:
+#   UP017  datetime.timezone.utc -> datetime.UTC   (datetime.UTC is 3.11+)
+#   UP041  asyncio.TimeoutError  -> TimeoutError   (only ALIASED from 3.11; on
+#          3.10 they are distinct classes, so the rewrite silently stops
+#          catching asyncio.wait_for timeouts -- a behaviour change, not a
+#          modernization)
+# This is not a relaxed gate: applying these rules here produces code that does
+# not run, and in UP041's case code that runs and is wrong. If the plugin's
+# floor is raised to 3.11, delete this entry and re-run `ruff check --fix`.
+"plugins/traigent-ui/**" = ["UP017", "UP041"]
 "__init__.py" = ["F401"]
 "tests/*" = ["B011"]
 "examples/*" = ["E402"]  # Examples often set env vars before imports
