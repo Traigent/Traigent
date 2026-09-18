@@ -276,6 +276,69 @@ class TestDoctorKeyChecks:
         assert traigent_row["status"] == "FAIL"
 
 
+class TestVendorKeyCheckCoversEverySupportedVendor:
+    """#1778 "vendor completeness": the 6-vendor hardcoded list previously
+    silently un-checked HuggingFace, plus Bedrock/Azure OpenAI/OpenRouter,
+    which the issue names explicitly. The presence check now derives from the
+    SDK's canonical provider-support table (`provider_support.PROVIDER_SPECS`)
+    instead of a literal, and a handful of documented non-table credential
+    markers cover the vendors that authenticate some other way.
+    """
+
+    def _auth_row(self, payload: dict) -> dict:
+        auth_rows = [c for c in payload["checks"] if c["category"] == "Auth"]
+        return next(r for r in auth_rows if "vendor api key" in r["message"].lower())
+
+    @patch.dict(os.environ, _clean_env(), clear=True)
+    def test_a_huggingface_only_env_passes_the_vendor_check(
+        self, runner: CliRunner
+    ) -> None:
+        """HF_TOKEN was never in the old 6-vendor literal list at all."""
+        env = {**_clean_env(), "HF_TOKEN": "hf_" + "x" * 32}
+        with patch.dict(os.environ, env, clear=True):
+            result = runner.invoke(doctor, ["--json"])
+        payload = json.loads(result.stdout)
+        assert self._auth_row(payload)["status"] == "PASS"
+
+    @patch.dict(os.environ, _clean_env(), clear=True)
+    def test_a_bedrock_only_env_passes_the_vendor_check(
+        self, runner: CliRunner
+    ) -> None:
+        """Bedrock authenticates via the AWS credential chain, not a
+        provider_support.py env key -- doctor still must not call this a
+        missing vendor key."""
+        env = {**_clean_env(), "AWS_ACCESS_KEY_ID": "not-a-real-credential-marker"}
+        with patch.dict(os.environ, env, clear=True):
+            result = runner.invoke(doctor, ["--json"])
+        payload = json.loads(result.stdout)
+        assert self._auth_row(payload)["status"] == "PASS"
+
+    @patch.dict(os.environ, _clean_env(), clear=True)
+    def test_an_openrouter_only_env_passes_the_vendor_check(
+        self, runner: CliRunner
+    ) -> None:
+        """OpenRouter has no ProviderSpec at all (reached only as an
+        OpenAI-compatible client) -- issue #1778 names it explicitly."""
+        env = {
+            **_clean_env(),
+            "OPENROUTER_API_KEY": "sk-or-" + "x" * 32,  # pragma: allowlist secret
+        }
+        with patch.dict(os.environ, env, clear=True):
+            result = runner.invoke(doctor, ["--json"])
+        payload = json.loads(result.stdout)
+        assert self._auth_row(payload)["status"] == "PASS"
+
+    @patch.dict(os.environ, _clean_env(), clear=True)
+    def test_still_warns_with_no_vendor_credential_at_all(
+        self, runner: CliRunner
+    ) -> None:
+        """Control: broadening the list must not make the WARN unreachable."""
+        with patch.dict(os.environ, _clean_env(), clear=True):
+            result = runner.invoke(doctor, ["--json"])
+        payload = json.loads(result.stdout)
+        assert self._auth_row(payload)["status"] == "WARN"
+
+
 # ===========================================================================
 # Secret safety, offline honesty, and checks that could PASS without checking.
 #
@@ -283,7 +346,7 @@ class TestDoctorKeyChecks:
 # built to be pasted into a ticket, so a leak here travels.
 # ===========================================================================
 
-SENTINEL = "tg_CANARY_0123456789abcdefSECRET"
+SENTINEL = "tg_CANARY_0123456789abcdefSECRET"  # pragma: allowlist secret
 
 
 class TestReportIsSecretSafe:
@@ -342,14 +405,15 @@ class TestReportIsSecretSafe:
         from traigent.utils.diagnostics import scrub
 
         out = scrub(
-            "cannot reach https://admin:hunter2@backend.example.com/v1", environ={}
+            "cannot reach https://admin:hunter2@backend.example.com/v1",  # pragma: allowlist secret
+            environ={},
         )
-        assert "hunter2" not in out
+        assert "hunter2" not in out  # pragma: allowlist secret
 
         url = urlsplit(out.removeprefix("cannot reach "))
         assert url.hostname == "backend.example.com"
         assert url.username == "admin"
-        assert url.password != "hunter2"
+        assert url.password != "hunter2"  # pragma: allowlist secret
 
     def test_scrub_leaves_ordinary_text_alone(self) -> None:
         from traigent.utils.diagnostics import scrub
@@ -364,12 +428,15 @@ class TestReportIsSecretSafe:
         from traigent.utils.diagnostics import DiagnosticReport, TraigentDiagnostics
 
         monkeypatch.setenv(
-            "TRAIGENT_BACKEND_URL", "https://svc:s3cr3t-pass@backend.example.com"
+            "TRAIGENT_BACKEND_URL",
+            "https://svc:s3cr3t-pass@backend.example.com",  # pragma: allowlist secret
         )
         report = DiagnosticReport()
         TraigentDiagnostics._check_environment(report)
 
-        assert "s3cr3t-pass" not in json.dumps(report.to_dict())
+        assert "s3cr3t-pass" not in json.dumps(  # pragma: allowlist secret
+            report.to_dict()
+        )
 
         # And the host survives, so the check is still useful. Parsed rather
         # than substring-matched, for the reason given above.
@@ -380,7 +447,7 @@ class TestReportIsSecretSafe:
         )
         url = urlsplit(reported.removeprefix("TRAIGENT_BACKEND_URL = "))
         assert url.hostname == "backend.example.com"
-        assert url.password != "s3cr3t-pass"
+        assert url.password != "s3cr3t-pass"  # pragma: allowlist secret
 
     def test_an_api_key_value_is_never_quoted_in_the_report(self, monkeypatch) -> None:
         from traigent.utils.diagnostics import DiagnosticReport, TraigentDiagnostics

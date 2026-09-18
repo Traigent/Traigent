@@ -28,6 +28,7 @@ from typing import Any, Literal
 
 import click
 
+from traigent.config.provider_support import PROVIDER_SPECS
 from traigent.utils.diagnostics import (
     DiagnosticReport,
     TraigentDiagnostics,
@@ -65,15 +66,36 @@ _STATUS_STYLE = {
 # Same prefixes `traigent auth whoami` accepts (traigent/cli/auth_commands.py).
 _TRAIGENT_KEY_PREFIXES = ("tg_", "uk_", "sk_", "ak_", "tk_")
 
-# Vendor API-key environment variables doctor checks for presence (mirrors
-# the "KEY" filter TraigentDiagnostics._add_recommendations already uses).
-_VENDOR_KEY_ENV_VARS = (
-    "OPENAI_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "GOOGLE_API_KEY",
-    "GEMINI_API_KEY",
-    "MISTRAL_API_KEY",
-    "COHERE_API_KEY",
+# Vendor API-key environment variables doctor checks for presence. Derived
+# from the SDK's canonical provider-support table
+# (`traigent.config.provider_support.PROVIDER_SPECS`, #1568) rather than a
+# hand-maintained literal, so this list cannot silently drift from what the
+# SDK actually key-manages -- a hardcoded 6-vendor list previously told a
+# HuggingFace user "no vendor API key found" even with HF_TOKEN set (#1778
+# "vendor completeness").
+_VENDOR_KEY_ENV_VARS: tuple[str, ...] = tuple(
+    dict.fromkeys(key for spec in PROVIDER_SPECS for key in spec.env_keys)
+)
+
+# Providers the canonical table marks "mapping_only" (recognized by the SDK,
+# but not key-managed through a single validated env var -- see
+# `ProviderSpec.env_keys` docs) still have a real, documented credential
+# convention doctor can check for presence: Bedrock authenticates through the
+# AWS credential chain and Azure OpenAI through an endpoint+key pair. Also
+# included: OpenRouter, which #1778 names explicitly but which the SDK
+# reaches only as an OpenAI-compatible client (see
+# `traigent/examples/providers/openrouter.py`), not as a provider_support.py
+# entry -- so it has no `ProviderSpec` to derive from at all. Presence-only,
+# same as every other check here: doctor never validates these credentials.
+_ADDITIONAL_VENDOR_CREDENTIAL_MARKERS: tuple[str, ...] = (
+    "AWS_ACCESS_KEY_ID",  # Bedrock
+    "AWS_PROFILE",  # Bedrock (profile-based auth, no static key in env)
+    "AZURE_OPENAI_API_KEY",  # Azure OpenAI
+    "OPENROUTER_API_KEY",  # OpenRouter
+)
+
+_ALL_VENDOR_KEY_MARKERS: tuple[str, ...] = (
+    _VENDOR_KEY_ENV_VARS + _ADDITIONAL_VENDOR_CREDENTIAL_MARKERS
 )
 
 
@@ -170,7 +192,7 @@ def _run_key_checks(report: DoctorReport) -> None:
             f"({', '.join(_TRAIGENT_KEY_PREFIXES)})",
         )
 
-    vendor_keys_present = [v for v in _VENDOR_KEY_ENV_VARS if os.environ.get(v)]
+    vendor_keys_present = [v for v in _ALL_VENDOR_KEY_MARKERS if os.environ.get(v)]
     if vendor_keys_present:
         report.add(
             "Auth",
@@ -182,7 +204,7 @@ def _run_key_checks(report: DoctorReport) -> None:
             "Auth",
             "WARN",
             "No vendor API key found ("
-            + ", ".join(_VENDOR_KEY_ENV_VARS)
+            + ", ".join(_ALL_VENDOR_KEY_MARKERS)
             + "); needed for any provider that isn't mocked",
         )
 
