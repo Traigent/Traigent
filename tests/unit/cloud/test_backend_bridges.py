@@ -1,5 +1,6 @@
 """Tests for Traigent Cloud Backend Bridges."""
 
+import logging
 from datetime import datetime
 
 import pytest
@@ -718,6 +719,35 @@ class TestSDKBackendBridge:
             measures = sdk_bridge._map_objectives_to_measures([unsafe])
             assert measures == ["accuracy"], unsafe
             assert unsafe not in measures
+
+    def test_unrecognized_objective_coercion_is_logged(self, sdk_bridge, caplog):
+        """Regression for issue #1619.
+
+        Coercing an objective name that is neither a known alias nor a safe
+        custom-metric identifier to ``accuracy`` must emit a ``logger.warning``
+        naming the rejected objective, so a legitimate typo (not just an
+        injection payload) is observable instead of silently retargeting the
+        optimization run.
+        """
+        with caplog.at_level(logging.WARNING, logger="traigent.cloud.backend_bridges"):
+            measures = sdk_bridge._map_objectives_to_measures(["f1-score"])
+        assert measures == ["accuracy"]
+        assert any("f1-score" in record.getMessage() for record in caplog.records), (
+            "expected a warning naming the rejected objective 'f1-score'"
+        )
+
+    def test_empty_objectives_default_is_logged(self, sdk_bridge, caplog):
+        """Regression for issue #1619.
+
+        An empty objectives list silently defaulting to ``["accuracy"]`` must
+        also be logged, mirroring the per-objective coercion warning.
+        """
+        with caplog.at_level(logging.WARNING, logger="traigent.cloud.backend_bridges"):
+            measures = sdk_bridge._map_objectives_to_measures([])
+        assert measures == ["accuracy"]
+        assert any("accuracy" in record.getMessage() for record in caplog.records), (
+            "expected a warning about the empty-objectives default"
+        )
 
     def test_convert_dataset_to_examples_edge_cases(self, sdk_bridge):
         """Test dataset to examples conversion with edge cases."""

@@ -794,11 +794,24 @@ Response:"""
                 measure_id = objective
             else:
                 measure_id = "accuracy"
+                logger.warning(
+                    "Objective %r is not a recognized alias or a safe "
+                    "custom-metric identifier (%r); coercing to %r so the "
+                    "optimization run still proceeds, but it will target a "
+                    "different objective than requested",
+                    objective,
+                    safe_name,
+                    measure_id,
+                )
             if measure_id not in measures:
                 measures.append(measure_id)
 
         # Ensure at least one measure
         if not measures:
+            logger.warning(
+                "No objectives resolved to a measure id; defaulting to %r",
+                "accuracy",
+            )
             measures.append("accuracy")
 
         return measures
