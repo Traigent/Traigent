@@ -76,6 +76,101 @@ def _safe_print(*args: Any, **kwargs: Any) -> None:
         stream.flush()
 
 
+# Control characters that get a readable escape rather than a numeric one.
+_CONTROL_ESCAPES: dict[str, str] = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
+
+# Bounds for operator-supplied labels in console output. Generous enough for
+# any real objective or algorithm name, small enough that one pathological
+# name -- or a pathological number of them -- cannot flood a log line.
+_MAX_LABEL_LENGTH = 120
+_MAX_LABEL_LIST_LENGTH = 400
+_TRUNCATION_MARKER = "...[truncated]"
+
+
+def _truncate(text: str, limit: int) -> str:
+    """Cap ``text`` at ``limit`` characters, marking that it was cut."""
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - len(_TRUNCATION_MARKER))] + _TRUNCATION_MARKER
+
+
+def _sanitize_user_label(value: Any, limit: int = _MAX_LABEL_LENGTH) -> str:
+    """Render a caller-supplied label as one bounded, control-character-free line.
+
+    ``objectives`` and ``algorithm`` are unrestricted caller-chosen strings that
+    the console callbacks print verbatim to stdout, and stdout is captured by
+    log collectors. Printed raw, an embedded newline lets a caller **forge
+    additional log lines**, and an ANSI escape introducer lets one rewrite what
+    an operator sees in a terminal.
+
+    The label itself is preserved -- it is the operator's own name for the thing
+    and the output cannot be read without it. Only its control characters are
+    escaped and its length bounded.
+
+    Escapes rather than deletes: a stripped newline silently joins two words
+    into one plausible-looking token, whereas a literal ``\\n`` in the output
+    tells the reader exactly what the label contained. Diagnosability is the
+    whole point of this output.
+    """
+    text = value if isinstance(value, str) else str(value)
+    pieces: list[str] = []
+    for char in text:
+        escape = _CONTROL_ESCAPES.get(char)
+        if escape is not None:
+            pieces.append(escape)
+            continue
+        code = ord(char)
+        # C0 controls (incl. ESC 0x1b, the ANSI introducer), DEL, and C1
+        # controls. Ordinary non-ASCII text (>= U+00A0) is left alone so
+        # non-English labels still render.
+        if code < 0x20 or code == 0x7F or 0x80 <= code <= 0x9F:
+            pieces.append(f"\\x{code:02x}")
+            continue
+        pieces.append(char)
+    return _truncate("".join(pieces), limit)
+
+
+def _sanitize_user_labels(
+    values: Any, limit: int = _MAX_LABEL_LIST_LENGTH, separator: str = ", "
+) -> str:
+    """Join caller-supplied labels for display, each sanitized, the whole bounded.
+
+    Bounding the joined result as well as each item matters: a caller controls
+    how many objectives there are, not just how long each name is.
+    """
+    try:
+        items = list(values)
+    except TypeError:
+        items = [values]
+    return _truncate(
+        separator.join(_sanitize_user_label(item) for item in items), limit
+    )
+
+
+def _run_status_text(result: Any) -> str:
+    """Map a run's status onto the closed status set, never interpolating it raw.
+
+    ``result.status`` can carry a value from a backend response, so it is not
+    guaranteed to be an ``OptimizationStatus``. Interpolating it raw put an
+    externally-influenced string straight into a printed line; anything outside
+    the enum now becomes the neutral ``unknown`` instead of being echoed.
+    """
+    # Imported here, not at module scope: ``..api.types`` is deliberately kept
+    # behind TYPE_CHECKING above to avoid an import cycle through the package.
+    from ..api.types import OptimizationStatus
+
+    status = getattr(result, "status", None)
+    raw = getattr(status, "value", status)
+    if raw is None:
+        return "finished"
+    try:
+        # ``str()`` on a StrEnum member is its value, and keeps this typed as
+        # ``str`` rather than the ``Any`` that ``.value`` is annotated with.
+        return str(OptimizationStatus(raw))
+    except (ValueError, TypeError):
+        return str(OptimizationStatus.UNKNOWN)
+
+
 CallbackInvocationKey = tuple[int, str]
 
 
@@ -197,9 +292,13 @@ class ProgressBarCallback(OptimizationCallback):
         self._config_space = dict(config_space)
         self._objectives = list(objectives)
         # Note: ProgressBarCallback uses print for interactive console output
-        # This is intentional for user-facing progress display
-        _safe_print(f"🚀 Starting optimization with {algorithm}")
-        _safe_print(f"📊 Objectives: {', '.join(objectives)}")
+        # This is intentional for user-facing progress display.
+        # ``algorithm`` and ``objectives`` are caller-chosen strings, so they go
+        # through _sanitize_user_label* before reaching stdout -- printed raw, an
+        # embedded newline forges extra log lines and an ANSI escape rewrites
+        # what an operator sees.
+        _safe_print(f"🚀 Starting optimization with {_sanitize_user_label(algorithm)}")
+        _safe_print(f"📊 Objectives: {_sanitize_user_labels(objectives)}")
         _safe_print(f"⚙️  Configuration space: {len(config_space)} parameters")
         _safe_print()
 
@@ -275,7 +374,7 @@ class ProgressBarCallback(OptimizationCallback):
             if isinstance(result.metadata, dict):
                 timeout_value = result.metadata.get("timeout")
             timeout_hint = f" ({timeout_value}s)" if timeout_value else ""
-            _safe_print(f"⚠️ Optimization stopped early: timeout reached{timeout_hint}.")
+            _safe_print(f"⚠️ Optimization stopped: timeout reached{timeout_hint}.")
         else:
             _safe_print("✅ Optimization complete!")
         best_score_str = (
@@ -388,6 +487,95 @@ class ResultsTableCallback(OptimizationCallback):
                 _safe_print(self._table_footer_note)
         except Exception as exc:
             logger.warning("Failed to render results table: %s", exc)
+
+
+def _format_elapsed(seconds: float) -> str:
+    """Format elapsed seconds, keeping hours.
+
+    ``time.strftime("%M:%S", time.gmtime(s))`` silently wraps at one hour, so a
+    3725-second run renders as ``02:05``. Managed runs are exactly the long ones
+    (reasoning models, many configs), so the hours matter here more than
+    anywhere else.
+    """
+    total = max(0, int(seconds))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours:d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+class ManagedProgressCallback(OptimizationCallback):
+    """Per-config heartbeat for the managed (hybrid) execution path (Traigent#1601).
+
+    The managed path had no client-side per-config progress: each config is
+    evaluated against Traigent's backend-guided optimizer, often for minutes
+    (reasoning models), and a managed run is commonly launched
+    non-interactively (a script, notebook, or background process) rather than
+    watched in a live terminal. ``ProgressBarCallback`` only auto-injects in
+    an interactive TTY (``sys.stdin.isatty()``), and ``ResultsTableCallback``
+    -- the non-interactive fallback -- only prints once, at the very end. So a
+    non-interactive managed run produced zero output between start and
+    finish, and the only way to tell a slow run from a hung one was manually
+    polling the portal API.
+
+    Emits one line per completed config via stdout (``_safe_print``, so it is
+    never silently dropped by a logger configured at WARNING+), with no
+    ``\\r`` redraws -- safe to redirect to a file or pipe. Never throttled:
+    managed configs are minutes apart, not the sub-second cadence a progress
+    bar throttles for.
+    """
+
+    def on_optimization_start(
+        self, config_space: dict[str, Any], objectives: list[str], algorithm: str
+    ) -> None:
+        """Called when optimization starts."""
+        # flush=True on every line here: this callback exists for runs whose
+        # output is redirected (a script, notebook or background process), and
+        # a non-tty stream is block-buffered, so an unflushed heartbeat is not
+        # written until the buffer fills or the process exits -- invisible in
+        # exactly the case it was written for.
+        _safe_print(
+            f"[traigent] managed run starting: "
+            f"algorithm={_sanitize_user_label(algorithm)} "
+            f"objectives={_sanitize_user_labels(objectives)}",
+            flush=True,
+        )
+
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
+        """Called when a trial starts."""
+        return None  # Heartbeat fires on completion, like the progress bar.
+
+    def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
+        """Called when a trial completes."""
+        status = "OK" if trial.is_successful else "FAIL"
+        total = progress.total_trials if progress.total_trials else "?"
+        best_score_str = (
+            f"{progress.best_score:.4f}" if progress.best_score is not None else "N/A"
+        )
+        elapsed = _format_elapsed(progress.elapsed_time)
+        _safe_print(
+            f"[traigent] config {progress.completed_trials}/{total} {status} "
+            f"best={best_score_str} elapsed={elapsed}",
+            flush=True,
+        )
+
+    def on_optimization_complete(self, result: OptimizationResult) -> None:
+        """Called when optimization finishes, however it finished."""
+        best_score_str = (
+            f"{result.best_score:.4f}" if result.best_score is not None else "N/A"
+        )
+        # Report the actual status rather than always saying "complete": this
+        # callback also fires for a cancelled or timed-out run, and telling a
+        # user their run completed when it was cut short is worse than silence.
+        # Mapped strictly onto the known status set rather than interpolated
+        # raw, so an unexpected value cannot inject text into this line.
+        status_text = _run_status_text(result)
+        _safe_print(
+            f"[traigent] managed run {status_text}: best={best_score_str} "
+            f"success_rate={result.success_rate:.1%} duration={result.duration:.1f}s",
+            flush=True,
+        )
 
 
 class LoggingCallback(OptimizationCallback):
@@ -598,10 +786,11 @@ class SimpleProgressCallback(OptimizationCallback):
             self.total_trials = total_configs
 
         self._output(
-            f"\n🔄 Starting {algorithm} optimization with {self.total_trials} configurations..."
+            f"\n🔄 Starting {_sanitize_user_label(algorithm)} optimization "
+            f"with {self.total_trials} configurations..."
         )
         if self.show_details:
-            self._output(f"📊 Objectives: {', '.join(objectives)}")
+            self._output(f"📊 Objectives: {_sanitize_user_labels(objectives)}")
 
     def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
         """Called when a trial starts."""
@@ -1092,8 +1281,8 @@ class DetailedProgressCallback(OptimizationCallback):
         _safe_print("\n" + "=" * 60)
         _safe_print("🚀 OPTIMIZATION STARTING")
         _safe_print("=" * 60)
-        _safe_print(f"📊 Algorithm: {algorithm}")
-        _safe_print(f"🎯 Objectives: {', '.join(objectives)}")
+        _safe_print(f"📊 Algorithm: {_sanitize_user_label(algorithm)}")
+        _safe_print(f"🎯 Objectives: {_sanitize_user_labels(objectives)}")
         _safe_print("🔧 Configuration Space:")
 
         for param, values in config_space.items():
@@ -1173,7 +1362,15 @@ class DetailedProgressCallback(OptimizationCallback):
         filled = int(bar_length * percent / 100)
         bar = "█" * filled + "░" * (bar_length - filled)
         _safe_print(f"   Progress: [{bar}] {percent:.0f}%")
-        _safe_print()
+        # Flush once, at the end of the trial's block. `_safe_print` defaults to
+        # flush=False, so without this the whole report sits in stdout's buffer
+        # whenever output is redirected (a pipe, a log file, nohup) -- which is
+        # exactly the non-interactive managed run this callback is trusted to
+        # keep from going silent. The heartbeat defers to this callback, so
+        # "it printed" has to mean "the user received it", not "it reached the
+        # buffer". Flushing here rather than on all seven writes keeps one
+        # syscall per trial instead of seven.
+        _safe_print(flush=True)
 
     def _print_header(self, result: OptimizationResult) -> None:
         """Print the completion header."""

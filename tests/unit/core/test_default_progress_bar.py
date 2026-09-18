@@ -5,7 +5,11 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from traigent.core.optimized_function import _resolve_callbacks
-from traigent.utils.callbacks import ProgressBarCallback, ResultsTableCallback
+from traigent.utils.callbacks import (
+    ManagedProgressCallback,
+    ProgressBarCallback,
+    ResultsTableCallback,
+)
 
 
 class TestResolveCallbacks:
@@ -113,3 +117,93 @@ class TestResolveCallbacks:
 
         assert len(callbacks) == 1
         assert isinstance(callbacks[0], ResultsTableCallback)
+
+
+class TestManagedProgressHeartbeat:
+    """Managed (hybrid) execution path heartbeat injection (Traigent#1601)."""
+
+    def test_injected_for_hybrid_non_interactive(self):
+        """Non-interactive HYBRID run gets the heartbeat instead of nothing."""
+        with patch("traigent.core.optimized_function.sys") as mock_sys:
+            mock_sys.stdin.isatty.return_value = False
+            callbacks = _resolve_callbacks(
+                None, None, progress_bar=None, execution_mode="hybrid"
+            )
+
+        managed = [cb for cb in callbacks if isinstance(cb, ManagedProgressCallback)]
+        progress_bars = [cb for cb in callbacks if isinstance(cb, ProgressBarCallback)]
+        assert len(managed) == 1
+        assert progress_bars == []
+
+    def test_interactive_hybrid_gets_progress_bar_not_heartbeat(self):
+        """In an interactive terminal, the real progress bar already gives
+        live feedback, so the heartbeat correctly defers to it (no
+        duplicate output) -- it only fills the non-interactive gap."""
+        with patch("traigent.core.optimized_function.sys") as mock_sys:
+            mock_sys.stdin.isatty.return_value = True
+            callbacks = _resolve_callbacks(
+                None, None, progress_bar=None, execution_mode="hybrid"
+            )
+
+        managed = [cb for cb in callbacks if isinstance(cb, ManagedProgressCallback)]
+        progress_bars = [cb for cb in callbacks if isinstance(cb, ProgressBarCallback)]
+        assert len(progress_bars) == 1
+        assert managed == []
+
+    def test_not_injected_for_local(self):
+        """LOCAL runs keep existing behavior (no heartbeat noise)."""
+        with patch("traigent.core.optimized_function.sys") as mock_sys:
+            mock_sys.stdin.isatty.return_value = False
+            callbacks = _resolve_callbacks(
+                None, None, progress_bar=None, execution_mode="local"
+            )
+
+        managed = [cb for cb in callbacks if isinstance(cb, ManagedProgressCallback)]
+        assert managed == []
+
+    def test_not_injected_when_progress_bar_explicitly_disabled(self):
+        """progress_bar=False suppresses the heartbeat too, not just the bar."""
+        with patch("traigent.core.optimized_function.sys") as mock_sys:
+            mock_sys.stdin.isatty.return_value = False
+            callbacks = _resolve_callbacks(
+                None, None, progress_bar=False, execution_mode="hybrid"
+            )
+
+        managed = [cb for cb in callbacks if isinstance(cb, ManagedProgressCallback)]
+        assert managed == []
+
+    def test_not_duplicated_when_progress_bar_active(self):
+        """A real progress bar (forced/interactive) suppresses the heartbeat."""
+        with patch("traigent.core.optimized_function.sys") as mock_sys:
+            mock_sys.stdin.isatty.return_value = True
+            callbacks = _resolve_callbacks(
+                None, None, progress_bar=True, execution_mode="hybrid"
+            )
+
+        managed = [cb for cb in callbacks if isinstance(cb, ManagedProgressCallback)]
+        progress_bars = [cb for cb in callbacks if isinstance(cb, ProgressBarCallback)]
+        assert len(progress_bars) == 1
+        assert managed == []
+
+    def test_user_supplied_managed_callback_not_duplicated(self):
+        """An explicitly-passed ManagedProgressCallback is used, not doubled."""
+        existing = ManagedProgressCallback()
+        with patch("traigent.core.optimized_function.sys") as mock_sys:
+            mock_sys.stdin.isatty.return_value = False
+            callbacks = _resolve_callbacks(
+                [existing], None, progress_bar=None, execution_mode="hybrid"
+            )
+
+        managed = [cb for cb in callbacks if isinstance(cb, ManagedProgressCallback)]
+        assert managed == [existing]
+
+    def test_results_table_still_present_alongside_heartbeat(self):
+        """The heartbeat doesn't render a table, so the fallback table stays."""
+        with patch("traigent.core.optimized_function.sys") as mock_sys:
+            mock_sys.stdin.isatty.return_value = False
+            callbacks = _resolve_callbacks(
+                None, None, progress_bar=None, execution_mode="hybrid"
+            )
+
+        tables = [cb for cb in callbacks if isinstance(cb, ResultsTableCallback)]
+        assert len(tables) == 1

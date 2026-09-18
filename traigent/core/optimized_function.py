@@ -215,6 +215,7 @@ def _resolve_callbacks(
     explicit_callbacks: list[Any] | None,
     decorator_callbacks: list[Any] | None,
     progress_bar: bool | None,
+    execution_mode: str = ExecutionMode.LOCAL.value,
 ) -> list[Any]:
     """Resolve callbacks with optional auto-injection of ProgressBarCallback.
 
@@ -227,15 +228,86 @@ def _resolve_callbacks(
     table) so that users see a results summary even in non-interactive
     environments.
 
+    On the managed (non-local: ``ExecutionMode.HYBRID`` or ``HYBRID_API``)
+    path, ``ProgressBarCallback`` alone is not enough: managed runs are
+    commonly launched non-interactively (``sys.stdin.isatty()`` is False),
+    where it never auto-injects, and the non-interactive fallback
+    (``ResultsTableCallback``) only prints once, at the very end -- so a
+    managed run gave zero client-side signal between start and finish
+    (Traigent#1601). Unless a progress-capable callback is already present, a
+    line-based :class:`ManagedProgressCallback` heartbeat is appended for
+    managed runs -- it is not gated on ``isatty()`` the way the progress bar
+    is, since it never redraws in place.
+
     Args:
         explicit_callbacks: Callbacks passed directly to optimize().
         decorator_callbacks: Callbacks stored on the decorator/OptimizedFunction.
         progress_bar: ``True`` to force, ``False`` to suppress, ``None`` for auto.
+        execution_mode: The ``ExecutionMode`` value for *this call*, used only to
+            decide managed-heartbeat injection. Callers must pass the per-call
+            resolved mode (see ``OptimizedFunction._resolve_runtime_execution_mode``),
+            not the construction-time ``self.execution_mode`` -- a per-call
+            ``algorithm`` override can flip cloud-vs-local routing (#1421) or add
+            an external evaluator (HYBRID_API) after construction. "Managed" here
+            matches ``_log_execution_mode_warnings``'s own definition: anything
+            other than ``ExecutionMode.LOCAL``.
 
     Returns:
         Resolved list of callback instances.
     """
-    from traigent.utils.callbacks import ProgressBarCallback, ResultsTableCallback
+    from traigent.utils.callbacks import (
+        DetailedProgressCallback,
+        ManagedProgressCallback,
+        ProgressBarCallback,
+        ResultsTableCallback,
+    )
+
+    # The heartbeat exists to fill a SILENCE, so it defers only to a callback
+    # that is KNOWN to emit on every trial completion.
+    #
+    # The two answers are not symmetric. A false "yes" suppresses the heartbeat
+    # and leaves a long managed run printing nothing -- the exact problem this
+    # feature exists to solve. A false "no" costs one duplicated line. So
+    # anything not positively known to report must answer False.
+    #
+    # Measured against each on_trial_complete, on a successful AND a failed
+    # trial (tests/unit/core/optimized_function_tests/test_resolve_callbacks.py):
+    #
+    #   ManagedProgressCallback   emits on both, flushed        -> reporter
+    #   DetailedProgressCallback  emits on both, toggles do not
+    #                             gate the trial line           -> reporter
+    #   SimpleProgressCallback    silent on a FAILED trial, and
+    #                             silent on a completed trial
+    #                             with no recognized score and
+    #                             no best score yet; also silent
+    #                             with show_details=False, and
+    #                             invisible with output="log"
+    #                             (the CLI's own default level
+    #                             is WARNING, cli/main.py)       -> NOT a reporter
+    #
+    # SimpleProgressCallback is therefore excluded outright rather than
+    # inspected: a run whose trials all fail is precisely when the user most
+    # needs a heartbeat, and that is exactly when this callback goes quiet.
+    # Excluding it also means we never read attributes off a user object here,
+    # so a subclass whose `show_details` is a property that raises can no
+    # longer take down callback resolution.
+    #
+    # Exact type rather than isinstance: a subclass may override
+    # on_trial_complete to filter or stay silent, which is invisible from here.
+    # An unrecognized subclass gets a heartbeat it may not need, which is the
+    # harmless direction.
+    #
+    # (ProgressBarCallback is listed for completeness; its presence is already
+    # handled by `has_progress` below, which short-circuits the heartbeat
+    # before this predicate can matter.)
+    _per_trial_reporters = (
+        ManagedProgressCallback,
+        DetailedProgressCallback,
+        ProgressBarCallback,
+    )
+
+    def _reports_per_trial(callback: Any) -> bool:
+        return type(callback) in _per_trial_reporters
 
     callbacks = list(explicit_callbacks or decorator_callbacks or [])
     has_progress = any(isinstance(cb, ProgressBarCallback) for cb in callbacks)
@@ -245,6 +317,25 @@ def _resolve_callbacks(
         if progress_bar is True or sys.stdin.isatty():
             callbacks.insert(0, ProgressBarCallback())
             has_progress = True
+
+    # The heartbeat decision reads ONLY _reports_per_trial, never has_progress.
+    # has_progress is an isinstance check, and it must stay one -- it answers
+    # "is a progress bar already present, so do not inject a second one", where
+    # a subclass genuinely counts. But routing the heartbeat through it
+    # reintroduced the bug this predicate exists to prevent: a silent
+    # ProgressBarCallback SUBCLASS sets has_progress, which suppressed the
+    # heartbeat regardless of the exact-type rule below it.
+    has_managed_progress = any(_reports_per_trial(cb) for cb in callbacks)
+    # "Managed" mirrors _log_execution_mode_warnings' own definition (Traigent
+    # #2352 review): anything other than LOCAL, so HYBRID_API (an external
+    # evaluator) gets a heartbeat too, not only HYBRID.
+    if (
+        progress_bar is not False
+        and execution_mode != ExecutionMode.LOCAL.value
+        and not has_managed_progress
+    ):
+        callbacks.append(ManagedProgressCallback())
+        has_managed_progress = True
 
     has_table = any(isinstance(cb, ResultsTableCallback) for cb in callbacks)
 
@@ -1956,8 +2047,13 @@ class OptimizedFunction(Generic[_P, _R]):
 
         timeout = timeout if timeout is not None else getattr(self, "timeout", None)
         save_to = save_to if save_to is not None else getattr(self, "save_to", None)
+        # Per-call resolved mode, not the stale construction-time
+        # self.execution_mode -- see _resolve_runtime_execution_mode (#2352).
         callbacks = _resolve_callbacks(
-            callbacks, getattr(self, "callbacks", None), progress_bar
+            callbacks,
+            getattr(self, "callbacks", None),
+            progress_bar,
+            execution_mode=self._resolve_runtime_execution_mode(algorithm).value,
         )
 
         try:
@@ -3009,6 +3105,45 @@ Remediation:
             # canonical "Unknown optimizer" error instead of a policy-resolution
             # ValueError leaking from here (error semantics unchanged, #1421).
             return stored_policy
+
+    def _resolve_runtime_execution_mode(self, algorithm: str | None) -> ExecutionMode:
+        """Re-derive the effective ``ExecutionMode`` for THIS call (Traigent#2352).
+
+        ``self.execution_mode`` is a construction-time string; it is never
+        refreshed for a per-call ``algorithm`` override. Two things can flip
+        the *actual* execution mode after construction, and callers that need
+        to know "is this call really managed right now" -- e.g. the managed-run
+        heartbeat (Traigent#1601) -- must read the resolved value, not the
+        stale attribute:
+
+        * a local override (``optimize(algorithm="grid")`` on a cloud-capable
+          ``auto`` policy) flips routing to ``LOCAL_ONLY`` (#1421) -- the
+          construction-time mode would still read ``"hybrid"``, a false
+          positive for "managed";
+        * an external evaluator resolves to ``HYBRID_API``, which the previous
+          gate (``== ExecutionMode.HYBRID.value``) excluded outright -- a false
+          negative for the exact managed path #1601 is about.
+
+        Mirrors ``decorators._runtime_execution_mode_for_policy`` exactly, using
+        the same per-call policy re-derivation (``_policy_for_runtime_algorithm``)
+        ``_execute_optimization`` already performs for cloud-vs-local routing.
+        """
+        stored_policy = getattr(self, "execution_policy", None)
+        if not isinstance(stored_policy, ResolvedExecutionPolicy):
+            stored_policy = None
+        resolved_policy = self._policy_for_runtime_algorithm(stored_policy, algorithm)
+        external_evaluator = (
+            getattr(self, "external_service_evaluator", None) is not None
+            or self.execution_mode == ExecutionMode.HYBRID_API.value
+        )
+        if external_evaluator:
+            return ExecutionMode.HYBRID_API
+        if (
+            resolved_policy is not None
+            and resolved_policy.intent is ExecutionIntent.LOCAL_ONLY
+        ):
+            return ExecutionMode.LOCAL
+        return ExecutionMode.HYBRID
 
     async def _execute_optimization(
         self,
