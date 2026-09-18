@@ -258,7 +258,9 @@ def test_printed_cost_estimate_matches_the_real_dataset_size() -> None:
             continue
 
         dataset_path = datasets_dir / dataset_match.group(1)
-        assert dataset_path.is_file(), f"{path.name} references a missing {dataset_path}"
+        assert dataset_path.is_file(), (
+            f"{path.name} references a missing {dataset_path}"
+        )
         actual = sum(
             1
             for line in dataset_path.read_text(encoding="utf-8").splitlines()
@@ -272,5 +274,5 @@ def test_printed_cost_estimate_matches_the_real_dataset_size() -> None:
             )
 
     assert not mismatches, (
-        "printed cost estimates disagree with their own datasets: " f"{mismatches}"
+        f"printed cost estimates disagree with their own datasets: {mismatches}"
     )
