@@ -28,7 +28,7 @@ Comprehensive guides for using Traigent SDK features and capabilities.
 
 ## CLI & Observability Tools
 
-- Onboarding: `traigent onboard`, browser `traigent auth device-login`, `traigent quickstart`, and `traigent first-prompt --agent claude|cursor|codex`.
+- Onboarding: `traigent onboard`, browser `traigent auth device-login`, `traigent quickstart`, and `traigent first-prompt --agent claude|cursor|codex|copilot`.
 - Local MCP: `traigent mcp serve` provides the stdio MCP server for coding agents.
 - Observability: `add_agent_span()` adds user-defined agent workflow spans; see [telemetry](../api-reference/telemetry.md).
 

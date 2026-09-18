@@ -63,6 +63,14 @@ from pydantic import (
     model_validator,
 )
 
+# Aliased on purpose. This module imports Traigent's own ``ValidationError`` from
+# ``traigent.utils.exceptions`` below, which binds that name for the rest of the
+# file, so a bare ``except ValidationError`` here would never catch a pydantic
+# failure. There are currently zero ``except ValidationError`` sites in this
+# module, so the shadowing is a latent trap for future code rather than a live
+# bug; the alias keeps the pydantic class reachable under an unambiguous name.
+from pydantic import ValidationError as PydanticValidationError
+
 from traigent.api.functions import _GLOBAL_CONFIG
 from traigent.api.parameter_ranges import (
     ParameterRange,
@@ -71,9 +79,7 @@ from traigent.api.parameter_ranges import (
     normalize_configuration_space,
 )
 from traigent.api.types import AgentDefinition
-from traigent.cloud.smart_pruning import (
-    SmartPruningOptions,
-)
+from traigent.cloud.smart_pruning import SmartPruningOptions
 from traigent.cloud.smart_pruning import (
     normalize_smart_pruning_options as _normalize_smart_pruning_options,
 )
@@ -153,6 +159,12 @@ class EvaluationOptions(BaseModel):
     #: an anchor; unknown values simply resolve to "no anchor". Without this,
     #: the evaluator-quality audit abstains on every run.
     task_type: str | None = None
+    #: Optional stable dataset identity for portal history, which groups runs by
+    #: (agent, dataset). Keep it the same across content edits and renames of
+    #: ``Dataset.name`` (the display label). When omitted, a real
+    #: ``Dataset(name=...)`` label is used; anonymous inline examples declare no
+    #: identity and show as "Dataset not linked". Stripped; 1-255 characters.
+    dataset_id: str | None = None
     #: Optional cheap "surrogate" (pre-screen) scorer applied to the SAME outputs
     #: the primary evaluator already produced, per example. It scores captured
     #: outputs only and NEVER re-executes the decorated function. Same calling
@@ -167,6 +179,14 @@ class EvaluationOptions(BaseModel):
     #: anonymous scorers). A runtime ``optimize(surrogate_evaluator_name=...)``
     #: overrides this decorator value.
     surrogate_evaluator_name: str | None = None
+
+    @field_validator("dataset_id", mode="before")
+    @classmethod
+    def validate_dataset_id(cls, value: Any) -> str | None:
+        """Stripped, non-blank, at most 255 characters; never truncated."""
+        from traigent.cloud.models import normalize_declared_dataset_id
+
+        return normalize_declared_dataset_id(value)
 
     @model_validator(mode="after")
     def validate_evaluator_identity(self) -> EvaluationOptions:
@@ -312,6 +332,12 @@ class ExecutionOptions(BaseModel):
             guarantee. Distinct from the enterprise-gated ``reps_per_trial``
             (which repeats every trial during search); this reruns only the
             already-selected winner.
+        require_run_id: Fail session creation early with a ``RunIdMissingError``
+            when the backend returns no authoritative ``experiment_run_id``.
+            Tri-state: ``None`` (default) leaves the choice to
+            ``TRAIGENT_REQUIRE_RUN_ID`` for this run. An explicit ``True`` or
+            ``False`` always overrides the environment variable, including
+            explicit ``False`` against an environment set to ``true``.
     """
 
     model_config = ConfigDict(
@@ -345,6 +371,7 @@ class ExecutionOptions(BaseModel):
     reps_per_trial: int = 1
     reps_aggregation: str = "mean"
     winner_stability_reps: int = 0
+    require_run_id: bool | None = None
 
     @model_validator(mode="wrap")
     @classmethod
@@ -497,6 +524,111 @@ _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
 
+def _is_same_named_twin(value: Any, model_cls: type[BundleModel]) -> bool:
+    """Is ``value`` an instance of a *same-named twin* of ``model_cls``?
+
+    A twin is a second class object built from the same source class statement:
+    identical ``__qualname__``, identical defining module name, but a different
+    object, so ``isinstance(value, model_cls)`` is ``False``. The producer is
+    ``importlib.reload`` — reload re-executes the module body in the *same*
+    module object, minting brand-new class objects and rebinding the module
+    attributes, while every caller that already did ``from
+    traigent.api.decorators import ExecutionOptions`` keeps the pre-reload class.
+    A notebook running ``%autoreload``, a plugin that reloads SDK modules, and
+    the "reimport the module to pick up the env-var change" pattern all land a
+    user here holding a perfectly valid bundle object, with nothing in the
+    message to tell them what went wrong.
+
+    Deliberately narrow: the value must still be a pydantic model, and the name
+    and module basename must match exactly. Duck-typed objects, unrelated
+    models, ``str`` and ``list`` are NOT twins and must keep raising
+    ``TypeError``.
+    """
+    if not isinstance(value, BaseModel):
+        return False
+    value_cls = type(value)
+    if value_cls.__qualname__ != model_cls.__qualname__:
+        return False
+    return (
+        value_cls.__module__.rsplit(".", 1)[-1]
+        == model_cls.__module__.rsplit(".", 1)[-1]
+    )
+
+
+def _replayable_legacy_inputs(
+    value: BaseModel, model_cls: type[BundleModel]
+) -> dict[str, Any]:
+    """The deprecated *inputs* a twin recorded, for the live model to re-validate.
+
+    ``ExecutionOptions`` keeps the tolerated legacy spellings
+    (``execution_mode``, ``privacy_enabled``, ``cloud_fallback_policy``, the flat
+    ``hybrid_api_*`` keys) in the ``_legacy_options`` ``PrivateAttr``, filled by
+    the ``_split_legacy_execution_options`` wrap validator and read back through
+    ``legacy_option_values``. They are constructor *inputs*, not derived state,
+    so a rebuild can put them back in the payload and let the live wrap
+    validator populate the stash itself. That is the point: the rebuilt object's
+    private state is *derived* by the live validators from the original inputs —
+    including ``HybridAPIOptions.model_validate``, which rejects e.g.
+    ``hybrid_api_batch_size=0`` — instead of being transplanted out of the old
+    object's ``__dict__``/``__pydantic_private__``. Nothing private is copied,
+    no unknown private key is imported, and the two instances share no mutable
+    state.
+
+    Only this one documented stash is replayed. A model without the
+    ``_legacy_options`` private attribute contributes nothing.
+    """
+    if "_legacy_options" not in getattr(model_cls, "__private_attributes__", {}):
+        return {}
+    recorded = getattr(value, "legacy_option_values", None)
+    if not isinstance(recorded, Mapping):
+        return {}
+    return dict(recorded)
+
+
+def _revalidate_same_named_twin(
+    value: BaseModel, model_cls: type[BundleModel], parameter_name: str
+) -> BundleModel:
+    """Rebuild a twin instance as a real ``model_cls``, or raise ``TypeError``.
+
+    The name/module match alone is not enough to trust the object — a twin from
+    a genuinely different version of the class could carry different fields. So
+    the inputs are re-validated through the live ``model_cls``, which re-runs
+    every validator and the models' ``extra="forbid"``: a structurally wrong
+    twin still fails, an out-of-range legacy value still fails, and what is
+    returned is an instance of the class the rest of the decorator actually uses.
+
+    Field values are taken from ``__dict__`` rather than ``model_dump()`` on
+    purpose: these bundles set ``arbitrary_types_allowed=True`` and hold live
+    objects (``ParallelConfig``, an evaluator instance, callables), which
+    ``model_dump()`` would try to serialize.
+
+    Known limits, both of them pre-existing gaps in this tolerance rather than
+    regressions. Only the *outer* model is rebuilt, so a nested value that is
+    itself an instance of a reloaded type (an evaluator instance, say) keeps its
+    old class identity and is still unsupported. And raw field names are not a
+    general answer for models that rely on validation aliases, computed fields,
+    or non-default serialization settings; none of the bundles coerced here use
+    those today.
+    """
+    payload: dict[str, Any] = dict(value.__dict__)
+    extra = getattr(value, "__pydantic_extra__", None)
+    if extra:
+        payload.update(extra)
+    for key, legacy_value in _replayable_legacy_inputs(value, model_cls).items():
+        # A real field of the live class always wins over a replayed legacy
+        # spelling of the same name (they are disjoint in every bundle today).
+        payload.setdefault(key, legacy_value)
+    try:
+        return cast(BundleModel, model_cls.model_validate(payload))
+    except PydanticValidationError as exc:
+        raise TypeError(
+            f"{parameter_name} was given an instance of "
+            f"{type(value).__qualname__} that came from a different import of "
+            f"{model_cls.__module__} (a reloaded module), and its values "
+            f"do not validate against this one: {exc}"
+        ) from exc
+
+
 def _coerce_bundle(
     value: Any, model_cls: type[BundleModel], parameter_name: str
 ) -> BundleModel | None:
@@ -508,6 +640,8 @@ def _coerce_bundle(
         if model_cls is ExecutionOptions:
             _reject_removed_js_bridge_options(value)
         return cast(BundleModel, model_cls.model_validate(value))
+    if _is_same_named_twin(value, model_cls):
+        return _revalidate_same_named_twin(value, model_cls, parameter_name)
     raise TypeError(
         f"{parameter_name} must be a dict or {model_cls.__name__}, got {type(value).__name__}"
     )
@@ -975,6 +1109,7 @@ _ALLOWED_RUNTIME_OVERRIDE_KEYS = frozenset(
         "semantic_saturation",
         "cost_limit",
         "cost_approved",
+        "estimated_calls_per_example",
         "tie_breakers",
         "tvl_parameter_agents",
     )
@@ -2497,9 +2632,17 @@ def optimize(  # NOSONAR(S107)
                 ... def my_func(): ...
 
         constraints: Optional validators receiving ``config`` and ``metrics``. Return
-            True to accept a configuration or False to skip it.
-        safety_constraints: Not yet implemented - raises ``NotImplementedError``.
-            See traigent-smartopt#26.
+            True to accept a configuration or False to skip it. These are hard,
+            per-trial constraints: a config that fails one is rejected outright.
+        safety_constraints: Soft, statistical safety constraints built from
+            ``traigent.api.safety`` metrics (e.g. ``hallucination_rate().below(0.1)``).
+            Unlike ``constraints``, each one is validated with a Clopper-Pearson
+            statistical bound accumulated across completed trials; once a
+            constraint's ``min_samples`` evidence floor is reached and it is
+            statistically violated, the run halts with
+            ``OptimizationResult.stop_reason == "safety_constraint"``. Below the
+            evidence floor, or when satisfied, the run continues normally. See
+            traigent-smartopt#26.
 
         TVL integration:
             tvl_spec: Path to a TVL spec. When provided (and ``tvl`` opts allow it)
@@ -2570,6 +2713,13 @@ def optimize(  # NOSONAR(S107)
             cost_limit: Maximum USD spending per optimization run. Defaults to
                 TRAIGENT_RUN_COST_LIMIT env var or $2.00.
             cost_approved: Skip cost approval prompt. Use with caution in production.
+            estimated_calls_per_example: Expected LLM calls per evaluated
+                example (self-consistency voting, repair passes, model
+                cascades). Multiplies the per-example base cost in the
+                pre-run estimate and scales the runtime cost-divergence EMA
+                seed by the same factor, so per-trial actuals for a
+                multi-call agent are compared against a calibrated baseline
+                instead of a single-call default. Defaults to 1.
             metric_limit: Soft cumulative stop for a named completed-trial metric.
                 Requires metric_name. Use for counters such as total tokens or
                 cumulative latency, not hard money-spend control.
@@ -2589,8 +2739,8 @@ def optimize(  # NOSONAR(S107)
                 ``metric_limit``, ``metric_name``,
                 ``metric_include_pruned``, ``plateau_window``,
                 ``plateau_epsilon``, ``semantic_saturation``, ``cost_limit``,
-                ``cost_approved``, ``tie_breakers``, and
-                ``tvl_parameter_agents``.
+                ``cost_approved``, ``estimated_calls_per_example``,
+                ``tie_breakers``, and ``tvl_parameter_agents``.
                 Note: ``algorithm`` and ``max_trials`` are first-class
                 parameters of this decorator (not in ``**runtime_overrides``);
                 ``timeout`` is supported on
@@ -2794,12 +2944,6 @@ def optimize(  # NOSONAR(S107)
     default_config = combined_settings["default_config"]
     constraints = combined_settings["constraints"]
     safety_constraints = combined_settings["safety_constraints"]
-    if safety_constraints:
-        raise NotImplementedError(
-            "safety_constraints are not yet implemented. "
-            "Statistical chance-constraints are on the roadmap — track progress at "
-            "https://github.com/Traigent/traigent-smartopt/issues/26"
-        )
 
     # Process ConfigSpace constraints
     config_space_constraints, config_space_var_names, _ = (
@@ -2835,6 +2979,24 @@ def optimize(  # NOSONAR(S107)
     config_param = combined_settings["config_param"]
     auto_override_frameworks = combined_settings["auto_override_frameworks"]
     framework_targets = combined_settings["framework_targets"]
+    if framework_targets:
+        # Fail at decoration, not on the first call: a bare name such as
+        # "langchain" can never be patched (#2299).
+        #
+        # Exempt targets the override registry already knows, exactly as
+        # FrameworkOverrideManager.activate_overrides does: a name registered
+        # via register_framework_mapping() + apply_mock_overrides() has had its
+        # shape accepted already, and validating it here would reject a
+        # registration the manager itself honours.
+        from traigent.integrations.framework_override import (
+            _framework_override_manager,
+            _validate_framework_target,
+        )
+
+        for framework_target in framework_targets:
+            if _framework_override_manager.is_override_registered(framework_target):
+                continue
+            _validate_framework_target(framework_target)
     effectuation = combined_settings["effectuation"]
     algorithm_value = validate_algorithm_name(combined_settings["algorithm"])
     offline_value = combined_settings["offline"]
@@ -2974,6 +3136,7 @@ def optimize(  # NOSONAR(S107)
         else None
     )
     task_type = evaluation_bundle.task_type if evaluation_bundle is not None else None
+    dataset_id = evaluation_bundle.dataset_id if evaluation_bundle is not None else None
     if surrogate_evaluator is not None:
         _validate_surrogate_evaluator_signature(surrogate_evaluator)
 
@@ -3024,6 +3187,17 @@ def optimize(  # NOSONAR(S107)
     smart_pruning_value = resolved_execution.smart_pruning
     winner_stability_reps_value = resolved_execution.winner_stability_reps
     legacy_execution_options = resolved_execution.legacy_options
+    # No direct @optimize(require_run_id=...) kwarg exists (execution-bundle-only
+    # option), so this reads straight from the bundle rather than going through
+    # _resolve_execution_bundle_options's direct-kwarg merge. Tri-state:
+    # ``None`` (no bundle, or a bundle that left the field unset) means
+    # "unspecified" and must stay distinguishable from an explicit ``False``
+    # all the way through (G1 v1.0.1 (g), F2) -- collapsing both to ``False``
+    # here would make an explicit ``False`` indistinguishable from "defer to
+    # TRAIGENT_REQUIRE_RUN_ID" downstream.
+    require_run_id_value = (
+        execution_bundle.require_run_id if execution_bundle is not None else None
+    )
     smart_pruning_config = _normalize_smart_pruning_options(smart_pruning_value)
     external_service_evaluator = _resolve_external_service_evaluator(
         evaluator_value,
@@ -3262,6 +3436,7 @@ def optimize(  # NOSONAR(S107)
             max_total_examples=max_total_examples,
             samples_include_pruned=samples_include_pruned,
             winner_stability_reps=winner_stability_reps_value,
+            require_run_id=require_run_id_value,
             smart_pruning=smart_pruning_config,
             parallel_config=combined_parallel_config,
             mock_mode_config=mock_mode_config,
@@ -3270,6 +3445,7 @@ def optimize(  # NOSONAR(S107)
             metric_functions=metric_functions,
             evaluator_definition_id=evaluator_definition_id,
             task_type=task_type,
+            dataset_id=dataset_id,
             requested_execution_mode=requested_execution_mode,
             execution_policy=execution_policy,
             # Multi-agent configuration

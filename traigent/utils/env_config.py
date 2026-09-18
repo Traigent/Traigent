@@ -108,20 +108,110 @@ def _check_mock_llm_prod_guard() -> None:
 # import, so late env mutation cannot bypass the guard.
 _check_mock_llm_prod_guard()
 
-# Load environment variables from .env file if it exists, unless the
-# caller has explicitly opted out via TRAIGENT_SKIP_DOTENV. Tests and
-# hermetic subprocess smokes set this so the repo's ``.env`` (which
-# typically contains TRAIGENT_BACKEND_URL=localhost:5000 etc.) does
-# NOT leak into a "clean env" run. Reuse ``_is_truthy_env_value`` so the
-# accepted-truthy set (``1``/``true``/``yes``/``on``, whitespace-tolerant)
-# matches the prod guard above — a value like ``" true"`` should opt out
-# here just as it would activate the prod guard.
-env_file = Path(__file__).parent.parent.parent / ".env"
-if env_file.exists() and not _is_truthy_env_value(
-    os.environ.get("TRAIGENT_SKIP_DOTENV")
-):
-    load_dotenv(env_file)
-    _check_mock_llm_prod_guard()
+
+_PROJECT_MARKER_NAMES = (".git", "pyproject.toml", "setup.cfg", "setup.py")
+
+
+def _find_project_boundary(start: Path) -> Path | None:
+    """Return the nearest directory at or above ``start`` that carries a
+    project marker (``.git``, ``pyproject.toml``, ``setup.cfg``,
+    ``setup.py``), or ``None`` if none is found before the filesystem root.
+    """
+    for directory in (start, *start.parents):
+        if any((directory / marker).exists() for marker in _PROJECT_MARKER_NAMES):
+            return directory
+    return None
+
+
+def _find_bounded_project_dotenv() -> str:
+    """Return the caller's project-root ``.env`` path, or ``""`` if none.
+
+    Walks up from the current working directory looking for a ``.env``,
+    but the walk is **bounded** at the nearest project marker (``.git``,
+    ``pyproject.toml``, ``setup.cfg``, ``setup.py``), inclusive of that
+    marker directory — it never crosses it. Without a bound, a bare
+    ``find_dotenv(usecwd=True)`` walks all the way to the filesystem root
+    and can silently load an unrelated ancestor's ``.env`` in a monorepo or
+    nested workspace (Traigent/Traigent#1830 review finding). When no
+    marker exists anywhere in the ancestry, there is no project boundary to
+    trust, so only ``cwd`` itself is checked.
+
+    Resolving ``cwd`` is wrapped so a deleted/unmounted working directory
+    (``os.getcwd()`` raising ``FileNotFoundError``/``OSError``) degrades to
+    "no project ``.env`` found" instead of crashing ``import traigent`` —
+    dotenv loading is best-effort and must never be able to take down
+    import.
+    """
+    try:
+        cwd = Path.cwd()
+    except (FileNotFoundError, OSError):
+        return ""
+
+    boundary = _find_project_boundary(cwd)
+    if boundary is None:
+        search_dirs = [cwd]
+    else:
+        ancestors = [cwd, *cwd.parents]
+        search_dirs = ancestors[: ancestors.index(boundary) + 1]
+
+    for directory in search_dirs:
+        candidate = directory / ".env"
+        if candidate.is_file():
+            return str(candidate)
+    return ""
+
+
+def _load_dotenv_files() -> None:
+    """Load ``.env`` files, unless opted out via ``TRAIGENT_SKIP_DOTENV``.
+
+    Two locations are loaded, in precedence order (``load_dotenv`` never
+    overrides a key already present in ``os.environ``, so the first file
+    to set a key wins over the second, and an explicitly-exported real env
+    var always wins over both):
+
+    1. The **caller's project** ``.env``, discovered by walking up from the
+       current working directory, bounded at the nearest project marker
+       (``.git``, ``pyproject.toml``, ``setup.cfg``, ``setup.py``), inclusive
+       of that marker directory — see :func:`_find_bounded_project_dotenv`.
+       This is the file a pip-installed user actually edits, per the
+       quickstart skill (Traigent/Traigent#1830) — without this, a
+       project-root ``.env`` is silently never read by the SDK's own loader.
+       The walk never crosses the project boundary, so an unrelated
+       ancestor's ``.env`` in a monorepo/workspace is never loaded; when no
+       marker is found at all, only ``cwd`` itself is checked.
+    2. The **package-adjacent** ``.env`` (``Path(__file__).parent.parent.parent
+       / ".env"``) — the repo root in a source checkout, or ``site-packages/``
+       when pip-installed. This is the historical dev-checkout convenience
+       (the repo's own ``.env`` typically has ``TRAIGENT_BACKEND_URL=
+       localhost:5000`` etc.) and stays lower precedence than the project one
+       so a dev checkout's own defaults never shadow a real project's.
+
+    Tests and hermetic subprocess smokes set ``TRAIGENT_SKIP_DOTENV`` so
+    neither file leaks into a "clean env" run. Reuse ``_is_truthy_env_value``
+    so the accepted-truthy set (``1``/``true``/``yes``/``on``,
+    whitespace-tolerant) matches the prod guard above — a value like
+    ``" true"`` should opt out here just as it would activate the prod
+    guard. ``_check_mock_llm_prod_guard()`` runs again after each load that
+    actually found a file, matching the pre-existing defense-in-depth: no
+    module-level cache is read after import, so late env mutation from
+    either file cannot bypass the guard.
+    """
+
+    if _is_truthy_env_value(os.environ.get("TRAIGENT_SKIP_DOTENV")):
+        return
+
+    project_env = _find_bounded_project_dotenv()
+    if project_env:
+        load_dotenv(project_env)
+        _check_mock_llm_prod_guard()
+
+    package_env = Path(__file__).parent.parent.parent / ".env"
+    if package_env.exists():
+        load_dotenv(package_env)
+        _check_mock_llm_prod_guard()
+
+
+_load_dotenv_files()
 
 _MIN_JWT_SECRET_LENGTH = 32
 _PRODUCTION_ENV_NAMES = {"prod", "production"}
@@ -560,6 +650,21 @@ def is_untracked_fallback_allowed() -> bool:
     """Return True when auth failures may proceed local-only by explicit opt-in."""
 
     return is_truthy(os.environ.get("TRAIGENT_ALLOW_UNTRACKED"))
+
+
+def is_seamless_no_targets_allowed() -> bool:
+    """Return True when a seamless run with zero injectable targets may proceed.
+
+    Default is fail-closed: a once-per-run structural check
+    (``SeamlessParameterProvider.assert_injectable``) raises
+    ``SeamlessNoInjectableTargetsError`` before the first optimization trial
+    is created, and the same check inside the per-call path
+    (``_seamless_transform_and_run`` / ``_seamless_fallback``) raises again as
+    defence in depth. Set ``TRAIGENT_ALLOW_SEAMLESS_NO_TARGETS=true`` to
+    restore the previous warning-only behavior for the rare intentional case.
+    """
+
+    return is_truthy(os.environ.get("TRAIGENT_ALLOW_SEAMLESS_NO_TARGETS"))
 
 
 def raise_if_backend_offline(operation: str = "This backend request") -> None:

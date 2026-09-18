@@ -238,7 +238,6 @@ async def main() -> None:
         max_trials=total_trials,  # Covers all config combinations for grid search
         parallel_config={"trial_concurrency": PARALLEL_TRIALS},
         timeout=600,  # 10 min for 10 trials
-        show_progress=True,
         callbacks=[build_results_table_callback(is_mock=False, show_progress=True)],
         random_seed=42,
     )

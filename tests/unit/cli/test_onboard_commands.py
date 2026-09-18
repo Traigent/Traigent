@@ -14,9 +14,13 @@ from click.testing import CliRunner
 from traigent.cli import onboard_commands
 from traigent.cli.main import cli
 from traigent.cli.onboard_commands import (
+    FIRST_RUN_SKILLS_COMMAND,
     PLAN_JSON_BEGIN,
     PLAN_JSON_END,
+    SKILLS_COMMAND,
     AgentName,
+    _detect_coding_agents,
+    _skills_command_for_profile,
     build_first_prompt,
 )
 
@@ -88,6 +92,9 @@ def test_onboard_non_tty_emits_human_and_json_plan(
     assert plan["login_command"] == "traigent onboard --login"
     assert plan["detected_agents"] == ["codex"]
     assert plan["python_project"] is True
+    # Default profile is "beginner": route new users to the traigent-first-run
+    # guided journey before the advanced skill catalog (cold-start inversion fix).
+    assert plan["profile"] == "beginner"
 
     commands = plan["commands"]
     assert isinstance(commands, list)
@@ -100,7 +107,7 @@ def test_onboard_non_tty_emits_human_and_json_plan(
     assert command_by_id["device_login"]["command"] == "traigent onboard --login"
     assert (
         command_by_id["install_agent_skills"]["command"]
-        == "npx skills add Traigent/traigent-skills"
+        == "npx skills add Traigent/traigent-first-run"
     )
     assert command_by_id["verify_quickstart"]["command"] == "traigent quickstart"
     assert (
@@ -119,6 +126,38 @@ def test_onboard_non_tty_emits_human_and_json_plan(
         "verification",
         "first_prompt",
     }
+
+
+def test_skills_command_for_profile_routes_beginner_and_advanced() -> None:
+    assert _skills_command_for_profile("beginner") == FIRST_RUN_SKILLS_COMMAND
+    assert _skills_command_for_profile("advanced") == SKILLS_COMMAND
+
+
+def test_onboard_non_tty_profile_advanced_installs_full_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        onboard_commands, "_detect_coding_agents", lambda _cwd: ["codex"]
+    )
+    monkeypatch.setattr(onboard_commands, "_mcp_help_succeeds", lambda: False)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(cli, ["onboard", "--profile", "advanced"])
+
+    assert result.exit_code == 0
+    plan = _extract_plan(result.output)
+    assert plan["profile"] == "advanced"
+
+    commands = plan["commands"]
+    assert isinstance(commands, list)
+    command_by_id = {
+        command["id"]: command for command in commands if isinstance(command, dict)
+    }
+    assert (
+        command_by_id["install_agent_skills"]["command"]
+        == "npx skills add Traigent/traigent-skills"
+    )
 
 
 def test_onboard_non_tty_without_flags_does_not_call_network_or_write_credentials(
@@ -227,6 +266,10 @@ def test_onboard_non_tty_login_flag_runs_device_flow(
             "codex",
             "Use Codex tools to inspect code and propose the smallest safe change.",
         ),
+        (
+            "copilot",
+            "Use GitHub Copilot agent tools to inspect code and propose the smallest safe change.",
+        ),
     ],
 )
 def test_first_prompt_golden_outputs(agent: AgentName, tool_line: str) -> None:
@@ -244,6 +287,48 @@ def test_first_prompt_golden_outputs(agent: AgentName, tool_line: str) -> None:
     )
 
     assert build_first_prompt(agent, Path("/work/project")) == expected
+
+
+def test_detect_coding_agents_finds_copilot_via_home_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(onboard_commands.shutil, "which", lambda _name: None)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".copilot").mkdir()
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+
+    assert _detect_coding_agents(cwd, home=home) == ["copilot"]
+
+
+def test_detect_coding_agents_auto_detects_cursor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Cursor IS auto-detected, from either marker. Detection decides whether to
+    # offer the skills install, and SKILLS_COMMAND takes no `--agent` flag --
+    # `npx skills add` writes the universal `.agents/skills/` directory that
+    # Cursor reads -- so the install works for a Cursor user and the offer must
+    # not be withheld. Gating detection on a per-agent plugin manifest would
+    # drop that offer for no reason the install path cares about.
+    monkeypatch.setattr(onboard_commands.shutil, "which", lambda _name: None)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".cursor").mkdir()
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+
+    assert _detect_coding_agents(cwd, home=home) == ["cursor"]
+
+    home_only = tmp_path / "home2"
+    home_only.mkdir()
+    project_marker = tmp_path / "project2"
+    project_marker.mkdir()
+    (project_marker / ".cursor").mkdir()
+
+    assert _detect_coding_agents(project_marker, home=home_only) == ["cursor"]
 
 
 def test_first_prompt_command_outputs_selected_agent() -> None:

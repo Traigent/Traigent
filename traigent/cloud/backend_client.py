@@ -1661,6 +1661,7 @@ class BackendIntegratedClient:
         run_title: str | None = None,
         run_description: str | None = None,
         task_type: str | None = None,
+        dataset_id: str | None = None,
     ) -> SessionCreationResult:
         """Synchronous wrapper for creating a session.
         Delegates to session_operations module. Phase 8: objectives are
@@ -1687,6 +1688,7 @@ class BackendIntegratedClient:
             run_title=run_title,
             run_description=run_description,
             task_type=task_type,
+            dataset_id=dataset_id,
         )
 
     async def create_hybrid_session(
@@ -2231,7 +2233,6 @@ class BackendIntegratedClient:
         metrics: dict[str, float],
         status: str,
         error_message: str | None = None,
-        execution_mode: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> bool | None | TrialSubmissionResult:
         """Submit trial results via the Traigent session endpoint.
@@ -2252,7 +2253,6 @@ class BackendIntegratedClient:
                     metrics,
                     status,
                     error_message,
-                    execution_mode,
                 ),
             )
         return cast(
@@ -2264,7 +2264,6 @@ class BackendIntegratedClient:
                 metrics,
                 status,
                 error_message,
-                execution_mode,
                 metadata=metadata,
             ),
         )

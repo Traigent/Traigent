@@ -589,7 +589,6 @@ class TestBackendIntegratedClient:
             {"accuracy": 0.9},
             "completed",
             None,
-            "local",
         )
 
         assert result is None
@@ -600,7 +599,6 @@ class TestBackendIntegratedClient:
             {"accuracy": 0.9},
             "completed",
             None,
-            "local",
         )
 
     @pytest.mark.asyncio

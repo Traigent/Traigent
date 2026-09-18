@@ -24,7 +24,7 @@ from traigent.api.types import (
     TrialResult,
     TrialStatus,
 )
-from traigent.config.types import ExecutionIntent, TraigentConfig
+from traigent.config.types import ExecutionIntent, TraigentConfig, _read_bool_env
 
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
@@ -52,6 +52,7 @@ from traigent.core.execution_policy_runtime import (
 )
 from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.objectives import ObjectiveSchema
+from traigent.core.selection_receipt import sanitize_selection_receipt
 from traigent.core.session_context import SessionContext
 from traigent.core.session_types import (
     SessionCreationFailureClassification,
@@ -278,6 +279,10 @@ def sanitize_session_aggregation_payload(payload: Any) -> dict[str, Any] | None:
     exception (prompt text a customer tuned as a variable travels as config);
     they are passed through as a dict, and the builder omits them under
     privacy mode.
+
+    ``selection`` (the R3 selection receipt) is never passed through: it is
+    rebuilt from its own allowlist by ``sanitize_selection_receipt`` and the
+    key is omitted when nothing valid survives.
     """
     if not isinstance(payload, dict):
         return None
@@ -293,7 +298,7 @@ def sanitize_session_aggregation_payload(payload: Any) -> dict[str, Any] | None:
             and not isinstance(value, bool)
         }
     best_weighted_config = payload.get("best_weighted_config")
-    return {
+    sanitized: dict[str, Any] = {
         "selection_mode": _bounded_label(payload.get("selection_mode")),
         "primary_objective": _bounded_label(payload.get("primary_objective")),
         "metrics": _sanitized_numeric_dict(payload.get("metrics")),
@@ -312,6 +317,10 @@ def sanitize_session_aggregation_payload(payload: Any) -> dict[str, Any] | None:
         "execution_time": _bounded_number(payload.get("execution_time")),
         "sdk_version": _bounded_version(payload.get("sdk_version")),
     }
+    selection = sanitize_selection_receipt(payload.get("selection"))
+    if selection is not None:
+        sanitized["selection"] = selection
+    return sanitized
 
 
 def _sanitized_numeric_dict(value: Any) -> dict[str, Any]:
@@ -647,6 +656,7 @@ class BackendSessionManager:
         optimization_id: str,
         optimization_status: OptimizationStatus,
         smart_pruning: dict[str, Any] | None = None,
+        require_run_id: bool | None = None,
     ) -> None:
         """Initialize backend session manager.
 
@@ -658,6 +668,11 @@ class BackendSessionManager:
             optimizer: Optimizer instance (for objectives and config_space)
             optimization_id: Unique optimization run identifier
             optimization_status: Current optimization status
+            require_run_id: Tri-state override for whether session creation
+                must fail closed when no authoritative experiment_run_id is
+                available. ``None`` means "not supplied" — the effective
+                value then falls back to ``TRAIGENT_REQUIRE_RUN_ID`` at
+                session-create time (G1 §1).
         """
         self._backend_client: BackendIntegratedClient | None = backend_client
         self._traigent_config = traigent_config
@@ -667,6 +682,7 @@ class BackendSessionManager:
         self._optimization_id = optimization_id
         self._optimization_status = optimization_status
         self._smart_pruning = dict(smart_pruning) if smart_pruning else None
+        self._require_run_id_option = require_run_id
 
         # Run-scoped circuit breaker — once disabled, all backend writes skip
         self._no_egress = backend_egress_disabled(traigent_config)
@@ -805,6 +821,32 @@ class BackendSessionManager:
         """Backend-supplied reason for the early session completion, if any."""
         return self._remote_early_complete_reason
 
+    def _warn_if_dataset_unlinked(self, dataset: Any, dataset_id: str | None) -> None:
+        """Log once per run when no dataset identity can be declared.
+
+        Anonymous data (e.g. an inline example list) with no explicit
+        ``dataset_id`` sends no identity, so portal history cannot group the
+        run with other runs on the same dataset.
+        """
+        if getattr(self, "_dataset_unlinked_warned", False):
+            return
+        label = getattr(dataset, "name", None)
+        from traigent.cloud.models import (  # local: traigent.cloud is optional
+            declared_dataset_identity,
+        )
+
+        if declared_dataset_identity(
+            dataset_id, label if isinstance(label, str) else None
+        ):
+            return
+        self._dataset_unlinked_warned = True
+        logger.warning(
+            "No dataset identity declared for this run, so its history will show "
+            '"Dataset not linked". Pass EvaluationOptions(dataset_id="<stable-id>") '
+            'or a named Dataset(name="<stable-name>") to group runs on the same '
+            "dataset."
+        )
+
     def _egress_disabled(self) -> bool:
         """Return true when this manager must not touch backend egress paths."""
 
@@ -812,6 +854,52 @@ class BackendSessionManager:
             return True
         config = getattr(self, "_traigent_config", None)
         return bool(config is not None and backend_egress_disabled(config))
+
+    def _effective_require_run_id(self) -> bool:
+        """Resolve the tri-state require_run_id option against the env flag.
+
+        An explicit option (True or False) always wins; ``None`` (not
+        supplied) defers to ``TRAIGENT_REQUIRE_RUN_ID``, read fresh each call
+        rather than cached (G1 §1, addendum F9).
+        """
+        if self._require_run_id_option is not None:
+            return self._require_run_id_option
+        return _read_bool_env("TRAIGENT_REQUIRE_RUN_ID")
+
+    def get_recorded_experiment_run_id(self, session_id: str | None) -> str | None:
+        """Return the authoritative experiment_run_id recorded for a session.
+
+        ``None`` when there is no session, no mapping, or the mapping's run
+        id is itself absent.
+        """
+        if session_id is None:
+            return None
+        get_mapping = getattr(self._backend_client, "get_session_mapping", None)
+        if not callable(get_mapping):
+            return None
+        try:
+            mapping = get_mapping(session_id)
+        except Exception:
+            return None
+        if mapping is None:
+            return None
+        return getattr(mapping, "experiment_run_id", None)
+
+    def ensure_run_id_recorded(self, session_id: str | None) -> None:
+        """Fail closed if require_run_id is set but no run id was recorded.
+
+        Called immediately before the trial loop starts, as a guard on top
+        of the create_session-time enforcement (which already raises before
+        this point is ever reached under the same effective flag). Never
+        logs — create_session already emitted whatever warning the create
+        response warranted.
+        """
+        if not self._effective_require_run_id():
+            return
+        if self.get_recorded_experiment_run_id(session_id) is None:
+            from traigent.cloud.client import RunIdMissingError
+
+            raise RunIdMissingError()
 
     def _local_storage(self) -> LocalStorageManager | None:
         """Own local-storage handle, independent of any backend client (#1939).
@@ -1375,6 +1463,7 @@ class BackendSessionManager:
         cost_limit: float | None = None,
         optimization_strategy: dict[str, Any] | None = None,
         task_type: str | None = None,
+        dataset_id: str | None = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -1404,15 +1493,26 @@ class BackendSessionManager:
         function_slug = function_descriptor.slug
 
         if self._egress_disabled():
+            # A no-egress/offline run never contacts the backend, so it can
+            # never mint an authoritative run id. Fail closed before any
+            # local session is created — never contact the network to check
+            # (G1 §1, addendum F3).
+            if self._effective_require_run_id():
+                from traigent.cloud.client import RunIdMissingError
+
+                raise RunIdMissingError(reason=SOURCE_OFFLINE)
+
             # #1939: offline/no-egress runs still persist a LOCAL session so
             # `traigent local list` sees them and `traigent sync` can upload
             # them later. Best-effort — a storage failure yields session_id
             # None exactly like the legacy behavior.
+            self._warn_if_dataset_unlinked(dataset, dataset_id)
             local_session_id = self._create_offline_local_session(
                 function_identifier=function_identifier,
                 function_display_name=function_display_name,
                 dataset=dataset,
                 max_trials=max_trials,
+                dataset_id=dataset_id,
             )
             return SessionContext(
                 session_id=local_session_id,
@@ -1424,6 +1524,7 @@ class BackendSessionManager:
 
         if self._backend_client:
             evaluation_set_name = getattr(dataset, "name", None) or "default_evaluation"
+            self._warn_if_dataset_unlinked(dataset, dataset_id)
             effective_smart_pruning = (
                 dict(smart_pruning)
                 if smart_pruning is not None
@@ -1551,8 +1652,19 @@ class BackendSessionManager:
                 cost_limit=cost_limit,
                 optimization_strategy=optimization_strategy,
                 task_type=task_type,
+                dataset_id=dataset_id,
             )
             result = self.normalize_session_creation_result(raw_result)
+            if self._effective_require_run_id() and not result.backend_connected:
+                # Any local-fallback create (no key, unreachable, offline,
+                # session-create failure) yields no authoritative run id.
+                # Raise before handle_session_creation_result emits its own
+                # local-fallback warning — never contact the network to
+                # check (G1 §1, addendum F2/F3).
+                from traigent.cloud.client import RunIdMissingError
+
+                reason = result.failure_reason.value if result.failure_reason else None
+                raise RunIdMissingError(reason=reason)
             session_id = self.handle_session_creation_result(
                 result,
                 governed_session=bool(promotion_policy or tvl_governance),
@@ -1588,6 +1700,17 @@ class BackendSessionManager:
                             exc,
                         )
 
+                if self._effective_require_run_id() and (
+                    session_mapping is None
+                    or getattr(session_mapping, "experiment_run_id", None) is None
+                ):
+                    # Connected, but the backend minted no authoritative run
+                    # id: fail before the feature upload and before return
+                    # (G1 §1, addendum F2).
+                    from traigent.cloud.client import RunIdMissingError
+
+                    raise RunIdMissingError()
+
                 if session_mapping is not None:
                     self._upload_dataset_features(
                         session_id=session_id,
@@ -1614,6 +1737,7 @@ class BackendSessionManager:
         function_display_name: str | None,
         dataset: Dataset,
         max_trials: int | None,
+        dataset_id: str | None = None,
     ) -> str | None:
         """Create the syncable LOCAL session for a no-egress run (#1939).
 
@@ -1648,6 +1772,16 @@ class BackendSessionManager:
                 "algorithm": getattr(policy, "algorithm", None),
                 "created_with_version": get_version(),
             }
+            # Persist the identity the live create would have declared (explicit
+            # id, else a real label, else none) so `traigent sync` sends it.
+            from traigent.cloud.models import (  # local: traigent.cloud is optional
+                DECLARED_DATASET_IDENTITY_METADATA_KEY,
+                declared_dataset_identity,
+            )
+
+            identity = declared_dataset_identity(dataset_id, evaluation_set_name)
+            if identity:
+                metadata[DECLARED_DATASET_IDENTITY_METADATA_KEY] = identity
             session_id = storage.create_session(
                 function_name=function_identifier,
                 optimization_config=optimization_config,
@@ -2404,7 +2538,6 @@ class BackendSessionManager:
                 metrics=metrics_payload,
                 status=status,
                 error_message=trial_result.error_message,
-                execution_mode=cast(str | None, self._traigent_config.execution_mode),
                 metadata=metadata_payload,
             )
             submitted = (
@@ -2707,7 +2840,10 @@ class BackendSessionManager:
             return 0
 
     def build_session_aggregation_payload(
-        self, result: OptimizationResult, session_id: str | None
+        self,
+        result: OptimizationResult,
+        session_id: str | None,
+        selection_receipt: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Build the content-free session-level rollup for POST .../finalize.
 
@@ -2728,6 +2864,11 @@ class BackendSessionManager:
         Args:
             result: Final optimization result
             session_id: Backend session identifier
+            selection_receipt: Optional R3 selection receipt built by
+                ``traigent.core.selection_receipt.build_selection_receipt``
+                from the same selection that produced ``result``. Re-run
+                through the receipt allowlist; the ``selection`` key is
+                omitted when it is ``None`` or does not survive.
 
         Returns:
             The allowlisted rollup dict, or ``None`` under the same skip
@@ -2808,7 +2949,7 @@ class BackendSessionManager:
         if not isinstance(success_rate, (int, float)) or isinstance(success_rate, bool):
             success_rate = None
 
-        return {
+        payload: dict[str, Any] = {
             "selection_mode": _bounded_label(session_summary.get("selection_mode")),
             "primary_objective": _bounded_label(
                 session_summary.get("primary_objective")
@@ -2827,6 +2968,10 @@ class BackendSessionManager:
             "execution_time": execution_time,
             "sdk_version": _bounded_version(get_version()),
         }
+        selection = sanitize_selection_receipt(selection_receipt)
+        if selection is not None:
+            payload["selection"] = selection
+        return payload
 
     def finalize_session(
         self,

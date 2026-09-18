@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any, Generic, ParamSpec, TypeVar, cast
 
 from traigent.api.types import OptimizationResult, OptimizationStatus
-from traigent.config import get_provider
+from traigent.config import SeamlessParameterProvider, get_provider
 from traigent.config.parallel import coerce_parallel_config, merge_parallel_configs
 from traigent.config.types import (
     ExecutionIntent,
@@ -91,10 +91,7 @@ from traigent.core.optimization_pipeline import (
     resolve_effective_parallel_config,
     resolve_execution_parameters,
 )
-from traigent.core.orchestrator import (
-    OptimizationOrchestrator,
-    _safe_exception_text,
-)
+from traigent.core.orchestrator import OptimizationOrchestrator, _safe_exception_text
 from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import (
     BaseEvaluator,
@@ -636,6 +633,7 @@ class OptimizedFunction(Generic[_P, _R]):
         evaluator_definition_id: str | None = None,
         effectuation: bool = False,
         task_type: str | None = None,
+        dataset_id: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize optimized function wrapper.
@@ -730,6 +728,7 @@ class OptimizedFunction(Generic[_P, _R]):
             evaluator_definition_id,
             effectuation,
             task_type,
+            dataset_id,
         )
 
         # Handle configuration space
@@ -771,6 +770,7 @@ class OptimizedFunction(Generic[_P, _R]):
         evaluator_definition_id,
         effectuation,
         task_type=None,
+        dataset_id=None,
     ) -> None:
         """Store core initialization parameters."""
         self.func = func
@@ -835,6 +835,15 @@ class OptimizedFunction(Generic[_P, _R]):
             if isinstance(task_type, str) and task_type.strip()
             else None
         )
+        # Explicit, stable dataset identity for portal history (see
+        # EvaluationOptions.dataset_id). Validated here too so a direct
+        # OptimizedFunction caller fails loudly at construction, never mid-run.
+        from traigent.cloud.models import normalize_declared_dataset_id
+
+        try:
+            self.dataset_id: str | None = normalize_declared_dataset_id(dataset_id)
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
 
     def _is_cloud_execution_mode(self) -> bool:
         return False
@@ -1025,6 +1034,20 @@ class OptimizedFunction(Generic[_P, _R]):
         self.smart_pruning = self._store_optional_param(
             kwargs, sentinel, "smart_pruning", None
         )
+        # G1 v1.0.1 (g): explicit True forces the early RunIdMissingError
+        # regardless of TRAIGENT_REQUIRE_RUN_ID; explicit False forces it
+        # off regardless of TRAIGENT_REQUIRE_RUN_ID (see
+        # _build_optimization_orchestrator). Tri-state, stored directly
+        # rather than via _store_optional_param(as_bool=True): that helper's
+        # bool() coercion would collapse "unspecified" and explicit False to
+        # the same False, making an explicit False indistinguishable from
+        # "defer to the environment" (G1 v1.0.1 (g), F2).
+        require_run_id_raw = kwargs.pop("require_run_id", sentinel)
+        if require_run_id_raw is sentinel or require_run_id_raw is None:
+            self.require_run_id = None
+        else:
+            self.require_run_id = bool(require_run_id_raw)
+            kwargs["require_run_id"] = self.require_run_id
         self.optimization_history_limit = kwargs.pop("optimization_history_limit", 100)
         if (
             not isinstance(self.optimization_history_limit, int)
@@ -1077,6 +1100,7 @@ class OptimizedFunction(Generic[_P, _R]):
             "samples_include_pruned",
             "winner_stability_reps",
             "smart_pruning",
+            "require_run_id",
             # Multi-agent configuration
             "agents",
             "agent_prefixes",
@@ -1191,6 +1215,28 @@ class OptimizedFunction(Generic[_P, _R]):
     @_best_config.setter
     def _best_config(self, value: dict[str, Any] | None) -> None:
         self._csm._best_config = value
+
+    def _representative_seamless_config(
+        self, configuration_space: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """A representative config for the once-per-run seamless check.
+
+        Prefers ``default_config`` (a real, user-provided config); otherwise
+        the first value of each ``configuration_space`` dimension, which is
+        what a real trial's config looks like.
+        """
+        if self.default_config:
+            return dict(self.default_config)
+        space = configuration_space or getattr(self, "configuration_space", None) or {}
+        if not isinstance(space, dict):
+            return {}
+        sample: dict[str, Any] = {}
+        for key, values in space.items():
+            if isinstance(values, (list, tuple)) and values:
+                sample[key] = values[0]
+            elif not isinstance(values, (list, tuple, set)):
+                sample[key] = values
+        return sample
 
     def _estimate_search_space_size(self) -> int:
         """Best-effort estimation of configuration combinations."""
@@ -1880,6 +1926,22 @@ class OptimizedFunction(Generic[_P, _R]):
 
             configuration_space, _ = normalize_configuration_space(configuration_space)
 
+        # Issue #2298 direction 1: for seamless injection, fail closed ONCE,
+        # before the first trial. A structural probe (AST compile + parameter
+        # name match; never runs the body) aborts the run with zero trials when
+        # nothing in a representative config could be injected, instead of
+        # every trial recording FAILED and the run completing with
+        # `best_config: None`. It runs here, not at decoration, so a decorated
+        # function that is only ever called directly is unaffected; the
+        # per-call checks in providers.py remain as defence in depth.
+        injection_mode_name = getattr(self.injection_mode, "value", self.injection_mode)
+        if injection_mode_name == "seamless" and isinstance(
+            self._provider, SeamlessParameterProvider
+        ):
+            sample_config = self._representative_seamless_config(configuration_space)
+            if sample_config:
+                self._provider.assert_injectable(self.func, sample_config)
+
         original_schema = self.objective_schema
         runtime_objective_input = (
             objectives if objectives is not None else legacy_objectives
@@ -2247,6 +2309,16 @@ class OptimizedFunction(Generic[_P, _R]):
         orchestrator_kwargs["winner_stability_reps"] = int(
             getattr(self, "winner_stability_reps", 0) or 0
         )
+        # G1 v1.0.1 (g), F2: only set the key when explicitly True or False.
+        # Leaving it unset for None (unspecified) lets BackendSessionManager's
+        # tri-state require_run_id default fall back to
+        # TRAIGENT_REQUIRE_RUN_ID, exactly as before this option existed. An
+        # explicit False must still be forwarded (not just True) -- omitting
+        # it collapsed explicit False into "unspecified", so it lost to the
+        # environment instead of overriding it.
+        require_run_id_value = getattr(self, "require_run_id", None)
+        if require_run_id_value is not None:
+            orchestrator_kwargs["require_run_id"] = require_run_id_value
 
         # Auto-initialize workflow traces tracker if backend is configured
         workflow_traces_tracker = create_workflow_traces_tracker(traigent_config)
@@ -2276,6 +2348,7 @@ class OptimizedFunction(Generic[_P, _R]):
         )
         orchestrator.evaluator_definition_id = self.evaluator_definition_id
         orchestrator.task_type = self.task_type
+        orchestrator.dataset_id = self.dataset_id
         # RFC 0001 §3.4: forward the user-attached knob resolver so the
         # public optimize() path resolves Fixed/CVAR bindings in-trial.
         # Attribute seam (like promotion_gate): set
@@ -2652,6 +2725,7 @@ class OptimizedFunction(Generic[_P, _R]):
                 fingerprint_meta=artifact_fingerprint_payload.get("fingerprint_meta"),
                 evaluator_definition_id=self.evaluator_definition_id,
                 task_type=self.task_type,
+                dataset_id=self.dataset_id,
                 context=traigent_config,
                 **optimizer_kwargs,
             )
@@ -3181,6 +3255,8 @@ Remediation:
         )
 
         # Phase 9: Run optimization and finalize
+        from traigent.cloud.client import SessionContractError
+
         try:
             return await self._run_and_finalize_optimization(
                 orchestrator=orchestrator,
@@ -3189,6 +3265,13 @@ Remediation:
                 save_to=save_to,
             )
         except OptimizationError:
+            raise
+        except SessionContractError:
+            # G1 v1.0.1 (g), F1: RunIdMissingError / SessionContractError ARE
+            # the public contract (session-create-time refusal to proceed
+            # without an authoritative run id) -- never dilute them into a
+            # generic OptimizationError the way an ordinary failure is below.
+            # Same rule as the ResolutionError branch a few lines down.
             raise
         except Exception as e:
             from traigent.knobs import ResolutionError

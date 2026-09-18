@@ -124,6 +124,15 @@ class TestCollectOrchestratorKwargsRemovedBudgetKeys:
         assert result["metric_limit"] == 0.9
         assert result["metric_name"] == "accuracy"
 
+    def test_estimated_calls_per_example_passes_through(self) -> None:
+        """issue #1750: the decorator lever must reach the orchestrator kwargs."""
+        result = self._call(estimated_calls_per_example=4)
+        assert result["estimated_calls_per_example"] == 4
+
+    def test_estimated_calls_per_example_absent_when_unset(self) -> None:
+        result = self._call()
+        assert "estimated_calls_per_example" not in result
+
 
 @pytest.fixture
 def workflow_trace_backend_env(monkeypatch: pytest.MonkeyPatch) -> None:

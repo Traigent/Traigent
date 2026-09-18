@@ -355,6 +355,15 @@ class SafetyConstraint:
     Attributes:
         metric: The safety metric to evaluate.
         threshold: Threshold configuration for the constraint.
+        mode: ``"soft"`` (the default, and the only value the factory presets
+            in this module produce) marks the constraint as belonging to the
+            statistical chance-constraint family: ``OptimizationOrchestrator._init_constraints``
+            excludes ``mode == "soft"`` constraints from the hard per-trial
+            ``enforce_constraints`` gate, so a single violating trial is
+            recorded as one piece of statistical evidence
+            (``SafetyConstraintStopCondition``) instead of failing the trial
+            outright. A plain constraint callable (no ``mode`` attribute)
+            defaults to hard, unaffected by this field.
 
     Thread Safety:
         SafetyConstraint is immutable and thread-safe.
@@ -362,6 +371,7 @@ class SafetyConstraint:
 
     metric: SafetyMetric
     threshold: SafetyThreshold
+    mode: str = "soft"
 
     def __call__(self, config: dict[str, Any], metrics: dict[str, Any]) -> bool:
         """Evaluate constraint as a callable.
@@ -503,6 +513,74 @@ class CompoundSafetyConstraint:
     def requires_metrics(self) -> bool:
         """Compound safety constraints always require metrics."""
         return True
+
+    @property
+    def mode(self) -> str:
+        """Compound constraints are always ``"soft"``.
+
+        A ``CompoundSafetyConstraint`` can only be built by combining
+        ``SafetyConstraint``/``CompoundSafetyConstraint`` leaves (``&``/``|``),
+        so it is always part of the statistical chance-constraint family --
+        see ``SafetyConstraint.mode``.
+        """
+        return "soft"
+
+    def _leaf_thresholds(self) -> list[SafetyThreshold]:
+        """Collect every leaf ``SafetyConstraint``'s threshold, recursively."""
+        result: list[SafetyThreshold] = []
+        for constraint in self._constraints:
+            if isinstance(constraint, CompoundSafetyConstraint):
+                result.extend(constraint._leaf_thresholds())
+            else:
+                result.append(constraint.threshold)
+        return result
+
+    def _label(self) -> str:
+        """Human-readable combinator expression, e.g. ``"a and (b or c)"``."""
+        parts = []
+        for constraint in self._constraints:
+            if isinstance(constraint, CompoundSafetyConstraint):
+                parts.append(f"({constraint._label()})")
+            else:
+                parts.append(constraint.threshold.metric_name)
+        return f" {self._combinator} ".join(parts)
+
+    @property
+    def threshold(self) -> SafetyThreshold:
+        """Synthetic threshold used to validate the compound as one unit.
+
+        ``SafetyConstraintStopCondition`` records ``self(config, metrics)`` --
+        already the correct AND/OR-combined boolean -- as a single Clopper-Pearson
+        sample stream per trial, instead of validating each leaf independently
+        (which discarded OR semantics: a leaf could statistically "fail" on its
+        own while the compound was satisfied on every trial).
+
+        The target compliance rate is the MINIMUM of the leaves' own
+        ``_required_compliance_rate`` (i.e. the compound's most lenient leaf's
+        own bar) rather than a fixed constant: a hardcoded universal target
+        (e.g. "always", ``value=1.0``) is statistically unreachable -- a
+        Clopper-Pearson lower bound is strictly < 1.0 for any finite sample at
+        confidence < 1 -- and a fixed target unrelated to the leaves' own
+        configured thresholds would silently override however strict or
+        lenient the user actually configured each leaf to be.
+        ``confidence``/``min_samples`` take the most conservative (maximum)
+        value across the compound's own leaves, so a compound is never *less*
+        demanding than its strictest leaf's own evidence requirement.
+        """
+        leaves = self._leaf_thresholds()
+        required_rates = [_required_compliance_rate(leaf) for leaf in leaves]
+        target_rate = min(required_rates, default=DEFAULT_SAFETY_CONFIDENCE)
+        confidence = max(
+            (leaf.confidence for leaf in leaves), default=DEFAULT_SAFETY_CONFIDENCE
+        )
+        min_samples = max((leaf.min_samples for leaf in leaves), default=30)
+        return SafetyThreshold(
+            metric_name=self._label(),
+            operator=">=",
+            value=target_rate,
+            confidence=confidence,
+            min_samples=min_samples,
+        )
 
     def __and__(
         self, other: SafetyConstraint | CompoundSafetyConstraint
@@ -815,11 +893,17 @@ class SafetyValidator:
 
     def record_result(
         self,
-        constraint: SafetyConstraint,
+        constraint: SafetyConstraint | CompoundSafetyConstraint,
         config: dict[str, Any],
         metrics: dict[str, Any],
     ) -> bool:
         """Record a single trial result for a safety constraint.
+
+        ``constraint`` may be a single ``SafetyConstraint`` (one metric) or a
+        ``CompoundSafetyConstraint`` (validated as one AND/OR-combined unit via
+        its own ``__call__``/``threshold`` -- see
+        ``CompoundSafetyConstraint.threshold``); both duck-type the same
+        ``threshold``/``__call__`` shape this validator relies on.
 
         Args:
             constraint: The safety constraint being validated.
@@ -839,7 +923,9 @@ class SafetyValidator:
 
         return passed
 
-    def validate(self, constraint: SafetyConstraint) -> SafetyValidationResult:
+    def validate(
+        self, constraint: SafetyConstraint | CompoundSafetyConstraint
+    ) -> SafetyValidationResult:
         """Validate a safety constraint with statistical analysis.
 
         Always uses a Clopper-Pearson exact lower bound on the pass rate; there is

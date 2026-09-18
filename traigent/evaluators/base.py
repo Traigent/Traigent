@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextvars import copy_context
 import inspect
 import json
 import math
@@ -18,6 +17,7 @@ from collections.abc import Mapping
 from collections.abc import Mapping as CollectionsMapping
 from collections.abc import Sequence
 from contextlib import contextmanager
+from contextvars import copy_context
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -34,6 +34,7 @@ from traigent.evaluators.metrics_tracker import (
     extract_llm_metrics,
     is_reserved_metric_key,
 )
+from traigent.utils.env_config import is_truthy
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
 from traigent.utils.exceptions import ConfigurationError, EvaluationError
@@ -968,6 +969,14 @@ class EvaluationResult:
     # is_objective}``. Empty when every metric computed cleanly.
     metric_errors: list[dict[str, Any]] = field(default_factory=list)
 
+    # Per-trial, per-model cost breakdown for multi-model/multi-step agents
+    # (Traigent#1598), aggregated from every example's
+    # ``__traigent_meta__["calls"]`` this trial reported (see
+    # ``MetricsTracker.aggregate_call_breakdown``). Each entry is
+    # ``{"model", "input_tokens", "output_tokens", "cost", "calls"}``. Empty
+    # when no example reported a per-call breakdown.
+    model_costs: list[dict[str, Any]] = field(default_factory=list)
+
     def __post_init__(self) -> None:
         # Backward compatibility mapping
         if self.metrics is None:
@@ -1021,6 +1030,7 @@ class EvaluationResult:
             "success_rate": self.success_rate,
             "has_errors": self.has_errors,
             "metric_errors": _safe_json_value(self.metric_errors),
+            "model_costs": _safe_json_value(self.model_costs),
         }
 
     @classmethod
@@ -1053,6 +1063,7 @@ class EvaluationResult:
             outputs=data.get("outputs"),
             errors=data.get("errors"),
             metric_errors=data.get("metric_errors") or [],
+            model_costs=data.get("model_costs") or [],
         )
 
 
@@ -1631,7 +1642,11 @@ class BaseEvaluator(ABC):
         This simulates realistic LLM latency in mock LLM mode to make parallel execution
         visible in traces. Uses asyncio.sleep to not block the event loop.
         """
-        if os.environ.get("TRAIGENT_MOCK_LLM", "").lower() not in ("true", "1", "yes"):
+        # Use the canonical truthy parser (accepts 1/true/yes/on,
+        # case-insensitive) so this agrees with env_config.is_mock_llm();
+        # the previous tuple omitted "on", silently dropping
+        # TRAIGENT_MOCK_DELAY_MS for that spelling (issue #1766).
+        if not is_truthy(os.environ.get("TRAIGENT_MOCK_LLM")):
             return
 
         delay_str = os.environ.get("TRAIGENT_MOCK_DELAY_MS", "")
@@ -3905,6 +3920,16 @@ class SimpleScoringEvaluator(BaseEvaluator):
             "total_cost": getattr(metrics_obj.cost, "total_cost", 0.0),
             "input_cost": getattr(metrics_obj.cost, "input_cost", 0.0),
             "output_cost": getattr(metrics_obj.cost, "output_cost", 0.0),
+            # True when this example's cost could not be priced -- unknown
+            # spend recorded as $0, not verified-free $0 (#1597). Threaded
+            # through so per-trial aggregation can distinguish the two
+            # (#1741, follow-up to #1597/#1407).
+            # Numeric flag (1.0/0.0), never a Python bool: the wire-format
+            # ``MeasuresDict`` rejects bool measures for JSON Schema parity
+            # (``traigent.cloud.dtos.MeasuresDict._validate_dict``).
+            "cost_unpriced": (
+                1.0 if getattr(metrics_obj.cost, "unpriced", False) else 0.0
+            ),
             "response_time_ms": getattr(metrics_obj.response, "response_time_ms", 0),
             "tokens_per_second": getattr(metrics_obj.response, "tokens_per_second", 0),
             "model": model_name or "unknown",
@@ -4063,6 +4088,9 @@ class SimpleScoringEvaluator(BaseEvaluator):
         example_metrics["input_cost"] = llm_metrics.get("input_cost", missing_default)
         example_metrics["output_cost"] = llm_metrics.get("output_cost", missing_default)
         example_metrics["total_cost"] = llm_metrics.get("total_cost", missing_default)
+        example_metrics["cost_unpriced"] = (
+            1.0 if llm_metrics.get("cost_unpriced", False) else 0.0
+        )
         example_metrics["response_time_ms"] = llm_metrics.get(
             "response_time_ms", missing_default
         )
@@ -4148,6 +4176,17 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 m.get(metric, 0.0) for m in all_metrics if m and metric in m
             ]
             aggregated[metric] = sum(metric_values) if metric_values else 0.0
+
+        # True iff ANY example's cost could not be priced -- unknown spend
+        # recorded as $0, not verified-free $0 (#1597). Threaded through so
+        # per-trial consumers (trial summary table, ``result.trials[i]``,
+        # Pareto/cost-objective logic) can distinguish unknown spend from
+        # verified-free instead of only seeing a bare $0 (#1741).
+        aggregated["cost_unpriced"] = (
+            1.0
+            if any(bool(m.get("cost_unpriced", False)) for m in all_metrics if m)
+            else 0.0
+        )
 
         # Keep the explicit millisecond key canonical while preserving the
         # legacy seconds-based field during the compatibility window.

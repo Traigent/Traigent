@@ -22,6 +22,7 @@ from traigent.api.agent_inference import (
     build_agent_configuration,
     extract_parameter_agents,
 )
+from traigent.api.safety import CompoundSafetyConstraint, SafetyConstraint
 from traigent.api.types import (
     AgentConfiguration,
     AgentDefinition,
@@ -53,6 +54,7 @@ from traigent.core.cost_enforcement import (
     CostEnforcerConfig,
     Permit,
     normalize_cost_approved,
+    normalize_estimated_calls_per_example,
     validate_cost_limit,
 )
 from traigent.core.cost_estimator import CostEstimator
@@ -106,6 +108,7 @@ from traigent.core.result_selection import (
     select_best_configuration,
 )
 from traigent.core.sample_budget import SampleBudgetManager
+from traigent.core.selection_receipt import build_selection_receipt
 from traigent.core.stat_significance import compute_significance
 from traigent.core.stop_condition_manager import StopConditionManager
 from traigent.core.trial_lifecycle import TrialLifecycle
@@ -397,7 +400,18 @@ class OptimizationOrchestrator:
         default_config = kwargs.pop("default_config", None)
         combined_constraints = list(raw_constraints or [])
         combined_constraints.extend(raw_safety_constraints or [])
+        # _init_constraints excludes mode == "soft" constraints (every
+        # safety_constraints entry) from the hard pre/post-eval lists below, so
+        # combining the two lists here is safe: a safety constraint never reaches
+        # enforce_constraints and cannot fail a trial on its own.
         self._init_constraints(combined_constraints)
+        # Kept separately (not just via _constraints_post_eval) so
+        # _configure_stop_conditions can wire the statistical chance-constraint
+        # halt (SafetyConstraintStopCondition, stop_reason="safety_constraint")
+        # in addition to the per-trial reject/accept behavior above.
+        self._safety_constraints: list[SafetyConstraint | CompoundSafetyConstraint] = (
+            list(raw_safety_constraints or [])
+        )
 
         self.objectives, self.objective_schema = prepare_objectives(
             objectives, objective_schema
@@ -450,6 +464,9 @@ class OptimizationOrchestrator:
         self.artifact_fingerprints: dict[str, str | None] | None = None
         self.fingerprint_meta: dict[str, Any] | None = None
         self.evaluator_definition_id: str | None = None
+        # Explicit stable dataset identity (EvaluationOptions.dataset_id), set by
+        # OptimizedFunction after construction like evaluator_definition_id.
+        self.dataset_id: str | None = None
         self.task_type: str | None = None
 
         # Interactive pause prompt adapter (None in non-interactive environments)
@@ -485,6 +502,7 @@ class OptimizationOrchestrator:
             optimization_id=self._optimization_id,
             optimization_status=self._status,
             smart_pruning=self._smart_pruning,
+            require_run_id=self.config.get("require_run_id"),
         )
 
         self.cache_policy_handler = CachePolicyHandler(
@@ -515,6 +533,7 @@ class OptimizationOrchestrator:
             ),
             estimated_input_tokens_per_example=estimated_input_tokens,
             estimated_output_tokens_per_example=estimated_output_tokens,
+            estimated_calls_per_example=self._estimated_calls_per_example,
         )
 
         self._trial_lifecycle = TrialLifecycle(self)
@@ -600,12 +619,26 @@ class OptimizationOrchestrator:
     def _init_constraints(
         self, raw_constraints: list[Callable[..., bool]] | None
     ) -> None:
-        """Initialize pre and post evaluation constraints."""
+        """Initialize pre and post evaluation constraints.
+
+        A constraint whose ``mode`` attribute is ``"soft"`` (the statistical
+        chance-constraint family -- see ``traigent.api.safety.SafetyConstraint``)
+        is never added to ``_constraints_pre_eval``/``_constraints_post_eval``:
+        those lists feed ``enforce_constraints``, which raises on a single
+        failure and fails the trial. A soft constraint's per-trial outcome is
+        instead evidence for its own statistical stop condition
+        (``SafetyConstraintStopCondition``, wired separately in
+        ``_configure_stop_conditions``) -- one violating trial should not by
+        itself end the run. A plain constraint callable has no ``mode``
+        attribute and defaults to hard, unaffected by this check.
+        """
         self._constraints_pre_eval: list[Callable[..., bool]] = []
         self._constraints_post_eval: list[Callable[..., bool]] = []
         if not raw_constraints:
             return
         for constraint in raw_constraints:
+            if getattr(constraint, "mode", "hard") == "soft":
+                continue
             if constraint_requires_metrics(constraint):
                 self._constraints_post_eval.append(constraint)
             else:
@@ -792,6 +825,18 @@ class OptimizationOrchestrator:
                 approved=cost_approved,
             )
         self.cost_enforcer = CostEnforcer(config=cost_config)
+        # Declared calls-per-example lever (issue #1750): scales the EMA seed
+        # so a multi-call agent's early trials don't read as guaranteed
+        # divergence against a single-call warm-start. Resolved once here
+        # (whether cost_config came from the block above or from env-loaded
+        # defaults inside CostEnforcer) and reused for the pre-run estimator.
+        self._estimated_calls_per_example = normalize_estimated_calls_per_example(
+            self.config.get("estimated_calls_per_example")
+        )
+        if self._estimated_calls_per_example is not None:
+            self.cost_enforcer.seed_estimated_cost_per_trial(
+                self._estimated_calls_per_example
+            )
         self.parallel_execution_manager.set_cost_enforcer(self.cost_enforcer)
         self._stop_condition_manager.register_cost_limit_condition(self.cost_enforcer)
 
@@ -819,6 +864,7 @@ class OptimizationOrchestrator:
             metric_name=metric_name,
             metric_include_pruned=metric_include_pruned,
             semantic_saturation=self.config.get("semantic_saturation"),
+            safety_constraints=self._safety_constraints,
         )
 
         self._setup_convergence_condition()
@@ -892,18 +938,79 @@ class OptimizationOrchestrator:
             and not backend_egress_disabled(self.traigent_config)
         )
 
-    def _backend_optimization_strategy_for_run(self) -> dict[str, str] | None:
-        """Return the backend strategy for named managed algorithms."""
+    def _backend_optimization_strategy_for_run(self) -> dict[str, Any] | None:
+        """Return the ``optimization_strategy`` payload for backend session-create.
 
+        Traigent#2271: ALWAYS attaches canonical ``execution_options``
+        (``algorithm`` + ``offline``, plus a non-secret external-evaluator
+        marker when one is configured) for every backend-connected session —
+        not only named cloud-required smart algorithms. TraigentBackend #3255
+        labels each trial's mode from this session-level state
+        (``optimization_strategy.execution_options``); without it a connected
+        grid/random run defaulted to ``algorithm="auto"`` server-side and was
+        mislabeled "hybrid" instead of "local". Mirrors the JS SDK
+        (``traigent-js/src/optimization/hybrid.ts`` ``buildHybridOptimizationStrategy``),
+        which always sends the same nested shape.
+
+        Named cloud-required algorithms additionally keep the existing
+        top-level backend engine selection (``{"algorithm": "optuna",
+        "sampler": ...}``) — ``execution_options`` is merged in, never
+        replacing those keys.
+
+        Offline runs never reach here with effect: ``backend_session_manager
+        .create_session`` short-circuits to a local-only session before this
+        payload is ever sent (no new egress for ``offline=True``).
+        """
         policy = policy_from_config(self.traigent_config)
-        if policy is None or not policy_is_cloud_required(policy):
-            return None
-        strategy = backend_optimization_strategy_for_algorithm(policy.algorithm)
-        if strategy is None:
-            raise ConfigurationError(
-                unsupported_backend_smart_algorithm_message(policy.algorithm)
+
+        strategy: dict[str, Any] = {}
+        if policy is not None and policy_is_cloud_required(policy):
+            named_strategy = backend_optimization_strategy_for_algorithm(
+                policy.algorithm
             )
+            if named_strategy is None:
+                raise ConfigurationError(
+                    unsupported_backend_smart_algorithm_message(policy.algorithm)
+                )
+            strategy.update(named_strategy)
+
+        strategy["execution_options"] = self._canonical_execution_options(policy)
         return strategy
+
+    def _canonical_execution_options(self, policy: Any) -> dict[str, Any]:
+        """Build the canonical ``execution_options`` the backend's typed
+        session-create adapter reads (Traigent#2271):
+        ``TraigentBackend src/shared_infrastructure/types/execution_mode.py``
+        ``normalize_optimization_strategy_execution_surface`` /
+        ``canonicalize_execution_surface``, storing ``execution_options`` on
+        the session so #3255 can label every trial from it.
+        """
+        algorithm = policy.algorithm if policy is not None else "auto"
+        offline = bool(policy.offline) if policy is not None else False
+        options: dict[str, Any] = {"algorithm": algorithm, "offline": offline}
+        external_evaluator = self._external_evaluator_marker()
+        if external_evaluator is not None:
+            options["external_evaluator"] = external_evaluator
+        return options
+
+    def _external_evaluator_marker(self) -> dict[str, str] | None:
+        """Non-secret presence marker for a configured external-service
+        evaluator, in the shape TraigentBackend's ``_normalize_hybrid_api_options``
+        (same module) accepts.
+
+        That adapter requires the nested object to carry a non-empty
+        ``endpoint`` or ``transport_type`` — a bare boolean is rejected
+        (raises ``... must be an object``) — so this sends only
+        ``transport_type`` (a closed ``"http"``/``"mcp"``/``"auto"``
+        selector, never a secret or an address) and never ``endpoint`` or
+        ``auth_header``.
+        """
+        from traigent.evaluators.hybrid_api import HybridAPIEvaluator
+
+        evaluator = self.evaluator
+        if not isinstance(evaluator, HybridAPIEvaluator):
+            return None
+        return {"transport_type": evaluator.transport_type}
 
     def _optimizer_uses_remote_guidance(self) -> bool:
         """Whether the active optimizer would call remote next-trial guidance."""
@@ -1003,6 +1110,8 @@ class OptimizationOrchestrator:
         self._successful_trials = 0
         self._failed_trials = 0
         self._best_trial_cached: TrialResult | None = None
+        # R3: (OptimizationResult, selection receipt) from the last result build.
+        self._selection_receipt_binding: tuple[Any, dict[str, Any] | None] | None = None
         self._consumed_examples = 0
         # Lock for protecting shared state mutations during parallel trial execution
         self._state_lock = asyncio.Lock()
@@ -1253,6 +1362,19 @@ class OptimizationOrchestrator:
         if space is not None:
             wire_governance = build_tvl_governance(space)
         return wire_policy, wire_governance
+
+    def _selection_receipt_for(self, result: Any) -> dict[str, Any] | None:
+        """The R3 selection receipt built with ``result``, else ``None``.
+
+        Identity-bound: a receipt is returned only for the exact
+        ``OptimizationResult`` object whose selection produced it, so a
+        result built elsewhere never carries another run's receipt.
+        """
+        binding = getattr(self, "_selection_receipt_binding", None)
+        if not isinstance(binding, tuple) or len(binding) != 2:
+            return None
+        bound_result, receipt = binding
+        return receipt if bound_result is result else None
 
     def _build_certified_selection_report(self) -> dict[str, Any] | None:
         """Phase 8: the client-attested certified-selection finalize report.
@@ -2756,7 +2878,13 @@ class OptimizationOrchestrator:
         """Submit collected workflow traces. Delegates to WorkflowTraceManager."""
         if backend_egress_disabled(self.traigent_config):
             return
-        await self._workflow_trace_manager.submit_traces(session_id)
+        # #2060: tell the trace manager whether any trial actually executed
+        # so a legitimate zero-trial completion (e.g. an exhausted shared
+        # ExecutionBudget, issue #1980) does not fire the zero-span
+        # wiring-fault WARNING.
+        await self._workflow_trace_manager.submit_traces(
+            session_id, trials_executed=bool(self._trials)
+        )
 
     @staticmethod
     def _populate_experiment_cloud_url(result: OptimizationResult) -> None:
@@ -2884,6 +3012,7 @@ class OptimizationOrchestrator:
             cost_limit=self.config.get("cost_limit"),
             optimization_strategy=optimization_strategy_payload,
             task_type=getattr(self, "task_type", None),
+            dataset_id=getattr(self, "dataset_id", None),
         )
         session_id: str | None = session_context.session_id
         self._active_session_id = session_id
@@ -3059,6 +3188,7 @@ class OptimizationOrchestrator:
                 fingerprint_meta=self.fingerprint_meta,
                 evaluator_definition_id=self.evaluator_definition_id,
                 task_type=getattr(self, "task_type", None),
+                dataset_id=getattr(self, "dataset_id", None),
             )
             session_id = self.backend_session_manager.handle_session_creation_result(
                 self.backend_session_manager.normalize_session_creation_result(
@@ -4086,7 +4216,9 @@ class OptimizationOrchestrator:
                 # rides the same request.
                 agg_payload = (
                     self.backend_session_manager.build_session_aggregation_payload(
-                        result, session_id
+                        result,
+                        session_id,
+                        selection_receipt=self._selection_receipt_for(result),
                     )
                 )
 
@@ -4411,28 +4543,35 @@ class OptimizationOrchestrator:
         return result
 
     def _fail_closed_on_empty_smart_managed_run(self) -> None:
-        """Reject a cloud-required smart run that executed zero trials.
+        """Reject a cloud-required smart run that executed zero *successful*
+        trials.
 
         A smart algorithm (``bayesian``/``tpe``/``cmaes``/``nsga2``/
         ``optuna*``) resolves to a ``CLOUD_REQUIRED`` policy whose managed
-        cloud path must either run trials or raise. When that managed path
-        returns without executing a single trial, the run would otherwise be
-        finalized as a silent ``COMPLETED`` result with ``best_config=None`` —
-        the exact silent-empty failure of issue #1681. Surface it as an
-        actionable error instead of a hollow success.
+        cloud path must either produce a successful trial or raise. When that
+        managed path returns with no successful trial — whether because it
+        ran zero trials, or because every trial it did run FAILED or was
+        PRUNED — the run would otherwise be finalized as a silent
+        ``COMPLETED`` result with ``best_config=None`` — the exact
+        silent-empty failure of issue #1681 (follow-up: #1703). Surface it as
+        an actionable error instead of a hollow success.
 
         Deliberately narrow so it never hijacks a legitimate empty stop:
 
-        * only fires for a genuinely empty run (``len(self._trials) == 0``);
+        * only fires when no trial in ``self._trials`` is ``is_successful``
+          (a non-empty ``self._trials`` whose members are all FAILED/PRUNED
+          is the same silent-empty shape as truly zero trials — keying on
+          ``bool(self._trials)`` alone missed it, issue #1703);
         * only when the resolved policy is ``CLOUD_REQUIRED`` (a smart
           algorithm), never for local/hybrid/cloud-brain runs;
         * leaves an explicit ``max_trials<=0`` no-op run alone (mirrors the
           ``_try_cloud_execution`` guard for non-positive trial budgets);
         * defers to already-owned stop causes (timeout / user cancel / cost
-          limit #1684 / vendor or network error) rather than relabeling them.
+          limit #1684 / vendor or network error) rather than relabeling them,
+          whether or not trials were attempted.
         """
 
-        if self._trials:
+        if any(trial.is_successful for trial in self._trials):
             return
         policy = policy_from_config(self.traigent_config)
         if not policy_is_cloud_required(policy):
@@ -4443,6 +4582,19 @@ class OptimizationOrchestrator:
             return
 
         algorithm = getattr(policy, "algorithm", None) or "the requested algorithm"
+        executed = len(self._trials)
+        if executed:
+            raise OptimizationError(
+                f"Smart optimization ('{algorithm}') requires the Traigent "
+                "managed cloud service, but the run finished with "
+                f"{executed} executed trial(s), none of which succeeded (all "
+                "failed or were pruned) -- no best configuration. A "
+                "cloud-required run must not silently report success. The "
+                "local SDK runs only 'grid' and 'random'; connect to a "
+                "Traigent backend that provides smart optimization, or call "
+                "optimize(algorithm='grid') / optimize(algorithm='random') to "
+                "run locally."
+            )
         raise OptimizationError(
             f"Smart optimization ('{algorithm}') requires the Traigent managed "
             "cloud service, but the run finished without executing a single "
@@ -4495,6 +4647,7 @@ class OptimizationOrchestrator:
                 # still capping wasted LLM spend on a true hang.
                 grace = min(max(self.timeout * 0.25, 1.0), 300.0)
                 watchdog_deadline = self.timeout + grace
+                self.backend_session_manager.ensure_run_id_recorded(session_id)
                 try:
                     await asyncio.wait_for(
                         self._run_optimization_loop(
@@ -4521,6 +4674,7 @@ class OptimizationOrchestrator:
                         len(self._trials),
                     )
             else:
+                self.backend_session_manager.ensure_run_id_recorded(session_id)
                 await self._run_optimization_loop(
                     func, dataset, session_id, function_identifier
                 )
@@ -4835,6 +4989,7 @@ class OptimizationOrchestrator:
                 "metric_limit": "metric_limit",
                 "convergence": "convergence",
                 "semantic_saturation": "semantic_saturation",
+                "safety_constraint": "safety_constraint",
             }
             mapped_reason = reason_mapping.get(reason, "condition")
             if (
@@ -5036,6 +5191,9 @@ class OptimizationOrchestrator:
         best_config = selection.best_config
         best_score = selection.best_score
         best_config_margin = selection.best_config_margin
+        # R3: the finalize selection receipt is projected from THIS selection
+        # (never a recomputed ranking) and bound to the result built below.
+        selection_receipt = build_selection_receipt(selection)
         # Issue #1866: surface a statistical-tie winner once per run. When the
         # winner-vs-runner-up margin is not significant, the "adopt best_config"
         # action is being taken on noise — name both configs, the objective, and
@@ -5244,7 +5402,11 @@ class OptimizationOrchestrator:
             warning_codes=result_warning_codes,
             source=source,
             best_config_margin=best_config_margin,
+            # Thread the terminal selector's exact eligible set through so
+            # post-hoc range normalization shares its basis (issue #1704).
+            ranking_eligible_trial_ids=selection.ranking_eligible_trial_ids,
         )
+        self._selection_receipt_binding = (optimization_result, selection_receipt)
 
         # Log optimization completion
         if self._logger:

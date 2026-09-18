@@ -40,7 +40,6 @@ def test_optimize_and_observe_tiny_demo_emits_one_session(monkeypatch) -> None:
             results = await agent.optimize(
                 algorithm=runtime.scale.algorithm,
                 max_trials=runtime.scale.max_trials,
-                show_progress=False,
                 random_seed=42,
             )
             client.flush()

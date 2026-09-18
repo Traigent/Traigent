@@ -926,9 +926,12 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
 
 
 class TextDocument(Choices[str]):
-    """Single trainable text document parameter for skill training."""
+    """Single trainable text document parameter for skill training.
 
-    trainable = True
+    ``train_skill`` and friends recognize a text-document parameter by
+    ``isinstance(value, TextDocument)`` (see ``optimized_function.py`` and
+    ``decorators.py``); there is no separate flag to keep in sync with that.
+    """
 
     def __init__(self, initial_text: str, name: str | None = None) -> None:
         super().__init__((initial_text,), name=name)

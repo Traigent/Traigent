@@ -222,6 +222,16 @@ class HybridAPIEvaluator(BaseEvaluator):
         return self._lifecycle_manager
 
     @property
+    def transport_type(self) -> Literal["http", "mcp", "auto"]:
+        """Get the configured transport type ("http", "mcp", or "auto").
+
+        Non-secret classifier — safe to surface on the session-create wire
+        as the external-evaluator presence marker (Traigent#2271). Never
+        the endpoint URL or auth_header.
+        """
+        return self._transport_type
+
+    @property
     def tunable_id(self) -> str | None:
         """Get the tunable ID (may be auto-discovered)."""
         return self._tunable_id

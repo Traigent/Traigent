@@ -185,7 +185,9 @@ class WorkflowTraceManager:
         with self._lock:
             return list(self._registered_nodes)
 
-    async def submit_traces(self, session_id: str | None = None) -> None:
+    async def submit_traces(
+        self, session_id: str | None = None, *, trials_executed: bool = True
+    ) -> None:
         """Submit collected workflow spans and graph to backend.
 
         Called during optimization finalization to send all collected spans
@@ -196,6 +198,13 @@ class WorkflowTraceManager:
 
         Args:
             session_id: Backend session ID (used to get experiment_id for graph)
+            trials_executed: Whether the run actually executed at least one
+                trial. Defaults to ``True`` so callers that do not know the
+                trial count keep the existing (warn-on-zero-spans) behavior.
+                Pass ``False`` for a run that legitimately completed with zero
+                trials (e.g. a shared ``ExecutionBudget`` already exhausted
+                before the first trial — issue #1980) so the zero-span case is
+                not misreported as a wiring fault.
         """
         if self._workflow_traces_tracker is None:
             return
@@ -204,10 +213,23 @@ class WorkflowTraceManager:
             collected_spans = list(self._collected_spans)
 
         if not collected_spans:
-            # Run-level invariant: tracing was configured (a tracker exists) yet
-            # the whole run produced zero spans. That is almost always a wiring
-            # fault — a sync agent function losing workflow_trace_context across
-            # the thread boundary, or add_agent_span never being reached — not a
+            if not trials_executed:
+                # #2060: a run that never executed a trial (e.g. a shared
+                # ExecutionBudget exhausted pre-batch) legitimately has zero
+                # spans — nothing about span wiring failed, so this is not
+                # the wiring-fault signal below. Keep it at DEBUG.
+                logger.debug(
+                    "Workflow tracing is enabled but the run executed zero "
+                    "trials; no workflow spans were collected. Nothing will "
+                    "appear in the workflow traces view."
+                )
+                return
+
+            # Run-level invariant: tracing was configured (a tracker exists),
+            # trials actually executed, yet the whole run produced zero
+            # spans. That is almost always a wiring fault — a sync agent
+            # function losing workflow_trace_context across the thread
+            # boundary, or add_agent_span never being reached — not a
             # legitimately empty run. DEBUG hides it until someone reads the
             # backend and finds nothing.
             logger.warning(

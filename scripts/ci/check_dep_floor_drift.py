@@ -34,8 +34,11 @@ been missing from the mirror for far longer. Review round 2 of that PR then
 caught the first version of check 3 accepting a bare name as protection --
 reproducing the very defect it was written to catch.
 
-Scope note: check 3 covers ``[project.dependencies]`` only. The optional extras
-have their own drift (issue #2211) which is not security-floor work.
+Scope note: check 3 covers ``[project.dependencies]``. Check 4 (below) extends the
+same "presence alone is not protection" logic to optional extras, but only for the
+extras that have a matching ``requirements-<extra>.txt`` mirror file -- extras with
+no mirror file are not this script's job to invent (issue #2211); see
+``requirements/README.md`` for which extras are mirrored today.
 
 Intentionally does NOT attempt to solve lockfile sync (that is ``uv``'s job).
 The scope is spec-file floors only.
@@ -175,47 +178,57 @@ def _collect_core_floors() -> dict[str, str]:
     return floors
 
 
-def _find_unprotected_core_floors() -> list[tuple[str, str, str]]:
-    """Core floors that ``requirements/requirements.txt`` does not actually enforce.
+def _find_unprotected_floors(
+    floors: dict[str, str],
+    requirements_path: Path,
+    expected_markers: dict[str, str] | None = None,
+) -> list[tuple[str, str, str]]:
+    """Floors that ``requirements_path`` does not actually enforce.
 
-    Returns ``(name, pyproject_floor, reason)``. Two ways a floor goes
-    unenforced, and **presence alone is not protection**:
+    Shared by the core check and the per-extra check (issue #2211): given a set
+    of ``{name: floor}`` pairs a spec file is expected to protect, and the
+    mirror file meant to protect them, return ``(name, floor, reason)`` for
+    every one it does not. Three ways a floor goes unenforced, and
+    **presence alone is not protection**:
 
     * ``absent``      -- the package is not in the mirror at all.
     * ``unpinned``    -- listed with no floor (``yarl``).
-    * ``conditional`` -- floored only behind an environment marker
-      (``yarl>=1.24.5,<2; python_version < "3.11"``). pyproject declares these
-      unconditionally, so a marker-gated mirror line protects only the
-      environments the marker admits -- and a marker that no supported
-      interpreter satisfies protects nothing at all while still looking pinned.
+    * ``conditional`` -- floored only behind an environment marker the
+      declaring source did not itself use (``yarl>=1.24.5,<2; python_version <
+      "3.11"`` in the mirror, unconditional in the declaring source). A
+      marker-gated mirror line protects only the environments the marker
+      admits -- and one no supported interpreter satisfies protects nothing at
+      all while still looking pinned. ``expected_markers`` (optional,
+      ``{name: marker text}``) lets a caller whose *own* declaration is
+      already marker-gated (e.g. ``faiss-cpu`` is Linux/macOS-only in
+      pyproject's ``integrations`` extra) accept a mirror line carrying that
+      identical marker as protecting exactly what the declaration promised.
 
-    Both leave ``pip install -r requirements/requirements.txt`` -- a documented,
-    sdist-shipped install path (MANIFEST.in) -- free to resolve a
+    Both leave ``pip install -r <requirements_path>`` free to resolve a
     known-vulnerable version. An earlier version of this function accepted a
     bare name as "present", which reproduced the exact defect it was written to
     catch; see PR #2210 review round 2.
 
-    A package that pyproject itself leaves unfloored is not reported: there is
-    no floor to enforce.
+    A package that carries no floor in ``floors`` is not reported: there is no
+    floor to enforce.
     """
-    core_requirements = REQUIREMENTS_DIR / "requirements.txt"
-    core_floors = _collect_core_floors()
-    if not core_floors:
+    if not floors:
         return []
-    if not core_requirements.exists():
+    if not requirements_path.exists():
         # Absent input is a finding, never a silent pass.
-        return [
-            (name, version, "absent") for name, version in sorted(core_floors.items())
-        ]
+        return [(name, version, "absent") for name, version in sorted(floors.items())]
+
+    expected_markers = expected_markers or {}
 
     # A floor only protects unconditionally when its line carries no
-    # environment marker. Collect the three states separately rather than
-    # reusing _collect_requirements_floors(), which is marker-blind because its
-    # own job (comparing floor values) does not depend on applicability.
+    # environment marker (or exactly the marker the declaration itself used).
+    # Collect the three states separately rather than reusing
+    # _collect_requirements_floors(), which is marker-blind because its own
+    # job (comparing floor values) does not depend on applicability.
     unconditional: set[str] = set()
     conditional: set[str] = set()
     listed: set[str] = set()
-    for raw_line in core_requirements.read_text().splitlines():
+    for raw_line in requirements_path.read_text().splitlines():
         line = raw_line.split("#", 1)[0].strip()
         if not line or line.startswith("-"):
             continue
@@ -227,10 +240,14 @@ def _find_unprotected_core_floors() -> list[tuple[str, str, str]]:
         listed.add(name)
         if _extract_floor(spec.strip()) is None:
             continue
-        (conditional if marker.strip() else unconditional).add(name)
+        marker = marker.strip()
+        if not marker or marker == expected_markers.get(name):
+            unconditional.add(name)
+        else:
+            conditional.add(name)
 
     findings: list[tuple[str, str, str]] = []
-    for name, version in sorted(core_floors.items()):
+    for name, version in sorted(floors.items()):
         if name in unconditional:
             continue
         if name in conditional:
@@ -241,6 +258,102 @@ def _find_unprotected_core_floors() -> list[tuple[str, str, str]]:
             reason = "absent"
         findings.append((name, version, reason))
     return findings
+
+
+def _find_unprotected_core_floors() -> list[tuple[str, str, str]]:
+    """Core floors that ``requirements/requirements.txt`` does not actually enforce.
+
+    See ``_find_unprotected_floors`` for the three unenforced reasons returned.
+    """
+    return _find_unprotected_floors(
+        _collect_core_floors(), REQUIREMENTS_DIR / "requirements.txt"
+    )
+
+
+def _collect_requirements_names(path: Path) -> set[str]:
+    """Every package name a requirements file lists, floored or bare."""
+    if not path.exists():
+        return set()
+    names: set[str] = set()
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line or line.startswith("-"):
+            continue
+        spec, _, _marker = line.partition(";")
+        name_match = re.match(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]*", spec.strip())
+        if name_match:
+            names.add(_normalize_name(name_match.group(0)))
+    return names
+
+
+def _collect_extra_floors(extra: str) -> tuple[dict[str, str], dict[str, str]]:
+    """Floors (and their own environment markers) for one optional-dependencies extra.
+
+    Excludes anything already FLOORED in ``requirements/requirements.txt`` --
+    every extra mirror file starts with ``-r requirements.txt``, so a package
+    floored there is core's job to enforce (check 3), not this extra's.
+
+    The floor is what earns the exemption, not mere presence. Exempting a BARE
+    core name opened a hole: a package declared only under extras (``mcp`` is
+    declared under ``hybrid``/``mcp``) could have its core pin replaced by a
+    bare name and escape every check -- check 3 never sees it, because it is
+    not in pyproject's core dependencies, and this check skipped it because
+    the name appeared in the core mirror. Requiring a real floor closes that. Matches the drift issue's own repro (#2211), which likewise
+    treats presence in the core mirror as "not this extra's problem" -- e.g.
+    ``claude-code-sdk``/``mcp`` are declared under the ``hybrid`` extra in
+    pyproject.toml but already floored directly in ``requirements.txt``
+    (tracked separately as over-inclusion, not drift).
+
+    Returns ``(floors, markers)``: ``markers[name]`` is the exact marker text
+    pyproject itself used for that dependency (``""`` if unconditional), e.g.
+    ``faiss-cpu`` is declared ``; sys_platform != 'win32'`` in the
+    ``integrations`` extra -- a mirror line carrying that same marker protects
+    exactly what pyproject promised and should not be flagged ``conditional``.
+    """
+    data = tomllib.loads(PYPROJECT_PATH.read_text())
+    deps = (data.get("project", {}).get("optional-dependencies") or {}).get(extra, [])
+    core_mirror = REQUIREMENTS_DIR / "requirements.txt"
+    already_mirrored = (
+        set(_collect_requirements_floors(core_mirror))
+        if core_mirror.exists()
+        else set()
+    )
+    floors: dict[str, str] = {}
+    markers: dict[str, str] = {}
+    for spec in deps:
+        if not isinstance(spec, str):
+            continue
+        pair = _extract_floor(spec)
+        if pair is None or pair[0] in already_mirrored:
+            continue
+        name, version = pair
+        floors[name] = version
+        markers[name] = spec.partition(";")[2].strip()
+    return floors, markers
+
+
+def _find_unprotected_extra_floors() -> dict[str, list[tuple[str, str, str]]]:
+    """Extra floors that their ``requirements-<extra>.txt`` mirror does not enforce.
+
+    Only extras that already have a matching ``requirements-<extra>.txt`` file
+    are checked -- an extra with no mirror file has nothing this script can
+    compare against (issue #2211; `requirements/README.md` documents which
+    extras are mirrored). Returns ``{extra: [(name, floor, reason), ...]}`` for
+    every extra with at least one unenforced floor.
+    """
+    data = tomllib.loads(PYPROJECT_PATH.read_text())
+    extras = sorted(data.get("project", {}).get("optional-dependencies") or {})
+
+    results: dict[str, list[tuple[str, str, str]]] = {}
+    for extra in extras:
+        req_path = REQUIREMENTS_DIR / f"requirements-{extra}.txt"
+        if not req_path.exists():
+            continue
+        floors, markers = _collect_extra_floors(extra)
+        findings = _find_unprotected_floors(floors, req_path, expected_markers=markers)
+        if findings:
+            results[extra] = findings
+    return results
 
 
 def main() -> int:
@@ -256,31 +369,56 @@ def main() -> int:
             if _parse_version_tuple(req_version) < _parse_version_tuple(py_version):
                 drifts.append((req_path, name, req_version, py_version))
 
-    unprotected = _find_unprotected_core_floors()
+    unprotected_core = _find_unprotected_core_floors()
+    unprotected_extras = _find_unprotected_extra_floors()
 
-    if not drifts and not unprotected:
+    if not drifts and not unprotected_core and not unprotected_extras:
         print("OK: no dependency floor drift between pyproject.toml and requirements/")
         return 0
 
-    if unprotected:
+    reason_detail = {
+        "absent": "absent from the mirror",
+        "unpinned": "listed in the mirror with no floor",
+        "conditional": (
+            "floored only behind an environment marker, so the floor "
+            "does not apply to every supported install"
+        ),
+    }
+
+    if unprotected_core:
         print(
             "❌ Core dependency floors not enforced by requirements/requirements.txt:\n",
             file=sys.stderr,
         )
-        for name, version, reason in unprotected:
-            detail = {
-                "absent": "absent from the mirror",
-                "unpinned": "listed in the mirror with no floor",
-                "conditional": (
-                    "floored only behind an environment marker, so the floor "
-                    "does not apply to every supported install"
-                ),
-            }[reason]
-            print(f"  {name}: pyproject.toml=>={version}, {detail}", file=sys.stderr)
+        for name, version, reason in unprotected_core:
+            print(
+                f"  {name}: pyproject.toml=>={version}, {reason_detail[reason]}",
+                file=sys.stderr,
+            )
         print(
             "\n`pip install -r requirements/requirements.txt` applies no floor for these, so a "
             "resolver can still pick a known-vulnerable version. Add each to the core "
             "requirements file with the same specifier. Listing the bare name is not enough.\n",
+            file=sys.stderr,
+        )
+
+    if unprotected_extras:
+        print(
+            "❌ Extra dependency floors not enforced by their requirements-<extra>.txt mirror:\n",
+            file=sys.stderr,
+        )
+        for extra in sorted(unprotected_extras):
+            for name, version, reason in unprotected_extras[extra]:
+                print(
+                    f"  requirements-{extra}.txt: {name}: pyproject.toml=>={version}, "
+                    f"{reason_detail[reason]}",
+                    file=sys.stderr,
+                )
+        print(
+            "\n`pip install -r requirements/requirements-<extra>.txt` applies no floor for these. "
+            "Add each to its extra's requirements file with the same specifier. Listing the bare "
+            "name is not enough. (Extras with no requirements-<extra>.txt mirror are not checked "
+            "here -- see requirements/README.md.)\n",
             file=sys.stderr,
         )
 
