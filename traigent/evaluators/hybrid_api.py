@@ -105,6 +105,28 @@ class HybridExampleResult:
         return self.error is None
 
 
+#: Metric names Traigent computes itself from the per-result fields
+#: (``result.success``, ``cost_usd``, ``latency_ms``) and therefore never takes
+#: from the external service's ``metrics`` payload.
+#:
+#: Without this, a service that reports a ``success_rate`` key of its own had it
+#: aggregated alongside the quality metrics and then written over the computed
+#: value. That was harmless while every row contributed -- the payload mean and
+#: the true rate agreed -- and became a live defect the moment errored rows were
+#: excluded from the quality means (issue #2192): one failed example out of two
+#: then reported ``success_rate`` 1.0 instead of 0.5, erasing the failure from
+#: the only metric that reports it.
+#:
+#: ``cost``/``total_cost``/``latency``/``response_time_ms`` are listed for the
+#: same reason rather than because a collision was observed: they are seeded
+#: from trial-level totals a few lines below, so a per-example payload key of
+#: the same name would silently change what the number MEANS -- a per-example
+#: mean presented where a trial total is expected.
+_TRAIGENT_COMPUTED_METRIC_KEYS: frozenset[str] = frozenset(
+    {"success_rate", "cost", "total_cost", "latency", "response_time_ms"}
+)
+
+
 class HybridAPIEvaluator(BaseEvaluator):
     """Evaluator that executes trials via external API endpoints.
 
@@ -645,6 +667,11 @@ class HybridAPIEvaluator(BaseEvaluator):
                 accuracy_values.append(float(per_example_accuracy))
 
             for metric_name, value in result.metrics.items():
+                # Same reservation as the primary aggregator: `setdefault`
+                # below would otherwise hand the payload's key priority over
+                # the computed one.
+                if metric_name in _TRAIGENT_COMPUTED_METRIC_KEYS:
+                    continue
                 if isinstance(value, bool):
                     continue
                 if not isinstance(value, (int, float)):
@@ -1490,6 +1517,9 @@ class HybridAPIEvaluator(BaseEvaluator):
             if not result.success:
                 continue
             for metric_name, value in result.metrics.items():
+                # Never let a payload key overwrite what Traigent computed.
+                if metric_name in _TRAIGENT_COMPUTED_METRIC_KEYS:
+                    continue
                 if metric_name not in metric_sums:
                     metric_sums[metric_name] = 0.0
                     metric_counts[metric_name] = 0

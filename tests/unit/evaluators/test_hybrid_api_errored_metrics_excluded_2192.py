@@ -124,3 +124,107 @@ class TestBuildSummaryStatsExcludesErroredResultMetrics:
         # unconditionally, independent of the quality-metric exclusion).
         assert metrics["success_rate"]["count"] == 2
         assert metrics["success_rate"]["mean"] == pytest.approx(0.5)
+
+
+class TestThePayloadCannotOverwriteWhatTraigentComputed:
+    """Excluding errored rows broke `success_rate`, on both aggregation paths.
+
+    The external service's ``metrics`` payload is aggregated alongside the
+    quality metrics and then written over the computed value. That was harmless
+    while every row contributed -- the payload mean and the true rate agreed --
+    and became a live defect the moment this fix stopped errored rows from
+    contributing. Measured before the reservation, with one failed example out
+    of two:
+
+        primary  success_rate   0.5 on develop  ->  1.0
+        summary  success_rate   0.5 (count 2)   ->  1.0 (count 1)
+
+    A run with a failed example reported 100% success. That is the same defect
+    class this module exists to fix, pointed the other way -- #2160's Blocker 1
+    is a placeholder silently DEPRESSING an average; this is a placeholder
+    silently INFLATING one -- and it landed on the one metric whose survival
+    the fix explicitly promises.
+    """
+
+    @staticmethod
+    def _rows() -> list[HybridExampleResult]:
+        """One measured and one errored row, both carrying `success_rate`."""
+        return [
+            HybridExampleResult(
+                example_id="ok",
+                metrics={"accuracy": 0.8, "success_rate": 1.0},
+                cost_usd=0.02,
+                latency_ms=200.0,
+            ),
+            HybridExampleResult(
+                example_id="bad",
+                error="failed",
+                metrics={"accuracy": 0.0, "success_rate": 0.0},
+                cost_usd=0.0,
+                latency_ms=0.0,
+            ),
+        ]
+
+    def test_primary_success_rate_is_computed_not_taken_from_the_payload(
+        self, ev: HybridAPIEvaluator
+    ) -> None:
+        agg = ev._compute_aggregated_metrics(self._rows(), total_cost=0.02)
+
+        assert agg["success_rate"] == pytest.approx(0.5), (
+            "one of two examples failed; a service-supplied success_rate must "
+            "not overwrite that"
+        )
+        # And the fix this module is about still holds.
+        assert agg["accuracy"] == pytest.approx(0.8)
+
+    def test_summary_success_rate_is_computed_not_taken_from_the_payload(
+        self, ev: HybridAPIEvaluator
+    ) -> None:
+        metrics = ev._build_summary_stats(self._rows(), duration=1.0)["metrics"]
+
+        assert metrics["success_rate"]["mean"] == pytest.approx(0.5)
+        assert metrics["success_rate"]["count"] == 2, (
+            "both rows count toward the failure signal, including the errored one"
+        )
+
+    def test_a_payload_cost_does_not_replace_the_trial_total(
+        self, ev: HybridAPIEvaluator
+    ) -> None:
+        """`cost` is seeded as the trial TOTAL; a payload key of that name is a
+        per-example value, so letting it through would change what the number
+        means rather than merely its magnitude."""
+        rows = [
+            HybridExampleResult(
+                example_id="ok", metrics={"accuracy": 1.0, "cost": 0.5}, cost_usd=0.02
+            )
+        ]
+        agg = ev._compute_aggregated_metrics(rows, total_cost=0.02)
+        assert agg["cost"] == pytest.approx(0.02)
+        assert agg["total_cost"] == pytest.approx(0.02)
+
+
+@pytest.mark.parametrize("error_value", ["downstream_validation_failed", ""])
+def test_the_guard_keys_on_success_not_on_error_being_truthy(
+    ev: HybridAPIEvaluator, error_value: str
+) -> None:
+    """`error=""` is unsuccessful by the class contract (`error is None`).
+
+    A guard written as ``if result.error:`` reads identically and passes every
+    other test in this module, because their fixtures all use a non-empty
+    error string. An empty-but-present error is exactly the shape a service
+    produces when it sets the field without a message.
+    """
+    rows = [
+        HybridExampleResult(example_id="ok", metrics={"accuracy": 0.8}),
+        HybridExampleResult(
+            example_id="bad", error=error_value, metrics={"accuracy": 0.0}
+        ),
+    ]
+    assert rows[1].success is False
+
+    agg = ev._compute_aggregated_metrics(rows, total_cost=0.0)
+    assert agg["accuracy"] == pytest.approx(0.8)
+
+    stats = ev._build_summary_stats(rows, duration=1.0)["metrics"]
+    assert stats["accuracy"]["count"] == 1
+    assert stats["accuracy"]["mean"] == pytest.approx(0.8)
