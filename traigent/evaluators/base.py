@@ -178,7 +178,7 @@ _ACCURACY_ABS_TOL = 1e-12
 
 
 def _coerce_string_to_expected_type(actual: str, expected: Any) -> tuple[Any, bool]:
-    """Coerce string outputs for scalar typed expected values."""
+    """Coerce string outputs for scalar (and JSON-container) typed expected values."""
     stripped = actual.strip()
     if isinstance(expected, bool):
         lowered = stripped.lower()
@@ -197,6 +197,20 @@ def _coerce_string_to_expected_type(actual: str, expected: Any) -> tuple[Any, bo
             return float(stripped), True
         except ValueError:
             return actual, False
+
+    if isinstance(expected, (dict, list, tuple)):
+        # A model that answers with a JSON string against a structured
+        # (dict/list) expected value otherwise scores 0.0 in every trial,
+        # across every config -- a config-independent ceiling (Traigent#1772).
+        try:
+            parsed = json.loads(stripped)
+        except (ValueError, TypeError):
+            return actual, False
+        if isinstance(expected, dict) and isinstance(parsed, dict):
+            return parsed, True
+        if isinstance(expected, (list, tuple)) and isinstance(parsed, list):
+            return parsed, True
+        return actual, False
 
     return actual, False
 
@@ -227,8 +241,47 @@ def _accuracy_values_match(actual: Any, expected: Any) -> bool:
                 type(expected).__name__,
             )
 
+    # Container elements get zero normalization otherwise: recurse the same
+    # scalar rules element-wise (list/tuple) or value-wise (dict), keyed on
+    # the (possibly just-JSON-coerced) expected shape (Traigent#1772).
+    if isinstance(expected, dict) and isinstance(actual, dict):
+        if set(actual.keys()) != set(expected.keys()):
+            return False
+        return all(
+            _accuracy_values_match(actual[key], expected[key]) for key in expected
+        )
+
+    if isinstance(expected, (list, tuple)) and isinstance(actual, (list, tuple)):
+        if len(actual) != len(expected):
+            return False
+        return all(
+            _accuracy_values_match(a, e) for a, e in zip(actual, expected, strict=True)
+        )
+
     if isinstance(actual, str) and isinstance(expected, str):
-        return actual.strip().lower() == expected.strip().lower()
+        if actual.strip().lower() == expected.strip().lower():
+            return True
+        # Numeric string-string pairs (e.g. the common JSONL habit of storing
+        # numeric gold labels as strings) get zero coercion otherwise: the
+        # existing coercion only fires when the EXPECTED side is typed
+        # (Traigent#1772).
+        try:
+            actual_num = float(actual.strip())
+            expected_num = float(expected.strip())
+        except ValueError:
+            return False
+        logger.warning(
+            "Coercing string output %r and expected %r to numeric for "
+            "exact-match accuracy comparison",
+            actual,
+            expected,
+        )
+        return math.isclose(
+            actual_num,
+            expected_num,
+            rel_tol=_ACCURACY_REL_TOL,
+            abs_tol=_ACCURACY_ABS_TOL,
+        )
 
     if (
         (isinstance(actual, float) or isinstance(expected, float))

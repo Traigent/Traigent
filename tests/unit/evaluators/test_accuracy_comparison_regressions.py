@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationExample
+from traigent.evaluators.base import (
+    BaseEvaluator,
+    Dataset,
+    EvaluationExample,
+    _accuracy_values_match,
+)
 from traigent.evaluators.local import LocalEvaluator
 from traigent.evaluators.metrics import MetricsComputer
 from traigent.invokers.base import InvocationResult
@@ -119,3 +124,84 @@ async def test_issue_1463_string_outputs_match_typed_expected_values(caplog) -> 
     assert result.example_results[1].metrics["accuracy"] == pytest.approx(1.0)
     assert result.example_results[2].metrics["accuracy"] == pytest.approx(0.0)
     assert "Coercing string output" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("actual", "expected"),
+    [
+        pytest.param(["Paris"], ["paris"], id="list_case_insensitive"),
+        pytest.param([" a ", "b"], ["a", "B"], id="list_whitespace_and_case"),
+        pytest.param({"k": "X"}, {"k": "x"}, id="dict_case_insensitive"),
+        pytest.param({"a": ["X"], "b": 1}, {"a": ["x"], "b": 1}, id="nested_dict_list"),
+    ],
+)
+def test_issue_1772_container_elements_get_scalar_normalization(
+    actual: object, expected: object
+) -> None:
+    """List/dict elements must get the same normalization scalars already get."""
+    assert _accuracy_values_match(actual, expected) is True
+
+
+@pytest.mark.parametrize(
+    ("actual", "expected"),
+    [
+        pytest.param(["Paris"], ["Rome"], id="list_real_mismatch"),
+        pytest.param({"k": "X"}, {"k": "y"}, id="dict_real_mismatch"),
+        pytest.param({"k": "X"}, {"other": "X"}, id="dict_key_mismatch"),
+        pytest.param(["a"], ["a", "b"], id="list_length_mismatch"),
+    ],
+)
+def test_issue_1772_container_elements_keep_real_mismatches(
+    actual: object, expected: object
+) -> None:
+    """Widening container matching must not paper over a genuine mismatch."""
+    assert _accuracy_values_match(actual, expected) is False
+
+
+def test_issue_1772_json_string_output_matches_structured_expected(caplog) -> None:
+    """A JSON-string output must match a dict/list expected value, not always
+    score 0.0 (Traigent#1772)."""
+    caplog.set_level("WARNING", logger="traigent.evaluators.base")
+
+    assert _accuracy_values_match('{"a": 1, "b": "X"}', {"a": 1, "b": "x"}) is True
+    assert _accuracy_values_match('["Paris", "Rome"]', ["paris", "rome"]) is True
+    assert _accuracy_values_match("not json", {"a": 1}) is False
+    assert "Coercing string output" in caplog.text
+
+
+def test_issue_1772_numeric_string_string_pairs_are_coerced(caplog) -> None:
+    """String-string numeric pairs (the common JSONL habit) must be coerced
+    the same way a typed expected value already is (Traigent#1772)."""
+    caplog.set_level("WARNING", logger="traigent.evaluators.base")
+
+    assert _accuracy_values_match("1.0", "1") is True
+    assert _accuracy_values_match(".5", "0.5") is True
+    assert _accuracy_values_match("1", "2") is False
+    assert _accuracy_values_match("abc", "abc") is True
+    assert "Coercing string output" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_issue_1772_end_to_end_structured_and_numeric_string_outputs() -> None:
+    """Full LocalEvaluator run: structured JSON-string and numeric-string
+    outputs should no longer carry a config-independent accuracy ceiling."""
+    evaluator = LocalEvaluator(metrics=["accuracy"], detailed=True)
+    dataset = Dataset(
+        [
+            EvaluationExample({"case": "json_dict"}, {"city": "Paris"}),
+            EvaluationExample({"case": "numeric_string"}, "1"),
+            EvaluationExample({"case": "list_case"}, ["Rome"]),
+        ],
+        name="issue_1772_regression",
+    )
+
+    def outputs(input_data: dict[str, str]) -> object:
+        return {
+            "json_dict": '{"city": "paris"}',
+            "numeric_string": "1.0",
+            "list_case": ["rome"],
+        }[input_data["case"]]
+
+    result = await evaluator.evaluate(outputs, {}, dataset)
+
+    assert result.metrics["accuracy"] == pytest.approx(1.0)
