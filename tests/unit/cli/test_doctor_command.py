@@ -708,3 +708,116 @@ class TestOfflinePinsTheLiteLLMPriceTable:
         assert "scorer" in help_text.lower(), (
             "the caveat about --scorer executing user code must stay in the help"
         )
+
+
+class TestEverySinkIsGuarded:
+    """`scrub()` guarded ONE sink; an executing review found four more.
+
+    Each test below replays a probe that leaked a sentinel before the fix. The
+    lesson worth keeping: adding a sanitizer proves nothing until you enumerate
+    the places output leaves the module. The first version sanitized scorer
+    imports and left `--model`, `--dataset`, the environment URL and the
+    initialization failure untouched.
+    """
+
+    def test_a_bare_token_userinfo_in_a_url_is_redacted(self, monkeypatch) -> None:
+        """`https://<token>@host` -- no colon, so the first pattern missed it.
+
+        This is the MORE common way an API URL carries a credential, and
+        TRAIGENT_BACKEND_URL is the variable this module's own docstring names
+        as the motivating leak.
+        """
+        from traigent.utils.diagnostics import DiagnosticReport, TraigentDiagnostics
+
+        monkeypatch.setenv(
+            "TRAIGENT_BACKEND_URL", f"https://{SENTINEL}@backend.example.com"
+        )
+        report = DiagnosticReport()
+        TraigentDiagnostics._check_environment(report)
+
+        blob = json.dumps(report.to_dict())
+        assert SENTINEL not in blob
+        assert "backend.example.com" in blob, "the host is the useful part; keep it"
+
+    def test_a_password_containing_an_at_sign_is_masked_whole(self) -> None:
+        """The old pattern stopped at the first `@` and left the tail exposed."""
+        from traigent.utils.diagnostics import scrub
+
+        out = scrub(f"cannot reach https://user:p@ss{SENTINEL}@host/v1", environ={})
+        assert SENTINEL not in out
+
+    def test_a_secret_passed_as_the_model_id_is_not_echoed(
+        self, runner, monkeypatch
+    ) -> None:
+        """`--model` round-trips into the report; a user can paste anything."""
+        monkeypatch.setenv("TRAIGENT_SKIP_DOTENV", "true")
+        result = runner.invoke(doctor, ["--json", "--offline", "--model", SENTINEL])
+        assert SENTINEL not in result.output
+
+    def test_a_secret_in_the_dataset_path_is_not_echoed(
+        self, runner, monkeypatch, tmp_path
+    ) -> None:
+        bad = tmp_path / f"{SENTINEL}.jsonl"
+        bad.write_text("not valid jsonl\n", encoding="utf-8")
+        monkeypatch.setenv("TRAIGENT_SKIP_DOTENV", "true")
+
+        result = runner.invoke(doctor, ["--json", "--offline", "--dataset", str(bad)])
+        assert SENTINEL not in result.output
+
+    def test_an_initialization_failure_does_not_leak_the_key(self, monkeypatch) -> None:
+        """Initialization reads config and talks to the backend.
+
+        Its failure message is one of the likeliest places for a credential to
+        surface, and it used raw `str(e)`.
+        """
+        from traigent.utils.diagnostics import DiagnosticReport, TraigentDiagnostics
+
+        monkeypatch.setenv("TRAIGENT_API_KEY", SENTINEL)
+        report = DiagnosticReport()
+        with patch(
+            "traigent.initialize",
+            side_effect=RuntimeError(f"backend handshake rejected key {SENTINEL}"),
+        ):
+            TraigentDiagnostics._check_traigent_config(report)
+
+        blob = json.dumps(report.to_dict())
+        assert SENTINEL not in blob
+        # The failure must still be legible, not swallowed along with the secret.
+        assert "Failed to initialize" in blob
+
+
+class TestScrubDoesNotDestroyDiagnostics:
+    """The opposite failure, which the first design had badly.
+
+    Masking every environment value meant a message's most useful part
+    disappeared whenever it happened to contain a common variable's value --
+    so the same error was legible on one machine and useless on another.
+    Masking is now scoped to secret-NAMED variables plus credential shapes.
+    """
+
+    def test_a_terminal_type_survives(self) -> None:
+        from traigent.utils.diagnostics import scrub
+
+        message = "terminal type xterm-256color not found in terminfo database"
+        assert scrub(message, environ={"TERM": "xterm-256color"}) == message
+
+    def test_an_import_error_keeps_its_module_path(self) -> None:
+        from traigent.utils.diagnostics import scrub
+
+        message = "cannot import name 'x' from 'pkg' (/home/u/proj/pkg/__init__.py)"
+        assert scrub(message, environ={"PWD": "/home/u/proj"}) == message
+
+    def test_but_a_secret_named_variable_is_still_masked(self) -> None:
+        """Control: the narrowing must not turn the masking off."""
+        from traigent.utils.diagnostics import scrub
+
+        out = scrub("auth rejected: s3cr3tvalue", environ={"MY_API_KEY": "s3cr3tvalue"})
+        assert "s3cr3tvalue" not in out
+
+    @pytest.mark.parametrize(
+        "name", ["SVC_TOKEN", "DB_PASSWORD", "X_SECRET", "AUTH_HEADER", "SIG_SIGNATURE"]
+    )
+    def test_the_secret_name_patterns_each_match(self, name) -> None:
+        from traigent.utils.diagnostics import scrub
+
+        assert "swordfish" not in scrub("value=swordfish", environ={name: "swordfish"})

@@ -33,6 +33,7 @@ from traigent.utils.diagnostics import (
     TraigentDiagnostics,
     describe_exception,
     diagnose,
+    scrub,
 )
 from traigent.utils.env_config import is_strict_cost_accounting
 
@@ -202,6 +203,14 @@ def _run_model_checks(
     from traigent.providers.validation import get_provider_for_model
 
     provider = get_provider_for_model(model_id)
+
+    # Everything below echoes the user's own --model back into the report, and
+    # the report is what gets pasted into tickets. A value supplied on the
+    # command line is not automatically safe: review round-tripped a live
+    # TRAIGENT_API_KEY through `--model` and it appeared verbatim in both
+    # --json and the rich table. Scrub once, here, so every message below is
+    # safe by construction rather than by remembering.
+    model_id = scrub(model_id)
     if provider:
         report.add("Model", "PASS", f"'{model_id}' recognized as a {provider} model")
     else:
@@ -294,12 +303,15 @@ def _run_dataset_checks(report: DoctorReport, dataset_path: str | None) -> None:
 
     result = Validators.validate_dataset(dataset_path)
     if result.is_valid:
-        report.add("Dataset", "PASS", f"'{dataset_path}' passed shape validation")
+        report.add(
+            "Dataset", "PASS", f"'{scrub(dataset_path)}' passed shape validation"
+        )
     else:
         report.add(
             "Dataset",
             "FAIL",
-            f"'{dataset_path}' failed shape validation: {result.get_feedback()}",
+            f"'{scrub(dataset_path)}' failed shape validation: "
+            f"{scrub(str(result.get_feedback()))}",
         )
 
 

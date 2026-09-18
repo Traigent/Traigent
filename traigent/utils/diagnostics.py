@@ -34,15 +34,24 @@ from traigent.utils.env_config import is_truthy
 #      no secret-looking token but whose value carries `https://user:pass@host`.
 #      Anything not on the allowlist is reported as present, never quoted.
 #
-#   2. Free text we did not author -- an exception message, most importantly --
-#      is scrubbed before it is reported, because importing a user's scorer
-#      runs their module code and the resulting exception can carry anything.
-#      The scrub masks live environment values verbatim, which defeats the
-#      direct attack (`ImportError(os.environ["TRAIGENT_API_KEY"])`), plus URL
-#      credentials and common vendor key shapes.
+#   2. Free text we did not author is scrubbed before it is reported. That
+#      means exception messages (importing a user's scorer runs their module
+#      code, so the exception can carry anything), AND anything the user handed
+#      us that we echo back -- `--model` and `--dataset` round-trip into the
+#      report, and a review round-tripped a live API key through `--model`.
+#      scrub() masks the values of secret-NAMED environment variables verbatim,
+#      which defeats the direct attack (`ImportError(os.environ["..._KEY"])`),
+#      plus URL credentials and known vendor key shapes wherever they appear.
 #
 # Rule 2 is a best-effort net over untrusted text and cannot be complete; that
 # is exactly why rule 1 is an allowlist rather than a cleverer filter.
+#
+# Known limits of rule 2, stated rather than implied: a secret that is neither
+# under a secret-named variable nor of a recognizable shape (say a bare 6-char
+# string) is not masked, and a secret the caller splits into chunks defeats
+# verbatim matching. A scorer that PRINTS a secret at import time bypasses the
+# report entirely -- `--offline --help` says so, because no filter here can
+# stop code we were asked to execute.
 # ---------------------------------------------------------------------------
 
 #: Environment variables whose VALUE may appear in a report. Everything else is
@@ -56,9 +65,18 @@ PRINTABLE_ENV_VALUES: frozenset[str] = frozenset(
 
 _REDACTED = "***redacted***"
 
-#: Credentials embedded in a URL: scheme://user:password@host -> scheme://user:***@host
+#: Credentials embedded in a URL. Covers BOTH userinfo shapes, because the
+#: token-only one is the more common way an API URL carries a secret and the
+#: first version of this matched only the pair:
+#:     scheme://user:password@host  ->  scheme://user:***@host
+#:     scheme://token@host          ->  scheme://***@host
+#: The userinfo run is greedy up to the LAST "@" before the host, so a password
+#: that itself contains "@" is masked whole rather than leaving its tail behind.
 _URL_CREDENTIALS_RE = re.compile(
-    r"(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*://)(?P<user>[^/\s:@]+):(?P<secret>[^/\s@]+)@"
+    r"(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*://)"
+    r"(?:(?P<user>[^/\s:@]+):)?"
+    r"(?P<secret>[^/\s]+)"
+    r"@"
 )
 
 #: Common vendor key shapes, masked wherever they appear in free text.
@@ -73,16 +91,49 @@ _KEY_SHAPES_RE = re.compile(
     r")"
 )
 
+#: Environment variables whose VALUE is masked verbatim wherever it appears in
+#: untrusted text.
+#:
+#: Masking every environment value was the first design and it was wrong in the
+#: other direction: it destroyed the diagnostics the report exists to deliver.
+#: Measured -- with TERM=xterm-256color set, "terminal type xterm-256color not
+#: found in terminfo database" came back as "terminal type ***redacted*** not
+#: found...", and a genuine ImportError's module path was masked because it
+#: contained $PWD. Which half of a message survived depended on which variables
+#: happened to be set, so the same failure was legible on one machine and
+#: useless on another.
+#:
+#: So mask what is DECLARED secret by its name, plus anything that is
+#: STRUCTURALLY secret by its shape (_KEY_SHAPES_RE, _URL_CREDENTIALS_RE)
+#: regardless of where it came from. Printing an environment value at all is
+#: governed separately, and strictly, by PRINTABLE_ENV_VALUES above.
+_SECRET_NAME_RE = re.compile(
+    r"(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|_PAT\b|SIGNATURE|SESSION_ID)",
+    re.IGNORECASE,
+)
+
 #: A value shorter than this is not treated as a secret worth masking verbatim,
 #: so that TRAIGENT_MOCK_LLM=1 does not turn every "1" in a message into a mask.
-_MIN_VERBATIM_SECRET_LEN = 8
+#: Lower than the original 8 because a short value under a secret-NAMED variable
+#: is still a secret -- the length bound exists to avoid masking incidental
+#: values, and the name check now does that job.
+_MIN_VERBATIM_SECRET_LEN = 4
+
+
+def _mask_userinfo(match: re.Match[str]) -> str:
+    user = match.group("user")
+    # Keep the username when there is one -- it is diagnostically useful and is
+    # not the credential. With no username the whole userinfo IS the token.
+    return (
+        f"{match.group('scheme')}{user}:{_REDACTED}@"
+        if user
+        else f"{match.group('scheme')}{_REDACTED}@"
+    )
 
 
 def redact_url_credentials(value: str) -> str:
-    """Strip the password out of any ``scheme://user:password@host`` in *value*."""
-    return _URL_CREDENTIALS_RE.sub(
-        lambda m: f"{m.group('scheme')}{m.group('user')}:{_REDACTED}@", value
-    )
+    """Mask the credential in any ``scheme://[user:]secret@host`` in *value*."""
+    return _URL_CREDENTIALS_RE.sub(_mask_userinfo, value)
 
 
 def scrub(text: str, environ: dict[str, str] | None = None) -> str:
@@ -103,14 +154,22 @@ def scrub(text: str, environ: dict[str, str] | None = None) -> str:
     env = os.environ if environ is None else environ
     scrubbed = text
 
-    # 1. Any live environment value, masked verbatim. This is the one that
-    #    defeats a deliberately crafted exception; it runs FIRST so a secret is
-    #    gone before any narrower pattern gets a chance to miss it. Longest
-    #    values first, so a value that contains another is masked whole.
+    # 1. The value of any SECRET-NAMED environment variable, masked verbatim.
+    #    This is what defeats a deliberately crafted exception such as
+    #    ImportError(os.environ["TRAIGENT_API_KEY"]). It runs FIRST so the
+    #    secret is gone before any narrower pattern gets a chance to miss it,
+    #    and longest-first so a value containing another is masked whole.
+    #
+    #    Scoped by name rather than applied to every variable: masking all of
+    #    them destroyed legitimate diagnostics (a module path containing $PWD,
+    #    a terminal type containing $TERM). Shape-based masking below still
+    #    catches a credential that never came from the environment.
     for name, value in sorted(env.items(), key=lambda kv: -len(kv[1] or "")):
         if not value or len(value) < _MIN_VERBATIM_SECRET_LEN:
             continue
         if name in PRINTABLE_ENV_VALUES:
+            continue
+        if not _SECRET_NAME_RE.search(name):
             continue
         if value in scrubbed:
             scrubbed = scrubbed.replace(value, _REDACTED)
@@ -386,10 +445,13 @@ class TraigentDiagnostics:
                     report.add_success("Environment", f"{var_name} = {value}")
                 elif var_name.endswith("_URL"):
                     # A URL's host is genuinely useful for diagnosis; its
-                    # userinfo never is.
+                    # userinfo never is. scrub() as well as the userinfo strip:
+                    # a URL can carry a key as a query parameter, and a bare
+                    # token@host userinfo was not matched by the first version
+                    # of the pattern at all.
                     report.add_success(
                         "Environment",
-                        f"{var_name} = {redact_url_credentials(value)}",
+                        f"{var_name} = {scrub(redact_url_credentials(value))}",
                     )
                 else:
                     report.add_success("Environment", f"{var_name} is set")
@@ -447,9 +509,14 @@ class TraigentDiagnostics:
                 )
 
         except Exception as e:
+            # describe_exception, not str(e): initialization reads configuration
+            # and talks to the backend, so its failure message is one of the
+            # most likely places for a credential to surface -- review found a
+            # handshake error carrying the live TRAIGENT_API_KEY verbatim into
+            # the report here.
             report.add_issue(
                 "Traigent",
-                f"Failed to initialize: {str(e)}",
+                f"Failed to initialize: {describe_exception(e)}",
                 "Check installation with: pip install -e .",
             )
 
