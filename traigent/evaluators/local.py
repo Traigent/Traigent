@@ -20,6 +20,7 @@ from traigent.evaluators.base import (
     BaseEvaluator,
     Dataset,
     EvaluationResult,
+    _accuracy_matches_after_unwrap,
     _accuracy_values_match,
     _example_correlation_key,
     _is_empty_expected_output,
@@ -2019,10 +2020,14 @@ class LocalEvaluator(BaseEvaluator):
             if error is not None:
                 continue
 
-            value = (
-                raw_output.get("text") if isinstance(raw_output, dict) else raw_output
-            )
-            if value is not None and _accuracy_values_match(value, expected):
+            # Unwrap the same way the per-example path already does (dict
+            # {"text": ...}, strict (output, metrics) tuple) before comparing
+            # -- a raw tuple/dict never equals a scalar expected value, which
+            # silently understated this aggregate on mixed-shape runs
+            # (Traigent#1771).
+            if raw_output is not None and _accuracy_matches_after_unwrap(
+                raw_output, expected
+            ):
                 correct += 1
 
         if total > 0:

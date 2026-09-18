@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from traigent.evaluators.base import _accuracy_values_match
+from traigent.evaluators.base import _accuracy_matches_after_unwrap
 from traigent.invokers.base import InvocationResult
 from traigent.utils.logging import get_logger
 
@@ -130,7 +130,7 @@ class MetricsComputer:
             correct = sum(
                 1
                 for output, expected in successful_pairs
-                if _accuracy_values_match(output, expected)
+                if _accuracy_matches_after_unwrap(output, expected)
             )
             computed_metrics["accuracy"] = correct / len(successful_pairs)
         elif "accuracy" in self.metrics:
