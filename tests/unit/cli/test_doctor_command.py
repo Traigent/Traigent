@@ -310,6 +310,10 @@ class TestReportIsSecretSafe:
             doctor, ["--json", "--offline", "--scorer", "leaky_scorer:score"]
         )
 
+        # `result.output` (combined stdout+stderr) is deliberate here and
+        # stricter than `.stdout`: a leaked key is a leak on EITHER stream.
+        # Tests that PARSE the report use `.stdout`, because on click >= 8.2
+        # `.output` interleaves the SDK's stderr log line with the JSON.
         assert SENTINEL not in result.output, (
             "the API key reached the doctor report; --json is exactly what a "
             "user pastes into an issue"
@@ -500,7 +504,7 @@ class TestChecksCannotPassWithoutChecking:
         result = runner.invoke(
             doctor, ["--json", "--offline", "--model", "gpt-4o-of-my-own"]
         )
-        payload = json.loads(result.output)
+        payload = json.loads(result.stdout)
         pricing = [
             c
             for c in payload["checks"]
@@ -524,7 +528,7 @@ class TestChecksCannotPassWithoutChecking:
         monkeypatch.setenv("TRAIGENT_SKIP_DOTENV", "true")
 
         result = runner.invoke(doctor, ["--json", "--offline", "--model", known])
-        payload = json.loads(result.output)
+        payload = json.loads(result.stdout)
         assert any(
             c["category"] == "Model"
             and c["status"] == "PASS"
@@ -548,7 +552,7 @@ class TestChecksCannotPassWithoutChecking:
         result = runner.invoke(
             doctor, ["--json", "--offline", "--scorer", "kwonly_scorer:score"]
         )
-        payload = json.loads(result.output)
+        payload = json.loads(result.stdout)
         scorer_checks = [c for c in payload["checks"] if c["category"] == "Scorer"]
         assert any(c["status"] == "FAIL" for c in scorer_checks), (
             f"an uncallable scorer passed the preflight: {scorer_checks}"
@@ -570,7 +574,7 @@ class TestChecksCannotPassWithoutChecking:
         result = runner.invoke(
             doctor, ["--json", "--offline", "--scorer", "ok_scorer:score"]
         )
-        payload = json.loads(result.output)
+        payload = json.loads(result.stdout)
         scorer_checks = [c for c in payload["checks"] if c["category"] == "Scorer"]
         assert any(c["status"] == "PASS" for c in scorer_checks), scorer_checks
 
