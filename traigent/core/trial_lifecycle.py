@@ -42,6 +42,7 @@ from traigent.core.trial_result_factory import (
 from traigent.core.types import TrialResult, TrialStatus
 from traigent.evaluators.base import Dataset
 from traigent.utils.error_handler import APIKeyError
+from traigent.utils.langchain_interceptor import capture_scope
 from traigent.utils.exceptions import (
     InsufficientFundsError,
     OptimizationError,
@@ -531,6 +532,12 @@ class TrialLifecycle:
             evaluate_kwargs = self._build_evaluate_kwargs(progress_callback, lease)
 
             async with (
+                # Give this trial its own LLM-response capture buffer. Trials
+                # are gathered on one event loop, so a shared buffer let one
+                # trial drain -- and be charged for -- another's judge calls
+                # (Traigent#2387). Opened OUTSIDE the evaluator so it spans the
+                # agent's own calls as well as the metric functions'.
+                capture_scope(),
                 TrialContext(
                     trial_id=trial_id,
                     metadata={

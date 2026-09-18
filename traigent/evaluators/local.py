@@ -37,6 +37,7 @@ from traigent.evaluators.metrics_tracker import (
 )
 from traigent.utils.exceptions import EvaluationError
 from traigent.utils.langchain_interceptor import (
+    capture_scope,
     clear_captured_responses,
     get_all_captured_responses,
     get_captured_response_by_key,
@@ -2177,6 +2178,34 @@ class LocalEvaluator(BaseEvaluator):
         return aggregated
 
     async def evaluate(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        dataset: Dataset,
+        *,
+        sample_lease: SampleBudgetLease | None = None,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
+        budget: ExecutionBudget | None = None,
+    ) -> EvaluationResult:
+        """Evaluate function with given configuration on dataset.
+
+        Runs inside its own LLM-response capture scope so that two evaluations
+        running concurrently cannot drain each other's captured responses and
+        charge one trial for another's judge spend (Traigent#2387). The trial
+        lifecycle opens an outer scope per trial; this inner one keeps a DIRECT
+        concurrent caller of ``evaluate()`` correct too, and nesting is safe.
+        """
+        async with capture_scope():
+            return await self._evaluate_within_capture_scope(
+                func,
+                config,
+                dataset,
+                sample_lease=sample_lease,
+                progress_callback=progress_callback,
+                budget=budget,
+            )
+
+    async def _evaluate_within_capture_scope(
         self,
         func: Callable[..., Any],
         config: dict[str, Any],
