@@ -130,7 +130,6 @@ async def main() -> None:
         algorithm="random",
         max_trials=8,
         random_seed=42,
-        show_progress=False,
         callbacks=[build_results_table_callback(is_mock=True, task_type="rag_qa")],
         parallel_config=parallel_config,
     )

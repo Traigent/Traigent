@@ -86,7 +86,6 @@ async def main() -> None:
         algorithm="grid",
         max_trials=2,
         random_seed=42,
-        show_progress=False,
         callbacks=[build_results_table_callback(is_mock=True, task_type="simple_qa")],
     )
 

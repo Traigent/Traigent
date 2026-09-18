@@ -130,7 +130,6 @@ async def main() -> None:
     results = await ai_agent_classify_text_sentiment.optimize(
         algorithm="random",
         max_trials=10,
-        show_progress=True,
         callbacks=[build_results_table_callback(is_mock=False, show_progress=True)],
         random_seed=42,
         timeout=300,  # 5 minute timeout

@@ -8,6 +8,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Breaking: `.optimize()` now rejects a keyword argument it does not recognize.** A
+  call-time keyword that is neither a `@traigent.optimize` decorator option nor consumed by
+  an optimizer was absorbed into the optimizer's `algorithm_config` and had no effect, so a
+  typo silently ran a different optimization from the one you wrote. Such a keyword now
+  raises `TypeError` naming it. Remove the argument at the call site, or correct the
+  spelling if you meant a real option; there is no compatibility flag, because a keyword
+  that reaches this error never had an effect. The shipped `walkthrough/` examples passed
+  `show_progress=` to `.optimize()`, which was never a parameter of it and never did
+  anything; it is removed from all 21 example call sites and no example's behaviour changes.
+  The parameter that does control the live progress bar is `progress_bar`: `True` forces one,
+  `False` suppresses it, `None` (the default) auto-enables it in an interactive terminal.
+
 - **Breaking: `PromptRewriter.rewrite()` no longer accepts `plan`, and `TextDocument` no
   longer exposes `trainable`.** Both were dead: `rewrite()` ignored `plan` entirely and
   nothing in the package ever read `trainable`. `PromptRewriter` is exported from
