@@ -233,7 +233,14 @@ class TestShippedCallSitesSurviveTheAllowlist:
 
     _SHIPPED_DIRS = ("examples", "walkthrough", "plugins")
 
-    def _offending_call_sites(self):
+    def _offending_call_sites(self, repo_root=None, scan_dirs=None):
+        """Walk the shipped trees and return every rejected .optimize() kwarg.
+
+        ``repo_root``/``scan_dirs`` are injectable ONLY so the red control below
+        can run this exact function against a planted offender. The control used
+        to re-implement the walk, which meant a green control proved nothing
+        about the code that actually guards the repo.
+        """
         import ast
         from pathlib import Path
 
@@ -242,7 +249,11 @@ class TestShippedCallSitesSurviveTheAllowlist:
             _decorator_only_optimize_params,
         )
 
-        repo_root = Path(__file__).resolve().parents[4]
+        repo_root = (
+            Path(__file__).resolve().parents[4]
+            if repo_root is None
+            else Path(repo_root)
+        )
         allowed = (
             OptimizedFunction._CALL_TIME_ALGORITHM_KWARGS_ALLOWLIST
             | OptimizedFunction._EXPLICIT_OPTIMIZE_SIGNATURE_PARAMS
@@ -258,7 +269,8 @@ class TestShippedCallSitesSurviveTheAllowlist:
         decorator_only = _decorator_only_optimize_params()
 
         offenders = []
-        for base in self._SHIPPED_DIRS:
+        scanned = 0
+        for base in self._SHIPPED_DIRS if scan_dirs is None else scan_dirs:
             root = repo_root / base
             if not root.is_dir():
                 continue
@@ -267,6 +279,7 @@ class TestShippedCallSitesSurviveTheAllowlist:
                     tree = ast.parse(path.read_text(encoding="utf-8"))
                 except (SyntaxError, UnicodeDecodeError):
                     continue
+                scanned += 1
                 decorated = {
                     id(sub)
                     for node in ast.walk(tree)
@@ -300,10 +313,20 @@ class TestShippedCallSitesSurviveTheAllowlist:
                             f"{path.relative_to(repo_root)}:{node.lineno} "
                             f"passes {kw.arg}= ({why})"
                         )
-        return offenders
+        return offenders, scanned
 
     def test_no_shipped_call_site_passes_a_rejected_kwarg(self):
-        offenders = self._offending_call_sites()
+        offenders, scanned = self._offending_call_sites()
+
+        # Without this, the guard passes vacuously if _SHIPPED_DIRS ever stops
+        # matching the tree (a rename, a move, a wrong repo_root): zero files
+        # scanned yields zero offenders and a green test that checks nothing.
+        assert scanned > 100, (
+            f"the census only parsed {scanned} files across {self._SHIPPED_DIRS}; "
+            "the scan roots no longer match the repository layout, so a green "
+            "result here would be meaningless"
+        )
+
         assert not offenders, (
             "These shipped .optimize() call sites pass a kwarg the allowlist "
             "now rejects, so they raise TypeError at runtime even though CI "
@@ -311,16 +334,17 @@ class TestShippedCallSitesSurviveTheAllowlist:
         )
 
     def test_the_census_can_actually_find_an_offender(self, tmp_path):
-        """Red control: the walk above must FAIL on a known-bad call site.
+        """Red control: the REAL walk must flag a planted call site.
 
-        Without this, an over-narrow receiver filter or a bad path root would
-        make the guard vacuously green -- the exact failure mode it exists to
-        prevent.
+        This calls `_offending_call_sites` itself rather than a copy of it.
+        An earlier version re-implemented the walk inline, so it could not
+        detect the failure modes that matter -- an over-narrow receiver
+        filter, a wrong repo root, or a missing scan directory would leave the
+        guard vacuously green while the control stayed green too.
         """
-        import ast
-
-        bad = tmp_path / "shipped_example.py"
-        bad.write_text(
+        shipped = tmp_path / "examples"
+        shipped.mkdir()
+        (shipped / "planted.py").write_text(
             "import traigent\n"
             "@traigent.optimize(configuration_space={'t': [0.0]})\n"
             "def answer(t: float = 0.0) -> str:\n"
@@ -328,28 +352,39 @@ class TestShippedCallSitesSurviveTheAllowlist:
             "r = answer.optimize(max_trials=2, algorithm_params={'n': 2})\n",
             encoding="utf-8",
         )
-        tree = ast.parse(bad.read_text(encoding="utf-8"))
-        decorated = {
-            id(sub)
-            for node in ast.walk(tree)
-            for deco in getattr(node, "decorator_list", [])
-            for sub in ast.walk(deco)
-        }
-        found = [
-            kw.arg
-            for node in ast.walk(tree)
-            if id(node) not in decorated
-            and isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "optimize"
-            and not (
-                isinstance(node.func.value, ast.Name)
-                and node.func.value.id in {"traigent", "tg"}
-            )
-            for kw in node.keywords
-            if kw.arg == "algorithm_params"
-        ]
-        assert found == ["algorithm_params"], (
-            "the AST walk used by the guard failed to spot a planted "
-            "offender, so a green guard would prove nothing"
+
+        offenders, scanned = self._offending_call_sites(
+            repo_root=tmp_path, scan_dirs=("examples",)
         )
+        assert scanned == 1
+
+        assert any("algorithm_params" in o for o in offenders), (
+            "the guard's own walk missed a planted offender, so a green run of "
+            f"it would prove nothing; got {offenders}"
+        )
+
+    def test_the_census_accepts_a_clean_shipped_tree(self, tmp_path):
+        """The other half of the control: no false positives.
+
+        A walk that flagged everything would also 'catch' the planted offender
+        above, so pin that a legitimate call site stays clean -- including the
+        decorator form and a foreign receiver, the two shapes the filter exists
+        to distinguish.
+        """
+        shipped = tmp_path / "examples"
+        shipped.mkdir()
+        (shipped / "clean.py").write_text(
+            "import traigent\n"
+            "@traigent.optimize(configuration_space={'t': [0.0]}, offline=True)\n"
+            "def answer(t: float = 0.0) -> str:\n"
+            "    return 'x'\n"
+            "r = answer.optimize(max_trials=2, cost_limit=1.0)\n"
+            "s = orchestrator.optimize(func=answer, dataset=[], function_name='x')\n",
+            encoding="utf-8",
+        )
+
+        offenders, scanned = self._offending_call_sites(
+            repo_root=tmp_path, scan_dirs=("examples",)
+        )
+        assert scanned == 1
+        assert offenders == []
