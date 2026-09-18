@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, mock_open, patch
 
@@ -442,27 +443,36 @@ class TestTraigentDiagnostics:
         assert "Failed to initialize" in report.issues[0]["message"]
         assert "pip install -e ." in report.issues[0]["fix"]
 
-    @patch("pathlib.Path.mkdir")
-    @patch("pathlib.Path.write_text")
-    @patch("pathlib.Path.unlink")
-    def test_check_permissions_success(
-        self,
-        mock_unlink: MagicMock,
-        mock_write: MagicMock,
-        mock_mkdir: MagicMock,
-    ) -> None:
-        """Test file permissions check when successful."""
+    def test_check_permissions_success(self, tmp_path) -> None:
+        """The probe reports a writable directory -- and leaves nothing behind.
+
+        This used to patch ``Path.write_text``/``Path.unlink`` and assert that
+        ``write_text`` had been called, which pinned the IMPLEMENTATION rather
+        than the behaviour: it went red the moment the probe stopped writing a
+        fixed ``.test_permission`` file (which destroyed a pre-existing file of
+        that name) and started using a unique temporary one. Assert what the
+        check is for instead -- it detects writability, and it is not
+        destructive -- so the next implementation change is free.
+        """
         report = DiagnosticReport()
 
-        TraigentDiagnostics._check_permissions(report)
+        with patch.object(Path, "home", return_value=tmp_path):
+            TraigentDiagnostics._check_permissions(report)
 
-        # Should succeed for all test paths and exercise write/unlink mocks
-        write_assertion_message = (
-            "write_text should have been called to test permissions"
-        )
-        assert mock_write.called, write_assertion_message
-        assert len(report.successes) >= 1
         assert any("Can write to" in s["message"] for s in report.successes)
+        assert not report.issues
+
+    def test_check_permissions_leaves_no_files_behind(self, tmp_path) -> None:
+        """The write probe cleans up after itself."""
+        report = DiagnosticReport()
+        target = tmp_path / ".traigent"
+        target.mkdir()
+        before = set(target.iterdir())
+
+        with patch.object(Path, "home", return_value=tmp_path):
+            TraigentDiagnostics._check_permissions(report)
+
+        assert set(target.iterdir()) == before, "the probe left a file behind"
 
     @patch("pathlib.Path.mkdir")
     def test_check_permissions_failure(self, mock_mkdir: MagicMock) -> None:
