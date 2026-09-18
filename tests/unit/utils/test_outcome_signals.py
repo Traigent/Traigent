@@ -66,10 +66,10 @@ def _result(**overrides):
 
 @pytest.mark.parametrize("field", ["input_data", "expected_output", "actual_output"])
 def test_no_content_reaches_the_payload(field: str) -> None:
-    secret = "CANARY-7f3a-CONFIDENTIAL-VALUE"  # pragma: allowlist secret
-    value = {"q": secret} if field == "input_data" else secret
+    canary_content = "CANARY-7f3a-CONFIDENTIAL-VALUE"
+    value = {"q": canary_content} if field == "input_data" else canary_content
     payload = json.dumps(build_example_signals(_result(**{field: value})))
-    assert secret not in payload
+    assert canary_content not in payload
     for fragment in ("CANARY", "CONFIDENTIAL", "7f3a"):
         assert fragment not in payload
 
@@ -93,10 +93,9 @@ def test_signal_key_id_present_alongside_the_digests() -> None:
 
 
 def test_same_example_same_digest_across_calls_and_objects() -> None:
-    assert (
-        build_example_signals(_result())["example_digest"]
-        == (build_example_signals(_result())["example_digest"])
-    )
+    first_signals = build_example_signals(_result())
+    second_signals = build_example_signals(_result())
+    assert first_signals["example_digest"] == second_signals["example_digest"]
 
 
 def test_dict_key_order_does_not_change_the_digest() -> None:
@@ -272,19 +271,19 @@ def test_build_example_signals_reads_a_plain_dict_not_just_an_object() -> None:
 def test_a_signal_build_failure_logs_no_content(caplog) -> None:
     import logging
 
-    secret = "CANARY-OBSERVABILITY-CONTENT-DO-NOT-LOG"  # pragma: allowlist secret
+    canary_content = "CANARY-OBSERVABILITY-CONTENT-DO-NOT-LOG"
 
     class Exploding:
         @property
         def input_data(self):
-            raise RuntimeError(secret)
+            raise RuntimeError(canary_content)
 
     with caplog.at_level(logging.WARNING, logger="traigent.utils.outcome_signals"):
         result = build_example_signals(Exploding())
 
     assert result == {}
     log_text = caplog.text
-    assert secret not in log_text
+    assert canary_content not in log_text
     # The failure must be observable (not merely silent), but content-free.
     assert "RuntimeError" in log_text
 

@@ -20,10 +20,10 @@ from traigent.evaluators.base import (
     BaseEvaluator,
     Dataset,
     EvaluationResult,
+    _accuracy_matches_after_unwrap,
     _accuracy_values_match,
     _example_correlation_key,
     _is_empty_expected_output,
-    _accuracy_matches_after_unwrap,
 )
 from traigent.evaluators.metrics_tracker import (
     EMPTY_OUTPUT_RATE_WARNING_THRESHOLD,
