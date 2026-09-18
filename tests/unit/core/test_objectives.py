@@ -647,3 +647,123 @@ class TestWeightValidationHardening:
         )
         assert abs(schema.get_normalized_weight("a") - 0.9) < 1e-10
         assert abs(schema.get_normalized_weight("b") - 0.1) < 1e-10
+
+
+class TestBandTargetWireShape:
+    """#304: center/tol is an SDK input convenience, never a second wire format.
+
+    The canonical BandTarget in objective_definition_schema.json declares
+    additionalProperties: false and allows exactly {target, test, alpha}. ObjectiveDefinition
+    used to emit center/tol alongside target whenever the caller supplied them, producing a
+    payload that failed schema validation while the identical band expressed as low/high
+    passed. BandTarget.__post_init__ already converts center/tol to low/high at construction,
+    so the translation exists -- serialization was undoing it.
+    """
+
+    def test_center_tol_band_serializes_to_target_only(self):
+        from traigent.core.objectives import ObjectiveDefinition
+        from traigent.tvl.models import BandTarget
+
+        objective = ObjectiveDefinition(
+            name="accuracy",
+            orientation="band",
+            weight=1.0,
+            band=BandTarget(center=0.5, tol=0.1),
+        )
+
+        band = objective.to_dict()["band"]
+
+        assert set(band) == {"target", "test", "alpha"}, (
+            f"band carries keys the canonical contract forbids: "
+            f"{sorted(set(band) - {'target', 'test', 'alpha'})}"
+        )
+        assert "center" not in band
+        assert "tol" not in band
+
+    def test_center_tol_conversion_preserves_the_interval(self):
+        """The owner's requirement: prove the conversion retains its meaning.
+
+        center +/- tol and the equivalent low/high must produce the SAME wire band, and the
+        boundaries must be exactly center-tol and center+tol -- not rounded, not widened.
+        """
+        from traigent.core.objectives import ObjectiveDefinition
+        from traigent.tvl.models import BandTarget
+
+        for center, tol in ((0.5, 0.1), (100.0, 2.5), (-3.0, 0.75), (1e-6, 1e-9)):
+            from_center = ObjectiveDefinition(
+                name="m", orientation="band", weight=1.0,
+                band=BandTarget(center=center, tol=tol),
+            ).to_dict()["band"]
+            from_interval = ObjectiveDefinition(
+                name="m",
+                orientation="band",
+                weight=1.0,
+                band=BandTarget(low=center - tol, high=center + tol),
+            ).to_dict()["band"]
+
+            assert from_center == from_interval, (
+                f"center={center} tol={tol} serializes differently from the identical "
+                f"interval: {from_center} != {from_interval}"
+            )
+            assert from_center["target"] == [center - tol, center + tol]
+
+    def test_containment_semantics_survive_the_conversion(self):
+        """A value inside the band before conversion is inside it after, at the boundaries too."""
+        from traigent.tvl.models import BandTarget
+
+        band = BandTarget(center=0.5, tol=0.1)
+
+        assert band.contains(0.5)
+        assert band.contains(0.4), "lower boundary must remain inside the band"
+        assert band.contains(0.6), "upper boundary must remain inside the band"
+        assert not band.contains(0.39)
+        assert not band.contains(0.61)
+
+    def test_low_high_band_is_unchanged_by_this_fix(self):
+        from traigent.core.objectives import ObjectiveDefinition
+        from traigent.tvl.models import BandTarget
+
+        band = ObjectiveDefinition(
+            name="accuracy", orientation="band", weight=1.0,
+            band=BandTarget(low=0.4, high=0.6),
+        ).to_dict()["band"]
+
+        assert band["target"] == [0.4, 0.6]
+        assert set(band) == {"target", "test", "alpha"}
+
+    def test_serialized_band_validates_against_the_real_schema(self):
+        """Contract-level proof, where traigent_schema is installed.
+
+        Skips rather than fails when the schema package is absent, so a local run without it
+        is not a false green -- the shape assertions above still run unconditionally.
+        """
+        import json
+        import pathlib
+
+        import pytest
+
+        traigent_schema = pytest.importorskip("traigent_schema")
+        jsonschema = pytest.importorskip("jsonschema")
+
+        schema_path = (
+            pathlib.Path(traigent_schema.__file__).parent
+            / "schemas"
+            / "optimization"
+            / "objective_definition_schema.json"
+        )
+        if not schema_path.exists():  # pragma: no cover - depends on packaged data
+            pytest.skip(f"objective_definition_schema.json not packaged at {schema_path}")
+
+        from traigent.core.objectives import ObjectiveDefinition
+        from traigent.tvl.models import BandTarget
+
+        payload = ObjectiveDefinition(
+            name="accuracy", orientation="band", weight=1.0,
+            band=BandTarget(center=0.5, tol=0.1),
+        ).to_dict()
+
+        validator = jsonschema.Draft7Validator(json.loads(schema_path.read_text()))
+        errors = sorted(validator.iter_errors(payload), key=lambda e: list(e.absolute_path))
+        assert not errors, "center/tol band does not satisfy the canonical contract: " + "; ".join(
+            f"{list(e.absolute_path)}: {e.message}" for e in errors[:3]
+        )
