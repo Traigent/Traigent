@@ -30,6 +30,7 @@ from traigent.evaluators.metrics_tracker import (
     MetricsCalculator,
     MetricsTracker,
     compute_empty_output_rate,
+    compute_truncated_output_rate,
     enforce_user_metric_ceiling,
     extract_llm_metrics,
 )
@@ -475,6 +476,9 @@ class LocalEvaluator(BaseEvaluator):
         # is shared across the run's trials, so this emits ONE warning per run
         # (naming the first offending config) rather than one per trial/example.
         self._empty_output_warning_logged = False
+        # One-shot guard for the truncated-finish_reason run warning (issue
+        # #1809). Same rationale as the empty-output flag.
+        self._truncated_output_warning_logged = False
 
     def _extract_prompt_info(
         self,
@@ -1931,6 +1935,40 @@ class LocalEvaluator(BaseEvaluator):
             EMPTY_OUTPUT_RATE_WARNING_THRESHOLD * 100.0,
         )
 
+    def _maybe_warn_truncated_output(self, rate: float, config: dict[str, Any]) -> None:
+        """Emit a single run-level warning when outputs were truncated (#1809).
+
+        Fires at most once per evaluator instance (== once per run, naming the
+        first offending config), mirroring the empty-output-rate warning
+        (#1851). Any nonzero rate warns -- unlike the empty-output threshold,
+        a single truncated example already means at least one score in the
+        comparison is a measurement artifact, not a real signal about the
+        config: reasoning models (gemini-2.5/3.x, gpt-5, o-series) spend
+        hidden reasoning tokens against ``max_tokens`` before any answer text,
+        so a cap sized for a non-reasoning model truncates the answer
+        mid-output and that example scores as an artifact, not on the config's
+        real capability. Every trial still records its own
+        ``truncated_output_rate`` metric; this warning only decides whether to
+        also log.
+        """
+        if rate <= 0.0:
+            return
+        if self._truncated_output_warning_logged:
+            return
+        self._truncated_output_warning_logged = True
+        logger.warning(
+            "%.1f%% of measured outputs for config %r were truncated "
+            "(provider finish_reason indicates the length/token cap was hit, "
+            "not a natural stop) — reasoning models spend hidden thinking "
+            "tokens against max_tokens before any answer text, so a cap sized "
+            "for a non-reasoning model can silently truncate the answer; "
+            "accuracy comparisons are unreliable until max_tokens is raised. "
+            "Each trial's truncated_output_rate metric records the "
+            "per-config rate.",
+            rate * 100.0,
+            config,
+        )
+
     def _compute_accuracy_aggregated(
         self,
         outputs: list[Any],
@@ -2372,6 +2410,22 @@ class LocalEvaluator(BaseEvaluator):
         empty_output_rate = compute_empty_output_rate(outputs)
         aggregated_metrics["empty_output_rate"] = empty_output_rate
         self._maybe_warn_high_empty_output_rate(empty_output_rate, config)
+
+        # Truncated-output guard (issue #1809): compute the fraction of this
+        # config's examples whose provider response carried a truncated
+        # finish/stop reason (reads the per-example finish_reason the response
+        # handler chain already recorded on ``metrics_tracker.example_metrics``
+        # while extracting tokens/cost -- no extra provider call), expose it
+        # as a reserved metric, then surface ONE run-level warning naming the
+        # first offending config. The complement to the metadata-free
+        # empty-output-rate guard above: this fires even when the truncated
+        # text is non-empty (a reasoning model's cut-off answer is rarely
+        # blank, just wrong).
+        truncated_output_rate = compute_truncated_output_rate(
+            metrics_tracker.example_metrics
+        )
+        aggregated_metrics["truncated_output_rate"] = truncated_output_rate
+        self._maybe_warn_truncated_output(truncated_output_rate, config)
 
         # Authoritative cap on the FINAL trial metrics: user keys (arriving via
         # the per-example custom_metrics -> comprehensive_metrics merge above)
