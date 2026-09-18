@@ -265,7 +265,19 @@ def _resolve_callbacks(
     # regardless of its toggles (measured across all four combinations).
     def _reports_per_trial(callback: Any) -> bool:
         if isinstance(callback, SimpleProgressCallback):
-            return bool(getattr(callback, "show_details", True))
+            # Two ways this one is silent, both measured:
+            #   show_details=False -> on_trial_complete emits ''
+            #   output="log"       -> goes to logger.info, which the CLI's own
+            #                         default level (WARNING, cli/main.py) drops
+            # A third is accepted rather than handled: with show_details=True it
+            # prints on completed trials but not failed ones, so it still reports
+            # on the normal path. Suppressing a heartbeat for a callback the user
+            # cannot see is worse than printing twice, so anything uncertain
+            # counts as NOT reporting.
+            return (
+                bool(getattr(callback, "show_details", True))
+                and getattr(callback, "output", "print") != "log"
+            )
         return isinstance(
             callback,
             (ProgressBarCallback, ManagedProgressCallback, DetailedProgressCallback),

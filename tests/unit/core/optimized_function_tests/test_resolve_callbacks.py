@@ -117,3 +117,103 @@ def test_heartbeat_defers_to_a_reporting_simple_progress_callback(monkeypatch):
     )
 
     assert not any(isinstance(c, ManagedProgressCallback) for c in resolved)
+
+
+def test_no_progress_callback_combination_leaves_a_managed_run_silent(monkeypatch):
+    """Exhaustive: for EVERY constructor combination, the user sees something.
+
+    This guard has now been wrong twice in opposite directions -- first too
+    narrow (a second reporter was injected alongside Simple/Detailed), then too
+    broad (a silent SimpleProgressCallback suppressed the heartbeat). Both were
+    found by review rather than by a test, because each fix was a hand-picked
+    case. So assert the actual invariant over the whole space instead: if a
+    supplied callback emits nothing visible for a trial, the heartbeat MUST be
+    injected.
+
+    Known and accepted: Simple(show_details=True) prints on completed trials but
+    not failed ones, so it still reports on the normal path. This checks the
+    completed-trial case, which is what "does it report at all" turns on.
+    """
+    import contextlib
+    import io
+    import logging
+    import sys as _sys
+    from datetime import UTC, datetime
+
+    from traigent.api.types import TrialResult, TrialStatus
+    from traigent.config.types import ExecutionMode
+    from traigent.core.optimized_function import _resolve_callbacks
+    from traigent.utils.callbacks import (
+        DetailedProgressCallback,
+        ManagedProgressCallback,
+        ProgressBarCallback,
+        ProgressInfo,
+        SimpleProgressCallback,
+    )
+
+    logging.basicConfig(level=logging.WARNING, force=True)
+    monkeypatch.setattr(_sys.stdin, "isatty", lambda: False)
+
+    trial = TrialResult(
+        trial_id="t",
+        config={},
+        metrics={"accuracy": 0.9},
+        status=TrialStatus.COMPLETED,
+        duration=1.0,
+        timestamp=datetime.now(UTC),
+    )
+    progress = ProgressInfo(
+        current_trial=1,
+        total_trials=3,
+        completed_trials=1,
+        successful_trials=1,
+        failed_trials=0,
+        best_score=0.9,
+        best_config={},
+        elapsed_time=5.0,
+        estimated_remaining=10.0,
+        current_algorithm="grid",
+    )
+
+    factories = [
+        (
+            f"Simple(output={out!r}, show_details={detail})",
+            lambda o=out, d=detail: SimpleProgressCallback(output=o, show_details=d),
+        )
+        for out in ("print", "log")
+        for detail in (True, False)
+    ]
+    factories += [
+        (
+            f"Detailed(config={cfg}, metrics={met})",
+            lambda c=cfg, m=met: DetailedProgressCallback(
+                show_config_details=c, show_metrics=m
+            ),
+        )
+        for cfg in (True, False)
+        for met in (True, False)
+    ]
+    factories += [
+        ("ProgressBar()", ProgressBarCallback),
+        ("Managed()", ManagedProgressCallback),
+    ]
+
+    silent_runs = []
+    for label, make in factories:
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
+            make().on_trial_complete(trial, progress)
+        user_sees_something = bool(buffer.getvalue().strip())
+
+        resolved = _resolve_callbacks(
+            [make()], None, None, execution_mode=ExecutionMode.HYBRID.value
+        )
+        heartbeat = any(isinstance(c, ManagedProgressCallback) for c in resolved)
+
+        if not (user_sees_something or heartbeat):
+            silent_runs.append(label)
+
+    assert not silent_runs, (
+        "these callbacks emit nothing per trial AND suppress the heartbeat, so a "
+        f"managed run would be silent: {silent_runs}"
+    )
