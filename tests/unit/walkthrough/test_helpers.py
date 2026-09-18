@@ -189,3 +189,90 @@ def test_mock_latency_override_is_milliseconds(walkthrough_on_path: None) -> Non
         get_mock_latency("gpt-4o-mini", "classification") * 1000.0
     )
     assert value > 1.0
+
+
+def test_every_real_example_has_an_estimated_time() -> None:
+    """``print_estimated_time`` is a silent no-op for an unlisted example.
+
+    ``print_estimated_time`` looks the file up in ``EXAMPLE_ESTIMATED_TIMES``
+    and only prints on a truthy hit, so a new ``walkthrough/real/NN_*.py`` that
+    calls it without adding its entry prints nothing and the omission is
+    invisible. Example 09 shipped exactly that way (Traigent/Traigent#1544
+    review). Pin the set so the next one fails a test instead.
+    """
+    from walkthrough.utils.helpers import EXAMPLE_ESTIMATED_TIMES
+
+    real_dir = REPO_ROOT / "walkthrough" / "real"
+    examples = sorted(p.name for p in real_dir.glob("[0-9][0-9]_*.py"))
+    assert examples, f"no numbered real examples found under {real_dir}"
+
+    missing = [
+        name
+        for name in examples
+        if name in _example_names_calling_estimated_time(real_dir)
+        and name not in EXAMPLE_ESTIMATED_TIMES
+    ]
+    assert not missing, (
+        "these real examples call print_estimated_time() but have no "
+        f"EXAMPLE_ESTIMATED_TIMES entry, so it prints nothing: {missing}"
+    )
+
+    stale = sorted(set(EXAMPLE_ESTIMATED_TIMES) - set(examples))
+    assert not stale, (
+        f"EXAMPLE_ESTIMATED_TIMES lists examples that no longer exist: {stale}"
+    )
+
+
+def _example_names_calling_estimated_time(real_dir: Path) -> set[str]:
+    return {
+        path.name
+        for path in real_dir.glob("[0-9][0-9]_*.py")
+        if "print_estimated_time(" in path.read_text(encoding="utf-8")
+    }
+
+
+def test_printed_cost_estimate_matches_the_real_dataset_size() -> None:
+    """A literal ``dataset_size=`` must equal the example's own dataset.
+
+    ``print_cost_estimate`` multiplies by whatever it is handed, so a literal
+    that drifts from the ``eval_dataset`` file silently overstates the spend a
+    user is about to approve -- the whole point of the estimate. Examples 05 and
+    09 both said 20 against a 13-row ``rag_questions.jsonl`` (~1.5x), which is
+    why both now count the file instead. Catch the next one here.
+    """
+    import re
+
+    real_dir = REPO_ROOT / "walkthrough" / "real"
+    datasets_dir = REPO_ROOT / "walkthrough" / "datasets"
+    dataset_re = re.compile(r'DATASETS\s*/\s*"([^"]+\.jsonl)"')
+    literal_size_re = re.compile(r"dataset_size\s*=\s*(\d+)\s*,")
+
+    mismatches: list[str] = []
+    for path in sorted(real_dir.glob("[0-9][0-9]_*.py")):
+        source = path.read_text(encoding="utf-8")
+        dataset_match = dataset_re.search(source)
+        size_match = literal_size_re.search(source)
+        # A derived size (e.g. EVAL_DATASET_SIZE) cannot drift, so only literals
+        # are checked; an example with no jsonl dataset is out of scope.
+        if not dataset_match or not size_match:
+            continue
+
+        dataset_path = datasets_dir / dataset_match.group(1)
+        assert dataset_path.is_file(), (
+            f"{path.name} references a missing {dataset_path}"
+        )
+        actual = sum(
+            1
+            for line in dataset_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        declared = int(size_match.group(1))
+        if declared != actual:
+            mismatches.append(
+                f"{path.name}: dataset_size={declared} but "
+                f"{dataset_match.group(1)} has {actual} rows"
+            )
+
+    assert not mismatches, (
+        f"printed cost estimates disagree with their own datasets: {mismatches}"
+    )
