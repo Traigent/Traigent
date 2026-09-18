@@ -428,3 +428,70 @@ class TestTheSweepReachesEveryComparator:
         assert _accuracy_matches_after_unwrap(("Rome", {"m": 1.0}), "Rome") is True
         assert _accuracy_matches_after_unwrap({"text": "Rome"}, "Rome") is True
         assert _accuracy_matches_after_unwrap("Paris", "Rome") is False
+
+
+class TestAMappingExpectedValueIsComparedAsAMapping:
+    """Found by composing this PR with #1772, not by reviewing either alone.
+
+    #1772 makes ``_accuracy_values_match`` coerce a JSON STRING to the
+    structured value it encodes. This PR makes a failed comparison retry
+    against an unwrapped output. Composed on a tree carrying both, a structured
+    answer that happens to carry a ``text`` field had its real data discarded
+    and its ``text`` re-parsed:
+
+        {"text": '{"id":"7"}', "id": "007"}   vs   {"id": "7"}   ->  True
+
+    The actual ``id`` is ``"007"``. It was thrown away, the ``text`` string was
+    parsed into ``{"id": "7"}``, and a wrong answer scored as correct. Measured
+    on a tree with both branches merged; NEITHER produces it alone, so no
+    per-PR test run could have seen it.
+
+    The rule: a mapping expected value is compared AS a mapping. Pulling one
+    field out of the actual and comparing that against a whole structure is
+    never the right question, whatever the field is called.
+
+    The obvious alternative -- "a wrapper is a mapping whose only key is
+    ``text``" -- was tried first and is wrong: the real SDK response wrapper is
+    ``{"text": ..., "raw_response": ...}`` and
+    ``tests/unit/evaluators/test_litellm_integration.py`` and
+    ``test_tuple_metrics_channel.py`` both pin it. Keying on the EXPECTED shape
+    keeps those working and still closes the hole.
+    """
+
+    def test_a_mapping_expected_value_does_not_unwrap_a_text_field(self) -> None:
+        from traigent.evaluators.base import _accuracy_matches_after_unwrap
+
+        # The `text` field holds the structure directly, so this fails on THIS
+        # branch alone -- no JSON coercion needed. The composed case from #1772
+        # is the same defect reached through a parsed string.
+        assert (
+            _accuracy_matches_after_unwrap(
+                {"text": {"id": "7"}, "id": "007"}, {"id": "7"}
+            )
+            is False
+        ), (
+            "the actual id is 007, not 7; pulling the `text` field out and "
+            "comparing THAT against the whole expected mapping awards a match "
+            "for an answer that is wrong in the field the caller asked about"
+        )
+
+    def test_a_string_expected_value_still_unwraps_a_multi_key_wrapper(self) -> None:
+        """Control: the SDK's own response shape must keep working.
+
+        ``{"text": ..., "raw_response": ...}`` against a string expected value
+        is the real wrapper this feature exists for. A fix that required
+        ``text`` to be the only key would pass the test above and break it.
+        """
+        from traigent.evaluators.base import _accuracy_matches_after_unwrap
+
+        assert (
+            _accuracy_matches_after_unwrap({"text": "YES", "other": "ignored"}, "YES")
+            is True
+        )
+        assert _accuracy_matches_after_unwrap({"text": "Rome"}, "Rome") is True
+
+    def test_two_mappings_that_genuinely_agree_still_match(self) -> None:
+        """Control: the rule must not make dict-vs-dict comparison impossible."""
+        from traigent.evaluators.base import _accuracy_matches_after_unwrap
+
+        assert _accuracy_matches_after_unwrap({"id": "7"}, {"id": "7"}) is True

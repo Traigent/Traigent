@@ -321,7 +321,9 @@ def _accuracy_values_match(actual: Any, expected: Any) -> bool:
     return _typed_accuracy_equality(actual, expected)
 
 
-def _normalize_output_for_accuracy_comparison(raw_output: Any) -> Any:
+def _normalize_output_for_accuracy_comparison(
+    raw_output: Any, expected: Any = None
+) -> Any:
     """Unwrap ``raw_output`` the same way the fully-processed detailed path
     already does, before it reaches an accuracy comparator (issue #1771).
 
@@ -354,13 +356,33 @@ def _normalize_output_for_accuracy_comparison(raw_output: Any) -> Any:
     through :func:`_accuracy_matches_after_unwrap`, which only reaches here
     when the direct comparison has already failed.
 
-    The dict branch is likewise narrowed to a wrapper that actually carries a
-    ``text`` key: ``{"a": 1}.get("text")`` is ``None``, so an unconditional
-    ``.get`` turned every non-wrapper dict output into ``None`` before the
-    comparison.
+    The dict branch carries two narrowings, each from a measured defect:
+
+    * it requires a ``text`` key. ``{"a": 1}.get("text")`` is ``None``, so an
+      unconditional ``.get`` turned every non-wrapper dict output into ``None``
+      before the comparison -- a correct structured answer scoring wrong.
+    * it does not fire when ``expected`` is itself a mapping. Composed with the
+      container and JSON-string coercion in #1772, a structured answer carrying
+      BOTH a ``text`` field and real data had its real data discarded and its
+      ``text`` re-parsed: measured, ``{"text": '{"id":"7"}', "id": "007"}``
+      scored as a correct answer to ``{"id": "7"}``, with the wrong ``id``
+      thrown away. Neither change produces that alone.
+
+    The second rule is the general one: a mapping expected value is compared AS
+    a mapping. Pulling one field out of the actual and comparing that against a
+    whole structure is never the right question, whatever the field is called.
+    Keying on the expected shape also keeps the real SDK response wrapper
+    working -- ``{"text": ..., "raw_response": ...}`` against a string expected
+    value is a wrapper, and `tests/unit/evaluators/test_litellm_integration.py`
+    pins exactly that -- which a "text must be the only key" rule would have
+    broken.
     """
     output, _ = BaseEvaluator._unpack_user_metrics(raw_output)
-    if isinstance(output, CollectionsMapping) and "text" in output:
+    if (
+        isinstance(output, CollectionsMapping)
+        and "text" in output
+        and not isinstance(expected, CollectionsMapping)
+    ):
         return output["text"]
     return output
 
@@ -380,7 +402,7 @@ def _accuracy_matches_after_unwrap(actual: Any, expected: Any) -> bool:
     """
     if _accuracy_values_match(actual, expected):
         return True
-    unwrapped = _normalize_output_for_accuracy_comparison(actual)
+    unwrapped = _normalize_output_for_accuracy_comparison(actual, expected)
     if unwrapped is actual or unwrapped == actual:
         return False
     return _accuracy_values_match(unwrapped, expected)
