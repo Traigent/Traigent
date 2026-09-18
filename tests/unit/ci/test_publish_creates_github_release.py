@@ -95,6 +95,45 @@ def test_release_job_requests_only_contents_write() -> None:
     assert job["permissions"] == {"contents": "write"}
 
 
+def _gh_invocation(steps_text: str, command: str) -> str:
+    """Return one backslash-continued shell invocation, joined to a single line.
+
+    Asserting a flag appears somewhere in the whole step is not enough when the
+    step contains two invocations: `--latest` on only the create branch would
+    satisfy it while every idempotent rerun quietly dropped the Latest badge.
+    """
+    lines = steps_text.splitlines()
+    start = next(i for i, line in enumerate(lines) if command in line)
+    invocation = [lines[start].strip()]
+    while invocation[-1].endswith("\\"):
+        start += 1
+        invocation.append(lines[start].strip())
+    return " ".join(part.rstrip("\\").strip() for part in invocation)
+
+
+@pytest.mark.parametrize("command", ["gh release create", "gh release edit"])
+def test_both_release_branches_force_the_latest_badge(command: str) -> None:
+    """`--latest` is the flag this whole job exists to set, on BOTH branches.
+
+    #2267 is a drift between GitHub's "Latest" badge and PyPI. Removing
+    `--latest` leaves every other assertion in this module green -- measured:
+    25 passed with the flag deleted -- because nothing else looks at it, and
+    the parity step downstream would then be asserting a badge nobody set.
+
+    Parametrized over both branches on purpose: the rerun path (`gh release
+    edit`) is the one a human exercises after a failed publish, so a flag
+    present only on the create branch would go wrong exactly when someone is
+    already recovering from a bad release.
+    """
+    job = _release_job()
+    steps_text = "\n".join(step.get("run", "") for step in job["steps"])
+    invocation = _gh_invocation(steps_text, command)
+    assert "--latest" in invocation, (
+        f"{command} must pass --latest so GitHub's Latest badge tracks the "
+        f"published version; got: {invocation}"
+    )
+
+
 def test_release_job_is_idempotent_create_or_update() -> None:
     job = _release_job()
     steps_text = "\n".join(step.get("run", "") for step in job["steps"])
