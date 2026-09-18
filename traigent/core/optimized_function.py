@@ -597,6 +597,19 @@ def _record_pricing_provenance(
     )
 
 
+# Optimizer constructor parameters the orchestrator supplies itself. They are
+# real ``__init__`` parameters, so the derived allowlist above would admit them
+# -- and then ``get_optimizer(algorithm, config_space, objectives, **kwargs)``
+# passes them positionally and Python raises
+# ``InteractiveOptimizer.__init__() got multiple values for argument
+# 'config_space'``: an internal TypeError naming a class the caller never
+# mentioned, three frames below the API they called. They get a dedicated
+# message instead.
+_ORCHESTRATOR_SUPPLIED_OPTIMIZER_PARAMS: frozenset[str] = frozenset(
+    {"config_space", "objectives"}
+)
+
+
 def _registered_optimizer_init_params() -> frozenset[str]:
     """Every explicit ``__init__`` parameter of every REGISTERED optimizer.
 
@@ -635,6 +648,42 @@ def _registered_optimizer_init_params() -> frozenset[str]:
             and parameter.kind
             not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
         )
+    return frozenset(names) - _ORCHESTRATOR_SUPPLIED_OPTIMIZER_PARAMS
+
+
+def _explicit_optimize_signature_params() -> frozenset[str]:
+    """``.optimize()``'s own named parameters, read from the real signature.
+
+    These can never reach ``**algorithm_kwargs`` -- Python binds them first --
+    so they are not decorator-only no matter what ``_OPTIMIZE_DEFAULTS`` says.
+
+    Read rather than curated, for the same reason as
+    :func:`_registered_optimizer_init_params`: the hand-written version was
+    already nine names behind the signature it claimed to mirror (``budget``,
+    ``callbacks``, ``progress_bar``, ``save_to``, ``strategy``,
+    ``strategy_params``, ``surrogate_evaluator``,
+    ``surrogate_evaluator_name``, ``timeout``). That drift happened to be
+    inert -- measured: deriving the set changes the rejected set by nothing at
+    all today -- because a name is only misclassified when it appears in BOTH
+    the signature and ``_OPTIMIZE_DEFAULTS``, and none of the nine did. The
+    next parameter added to both would have been rejected at call time as a
+    decorator-only option while sitting in the signature, and curating a list
+    is what a PR titled "derive the allowlist" exists to stop doing.
+
+    ``optimize_sync`` is included because it is a separate public entry point;
+    the two signatures agree today and this keeps them honest if they diverge.
+    """
+    names: set[str] = set()
+    for method in (OptimizedFunction.optimize, OptimizedFunction.optimize_sync):
+        for name, parameter in inspect.signature(method).parameters.items():
+            if name == "self":
+                continue
+            if parameter.kind in (
+                inspect.Parameter.VAR_KEYWORD,
+                inspect.Parameter.VAR_POSITIONAL,
+            ):
+                continue
+            names.add(name)
     return frozenset(names)
 
 
@@ -657,7 +706,7 @@ def _decorator_only_optimize_params() -> frozenset[str]:
 
     return (
         frozenset(_OPTIMIZE_DEFAULTS)
-        - OptimizedFunction._EXPLICIT_OPTIMIZE_SIGNATURE_PARAMS
+        - _explicit_optimize_signature_params()
         - OptimizedFunction._CALL_TIME_ALGORITHM_KWARGS_ALLOWLIST
     )
 
@@ -1524,18 +1573,6 @@ class OptimizedFunction(Generic[_P, _R]):
     # named parameter, so they can never actually reach
     # ``**algorithm_kwargs`` -- listed only so the derived decorator-only set
     # below is provably exact (see ``_decorator_only_optimize_params``).
-    _EXPLICIT_OPTIMIZE_SIGNATURE_PARAMS: frozenset[str] = frozenset(
-        {
-            "algorithm",
-            "max_trials",
-            "custom_evaluator",
-            "configuration_space",
-            "objectives",
-            "tvl_spec",
-            "tvl_environment",
-            "tvl",
-        }
-    )
 
     # Keys with their own dedicated rejection message below (not "unknown" --
     # a removed/never-valid name with a specific, more helpful error).
@@ -1561,6 +1598,19 @@ class OptimizedFunction(Generic[_P, _R]):
                 "and is not accepted by .optimize() at call time; move it to "
                 f"the decorator: @traigent.optimize({sorted(rejected)[0]}=...). "
                 "Previously this was silently ignored (issue #1683)."
+            )
+
+        supplied_by_us = _ORCHESTRATOR_SUPPLIED_OPTIMIZER_PARAMS.intersection(
+            algorithm_kwargs
+        )
+        if supplied_by_us:
+            names = ", ".join(sorted(supplied_by_us))
+            raise TypeError(
+                f"{names} is supplied to the optimizer by Traigent and cannot be "
+                "passed to .optimize(); use configuration_space=... and "
+                "objectives=... instead. Previously this reached the optimizer "
+                "constructor twice and surfaced as an internal "
+                '"got multiple values for argument" TypeError (issue #1705).'
             )
 
         # General allowlist validation (issue #1705): a key that is neither a

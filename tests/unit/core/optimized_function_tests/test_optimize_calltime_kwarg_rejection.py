@@ -17,6 +17,7 @@ import pytest
 from traigent.core.optimized_function import (
     OptimizedFunction,
     _decorator_only_optimize_params,
+    _explicit_optimize_signature_params,
 )
 
 
@@ -101,7 +102,7 @@ class TestDecoratorOnlyKwargDenylist:
         deny = _decorator_only_optimize_params()
         expected = (
             frozenset(_OPTIMIZE_DEFAULTS)
-            - OptimizedFunction._EXPLICIT_OPTIMIZE_SIGNATURE_PARAMS
+            - _explicit_optimize_signature_params()
             - OptimizedFunction._CALL_TIME_ALGORITHM_KWARGS_ALLOWLIST
         )
         assert deny == expected
@@ -256,7 +257,7 @@ class TestShippedCallSitesSurviveTheAllowlist:
         )
         allowed = (
             OptimizedFunction._CALL_TIME_ALGORITHM_KWARGS_ALLOWLIST
-            | OptimizedFunction._EXPLICIT_OPTIMIZE_SIGNATURE_PARAMS
+            | _explicit_optimize_signature_params()
         )
         # Every explicit parameter of .optimize() is routed by Python to the
         # named parameter and can never reach **algorithm_kwargs, so read the
@@ -440,10 +441,23 @@ class TestEveryRegisteredOptimizersOptionsAreAccepted:
         )
 
     def test_no_registered_optimizer_option_is_rejected(self, opt_func) -> None:
-        """Every constructor parameter of every registered optimizer is accepted."""
+        """Every constructor parameter of every registered optimizer is accepted.
+
+        Except the two Traigent supplies itself. ``config_space`` and
+        ``objectives`` are real ``__init__`` parameters on every optimizer, but
+        ``get_optimizer(algorithm, config_space, objectives, **kwargs)`` already
+        passes them positionally -- accepting them from the caller as well is
+        not "it works today", it is an internal ``got multiple values for
+        argument`` TypeError three frames down. See
+        ``TestOrchestratorSuppliedOptimizerParams``.
+        """
+        from traigent.core.optimized_function import (
+            _ORCHESTRATOR_SUPPLIED_OPTIMIZER_PARAMS,
+        )
+
         rejected: dict[str, str] = {}
         for optimizer_name, parameters in self._registry_params().items():
-            for parameter in parameters:
+            for parameter in parameters - _ORCHESTRATOR_SUPPLIED_OPTIMIZER_PARAMS:
                 try:
                     opt_func._prepare_algorithm_kwargs({parameter: None})
                 except TypeError as exc:
@@ -484,3 +498,183 @@ class TestEveryRegisteredOptimizersOptionsAreAccepted:
         text = str(excinfo.value)
         assert "registered optimizer" in text
         assert "runtime override" in text
+
+
+class TestTheAllowlistRereadsTheRegistry:
+    """The registry is mutable, so the derived allowlist must not be cached.
+
+    ``_registered_optimizer_init_params`` carries a docstring saying in as many
+    words that it is deliberately NOT cached, because ``register_optimizer``
+    supports plugins and a cache would pin whatever happened to be registered
+    at the first ``.optimize()`` call. An independent reviewer put
+    ``@lru_cache(maxsize=1)`` back on it -- the exact thing the docstring
+    forbids -- and all 60 tests in this module stayed green: every one of them
+    reads the allowlist at most once per process, so a stale cache is
+    indistinguishable from a fresh read.
+
+    The ordering below is the whole test. Reading the allowlist BEFORE the
+    plugin registers is what populates a hypothetical cache; asserting
+    acceptance AFTER is what proves the second read saw the new optimizer.
+    """
+
+    def test_an_optimizer_registered_after_first_use_has_its_kwargs_accepted(self):
+        from traigent.core.optimized_function import _registered_optimizer_init_params
+        from traigent.optimizers.base import BaseOptimizer
+        from traigent.optimizers.registry import _OPTIMIZER_REGISTRY, register_optimizer
+
+        class _PluginOptimizer(BaseOptimizer):
+            def __init__(self, *args, plugin_only_knob: int = 0, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.plugin_only_knob = plugin_only_knob
+
+            def suggest(self, *args, **kwargs):  # pragma: no cover - never run
+                raise NotImplementedError
+
+            def update(self, *args, **kwargs):  # pragma: no cover - never run
+                raise NotImplementedError
+
+        # Read it first: this is the call that would fill a cache.
+        before = _registered_optimizer_init_params()
+        assert "plugin_only_knob" not in before
+
+        name = "_test_plugin_optimizer_1705"
+        register_optimizer(name, _PluginOptimizer)
+        try:
+            after = _registered_optimizer_init_params()
+        finally:
+            _OPTIMIZER_REGISTRY.pop(name, None)
+
+        assert "plugin_only_knob" in after, (
+            "the allowlist did not pick up an optimizer registered after its "
+            "first read -- it is being cached, which the function's own "
+            "docstring forbids. A plugin's legitimate options would be "
+            "rejected as typos for the life of the process."
+        )
+
+
+def test_the_signature_param_set_is_read_from_the_signature():
+    """The set must equal ``optimize``'s real parameters, with nothing curated.
+
+    The hand-written version this replaced was nine names behind the signature
+    it claimed to mirror. That drift was inert -- a name is only misclassified
+    when it appears in BOTH the signature and ``_OPTIMIZE_DEFAULTS``, and none
+    of the nine did -- but it is the exact failure mode this PR exists to stop:
+    a list someone has to remember to update.
+    """
+    import inspect
+
+    expected = set()
+    for method in (OptimizedFunction.optimize, OptimizedFunction.optimize_sync):
+        for name, parameter in inspect.signature(method).parameters.items():
+            if name == "self":
+                continue
+            if parameter.kind in (
+                inspect.Parameter.VAR_KEYWORD,
+                inspect.Parameter.VAR_POSITIONAL,
+            ):
+                continue
+            expected.add(name)
+
+    assert set(_explicit_optimize_signature_params()) == expected
+
+    # The nine the curated list had lost. Named individually so the failure
+    # says which one came back, not just that a set comparison differed.
+    for lost in (
+        "budget",
+        "callbacks",
+        "progress_bar",
+        "save_to",
+        "strategy",
+        "strategy_params",
+        "surrogate_evaluator",
+        "surrogate_evaluator_name",
+        "timeout",
+    ):
+        assert lost in _explicit_optimize_signature_params(), lost
+
+
+def test_deriving_the_signature_params_rejects_exactly_what_it_did_before():
+    """No behaviour change today -- the drift was inert, and this pins that.
+
+    If deriving the set had quietly started accepting a name that used to be
+    rejected, that would be a silent widening of the call-time surface hiding
+    inside a refactor. It does not: measured, the decorator-only set is
+    identical either way.
+    """
+    from traigent.api.decorators import _OPTIMIZE_DEFAULTS
+
+    curated = frozenset(
+        {
+            "algorithm",
+            "max_trials",
+            "custom_evaluator",
+            "configuration_space",
+            "objectives",
+            "tvl_spec",
+            "tvl_environment",
+            "tvl",
+        }
+    )
+    as_curated = (
+        frozenset(_OPTIMIZE_DEFAULTS)
+        - curated
+        - OptimizedFunction._CALL_TIME_ALGORITHM_KWARGS_ALLOWLIST
+    )
+    assert set(_decorator_only_optimize_params()) == set(as_curated)
+
+
+class TestOrchestratorSuppliedOptimizerParams:
+    """``config_space`` passed the allowlist and then crashed three frames down.
+
+    It is a genuine ``BaseOptimizer.__init__`` parameter, so the registry-derived
+    allowlist admitted it -- and then ``get_optimizer(algorithm, config_space,
+    objectives, **kwargs)`` passes it positionally as well. Measured on the
+    previous head:
+
+        .optimize(config_space={"temperature": [9.9]})
+        -> TypeError: InteractiveOptimizer.__init__() got multiple values for
+           argument 'config_space'
+
+    An internal error naming a class the caller never mentioned, from an API
+    that was supposed to answer typos with a clear message. Deriving the
+    allowlist from constructor signatures is right; it just has to subtract the
+    arguments Traigent fills in itself.
+    """
+
+    def test_config_space_is_rejected_with_a_message_naming_the_real_parameter(
+        self, opt_func
+    ):
+        with pytest.raises(TypeError) as excinfo:
+            opt_func._prepare_algorithm_kwargs({"config_space": {"temperature": [9.9]}})
+
+        message = str(excinfo.value)
+        assert "config_space" in message
+        assert "configuration_space" in message, (
+            "the message must name the parameter the caller should have used"
+        )
+        assert "InteractiveOptimizer" not in message, (
+            "the caller must not be shown an internal optimizer class they "
+            f"never named: {message}"
+        )
+
+    def test_the_orchestrator_supplied_names_are_not_on_the_derived_allowlist(self):
+        from traigent.core.optimized_function import (
+            _ORCHESTRATOR_SUPPLIED_OPTIMIZER_PARAMS,
+            _registered_optimizer_init_params,
+        )
+
+        derived = _registered_optimizer_init_params()
+        assert not (derived & _ORCHESTRATOR_SUPPLIED_OPTIMIZER_PARAMS), (
+            "an argument Traigent passes positionally must not also be accepted "
+            f"from the caller: {sorted(derived & _ORCHESTRATOR_SUPPLIED_OPTIMIZER_PARAMS)}"
+        )
+
+    def test_a_real_optimizer_option_is_still_accepted(self, opt_func):
+        """Control: the subtraction must not have narrowed the real allowlist.
+
+        ``pareto_frontier_size`` is the constructor parameter whose wrongful
+        rejection this PR exists to fix, so it is the right canary for an
+        over-broad subtraction.
+        """
+        merged = opt_func._prepare_algorithm_kwargs({"pareto_frontier_size": 7})
+        assert merged["pareto_frontier_size"] == 7
