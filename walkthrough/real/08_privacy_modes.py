@@ -95,7 +95,6 @@ async def main() -> None:
     results = await local_mode.optimize(
         algorithm="grid",
         max_trials=4,
-        show_progress=True,
         callbacks=[build_results_table_callback(is_mock=False, show_progress=True)],
         random_seed=42,
     )

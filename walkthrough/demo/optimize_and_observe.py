@@ -642,7 +642,6 @@ async def main() -> None:
         results = await agent.optimize(
             algorithm=runtime.scale.algorithm,
             max_trials=runtime.scale.max_trials,
-            show_progress=True,
             callbacks=[
                 build_results_table_callback(
                     is_mock=runtime.mode == "mock",
