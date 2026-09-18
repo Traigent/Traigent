@@ -1523,6 +1523,14 @@ class ResponseHandler(ABC):
         """
         for meta_attr in ("metadata", "response_metadata"):
             metadata_dict = self._safe_getattr(response, meta_attr)
+            # Fall back to the mapping lookup when the response IS a dict, the
+            # way the other two branches already do. Without it a dict-shaped
+            # response carrying its reason under ``metadata`` reported "no
+            # signal" -- including the internal wrapper shape this docstring
+            # names. Splitting the three branches apart is what made the
+            # inconsistency visible: two handled dicts, this one did not.
+            if metadata_dict is None and isinstance(response, dict):
+                metadata_dict = response.get(meta_attr)
             if isinstance(metadata_dict, dict):
                 for key in ("finish_reason", "stop_reason"):
                     reason = metadata_dict.get(key)

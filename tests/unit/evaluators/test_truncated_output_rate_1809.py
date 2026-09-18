@@ -321,3 +321,42 @@ async def test_warning_fires_once_per_run_across_trials(
     assert r1.metrics["truncated_output_rate"] == pytest.approx(0.5)
     assert r2.metrics["truncated_output_rate"] == pytest.approx(0.5)
     assert len(_warning_records(caplog)) == 1
+
+
+@pytest.mark.parametrize(
+    "response,expected",
+    [
+        ({"metadata": {"finish_reason": "length"}}, "length"),
+        ({"metadata": {"stop_reason": "max_tokens"}}, "max_tokens"),
+        ({"response_metadata": {"finish_reason": "length"}}, "length"),
+    ],
+)
+def test_a_dict_response_carrying_metadata_is_read(response, expected) -> None:
+    """The metadata branch was the only one that did not handle a dict.
+
+    ``_extract_choices_finish_reason`` and ``_extract_toplevel_finish_reason``
+    both fall back to ``response.get(...)`` when the response IS a mapping.
+    ``_extract_metadata_finish_reason`` read only ``getattr``, so a dict-shaped
+    response carrying its reason under ``metadata`` reported "no signal" --
+    including the internal wrapper shape its own docstring names
+    (``integrations/utils/response_wrapper.py``).
+
+    Measured before the fix: ``{"metadata": {"stop_reason": "max_tokens"}}``
+    -> ``None``. Splitting the three branches into separate methods is what
+    made the inconsistency visible; they had been interleaved in one function.
+    """
+    assert OpenAIResponseHandler().extract_finish_reason(response) == expected
+
+
+def test_a_non_dict_metadata_value_is_still_no_signal() -> None:
+    """Control: the fallback must not invent a reason out of any metadata.
+
+    A fix that reached for ``response["metadata"]`` without checking it is a
+    mapping would pass the test above and then raise, or worse, stringify
+    something arbitrary into a provider finish reason.
+    """
+    assert (
+        OpenAIResponseHandler().extract_finish_reason({"metadata": "not-a-dict"})
+        is None
+    )
+    assert OpenAIResponseHandler().extract_finish_reason({"metadata": None}) is None
