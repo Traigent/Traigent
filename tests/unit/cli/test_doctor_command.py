@@ -961,6 +961,154 @@ class TestSinksFoundInTheFourthRound:
         assert redact_url_credentials(url) == url
 
 
+class TestSinksFoundInTheFifthRound:
+    """Five rounds. The count stays in the class name on purpose.
+
+    This round came from an independent reviewer running the real CLI with
+    sentinel values, not from reading the sanitizer. All three findings are
+    places the sanitizer looked complete from the inside.
+    """
+
+    def test_a_secret_in_a_url_PATH_is_not_printed_in_the_environment_section(
+        self, runner, monkeypatch
+    ) -> None:
+        """Userinfo and query masking cannot see a path.
+
+        Measured on the previous head:
+          TRAIGENT_BACKEND_URL=https://api.example.com/hook/<sentinel>
+          -> "TRAIGENT_BACKEND_URL = https://api.example.com/hook/<sentinel>"
+        printed in full, through the `*_URL` branch this feature added
+        specifically so a URL could be shown safely.
+        """
+        monkeypatch.setenv("TRAIGENT_SKIP_DOTENV", "true")
+        # Two things this canary must avoid, both of which would make the test
+        # pass without the fix. It must not be the module-level SENTINEL --
+        # that starts with `tg_`, which the vendor key-shape rule masks on its
+        # own -- and its path must not be webhook-shaped, or the free-text
+        # webhook rule would mask it and this test would prove nothing about
+        # the environment section. `/v1/tenants/<id>` is the ordinary case:
+        # a perfectly normal-looking path that happens to carry a secret.
+        monkeypatch.setenv(
+            "TRAIGENT_BACKEND_URL", "https://api.example.com/v1/tenants/CANARYVALUE"
+        )
+        result = runner.invoke(doctor, ["--json", "--offline"])
+        assert "CANARYVALUE" not in result.output
+
+    def test_the_host_still_survives_because_that_is_the_whole_point(
+        self, runner, monkeypatch
+    ) -> None:
+        """Control: dropping the path must not drop the diagnosis.
+
+        "Am I pointed at production or at localhost" is the question this line
+        exists to answer. A fix that masked the whole URL would pass the test
+        above and destroy the feature.
+        """
+        monkeypatch.setenv("TRAIGENT_SKIP_DOTENV", "true")
+        monkeypatch.setenv(
+            "TRAIGENT_BACKEND_URL", "https://api.example.com/v1/tenants/CANARYVALUE"
+        )
+        result = runner.invoke(doctor, ["--json", "--offline"])
+        assert "api.example.com" in result.output
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://hooks.slack.com/services/T00000000/B00000000/CANARYVALUE",
+            "https://discord.com/api/webhooks/123456/CANARYVALUE",
+            "https://example.com/hook/CANARYVALUE",
+        ],
+    )
+    def test_a_webhook_path_credential_is_masked_in_free_text(self, url) -> None:
+        """A webhook URL *is* the credential -- there is nothing else to
+        authenticate with -- and it hides in the path, where neither the
+        userinfo nor the query pattern looks."""
+        from traigent.utils.diagnostics import redact_url_credentials
+
+        assert "CANARYVALUE" not in redact_url_credentials(url)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "https://api.example.com/api/v1/runs/123 returned 404",
+            "https://example.com/services/status is up",
+        ],
+    )
+    def test_an_ordinary_url_path_survives(self, text) -> None:
+        """Control: the path is usually the diagnosis.
+
+        "404 on /api/v1/runs/123" is the useful half of that message, so a rule
+        that masked every path would trade one silent failure for another.
+        """
+        from traigent.utils.diagnostics import redact_url_credentials
+
+        assert redact_url_credentials(text) == text
+
+    def test_a_webhook_env_value_is_masked_wherever_it_appears(self) -> None:
+        """SLACK_WEBHOOK was printed in full while DATABASE_URL, SENTRY_DSN and
+        MONGO_URI beside it were masked -- those carry the secret in userinfo,
+        a webhook carries it in the path, and the NAME rule did not list it."""
+        from traigent.utils.diagnostics import scrub
+
+        hook = "https://hooks.example.com/abc/CANARYVALUE"
+        out = scrub(f"POST failed: {hook}", environ={"SLACK_WEBHOOK": hook})
+        assert "CANARYVALUE" not in out
+
+    @pytest.mark.parametrize(
+        "flag,value",
+        [
+            ("--model", "hf_CANARYVALUEabcdefghij"),
+            ("--model", "AIzaCANARYVALUEabcdefghijklmnop"),
+        ],
+    )
+    def test_a_vendor_key_doctor_knows_about_is_masked(
+        self, runner, monkeypatch, flag, value
+    ) -> None:
+        """doctor's own `_ALL_VENDOR_KEY_MARKERS` names HF_TOKEN and
+        GOOGLE_API_KEY as vendors it looks for, while their key shapes were
+        missing from the masker -- so it echoed them back verbatim."""
+        monkeypatch.setenv("TRAIGENT_SKIP_DOTENV", "true")
+        result = runner.invoke(doctor, ["--json", "--offline", flag, value])
+        assert "CANARYVALUE" not in result.output
+
+
+class TestTheNameRuleMatchesSegmentsNotSubstrings:
+    """The over-match the fourth round's commit message said it had fixed.
+
+    `_SECRET_NAME_RE` was an unanchored substring search, so AUTHOR, XAUTHORITY,
+    KEYBOARD_LAYOUT and MONKEY_HOME all counted as secret-named. With the
+    minimum verbatim length at 4, a four-character value under any of them
+    masked every occurrence of those four characters in the report.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        ["GIT_AUTHOR_NAME", "AUTHOR", "XAUTHORITY", "KEYBOARD_LAYOUT", "MONKEY_HOME"],
+    )
+    def test_an_ordinary_variable_does_not_mask_the_message(self, name) -> None:
+        from traigent.utils.diagnostics import scrub
+
+        message = "No module named 'tests.helpers'; check your test layout"
+        assert scrub(message, environ={name: "test"}) == message
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "TRAIGENT_API_KEY",
+            "HF_TOKEN",
+            "AWS_SECRET_ACCESS_KEY",
+            "GITHUB_PAT",
+            "SLACK_WEBHOOK",
+            "DB_PASSWORD",
+            "TRAIGENT_SESSION_ID",
+        ],
+    )
+    def test_a_genuinely_secret_name_still_masks(self, name) -> None:
+        """Control: narrowing the rule must not switch the masking off."""
+        from traigent.utils.diagnostics import scrub
+
+        assert "swordfish" not in scrub("value=swordfish", environ={name: "swordfish"})
+
+
 class TestPricingKeepsProviderIdentity:
     """The over-match I introduced while fixing the original over-match.
 

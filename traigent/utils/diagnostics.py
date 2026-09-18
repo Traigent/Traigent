@@ -80,6 +80,13 @@ _URL_CREDENTIALS_RE = re.compile(
 )
 
 #: Common vendor key shapes, masked wherever they appear in free text.
+#:
+#: The list is derived from doctor's own ``_ALL_VENDOR_KEY_MARKERS`` rather than
+#: written from memory: review found ``HF_TOKEN`` and ``GOOGLE_API_KEY`` named
+#: there as vendors doctor knows about, while their key shapes were missing
+#: here -- so ``traigent doctor --model hf_<secret>`` echoed the value back
+#: verbatim. A vendor doctor knows how to look for is a vendor whose key shape
+#: it must know how to mask.
 _KEY_SHAPES_RE = re.compile(
     r"\b("
     r"sk-[A-Za-z0-9_\-]{16,}"  # OpenAI and lookalikes
@@ -88,6 +95,8 @@ _KEY_SHAPES_RE = re.compile(
     r"|gh[pousr]_[A-Za-z0-9]{20,}"  # GitHub
     r"|xox[abprs]-[A-Za-z0-9\-]{10,}"  # Slack
     r"|AKIA[0-9A-Z]{16}"  # AWS access key id
+    r"|hf_[A-Za-z0-9]{16,}"  # Hugging Face
+    r"|AIza[A-Za-z0-9_\-]{20,}"  # Google API key
     r")"
 )
 
@@ -107,8 +116,37 @@ _KEY_SHAPES_RE = re.compile(
 #: STRUCTURALLY secret by its shape (_KEY_SHAPES_RE, _URL_CREDENTIALS_RE)
 #: regardless of where it came from. Printing an environment value at all is
 #: governed separately, and strictly, by PRINTABLE_ENV_VALUES above.
+#: Matched on whole ``_``-delimited SEGMENTS, not as a substring. The first
+#: version was an unanchored search, which is how a mask meant for credentials
+#: reached ordinary variables -- measured, with a control proving the text was
+#: otherwise identical:
+#:
+#:     GIT_AUTHOR_NAME=test          ->  "No module named '***redacted***s.helpers';
+#:                                        check your ***redacted*** layout"
+#:     SSH_AUTH_SOCK=/home/user/ssh  ->  "... layout under ***redacted***"
+#:     neither set                   ->  "No module named 'tests.helpers'; check
+#:                                        your test layout under /home/user/ssh"
+#:
+#: ``AUTHOR``, ``XAUTHORITY``, ``KEYBOARD_LAYOUT`` and ``MONKEY_HOME`` all
+#: matched. With ``_MIN_VERBATIM_SECRET_LEN`` at 4, a four-character value under
+#: any of them masked every occurrence of those four characters in the report --
+#: an over-mask that scales with how short the value is.
+#:
+#: ``AUTH`` as a whole segment still catches ``SSH_AUTH_SOCK``. That one is
+#: left: it is a socket path rather than a secret, but masking it loses little
+#: and the alternative is special-casing names, which is how the original
+#: substring rule got written.
+#:
+#: ``WEBHOOK`` is here because a Slack/Discord webhook URL *is* the credential --
+#: there is nothing else to authenticate with -- and review found ``SLACK_WEBHOOK``
+#: printed in full while ``DATABASE_URL``, ``SENTRY_DSN`` and ``MONGO_URI`` beside
+#: it were correctly masked, because those carry the secret in userinfo and a
+#: webhook carries it in the path.
 _SECRET_NAME_RE = re.compile(
-    r"(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|_PAT\b|SIGNATURE|SESSION_ID)",
+    r"(?:^|_)("
+    r"KEY|KEYS|TOKEN|TOKENS|SECRET|SECRETS|PASSWORD|PASSWD|CREDENTIAL|"
+    r"CREDENTIALS|AUTH|PAT|SIGNATURE|WEBHOOK|SESSION_ID"
+    r")(?:_|$)",
     re.IGNORECASE,
 )
 
@@ -141,10 +179,56 @@ _URL_QUERY_SECRET_RE = re.compile(
 )
 
 
+#: A webhook URL carries its credential in the PATH, which neither the userinfo
+#: nor the query pattern can see:
+#:     https://hooks.slack.com/services/T0/B0/<secret>
+#: There is no general rule that a URL path is secret -- masking every path
+#: would destroy the diagnostics a report exists to deliver ("404 on
+#: /api/v1/runs/123" is the useful half of that message). So this is scoped to
+#: the shape where the path IS the credential: a webhook HOST
+#: (hooks.slack.com/services/...) or a ``hook``/``webhook`` PATH segment
+#: anywhere in the path (discord.com/api/webhooks/...). Everything after it is
+#: masked. ``services`` is deliberately not in the path list on its own -- it
+#: is an ordinary path segment, and Slack's case is already covered by its
+#: host.
+#:
+#: This is a pattern, so it trails vendors by definition. The complete fix for
+#: the environment section is :func:`redact_url_to_origin`, which drops the
+#: path entirely; this exists for a URL that appears in FREE TEXT, where the
+#: path is often the diagnosis.
+_URL_PATH_SECRET_RE = re.compile(
+    r"(?i)(https?://[^/\s]*(?:hooks?|webhooks?)[^/\s]*/"
+    r"|https?://[^\s]*?/(?:hooks?|webhooks?)/)"
+    r"(\S+)"
+)
+
+
 def redact_url_credentials(value: str) -> str:
-    """Mask credentials in a URL: userinfo AND credential-named query params."""
+    """Mask credentials in a URL: userinfo, credential-named query params, and
+    the path of a webhook-shaped URL."""
     masked = _URL_CREDENTIALS_RE.sub(_mask_userinfo, value)
-    return _URL_QUERY_SECRET_RE.sub(lambda m: f"{m.group(1)}{_REDACTED}", masked)
+    masked = _URL_QUERY_SECRET_RE.sub(lambda m: f"{m.group(1)}{_REDACTED}", masked)
+    return _URL_PATH_SECRET_RE.sub(lambda m: f"{m.group(1)}{_REDACTED}", masked)
+
+
+def redact_url_to_origin(value: str) -> str:
+    """Reduce a URL to scheme://host[:port], dropping path, query and fragment.
+
+    For the environment section of a report specifically. The host answers
+    every question that section is asked -- am I pointed at production, at
+    localhost, at the right region -- and the path answers none of them, while
+    being the one place a credential hides that neither userinfo nor query
+    masking can see. Dropping it outright is a complete fix for this sink
+    rather than a pattern that has to anticipate the next webhook vendor.
+
+    Anything that does not parse as an absolute URL is returned scrubbed rather
+    than reshaped, so a malformed value is never silently emptied.
+    """
+    match = re.match(r"(?i)^([a-z][a-z0-9+.\-]*://[^/?#\s]+)([/?#]\S*)?$", value)
+    if not match:
+        return redact_url_credentials(value)
+    origin = redact_url_credentials(match.group(1))
+    return f"{origin}/{_REDACTED}" if match.group(2) not in (None, "", "/") else origin
 
 
 def scrub(text: str, environ: dict[str, str] | None = None) -> str:
@@ -455,14 +539,18 @@ class TraigentDiagnostics:
                 if var_name in PRINTABLE_ENV_VALUES:
                     report.add_success("Environment", f"{var_name} = {value}")
                 elif var_name.endswith("_URL"):
-                    # A URL's host is genuinely useful for diagnosis; its
-                    # userinfo never is. scrub() as well as the userinfo strip:
-                    # a URL can carry a key as a query parameter, and a bare
-                    # token@host userinfo was not matched by the first version
-                    # of the pattern at all.
+                    # A URL's ORIGIN is genuinely useful for diagnosis -- am I
+                    # pointed at production or at localhost -- and nothing
+                    # below it is. Review found a credential in the path
+                    # (https://host/hook/<secret>) printed in full here,
+                    # because userinfo and query masking cannot see a path.
+                    # Reducing to the origin closes the sink for every URL
+                    # shape instead of one vendor at a time. scrub() still runs
+                    # on top, for a secret-named env value or a vendor key
+                    # shape that survived in the host itself.
                     report.add_success(
                         "Environment",
-                        f"{var_name} = {scrub(redact_url_credentials(value))}",
+                        f"{var_name} = {scrub(redact_url_to_origin(value))}",
                     )
                 else:
                     report.add_success("Environment", f"{var_name} is set")
