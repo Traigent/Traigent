@@ -28,8 +28,29 @@ from typing import Any, Literal
 
 import click
 
-from traigent.utils.diagnostics import DiagnosticReport, diagnose
+from traigent.utils.diagnostics import (
+    DiagnosticReport,
+    TraigentDiagnostics,
+    describe_exception,
+    diagnose,
+)
 from traigent.utils.env_config import is_strict_cost_accounting
+
+#: LiteLLM lists some models both bare ("gpt-4o") and provider-qualified
+#: ("openai/gpt-4o"). Only these exact forms count as a price hit -- never a
+#: substring of one, which is what let an invented model id report PASS.
+_LITELLM_PROVIDER_PREFIXES: tuple[str, ...] = (
+    "openai",
+    "anthropic",
+    "azure",
+    "bedrock",
+    "vertex_ai",
+    "gemini",
+    "mistral",
+    "cohere",
+    "groq",
+    "together_ai",
+)
 
 Status = Literal["PASS", "WARN", "FAIL", "SKIP"]
 
@@ -104,6 +125,14 @@ def _fold_diagnostic_report(report: DoctorReport, diag: DiagnosticReport) -> Non
     for success in diag.successes:
         report.add(success["category"], "PASS", success["message"])
     for warning in diag.warnings:
+        # The Chroma advisory is a standing product/security notice with the
+        # same text on every machine -- it diagnoses OUR packaging, not the
+        # user's environment, and nothing the user does can clear it. Folded as
+        # WARN it made `--strict` exit 1 on every completed run, which made the
+        # flag unusable: a gate that always fails gates nothing.
+        if warning["message"] == TraigentDiagnostics.CHROMA_INTEGRATION_UNAVAILABLE:
+            report.add(warning["category"], "SKIP", warning["message"])
+            continue
         report.add(warning["category"], "WARN", warning["message"])
     for issue in diag.issues:
         message = issue["message"]
@@ -183,11 +212,32 @@ def _run_model_checks(report: DoctorReport, model_id: str | None) -> None:
     try:
         import litellm
 
-        priced = model_id in litellm.model_cost or any(
-            model_id in key or key in model_id for key in litellm.model_cost
+        # Exact match only. The previous test was bidirectional substring
+        # (`model_id in key or key in model_id`), so an invented id that merely
+        # CONTAINS a priced name -- "gpt-4o-of-my-own" -- reported PASS and the
+        # user went on to run a cost objective against a model with no price.
+        # The one normalization kept is the provider prefix, because LiteLLM
+        # keys appear both as "gpt-4o" and "openai/gpt-4o".
+        candidates = {model_id, model_id.rpartition("/")[2]} - {""}
+        priced = any(
+            candidate in litellm.model_cost
+            or any(
+                f"{prefix}/{candidate}" in litellm.model_cost
+                for prefix in _LITELLM_PROVIDER_PREFIXES
+            )
+            for candidate in candidates
         )
     except ImportError:
-        report.add("Model", "SKIP", "litellm not importable; skipping pricing coverage")
+        # A missing LiteLLM is not an answer to a question the user asked
+        # explicitly by passing --model, so it warns rather than silently
+        # skipping.
+        report.add(
+            "Model",
+            "WARN",
+            "litellm is not installed, so pricing coverage for "
+            f"'{model_id}' could not be checked; install litellm or treat the "
+            "model as unpriced",
+        )
         return
 
     if priced:
@@ -273,7 +323,26 @@ def _run_scorer_checks(report: DoctorReport, scorer_spec: str | None) -> None:
         module = import_module(module_name)
         scorer = getattr(module, func_name)
     except (ImportError, AttributeError) as exc:
-        report.add("Scorer", "FAIL", f"could not import '{scorer_spec}': {exc}")
+        # Importing a user's scorer executes their module. The resulting
+        # exception is attacker-controlled text and used to be copied verbatim
+        # into the report, including --json, which is exactly what people paste
+        # into a ticket. `ImportError(os.environ["TRAIGENT_API_KEY"])` printed
+        # the key.
+        report.add(
+            "Scorer",
+            "FAIL",
+            f"could not import '{scorer_spec}': {describe_exception(exc)}",
+        )
+        return
+    except Exception as exc:  # noqa: BLE001 - user module code, any error
+        # A scorer module that raises something other than ImportError on
+        # import previously escaped this function and crashed the command,
+        # losing the whole report (and, with --json, emitting nothing at all).
+        report.add(
+            "Scorer",
+            "FAIL",
+            f"importing '{scorer_spec}' raised: {describe_exception(exc)}",
+        )
         return
 
     if not callable(scorer):
@@ -282,13 +351,51 @@ def _run_scorer_checks(report: DoctorReport, scorer_spec: str | None) -> None:
 
     from traigent.utils.function_identity import is_coroutine_callable
 
-    param_count = len(inspect.signature(scorer).parameters)
+    try:
+        signature = inspect.signature(scorer)
+    except (TypeError, ValueError) as exc:
+        # A C-implemented or otherwise un-introspectable callable. Previously
+        # this escaped the function and crashed the command -- with --json,
+        # emitting nothing at all instead of a report.
+        report.add(
+            "Scorer",
+            "WARN",
+            f"'{scorer_spec}' is callable but its signature could not be "
+            f"inspected: {describe_exception(exc)}",
+        )
+        return
+
+    # Counting parameters says nothing about whether the scorer can actually be
+    # CALLED. A required keyword-only parameter is never supplied by the SDK,
+    # so such a scorer raises TypeError on the first trial -- after the run has
+    # started spending. That is precisely the class of failure a preflight
+    # exists to catch, and the previous check reported PASS for it.
+    unbindable = [
+        name
+        for name, parameter in signature.parameters.items()
+        if parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        and parameter.default is inspect.Parameter.empty
+    ]
     async_note = " (async)" if is_coroutine_callable(scorer) else ""
+
+    if unbindable:
+        report.add(
+            "Scorer",
+            "FAIL",
+            f"'{scorer_spec}' has required keyword-only parameter(s) "
+            f"{', '.join(unbindable)}, which the SDK never supplies; the first "
+            "trial would raise TypeError. Give them defaults or make them "
+            "positional.",
+        )
+        return
+
+    param_count = len(signature.parameters)
     report.add(
         "Scorer",
         "PASS",
-        f"'{scorer_spec}' is importable and callable with {param_count} "
-        f"parameter(s){async_note}",
+        f"'{scorer_spec}' is importable, callable with {param_count} "
+        f"parameter(s){async_note}, and has no required keyword-only "
+        "parameters",
     )
 
 
@@ -367,7 +474,7 @@ def _render_table(report: DoctorReport) -> None:
 def doctor(
     output_json: bool,
     strict: bool,
-    offline: bool,  # noqa: ARG001 - see --offline help text
+    offline: bool,
     dataset_path: str | None,
     model_id: str | None,
     scorer_spec: str | None,
@@ -382,7 +489,10 @@ def doctor(
     """
     report = DoctorReport()
 
-    _fold_diagnostic_report(report, diagnose())
+    # --offline is threaded into diagnose() rather than discarded. It used to
+    # carry a `noqa: ARG001` and do nothing, so the command opened sockets to
+    # github.com and pypi.org while its own --help promised it would not.
+    _fold_diagnostic_report(report, diagnose(offline=offline))
     _run_key_checks(report)
     _run_model_checks(report, model_id)
     _run_cost_checks(report)

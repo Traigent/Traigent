@@ -9,12 +9,129 @@ Provides tools to diagnose and troubleshoot Traigent installation and configurat
 import importlib
 import json
 import os
+import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
 from traigent.utils.console import _safe_print
 from traigent.utils.env_config import is_truthy
+
+# ---------------------------------------------------------------------------
+# Redaction.
+#
+# A diagnostic report is the single most likely thing a user pastes into a
+# ticket, a chat, or an issue -- and `traigent doctor --json` exists to make
+# that easy. So nothing derived from an environment value or from an exception
+# raised by someone else's code may reach it unfiltered.
+#
+# Two rules, in this order:
+#
+#   1. Environment values are printed only for variables on an ALLOWLIST.
+#      A denylist ("redact anything with KEY in the name") is what this file
+#      used to do, and it leaked TRAIGENT_BACKEND_URL -- whose name contains
+#      no secret-looking token but whose value carries `https://user:pass@host`.
+#      Anything not on the allowlist is reported as present, never quoted.
+#
+#   2. Free text we did not author -- an exception message, most importantly --
+#      is scrubbed before it is reported, because importing a user's scorer
+#      runs their module code and the resulting exception can carry anything.
+#      The scrub masks live environment values verbatim, which defeats the
+#      direct attack (`ImportError(os.environ["TRAIGENT_API_KEY"])`), plus URL
+#      credentials and common vendor key shapes.
+#
+# Rule 2 is a best-effort net over untrusted text and cannot be complete; that
+# is exactly why rule 1 is an allowlist rather than a cleverer filter.
+# ---------------------------------------------------------------------------
+
+#: Environment variables whose VALUE may appear in a report. Everything else is
+#: reported as "is set" only. Keep this list to non-secret switches.
+PRINTABLE_ENV_VALUES: frozenset[str] = frozenset(
+    {
+        "TRAIGENT_MOCK_LLM",
+        "TRAIGENT_OFFLINE_MODE",
+    }
+)
+
+_REDACTED = "***redacted***"
+
+#: Credentials embedded in a URL: scheme://user:password@host -> scheme://user:***@host
+_URL_CREDENTIALS_RE = re.compile(
+    r"(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*://)(?P<user>[^/\s:@]+):(?P<secret>[^/\s@]+)@"
+)
+
+#: Common vendor key shapes, masked wherever they appear in free text.
+_KEY_SHAPES_RE = re.compile(
+    r"\b("
+    r"sk-[A-Za-z0-9_\-]{16,}"  # OpenAI and lookalikes
+    r"|tg_[A-Za-z0-9_\-]{16,}"  # Traigent
+    r"|uk_[A-Za-z0-9_\-]{16,}"  # Traigent user key
+    r"|gh[pousr]_[A-Za-z0-9]{20,}"  # GitHub
+    r"|xox[abprs]-[A-Za-z0-9\-]{10,}"  # Slack
+    r"|AKIA[0-9A-Z]{16}"  # AWS access key id
+    r")"
+)
+
+#: A value shorter than this is not treated as a secret worth masking verbatim,
+#: so that TRAIGENT_MOCK_LLM=1 does not turn every "1" in a message into a mask.
+_MIN_VERBATIM_SECRET_LEN = 8
+
+
+def redact_url_credentials(value: str) -> str:
+    """Strip the password out of any ``scheme://user:password@host`` in *value*."""
+    return _URL_CREDENTIALS_RE.sub(
+        lambda m: f"{m.group('scheme')}{m.group('user')}:{_REDACTED}@", value
+    )
+
+
+def scrub(text: str, environ: dict[str, str] | None = None) -> str:
+    """Remove credential-shaped content from text we did not author.
+
+    Applied to every exception message and every other free-form string that
+    originates outside this module before it reaches a report.
+
+    Args:
+        text: The untrusted text.
+        environ: Environment to treat as secret-bearing; defaults to the live
+            one. Injectable so the canary test can prove the masking works
+            without putting a real credential in the process environment.
+    """
+    if not text:
+        return text
+
+    env = os.environ if environ is None else environ
+    scrubbed = text
+
+    # 1. Any live environment value, masked verbatim. This is the one that
+    #    defeats a deliberately crafted exception; it runs FIRST so a secret is
+    #    gone before any narrower pattern gets a chance to miss it. Longest
+    #    values first, so a value that contains another is masked whole.
+    for name, value in sorted(env.items(), key=lambda kv: -len(kv[1] or "")):
+        if not value or len(value) < _MIN_VERBATIM_SECRET_LEN:
+            continue
+        if name in PRINTABLE_ENV_VALUES:
+            continue
+        if value in scrubbed:
+            scrubbed = scrubbed.replace(value, _REDACTED)
+
+    # 2. Credentials in a URL, whether or not they came from the environment.
+    scrubbed = redact_url_credentials(scrubbed)
+
+    # 3. Recognizable vendor key shapes, for a secret that reached the text
+    #    from a config file or an argument rather than from os.environ.
+    return _KEY_SHAPES_RE.sub(_REDACTED, scrubbed)
+
+
+def describe_exception(exc: BaseException) -> str:
+    """Render an exception for a report: type name plus a scrubbed message.
+
+    The type is always safe and is usually the diagnostic signal anyway
+    (``ModuleNotFoundError`` vs ``AttributeError``). The message is scrubbed
+    because it is the attacker-controlled half.
+    """
+    message = scrub(str(exc))
+    return f"{type(exc).__name__}: {message}" if message else type(exc).__name__
 
 
 class DiagnosticReport:
@@ -123,8 +240,13 @@ class TraigentDiagnostics:
         ("streamlit", "Streamlit", "streamlit"),
     ]
 
+    #: Any ONE of these satisfies "you can reach a model provider". Requiring
+    #: OPENAI_API_KEY specifically made `doctor` report a hard FAIL for a user
+    #: running entirely on Anthropic -- a correct setup called broken.
+    PROVIDER_KEY_VARIABLES = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY")
+
     ENVIRONMENT_VARIABLES = [
-        ("OPENAI_API_KEY", "OpenAI API access", True),
+        ("OPENAI_API_KEY", "OpenAI API access", False),
         ("TRAIGENT_API_KEY", "Traigent cloud features", False),
         ("ANTHROPIC_API_KEY", "Anthropic Claude access", False),
         ("TRAIGENT_BACKEND_URL", "Traigent backend", False),
@@ -140,8 +262,16 @@ class TraigentDiagnostics:
     )
 
     @classmethod
-    def run_diagnostics(cls) -> DiagnosticReport:
-        """Run complete diagnostics and return report."""
+    def run_diagnostics(cls, *, offline: bool = False) -> DiagnosticReport:
+        """Run complete diagnostics and return report.
+
+        Args:
+            offline: When True, skip every check that opens a network socket.
+                The ``traigent doctor --offline`` flag depends on this actually
+                being honoured -- it previously reached the CLI and was
+                discarded, so the command opened sockets to github.com and
+                pypi.org while telling the user it would not.
+        """
         report = DiagnosticReport()
 
         # Check Python version
@@ -160,6 +290,9 @@ class TraigentDiagnostics:
         # Check environment variables
         cls._check_environment(report)
 
+        # At least one provider key (not one SPECIFIC provider's key)
+        cls._check_provider_keys(report)
+
         # Check Traigent configuration
         cls._check_traigent_config(report)
 
@@ -167,7 +300,12 @@ class TraigentDiagnostics:
         cls._check_permissions(report)
 
         # Check network connectivity
-        cls._check_network(report)
+        if offline:
+            report.add_success(
+                "Network", "skipped (offline requested); no sockets were opened"
+            )
+        else:
+            cls._check_network(report)
 
         # Add recommendations
         cls._add_recommendations(report)
@@ -240,11 +378,21 @@ class TraigentDiagnostics:
             value = os.environ.get(var_name)
 
             if value:
-                # Don't show actual key values for security
-                if "KEY" in var_name:
-                    report.add_success("Environment", f"{var_name} is set")
-                else:
+                # Allowlist, not a name heuristic. The previous rule was
+                # `"KEY" in var_name`, which printed TRAIGENT_BACKEND_URL in
+                # full -- credentials included, for a `https://user:pass@host`
+                # style URL.
+                if var_name in PRINTABLE_ENV_VALUES:
                     report.add_success("Environment", f"{var_name} = {value}")
+                elif var_name.endswith("_URL"):
+                    # A URL's host is genuinely useful for diagnosis; its
+                    # userinfo never is.
+                    report.add_success(
+                        "Environment",
+                        f"{var_name} = {redact_url_credentials(value)}",
+                    )
+                else:
+                    report.add_success("Environment", f"{var_name} is set")
             elif required:
                 report.add_issue(
                     "Environment",
@@ -255,6 +403,29 @@ class TraigentDiagnostics:
                 report.add_warning(
                     "Environment", f"{var_name} not set (optional for {description})"
                 )
+
+    @classmethod
+    def _check_provider_keys(cls, report: DiagnosticReport) -> None:
+        """At least one model-provider key must be reachable.
+
+        Reported on the set, never on one vendor: a user on Anthropic alone is
+        correctly configured, and the previous per-variable `required=True` on
+        OPENAI_API_KEY reported that setup as a critical issue.
+        """
+        present = [name for name in cls.PROVIDER_KEY_VARIABLES if os.environ.get(name)]
+        if present:
+            report.add_success(
+                "Environment",
+                f"a model-provider key is set ({', '.join(sorted(present))})",
+            )
+        else:
+            report.add_issue(
+                "Environment",
+                "no model-provider API key is set ("
+                + ", ".join(cls.PROVIDER_KEY_VARIABLES)
+                + ")",
+                "Export the key for whichever provider you use",
+            )
 
     @classmethod
     def _check_traigent_config(cls, report: DiagnosticReport) -> None:
@@ -295,10 +466,16 @@ class TraigentDiagnostics:
             try:
                 # Try to create directory
                 path.mkdir(parents=True, exist_ok=True)
-                # Try to write a test file
-                test_file = path / ".test_permission"
-                test_file.write_text("test")
-                test_file.unlink()
+                # Write probe through a UNIQUE temp name. The previous code
+                # wrote and then unlinked a fixed ".test_permission", which
+                # destroyed a pre-existing file of that name -- a diagnostic
+                # command must not delete a user's data to find out whether it
+                # could have written some.
+                with tempfile.NamedTemporaryFile(
+                    dir=path, prefix=".traigent-write-probe-", delete=True
+                ) as probe:
+                    probe.write(b"test")
+                    probe.flush()
                 report.add_success("Permissions", f"Can write to {path}")
             except Exception:
                 report.add_warning(
@@ -353,9 +530,13 @@ class TraigentDiagnostics:
         )
 
 
-def diagnose() -> DiagnosticReport:
-    """Run diagnostics and return report."""
-    return TraigentDiagnostics.run_diagnostics()
+def diagnose(*, offline: bool = False) -> DiagnosticReport:
+    """Run diagnostics and return report.
+
+    Args:
+        offline: Skip every check that opens a network socket.
+    """
+    return TraigentDiagnostics.run_diagnostics(offline=offline)
 
 
 def main():
