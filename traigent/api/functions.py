@@ -1223,16 +1223,40 @@ def with_usage(
                     f"with_usage() model_costs[{i}] requires a non-empty "
                     f"string 'model' key."
                 )
-            if "cost" not in call or not isinstance(call["cost"], (int, float)):
+            # `bool` is a subclass of `int`, so a bare isinstance(..., (int, float))
+            # admits True/False and float(True) is 1.0 -- a boolean would land in
+            # the ledger as a $1.00 charge. The meta-side validator in
+            # traigent/core/meta_types.py rejects bools explicitly, but it never
+            # sees them from this path: we normalise to float here first, so the
+            # bool is already gone by the time it runs. Reject at the entry point.
+            cost = call.get("cost")
+            if (
+                "cost" not in call
+                or isinstance(cost, bool)
+                or not isinstance(cost, (int, float))
+            ):
                 raise TypeError(
                     f"with_usage() model_costs[{i}] requires a numeric 'cost' key."
                 )
+            input_tokens = call.get("input_tokens", 0) or 0
+            output_tokens = call.get("output_tokens", 0) or 0
+            for field_name, field_value in (
+                ("input_tokens", input_tokens),
+                ("output_tokens", output_tokens),
+            ):
+                if isinstance(field_value, bool) or not isinstance(
+                    field_value, (int, float)
+                ):
+                    raise TypeError(
+                        f"with_usage() model_costs[{i}] requires a numeric "
+                        f"'{field_name}' key, got {type(field_value).__name__}."
+                    )
             normalized_calls.append(
                 {
                     "model": model,
-                    "input_tokens": int(call.get("input_tokens", 0) or 0),
-                    "output_tokens": int(call.get("output_tokens", 0) or 0),
-                    "cost": float(call["cost"]),
+                    "input_tokens": int(input_tokens),
+                    "output_tokens": int(output_tokens),
+                    "cost": float(cost),
                 }
             )
         meta["calls"] = normalized_calls

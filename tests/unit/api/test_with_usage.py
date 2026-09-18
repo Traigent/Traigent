@@ -263,3 +263,47 @@ class TestWithUsageModelCosts:
             model_costs=[{"model": "gpt-4o-mini", "cost": 0.01}],
         )
         assert result == "answer"
+
+    def test_model_costs_bool_cost_raises(self):
+        """``bool`` is a subclass of ``int``; ``float(True)`` is a $1.00 charge.
+
+        ``meta_types`` rejects bools, but it never sees one from this path --
+        ``with_usage`` normalises to ``float`` first, so the bool is already gone
+        by the time that validator runs. Measured before this guard:
+        ``cost=True`` produced ``{'cost': 1.0}`` with no error raised.
+        """
+        ctx_handle = trial_context.set({"trial_id": 1})
+        try:
+            with pytest.raises(TypeError, match="numeric 'cost' key"):
+                traigent.with_usage(
+                    text="answer",
+                    total_cost=0.01,
+                    model_costs=[{"model": "gpt-4o-mini", "cost": True}],
+                )
+        finally:
+            trial_context.reset(ctx_handle)
+
+    @pytest.mark.parametrize("field", ["input_tokens", "output_tokens"])
+    def test_model_costs_bool_token_counts_raise(self, field):
+        """Same subclass trap on the token counts: ``int(True)`` is 1."""
+        ctx_handle = trial_context.set({"trial_id": 1})
+        entry = {"model": "gpt-4o-mini", "cost": 0.01, field: True}
+        try:
+            with pytest.raises(TypeError, match=f"numeric '{field}' key"):
+                traigent.with_usage(text="answer", total_cost=0.01, model_costs=[entry])
+        finally:
+            trial_context.reset(ctx_handle)
+
+    def test_model_costs_non_numeric_token_counts_raise(self):
+        ctx_handle = trial_context.set({"trial_id": 1})
+        try:
+            with pytest.raises(TypeError, match="numeric 'input_tokens' key"):
+                traigent.with_usage(
+                    text="answer",
+                    total_cost=0.01,
+                    model_costs=[
+                        {"model": "gpt-4o-mini", "cost": 0.01, "input_tokens": "12"}
+                    ],
+                )
+        finally:
+            trial_context.reset(ctx_handle)
