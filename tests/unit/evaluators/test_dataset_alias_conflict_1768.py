@@ -222,3 +222,96 @@ def test_load_inline_dataset_drops_losing_alias(
     assert example.expected_output == "A"
     assert "expected_output" not in example.metadata
     assert len(_warning_records(caplog)) == 1
+
+
+class TestTheJsonlLoaderGetsTheSameTreatment:
+    """`Dataset.from_jsonl` was untested, and it is the path real datasets take.
+
+    Every case above goes through `load_inline_dataset` or the coercion helper
+    directly. A second reviewer predicted that rewrapping the JSONL loader's
+    result -- `metadata=metadata` -> `metadata={"metadata": metadata}` at
+    `_parse_jsonl_examples` -- would restore the nesting bug for every file-
+    backed dataset and leave this module green. It would have.
+    """
+
+    def test_a_jsonl_row_metadata_dict_merges_at_the_top_level(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        import json as _json
+
+        from traigent.evaluators.base import Dataset
+
+        # `_resolve_dataset_source` refuses a path outside the dataset root.
+        # That guard is doing its job; point it at tmp_path rather than
+        # around it.
+        monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+        path = tmp_path / "rows.jsonl"
+        path.write_text(
+            "\n".join(
+                _json.dumps(row)
+                for row in (
+                    {
+                        "input": "q1",
+                        "expected_output": "A",
+                        "metadata": {"example_id": "row-7", "split": "dev"},
+                    },
+                    {"input": "q2", "expected_output": "B", "difficulty": "hard"},
+                )
+            ),
+            encoding="utf-8",
+        )
+
+        dataset = Dataset.from_jsonl(str(path))
+
+        assert dataset.examples[0].metadata == {"example_id": "row-7", "split": "dev"}
+        assert _example_correlation_key(dataset.examples[0], 0) == "row-7", (
+            "a file-backed row's example_id must reach the correlation key, "
+            "not fall back to a positional example_N"
+        )
+        assert dataset.examples[1].metadata == {"difficulty": "hard"}
+        assert _example_correlation_key(dataset.examples[1], 1) == "example_1"
+
+    def test_a_jsonl_row_drops_its_losing_alias(
+        self, tmp_path, caplog, monkeypatch
+    ) -> None:
+        import json as _json
+
+        from traigent.evaluators.base import Dataset
+
+        monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+        path = tmp_path / "dual.jsonl"
+        path.write_text(
+            _json.dumps({"input": "q", "output": "A", "answer": "B"}), encoding="utf-8"
+        )
+
+        with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
+            dataset = Dataset.from_jsonl(str(path))
+
+        assert dataset.examples[0].expected_output == "A"
+        assert dataset.examples[0].metadata == {}
+        assert _WARNING_MARKER in caplog.text
+
+
+class TestAnExplicitNullMetadataFieldIsNotAbsence:
+    """`item.get("metadata")` cannot tell `"metadata": null` from no field.
+
+    The first version keyed the non-dict branch on `row_metadata is not None`,
+    so an explicitly-null field was dropped -- contradicting the same
+    function's promise to keep a non-dict value rather than silently discard
+    it. Measured against develop, which reported `{"metadata": None}`.
+    """
+
+    def test_an_explicit_null_is_kept(self) -> None:
+        _, _, metadata = _coerce_dataset_example_mapping(
+            {"input": "q", "output": "A", "metadata": None},
+            source="s",
+            location="row",
+        )
+        assert metadata == {"metadata": None}
+
+    def test_an_absent_field_stays_absent(self) -> None:
+        """Control: presence, not truthiness -- a missing field adds nothing."""
+        _, _, metadata = _coerce_dataset_example_mapping(
+            {"input": "q", "output": "A"}, source="s", location="row"
+        )
+        assert metadata == {}

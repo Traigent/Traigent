@@ -798,15 +798,20 @@ def _coerce_dataset_example_mapping(
 
     extra_metadata = {k: v for k, v in item.items() if k not in metadata_keys}
 
+    has_metadata_field = "metadata" in item
     row_metadata = item.get("metadata")
     if isinstance(row_metadata, CollectionsMapping):
         metadata = {**extra_metadata, **row_metadata}
     else:
         metadata = extra_metadata
-        if row_metadata is not None:
-            # Non-dict "metadata" value: cannot merge as the metadata dict,
-            # so keep it as an ordinary extra field rather than silently
-            # dropping it.
+        if has_metadata_field:
+            # Non-dict "metadata" value: cannot merge as the metadata dict, so
+            # keep it as an ordinary extra field rather than silently dropping
+            # it. Keyed on PRESENCE, not on the value being non-None: `item.get`
+            # cannot tell an absent field from an explicit `"metadata": null`,
+            # and dropping the latter contradicts this function's own promise
+            # to preserve a non-dict value. Measured against develop, which
+            # reported {"metadata": None} for that row.
             metadata["metadata"] = row_metadata
 
     expected_output = item.get(expected_key) if expected_key is not None else None
