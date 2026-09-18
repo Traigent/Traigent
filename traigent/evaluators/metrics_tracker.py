@@ -69,8 +69,8 @@ REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO = 0.5
 #: * ``MetricsTracker.format_for_backend`` outputs: ``score``, ``accuracy``,
 #:   ``duration``, ``input_tokens``, ``output_tokens``, ``total_tokens``,
 #:   ``response_time_ms``, ``cost`` (per-trial TOTAL),
-#:   ``cost_per_example_mean``, ``cost_unpriced``, ``total_examples``,
-#:   ``successful_examples``, ``tokens_per_second``;
+#:   ``cost_per_example_mean``, ``cost_unpriced``, ``tokens_estimated``,
+#:   ``total_examples``, ``successful_examples``, ``tokens_per_second``;
 #: * the LLM aggregation (``_aggregate_llm_metrics``): ``prompt_tokens``,
 #:   ``completion_tokens``, ``total_tokens``, ``input_cost``, ``output_cost``,
 #:   ``total_cost``, ``cost_unpriced``, ``avg_response_time``,
@@ -96,6 +96,11 @@ RESERVED_METRIC_KEYS: frozenset[str] = frozenset(
         # #1741). Reserved so a user tuple key cannot overwrite it and it is
         # never dropped under the measures ceiling.
         "cost_unpriced",
+        # True iff any measured example's token counts were fabricated from
+        # character length rather than captured usage (#2263). Reserved so a
+        # user tuple key can never overwrite it and it is never dropped under
+        # the measures ceiling.
+        "tokens_estimated",
         "latency",
         "score",
         # Diagnostic: the built-in exact-match scorer recorded alongside a custom
@@ -365,6 +370,17 @@ class TokenMetrics:
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+    # True when these counts were FABRICATED from character length
+    # (``LocalEvaluator._estimate_string_tokens``, Traigent#2263) rather than
+    # captured from a real provider response. A run whose optimized function
+    # returns a plain string with no captured LLM usage still needs SOME
+    # length-derived number for privacy-mode cost estimation, but that number
+    # must stay distinguishable from a measured one downstream -- an
+    # estimated-tokens row is not a smaller real bill, it is a guess with no
+    # bill behind it at all. Consumers (trial/result aggregation, cost
+    # pricing) must treat this as "not real usage", never merge it into the
+    # same fields as a measured count without a flag.
+    estimated: bool = False
 
     def __post_init__(self) -> None:
         # Ensure non-negative values and handle None
@@ -841,6 +857,22 @@ class MetricsTracker:
         # 1.0/0.0, never a Python ``bool``.
         cost_unpriced = 1.0 if any(m.cost.unpriced for m in measured_metrics) else 0.0
 
+        # True when ANY measured example's token counts were fabricated from
+        # character length (``LocalEvaluator._estimate_string_tokens``, #2263)
+        # rather than captured from real usage. ``input_tokens``/
+        # ``output_tokens``/``total_tokens`` above are means over the SAME
+        # measured rows, so this flag is the only signal that some of that
+        # mean is a length-derived guess rather than measured usage --
+        # without it a cost/token objective or the trial summary table
+        # cannot tell "no LLM call was captured" from "a cheap one was".
+        # Numeric (1.0/0.0), never a Python ``bool``: the wire-format
+        # ``MeasuresDict`` rejects bool measures for JSON Schema parity
+        # (``traigent.cloud.dtos.MeasuresDict``), same convention as
+        # ``CostMetrics.unpriced``/``cost_unpriced`` (#1597/#1741).
+        tokens_estimated = (
+            1.0 if any(m.tokens.estimated for m in measured_metrics) else 0.0
+        )
+
         formatted = {
             # Core metrics (single values)
             "score": accuracy_value,  # Use actual accuracy for score
@@ -863,6 +895,9 @@ class MetricsTracker:
             # True iff any measured example's cost is unknown spend, not
             # verified-free $0 (#1741). See comment above.
             "cost_unpriced": cost_unpriced,
+            # True iff any measured example's token counts are a length-derived
+            # estimate, not captured usage (#2263). See comment above.
+            "tokens_estimated": tokens_estimated,
             # Additional useful metrics
             "total_examples": aggregated["total_examples"],
             "successful_examples": aggregated["successful_examples"],
@@ -1207,13 +1242,21 @@ class ResponseHandler(ABC):
         Checks the following sources in order, preferring an explicit
         provider-reported charge — including an explicit ``$0`` — over a
         LiteLLM/local price-table estimate (#2274):
-        1. ``response.cost`` — generic cost attribute (dict or scalar).
+        1. ``response.cost`` — generic cost attribute (dict or scalar). Used
+           only when it parses to a POSITIVE amount. A bare ``.cost`` on an
+           arbitrary response object is far more often an uninitialised
+           placeholder than a provider charge, so a ``0.0`` here must not
+           short-circuit the authoritative source below (#2342).
         2. ``response.usage.cost`` — LiteLLM's Usage object exposes ``cost``
            when the provider (e.g. OpenRouter) includes it in the usage
-           block. This is an explicit provider-reported charge, so it is
-           retained even when it is exactly ``0.0`` and flagged via
-           ``CostMetrics.cost_explicit`` so the downstream cost path keeps it
-           instead of substituting a price-table estimate.
+           block. litellm's own ``Usage`` does not define ``cost``, so the
+           attribute's mere presence means the provider supplied it: this is
+           the authoritative figure, retained even when it is exactly ``0.0``
+           and flagged via ``CostMetrics.cost_explicit`` so the downstream
+           cost path keeps it instead of substituting a price-table estimate.
+           Accepted only when finite, non-negative and not a ``bool``; an
+           unusable value is logged and falls back to the estimate below — it
+           is never recorded, and never silently treated as ``$0``.
         3. ``response._hidden_params['response_cost']`` — LiteLLM sets this
            for OpenRouter and other providers. On some routes LiteLLM copies
            the provider's own charge here; on others it is a local
@@ -1223,25 +1266,30 @@ class ResponseHandler(ABC):
         """
         cost_metrics = CostMetrics()
 
-        # 1. Generic ``response.cost`` attribute (dict or scalar). This is an
-        #    explicit provider-reported charge, so it is retained even when
-        #    it is exactly 0.0 (#2274) — return whenever a cost was actually
-        #    parsed, not only when it happens to be positive.
-        response_cost_found = False
+        # 1. Generic ``response.cost`` attribute (dict or scalar). Only a
+        #    POSITIVE value short-circuits. Returning as soon as a cost was
+        #    *parsed* — including a parsed 0.0 — let a placeholder
+        #    ``response.cost = 0`` shadow BOTH the authoritative ``usage.cost``
+        #    below and the LiteLLM figure after it, so a response carrying
+        #    ``cost = 0`` next to a real ``usage.cost = 0.0042`` was priced
+        #    from the offline table instead: a 9x UNDER-report of real spend,
+        #    and 1282x for ``usage.cost = 0.25`` (#2342). Returning a zero
+        #    here never preserved anything in the first place — the generic
+        #    path does not set ``cost_explicit``, so ``handle``'s
+        #    ``total_cost > 0 or cost_explicit`` test discarded it one frame
+        #    up regardless.
         if hasattr(response, "cost"):
             try:
                 if isinstance(response.cost, dict):
                     cost_metrics.input_cost = response.cost.get("input", 0.0)
                     cost_metrics.output_cost = response.cost.get("output", 0.0)
                     cost_metrics.total_cost = response.cost.get("total", 0.0)
-                    response_cost_found = True
                 else:
                     cost_metrics.total_cost = float(response.cost)
-                    response_cost_found = True
             except (TypeError, ValueError) as e:
                 logger.debug(f"Failed to parse cost from response: {e}")
 
-        if response_cost_found:
+        if cost_metrics.total_cost > 0.0:
             return cost_metrics
 
         # 2. LiteLLM Usage.cost field — an explicit provider-reported charge.
@@ -1251,12 +1299,26 @@ class ResponseHandler(ABC):
         if usage is not None:
             try:
                 usage_cost = getattr(usage, "cost", None)
-                # ``bool`` is a subclass of ``int``, so ``isinstance(True, int)``
-                # is True and a stray boolean would price a call at $1.00 now
-                # that the old ``> 0`` filter no longer rejects it. Reject it
-                # explicitly rather than relying on the magnitude.
-                if isinstance(usage_cost, (int, float)) and not isinstance(
-                    usage_cost, bool
+                # Validate the AUTHORITATIVE figure before trusting it, since
+                # dropping the old ``> 0`` filter also dropped every sanity
+                # check it incidentally performed (#2342):
+                #  * ``bool`` is a subclass of ``int``, so ``isinstance(True,
+                #    int)`` is True and ``float(True)`` is 1.0 — a stray
+                #    boolean would book a $1.00 charge;
+                #  * a negative reached ``format_for_backend`` verbatim
+                #    (``usage.cost = -1`` produced ``cost: -1.0``), because the
+                #    explicit-$0 bypass downstream tests ``<= 0.0`` and so also
+                #    skipped the plausibility reconciler;
+                #  * ``inf`` reached the ledger as ``inf``, and ``NaN`` set
+                #    ``cost_explicit`` on a value that then lost to the
+                #    estimate anyway — a provenance flag that lied.
+                # A rejected value is NOT a $0 charge: fall through to the
+                # estimate and say so in the log.
+                if (
+                    isinstance(usage_cost, (int, float))
+                    and not isinstance(usage_cost, bool)
+                    and math.isfinite(usage_cost)
+                    and usage_cost >= 0
                 ):
                     cost_metrics.total_cost = float(usage_cost)
                     # litellm's own ``Usage`` object does NOT define ``cost``
@@ -1273,6 +1335,18 @@ class ResponseHandler(ABC):
                         cost_metrics.total_cost,
                     )
                     return cost_metrics
+                if usage_cost is not None:
+                    # Say it out loud: the figure the provider sent was
+                    # unusable, so what lands on the trial is an ESTIMATE.
+                    # Cost accounting fails closed — an invalid charge becomes
+                    # unknown spend, never a silent $0 and never the bad value.
+                    logger.warning(
+                        "Ignoring unusable provider-reported usage.cost %r "
+                        "(must be a finite, non-negative, non-boolean "
+                        "number). The cost recorded for this call is a "
+                        "price-table ESTIMATE, not the provider's charge.",
+                        usage_cost,
+                    )
             except Exception as e:  # pragma: no cover
                 logger.debug(f"Failed to parse cost from usage.cost: {e}")
 
@@ -1769,6 +1843,16 @@ def _calculate_cost_for_metrics(
     Uses cost_from_tokens() as the canonical cost path when token counts are
     available, falling back to deprecated text-based functions otherwise.
     """
+    if metrics.tokens.estimated:
+        # Traigent#2263: character-length-derived counts (``LocalEvaluator.
+        # _estimate_string_tokens``) are a guess, not a measurement -- there
+        # is no real spend behind them to price. In the current call graph
+        # this function always runs BEFORE the estimate is written, so this
+        # is currently a no-op guard; it exists so a future reordering (or a
+        # new caller) cannot silently start pricing fabricated tokens as if
+        # they were real usage.
+        return
+
     from traigent.utils.env_config import is_strict_cost_accounting
 
     strict_cost_accounting = is_strict_cost_accounting()

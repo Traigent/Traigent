@@ -699,6 +699,17 @@ class LocalEvaluator(BaseEvaluator):
         Updates example_metric in place with estimated token counts.
         Uses approximation of 1 token per 4 characters.
 
+        These counts are a guess derived from character length, not a
+        measurement -- there was no captured LLM usage for this example
+        (that is the only reason this method runs at all, see the caller).
+        ``example_metric.tokens.estimated`` is set so downstream consumers
+        (trial-level aggregation, cost pricing) never mistake a fabricated
+        count for real usage (Traigent#2263). Privacy mode's own
+        length-derived cost estimation is a legitimate, intentional use of
+        this same approximation -- the flag does not disable it, it only
+        stops the estimate from being silently indistinguishable from a
+        real one once it lands on a trial.
+
         Args:
             example_metric: Metrics object to update
             output: String output from function
@@ -708,6 +719,7 @@ class LocalEvaluator(BaseEvaluator):
         """
         # Estimate output tokens
         example_metric.tokens.output_tokens = max(1, len(output) // 4)
+        example_metric.tokens.estimated = True
 
         # Estimate input tokens from local lengths only. Privacy mode may not
         # retain raw prompts, but it still needs length-derived cost metrics.

@@ -43,8 +43,7 @@ def _write_pyproject(root: Path, *extras_by_name: tuple[str, list[str]]) -> None
         for name, specs in extras_by_name
     )
     (root / "pyproject.toml").write_text(
-        textwrap.dedent(
-            f"""
+        textwrap.dedent(f"""
             [project]
             name = "traigent"
             version = "0.0.0"
@@ -57,8 +56,7 @@ def _write_pyproject(root: Path, *extras_by_name: tuple[str, list[str]]) -> None
 
             [project.optional-dependencies]
             {extras_block}
-            """
-        ).strip()
+            """).strip()
     )
 
 
@@ -249,6 +247,115 @@ def test_extra_dependencies_are_also_checked(drift_module) -> None:
 
     rc = module.main()
     assert rc == 1
+
+
+def test_extra_floor_absent_from_its_mirror_file_is_a_finding(drift_module) -> None:
+    """An extra floor missing from its own requirements-<extra>.txt is a finding.
+
+    This is issue #2211: check 3 only ever looked at ``[project.dependencies]``,
+    so a package declared only under an extra (e.g. ``pyotp`` under
+    ``security``) could drift out of its mirror file with nothing catching it.
+    """
+    module, root = drift_module
+    _write_pyproject(
+        root,
+        ("security", ["pyotp>=2.9.0", "redis>=4.0.0"]),
+    )
+    (root / "requirements" / "requirements.txt").write_text(
+        "cryptography>=46.0.7\naiohttp>=3.13.4\nlangchain-core>=1.2.11\n"
+    )
+    (root / "requirements" / "requirements-security.txt").write_text(
+        "-r requirements.txt\nredis>=4.0.0\n"  # pyotp missing
+    )
+
+    rc = module.main()
+    assert rc == 1
+
+
+def test_extra_with_no_mirror_file_is_not_checked(drift_module) -> None:
+    """An extra that has no requirements-<extra>.txt is out of check 4's scope.
+
+    There is nothing to compare against, and inventing the file is a product
+    decision (issue #2211), not this guard's job.
+    """
+    module, root = drift_module
+    _write_pyproject(
+        root,
+        ("docs", ["mkdocs>=1.5.0"]),
+    )
+    (root / "requirements" / "requirements.txt").write_text(
+        "cryptography>=46.0.7\naiohttp>=3.13.4\nlangchain-core>=1.2.11\n"
+    )
+
+    assert module.main() == 0
+
+
+def test_extra_floor_already_in_core_mirror_is_not_double_flagged(drift_module) -> None:
+    """A dependency declared under an extra but already floored in the core
+    mirror (over-inclusion, not drift) is not this check's problem.
+
+    Mirrors the real ``hybrid`` extra's ``claude-code-sdk``/``mcp``: both are
+    declared under ``optional-dependencies.hybrid`` in pyproject.toml but
+    already floored directly in ``requirements/requirements.txt``, which every
+    extra file pulls in via ``-r requirements.txt``.
+    """
+    module, root = drift_module
+    _write_pyproject(
+        root,
+        ("hybrid", ["httpx>=0.24.0", "mcp>=1.28.1"]),
+    )
+    (root / "requirements" / "requirements.txt").write_text(
+        "cryptography>=46.0.7\naiohttp>=3.13.4\nlangchain-core>=1.2.11\nmcp>=1.28.1\n"
+    )
+    (root / "requirements" / "requirements-hybrid.txt").write_text(
+        "-r requirements.txt\nhttpx>=0.24.0\n"  # mcp intentionally not repeated
+    )
+
+    assert module.main() == 0
+
+
+def test_extra_floor_marker_matching_pyprojects_own_marker_is_clean(
+    drift_module,
+) -> None:
+    """A mirror line carrying the exact marker pyproject itself used protects
+    exactly what pyproject promised (e.g. real-world ``faiss-cpu; sys_platform
+    != 'win32'`` under the ``integrations`` extra) and must not be flagged
+    ``conditional``.
+    """
+    module, root = drift_module
+    _write_pyproject(
+        root,
+        ("integrations", ["faiss-cpu>=1.7.0; sys_platform != 'win32'"]),
+    )
+    (root / "requirements" / "requirements.txt").write_text(
+        "cryptography>=46.0.7\naiohttp>=3.13.4\nlangchain-core>=1.2.11\n"
+    )
+    (root / "requirements" / "requirements-integrations.txt").write_text(
+        "-r requirements.txt\nfaiss-cpu>=1.7.0; sys_platform != 'win32'\n"
+    )
+
+    assert module.main() == 0
+
+
+def test_extra_floor_marker_narrower_than_pyprojects_is_a_finding(
+    drift_module,
+) -> None:
+    """A mirror marker that is *not* the one pyproject declared still protects
+    only some environments and must be flagged, even though pyproject's own
+    declaration is itself conditional."""
+    module, root = drift_module
+    _write_pyproject(
+        root,
+        ("integrations", ["faiss-cpu>=1.7.0; sys_platform != 'win32'"]),
+    )
+    (root / "requirements" / "requirements.txt").write_text(
+        "cryptography>=46.0.7\naiohttp>=3.13.4\nlangchain-core>=1.2.11\n"
+    )
+    (root / "requirements" / "requirements-integrations.txt").write_text(
+        '-r requirements.txt\nfaiss-cpu>=1.7.0; python_version < "3.12"\n'
+    )
+
+    assert module.main() == 1
 
 
 def test_ignores_loose_specs_without_floor(drift_module) -> None:

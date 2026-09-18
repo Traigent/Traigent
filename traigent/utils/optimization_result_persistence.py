@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 #: missing key is corruption — but says nothing about fields introduced later.
 #: Bump this whenever a field is added to :data:`RESULT_RESTORE`, and record the
 #: new version in :data:`FIELD_INTRODUCED_IN`. See :func:`decode_result`.
-RESULT_SCHEMA_VERSION = 1
+RESULT_SCHEMA_VERSION = 2
 
 #: Key under which :data:`RESULT_SCHEMA_VERSION` is stored.
 SCHEMA_VERSION_KEY = "_schema_version"
@@ -139,6 +139,7 @@ RESULT_RESTORE: frozenset[str] = frozenset(
         "warning_codes",  # structured form of the above; clamps success_rate
         "source",  # local vs backend provenance (#1265)
         "best_config_margin",  # winner-vs-runner-up significance (#1866)
+        "ranking_eligible_trial_ids",  # terminal selector's eligible set (#1704)
     }
 )
 
@@ -342,9 +343,10 @@ FIELD_INTRODUCED_IN: dict[str, int] = {
     "total_tokens": 1,
     "warning_codes": 1,
     "warnings": 1,
+    "ranking_eligible_trial_ids": 2,  # issue #1704
     # The next field added to RESULT_RESTORE goes here at the *bumped*
-    # RESULT_SCHEMA_VERSION, e.g. "billing_currency": 2 — never at 1, which
-    # would claim every artifact ever written already carried it.
+    # RESULT_SCHEMA_VERSION, e.g. "billing_currency": 3 — never at 1 or 2,
+    # which would claim every artifact ever written already carried it.
 }
 
 #: Reference value for every :data:`RESULT_RESTORE` field: a non-default,
@@ -406,6 +408,7 @@ _SENTINELS: dict[str, Any] = {
     "warning_codes": ["OBJECTIVE_UNMATCHED"],
     "source": "local",
     "best_config_margin": {"verdict": "statistical_tie", "delta": 0.01},
+    "ranking_eligible_trial_ids": ["trial-sentinel-0"],
 }
 
 
