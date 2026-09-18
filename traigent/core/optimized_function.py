@@ -253,35 +253,54 @@ def _resolve_callbacks(
         ManagedProgressCallback,
         ProgressBarCallback,
         ResultsTableCallback,
-        SimpleProgressCallback,
     )
 
-    # The heartbeat exists to fill a SILENCE, so it defers to a callback that
-    # actually reports per trial -- and only then. Membership alone is not
-    # enough: SimpleProgressCallback(show_details=False) emits nothing from
-    # on_trial_complete (measured: ''), so treating it as a reporter would
-    # suppress the heartbeat and leave the managed run silent, which is the
-    # exact problem this feature solves. DetailedProgressCallback always emits
-    # regardless of its toggles (measured across all four combinations).
+    # The heartbeat exists to fill a SILENCE, so it defers only to a callback
+    # that is KNOWN to emit on every trial completion.
+    #
+    # The two answers are not symmetric. A false "yes" suppresses the heartbeat
+    # and leaves a long managed run printing nothing -- the exact problem this
+    # feature exists to solve. A false "no" costs one duplicated line. So
+    # anything not positively known to report must answer False.
+    #
+    # Measured against each on_trial_complete, on a successful AND a failed
+    # trial (tests/unit/core/optimized_function_tests/test_resolve_callbacks.py):
+    #
+    #   ManagedProgressCallback   emits on both, flushed        -> reporter
+    #   DetailedProgressCallback  emits on both, toggles do not
+    #                             gate the trial line           -> reporter
+    #   SimpleProgressCallback    silent on a FAILED trial, and
+    #                             silent on a completed trial
+    #                             with no recognized score and
+    #                             no best score yet; also silent
+    #                             with show_details=False, and
+    #                             invisible with output="log"
+    #                             (the CLI's own default level
+    #                             is WARNING, cli/main.py)       -> NOT a reporter
+    #
+    # SimpleProgressCallback is therefore excluded outright rather than
+    # inspected: a run whose trials all fail is precisely when the user most
+    # needs a heartbeat, and that is exactly when this callback goes quiet.
+    # Excluding it also means we never read attributes off a user object here,
+    # so a subclass whose `show_details` is a property that raises can no
+    # longer take down callback resolution.
+    #
+    # Exact type rather than isinstance: a subclass may override
+    # on_trial_complete to filter or stay silent, which is invisible from here.
+    # An unrecognized subclass gets a heartbeat it may not need, which is the
+    # harmless direction.
+    #
+    # (ProgressBarCallback is listed for completeness; its presence is already
+    # handled by `has_progress` below, which short-circuits the heartbeat
+    # before this predicate can matter.)
+    _per_trial_reporters = (
+        ManagedProgressCallback,
+        DetailedProgressCallback,
+        ProgressBarCallback,
+    )
+
     def _reports_per_trial(callback: Any) -> bool:
-        if isinstance(callback, SimpleProgressCallback):
-            # Two ways this one is silent, both measured:
-            #   show_details=False -> on_trial_complete emits ''
-            #   output="log"       -> goes to logger.info, which the CLI's own
-            #                         default level (WARNING, cli/main.py) drops
-            # A third is accepted rather than handled: with show_details=True it
-            # prints on completed trials but not failed ones, so it still reports
-            # on the normal path. Suppressing a heartbeat for a callback the user
-            # cannot see is worse than printing twice, so anything uncertain
-            # counts as NOT reporting.
-            return (
-                bool(getattr(callback, "show_details", True))
-                and getattr(callback, "output", "print") != "log"
-            )
-        return isinstance(
-            callback,
-            (ProgressBarCallback, ManagedProgressCallback, DetailedProgressCallback),
-        )
+        return type(callback) in _per_trial_reporters
 
     callbacks = list(explicit_callbacks or decorator_callbacks or [])
     has_progress = any(isinstance(cb, ProgressBarCallback) for cb in callbacks)
