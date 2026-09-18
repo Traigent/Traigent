@@ -171,8 +171,10 @@ class TestSessionCreation:
 
         submitted_payload = mock_session.post.call_args.kwargs["json"]
         assert submitted_payload["objectives"] == [
-            {"metric": "accuracy", "direction": "maximize", "weight": 2.0},
-            {"metric": "latency", "direction": "minimize", "weight": 1.0},
+            # inputs above stay in the legacy spelling on purpose -- it is still an
+            # accepted SDK input; only the WIRE is canonical now (#304)
+            {"name": "accuracy", "orientation": "maximize", "weight": 2.0},
+            {"name": "latency", "orientation": "minimize", "weight": 1.0},
         ]
         assert submitted_payload["budget"] == {"max_cost_usd": 2.0}
         assert submitted_payload["constraints"] == {
@@ -190,8 +192,8 @@ class TestSessionCreation:
     @pytest.mark.parametrize(
         ("objectives", "expected_objectives"),
         [
-            (None, [{"metric": "score", "direction": "maximize"}]),
-            (["maximize"], [{"metric": "score", "direction": "maximize"}]),
+            (None, [{"name": "score", "orientation": "maximize"}]),
+            (["maximize"], [{"name": "score", "orientation": "maximize"}]),
             (["accuracy"], ["accuracy"]),
         ],
     )
@@ -267,10 +269,12 @@ class TestSessionCreation:
         submitted_payload = mock_session.post.call_args.kwargs["json"]
         assert submitted_payload["objectives"] == [
             {
-                "metric": "response_length",
-                "band": {"low": 120, "high": 180},
-                "test": "TOST",
-                "alpha": 0.05,
+                "name": "response_length",
+                # low/high is translated to the canonical BandTarget, and test/alpha
+                # move INSIDE it -- BandTarget is additionalProperties:false, so a
+                # sibling test/alpha would not validate
+                "band": {"target": [120, 180], "test": "TOST", "alpha": 0.05},
+                "orientation": "band",
                 "weight": 2.0,
             }
         ]
