@@ -359,6 +359,28 @@ jobs:
       GH_TOKEN: ${{ github.token }}
 
     steps:
+    # A workflow_dispatch->pypi publish never sets github.ref to a tag, so the
+    # `publish` job's "Verify tag is on main" step (gated on
+    # startsWith(github.ref, 'refs/tags/v')) is SKIPPED on that path. Without
+    # this check, dispatching from a feature branch would mint a v<version> git
+    # tag on that commit (--target $GITHUB_SHA) and mark it Latest -- publishing
+    # to PyPI from a branch was already possible, but the tag + Latest side
+    # effect would be new. Uses the API rather than a checkout: this job has
+    # none, and adding one to run `git merge-base` would be a bigger change than
+    # the check.
+    - name: Verify the release commit is on main
+      run: |
+        set -euo pipefail
+        STATUS="$(gh api "repos/$REPO/compare/main...$GITHUB_SHA" --jq .status)"
+        echo "compare main...$GITHUB_SHA -> $STATUS"
+        case "$STATUS" in
+          identical|behind) ;;
+          *)
+            echo "::error::Refusing to create release $TAG: $GITHUB_SHA is not on main ($STATUS)."
+            exit 1
+            ;;
+        esac
+
     - name: Create or update the GitHub Release for this tag
       run: |
         set -euo pipefail

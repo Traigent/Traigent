@@ -134,3 +134,71 @@ def test_release_job_authenticates_by_env_not_by_writing_a_credential_to_disk() 
         "use the GH_TOKEN job env instead of gh auth login, which writes the "
         "credential to the runner's gh config"
     )
+
+
+def _normalized_release_condition() -> str:
+    """The release job's `if`, whitespace-collapsed for exact comparison."""
+    return " ".join(_release_job()["if"].split())
+
+
+def test_release_condition_is_exactly_the_intended_expression() -> None:
+    """Pin the whole expression, not substrings of it.
+
+    Substring assertions cannot see the operators between the parts they match,
+    so two mutations survived them: flipping the `&&` joining the two
+    `needs.*.result == 'success'` checks to `||` (the job then releases when
+    `publish` FAILED), and widening the environment check so a TestPyPI dispatch
+    also cuts a production release. Both leave every cited substring present.
+    """
+    assert _normalized_release_condition() == (
+        "always() && needs.publish.result == 'success' && "
+        "needs.verify-publication.result == 'success' && "
+        "(startsWith(github.ref, 'refs/tags/v') || "
+        "(github.event_name == 'workflow_dispatch' && inputs.environment == 'pypi'))"
+    )
+
+
+def test_release_condition_requires_both_dependencies_to_have_succeeded() -> None:
+    """The two success checks are ANDed, never ORed."""
+    condition = _normalized_release_condition()
+    joined = (
+        "needs.publish.result == 'success' && "
+        "needs.verify-publication.result == 'success'"
+    )
+    assert joined in condition
+    assert "needs.publish.result == 'success' ||" not in condition
+
+
+def test_release_is_gated_to_the_production_environment_only() -> None:
+    """A TestPyPI dispatch must not cut a production GitHub Release."""
+    condition = _normalized_release_condition()
+    assert "inputs.environment == 'pypi'" in condition
+    assert "testpypi" not in condition
+    assert "inputs.environment != " not in condition
+
+
+def test_release_job_verifies_the_commit_is_on_main() -> None:
+    """The publish job's on-main check is tag-only, so the release job needs its own.
+
+    On the workflow_dispatch->pypi path `github.ref` is a branch, so
+    `startsWith(github.ref, 'refs/tags/v')` is false and the publish job's
+    "Verify tag is on main" step is skipped. Creating the release with
+    `--target $GITHUB_SHA` would then mint a v<version> tag on a non-main commit
+    and mark it Latest.
+    """
+    steps = _release_job()["steps"]
+    guard = next((s for s in steps if "on main" in s.get("name", "")), None)
+    assert guard is not None, "the release job must verify its commit is on main"
+
+    run = guard["run"]
+    assert "compare/main..." in run
+    assert "identical|behind" in run
+    assert "exit 1" in run
+
+    names = [s.get("name", "") for s in steps]
+    create_index = next(
+        i for i, n in enumerate(names) if n.startswith("Create or update")
+    )
+    assert names.index(guard["name"]) < create_index, (
+        "the on-main check must run BEFORE the release is created"
+    )
