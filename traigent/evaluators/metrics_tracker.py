@@ -1469,20 +1469,81 @@ class ResponseHandler(ABC):
             except (TypeError, ValueError):
                 pass
 
+    @staticmethod
+    def _safe_getattr(obj: Any, name: str) -> Any:
+        try:
+            return getattr(obj, name, None)
+        except Exception:
+            return None
+
+    def _extract_choices_finish_reason(self, response: Any) -> str | None:
+        """Check OpenAI/LiteLLM-style ``choices[0].finish_reason`` (object or dict).
+
+        Covers OpenAI, Azure OpenAI, and OpenAI-compatible endpoints
+        (OpenRouter, Gemini-via-LiteLLM).
+        """
+        choices = self._safe_getattr(response, "choices")
+        if choices is None and isinstance(response, dict):
+            choices = response.get("choices")
+        if not choices:
+            return None
+
+        try:
+            choice = choices[0]
+        except Exception:
+            choice = None
+        if choice is None:
+            return None
+
+        reason = self._safe_getattr(choice, "finish_reason")
+        if reason is None and isinstance(choice, dict):
+            reason = choice.get("finish_reason")
+        return str(reason) if reason else None
+
+    def _extract_toplevel_finish_reason(self, response: Any) -> str | None:
+        """Check a top-level ``finish_reason``/``stop_reason`` attribute or dict key.
+
+        Covers Anthropic's ``stop_reason`` and dict responses.
+        """
+        for attr in ("finish_reason", "stop_reason"):
+            reason = self._safe_getattr(response, attr)
+            if reason:
+                return str(reason)
+            if isinstance(response, dict):
+                reason = response.get(attr)
+                if reason:
+                    return str(reason)
+        return None
+
+    def _extract_metadata_finish_reason(self, response: Any) -> str | None:
+        """Check a ``metadata``/``response_metadata`` dict's finish/stop reason.
+
+        Covers LangChain responses and the internal response-wrapper metadata
+        in ``integrations/utils/response_wrapper.py``.
+        """
+        for meta_attr in ("metadata", "response_metadata"):
+            metadata_dict = self._safe_getattr(response, meta_attr)
+            # Fall back to the mapping lookup when the response IS a dict, the
+            # way the other two branches already do. Without it a dict-shaped
+            # response carrying its reason under ``metadata`` reported "no
+            # signal" -- including the internal wrapper shape this docstring
+            # names. Splitting the three branches apart is what made the
+            # inconsistency visible: two handled dicts, this one did not.
+            if metadata_dict is None and isinstance(response, dict):
+                metadata_dict = response.get(meta_attr)
+            if isinstance(metadata_dict, dict):
+                for key in ("finish_reason", "stop_reason"):
+                    reason = metadata_dict.get(key)
+                    if reason:
+                        return str(reason)
+        return None
+
     def extract_finish_reason(self, response: Any) -> str | None:
         """Extract a provider finish/stop reason from ``response`` (issue #1809).
 
-        Generic across providers so no subclass needs to override it. Checked
-        in order:
-
-        1. OpenAI/LiteLLM-style ``choices[0].finish_reason`` (object or dict) --
-           covers OpenAI, Azure OpenAI, and OpenAI-compatible endpoints
-           (OpenRouter, Gemini-via-LiteLLM).
-        2. A top-level ``finish_reason``/``stop_reason`` attribute or dict key
-           (Anthropic's ``stop_reason``; dict responses).
-        3. A ``metadata``/``response_metadata`` dict's ``finish_reason``/
-           ``stop_reason`` (LangChain responses; the internal response-wrapper
-           metadata in ``integrations/utils/response_wrapper.py``).
+        Generic across providers so no subclass needs to override it. Tries
+        each provider-shape lookup below in order and returns the first hit;
+        see each helper's docstring for the provider shapes it covers.
 
         Returns ``None`` when no provider signal is available -- never
         fabricated, so an unrecognized response shape reports "no signal",
@@ -1491,45 +1552,14 @@ class ResponseHandler(ABC):
         double with a raising property) must never turn this best-effort
         extraction into a hard failure of the whole metrics pipeline.
         """
-
-        def _safe_getattr(obj: Any, name: str) -> Any:
-            try:
-                return getattr(obj, name, None)
-            except Exception:
-                return None
-
-        choices = _safe_getattr(response, "choices")
-        if choices is None and isinstance(response, dict):
-            choices = response.get("choices")
-        if choices:
-            try:
-                choice = choices[0]
-            except Exception:
-                choice = None
-            if choice is not None:
-                reason = _safe_getattr(choice, "finish_reason")
-                if reason is None and isinstance(choice, dict):
-                    reason = choice.get("finish_reason")
-                if reason:
-                    return str(reason)
-
-        for attr in ("finish_reason", "stop_reason"):
-            reason = _safe_getattr(response, attr)
+        for lookup in (
+            self._extract_choices_finish_reason,
+            self._extract_toplevel_finish_reason,
+            self._extract_metadata_finish_reason,
+        ):
+            reason = lookup(response)
             if reason:
-                return str(reason)
-            if isinstance(response, dict):
-                reason = response.get(attr)
-                if reason:
-                    return str(reason)
-
-        for meta_attr in ("metadata", "response_metadata"):
-            metadata_dict = _safe_getattr(response, meta_attr)
-            if isinstance(metadata_dict, dict):
-                for key in ("finish_reason", "stop_reason"):
-                    reason = metadata_dict.get(key)
-                    if reason:
-                        return str(reason)
-
+                return reason
         return None
 
     def handle(self, response: Any) -> ExampleMetrics | None:
