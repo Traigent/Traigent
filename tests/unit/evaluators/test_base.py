@@ -11,7 +11,9 @@ Tests cover:
 """
 
 import json
+import os
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -730,6 +732,47 @@ class TestBaseEvaluator:
         assert (
             abs(result.aggregated_metrics["average_score"] - expected_avg_score) < 0.001
         )
+
+
+class TestApplyMockDelayIfEnabled:
+    """Regression tests for #1766: TRAIGENT_MOCK_LLM truthy-parse divergence.
+
+    ``_apply_mock_delay_if_enabled`` must agree with the canonical
+    ``env_config.is_truthy`` accepted spellings (1/true/yes/on,
+    case-insensitive) instead of a tuple that silently omitted "on".
+    """
+
+    @pytest.fixture
+    def mock_evaluator(self):
+        return MockEvaluator()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mock_value", ["true", "1", "yes", "on", "ON", "True"])
+    async def test_delay_honored_for_every_truthy_spelling(
+        self, mock_evaluator, mock_value: str
+    ) -> None:
+        with patch.dict(
+            os.environ,
+            {"TRAIGENT_MOCK_LLM": mock_value, "TRAIGENT_MOCK_DELAY_MS": "5"},
+            clear=True,
+        ):
+            with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+                await mock_evaluator._apply_mock_delay_if_enabled()
+
+        mock_sleep.assert_awaited_once()
+        assert mock_sleep.await_args.args[0] == pytest.approx(0.005)
+
+    @pytest.mark.asyncio
+    async def test_delay_skipped_when_mock_llm_disabled(self, mock_evaluator) -> None:
+        with patch.dict(
+            os.environ,
+            {"TRAIGENT_MOCK_LLM": "false", "TRAIGENT_MOCK_DELAY_MS": "5"},
+            clear=True,
+        ):
+            with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+                await mock_evaluator._apply_mock_delay_if_enabled()
+
+        mock_sleep.assert_not_awaited()
 
 
 class TestEvaluationResult:
