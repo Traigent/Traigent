@@ -412,6 +412,23 @@ class TestTraigentDiagnostics:
         assert len(report.successes) >= 2
         assert any("Mock LLM mode is enabled" in s["message"] for s in report.successes)
 
+    @pytest.mark.parametrize("mock_value", ["1", "yes", "on", "TRUE", "On"])
+    @patch("traigent.initialize")
+    def test_check_traigent_config_with_mock_mode_truthy_variants(
+        self, mock_initialize: MagicMock, mock_value: str
+    ) -> None:
+        """Regression for #1766: diagnose() must agree with is_truthy()'s
+        accepted spellings (1/true/yes/on, case-insensitive), not just the
+        exact string "true"."""
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": mock_value}, clear=True):
+            report = DiagnosticReport()
+
+            TraigentDiagnostics._check_traigent_config(report)
+
+            assert any(
+                "Mock LLM mode is enabled" in s["message"] for s in report.successes
+            ), f"TRAIGENT_MOCK_LLM={mock_value!r} should be reported as enabled"
+
     @patch("traigent.initialize")
     @patch.dict(os.environ, {}, clear=True)
     def test_check_traigent_config_failure(self, mock_initialize: MagicMock) -> None:
@@ -507,6 +524,33 @@ class TestTraigentDiagnostics:
 
         # Should not recommend mock mode if already enabled
         assert not any("Enable mock mode" in r for r in report.recommendations)
+
+    @pytest.mark.parametrize("mock_value", ["1", "yes", "on", "On"])
+    def test_add_recommendations_with_mock_mode_truthy_variants(
+        self, mock_value: str
+    ) -> None:
+        """Regression for #1766: the recommendation must be suppressed for
+        every spelling is_truthy() accepts, not just the exact string
+        "true"."""
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": mock_value}, clear=True):
+            report = DiagnosticReport()
+
+            TraigentDiagnostics._add_recommendations(report)
+
+            assert not any(
+                "Enable mock LLM mode" in r for r in report.recommendations
+            ), f"TRAIGENT_MOCK_LLM={mock_value!r} should suppress the recommendation"
+
+    def test_add_recommendations_with_mock_mode_false_still_recommends(self) -> None:
+        """Regression for #1766: a bare presence check previously treated
+        TRAIGENT_MOCK_LLM=false as "set" and suppressed the recommendation
+        even though mock mode is off."""
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}, clear=True):
+            report = DiagnosticReport()
+
+            TraigentDiagnostics._add_recommendations(report)
+
+            assert any("Enable mock LLM mode" in r for r in report.recommendations)
 
     @patch.dict(os.environ, {}, clear=True)
     def test_add_recommendations_without_api_keys(self) -> None:
