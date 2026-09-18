@@ -131,9 +131,20 @@ def _mask_userinfo(match: re.Match[str]) -> str:
     )
 
 
+#: Credential-bearing URL QUERY parameters. Userinfo is not the only place a
+#: URL carries a secret -- `https://host/v1?token=...` is at least as common,
+#: and the userinfo pattern above cannot see it. Matched on the parameter NAME
+#: so an opaque value with no recognizable shape is still caught.
+_URL_QUERY_SECRET_RE = re.compile(
+    r"(?i)([?&](?:[a-z0-9_\-]*(?:token|key|secret|password|passwd|credential|"
+    r"auth|sig|signature)[a-z0-9_\-]*)=)([^&\s#]+)"
+)
+
+
 def redact_url_credentials(value: str) -> str:
-    """Mask the credential in any ``scheme://[user:]secret@host`` in *value*."""
-    return _URL_CREDENTIALS_RE.sub(_mask_userinfo, value)
+    """Mask credentials in a URL: userinfo AND credential-named query params."""
+    masked = _URL_CREDENTIALS_RE.sub(_mask_userinfo, value)
+    return _URL_QUERY_SECRET_RE.sub(lambda m: f"{m.group(1)}{_REDACTED}", masked)
 
 
 def scrub(text: str, environ: dict[str, str] | None = None) -> str:

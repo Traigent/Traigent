@@ -258,7 +258,17 @@ def _run_model_checks(
         # user went on to run a cost objective against a model with no price.
         # The one normalization kept is the provider prefix, because LiteLLM
         # keys appear both as "gpt-4o" and "openai/gpt-4o".
-        candidates = {model_id, model_id.rpartition("/")[2]} - {""}
+        # Strip the prefix ONLY when it names a provider we recognize. The
+        # first version of this stripped ANY prefix, which traded one
+        # over-match for another: "invented/gpt-4o" resolved to the bare
+        # "gpt-4o", found it in the table, and reported PASS for a provider
+        # that does not exist. Provider identity is part of the model's
+        # identity for pricing.
+        prefix, separator, bare = model_id.rpartition("/")
+        candidates = {model_id}
+        if separator and prefix in _LITELLM_PROVIDER_PREFIXES:
+            candidates.add(bare)
+        candidates -= {""}
         priced = any(
             candidate in litellm.model_cost
             or any(
@@ -352,6 +362,13 @@ def _run_scorer_checks(report: DoctorReport, scorer_spec: str | None) -> None:
             "richer scorer validation)",
         )
         return
+
+    # --scorer round-trips into the report exactly as --model and --dataset
+    # do, and a user can put anything on the command line. Scrub once here so
+    # every message below is safe by construction. (Review found this sink
+    # after the other two were fixed -- enumerate ALL of them, not the ones
+    # that came to mind.)
+    scorer_spec = scrub(scorer_spec)
 
     module_name, _, func_name = scorer_spec.partition(":")
     if not func_name:

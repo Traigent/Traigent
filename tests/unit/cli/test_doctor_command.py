@@ -915,3 +915,84 @@ class TestScrubDoesNotDestroyDiagnostics:
         from traigent.utils.diagnostics import scrub
 
         assert "swordfish" not in scrub("value=swordfish", environ={name: "swordfish"})
+
+
+class TestSinksFoundInTheFourthRound:
+    """Three more, after three rounds of "every sink is guarded".
+
+    Worth keeping the count visible: each round I believed the enumeration was
+    complete. The lesson is not "try harder" -- it is that a sanitizer needs a
+    test per OUTPUT PATH, not per sanitizer.
+    """
+
+    def test_a_secret_passed_as_the_scorer_spec_is_not_echoed(
+        self, runner, monkeypatch
+    ) -> None:
+        """`--scorer` round-trips like `--model` and `--dataset` already did."""
+        monkeypatch.setenv("TRAIGENT_SKIP_DOTENV", "true")
+        result = runner.invoke(doctor, ["--json", "--offline", "--scorer", SENTINEL])
+        assert SENTINEL not in result.output
+
+    def test_a_credential_in_a_url_query_parameter_is_redacted(self) -> None:
+        """Userinfo is not the only place a URL carries a secret.
+
+        `https://host/v1?token=...` is at least as common, and the userinfo
+        pattern cannot see it. Matched on the parameter NAME so an opaque
+        value with no recognizable shape is still caught.
+        """
+        from traigent.utils.diagnostics import redact_url_credentials
+
+        out = redact_url_credentials("https://host/v1?token=opaque-canary-1234")
+        assert "opaque-canary-1234" not in out
+        assert "host/v1" in out
+
+    def test_query_redaction_keeps_the_non_secret_parameters(self) -> None:
+        """Control: it must not blank the whole query string."""
+        from traigent.utils.diagnostics import redact_url_credentials
+
+        out = redact_url_credentials("https://host/?api_key=abc123secret&model=gpt-4o")
+        assert "abc123secret" not in out
+        assert "model=gpt-4o" in out
+
+    def test_a_clean_url_is_untouched(self) -> None:
+        from traigent.utils.diagnostics import redact_url_credentials
+
+        url = "https://host/v1?model=gpt-4o&n=3"
+        assert redact_url_credentials(url) == url
+
+
+class TestPricingKeepsProviderIdentity:
+    """The over-match I introduced while fixing the original over-match.
+
+    The first bug was bidirectional substring matching: `gpt-4o-of-my-own`
+    reported PASS. My fix stripped ANY provider prefix, so `invented/gpt-4o`
+    resolved to the bare `gpt-4o` and reported PASS for a provider that does
+    not exist. Provider identity is part of the model's identity for pricing.
+    """
+
+    @pytest.mark.parametrize(
+        "model_id,should_be_priced",
+        [
+            ("gpt-4o", True),
+            ("openai/gpt-4o", True),
+            ("invented/gpt-4o", False),
+            ("gpt-4o-of-my-own", False),
+        ],
+    )
+    def test_pricing_lookup(self, runner, monkeypatch, model_id, should_be_priced):
+        litellm = pytest.importorskip("litellm")
+        if "gpt-4o" not in litellm.model_cost:
+            pytest.skip("this litellm build has no gpt-4o price entry")
+        monkeypatch.setenv("TRAIGENT_SKIP_DOTENV", "true")
+
+        result = runner.invoke(doctor, ["--json", "--offline", "--model", model_id])
+        payload = json.loads(result.stdout)
+        priced = any(
+            c["category"] == "Model"
+            and c["status"] == "PASS"
+            and "pricing coverage" in c["message"]
+            for c in payload["checks"]
+        )
+        assert priced is should_be_priced, (
+            f"{model_id!r}: expected priced={should_be_priced}, got {priced}"
+        )
