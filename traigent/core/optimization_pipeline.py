@@ -516,6 +516,77 @@ def build_metric_functions(
     return effective_metric_functions
 
 
+def validate_metric_function_bindability(
+    effective_metric_functions: dict[str, Callable[..., Any]],
+) -> None:
+    """Fail fast, before any LLM call, if a metric/scoring signature can't bind.
+
+    Runs the same no-execution candidate-binding logic the runtime invocation
+    path uses (``resolve_metric_call_binding``: var-positional, then
+    recognized-keyword, then positional fallbacks of decreasing arity) against
+    a synthetic example. A required parameter outside every recognized name,
+    with no ``**kwargs`` and not positionally bindable, previously surfaced
+    only lazily at scoring time -- after the LLM call that produced ``output``
+    had already spent money -- and then failed again on every example. This
+    check runs once at evaluator construction (run start), before any LLM
+    call is issued.
+
+    Args:
+        effective_metric_functions: The dict built by
+            :func:`build_metric_functions` (``metric_functions`` merged with
+            ``scoring_function``).
+
+    Raises:
+        ValidationError: If a metric/scoring function's signature cannot be
+            introspected, or no argument candidate binds to it.
+    """
+    if not effective_metric_functions:
+        return
+
+    from traigent.evaluators.base import EvaluationExample
+    from traigent.evaluators.local import (
+        _EXPECTED_METRIC_PARAM_NAMES,
+        _LLM_METRIC_PARAM_NAMES,
+        _OUTPUT_METRIC_PARAM_NAMES,
+        resolve_metric_call_binding,
+    )
+    from traigent.utils.exceptions import ValidationError
+
+    synthetic_example = EvaluationExample(input_data={}, expected_output=None)
+    recognized_names = sorted(
+        _OUTPUT_METRIC_PARAM_NAMES
+        | _EXPECTED_METRIC_PARAM_NAMES
+        | _LLM_METRIC_PARAM_NAMES
+        | {"example", "input_data", "metadata", "config", "example_index"}
+    )
+
+    for metric_name, metric_func in effective_metric_functions.items():
+        try:
+            binding = resolve_metric_call_binding(
+                metric_func, None, synthetic_example, {}, {}, 0
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                f"metric/scoring function '{metric_name}' signature could not "
+                f"be introspected ({type(exc).__name__}: {exc}). Fix its "
+                "signature before running -- this check runs before any LLM "
+                "call."
+            ) from exc
+
+        if binding.bind_ok:
+            continue
+
+        unmatched = ", ".join(binding.unmatched_parameters) or "(unknown)"
+        raise ValidationError(
+            f"metric/scoring function '{metric_name}' has required "
+            f"parameter(s) that cannot be bound: {unmatched}. Accept "
+            "(output, expected) positionally, use **kwargs, or name "
+            f"parameters from the recognized set: {', '.join(recognized_names)}. "
+            "This check runs before any LLM call, so a signature mismatch "
+            "fails fast instead of costing a full run."
+        )
+
+
 def resolve_effective_workers(
     effective_batch_size: int | None,
     effective_thread_workers: int | None,
@@ -639,6 +710,7 @@ def _create_local_evaluator(
     effective_metric_fns = build_metric_functions(
         metric_functions, scoring_function, objectives
     )
+    validate_metric_function_bindability(effective_metric_fns)
     effective_workers = resolve_effective_workers(
         effective_batch_size, effective_thread_workers
     )
