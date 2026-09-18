@@ -248,6 +248,37 @@ def _accuracy_values_match(actual: Any, expected: Any) -> bool:
     return _typed_accuracy_equality(actual, expected)
 
 
+def _normalize_output_for_accuracy_comparison(raw_output: Any) -> Any:
+    """Unwrap ``raw_output`` the same way the fully-processed detailed path
+    already does, before it reaches an accuracy comparator (issue #1771).
+
+    Two independent output-wrapping shapes can reach an accuracy comparator
+    un-unwrapped on the non-detailed and live-progress paths, even though the
+    fully-processed detailed per-example path (``_process_single_output`` /
+    ``_evaluate_single_detailed``) already unwraps them before scoring:
+
+    * the strict ``(output, metrics)`` 2-tuple contract
+      (:meth:`BaseEvaluator._unpack_user_metrics`) -- element ``[0]`` is the
+      real output, element ``[1]`` is per-example user metrics;
+    * a ``{"text": ...}`` dict wrapper.
+
+    Comparing the raw wrapper against a scalar ``expected_output`` always
+    mismatches (a tuple or dict is never ``==`` a string), so a genuinely
+    correct example silently scores as wrong. Applying this at every
+    accuracy-comparison site (the registry ``_compute_accuracy``,
+    ``_build_progress_accuracy_metrics``, and
+    ``LocalEvaluator._compute_accuracy_aggregated``) keeps them from drifting
+    out of sync with the per-example path again. Calling
+    ``_unpack_user_metrics`` on an already-unpacked value is a documented
+    no-op, so this is safe to apply even when ``raw_output`` was unwrapped
+    upstream already.
+    """
+    output, _ = BaseEvaluator._unpack_user_metrics(raw_output)
+    if isinstance(output, dict):
+        return output.get("text")
+    return output
+
+
 try:  # pragma: no cover - import guard for optional dependency
     from traigent.metrics.ragas_metrics import (
         POPULAR_RAGAS_METRICS,
@@ -1631,7 +1662,9 @@ class BaseEvaluator(ABC):
             if _is_empty_expected_output(exp):
                 continue
             total += 1
-            if error is None and _accuracy_values_match(output, exp):
+            if error is None and _accuracy_values_match(
+                _normalize_output_for_accuracy_comparison(output), exp
+            ):
                 correct += 1
 
         return correct / total if total > 0 else 0.0
@@ -3416,9 +3449,12 @@ class BaseEvaluator(ABC):
         if error is not None or _is_empty_expected_output(expected_output):
             return {}
         try:
+            normalized_output = _normalize_output_for_accuracy_comparison(output)
             return {
                 "accuracy": (
-                    1.0 if _accuracy_values_match(output, expected_output) else 0.0
+                    1.0
+                    if _accuracy_values_match(normalized_output, expected_output)
+                    else 0.0
                 )
             }
         except Exception as exc:
