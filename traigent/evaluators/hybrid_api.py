@@ -105,6 +105,28 @@ class HybridExampleResult:
         return self.error is None
 
 
+#: Metric names Traigent computes itself from the per-result fields
+#: (``result.success``, ``cost_usd``, ``latency_ms``) and therefore never takes
+#: from the external service's ``metrics`` payload.
+#:
+#: Without this, a service that reports a ``success_rate`` key of its own had it
+#: aggregated alongside the quality metrics and then written over the computed
+#: value. That was harmless while every row contributed -- the payload mean and
+#: the true rate agreed -- and became a live defect the moment errored rows were
+#: excluded from the quality means (issue #2192): one failed example out of two
+#: then reported ``success_rate`` 1.0 instead of 0.5, erasing the failure from
+#: the only metric that reports it.
+#:
+#: ``cost``/``total_cost``/``latency``/``response_time_ms`` are listed for the
+#: same reason rather than because a collision was observed: they are seeded
+#: from trial-level totals a few lines below, so a per-example payload key of
+#: the same name would silently change what the number MEANS -- a per-example
+#: mean presented where a trial total is expected.
+_TRAIGENT_COMPUTED_METRIC_KEYS: frozenset[str] = frozenset(
+    {"success_rate", "cost", "total_cost", "latency", "response_time_ms"}
+)
+
+
 class HybridAPIEvaluator(BaseEvaluator):
     """Evaluator that executes trials via external API endpoints.
 
@@ -628,11 +650,28 @@ class HybridAPIEvaluator(BaseEvaluator):
             if result.latency_ms > 0:
                 latency_values.append(float(result.latency_ms))
 
+            # A failed example is not a real measurement (issue #2192,
+            # mirroring the measured-vs-unmeasured distinction from #1964's
+            # local evaluator lane): the external agent service's
+            # ``metrics`` payload for an errored example is not a
+            # trustworthy measurement -- a quality metric it reports
+            # alongside an error may be a placeholder, not a real
+            # measurement, and averaging it in would silently depress the
+            # reported accuracy/quality stats. Only successful examples
+            # contribute a quality metric.
+            if not result.success:
+                continue
+
             per_example_accuracy = self._derive_accuracy_from_metrics(result.metrics)
             if per_example_accuracy is not None:
                 accuracy_values.append(float(per_example_accuracy))
 
             for metric_name, value in result.metrics.items():
+                # Same reservation as the primary aggregator: `setdefault`
+                # below would otherwise hand the payload's key priority over
+                # the computed one.
+                if metric_name in _TRAIGENT_COMPUTED_METRIC_KEYS:
+                    continue
                 if isinstance(value, bool):
                     continue
                 if not isinstance(value, (int, float)):
@@ -1465,20 +1504,34 @@ class HybridAPIEvaluator(BaseEvaluator):
         metric_counts: dict[str, int] = {}
 
         for result in results:
+            # A failed example is not a real measurement (issue #2192,
+            # mirroring the measured-vs-unmeasured distinction from #1964's
+            # local evaluator lane): the external agent service's
+            # ``metrics`` payload for an errored example is not a
+            # trustworthy measurement -- e.g. an output scored before a
+            # downstream validation step raised an error may still carry a
+            # quality metric, and averaging that value in would silently
+            # depress the reported mean for an example that did not really
+            # complete. Only successful examples contribute a quality
+            # metric to the per-example means.
+            if not result.success:
+                continue
             for metric_name, value in result.metrics.items():
+                # Never let a payload key overwrite what Traigent computed.
+                if metric_name in _TRAIGENT_COMPUTED_METRIC_KEYS:
+                    continue
                 if metric_name not in metric_sums:
                     metric_sums[metric_name] = 0.0
                     metric_counts[metric_name] = 0
                 metric_sums[metric_name] += value
                 metric_counts[metric_name] += 1
-            if result.success:
-                for metric_name in (
-                    "cost",
-                    "total_cost",
-                    "latency",
-                    "response_time_ms",
-                ):
-                    metric_counts[metric_name] = metric_counts.get(metric_name, 0) + 1
+            for metric_name in (
+                "cost",
+                "total_cost",
+                "latency",
+                "response_time_ms",
+            ):
+                metric_counts[metric_name] = metric_counts.get(metric_name, 0) + 1
 
         # Compute means
         for metric_name, total in metric_sums.items():
