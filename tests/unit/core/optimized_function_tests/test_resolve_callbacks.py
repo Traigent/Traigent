@@ -68,3 +68,52 @@ def test_managed_heartbeat_still_injects_when_nothing_reports(monkeypatch):
     )
 
     assert any(isinstance(c, ManagedProgressCallback) for c in resolved)
+
+
+def test_heartbeat_still_injects_for_a_silent_simple_progress_callback(monkeypatch):
+    """Membership in the guard list is not the question; reporting is.
+
+    ``SimpleProgressCallback(show_details=False)`` emits nothing from
+    ``on_trial_complete`` (measured: ``''``). Treating it as a reporter would
+    suppress the heartbeat and leave the managed run silent -- the exact problem
+    the heartbeat exists to solve, reintroduced by the guard meant to stop
+    duplicate output.
+    """
+    import sys as _sys
+
+    from traigent.config.types import ExecutionMode
+    from traigent.core.optimized_function import _resolve_callbacks
+    from traigent.utils.callbacks import ManagedProgressCallback, SimpleProgressCallback
+
+    monkeypatch.setattr(_sys.stdin, "isatty", lambda: False)
+
+    resolved = _resolve_callbacks(
+        [SimpleProgressCallback(show_details=False)],
+        None,
+        None,
+        execution_mode=ExecutionMode.HYBRID.value,
+    )
+
+    assert any(isinstance(c, ManagedProgressCallback) for c in resolved), (
+        "a silent SimpleProgressCallback must not suppress the heartbeat"
+    )
+
+
+def test_heartbeat_defers_to_a_reporting_simple_progress_callback(monkeypatch):
+    """The same callback WITH details on does report, so it must suppress."""
+    import sys as _sys
+
+    from traigent.config.types import ExecutionMode
+    from traigent.core.optimized_function import _resolve_callbacks
+    from traigent.utils.callbacks import ManagedProgressCallback, SimpleProgressCallback
+
+    monkeypatch.setattr(_sys.stdin, "isatty", lambda: False)
+
+    resolved = _resolve_callbacks(
+        [SimpleProgressCallback(show_details=True)],
+        None,
+        None,
+        execution_mode=ExecutionMode.HYBRID.value,
+    )
+
+    assert not any(isinstance(c, ManagedProgressCallback) for c in resolved)

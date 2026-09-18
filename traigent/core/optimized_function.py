@@ -256,18 +256,20 @@ def _resolve_callbacks(
         SimpleProgressCallback,
     )
 
-    # Every callback that already reports per-trial progress. The heartbeat
-    # exists to fill a silence, so if the user supplied ANY of these there is
-    # no silence to fill and a second reporter is just duplicate output.
-    # Verified before this list existed: passing DetailedProgressCallback or
-    # SimpleProgressCallback on the managed path got a ManagedProgressCallback
-    # injected alongside it (two reporters).
-    progress_capable = (
-        ProgressBarCallback,
-        ManagedProgressCallback,
-        SimpleProgressCallback,
-        DetailedProgressCallback,
-    )
+    # The heartbeat exists to fill a SILENCE, so it defers to a callback that
+    # actually reports per trial -- and only then. Membership alone is not
+    # enough: SimpleProgressCallback(show_details=False) emits nothing from
+    # on_trial_complete (measured: ''), so treating it as a reporter would
+    # suppress the heartbeat and leave the managed run silent, which is the
+    # exact problem this feature solves. DetailedProgressCallback always emits
+    # regardless of its toggles (measured across all four combinations).
+    def _reports_per_trial(callback: Any) -> bool:
+        if isinstance(callback, SimpleProgressCallback):
+            return bool(getattr(callback, "show_details", True))
+        return isinstance(
+            callback,
+            (ProgressBarCallback, ManagedProgressCallback, DetailedProgressCallback),
+        )
 
     callbacks = list(explicit_callbacks or decorator_callbacks or [])
     has_progress = any(isinstance(cb, ProgressBarCallback) for cb in callbacks)
@@ -278,7 +280,7 @@ def _resolve_callbacks(
             callbacks.insert(0, ProgressBarCallback())
             has_progress = True
 
-    has_managed_progress = any(isinstance(cb, progress_capable) for cb in callbacks)
+    has_managed_progress = any(_reports_per_trial(cb) for cb in callbacks)
     if (
         progress_bar is not False
         and execution_mode == ExecutionMode.HYBRID.value
