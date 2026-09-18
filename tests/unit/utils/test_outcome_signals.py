@@ -66,7 +66,7 @@ def _result(**overrides):
 
 @pytest.mark.parametrize("field", ["input_data", "expected_output", "actual_output"])
 def test_no_content_reaches_the_payload(field: str) -> None:
-    secret = "CANARY-7f3a-CONFIDENTIAL-VALUE"
+    secret = "CANARY-7f3a-CONFIDENTIAL-VALUE"  # pragma: allowlist secret
     value = {"q": secret} if field == "input_data" else secret
     payload = json.dumps(build_example_signals(_result(**{field: value})))
     assert secret not in payload
@@ -129,6 +129,20 @@ def test_digest_domains_are_separated() -> None:
 def test_match_and_mismatch() -> None:
     assert build_example_signals(_result())["verified_match"] == 1.0
     assert build_example_signals(_result(actual_output="5"))["verified_match"] == 0.0
+
+
+def test_dict_wrapped_correct_output_scores_as_match() -> None:
+    """A ``{"text": ...}``-wrapped output must be unwrapped before comparison.
+
+    Same bug class as issue #1771 (raw-output comparison instead of the
+    unwrapped value the per-example path already scores against), left
+    un-ported to this wire-facing verification signal: a genuinely correct
+    dict-shaped output must not score 0.0 here just because it never went
+    through the accuracy comparator's normalization helper.
+    """
+    signals = build_example_signals(_result(actual_output={"text": "4"}))
+    assert signals["verified_match"] == 1.0
+    assert verified_match({"text": "4"}, "4") == 1.0
 
 
 @pytest.mark.parametrize("empty", [None, "", "   "])
@@ -258,7 +272,7 @@ def test_build_example_signals_reads_a_plain_dict_not_just_an_object() -> None:
 def test_a_signal_build_failure_logs_no_content(caplog) -> None:
     import logging
 
-    secret = "CANARY-OBSERVABILITY-CONTENT-DO-NOT-LOG"
+    secret = "CANARY-OBSERVABILITY-CONTENT-DO-NOT-LOG"  # pragma: allowlist secret
 
     class Exploding:
         @property
@@ -347,7 +361,7 @@ def test_signal_key_id_is_not_the_api_key_or_derived_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The id must be a one-way tag: it cannot embed the key material itself."""
-    api_key = "super-secret-project-api-key-do-not-leak"
+    api_key = "super-secret-project-api-key-do-not-leak"  # pragma: allowlist secret
     _set_api_key(monkeypatch, api_key)
 
     signals = build_example_signals(_result())
