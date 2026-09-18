@@ -325,14 +325,26 @@ class TestReportIsSecretSafe:
         assert SENTINEL not in scrub(f"boom: {SENTINEL}", environ=env)
 
     def test_scrub_masks_url_credentials(self) -> None:
+        """Password gone, host intact -- asserted by PARSING, not by substring.
+
+        `"backend.example.com" in out` would also be satisfied by
+        `https://evil.test/?x=backend.example.com`, which is why CodeQL flags
+        that shape (py/incomplete-url-substring-sanitization). Parsing asserts
+        the property the redaction actually has to hold.
+        """
+        from urllib.parse import urlsplit
+
         from traigent.utils.diagnostics import scrub
 
         out = scrub(
             "cannot reach https://admin:hunter2@backend.example.com/v1", environ={}
         )
         assert "hunter2" not in out
-        # the host stays, because that is the diagnostically useful part
-        assert "backend.example.com" in out
+
+        url = urlsplit(out.removeprefix("cannot reach "))
+        assert url.hostname == "backend.example.com"
+        assert url.username == "admin"
+        assert url.password != "hunter2"
 
     def test_scrub_leaves_ordinary_text_alone(self) -> None:
         from traigent.utils.diagnostics import scrub
@@ -342,6 +354,8 @@ class TestReportIsSecretSafe:
 
     def test_backend_url_credentials_are_not_reported(self, monkeypatch) -> None:
         """The leak the old `"KEY" in var_name` rule could not see."""
+        from urllib.parse import urlsplit
+
         from traigent.utils.diagnostics import DiagnosticReport, TraigentDiagnostics
 
         monkeypatch.setenv(
@@ -349,9 +363,19 @@ class TestReportIsSecretSafe:
         )
         report = DiagnosticReport()
         TraigentDiagnostics._check_environment(report)
-        blob = json.dumps(report.to_dict())
-        assert "s3cr3t-pass" not in blob
-        assert "backend.example.com" in blob
+
+        assert "s3cr3t-pass" not in json.dumps(report.to_dict())
+
+        # And the host survives, so the check is still useful. Parsed rather
+        # than substring-matched, for the reason given above.
+        reported = next(
+            entry["message"]
+            for entry in report.successes
+            if entry["message"].startswith("TRAIGENT_BACKEND_URL = ")
+        )
+        url = urlsplit(reported.removeprefix("TRAIGENT_BACKEND_URL = "))
+        assert url.hostname == "backend.example.com"
+        assert url.password != "s3cr3t-pass"
 
     def test_an_api_key_value_is_never_quoted_in_the_report(self, monkeypatch) -> None:
         from traigent.utils.diagnostics import DiagnosticReport, TraigentDiagnostics
