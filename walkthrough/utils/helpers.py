@@ -27,12 +27,22 @@ EXAMPLE_ESTIMATED_TIMES: dict[str, int] = {
     "06_custom_evaluator.py": 73,  # ~1m 13s
     "07_multi_provider.py": 120,  # ~2m 0s (tests multiple providers)
     "08_privacy_modes.py": 104,  # ~1m 44s
-    # 09 is an "Optional Extras" example, not part of test_all_examples.sh,
-    # so unlike 01-08 this figure is DERIVED, not measured: 18 trials x 13
-    # rag_questions.jsonl rows = 234 sequential calls, at the ~1.5 s/call
-    # implied by 04 (10 trials x 20 rows = 200 calls in 300 s). Replace it
-    # with a measured value once 09 has a recorded real run.
-    "09_rag_multi_objective.py": 350,  # ~5m 50s (derived, see note above)
+    # 09 is an "Optional Extras" example, not part of test_all_examples.sh, so
+    # unlike 01-08 this figure is DERIVED, not measured. 18 trials x 13
+    # rag_questions.jsonl rows = 234 calls. The closest measured analogue by
+    # call count is 07 (12 trials x 20 rows = 240 calls in ~2m 0s, per
+    # test_all_examples.sh), i.e. ~0.5 s/call; across all of 01-08 the measured
+    # band is ~0.26-0.47 s/call. 234 calls therefore lands near 2 minutes, and
+    # 180 s leaves headroom for 09's per-call FAISS retrieval, which none of
+    # 01-08 do. Replace it with a measured value once 09 has a recorded run.
+    #
+    # NOTE: do not derive this from the 300 above. That entry disagrees with
+    # test_all_examples.sh, which measures 04 at ~1m 3s for the same 10 trials
+    # x 20 examples, and its own "(48 combinations, 6 models)" annotation
+    # describes a shape 04 no longer has (04_multi_objective.py:124,132 set
+    # dataset_size=20 and max_trials=10). Tracked separately; an earlier
+    # revision of this entry used the 300 and overstated 09 by ~3x.
+    "09_rag_multi_objective.py": 180,  # ~3m 0s (derived, see note above)
 }
 
 

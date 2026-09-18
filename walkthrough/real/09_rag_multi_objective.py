@@ -128,8 +128,18 @@ def get_vectorstore() -> FAISS:
     return _vectorstore
 
 
+EVAL_DATASET = DATASETS / "rag_questions.jsonl"
+
+# Counted, not hardcoded: the printed cost estimate previously said 20 examples
+# against a 13-row dataset, overstating the spend by ~1.5x. Deriving it here
+# means the estimate cannot drift from the file again.
+EVAL_DATASET_SIZE = sum(
+    1 for line in EVAL_DATASET.read_text(encoding="utf-8").splitlines() if line.strip()
+)
+
+
 @traigent.optimize(
-    eval_dataset=str(DATASETS / "rag_questions.jsonl"),
+    eval_dataset=str(EVAL_DATASET),
     objectives=OBJECTIVES,
     scoring_function=semantic_overlap_score,
     configuration_space=CONFIG_SPACE,
@@ -190,7 +200,7 @@ async def main() -> None:
     print_optimization_config(OBJECTIVES, CONFIG_SPACE)
     print_cost_estimate(
         models=CONFIG_SPACE["model"],
-        dataset_size=20,
+        dataset_size=EVAL_DATASET_SIZE,
         task_type="rag_qa",
         num_trials=18,
     )

@@ -229,3 +229,48 @@ def _example_names_calling_estimated_time(real_dir: Path) -> set[str]:
         for path in real_dir.glob("[0-9][0-9]_*.py")
         if "print_estimated_time(" in path.read_text(encoding="utf-8")
     }
+
+
+def test_printed_cost_estimate_matches_the_real_dataset_size() -> None:
+    """A literal ``dataset_size=`` must equal the example's own dataset.
+
+    ``print_cost_estimate`` multiplies by whatever it is handed, so a literal
+    that drifts from the ``eval_dataset`` file silently overstates the spend a
+    user is about to approve -- the whole point of the estimate. Examples 05 and
+    09 both said 20 against a 13-row ``rag_questions.jsonl`` (~1.5x), which is
+    why both now count the file instead. Catch the next one here.
+    """
+    import re
+
+    real_dir = REPO_ROOT / "walkthrough" / "real"
+    datasets_dir = REPO_ROOT / "walkthrough" / "datasets"
+    dataset_re = re.compile(r'DATASETS\s*/\s*"([^"]+\.jsonl)"')
+    literal_size_re = re.compile(r"dataset_size\s*=\s*(\d+)\s*,")
+
+    mismatches: list[str] = []
+    for path in sorted(real_dir.glob("[0-9][0-9]_*.py")):
+        source = path.read_text(encoding="utf-8")
+        dataset_match = dataset_re.search(source)
+        size_match = literal_size_re.search(source)
+        # A derived size (e.g. EVAL_DATASET_SIZE) cannot drift, so only literals
+        # are checked; an example with no jsonl dataset is out of scope.
+        if not dataset_match or not size_match:
+            continue
+
+        dataset_path = datasets_dir / dataset_match.group(1)
+        assert dataset_path.is_file(), f"{path.name} references a missing {dataset_path}"
+        actual = sum(
+            1
+            for line in dataset_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        declared = int(size_match.group(1))
+        if declared != actual:
+            mismatches.append(
+                f"{path.name}: dataset_size={declared} but "
+                f"{dataset_match.group(1)} has {actual} rows"
+            )
+
+    assert not mismatches, (
+        "printed cost estimates disagree with their own datasets: " f"{mismatches}"
+    )
