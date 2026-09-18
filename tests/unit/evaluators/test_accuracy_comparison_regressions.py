@@ -203,6 +203,10 @@ async def test_issue_1772_end_to_end_structured_and_numeric_string_outputs() -> 
         }[input_data["case"]]
 
     result = await evaluator.evaluate(outputs, {}, dataset)
+
+    assert result.metrics["accuracy"] == pytest.approx(1.0)
+
+
 @pytest.mark.asyncio
 async def test_issue_1771_non_detailed_aggregate_unwraps_strict_tuple_outputs() -> None:
     """Non-detailed lane must unwrap a strict (output, metrics) tuple before
@@ -275,6 +279,8 @@ def test_issue_1772_ordinary_numeric_formatting_still_coerces(actual, expected) 
     undo the PR.
     """
     assert _accuracy_values_match(actual, expected) is True
+
+
 def test_issue_1771_compute_accuracy_aggregated_unwraps_tuple_and_dict_directly() -> (
     None
 ):
