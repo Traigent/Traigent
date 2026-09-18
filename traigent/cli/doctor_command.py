@@ -186,7 +186,9 @@ def _run_key_checks(report: DoctorReport) -> None:
         )
 
 
-def _run_model_checks(report: DoctorReport, model_id: str | None) -> None:
+def _run_model_checks(
+    report: DoctorReport, model_id: str | None, *, offline: bool = False
+) -> None:
     """Model liveness classification + LiteLLM pricing coverage.
 
     Both checks are static/offline: provider classification is a local
@@ -210,6 +212,13 @@ def _run_model_checks(report: DoctorReport, model_id: str | None) -> None:
         )
 
     try:
+        if offline:
+            # LiteLLM fetches its model-cost map over the network on a cold
+            # import unless this is set. Without it, `doctor --offline --model`
+            # still reached out -- the flag promised something the import
+            # underneath did not honour. Set before the import, never after.
+            os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
         import litellm
 
         # Exact match only. The previous test was bidirectional substring
@@ -447,9 +456,13 @@ def _render_table(report: DoctorReport) -> None:
     is_flag=True,
     default=False,
     help=(
-        "Reserved for future network-touching checks; every current check "
-        "is already local-only, so this has no effect yet. traigent doctor "
-        "never issues an LLM completion regardless of this flag."
+        "Skip every check that opens a network socket. This is now honoured: "
+        "the connectivity probe is skipped, and LiteLLM's price table is "
+        "pinned to the bundled local copy so importing it cannot fetch one. "
+        "traigent doctor never issues an LLM completion regardless of this "
+        "flag. Caveat: --scorer imports the module you name, which executes "
+        "your code -- if that code opens a connection, --offline cannot stop "
+        "it. Omit --scorer for a guaranteed socket-free run."
     ),
 )
 @click.option(
@@ -494,7 +507,7 @@ def doctor(
     # github.com and pypi.org while its own --help promised it would not.
     _fold_diagnostic_report(report, diagnose(offline=offline))
     _run_key_checks(report)
-    _run_model_checks(report, model_id)
+    _run_model_checks(report, model_id, offline=offline)
     _run_cost_checks(report)
     _run_dataset_checks(report, dataset_path)
     _run_scorer_checks(report, scorer_spec)

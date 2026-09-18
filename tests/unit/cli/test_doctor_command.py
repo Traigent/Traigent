@@ -472,25 +472,64 @@ class TestOfflineIsReal:
 
 
 class TestPermissionProbeIsNonDestructive:
-    def test_an_existing_test_permission_file_survives(
-        self, tmp_path, monkeypatch
-    ) -> None:
-        """The probe used to write and unlink a FIXED `.test_permission`."""
+    """The probe used to write and unlink a FIXED `.test_permission`.
+
+    The canary has to sit where the probe actually writes. An earlier version
+    of this test planted it in the fake home ROOT while the probe writes into
+    `<home>/.traigent`, so restoring the destructive implementation would not
+    have touched it -- a test that could not fail. `Path.cwd` is patched too,
+    because the probe also visits `cwd/logs` and `cwd/data` and would otherwise
+    create directories in the real working tree during a test run.
+    """
+
+    @staticmethod
+    def _probe_dirs(tmp_path: Path) -> list[Path]:
+        return [tmp_path / ".traigent", tmp_path / "logs", tmp_path / "data"]
+
+    def test_an_existing_test_permission_file_survives(self, tmp_path) -> None:
         from traigent.utils.diagnostics import DiagnosticReport, TraigentDiagnostics
 
-        victim = tmp_path / ".test_permission"
-        victim.write_text("the user's own file", encoding="utf-8")
+        victims = []
+        for directory in self._probe_dirs(tmp_path):
+            directory.mkdir(parents=True, exist_ok=True)
+            victim = directory / ".test_permission"
+            victim.write_text("the user's own file", encoding="utf-8")
+            victims.append(victim)
 
-        monkeypatch.setattr(
-            TraigentDiagnostics,
-            "_check_permissions",
-            TraigentDiagnostics._check_permissions,
-        )
-        with patch.object(Path, "home", return_value=tmp_path):
+        report = DiagnosticReport()
+        with (
+            patch.object(Path, "home", return_value=tmp_path),
+            patch.object(Path, "cwd", return_value=tmp_path),
+        ):
+            TraigentDiagnostics._check_permissions(report)
+
+        # The probe must have actually run somewhere, or the assertions below
+        # are about a code path that never executed.
+        assert any("Can write to" in s["message"] for s in report.successes)
+
+        for victim in victims:
+            assert victim.exists(), f"the diagnostic deleted {victim}"
+            assert victim.read_text(encoding="utf-8") == "the user's own file"
+
+    def test_the_probe_leaves_no_files_behind(self, tmp_path) -> None:
+        """Cleanup, asserted where the probe actually writes."""
+        from traigent.utils.diagnostics import DiagnosticReport, TraigentDiagnostics
+
+        before = {}
+        for directory in self._probe_dirs(tmp_path):
+            directory.mkdir(parents=True, exist_ok=True)
+            before[directory] = set(directory.iterdir())
+
+        with (
+            patch.object(Path, "home", return_value=tmp_path),
+            patch.object(Path, "cwd", return_value=tmp_path),
+        ):
             TraigentDiagnostics._check_permissions(DiagnosticReport())
 
-        assert victim.exists(), "the diagnostic deleted a pre-existing user file"
-        assert victim.read_text(encoding="utf-8") == "the user's own file"
+        for directory, contents in before.items():
+            assert set(directory.iterdir()) == contents, (
+                f"the probe left a file behind in {directory}"
+            )
 
 
 class TestChecksCannotPassWithoutChecking:
@@ -626,3 +665,46 @@ class TestProviderKeysAreNotVendorSpecific:
         report = DiagnosticReport()
         TraigentDiagnostics._check_provider_keys(report)
         assert report.issues
+
+
+class TestOfflinePinsTheLiteLLMPriceTable:
+    def test_offline_sets_the_local_cost_map_before_importing_litellm(
+        self, runner, monkeypatch
+    ) -> None:
+        """LiteLLM fetches its price map on a cold import unless this is set.
+
+        Found by review: skipping the connectivity probe is not the same as
+        being offline. `--offline --model X` still reached the network through
+        LiteLLM's own import, so the flag promised more than it delivered.
+        """
+        monkeypatch.delenv("LITELLM_LOCAL_MODEL_COST_MAP", raising=False)
+        monkeypatch.setenv("TRAIGENT_SKIP_DOTENV", "true")
+
+        runner.invoke(doctor, ["--json", "--offline", "--model", "gpt-4o"])
+
+        assert os.environ.get("LITELLM_LOCAL_MODEL_COST_MAP") == "True"
+
+    def test_without_offline_the_cost_map_is_left_alone(
+        self, runner, monkeypatch
+    ) -> None:
+        """Control: the pin is scoped to --offline, not applied unconditionally."""
+        monkeypatch.delenv("LITELLM_LOCAL_MODEL_COST_MAP", raising=False)
+        monkeypatch.setenv("TRAIGENT_SKIP_DOTENV", "true")
+
+        runner.invoke(doctor, ["--json", "--model", "gpt-4o"])
+
+        assert "LITELLM_LOCAL_MODEL_COST_MAP" not in os.environ
+
+    def test_the_offline_help_does_not_claim_more_than_it_delivers(self) -> None:
+        """The old help said every check "is already local-only" -- it was not.
+
+        `--scorer` executes the user's module, which this flag cannot sandbox,
+        so the help has to say so rather than imply a guarantee.
+        """
+        offline_opt = next(p for p in doctor.params if "--offline" in p.opts)
+        help_text = offline_opt.help or ""
+
+        assert "no effect" not in help_text
+        assert "scorer" in help_text.lower(), (
+            "the caveat about --scorer executing user code must stay in the help"
+        )
