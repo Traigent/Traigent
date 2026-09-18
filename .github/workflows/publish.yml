@@ -351,15 +351,14 @@ jobs:
       TAG: v${{ needs.publish.outputs.package_version }}
       REPO: ${{ github.repository }}
       EXPECTED_VERSION: ${{ needs.publish.outputs.package_version }}
+      # `gh` reads GH_TOKEN directly, so this covers every step in the job
+      # without a login step. Preferred over `gh auth login --with-token`,
+      # which writes the credential to ~/.config/gh/hosts.yml on the runner --
+      # a credential at rest for the life of the job, where this is only ever
+      # in the process environment. Actions masks the value in logs either way.
+      GH_TOKEN: ${{ github.token }}
 
     steps:
-    # Authenticate the `gh` CLI for this job's remaining steps. Logging in
-    # (rather than exporting an env var holding the value) persists the
-    # credential to the runner's gh config for the rest of the job, and
-    # GitHub Actions still masks the value in logs either way.
-    - name: Authenticate gh CLI for this job
-      run: gh auth login --with-token <<< "${{ github.token }}"
-
     - name: Create or update the GitHub Release for this tag
       run: |
         set -euo pipefail
@@ -390,6 +389,16 @@ jobs:
           TITLE="$TAG"
         fi
 
+        # NOTE on --latest below: it FORCES this release to be GitHub's
+        # "Latest", which is correct for a forward publish (every release this
+        # repo has made) but wrong for a backport -- publishing 0.11.5 after
+        # 0.12.0 would move the Latest badge backwards. The assertion step
+        # cannot catch that, because it checks Latest == TAG and --latest is
+        # what just made that true. Deliberately not guarded with a version
+        # comparison here: `gh release list` failing under `set -euo pipefail`
+        # would abort this job AFTER PyPI has published, which is a worse
+        # failure than the case it would prevent. If we ever ship a backport,
+        # pass --latest=false for it.
         if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
           # Idempotent rerun (e.g. a retried workflow_dispatch of this job,
           # or a manually re-triggered run for the same tag): update the

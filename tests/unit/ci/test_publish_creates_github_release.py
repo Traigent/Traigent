@@ -114,3 +114,23 @@ def test_release_job_asserts_tag_pypi_and_latest_agree() -> None:
     assert (
         job["env"]["EXPECTED_VERSION"] == "${{ needs.publish.outputs.package_version }}"
     )
+
+
+def test_release_job_authenticates_by_env_not_by_writing_a_credential_to_disk() -> None:
+    """``gh`` gets its token from the job env, never from ``gh auth login``.
+
+    ``gh auth login --with-token`` persists the token to
+    ``~/.config/gh/hosts.yml`` on the runner -- a credential at rest for the
+    life of the job -- whereas ``GH_TOKEN`` in the job env is read directly by
+    ``gh`` and never touches the filesystem. Both are masked in logs, so the
+    difference is invisible in a run and easy to reintroduce.
+    """
+    job = _release_job()
+
+    assert job["env"]["GH_TOKEN"] == "${{ github.token }}"
+
+    steps_text = "\n".join(step.get("run", "") for step in job["steps"])
+    assert "gh auth login" not in steps_text, (
+        "use the GH_TOKEN job env instead of gh auth login, which writes the "
+        "credential to the runner's gh config"
+    )
