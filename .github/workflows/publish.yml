@@ -323,3 +323,193 @@ jobs:
       run: |
         echo "✅ Package successfully published and verified on PyPI!" >> "$GITHUB_STEP_SUMMARY"
         echo "Users can now install with: \`pip install traigent\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # GitHub Latest drifted from PyPI (stuck at v0.12.0 while PyPI reached
+  # v0.27.0) because no job in this workflow ever creates a GitHub Release.
+  # This job closes that gap for the automatic, tag-triggered publish path:
+  # it creates (or, on a rerun, idempotently updates) the Release for the
+  # exact tag that was just verified on PyPI, then asserts the tag, the
+  # published PyPI version, and GitHub's "Latest" all agree.
+  github-release:
+    needs: [publish, verify-publication]
+    runs-on: ubuntu-latest
+    if: >-
+      always() &&
+      needs.publish.result == 'success' &&
+      needs.verify-publication.result == 'success' &&
+      (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.environment == 'pypi'))
+    # Minimum permission beyond the workflow-level `contents: read`: this job
+    # is the only one that writes a GitHub Release.
+    permissions:
+      contents: write
+    env:
+      # Derived from the published package version (the same source
+      # verify-publication uses to confirm PyPI), not github.ref: a
+      # workflow_dispatch production-PyPI publish (roughly as common in this
+      # repo's history as a tag push) never sets github.ref to a tag, so a
+      # ref-derived tag would be wrong or empty for that path.
+      TAG: v${{ needs.publish.outputs.package_version }}
+      REPO: ${{ github.repository }}
+      EXPECTED_VERSION: ${{ needs.publish.outputs.package_version }}
+      # `gh` reads GH_TOKEN directly, so this covers every step in the job
+      # without a login step. Preferred over `gh auth login --with-token`,
+      # which writes the credential to ~/.config/gh/hosts.yml on the runner --
+      # a credential at rest for the life of the job, where this is only ever
+      # in the process environment. Actions masks the value in logs either way.
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+    # A workflow_dispatch->pypi publish never sets github.ref to a tag, so the
+    # `publish` job's "Verify tag is on main" step (gated on
+    # startsWith(github.ref, 'refs/tags/v')) is SKIPPED on that path. Without
+    # this check, dispatching from a feature branch would mint a v<version> git
+    # tag on that commit (--target $GITHUB_SHA) and mark it Latest -- publishing
+    # to PyPI from a branch was already possible, but the tag + Latest side
+    # effect would be new. Uses the API rather than a checkout: this job has
+    # none, and adding one to run `git merge-base` would be a bigger change than
+    # the check.
+    - name: Verify the release commit is on main
+      run: |
+        set -euo pipefail
+        STATUS="$(gh api "repos/$REPO/compare/main...$GITHUB_SHA" --jq .status)"
+        echo "compare main...$GITHUB_SHA -> $STATUS"
+        case "$STATUS" in
+          identical|behind) ;;
+          *)
+            echo "::error::Refusing to create release $TAG: $GITHUB_SHA is not on main ($STATUS)."
+            exit 1
+            ;;
+        esac
+
+    # The step above validates $GITHUB_SHA. It says nothing about where $TAG
+    # points, and `gh release create` REUSES an existing tag rather than
+    # repointing it -- so a workflow_dispatch can publish version X built from
+    # commit B while refs/tags/vX still points at commit A, and the Release
+    # (plus everything downstream that trusts "the tag for vX") would be cut
+    # against a commit this run never verified. Name parity is not identity.
+    - name: Verify an existing tag points at the published commit
+      run: |
+        set -euo pipefail
+        # Distinguish a CONFIRMED 404 (the tag genuinely does not exist yet,
+        # which is the normal workflow_dispatch path) from any other failure.
+        # The first version used `|| true` and treated empty output as
+        # "absent", so a transient transport error silently skipped identity
+        # verification entirely -- a policy check failing OPEN, which is the
+        # one direction this guard must never fail.
+        TAG_ERR="${RUNNER_TEMP:-/tmp}/tag-ref-$$.err"
+        set +e
+        REF_JSON="$(gh api "repos/$REPO/git/ref/tags/$TAG" 2>"$TAG_ERR")"
+        ref_rc=$?
+        set -e
+        if [ "$ref_rc" -ne 0 ]; then
+          if grep -qi 'HTTP 404' "$TAG_ERR"; then
+            echo "No existing $TAG; it will be created at $GITHUB_SHA."
+            exit 0
+          fi
+          echo "::error::Could not determine whether $TAG already exists (gh exited ${ref_rc}). Refusing to cut a release without verifying the tag's identity."
+          cat "$TAG_ERR" >&2
+          exit 1
+        fi
+        if [ -z "$REF_JSON" ]; then
+          echo "::error::Tag lookup for $TAG succeeded but returned nothing; refusing to proceed on an unverifiable result."
+          exit 1
+        fi
+        OBJ_SHA="$(printf '%s' "$REF_JSON" | jq -r '.object.sha')"
+        OBJ_TYPE="$(printf '%s' "$REF_JSON" | jq -r '.object.type')"
+        # A null/absent sha means the response was not the shape we expect
+        # (a 404 body echoed to stdout, an error envelope, a schema change).
+        # Never read that as "no existing tag".
+        if [ -z "$OBJ_SHA" ] || [ "$OBJ_SHA" = "null" ]; then
+          echo "::error::Tag lookup for $TAG returned no object sha; refusing to proceed on an unverifiable result."
+          printf '%s\n' "$REF_JSON" >&2
+          exit 1
+        fi
+        if [ "$OBJ_TYPE" = "tag" ]; then
+          # Annotated tag: peel it to the commit it wraps.
+          OBJ_SHA="$(gh api "repos/$REPO/git/tags/$OBJ_SHA" --jq '.object.sha')"
+        fi
+        if [ "$OBJ_SHA" != "$GITHUB_SHA" ]; then
+          echo "::error::$TAG already points at $OBJ_SHA, but this run published $GITHUB_SHA. Refusing to publish against an unverified commit."
+          exit 1
+        fi
+        echo "$TAG already points at $GITHUB_SHA."
+
+    - name: Create or update the GitHub Release for this tag
+      run: |
+        set -euo pipefail
+
+        echo "Generating release notes for $TAG..."
+        # target_commitish covers the workflow_dispatch case, where $TAG has
+        # no matching git tag yet: it tells the API which commit the
+        # (about-to-be-minted) tag will point at, so notes are generated
+        # against the right point in history instead of the default branch.
+        gh api "repos/$REPO/releases/generate-notes" \
+          -f "tag_name=$TAG" -f "target_commitish=$GITHUB_SHA" \
+          > /tmp/generated-notes.json
+
+        python - <<'PY'
+        import json
+
+        with open("/tmp/generated-notes.json", encoding="utf-8") as handle:
+            data = json.load(handle)
+
+        with open("/tmp/release-title.txt", "w", encoding="utf-8") as handle:
+            handle.write(data.get("name") or "")
+        with open("/tmp/release-body.md", "w", encoding="utf-8") as handle:
+            handle.write(data.get("body") or "")
+        PY
+
+        TITLE="$(cat /tmp/release-title.txt)"
+        if [ -z "$TITLE" ]; then
+          TITLE="$TAG"
+        fi
+
+        # NOTE on --latest below: it FORCES this release to be GitHub's
+        # "Latest", which is correct for a forward publish (every release this
+        # repo has made) but wrong for a backport -- publishing 0.11.5 after
+        # 0.12.0 would move the Latest badge backwards. The assertion step
+        # cannot catch that, because it checks Latest == TAG and --latest is
+        # what just made that true. Deliberately not guarded with a version
+        # comparison here: `gh release list` failing under `set -euo pipefail`
+        # would abort this job AFTER PyPI has published, which is a worse
+        # failure than the case it would prevent. If we ever ship a backport,
+        # pass --latest=false for it.
+        if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+          # Idempotent rerun (e.g. a retried workflow_dispatch of this job,
+          # or a manually re-triggered run for the same tag): update the
+          # existing release instead of failing on "already exists".
+          echo "Release $TAG already exists — updating it."
+          gh release edit "$TAG" --repo "$REPO" \
+            --title "$TITLE" \
+            --notes-file /tmp/release-body.md \
+            --latest
+        else
+          # --target mints the tag from this run's commit when it doesn't
+          # exist yet (the workflow_dispatch-to-pypi path never pushed one);
+          # for a real tag push the tag already exists at this commit, so
+          # --target has no effect there and gh just uses the existing tag.
+          echo "Creating release $TAG."
+          gh release create "$TAG" --repo "$REPO" \
+            --title "$TITLE" \
+            --notes-file /tmp/release-body.md \
+            --latest \
+            --target "$GITHUB_SHA"
+        fi
+
+    - name: Assert GitHub Latest, the tag, and PyPI agree
+      run: |
+        set -euo pipefail
+
+        TAG_VERSION="${TAG#v}"
+        if [ "$TAG_VERSION" != "$EXPECTED_VERSION" ]; then
+          echo "Error: tag $TAG (version $TAG_VERSION) does not match the published package version $EXPECTED_VERSION"
+          exit 1
+        fi
+
+        LATEST_TAG="$(gh release view --repo "$REPO" --json tagName -q .tagName)"
+        if [ "$LATEST_TAG" != "$TAG" ]; then
+          echo "Error: GitHub Latest release is $LATEST_TAG, expected $TAG"
+          exit 1
+        fi
+
+        echo "GitHub Latest ($LATEST_TAG), tag ($TAG), and PyPI ($EXPECTED_VERSION) agree."
