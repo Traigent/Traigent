@@ -31,11 +31,19 @@ Public surface:
 
 * :func:`enable_mock_mode_for_quickstart` — opt in (warns once on
   activation, ``RuntimeError`` in prod).
+* :func:`disable_mock_mode` — opt back out within the same process
+  (info-logs on deactivation; always allowed, no prod guard needed
+  since turning mock mode OFF can never substitute a fake result for
+  a real one).
 * :func:`is_mock_mode_enabled` — runtime check (in-code flag only;
   use :func:`is_mock_llm` if you also want the env-var fallback).
 
 The module-level flag is process-local; importing the SDK in a fresh
-interpreter starts with mock mode off.
+interpreter starts with mock mode off. Within a single process, a
+mock test-run followed by a "real" run must call
+:func:`disable_mock_mode` in between or the "real" run silently keeps
+using mocked responses — call :func:`disable_mock_mode` explicitly to
+avoid that.
 """
 
 from __future__ import annotations
@@ -45,6 +53,7 @@ import threading
 
 __all__ = [
     "enable_mock_mode_for_quickstart",
+    "disable_mock_mode",
     "is_mock_mode_enabled",
 ]
 
@@ -108,6 +117,44 @@ def enable_mock_mode_for_quickstart() -> None:
                 "and anthropic.messages.create(...) calls are not intercepted and "
                 "can hit the real provider API."
             )
+
+
+def disable_mock_mode() -> None:
+    """Deactivate process-local mock mode for LLM calls.
+
+    Public counterpart to :func:`enable_mock_mode_for_quickstart`.
+    Idempotent: calling this when mock mode is already off is a no-op.
+    The first deactivation after an activation emits a single mandatory
+    ``INFO`` log line, mirroring the ``WARNING`` emitted on activation, so
+    the transition is visible to anyone tailing logs.
+
+    Unlike :func:`enable_mock_mode_for_quickstart`, this has no
+    ``ENVIRONMENT=production`` guard: turning mock mode OFF can never
+    substitute a fake result for a real one, so there is nothing to
+    hard-block.
+
+    Intended for: same-process flows that do a free mock test-run and
+    then a "real" run and need mock mode fully off before that real run,
+    so it does not silently keep returning canned responses. After this
+    call, the next :func:`enable_mock_mode_for_quickstart` will log its
+    activation warning again (the "already logged" state resets too).
+
+    Note: this only resets the in-code flag consulted by
+    :func:`is_mock_mode_enabled`. The legacy ``TRAIGENT_MOCK_LLM`` env var
+    (if set) is a separate mechanism — unset it yourself if your process
+    also relies on that path.
+    """
+    global _enabled, _activation_logged
+    with _lock:
+        if not _enabled:
+            return
+        _enabled = False
+        _activation_logged = False
+        _logger.info(
+            "[traigent.testing] mock mode is now INACTIVE — LLM calls will "
+            "no longer be intercepted and will hit real providers again. "
+            "Disabled via traigent.testing.disable_mock_mode()."
+        )
 
 
 def is_mock_mode_enabled() -> bool:

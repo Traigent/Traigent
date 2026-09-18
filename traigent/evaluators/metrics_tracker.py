@@ -1196,13 +1196,21 @@ class ResponseHandler(ABC):
         Checks the following sources in order, preferring an explicit
         provider-reported charge — including an explicit ``$0`` — over a
         LiteLLM/local price-table estimate (#2274):
-        1. ``response.cost`` — generic cost attribute (dict or scalar).
+        1. ``response.cost`` — generic cost attribute (dict or scalar). Used
+           only when it parses to a POSITIVE amount. A bare ``.cost`` on an
+           arbitrary response object is far more often an uninitialised
+           placeholder than a provider charge, so a ``0.0`` here must not
+           short-circuit the authoritative source below (#2342).
         2. ``response.usage.cost`` — LiteLLM's Usage object exposes ``cost``
            when the provider (e.g. OpenRouter) includes it in the usage
-           block. This is an explicit provider-reported charge, so it is
-           retained even when it is exactly ``0.0`` and flagged via
-           ``CostMetrics.cost_explicit`` so the downstream cost path keeps it
-           instead of substituting a price-table estimate.
+           block. litellm's own ``Usage`` does not define ``cost``, so the
+           attribute's mere presence means the provider supplied it: this is
+           the authoritative figure, retained even when it is exactly ``0.0``
+           and flagged via ``CostMetrics.cost_explicit`` so the downstream
+           cost path keeps it instead of substituting a price-table estimate.
+           Accepted only when finite, non-negative and not a ``bool``; an
+           unusable value is logged and falls back to the estimate below — it
+           is never recorded, and never silently treated as ``$0``.
         3. ``response._hidden_params['response_cost']`` — LiteLLM sets this
            for OpenRouter and other providers. On some routes LiteLLM copies
            the provider's own charge here; on others it is a local
@@ -1212,25 +1220,30 @@ class ResponseHandler(ABC):
         """
         cost_metrics = CostMetrics()
 
-        # 1. Generic ``response.cost`` attribute (dict or scalar). This is an
-        #    explicit provider-reported charge, so it is retained even when
-        #    it is exactly 0.0 (#2274) — return whenever a cost was actually
-        #    parsed, not only when it happens to be positive.
-        response_cost_found = False
+        # 1. Generic ``response.cost`` attribute (dict or scalar). Only a
+        #    POSITIVE value short-circuits. Returning as soon as a cost was
+        #    *parsed* — including a parsed 0.0 — let a placeholder
+        #    ``response.cost = 0`` shadow BOTH the authoritative ``usage.cost``
+        #    below and the LiteLLM figure after it, so a response carrying
+        #    ``cost = 0`` next to a real ``usage.cost = 0.0042`` was priced
+        #    from the offline table instead: a 9x UNDER-report of real spend,
+        #    and 1282x for ``usage.cost = 0.25`` (#2342). Returning a zero
+        #    here never preserved anything in the first place — the generic
+        #    path does not set ``cost_explicit``, so ``handle``'s
+        #    ``total_cost > 0 or cost_explicit`` test discarded it one frame
+        #    up regardless.
         if hasattr(response, "cost"):
             try:
                 if isinstance(response.cost, dict):
                     cost_metrics.input_cost = response.cost.get("input", 0.0)
                     cost_metrics.output_cost = response.cost.get("output", 0.0)
                     cost_metrics.total_cost = response.cost.get("total", 0.0)
-                    response_cost_found = True
                 else:
                     cost_metrics.total_cost = float(response.cost)
-                    response_cost_found = True
             except (TypeError, ValueError) as e:
                 logger.debug(f"Failed to parse cost from response: {e}")
 
-        if response_cost_found:
+        if cost_metrics.total_cost > 0.0:
             return cost_metrics
 
         # 2. LiteLLM Usage.cost field — an explicit provider-reported charge.
@@ -1240,12 +1253,26 @@ class ResponseHandler(ABC):
         if usage is not None:
             try:
                 usage_cost = getattr(usage, "cost", None)
-                # ``bool`` is a subclass of ``int``, so ``isinstance(True, int)``
-                # is True and a stray boolean would price a call at $1.00 now
-                # that the old ``> 0`` filter no longer rejects it. Reject it
-                # explicitly rather than relying on the magnitude.
-                if isinstance(usage_cost, (int, float)) and not isinstance(
-                    usage_cost, bool
+                # Validate the AUTHORITATIVE figure before trusting it, since
+                # dropping the old ``> 0`` filter also dropped every sanity
+                # check it incidentally performed (#2342):
+                #  * ``bool`` is a subclass of ``int``, so ``isinstance(True,
+                #    int)`` is True and ``float(True)`` is 1.0 — a stray
+                #    boolean would book a $1.00 charge;
+                #  * a negative reached ``format_for_backend`` verbatim
+                #    (``usage.cost = -1`` produced ``cost: -1.0``), because the
+                #    explicit-$0 bypass downstream tests ``<= 0.0`` and so also
+                #    skipped the plausibility reconciler;
+                #  * ``inf`` reached the ledger as ``inf``, and ``NaN`` set
+                #    ``cost_explicit`` on a value that then lost to the
+                #    estimate anyway — a provenance flag that lied.
+                # A rejected value is NOT a $0 charge: fall through to the
+                # estimate and say so in the log.
+                if (
+                    isinstance(usage_cost, (int, float))
+                    and not isinstance(usage_cost, bool)
+                    and math.isfinite(usage_cost)
+                    and usage_cost >= 0
                 ):
                     cost_metrics.total_cost = float(usage_cost)
                     # litellm's own ``Usage`` object does NOT define ``cost``
@@ -1262,6 +1289,18 @@ class ResponseHandler(ABC):
                         cost_metrics.total_cost,
                     )
                     return cost_metrics
+                if usage_cost is not None:
+                    # Say it out loud: the figure the provider sent was
+                    # unusable, so what lands on the trial is an ESTIMATE.
+                    # Cost accounting fails closed — an invalid charge becomes
+                    # unknown spend, never a silent $0 and never the bad value.
+                    logger.warning(
+                        "Ignoring unusable provider-reported usage.cost %r "
+                        "(must be a finite, non-negative, non-boolean "
+                        "number). The cost recorded for this call is a "
+                        "price-table ESTIMATE, not the provider's charge.",
+                        usage_cost,
+                    )
             except Exception as e:  # pragma: no cover
                 logger.debug(f"Failed to parse cost from usage.cost: {e}")
 

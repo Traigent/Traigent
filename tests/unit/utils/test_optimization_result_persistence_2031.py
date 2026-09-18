@@ -17,6 +17,7 @@ Cost safety: these are pure serializer unit tests. No ``OptimizedFunction``, no
 ``optimize()``, no evaluator or optimizer is constructed, so there is no LLM
 call, no network, and no spend.
 """
+
 # Traceability: CONC-Layer-Data CONC-Quality-Reliability FUNC-STORAGE REQ-STOR-007
 
 from __future__ import annotations
@@ -33,11 +34,11 @@ import pytest
 from traigent.api.types import OptimizationResult, OptimizationStatus, TrialResult
 from traigent.utils import optimization_result_persistence as manifest
 from traigent.utils.optimization_result_persistence import (
+    _SENTINELS,
     RESULT_RESET,
     RESULT_RESTORE,
     RESULT_SCHEMA_VERSION,
     SCHEMA_VERSION_KEY,
-    _SENTINELS,
     decode_result,
     encode_result_fields,
 )
@@ -88,8 +89,8 @@ def test_manifest_covers_every_optimization_result_field() -> None:
         "A field cannot be both restored and reset; the manifest contradicts "
         f"itself for: {sorted(RESULT_RESTORE & RESULT_RESET)}"
     )
-    assert len(declared) == 27, (
-        f"OptimizationResult now declares {len(declared)} fields, not 27. If you "
+    assert len(declared) == 28, (
+        f"OptimizationResult now declares {len(declared)} fields, not 28. If you "
         f"added one, updating this number is the LAST step, not the first: a "
         f"restorable field also needs a _SENTINELS entry, a bumped "
         f"RESULT_SCHEMA_VERSION, a FIELD_INTRODUCED_IN entry at that bumped "
@@ -589,8 +590,18 @@ _GOLDEN_V1: dict = {
     "warnings": ["Model 'mystery-1' priced at $0 — spend is under-reported."],
 }
 
+#: Version 2 (issue #1704): adds `ranking_eligible_trial_ids`, the terminal
+#: selector's exact ranking-eligible trial-id set, threaded through so
+#: post-hoc weighted-score range normalization shares its basis instead of
+#: silently re-widening it over every successful trial.
+_GOLDEN_V2: dict = {
+    **{k: v for k, v in _GOLDEN_V1.items() if k != SCHEMA_VERSION_KEY},
+    "_schema_version": 2,
+    "ranking_eligible_trial_ids": ["golden-trial-0"],
+}
+
 #: One frozen payload per schema version this build claims to read.
-_GOLDEN_ARTIFACTS: dict[int, dict] = {1: _GOLDEN_V1}
+_GOLDEN_ARTIFACTS: dict[int, dict] = {1: _GOLDEN_V1, 2: _GOLDEN_V2}
 
 
 def test_a_golden_artifact_is_frozen_for_every_readable_schema_version() -> None:

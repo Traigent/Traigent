@@ -2878,7 +2878,13 @@ class OptimizationOrchestrator:
         """Submit collected workflow traces. Delegates to WorkflowTraceManager."""
         if backend_egress_disabled(self.traigent_config):
             return
-        await self._workflow_trace_manager.submit_traces(session_id)
+        # #2060: tell the trace manager whether any trial actually executed
+        # so a legitimate zero-trial completion (e.g. an exhausted shared
+        # ExecutionBudget, issue #1980) does not fire the zero-span
+        # wiring-fault WARNING.
+        await self._workflow_trace_manager.submit_traces(
+            session_id, trials_executed=bool(self._trials)
+        )
 
     @staticmethod
     def _populate_experiment_cloud_url(result: OptimizationResult) -> None:
@@ -5396,6 +5402,9 @@ class OptimizationOrchestrator:
             warning_codes=result_warning_codes,
             source=source,
             best_config_margin=best_config_margin,
+            # Thread the terminal selector's exact eligible set through so
+            # post-hoc range normalization shares its basis (issue #1704).
+            ranking_eligible_trial_ids=selection.ranking_eligible_trial_ids,
         )
         self._selection_receipt_binding = (optimization_result, selection_receipt)
 

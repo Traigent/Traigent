@@ -104,6 +104,39 @@ class TestSubmitTraces:
         await mgr.submit_traces()  # no spans collected
 
     @pytest.mark.asyncio
+    async def test_warns_on_zero_spans_when_trials_executed(self, caplog) -> None:
+        """#2060: default (unknown trial count) preserves the wiring-fault
+        warning, and an explicit trials_executed=True keeps it too."""
+        import logging
+
+        mgr = _make_manager(tracker=MagicMock())
+
+        with caplog.at_level(logging.WARNING):
+            await mgr.submit_traces(trials_executed=True)
+
+        assert any(r.levelno == logging.WARNING for r in caplog.records)
+        assert "no workflow spans" in caplog.text.lower()
+
+    @pytest.mark.asyncio
+    async def test_no_warning_on_zero_spans_when_no_trials_executed(
+        self, caplog
+    ) -> None:
+        """#2060: a legitimate zero-trial completion (e.g. an exhausted
+        shared ExecutionBudget, issue #1980) must not fire the zero-span
+        wiring-fault WARNING; it stays at DEBUG."""
+        import logging
+
+        mgr = _make_manager(tracker=MagicMock())
+
+        with caplog.at_level(
+            logging.DEBUG, logger="traigent.core.workflow_trace_manager"
+        ):
+            await mgr.submit_traces(trials_executed=False)
+
+        assert not any(r.levelno >= logging.WARNING for r in caplog.records)
+        assert any("zero trials" in r.message.lower() for r in caplog.records)
+
+    @pytest.mark.asyncio
     async def test_skips_in_offline_mode(self) -> None:
         tracker = MagicMock()
         mgr = _make_manager(tracker=tracker)
