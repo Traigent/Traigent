@@ -115,6 +115,14 @@ RESERVED_METRIC_KEYS: frozenset[str] = frozenset(
         # evaluator's value and it is never sacrificed to the measures ceiling —
         # portals/harnesses gate on it, so it must always survive to the trial.
         "empty_output_rate",
+        # Diagnostic: fraction of a config's examples whose provider response
+        # carried a truncated finish/stop reason -- OpenAI/LiteLLM "length",
+        # Anthropic "max_tokens", Gemini "MAX_TOKENS" (issue #1809). Reasoning
+        # models spend hidden thinking tokens against max_tokens before any
+        # answer text, so a cap sized for a non-reasoning model silently
+        # truncates the answer and the accuracy comparison measures an
+        # artifact. Reserved for the same reasons as ``empty_output_rate``.
+        "truncated_output_rate",
         # format_for_backend / summary outputs.
         "duration",
         "input_tokens",
@@ -196,6 +204,46 @@ def compute_empty_output_rate(outputs: Sequence[Any]) -> float:
         return 0.0
     empty = sum(1 for output in outputs if output_is_empty(output))
     return empty / len(outputs)
+
+
+#: Provider finish/stop-reason values that mean "hit the length cap, not a
+#: natural stop" (issue #1809). OpenAI/LiteLLM/most OpenAI-compatible APIs use
+#: "length"; Anthropic's ``stop_reason`` uses "max_tokens"; Gemini's
+#: ``finish_reason`` uses "MAX_TOKENS" (matched case-insensitively below).
+TRUNCATED_FINISH_REASONS: frozenset[str] = frozenset({"length", "max_tokens"})
+
+
+def finish_reason_is_truncated(finish_reason: str | None) -> bool:
+    """Return ``True`` if ``finish_reason`` means the output was cut off (#1809).
+
+    Reasoning models (gemini-2.5/3.x, gpt-5, o-series) spend hidden reasoning
+    tokens against ``max_tokens`` before any answer text, so a cap sized for a
+    non-reasoning model truncates the answer mid-output. The trial then scores
+    as a measurement artifact rather than on the config's real capability.
+    """
+    if not finish_reason:
+        return False
+    return finish_reason.strip().lower() in TRUNCATED_FINISH_REASONS
+
+
+def compute_truncated_output_rate(example_metrics: Sequence[Any]) -> float:
+    """Fraction of examples with a detected truncated ``finish_reason`` (#1809).
+
+    The denominator is examples that carried a recognizable finish/stop
+    reason at all, not every example in the trial: privacy mode, a plain
+    string return with no captured provider response, or an unrecognized
+    response shape leaves ``finish_reason`` unset, and counting those as
+    "not truncated" would understate the rate with a signal that was never
+    actually available. Returns ``0.0`` when no example has a finish_reason
+    (nothing to report, not a divide-by-zero).
+    """
+    reasons = [
+        metric.finish_reason for metric in example_metrics if metric.finish_reason
+    ]
+    if not reasons:
+        return 0.0
+    truncated = sum(1 for reason in reasons if finish_reason_is_truncated(reason))
+    return truncated / len(reasons)
 
 
 def aggregate_user_custom_metrics(
@@ -497,6 +545,13 @@ class ExampleMetrics:
     # ``ExampleMetrics(...)`` calls elsewhere in the codebase) keeps its
     # current behavior unless it explicitly opts out.
     measured: bool = True
+    # Raw provider finish/stop reason for this example's LLM response (issue
+    # #1809), e.g. OpenAI/LiteLLM "length", Anthropic "max_tokens", Gemini
+    # "MAX_TOKENS", or a natural "stop". ``None`` when the response handler
+    # chain found no such signal (privacy mode, a plain string return, or a
+    # response shape none of the handlers recognize) -- never fabricated.
+    # See :func:`finish_reason_is_truncated` for the truncation predicate.
+    finish_reason: str | None = None
 
 
 class MetricsTracker:
@@ -1329,6 +1384,69 @@ class ResponseHandler(ABC):
             except (TypeError, ValueError):
                 pass
 
+    def extract_finish_reason(self, response: Any) -> str | None:
+        """Extract a provider finish/stop reason from ``response`` (issue #1809).
+
+        Generic across providers so no subclass needs to override it. Checked
+        in order:
+
+        1. OpenAI/LiteLLM-style ``choices[0].finish_reason`` (object or dict) --
+           covers OpenAI, Azure OpenAI, and OpenAI-compatible endpoints
+           (OpenRouter, Gemini-via-LiteLLM).
+        2. A top-level ``finish_reason``/``stop_reason`` attribute or dict key
+           (Anthropic's ``stop_reason``; dict responses).
+        3. A ``metadata``/``response_metadata`` dict's ``finish_reason``/
+           ``stop_reason`` (LangChain responses; the internal response-wrapper
+           metadata in ``integrations/utils/response_wrapper.py``).
+
+        Returns ``None`` when no provider signal is available -- never
+        fabricated, so an unrecognized response shape reports "no signal",
+        not a false "not truncated". Every attribute access is guarded: a
+        response object (real SDK object, ``unittest.mock.Mock``, or a test
+        double with a raising property) must never turn this best-effort
+        extraction into a hard failure of the whole metrics pipeline.
+        """
+
+        def _safe_getattr(obj: Any, name: str) -> Any:
+            try:
+                return getattr(obj, name, None)
+            except Exception:
+                return None
+
+        choices = _safe_getattr(response, "choices")
+        if choices is None and isinstance(response, dict):
+            choices = response.get("choices")
+        if choices:
+            try:
+                choice = choices[0]
+            except Exception:
+                choice = None
+            if choice is not None:
+                reason = _safe_getattr(choice, "finish_reason")
+                if reason is None and isinstance(choice, dict):
+                    reason = choice.get("finish_reason")
+                if reason:
+                    return str(reason)
+
+        for attr in ("finish_reason", "stop_reason"):
+            reason = _safe_getattr(response, attr)
+            if reason:
+                return str(reason)
+            if isinstance(response, dict):
+                reason = response.get(attr)
+                if reason:
+                    return str(reason)
+
+        for meta_attr in ("metadata", "response_metadata"):
+            metadata_dict = _safe_getattr(response, meta_attr)
+            if isinstance(metadata_dict, dict):
+                for key in ("finish_reason", "stop_reason"):
+                    reason = metadata_dict.get(key)
+                    if reason:
+                        return str(reason)
+
+        return None
+
     def handle(self, response: Any) -> ExampleMetrics | None:
         """Handle the response or pass to next handler."""
         if self.can_handle(response):
@@ -1348,6 +1466,9 @@ class ResponseHandler(ABC):
 
             # Extract additional metadata
             self.extract_metadata_info(response, metrics)
+
+            # Extract finish/stop reason for the truncation guard (#1809).
+            metrics.finish_reason = self.extract_finish_reason(response)
 
             return metrics
         elif self._next_handler:
