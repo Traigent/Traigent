@@ -23,7 +23,7 @@ from traigent.evaluators.base import (
     _accuracy_values_match,
     _example_correlation_key,
     _is_empty_expected_output,
-    _normalize_output_for_accuracy_comparison,
+    _accuracy_matches_after_unwrap,
 )
 from traigent.evaluators.metrics_tracker import (
     EMPTY_OUTPUT_RATE_WARNING_THRESHOLD,
@@ -2025,8 +2025,9 @@ class LocalEvaluator(BaseEvaluator):
             # -- a raw tuple/dict never equals a scalar expected value, which
             # silently understated this aggregate on mixed-shape runs
             # (Traigent#1771).
-            value = _normalize_output_for_accuracy_comparison(raw_output)
-            if value is not None and _accuracy_values_match(value, expected):
+            if raw_output is not None and _accuracy_matches_after_unwrap(
+                raw_output, expected
+            ):
                 correct += 1
 
         if total > 0:

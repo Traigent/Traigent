@@ -326,3 +326,105 @@ def test_issue_1771_progress_accuracy_metrics_unwraps_tuple_and_dict_outputs() -
 
     assert tuple_metrics["accuracy"] == pytest.approx(1.0)
     assert dict_metrics["accuracy"] == pytest.approx(1.0)
+
+
+class TestUnwrappingIsTriedSecond:
+    """The unwrap must never turn a MATCH into a mismatch (Traigent#1771).
+
+    The first version of this fix applied ``_unpack_user_metrics``
+    unconditionally, on a docstring claim that re-unpacking an already-unpacked
+    value is a no-op. It is not. A user output that is ITSELF a ``(value,
+    dict)`` 2-tuple matches the unpack contract, so a second unpack splits it
+    again -- and the detailed path unpacks once already, at
+    ``_evaluate_single_detailed``. Measured end to end, with the agent
+    returning ``(("Rome", {"x": 1.0}), {"m": 1.0})``:
+
+        detailed=False    0.0 on develop  ->  1.0   (the fix)
+        detailed=True     1.0 on develop  ->  0.0   (a NEW failure)
+
+    ``local.py`` records exactly this hazard at its own carrier check; the new
+    call sites walked into it. The comparison now runs DIRECT first and unwraps
+    only on failure, so the transformation can add a match and never remove
+    one.
+    """
+
+    def test_a_nested_tuple_output_survives_on_both_lanes(self) -> None:
+        import asyncio
+
+        nested = ("Rome", {"x": 1.0})
+
+        def agent(**_config):
+            return (nested, {"m": 1.0})
+
+        dataset = Dataset([EvaluationExample({"q": "capital"}, nested)])
+
+        for detailed in (False, True):
+            evaluator = LocalEvaluator(metrics=["accuracy"], detailed=detailed)
+            result = asyncio.run(evaluator.evaluate(agent, {}, dataset))
+            assert result.metrics.get("accuracy") == pytest.approx(1.0), (
+                f"detailed={detailed}: a correct nested-tuple answer scored "
+                f"{result.metrics.get('accuracy')}"
+            )
+
+    def test_a_plain_dict_output_is_not_flattened_to_none(self) -> None:
+        """``{"a": 1}.get("text")`` is ``None``.
+
+        The dict branch called ``.get("text")`` on every dict, so a structured
+        output that was not a ``{"text": ...}`` wrapper became ``None`` before
+        the comparison -- a correct structured answer scored wrong, the same
+        failure the PR set out to fix, introduced by the fix.
+        """
+        base = _DummyBaseEvaluator()
+        metrics = base._build_progress_accuracy_metrics(
+            output={"a": 1},
+            expected_output={"a": 1},
+            error=None,
+            example_id="ex-dict",
+        )
+        assert metrics["accuracy"] == pytest.approx(1.0)
+
+    def test_a_real_mismatch_is_still_a_mismatch(self) -> None:
+        """Control: retrying after an unwrap must not invent matches."""
+        base = _DummyBaseEvaluator()
+        assert base._compute_accuracy(
+            [("Paris", {"m": 1.0})], ["Rome"], [None]
+        ) == pytest.approx(0.0)
+
+
+class TestTheSweepReachesEveryComparator:
+    """The title claims "every accuracy comparison site". Three were missed.
+
+    A previous review dismissed ``metrics.py`` as dead code -- on a grep for
+    ``MetricsCalculator``, which is a DIFFERENT class in ``metrics_tracker.py``.
+    The class here is ``MetricsComputer``, and this very file constructs it.
+    """
+
+    def test_metrics_computer_scores_a_tuple_output_correctly(self) -> None:
+        result = MetricsComputer(metrics=["accuracy"]).compute_metrics(
+            [
+                InvocationResult(result=("Rome", {"m": 1.0}), is_successful=True),
+                InvocationResult(result="Rome", is_successful=True),
+            ],
+            ["Rome", "Rome"],
+        )
+        assert result.metrics["accuracy"] == pytest.approx(1.0)
+
+    @pytest.mark.parametrize("actual", [{"text": "Rome"}, ("Rome", {"m": 1.0}), "Rome"])
+    def test_outcome_signals_verified_match_unwraps(self, actual) -> None:
+        """Consumed by ``core/trial_result_factory.py`` -- a live path."""
+        from traigent.utils.outcome_signals import verified_match
+
+        assert verified_match(actual, "Rome") == pytest.approx(1.0)
+
+    def test_outcome_signals_still_reports_a_real_miss(self) -> None:
+        from traigent.utils.outcome_signals import verified_match
+
+        assert verified_match({"text": "Paris"}, "Rome") == pytest.approx(0.0)
+
+    def test_execution_adapter_exact_match_unwraps(self) -> None:
+        """Constructed at ``traigent_client.py:311,551``."""
+        from traigent.evaluators.base import _accuracy_matches_after_unwrap
+
+        assert _accuracy_matches_after_unwrap(("Rome", {"m": 1.0}), "Rome") is True
+        assert _accuracy_matches_after_unwrap({"text": "Rome"}, "Rome") is True
+        assert _accuracy_matches_after_unwrap("Paris", "Rome") is False

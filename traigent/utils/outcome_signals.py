@@ -305,7 +305,7 @@ def verified_match(
     built-in scorer: a config that fails on an example did not get it right.
     """
     from traigent.evaluators.base import (
-        _accuracy_values_match,
+        _accuracy_matches_after_unwrap,
         _is_empty_expected_output,
     )
 
@@ -313,7 +313,9 @@ def verified_match(
         return None
     if errored:
         return 0.0
-    return 1.0 if _accuracy_values_match(actual_output, expected_output) else 0.0
+    return (
+        1.0 if _accuracy_matches_after_unwrap(actual_output, expected_output) else 0.0
+    )
 
 
 #: Counts total signal-build failures process-wide, so a systemic failure (every

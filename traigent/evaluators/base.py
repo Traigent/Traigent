@@ -341,15 +341,49 @@ def _normalize_output_for_accuracy_comparison(raw_output: Any) -> Any:
     accuracy-comparison site (the registry ``_compute_accuracy``,
     ``_build_progress_accuracy_metrics``, and
     ``LocalEvaluator._compute_accuracy_aggregated``) keeps them from drifting
-    out of sync with the per-example path again. Calling
-    ``_unpack_user_metrics`` on an already-unpacked value is a documented
-    no-op, so this is safe to apply even when ``raw_output`` was unwrapped
-    upstream already.
+    out of sync with the per-example path again.
+
+    **This is not idempotent, and must not be applied unconditionally.** An
+    earlier version of this docstring claimed that unpacking an already-
+    unpacked value is a no-op. It is not: a user output that is ITSELF a
+    ``(value, dict)`` 2-tuple matches the unpack contract, so a second unpack
+    splits it again. On the detailed path, where ``_unpack_user_metrics`` has
+    already run at ``_evaluate_single_detailed``, that turned a correct answer
+    into a wrong one -- measured, aggregate accuracy 1.0 -> 0.0. ``local.py``
+    records the same hazard at its own carrier check. Callers therefore go
+    through :func:`_accuracy_matches_after_unwrap`, which only reaches here
+    when the direct comparison has already failed.
+
+    The dict branch is likewise narrowed to a wrapper that actually carries a
+    ``text`` key: ``{"a": 1}.get("text")`` is ``None``, so an unconditional
+    ``.get`` turned every non-wrapper dict output into ``None`` before the
+    comparison.
     """
     output, _ = BaseEvaluator._unpack_user_metrics(raw_output)
-    if isinstance(output, dict):
-        return output.get("text")
+    if isinstance(output, CollectionsMapping) and "text" in output:
+        return output["text"]
     return output
+
+
+def _accuracy_matches_after_unwrap(actual: Any, expected: Any) -> bool:
+    """Compare, and retry once against the unwrapped output (issue #1771).
+
+    The direct comparison runs FIRST. Only if it fails is the output unwrapped
+    and compared again, so this can turn a mismatch into a match but never the
+    reverse -- which is the whole content of #1771 (a correct answer inside a
+    wrapper scoring as wrong) without the regression that unwrapping
+    unconditionally introduced on the already-unwrapped detailed path.
+
+    Ordering matters rather than being a micro-optimization: it is what makes
+    the transformation safe to apply at a call site without first knowing
+    whether that site's output arrived wrapped.
+    """
+    if _accuracy_values_match(actual, expected):
+        return True
+    unwrapped = _normalize_output_for_accuracy_comparison(actual)
+    if unwrapped is actual or unwrapped == actual:
+        return False
+    return _accuracy_values_match(unwrapped, expected)
 
 
 try:  # pragma: no cover - import guard for optional dependency
@@ -1735,9 +1769,7 @@ class BaseEvaluator(ABC):
             if _is_empty_expected_output(exp):
                 continue
             total += 1
-            if error is None and _accuracy_values_match(
-                _normalize_output_for_accuracy_comparison(output), exp
-            ):
+            if error is None and _accuracy_matches_after_unwrap(output, exp):
                 correct += 1
 
         return correct / total if total > 0 else 0.0
@@ -3522,11 +3554,10 @@ class BaseEvaluator(ABC):
         if error is not None or _is_empty_expected_output(expected_output):
             return {}
         try:
-            normalized_output = _normalize_output_for_accuracy_comparison(output)
             return {
                 "accuracy": (
                     1.0
-                    if _accuracy_values_match(normalized_output, expected_output)
+                    if _accuracy_matches_after_unwrap(output, expected_output)
                     else 0.0
                 )
             }
