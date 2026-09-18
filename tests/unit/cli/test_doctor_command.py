@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import urlsplit
 
 import pytest
 from click.testing import CliRunner
@@ -729,22 +730,48 @@ class TestEverySinkIsGuarded:
         """
         from traigent.utils.diagnostics import DiagnosticReport, TraigentDiagnostics
 
+        # Deliberately NOT the `tg_`-prefixed SENTINEL: that matches the vendor
+        # key-shape pattern, so the shape rule would redact it even with the URL
+        # rule broken, and this test would pass without exercising the path it
+        # names. Verified by mutation -- with SENTINEL, reverting the userinfo
+        # pattern to colon-only left this test GREEN. A shapeless token isolates
+        # the URL rule, which is the thing under test.
+        shapeless = "OPAQUEUSERINFO1234567890"
         monkeypatch.setenv(
-            "TRAIGENT_BACKEND_URL", f"https://{SENTINEL}@backend.example.com"
+            "TRAIGENT_BACKEND_URL", f"https://{shapeless}@backend.example.com"
         )
         report = DiagnosticReport()
         TraigentDiagnostics._check_environment(report)
 
-        blob = json.dumps(report.to_dict())
-        assert SENTINEL not in blob
-        assert "backend.example.com" in blob, "the host is the useful part; keep it"
+        assert shapeless not in json.dumps(report.to_dict())
+
+        # Parsed, not substring-matched: `"backend.example.com" in blob` is also
+        # satisfied by `https://evil.test/?x=backend.example.com`, which is why
+        # CodeQL flags that shape (py/incomplete-url-substring-sanitization).
+        # This is the second time this pattern slipped into this file; asserting
+        # on the parsed host is both stronger and the thing actually meant.
+        reported = next(
+            entry["message"]
+            for entry in report.successes
+            if entry["message"].startswith("TRAIGENT_BACKEND_URL = ")
+        )
+        url = urlsplit(reported.removeprefix("TRAIGENT_BACKEND_URL = "))
+        assert url.hostname == "backend.example.com", (
+            "the host is the diagnostically useful part and must survive"
+        )
 
     def test_a_password_containing_an_at_sign_is_masked_whole(self) -> None:
-        """The old pattern stopped at the first `@` and left the tail exposed."""
+        """The old pattern stopped at the first `@` and left the tail exposed.
+
+        Shapeless token for the same reason as above: a `tg_`-prefixed one
+        would be caught by the vendor key-shape rule regardless of how the
+        userinfo pattern behaves, so it would not test this at all.
+        """
         from traigent.utils.diagnostics import scrub
 
-        out = scrub(f"cannot reach https://user:p@ss{SENTINEL}@host/v1", environ={})
-        assert SENTINEL not in out
+        shapeless = "TAILOFTHEPASSWORD9876"
+        out = scrub(f"cannot reach https://user:p@ss{shapeless}@host/v1", environ={})
+        assert shapeless not in out
 
     def test_a_secret_passed_as_the_model_id_is_not_echoed(
         self, runner, monkeypatch
