@@ -393,7 +393,8 @@ def build_example_signals(example_result: Any) -> dict[str, Any]:
 
         if signals:
             signals[SIGNAL_KEY_ID_KEY] = key_id
-    except Exception as exc:  # noqa: BLE001 - signals are diagnostic, never load-bearing
+    # Signals are diagnostic and must never make the result-loading path fail.
+    except Exception as exc:  # noqa: BLE001
         _note_signal_failure(exc)
         return {}
     return signals
