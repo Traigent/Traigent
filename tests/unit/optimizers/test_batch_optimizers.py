@@ -19,7 +19,7 @@ from traigent.optimizers.batch_optimizers import (
 from traigent.optimizers.grid import GridSearchOptimizer
 from traigent.optimizers.random import RandomSearchOptimizer
 from traigent.optimizers.registry import get_optimizer
-from traigent.optimizers.results import Trial
+from traigent.optimizers.results import BatchTrial
 from traigent.utils.multi_objective import scalarize_objectives
 
 
@@ -567,9 +567,9 @@ class TestAdaptiveBatchOptimizer:
         )
 
         # Create mock trial
-        from traigent.optimizers.results import Trial
+        from traigent.optimizers.results import BatchTrial
 
-        trial = Trial(
+        trial = BatchTrial(
             configuration={"param1": 1},
             score=0.8,
             duration=1.0,
@@ -598,9 +598,9 @@ class TestAdaptiveBatchOptimizer:
         )
 
         # Create failed trial
-        from traigent.optimizers.results import Trial
+        from traigent.optimizers.results import BatchTrial
 
-        failed_trial = Trial(
+        failed_trial = BatchTrial(
             configuration={"param1": 1},
             score=float("-inf"),
             duration=1.0,
@@ -619,10 +619,10 @@ class TestAdaptiveBatchOptimizer:
         )
 
         # Add many trials to exceed limit
-        from traigent.optimizers.results import Trial
+        from traigent.optimizers.results import BatchTrial
 
         for i in range(150):  # Exceed the 100 limit
-            trial = Trial(
+            trial = BatchTrial(
                 configuration={"param1": 1},
                 score=0.8,
                 duration=1.0,
@@ -941,13 +941,13 @@ class TestObjectiveOrientationInCompositeScore:
                 minimize_objectives=optimizer._minimize_objectives,
             )
 
-        cheap_trial = Trial(
+        cheap_trial = BatchTrial(
             configuration={"param1": 1},
             score=_composite(cheap_metrics),
             duration=0.0,
             metadata={"objective_scores": cheap_metrics},
         )
-        expensive_trial = Trial(
+        expensive_trial = BatchTrial(
             configuration={"param1": 2},
             score=_composite(expensive_metrics),
             duration=0.0,
@@ -971,9 +971,9 @@ class TestObjectiveOrientationInCompositeScore:
         assert "accuracy" not in optimizer._minimize_objectives
 
 
-def _trial(scores: dict, score: float = 0.0) -> Trial:
-    """Build a Trial carrying objective_scores metadata for frontier tests."""
-    return Trial(
+def _trial(scores: dict, score: float = 0.0) -> BatchTrial:
+    """Build a BatchTrial carrying objective_scores metadata for frontier tests."""
+    return BatchTrial(
         configuration={},
         score=score,
         duration=0.1,

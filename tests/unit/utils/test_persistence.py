@@ -1082,3 +1082,40 @@ def test_a_duck_typed_result_with_unserializable_metadata_also_degrades(
     assert persistence.load_result("duck-unserializable").best_config == {
         "model": "cheap"
     }
+
+
+def test_restricted_unpickler_accepts_the_renamed_batch_types() -> None:
+    """Renaming a pickled type must not make NEW artifacts unrestorable.
+
+    The compatibility aliases keep existing files loading, but the allowlist is
+    keyed on the dotted name actually emitted -- so a freshly pickled
+    ``BatchTrial``/``BatchResult`` carries the NEW name and was rejected until
+    both were added. The failure mode is quiet and one-directional: old data
+    keeps working while new data of the same type cannot be read back.
+    """
+    import io
+    import pickle
+
+    from traigent.optimizers.results import BatchResult, BatchTrial
+    from traigent.utils.persistence import RestrictedUnpickler
+
+    for cls in (BatchTrial, BatchResult):
+        payload = pickle.dumps(cls.__new__(cls))
+        restored = RestrictedUnpickler(io.BytesIO(payload)).load()
+        assert type(restored) is cls
+
+
+def test_restricted_unpickler_still_rejects_an_unlisted_global() -> None:
+    """The allowlist must stay an allowlist -- widening it for the batch types
+    must not turn it into a pass-through."""
+    import io
+    import pickle
+
+    import pytest
+
+    from traigent.utils.persistence import RestrictedUnpickler
+
+    payload = pickle.dumps(ValueError("not on the list"))
+
+    with pytest.raises(pickle.UnpicklingError, match="unsafe global"):
+        RestrictedUnpickler(io.BytesIO(payload)).load()

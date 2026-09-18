@@ -1,12 +1,16 @@
 """Tests for environment configuration utilities."""
 
+import os
 import sys
 from types import SimpleNamespace
 
 import pytest
 
 if "dotenv" not in sys.modules:
-    sys.modules["dotenv"] = SimpleNamespace(load_dotenv=lambda *_args, **_kwargs: None)
+    sys.modules["dotenv"] = SimpleNamespace(
+        load_dotenv=lambda *_args, **_kwargs: None,
+        find_dotenv=lambda *_args, **_kwargs: "",
+    )
 
 from traigent.utils import env_config
 
@@ -21,6 +25,16 @@ def _reset_env(monkeypatch):
         "TRAIGENT_ENV",
         "TRAIGENT_ENVIRONMENT",
         "TRAIGENT_DEV_JWT_SECRET",
+        # Without this, an ambient TRAIGENT_SKIP_DOTENV (common in this
+        # workspace -- hermetic smokes and several suites export it) makes
+        # `_load_dotenv_files()` return immediately, so every test here that
+        # asserts a `.env` WAS read fails locally while CI, which sets nothing,
+        # stays green. Measured on this branch: with the var set,
+        # test_reads_project_root_env_via_cwd and
+        # test_project_dotenv_bounded_at_marker_directory both fail; with it
+        # unset the file passes. Tests that want the opt-out ON set it
+        # themselves after calling this helper.
+        "TRAIGENT_SKIP_DOTENV",
     ):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(env_config, "_GENERATED_DEV_JWT_SECRET", None, raising=False)
@@ -208,3 +222,139 @@ def test_backend_offline_accepts_consolidated_offline_alias(monkeypatch):
     monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
     monkeypatch.setenv("TRAIGENT_OFFLINE", "1")
     assert env_config.is_backend_offline() is True
+
+
+class TestLoadDotenvFiles:
+    """Traigent/Traigent#1830: the SDK's own dotenv loader must also read a
+    project-root ``.env`` discovered from the caller's cwd, not only the
+    package-adjacent path (repo root in a dev checkout, ``site-packages/``
+    when pip-installed).
+    """
+
+    _MARKER_VAR = "TRAIGENT_TEST_1830_PROJECT_MARKER"
+
+    def _write_project_env(self, tmp_path, value):
+        (tmp_path / ".env").write_text(f"{self._MARKER_VAR}={value}\n")
+
+    def test_reads_project_root_env_via_cwd(self, tmp_path, monkeypatch):
+        """A .env in the caller's project root (not package-adjacent) is
+        loaded once the SDK's own loader runs — the pip-installed-user
+        scenario the issue reports as silently unmet before this fix."""
+        _reset_env(monkeypatch)
+        self._write_project_env(tmp_path, "from-project-root")
+        monkeypatch.delenv(self._MARKER_VAR, raising=False)
+        monkeypatch.chdir(tmp_path)
+
+        try:
+            env_config._load_dotenv_files()
+            assert os.environ.get(self._MARKER_VAR) == "from-project-root"
+        finally:
+            os.environ.pop(self._MARKER_VAR, None)
+
+    def test_explicit_env_var_wins_over_project_dotenv(self, tmp_path, monkeypatch):
+        """An already-exported real env var is never overridden by the
+        project .env (load_dotenv's default, non-overriding behavior)."""
+        _reset_env(monkeypatch)
+        self._write_project_env(tmp_path, "from-project-root")
+        monkeypatch.setenv(self._MARKER_VAR, "from-real-shell-env")
+        monkeypatch.chdir(tmp_path)
+
+        env_config._load_dotenv_files()
+        assert os.environ.get(self._MARKER_VAR) == "from-real-shell-env"
+
+    def test_skip_dotenv_opts_out_of_project_dotenv_too(self, tmp_path, monkeypatch):
+        """TRAIGENT_SKIP_DOTENV must still suppress the new cwd-discovered
+        file, exactly as it already suppresses the package-adjacent one."""
+        self._write_project_env(tmp_path, "from-project-root")
+        monkeypatch.delenv(self._MARKER_VAR, raising=False)
+        monkeypatch.setenv("TRAIGENT_SKIP_DOTENV", "1")
+        monkeypatch.chdir(tmp_path)
+
+        try:
+            env_config._load_dotenv_files()
+            assert self._MARKER_VAR not in os.environ
+        finally:
+            os.environ.pop(self._MARKER_VAR, None)
+
+    def test_survives_deleted_cwd(self, tmp_path, monkeypatch):
+        """A deleted/unmounted cwd must degrade to 'no project .env found',
+        never crash the loader (review finding: os.getcwd() raising
+        FileNotFoundError inside find_dotenv(usecwd=True) used to propagate
+        straight out of _load_dotenv_files(), i.e. out of `import traigent`).
+        """
+        _reset_env(monkeypatch)
+        gone = tmp_path / "deleted"
+        gone.mkdir()
+        monkeypatch.chdir(gone)
+        gone.rmdir()
+
+        # Must not raise.
+        env_config._load_dotenv_files()
+
+    def test_project_dotenv_bounded_at_marker_directory(self, tmp_path, monkeypatch):
+        """A .env at the project marker directory (one level above cwd) is
+        still found — the bound is inclusive of the marker directory."""
+        _reset_env(monkeypatch)
+        project = tmp_path / "project"
+        subdir = project / "subdir"
+        subdir.mkdir(parents=True)
+        (project / "pyproject.toml").write_text("")
+        self._write_project_env(project, "from-marker-dir")
+        monkeypatch.delenv(self._MARKER_VAR, raising=False)
+        monkeypatch.chdir(subdir)
+
+        try:
+            env_config._load_dotenv_files()
+            assert os.environ.get(self._MARKER_VAR) == "from-marker-dir"
+        finally:
+            os.environ.pop(self._MARKER_VAR, None)
+
+    def test_project_dotenv_never_crosses_marker_into_ancestor(
+        self, tmp_path, monkeypatch
+    ):
+        """A .env belonging to an unrelated ancestor (past the project
+        marker, e.g. a monorepo/workspace root) must never be loaded —
+        the walk stops at the marker, it does not cross it."""
+        _reset_env(monkeypatch)
+        workspace = tmp_path / "workspace"
+        project = workspace / "project"
+        subdir = project / "subdir"
+        subdir.mkdir(parents=True)
+        self._write_project_env(workspace, "from-unrelated-ancestor")
+        (project / "pyproject.toml").write_text("")
+        monkeypatch.delenv(self._MARKER_VAR, raising=False)
+        monkeypatch.chdir(subdir)
+
+        env_config._load_dotenv_files()
+        assert self._MARKER_VAR not in os.environ
+
+    def test_no_marker_anywhere_checks_cwd_only(self, tmp_path, monkeypatch):
+        """When no project marker exists in the whole ancestry, there is no
+        trusted boundary, so only cwd itself is checked — an ancestor .env
+        with no marker between it and cwd is not loaded either.
+
+        ``tmp_path`` alone cannot give us a markerless ancestry: the walk
+        continues past ``tmp_path`` into the REAL filesystem, and a marker
+        anywhere above it makes the search span the ancestor below that marker
+        and legitimately load ``parent/.env``. Measured on this box: ``/tmp/.git``
+        exists, so the boundary lands on ``/tmp`` and this test failed for an
+        ambient-filesystem reason rather than a code one. Substitute a marker
+        name that cannot exist anywhere, so "no marker in the ancestry" holds by
+        construction and the ``boundary is None`` branch is what actually
+        gets exercised.
+        """
+        _reset_env(monkeypatch)
+        monkeypatch.setattr(
+            env_config,
+            "_PROJECT_MARKER_NAMES",
+            (".traigent-marker-that-cannot-exist",),
+        )
+        parent = tmp_path / "parent"
+        child = parent / "child"
+        child.mkdir(parents=True)
+        self._write_project_env(parent, "from-markerless-ancestor")
+        monkeypatch.delenv(self._MARKER_VAR, raising=False)
+        monkeypatch.chdir(child)
+
+        env_config._load_dotenv_files()
+        assert self._MARKER_VAR not in os.environ
