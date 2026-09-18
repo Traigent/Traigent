@@ -311,11 +311,17 @@ def _resolve_callbacks(
             callbacks.insert(0, ProgressBarCallback())
             has_progress = True
 
+    # The heartbeat decision reads ONLY _reports_per_trial, never has_progress.
+    # has_progress is an isinstance check, and it must stay one -- it answers
+    # "is a progress bar already present, so do not inject a second one", where
+    # a subclass genuinely counts. But routing the heartbeat through it
+    # reintroduced the bug this predicate exists to prevent: a silent
+    # ProgressBarCallback SUBCLASS sets has_progress, which suppressed the
+    # heartbeat regardless of the exact-type rule below it.
     has_managed_progress = any(_reports_per_trial(cb) for cb in callbacks)
     if (
         progress_bar is not False
         and execution_mode == ExecutionMode.HYBRID.value
-        and not has_progress
         and not has_managed_progress
     ):
         callbacks.append(ManagedProgressCallback())

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -453,3 +454,121 @@ def test_a_callback_whose_show_details_raises_does_not_break_resolution(monkeypa
 
     # Must not raise.
     assert _heartbeat_injected(Exploding(), monkeypatch) is True
+
+
+def test_a_silent_progress_bar_subclass_cannot_suppress_the_heartbeat(monkeypatch):
+    """The exact-type rule was being bypassed one line above it.
+
+    ``has_progress`` is an ``isinstance`` check and must stay one -- it answers
+    "is a progress bar already here, so do not add a second", where a subclass
+    genuinely counts. But the heartbeat condition also read it, so a
+    ``ProgressBarCallback`` subclass that emits nothing suppressed the
+    heartbeat no matter what ``_reports_per_trial`` said about it. Found by
+    review, not by the earlier tests, because they only ever supplied the base
+    classes.
+    """
+    import sys as _sys
+
+    from traigent.config.types import ExecutionMode
+    from traigent.core.optimized_function import _resolve_callbacks
+    from traigent.utils.callbacks import ManagedProgressCallback, ProgressBarCallback
+
+    class MuteBar(ProgressBarCallback):
+        def on_trial_complete(self, trial, progress) -> None:  # noqa: D102
+            return None
+
+    monkeypatch.setattr(_sys.stdin, "isatty", lambda: False)
+    resolved = _resolve_callbacks(
+        [MuteBar()], None, None, execution_mode=ExecutionMode.HYBRID.value
+    )
+
+    assert any(isinstance(c, ManagedProgressCallback) for c in resolved), (
+        "a silent ProgressBarCallback subclass suppressed the heartbeat"
+    )
+
+
+def test_a_real_progress_bar_still_suppresses_the_heartbeat(monkeypatch):
+    """Control: the fix above must not start double-reporting for everyone."""
+    import sys as _sys
+
+    from traigent.config.types import ExecutionMode
+    from traigent.core.optimized_function import _resolve_callbacks
+    from traigent.utils.callbacks import ManagedProgressCallback, ProgressBarCallback
+
+    monkeypatch.setattr(_sys.stdin, "isatty", lambda: False)
+    resolved = _resolve_callbacks(
+        [ProgressBarCallback()], None, None, execution_mode=ExecutionMode.HYBRID.value
+    )
+
+    assert not any(isinstance(c, ManagedProgressCallback) for c in resolved)
+
+
+def test_detailed_progress_reaches_a_redirected_stream_before_the_run_ends(tmp_path):
+    """Delivery, not capture.
+
+    ``capsys`` reads the buffer, so it cannot tell a flushed write from one
+    sitting in stdout's block buffer. That distinction is the whole point here:
+    the heartbeat stands down for DetailedProgressCallback, so if its output
+    only materializes when the process exits, a redirected managed run is
+    silent for its entire duration -- precisely the failure this feature
+    exists to prevent.
+
+    So run it for real, with stdout on a PIPE (block-buffered, not line-
+    buffered as a tty would be), and require the text to arrive while the
+    process is still running.
+    """
+    import select
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(
+        """
+        import time
+        from datetime import UTC, datetime
+
+        from traigent.api.types import TrialResult, TrialStatus
+        from traigent.utils.callbacks import DetailedProgressCallback, ProgressInfo
+
+        cb = DetailedProgressCallback()
+        cb.total_trials = 2
+        cb.on_trial_complete(
+            TrialResult(
+                trial_id="t1",
+                config={},
+                metrics={"accuracy": 0.9},
+                status=TrialStatus.COMPLETED,
+                duration=1.0,
+                timestamp=datetime.now(UTC),
+                score=0.9,
+            ),
+            ProgressInfo(
+                current_trial=1, total_trials=2, completed_trials=1,
+                successful_trials=1, failed_trials=0, best_score=0.9,
+                best_config=None, elapsed_time=1.0, estimated_remaining=None,
+                current_algorithm="random",
+            ),
+        )
+        time.sleep(60)
+        """
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-c", script],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        cwd=str(Path(__file__).resolve().parents[4]),
+    )
+    try:
+        ready, _, _ = select.select([proc.stdout], [], [], 30)
+        assert ready, (
+            "DetailedProgressCallback produced nothing on a redirected stream "
+            "within 30s while the run was still going. Its output is sitting in "
+            "stdout's buffer, so a managed run that defers to it is silent."
+        )
+        chunk = proc.stdout.read1(4096).decode("utf-8", "replace")
+        assert "Trial" in chunk, f"unexpected first output: {chunk!r}"
+    finally:
+        proc.kill()
+        proc.wait(timeout=30)
+        if proc.stdout:
+            proc.stdout.close()

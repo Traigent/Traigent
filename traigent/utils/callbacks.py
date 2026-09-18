@@ -1362,7 +1362,15 @@ class DetailedProgressCallback(OptimizationCallback):
         filled = int(bar_length * percent / 100)
         bar = "█" * filled + "░" * (bar_length - filled)
         _safe_print(f"   Progress: [{bar}] {percent:.0f}%")
-        _safe_print()
+        # Flush once, at the end of the trial's block. `_safe_print` defaults to
+        # flush=False, so without this the whole report sits in stdout's buffer
+        # whenever output is redirected (a pipe, a log file, nohup) -- which is
+        # exactly the non-interactive managed run this callback is trusted to
+        # keep from going silent. The heartbeat defers to this callback, so
+        # "it printed" has to mean "the user received it", not "it reached the
+        # buffer". Flushing here rather than on all seven writes keeps one
+        # syscall per trial instead of seven.
+        _safe_print(flush=True)
 
     def _print_header(self, result: OptimizationResult) -> None:
         """Print the completion header."""
