@@ -381,6 +381,32 @@ jobs:
             ;;
         esac
 
+    # The step above validates $GITHUB_SHA. It says nothing about where $TAG
+    # points, and `gh release create` REUSES an existing tag rather than
+    # repointing it -- so a workflow_dispatch can publish version X built from
+    # commit B while refs/tags/vX still points at commit A, and the Release
+    # (plus everything downstream that trusts "the tag for vX") would be cut
+    # against a commit this run never verified. Name parity is not identity.
+    - name: Verify an existing tag points at the published commit
+      run: |
+        set -euo pipefail
+        REF_JSON="$(gh api "repos/$REPO/git/ref/tags/$TAG" 2>/dev/null || true)"
+        if [ -z "$REF_JSON" ]; then
+          echo "No existing $TAG; it will be created at $GITHUB_SHA."
+          exit 0
+        fi
+        OBJ_SHA="$(printf '%s' "$REF_JSON" | jq -r '.object.sha')"
+        OBJ_TYPE="$(printf '%s' "$REF_JSON" | jq -r '.object.type')"
+        if [ "$OBJ_TYPE" = "tag" ]; then
+          # Annotated tag: peel it to the commit it wraps.
+          OBJ_SHA="$(gh api "repos/$REPO/git/tags/$OBJ_SHA" --jq '.object.sha')"
+        fi
+        if [ "$OBJ_SHA" != "$GITHUB_SHA" ]; then
+          echo "::error::$TAG already points at $OBJ_SHA, but this run published $GITHUB_SHA. Refusing to publish against an unverified commit."
+          exit 1
+        fi
+        echo "$TAG already points at $GITHUB_SHA."
+
     - name: Create or update the GitHub Release for this tag
       run: |
         set -euo pipefail

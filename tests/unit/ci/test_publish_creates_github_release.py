@@ -12,6 +12,7 @@ PyPI version, and GitHub Latest all agree before the run is considered green.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -322,3 +323,120 @@ def test_on_main_guard_fails_closed_on_an_empty_status(tmp_path) -> None:
     """`gh ... --jq .status` printing nothing must not be read as acceptance."""
     result = _run_on_main_guard(tmp_path, "")
     assert result.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# Tag identity.
+#
+# Review found the on-main guard validates $GITHUB_SHA and says nothing about
+# where $TAG points, while the CLI reuses an existing tag rather than
+# repointing it. Name parity is not commit identity.
+# ---------------------------------------------------------------------------
+
+PUBLISHED_SHA = "0123456789abcdef0123456789abcdef01234567"
+OTHER_SHA = "fedcba9876543210fedcba9876543210fedcba98"
+
+
+def _tag_identity_script() -> str:
+    steps = _release_job()["steps"]
+    guard = next(s for s in steps if "existing tag" in s.get("name", ""))
+    return guard["run"]
+
+
+def _run_tag_identity_guard(tmp_path: Path, responses: dict[str, str]):
+    """Execute the guard with `gh` stubbed to answer per API path."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+
+    cases = "\n".join(
+        f'  *"{path}"*) printf %s {payload!r}; exit 0 ;;'
+        for path, payload in responses.items()
+    )
+    fake_gh = bin_dir / "gh"
+    fake_gh.write_text(
+        "#!/usr/bin/env bash\n"
+        'args="$*"\n'
+        'case "$args" in\n'
+        f"{cases}\n"
+        "  *) exit 1 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(fake_gh.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
+    script = tmp_path / "tag_guard.sh"
+    script.write_text(_tag_identity_script(), encoding="utf-8")
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["REPO"] = "Traigent/Traigent"
+    env["GITHUB_SHA"] = PUBLISHED_SHA
+    env["TAG"] = "v0.11.4"
+    return subprocess.run(
+        ["bash", str(script)], env=env, capture_output=True, text=True, timeout=60
+    )
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+@pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
+def test_tag_guard_accepts_a_tag_already_on_the_published_commit(tmp_path) -> None:
+    result = _run_tag_identity_guard(
+        tmp_path,
+        {
+            "git/ref/tags": json.dumps(
+                {"object": {"sha": PUBLISHED_SHA, "type": "commit"}}
+            )
+        },
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+@pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
+def test_tag_guard_refuses_a_tag_pointing_somewhere_else(tmp_path) -> None:
+    """The defect: version X published from B while vX still points at A."""
+    result = _run_tag_identity_guard(
+        tmp_path,
+        {"git/ref/tags": json.dumps({"object": {"sha": OTHER_SHA, "type": "commit"}})},
+    )
+    assert result.returncode != 0
+    assert "::error::" in (result.stdout + result.stderr)
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+@pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
+def test_tag_guard_peels_an_annotated_tag_before_comparing(tmp_path) -> None:
+    """An annotated tag's ref points at a tag object, not the commit.
+
+    Without peeling, every annotated tag would compare unequal and block a
+    legitimate publish -- a failure mode worse than the one being prevented.
+    """
+    result = _run_tag_identity_guard(
+        tmp_path,
+        {
+            "git/ref/tags": json.dumps(
+                {
+                    "object": {
+                        "sha": "aaaabbbbccccddddeeeeffff0000111122223333",
+                        "type": "tag",
+                    }
+                }
+            ),
+            # The peel call is `gh api ... --jq '.object.sha'`, so gh itself
+            # does the filtering and the stub must return the bare sha here,
+            # not the envelope it returns for the ref lookup above.
+            "git/tags": PUBLISHED_SHA,
+        },
+    )
+    assert result.returncode == 0, (
+        "an annotated tag pointing at the published commit was rejected: "
+        f"{result.stdout!r} {result.stderr!r}"
+    )
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+@pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
+def test_tag_guard_allows_a_tag_that_does_not_exist_yet(tmp_path) -> None:
+    """The workflow_dispatch path mints the tag; absence is not a failure."""
+    result = _run_tag_identity_guard(tmp_path, {})
+    assert result.returncode == 0, result.stderr
