@@ -127,6 +127,36 @@ def test_unbindable_report_omits_parameters_the_runtime_can_supply() -> None:
     assert "output" not in cannot_bind
 
 
+def test_unbindable_report_names_positional_only_culprit_not_recognized_names() -> None:
+    """A required POSITIONAL_ONLY parameter is the real culprit -- name it.
+
+    Follow-up to #1780 (post-merge review, P2): ``resolve_metric_call_binding``
+    used to report every visible POSITIONAL_OR_KEYWORD/KEYWORD_ONLY name when
+    nothing bound (``unmatched_parameters = bindable_names``), which silently
+    excludes required POSITIONAL_ONLY parameters. For
+    ``def scorer(x, /, output, expected, *, llm_metrics)`` binding fails (4
+    required, 3 positional values), every *visible* name is recognized, so
+    the old fallback named ``expected, llm_metrics, output`` -- the exact
+    parameters the module's own comment (local.py) says must never be named --
+    while never mentioning ``x``, the actual reason nothing could bind.
+    """
+
+    def scorer(x: str, /, output: str, expected: str, *, llm_metrics: dict) -> float:
+        raise AssertionError("scorer must never be invoked by this test")
+
+    with pytest.raises(ValidationError) as excinfo:
+        validate_metric_function_bindability(
+            {"accuracy": scorer}, objectives=["accuracy"]
+        )
+
+    message = str(excinfo.value)
+    cannot_bind = message.split("cannot be bound:")[1].split(".")[0]
+    assert "x" in [name.strip() for name in cannot_bind.split(",")]
+    assert "output" not in cannot_bind
+    assert "expected" not in cannot_bind
+    assert "llm_metrics" not in cannot_bind
+
+
 def test_validate_metric_function_bindability_direct_unit() -> None:
     """Unit-level check of the validator without the full evaluator wiring."""
 

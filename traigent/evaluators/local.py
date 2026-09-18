@@ -83,7 +83,15 @@ class MetricBinding:
         matched_parameters: Metric parameter names filled by a recognized
             keyword (empty for positional / var-positional binding).
         unmatched_parameters: Bindable metric parameter names NOT filled by a
-            recognized keyword.
+            recognized keyword. When no candidate binds at all
+            (``bind_ok=False``), this leads with any *required*
+            positional-only parameter names -- they can never be filled by a
+            recognized keyword (``build_metric_keyword_arguments`` never
+            offers one to a positional-only slot) and are the actual reason
+            binding failed, even though ``inspect.Signature.bind`` still
+            reports the trailing keyword-or-positional parameters as
+            "missing" -- followed by the other bindable (POSITIONAL_OR_KEYWORD
+            / KEYWORD_ONLY) names.
         bind_ok: Whether any candidate bound successfully.
         bind_exception: The terminal ``TypeError`` from ``Signature.bind`` when
             nothing bound; ``None`` on success. Held as the original exception
@@ -236,12 +244,25 @@ def resolve_metric_call_binding(
             bind_exception=None,
         )
 
+    # A required POSITIONAL_ONLY parameter (e.g. `def scorer(x, /, output,
+    # ...)`) can never receive a recognized keyword -- `bindable_names` above
+    # deliberately excludes it, since `build_metric_keyword_arguments` never
+    # assigns one -- but it is consuming the leading slot(s) of every
+    # positional candidate, which is *why* the trailing keyword-or-positional
+    # names end up unfilled. Report it first: it is the actual culprit, not
+    # the recognized names that follow it in the signature.
+    required_positional_only = [
+        parameter.name
+        for parameter in parameters
+        if parameter.kind is inspect.Parameter.POSITIONAL_ONLY
+        and parameter.default is inspect.Parameter.empty
+    ]
     return MetricBinding(
         args=(),
         kwargs={},
         binding_mode="unbound",
         matched_parameters=(),
-        unmatched_parameters=tuple(sorted(bindable_names)),
+        unmatched_parameters=tuple(required_positional_only + sorted(bindable_names)),
         bind_ok=False,
         bind_exception=bind_error,
     )
