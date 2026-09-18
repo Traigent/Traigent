@@ -995,20 +995,41 @@ class TestSinksFoundInTheFifthRound:
         assert "CANARYVALUE" not in result.output
 
     def test_the_host_still_survives_because_that_is_the_whole_point(
-        self, runner, monkeypatch
+        self, monkeypatch
     ) -> None:
         """Control: dropping the path must not drop the diagnosis.
 
         "Am I pointed at production or at localhost" is the question this line
         exists to answer. A fix that masked the whole URL would pass the test
         above and destroy the feature.
+
+        Parsed rather than substring-matched, for the same reason as
+        ``test_a_backend_url_password_is_not_printed`` above -- and because
+        CodeQL is right to flag `"api.example.com" in output` as incomplete URL
+        checking: that assertion also passes for
+        ``https://api.example.com.attacker.test``, so it does not actually
+        establish which host was reported.
         """
+        from urllib.parse import urlsplit
+
+        from traigent.utils.diagnostics import DiagnosticReport, TraigentDiagnostics
+
         monkeypatch.setenv("TRAIGENT_SKIP_DOTENV", "true")
         monkeypatch.setenv(
             "TRAIGENT_BACKEND_URL", "https://api.example.com/v1/tenants/CANARYVALUE"
         )
-        result = runner.invoke(doctor, ["--json", "--offline"])
-        assert "api.example.com" in result.output
+        report = DiagnosticReport()
+        TraigentDiagnostics._check_environment(report)
+
+        reported = next(
+            entry["message"]
+            for entry in report.successes
+            if entry["message"].startswith("TRAIGENT_BACKEND_URL = ")
+        )
+        url = urlsplit(reported.removeprefix("TRAIGENT_BACKEND_URL = "))
+        assert url.hostname == "api.example.com"
+        assert url.scheme == "https"
+        assert "CANARYVALUE" not in reported
 
     @pytest.mark.parametrize(
         "url",
