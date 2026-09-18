@@ -12,9 +12,15 @@ PyPI version, and GitHub Latest all agree before the run is considered green.
 
 from __future__ import annotations
 
+import os
+import re
+import shutil
+import stat
+import subprocess
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -137,8 +143,18 @@ def test_release_job_authenticates_by_env_not_by_writing_a_credential_to_disk() 
 
 
 def _normalized_release_condition() -> str:
-    """The release job's `if`, whitespace-collapsed for exact comparison."""
-    return " ".join(_release_job()["if"].split())
+    """The release job's `if`, whitespace-normalized for exact comparison.
+
+    Collapsing runs of whitespace is not enough on its own: a space directly
+    inside a parenthesis (``( startsWith(...``) is a harmless reformat that
+    survives the collapse and would fail the exact match below, making CI red
+    for a change with no semantic content. Spaces adjacent to a parenthesis are
+    therefore dropped too. Everything that carries meaning -- operand order and
+    the ``&&``/``||`` operators between them -- is still compared exactly.
+    """
+    condition = " ".join(_release_job()["if"].split())
+    condition = re.sub(r"\(\s+", "(", condition)
+    return re.sub(r"\s+\)", ")", condition)
 
 
 def test_release_condition_is_exactly_the_intended_expression() -> None:
@@ -190,10 +206,9 @@ def test_release_job_verifies_the_commit_is_on_main() -> None:
     guard = next((s for s in steps if "on main" in s.get("name", "")), None)
     assert guard is not None, "the release job must verify its commit is on main"
 
-    run = guard["run"]
-    assert "compare/main..." in run
-    assert "identical|behind" in run
-    assert "exit 1" in run
+    assert "compare/main..." in guard["run"], (
+        "the check must compare against main, not some other ref"
+    )
 
     names = [s.get("name", "") for s in steps]
     create_index = next(
@@ -202,3 +217,108 @@ def test_release_job_verifies_the_commit_is_on_main() -> None:
     assert names.index(guard["name"]) < create_index, (
         "the on-main check must run BEFORE the release is created"
     )
+
+
+# ---------------------------------------------------------------------------
+# Behavioural checks on the on-main guard.
+#
+# Asserting that the step's text contains "identical|behind" cannot see what
+# the case arm DOES with it: widening acceptance to "identical|behind|ahead"
+# still contains that substring, so the weaker assertion stayed green while
+# the guard stopped guarding. These run the step's own script instead, with
+# `gh` stubbed to report each compare status the API can return.
+# ---------------------------------------------------------------------------
+
+
+def _on_main_guard_script() -> str:
+    steps = _release_job()["steps"]
+    guard = next(s for s in steps if "on main" in s.get("name", ""))
+    return guard["run"]
+
+
+def _run_on_main_guard(tmp_path: Path, gh_stdout: str, gh_exit: int = 0):
+    """Execute the guard step with `gh` stubbed, and return the CompletedProcess."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    fake_gh = bin_dir / "gh"
+    fake_gh.write_text(
+        f"#!/usr/bin/env bash\nprintf '%s\\n' {gh_stdout!r}\nexit {gh_exit}\n",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(fake_gh.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
+    script = tmp_path / "guard.sh"
+    script.write_text(_on_main_guard_script(), encoding="utf-8")
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["REPO"] = "Traigent/Traigent"
+    env["GITHUB_SHA"] = "0123456789abcdef0123456789abcdef01234567"
+    env["TAG"] = "v0.11.4"
+    return subprocess.run(
+        ["bash", str(script)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+@pytest.mark.parametrize("status", ["identical", "behind"])
+def test_on_main_guard_accepts_a_commit_that_is_on_main(tmp_path, status) -> None:
+    """`identical` is main's tip; `behind` is an ancestor of it. Both are on main."""
+    result = _run_on_main_guard(tmp_path, status)
+    assert result.returncode == 0, (
+        f"compare status {status!r} is on main and must be accepted; "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+@pytest.mark.parametrize("status", ["ahead", "diverged"])
+def test_on_main_guard_rejects_a_commit_that_is_not_on_main(tmp_path, status) -> None:
+    """The mutation the old substring assertion could not catch.
+
+    `ahead` means the commit carries work main does not have, and `diverged`
+    means the two have split -- in both cases the release commit is NOT on
+    main, which is the whole thing this step exists to refuse. Widening the
+    case arm to `identical|behind|ahead` makes this test red; it left the
+    previous `"identical|behind" in run` assertion green.
+    """
+    result = _run_on_main_guard(tmp_path, status)
+    assert result.returncode != 0, (
+        f"compare status {status!r} is NOT on main and must abort the release; "
+        f"stdout={result.stdout!r}"
+    )
+    assert "::error::" in (result.stdout + result.stderr), (
+        "the refusal must surface as a GitHub Actions error annotation"
+    )
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+def test_on_main_guard_fails_closed_on_an_unexpected_status(tmp_path) -> None:
+    """An unrecognized status is not a licence to release."""
+    result = _run_on_main_guard(tmp_path, "something_new_from_the_api")
+    assert result.returncode != 0
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+def test_on_main_guard_fails_closed_when_the_compare_api_errors(tmp_path) -> None:
+    """A failing `gh api` call must abort, never fall through to the release.
+
+    This is the fail-closed property for a policy surface: if we cannot
+    establish that the commit is on main, we do not publish a Release for it.
+    """
+    result = _run_on_main_guard(tmp_path, "", gh_exit=1)
+    assert result.returncode != 0, (
+        "a compare API failure left the guard passing, so an unverified commit "
+        "would get a GitHub Release"
+    )
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+def test_on_main_guard_fails_closed_on_an_empty_status(tmp_path) -> None:
+    """`gh ... --jq .status` printing nothing must not be read as acceptance."""
+    result = _run_on_main_guard(tmp_path, "")
+    assert result.returncode != 0
