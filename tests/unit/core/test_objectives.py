@@ -691,7 +691,9 @@ class TestBandTargetWireShape:
 
         for center, tol in ((0.5, 0.1), (100.0, 2.5), (-3.0, 0.75), (1e-6, 1e-9)):
             from_center = ObjectiveDefinition(
-                name="m", orientation="band", weight=1.0,
+                name="m",
+                orientation="band",
+                weight=1.0,
                 band=BandTarget(center=center, tol=tol),
             ).to_dict()["band"]
             from_interval = ObjectiveDefinition(
@@ -724,7 +726,9 @@ class TestBandTargetWireShape:
         from traigent.tvl.models import BandTarget
 
         band = ObjectiveDefinition(
-            name="accuracy", orientation="band", weight=1.0,
+            name="accuracy",
+            orientation="band",
+            weight=1.0,
             band=BandTarget(low=0.4, high=0.6),
         ).to_dict()["band"]
 
@@ -752,18 +756,25 @@ class TestBandTargetWireShape:
             / "objective_definition_schema.json"
         )
         if not schema_path.exists():  # pragma: no cover - depends on packaged data
-            pytest.skip(f"objective_definition_schema.json not packaged at {schema_path}")
+            pytest.skip(
+                f"objective_definition_schema.json not packaged at {schema_path}"
+            )
 
         from traigent.core.objectives import ObjectiveDefinition
         from traigent.tvl.models import BandTarget
 
         payload = ObjectiveDefinition(
-            name="accuracy", orientation="band", weight=1.0,
+            name="accuracy",
+            orientation="band",
+            weight=1.0,
             band=BandTarget(center=0.5, tol=0.1),
         ).to_dict()
 
         validator = jsonschema.Draft7Validator(json.loads(schema_path.read_text()))
-        errors = sorted(validator.iter_errors(payload), key=lambda e: list(e.absolute_path))
-        assert not errors, "center/tol band does not satisfy the canonical contract: " + "; ".join(
-            f"{list(e.absolute_path)}: {e.message}" for e in errors[:3]
+        errors = sorted(
+            validator.iter_errors(payload), key=lambda e: list(e.absolute_path)
+        )
+        assert not errors, (
+            "center/tol band does not satisfy the canonical contract: "
+            + "; ".join(f"{list(e.absolute_path)}: {e.message}" for e in errors[:3])
         )
