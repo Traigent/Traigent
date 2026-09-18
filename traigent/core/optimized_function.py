@@ -249,9 +249,24 @@ def _resolve_callbacks(
         Resolved list of callback instances.
     """
     from traigent.utils.callbacks import (
+        DetailedProgressCallback,
         ManagedProgressCallback,
         ProgressBarCallback,
         ResultsTableCallback,
+        SimpleProgressCallback,
+    )
+
+    # Every callback that already reports per-trial progress. The heartbeat
+    # exists to fill a silence, so if the user supplied ANY of these there is
+    # no silence to fill and a second reporter is just duplicate output.
+    # Verified before this list existed: passing DetailedProgressCallback or
+    # SimpleProgressCallback on the managed path got a ManagedProgressCallback
+    # injected alongside it (two reporters).
+    progress_capable = (
+        ProgressBarCallback,
+        ManagedProgressCallback,
+        SimpleProgressCallback,
+        DetailedProgressCallback,
     )
 
     callbacks = list(explicit_callbacks or decorator_callbacks or [])
@@ -263,9 +278,7 @@ def _resolve_callbacks(
             callbacks.insert(0, ProgressBarCallback())
             has_progress = True
 
-    has_managed_progress = any(
-        isinstance(cb, ManagedProgressCallback) for cb in callbacks
-    )
+    has_managed_progress = any(isinstance(cb, progress_capable) for cb in callbacks)
     if (
         progress_bar is not False
         and execution_mode == ExecutionMode.HYBRID.value

@@ -2678,3 +2678,101 @@ class TestUnicodeOutputSafety:
         assert len(cp1252_stdout.written) > 0, (
             "Expected some output from DetailedProgressCallback"
         )
+
+
+class TestManagedProgressCallbackReviewFixes:
+    """Fixes from the pre-merge review of Traigent#1601."""
+
+    @staticmethod
+    def _trial() -> TrialResult:
+        return TrialResult(
+            trial_id="trial_1",
+            config={"model": "gpt-4"},
+            metrics={"accuracy": 0.85},
+            status=TrialStatus.COMPLETED,
+            duration=10.0,
+            timestamp=datetime.now(UTC),
+        )
+
+    @staticmethod
+    def _progress() -> ProgressInfo:
+        return ProgressInfo(
+            current_trial=5,
+            total_trials=10,
+            completed_trials=5,
+            successful_trials=4,
+            failed_trials=1,
+            best_score=0.85,
+            best_config={"model": "gpt-4"},
+            elapsed_time=3725.0,
+            estimated_remaining=50.0,
+            current_algorithm="grid",
+        )
+
+    @staticmethod
+    def _result(status: Any = None) -> OptimizationResult:
+        return OptimizationResult(
+            trials=[],
+            best_config={"model": "gpt-4"},
+            best_score=0.92,
+            optimization_id="opt_1",
+            duration=120.5,
+            convergence_info={},
+            status=status or OptimizationStatus.COMPLETED,
+            objectives=["accuracy"],
+            algorithm="grid",
+            timestamp=datetime.now(UTC),
+        )
+
+    def test_elapsed_keeps_hours(self):
+        """``strftime("%M:%S")`` wraps at an hour; managed runs are the long ones."""
+        from traigent.utils.callbacks import _format_elapsed
+
+        assert _format_elapsed(3725) == "1:02:05"
+        assert _format_elapsed(125) == "02:05"
+        assert _format_elapsed(0) == "00:00"
+        assert _format_elapsed(-5) == "00:00"
+
+    def test_every_heartbeat_line_is_flushed(self, monkeypatch):
+        """A non-tty stream is block-buffered.
+
+        This callback exists for redirected output, so an unflushed line is not
+        written until the buffer fills or the process exits -- invisible in
+        exactly the case it was written for.
+        """
+        from traigent.utils import callbacks as callbacks_module
+        from traigent.utils.callbacks import ManagedProgressCallback
+
+        seen: list[bool] = []
+
+        def _record(*args: Any, **kwargs: Any) -> None:
+            seen.append(bool(kwargs.get("flush", False)))
+
+        monkeypatch.setattr(callbacks_module, "_safe_print", _record)
+        callback = ManagedProgressCallback()
+
+        callback.on_optimization_start({"model": ["a"]}, ["accuracy"], "grid")
+        callback.on_trial_complete(self._trial(), self._progress())
+        callback.on_optimization_complete(self._result())
+
+        assert seen, "no heartbeat lines were emitted"
+        assert all(seen), f"un-flushed heartbeat line(s): {seen}"
+
+    def test_completion_line_reports_the_actual_status(self, monkeypatch):
+        """A cancelled run must not be announced as 'complete'."""
+        from traigent.utils import callbacks as callbacks_module
+        from traigent.utils.callbacks import ManagedProgressCallback
+
+        lines: list[str] = []
+        monkeypatch.setattr(
+            callbacks_module,
+            "_safe_print",
+            lambda *a, **k: lines.append(" ".join(str(x) for x in a)),
+        )
+
+        result = self._result(status=OptimizationStatus.CANCELLED)
+        ManagedProgressCallback().on_optimization_complete(result)
+
+        assert lines, "no completion line emitted"
+        assert "cancelled" in lines[-1]
+        assert "managed run complete" not in lines[-1]

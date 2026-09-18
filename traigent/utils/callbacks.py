@@ -390,6 +390,22 @@ class ResultsTableCallback(OptimizationCallback):
             logger.warning("Failed to render results table: %s", exc)
 
 
+def _format_elapsed(seconds: float) -> str:
+    """Format elapsed seconds, keeping hours.
+
+    ``time.strftime("%M:%S", time.gmtime(s))`` silently wraps at one hour, so a
+    3725-second run renders as ``02:05``. Managed runs are exactly the long ones
+    (reasoning models, many configs), so the hours matter here more than
+    anywhere else.
+    """
+    total = max(0, int(seconds))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours:d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
 class ManagedProgressCallback(OptimizationCallback):
     """Per-config heartbeat for the managed (hybrid) execution path (Traigent#1601).
 
@@ -415,9 +431,15 @@ class ManagedProgressCallback(OptimizationCallback):
         self, config_space: dict[str, Any], objectives: list[str], algorithm: str
     ) -> None:
         """Called when optimization starts."""
+        # flush=True on every line here: this callback exists for runs whose
+        # output is redirected (a script, notebook or background process), and
+        # a non-tty stream is block-buffered, so an unflushed heartbeat is not
+        # written until the buffer fills or the process exits -- invisible in
+        # exactly the case it was written for.
         _safe_print(
             f"[traigent] managed run starting: algorithm={algorithm} "
-            f"objectives={', '.join(objectives)}"
+            f"objectives={', '.join(objectives)}",
+            flush=True,
         )
 
     def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
@@ -431,20 +453,27 @@ class ManagedProgressCallback(OptimizationCallback):
         best_score_str = (
             f"{progress.best_score:.4f}" if progress.best_score is not None else "N/A"
         )
-        elapsed = time.strftime("%M:%S", time.gmtime(progress.elapsed_time))
+        elapsed = _format_elapsed(progress.elapsed_time)
         _safe_print(
             f"[traigent] config {progress.completed_trials}/{total} {status} "
-            f"best={best_score_str} elapsed={elapsed}"
+            f"best={best_score_str} elapsed={elapsed}",
+            flush=True,
         )
 
     def on_optimization_complete(self, result: OptimizationResult) -> None:
-        """Called when optimization completes."""
+        """Called when optimization finishes, however it finished."""
         best_score_str = (
             f"{result.best_score:.4f}" if result.best_score is not None else "N/A"
         )
+        # Report the actual status rather than always saying "complete": this
+        # callback also fires for a cancelled or timed-out run, and telling a
+        # user their run completed when it was cut short is worse than silence.
+        status = getattr(result, "status", None)
+        status_text = getattr(status, "value", status) or "finished"
         _safe_print(
-            f"[traigent] managed run complete: best={best_score_str} "
-            f"success_rate={result.success_rate:.1%} duration={result.duration:.1f}s"
+            f"[traigent] managed run {status_text}: best={best_score_str} "
+            f"success_rate={result.success_rate:.1%} duration={result.duration:.1f}s",
+            flush=True,
         )
 
 
