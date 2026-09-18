@@ -8,8 +8,9 @@ the main run_optimization function and related utilities.
 
 import asyncio
 import os
-from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from datetime import datetime, UTC
+from typing import Any
+from collections.abc import Callable
 
 import streamlit as st
 
@@ -47,14 +48,14 @@ except ImportError as e:
 async def run_optimization(
     problem_name: str,
     strategy: str,
-    models: List[str],
+    models: list[str],
     max_iterations: int = 10,
-    subset_size: Optional[int] = None,
-    temperature_range: Optional[List[float]] = None,
+    subset_size: int | None = None,
+    temperature_range: list[float] | None = None,
     dry_run: bool = False,
     mock: bool = False,
-    progress_callback: Optional[Callable] = None,
-) -> Dict[str, Any]:
+    progress_callback: Callable | None = None,
+) -> dict[str, Any]:
     """Run agent comparison for a problem to find the best AI configuration."""
     try:
         # Normalize inputs for downstream logic
@@ -102,7 +103,7 @@ async def run_optimization(
             )
 
         # Real Traigent optimization
-        start_time = datetime.now(timezone.utc)
+        start_time = datetime.now(UTC)
 
         if progress_callback:
             progress_callback(0.1, f"REAL MODE: Loading problem '{problem_name}'...")
@@ -283,7 +284,7 @@ async def run_optimization(
                     ),
                     timeout=90.0,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Fallback to simulation to keep the UI responsive.
                 if progress_callback:
                     progress_callback(
@@ -369,7 +370,7 @@ async def run_optimization(
             progress_callback(1.0, "Optimization complete!")
 
         # Extract results and format for UI
-        duration = (datetime.now(timezone.utc) - start_time).total_seconds() / 60.0
+        duration = (datetime.now(UTC) - start_time).total_seconds() / 60.0
 
         # Extract best trial information for UI display
         best_config = (
@@ -485,12 +486,12 @@ async def run_optimization(
 async def _run_simulation(
     problem_name: str,
     strategy: str,
-    models: List[str],
+    models: list[str],
     max_iterations: int,
-    subset_size: Optional[int],
-    temperature_range: Optional[List[float]],
-    progress_callback: Optional[Callable] = None,
-) -> Dict[str, Any]:
+    subset_size: int | None,
+    temperature_range: list[float] | None,
+    progress_callback: Callable | None = None,
+) -> dict[str, Any]:
     """Run simulation mode (for mock/dry-run)."""
     # Ensure we have a usable temperature list for the simulation loop
     safe_temperatures = (temperature_range or [0.3, 0.5, 0.7])[:3]
@@ -581,7 +582,7 @@ async def _run_simulation(
         "success": True,
         "problem": problem_name,
         "strategy": strategy,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "duration_minutes": 2.0,  # Mock duration
         "configurations_tested": configurations_tested,
         "performance": {
@@ -601,13 +602,13 @@ async def _run_simulation(
 
 
 def calculate_configuration_count(
-    models: List[str], temperature_points: int = 3
+    models: list[str], temperature_points: int = 3
 ) -> int:
     """Calculate the total number of configurations to be tested."""
     return len(models) * temperature_points
 
 
-def get_optimization_strategies() -> Dict[str, str]:
+def get_optimization_strategies() -> dict[str, str]:
     """Get available optimization strategies."""
     return {
         "🔍 Systematic Exploration": "grid",
@@ -619,7 +620,7 @@ def get_optimization_strategies() -> Dict[str, str]:
     }
 
 
-def validate_optimization_config(config: Dict[str, Any]) -> Dict[str, Any]:
+def validate_optimization_config(config: dict[str, Any]) -> dict[str, Any]:
     """Validate optimization configuration and return validation result."""
     errors = []
     warnings = []
