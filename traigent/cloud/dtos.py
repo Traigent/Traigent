@@ -226,6 +226,29 @@ class ExampleMeasure:
         )
 
 
+def _non_numeric_measure_error(key: str, value: Any) -> TypeError:
+    """Build the TypeError raised when a measure value is not numeric.
+
+    This guard is a privacy boundary, not a typing nicety. Measures cross to the
+    Traigent backend on every trial submission, and the SDK's promise is that
+    only tuned config values, numeric metrics, ids and metadata leave the
+    machine -- never dataset content or model output. A metric holding a string
+    (an LLM judge's rationale, a captured response, an error excerpt) turns the
+    metrics channel into a content channel, so it is rejected here rather than
+    warned about and sent. Introduced warn-only as "Phase 0" in PR #42
+    (d4b76645, 2026-01-17) pending a "v2.0" that never came; the SDK is 0.27.0
+    and the warning shipped for eight months while the leak stayed open.
+    """
+    return TypeError(
+        f"Measure '{key}' must be numeric (int, float, or None), got "
+        f"{type(value).__name__}. Metrics cross to the Traigent backend and are "
+        f"numeric-only by contract, so that no text content ever leaves your "
+        f"machine. Return numbers only from evaluators; keep any "
+        f"rationale/explanation text local -- in the on-disk trial logs or your "
+        f"own logging. Do not put text in metrics or metadata."
+    )
+
+
 class MeasuresDict(UserDict):
     """Type-safe measures dict with validation for trial-level metrics.
 
@@ -238,12 +261,14 @@ class MeasuresDict(UserDict):
     Enforces:
     - Maximum 50 keys to prevent unbounded memory usage
     - String keys matching Python identifier pattern (^[a-zA-Z_][a-zA-Z0-9_]*$)
-    - Numeric value types only (int, float, None) for optimization metrics
-    - Non-numeric values log warnings in Phase 0 (will be rejected in v2.0)
+    - Numeric value types only (int, float, None) for optimization metrics.
+      Non-numeric values are REJECTED, not coerced or warned about: measures
+      cross to the Traigent backend, and a string metric would carry content
+      (see ``_non_numeric_measure_error``).
 
     Raises:
         ValueError: If key limit exceeded or key pattern invalid
-        TypeError: If key is not string or value is not primitive type
+        TypeError: If key is not string or value is not numeric
     """
 
     MAX_KEYS = 50
@@ -306,25 +331,10 @@ class MeasuresDict(UserDict):
                     f"Measure '{key}' must be numeric type (int, float, None), got bool"
                 )
 
-            # NEW: Phase 0 - Warn on non-numeric values (enforce in Phase 2/v2.0)
+            # Numeric-only is enforced, not warned about: see
+            # ``_non_numeric_measure_error``.
             if not isinstance(value, (int, float, type(None))):
-                logger.warning(
-                    f"Measure '{key}' has non-numeric value type {type(value).__name__}. "
-                    f"Non-numeric metrics will be rejected in Traigent v2.0. "
-                    f"Store non-numeric data in configuration run metadata instead.",
-                    extra={
-                        "key": key,
-                        "value_type": type(value).__name__,
-                        "hint": "Use run_metadata or workflow_metadata for non-numeric data",
-                    },
-                )
-                # Phase 0: Allow but warn (backward compatible)
-                # Phase 2: Uncomment to enforce
-                # raise TypeError(
-                #     f"Measure '{key}' must be numeric type (int, float, None), "
-                #     f"got {type(value).__name__}. "
-                #     f"Non-numeric data should be stored in configuration run metadata."
-                # )
+                raise _non_numeric_measure_error(key, value)
 
     def __setitem__(self, key: str, value: Any) -> None:
         """Validate on assignment.
@@ -357,19 +367,10 @@ class MeasuresDict(UserDict):
                 f"Value for measure '{key}' must be numeric type (int, float, None), got bool"
             )
 
-        # NEW: Phase 0 - Warn on non-numeric values (enforce in Phase 2/v2.0)
+        # Numeric-only is enforced, not warned about: see
+        # ``_non_numeric_measure_error``.
         if not isinstance(value, (int, float, type(None))):
-            logger.warning(
-                f"Setting non-numeric measure '{key}': {type(value).__name__}. "
-                f"This will be rejected in Traigent v2.0. "
-                f"Use run_metadata or workflow_metadata for non-numeric data."
-            )
-            # Phase 0: Allow but warn (backward compatible)
-            # Phase 2: Uncomment to enforce
-            # raise TypeError(
-            #     f"Value must be numeric type (int, float, None), "
-            #     f"got {type(value).__name__}"
-            # )
+            raise _non_numeric_measure_error(key, value)
 
         self.data[key] = value
 

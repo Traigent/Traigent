@@ -74,6 +74,55 @@ class OptimizationState(Enum):
     ERROR = auto()
 
 
+# Content-bearing fields of a serialized `ExampleResult` (see
+# `traigent.api.types.ExampleResult.to_dict`) — the ones that hold raw
+# question/response/expected text rather than ids or metrics. Mirrors the
+# `query`/`response`/`expected` triple `optimization_logger._should_log_example_content`
+# already redacts for the trial jsonl (#1069); kept in sync deliberately rather
+# than derived, since the two on-disk shapes are not the same dict.
+_EXAMPLE_RESULT_CONTENT_FIELDS = ("input_data", "expected_output", "actual_output")
+
+
+def _redact_example_content_for_disk_save(result_dict: dict[str, Any]) -> None:
+    """Null out per-example content fields when raw-content logging is off.
+
+    Issue #2223: `save_optimization_results` dumps the full `OptimizationResult`
+    dataclass, including `trial.metadata["example_results"]` — which carries
+    each example's raw input/expected/actual content — with no awareness of
+    `TRAIGENT_LOG_EXAMPLE_CONTENT`. `optimization_logger.py` already applies
+    that opt-out to its own trial jsonl; `_should_log_example_content()` is the
+    single source of truth for the switch, so this reuses it rather than
+    reading the env var again with a second, possibly-divergent default.
+
+    Mutates `result_dict` in place. `ids`/`metrics`/`success`/`error_message`
+    are left untouched — only the fields that hold prompt/response/expected
+    text are nulled, matching what the sibling opt-out keeps and drops.
+    """
+    from traigent.utils.optimization_logger import _should_log_example_content
+
+    if _should_log_example_content():
+        return
+
+    trials = result_dict.get("trials")
+    if not isinstance(trials, list):
+        return
+    for trial in trials:
+        if not isinstance(trial, dict):
+            continue
+        metadata = trial.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        example_results = metadata.get("example_results")
+        if not isinstance(example_results, list):
+            continue
+        for example in example_results:
+            if not isinstance(example, dict):
+                continue
+            for field_name in _EXAMPLE_RESULT_CONTENT_FIELDS:
+                if field_name in example:
+                    example[field_name] = None
+
+
 class ConfigStateManager:
     """Manages optimization config state: results, history, load/save/export.
 
@@ -638,6 +687,16 @@ class ConfigStateManager:
         # `json.dump(default=str)` wrote `timestamp: None` happily and
         # load_optimization_results raised on it, one process later.
         result_dict = encode_whole_result_dump(self._optimization_results)
+
+        # #2223: this writer had no idea `TRAIGENT_LOG_EXAMPLE_CONTENT` exists.
+        # `optimization_logger.py` already honors it for the trial jsonl (its
+        # `_should_log_example_content()` is the single source of truth for
+        # this switch); reuse that check here instead of inventing a second,
+        # possibly differently-defaulting reading of the same env var, so a
+        # customer who opted out of raw-content logging gets that promise kept
+        # on every artifact this SDK writes, not just the jsonl trial log.
+        _redact_example_content_for_disk_save(result_dict)
+
         output_path = Path(path).expanduser()
         base_dir = (
             output_path.parent if output_path.is_absolute() else Path.cwd().resolve()

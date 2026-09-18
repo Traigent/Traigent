@@ -61,15 +61,20 @@ string value. It does not send dataset example inputs, expected outputs, model
 responses, or example metadata unless you put that content into the tuned
 configuration itself.
 
-Use privacy-mode redaction when you need backend coordination without sending
-tuned string values. Privacy submissions preserve which keys were tuned, but
-redact sensitive-key values and all string/free-text config values. Numeric,
-boolean, and `None` config values still pass through. This redaction is gated by
-the run's effective `TraigentConfig.privacy_enabled` setting, including
-configuration loaded from `TRAIGENT_PRIVACY_MODE=true` for compatibility. Do not
-use `@traigent.optimize(..., privacy_enabled=True)` for new code; that decorator
+Privacy-mode redaction applies to per-trial submissions, not to session
+creation. The full tuned configuration space — including string values — is
+sent unconditionally when the session is created, before any redaction runs
+(see Data Boundary above). Enabling privacy mode does not withhold that
+payload. What it does change: subsequent per-trial submissions preserve which
+keys were tuned, but redact sensitive-key values and all string/free-text
+config values. Numeric, boolean, and `None` config values still pass through.
+This trial-level redaction is gated by the run's effective
+`TraigentConfig.privacy_enabled` setting, including configuration loaded from
+`TRAIGENT_PRIVACY_MODE=true` for compatibility. Do not use
+`@traigent.optimize(..., privacy_enabled=True)` for new code; that decorator
 keyword is deprecated and emits a warning. Use `offline=True` instead when the
-requirement is no Traigent backend egress.
+requirement is that tuned string values — including at session creation —
+never leave.
 
 Use `offline=True` when your policy requires no Traigent backend egress at all:
 
@@ -84,10 +89,18 @@ Use `offline=True` when your policy requires no Traigent backend egress at all:
 No-egress runs keep Traigent optimization metadata local while still allowing your
 own function to call LLM providers or other services.
 
+`offline=True` does not disable OpenTelemetry export: if you have set
+`TRAIGENT_TRACE_ENABLED=true` and `OTEL_EXPORTER_OTLP_ENDPOINT`, evaluation
+spans — including truncated model output — are still exported to the collector
+you configured. The observability lanes (`@observe`, `TRAIGENT_TRACE_ENABLED`)
+have their own content controls, described below, and carry no privacy
+guarantee.
+
 Use `TRAIGENT_DISABLE_TELEMETRY=true` for SDK telemetry opt-out, effective
 `TraigentConfig.privacy_enabled` privacy mode to redact tuned string config
-values on privacy-mode submissions, and `offline=True` for zero Traigent backend
-egress.
+values on per-trial submissions made after session creation, and
+`offline=True` for zero Traigent backend egress, including at session
+creation.
 
 ### `@observe` Content Egress
 

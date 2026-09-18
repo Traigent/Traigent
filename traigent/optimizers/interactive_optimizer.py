@@ -200,6 +200,9 @@ class InteractiveOptimizer(BaseOptimizer):
         fingerprint_meta: dict[str, Any] | None = None,
         evaluator_definition_id: str | None = None,
         task_type: str | None = None,
+        *,
+        dataset: Any = None,
+        dataset_id: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize interactive optimizer.
@@ -211,6 +214,29 @@ class InteractiveOptimizer(BaseOptimizer):
             dataset_metadata: Metadata about the dataset (size, type, etc.)
             optimization_strategy: Strategy for optimization
             context: Optional TraigentConfig for global settings
+            artifact_fingerprints: Explicit content-free fingerprints
+                (``{"dataset": ..., "agent": ..., "evaluator": ...,
+                "config_space": ...}``). Takes precedence over `dataset`
+                below -- if you pass this, it is used as-is.
+            dataset: Optional materialized dataset (a ``Dataset`` instance,
+                a list of examples, or a mapping with an ``examples``
+                list) used ONLY to compute the ``dataset`` slot of
+                `artifact_fingerprints` when `artifact_fingerprints` is not
+                already given. Never sent over the wire -- only its
+                content-addressed sha256 fingerprint is. A bare
+                generator/iterator is treated as unmaterialized and is
+                never consumed here; pass a list or `Dataset` to get a
+                fingerprint. Absent/unmaterialized data yields no
+                fingerprint -- it remains PROVENANCE only (did the content
+                drift?), never dataset identity -- see `dataset_id` below.
+            dataset_id: Optional DECLARED, stable dataset identity for portal
+                grouping (agent x dataset). Must stay the same across content
+                edits -- exactly like an agent's identity does not change
+                when its code changes. When omitted, a label-derived default
+                is used if available (`dataset_metadata["name"]` or the
+                `evaluation_set` metadata key); when neither is available no
+                identity is sent at all -- it is never invented from example
+                content.
             **kwargs: Additional optimizer configuration
 
         Raises:
@@ -225,8 +251,20 @@ class InteractiveOptimizer(BaseOptimizer):
         self.remote_service = remote_service
         self.dataset_metadata = dataset_metadata or {}
         self.optimization_strategy = optimization_strategy
+        if artifact_fingerprints is None and dataset is not None:
+            from traigent.utils.artifact_fingerprints import (
+                build_dataset_only_fingerprint_payload,
+            )
+
+            fingerprint_payload = build_dataset_only_fingerprint_payload(dataset)
+            if fingerprint_payload is not None:
+                artifact_fingerprints = fingerprint_payload["artifact_fingerprints"]
+                fingerprint_meta = (
+                    fingerprint_meta or fingerprint_payload["fingerprint_meta"]
+                )
         self.artifact_fingerprints = artifact_fingerprints
         self.fingerprint_meta = fingerprint_meta
+        self.dataset_id = dataset_id
         self.evaluator_definition_id = evaluator_definition_id
         self.task_type = task_type
         self.optimizer_ready_timeout = _resolve_optimizer_ready_timeout(
@@ -276,6 +314,7 @@ class InteractiveOptimizer(BaseOptimizer):
                 billing_tier=billing_tier,
                 artifact_fingerprints=self.artifact_fingerprints,
                 fingerprint_meta=self.fingerprint_meta,
+                dataset_id=self.dataset_id,
                 evaluator_definition_id=self.evaluator_definition_id,
                 task_type=self.task_type,
             )

@@ -1176,6 +1176,41 @@ def model_has_nonzero_price_coverage(model_name: str) -> bool:
     return (input_cost + output_cost) > 0.0
 
 
+def get_pricing_provenance() -> dict[str, Any]:
+    """Describe where this process's LiteLLM price table came from.
+
+    Two runs can price the same tokens differently depending on whether
+    LiteLLM loaded its bundled table or fetched the live one from GitHub at
+    import (which depends on ``LITELLM_LOCAL_MODEL_COST_MAP`` and on import
+    order). Recording this per run makes cost columns comparable.
+
+    Never raises. ``price_table_source`` is ``"local"``, ``"remote"``, or
+    ``"unknown"`` when LiteLLM is absent or too old to report it (the
+    source-info API exists from LiteLLM 1.93; the SDK floor is lower).
+    """
+    provenance: dict[str, Any] = {
+        "price_table_source": "unknown",
+        "price_table_env_forced": None,
+        "price_table_fallback_reason": None,
+        "litellm_local_model_cost_map": os.environ.get("LITELLM_LOCAL_MODEL_COST_MAP"),
+    }
+    if not LITELLM_AVAILABLE:
+        return provenance
+    try:
+        from litellm.litellm_core_utils.get_model_cost_map import (
+            get_model_cost_map_source_info,
+        )
+
+        info = get_model_cost_map_source_info()
+    except Exception:  # older LiteLLM, or a changed internal module path
+        logger.debug("LiteLLM price-table source info unavailable", exc_info=True)
+        return provenance
+    provenance["price_table_source"] = info.get("source") or "unknown"
+    provenance["price_table_env_forced"] = info.get("is_env_forced")
+    provenance["price_table_fallback_reason"] = info.get("fallback_reason")
+    return provenance
+
+
 def find_models_missing_price_coverage(models: Iterable[str]) -> list[str]:
     """Return deduplicated model IDs without non-zero pricing coverage."""
     missing: list[str] = []
@@ -1372,3 +1407,40 @@ def reset_unpriced_runtime_models() -> None:
     """Clear the unpriced-at-runtime model registry (call before a fresh run)."""
     with _unpriced_runtime_lock:
         _unpriced_runtime_models.clear()
+
+
+# Whether THIS run measured any LLM usage at all. Recorded next to the
+# unpriced-model registry above and reset by the same run-start hook.
+#
+# It cannot be read back off the trials: when an optimized function returns a
+# plain string, ``LocalEvaluator._estimate_string_tokens`` fills the trial's
+# ``input_tokens`` / ``output_tokens`` / ``total_tokens`` from character counts
+# (1 token per 4 chars), so a run that made no LLM call at all still reports
+# non-zero token columns. Only the extraction site can tell a measured token
+# count from an estimate, so it records the fact here.
+_usage_captured: dict[str, int] = {"count": 0}
+_usage_captured_lock = threading.Lock()
+
+
+def record_captured_usage() -> None:
+    """Record that real LLM usage (tokens or a reported cost) was measured."""
+    with _usage_captured_lock:
+        _usage_captured["count"] += 1
+
+
+def any_usage_captured() -> bool:
+    """Return True when this run measured LLM usage at least once."""
+    with _usage_captured_lock:
+        return _usage_captured["count"] > 0
+
+
+def captured_usage_count() -> int:
+    """Return how many examples contributed measured LLM usage this run."""
+    with _usage_captured_lock:
+        return _usage_captured["count"]
+
+
+def reset_captured_usage() -> None:
+    """Clear the usage-capture counter (call before a fresh run)."""
+    with _usage_captured_lock:
+        _usage_captured["count"] = 0

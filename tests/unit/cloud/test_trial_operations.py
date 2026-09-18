@@ -238,10 +238,14 @@ class TestMeasuresDictValidationInSubmission:
             "accuracy": 0.95,
             "nested": {"before": 1},
         }
+        # ``nested_metric`` is non-numeric and is now dropped from the wire
+        # copies of the trial metrics rather than deep-copied onto them: a dict
+        # metric can carry arbitrary text (privacy-egress fix). The detachment
+        # property this test guards is still asserted on the numeric metrics
+        # and on ``comparability`` / ``surrogate_evaluator`` below.
         assert result_data["metadata"]["all_metrics"] == {
             "accuracy": 0.95,
             "surrogate_score": 0.5,
-            "nested_metric": {"before": 1},
         }
         assert (
             result_data["metadata"]["comparability"]["per_metric_coverage"]["accuracy"][

@@ -69,11 +69,12 @@ REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO = 0.5
 #: * ``MetricsTracker.format_for_backend`` outputs: ``score``, ``accuracy``,
 #:   ``duration``, ``input_tokens``, ``output_tokens``, ``total_tokens``,
 #:   ``response_time_ms``, ``cost`` (per-trial TOTAL),
-#:   ``cost_per_example_mean``, ``total_examples``, ``successful_examples``,
-#:   ``tokens_per_second``;
+#:   ``cost_per_example_mean``, ``cost_unpriced``, ``total_examples``,
+#:   ``successful_examples``, ``tokens_per_second``;
 #: * the LLM aggregation (``_aggregate_llm_metrics``): ``prompt_tokens``,
 #:   ``completion_tokens``, ``total_tokens``, ``input_cost``, ``output_cost``,
-#:   ``total_cost``, ``avg_response_time``, ``avg_response_time_ms``;
+#:   ``total_cost``, ``cost_unpriced``, ``avg_response_time``,
+#:   ``avg_response_time_ms``;
 #: * standard/LLM per-example keys and lifecycle counters: ``input_cost``,
 #:   ``output_cost``, ``total_cost``, ``examples_attempted``,
 #:   ``examples_consumed``, ``execution_time_ms``.
@@ -90,6 +91,11 @@ RESERVED_METRIC_KEYS: frozenset[str] = frozenset(
         # (finding T2). Reserved so a user tuple key cannot overwrite it and it is
         # never dropped under the measures ceiling.
         "cost_per_example_mean",
+        # True iff any measured example in the trial had cost that could not be
+        # priced -- unknown spend recorded as $0, not verified-free $0 (#1597,
+        # #1741). Reserved so a user tuple key cannot overwrite it and it is
+        # never dropped under the measures ceiling.
+        "cost_unpriced",
         "latency",
         "score",
         # Diagnostic: the built-in exact-match scorer recorded alongside a custom
@@ -759,6 +765,19 @@ class MetricsTracker:
             # (None) and the normal contract (0.0) are preserved.
             cost_total = cost_per_example_mean
 
+        # True when ANY measured example's cost could not be priced
+        # (``ExampleMetrics.cost.unpriced``, #1597) -- the trial's ``cost``
+        # total above is a real sum, but part of it may be an unknown-spend
+        # $0 rather than verified-free $0. Threaded through so per-trial
+        # consumers (trial summary table, ``result.trials[i]``, Pareto/
+        # cost-objective logic) can tell the two apart instead of only
+        # seeing a bare $0 (#1741, follow-up to #1597/#1407).
+        # Wire-format ``MeasuresDict``/backend contract treats every measure
+        # as numeric (bool is rejected for JSON Schema parity, see
+        # ``traigent.cloud.dtos.MeasuresDict._validate_dict``) -- so this is
+        # 1.0/0.0, never a Python ``bool``.
+        cost_unpriced = 1.0 if any(m.cost.unpriced for m in measured_metrics) else 0.0
+
         formatted = {
             # Core metrics (single values)
             "score": accuracy_value,  # Use actual accuracy for score
@@ -778,6 +797,9 @@ class MetricsTracker:
             "cost": cost_total,
             # Per-example MEAN cost, preserved under a distinct key.
             "cost_per_example_mean": cost_per_example_mean,
+            # True iff any measured example's cost is unknown spend, not
+            # verified-free $0 (#1741). See comment above.
+            "cost_unpriced": cost_unpriced,
             # Additional useful metrics
             "total_examples": aggregated["total_examples"],
             "successful_examples": aggregated["successful_examples"],
@@ -1668,6 +1690,28 @@ def _calculate_cost_for_metrics(
         return
 
     if not model_name:
+        # Tokens were captured, so there WAS spend: recording $0 here is the
+        # same "unpriced call scores free" defect as an unknown model, and
+        # under strict accounting it must fail instead. A response with no
+        # tokens at all is a different case (nothing to price) and stays a
+        # warning in both modes.
+        if strict_cost_accounting and (
+            metrics.tokens.input_tokens > 0 or metrics.tokens.output_tokens > 0
+        ):
+            from traigent.utils.cost_calculator import UnknownModelError
+
+            raise UnknownModelError(
+                "Cost accounting is strict for this run and tokens were "
+                f"captured (in={metrics.tokens.input_tokens}, "
+                f"out={metrics.tokens.output_tokens}) but no model name was "
+                "available to price them, so the call is not recorded as $0. "
+                "Fix by choosing one of: 1) expose the model name on the LLM "
+                "response (a 'model' or 'model_name' attribute or key, or "
+                "LangChain response_metadata/llm_output), 2) include a "
+                "'model' key in the optimization configuration, 3) set "
+                "TRAIGENT_STRICT_COST_ACCOUNTING=false to accept $0 for "
+                "calls that cannot be priced."
+            )
         logger.warning(
             "Cost calculation skipped: model_name is None/empty. "
             "Ensure the optimization config includes a 'model' key or "
@@ -2023,6 +2067,21 @@ def extract_llm_metrics(
         # the chain, but kept fail-safe rather than fail-silent.
         metrics = ExampleMetrics(measured=False)
         logger.warning("No handler could process the response, using empty metrics")
+
+    # Record whether this response carried a real measurement, BEFORE any
+    # downstream estimation (``LocalEvaluator._estimate_string_tokens`` fills
+    # token counts from character counts for plain-string outputs, which is
+    # indistinguishable from a measurement once it lands on the trial). A run
+    # that never gets here with real usage has an UNMEASURED cost column, not
+    # a cheap one.
+    if (
+        metrics.tokens.input_tokens > 0
+        or metrics.tokens.output_tokens > 0
+        or metrics.cost.total_cost > 0
+    ):
+        from traigent.utils.cost_calculator import record_captured_usage
+
+        record_captured_usage()
 
     # Calculate cost using canonical cost_from_tokens path. Fall back to the
     # model name carried on the response itself when the config supplies none

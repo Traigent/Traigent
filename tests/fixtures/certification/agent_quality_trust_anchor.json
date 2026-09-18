@@ -1,0 +1,6 @@
+{
+  "algorithm": "ed25519",
+  "key_ref": "anchor:aaaaaaaa",
+  "public_key_der_b64": "MCowBQYDK2VwAyEAF0VTtFbd38aQjsqxwQH+arIeK6oGF3lbfUOmNIKZP9U=",
+  "public_key_digest": "sha256:993d8b97bee2d55d852e17b023ef5dffabf55a1887fa676b90bb751c5550baed"
+}

@@ -300,24 +300,22 @@ class TestSecureFileManager:
         with pytest.raises((FileNotFoundError, PermissionError, OSError)):
             SecureFileManager.write_secure_file(invalid_path, {"test": "data"})
 
-    def test_read_secure_file_permission_check(self):
+    def test_read_secure_file_permission_check(self, tmp_path):
         """Test reading file with insecure permissions"""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as temp_file:
-            temp_path = temp_file.name
-            json.dump({"test": "data"}, temp_file)
+        temp_path = tmp_path / "insecure_credential.json"
+        temp_path.write_text(json.dumps({"test": "data"}))
 
-        try:
-            # Make file world-readable (insecure)
-            os.chmod(temp_path, 0o644)
+        # Deliberately grant world-readable access (CWE-732) to a file that
+        # lives only in this test's isolated tmp_path directory, so we can
+        # assert SecureFileManager.read_secure_file rejects it below. 0o644
+        # is the narrowest mode that still sets a group/other bit, which is
+        # exactly what the permission check inspects. Intentional insecure
+        # fixture; rejection is asserted immediately below.
+        os.chmod(temp_path, 0o644)  # lgtm[py/overly-permissive-file]
 
-            # Should raise security error
-            with pytest.raises(
-                PermissionError, match="File permissions too permissive"
-            ):
-                SecureFileManager.read_secure_file(temp_path)
-
-        finally:
-            os.unlink(temp_path)
+        # Should raise security error
+        with pytest.raises(PermissionError, match="File permissions too permissive"):
+            SecureFileManager.read_secure_file(str(temp_path))
 
     def test_write_secure_file_creates_directory(self):
         """Test that writing secure file creates parent directory"""

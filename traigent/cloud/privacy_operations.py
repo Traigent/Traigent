@@ -22,6 +22,7 @@ from traigent.cloud.models import (
     TrialSuggestion,
 )
 from traigent.cloud.trial_operations import TrialOperations
+from traigent.utils.artifact_fingerprints import build_dataset_only_fingerprint_payload
 from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -49,6 +50,9 @@ class PrivacyOperations:
         dataset_metadata: dict[str, Any],
         max_trials: int = 50,
         user_id: str | None = None,
+        *,
+        dataset: Any = None,
+        dataset_id: str | None = None,
     ) -> tuple[str, str, str]:
         """Create a backend-tracked session for local/hybrid optimization.
 
@@ -63,6 +67,29 @@ class PrivacyOperations:
             dataset_metadata: Dataset metadata (no actual data)
             max_trials: Maximum optimization trials
             user_id: Optional user identifier
+            dataset: Optional materialized dataset (a ``Dataset`` instance, a
+                list of examples, or a mapping with an ``examples`` list).
+                Never sent over the wire -- only its content-addressed
+                sha256 fingerprint is (see
+                ``traigent.utils.artifact_fingerprints``). Datasets are
+                deliberately never uploaded on this path; the fingerprint
+                remains valuable PROVENANCE (did the content drift?) but is
+                NOT dataset identity -- see ``dataset_id`` below. Pass
+                ``None`` (the default) when no materialized dataset is
+                available -- an absent fingerprint stays absent, it is never
+                invented from ``dataset_metadata`` alone. A bare
+                generator/iterator is treated as unmaterialized and is never
+                consumed here; pass a list or a ``Dataset`` to get a
+                fingerprint.
+            dataset_id: Optional DECLARED, stable dataset identity for portal
+                grouping (agent x dataset). Unlike the content fingerprint,
+                this must stay the same across content edits -- exactly like
+                an agent's identity does not change when its code changes.
+                When omitted, a label-derived default is used if available
+                (``dataset_metadata["name"]`` or the ``evaluation_set``
+                metadata key); when neither is available no identity is sent
+                at all -- absence stays absence, nothing is invented from
+                example content.
 
         Returns:
             Tuple of (session_id, experiment_id, experiment_run_id)
@@ -85,6 +112,19 @@ class PrivacyOperations:
 
         logger.info(f"Creating privacy-first optimization session for {function_name}")
 
+        # Dataset identity for portal grouping is the DECLARED `dataset_id`; the
+        # fingerprint below is provenance only. The content fingerprint
+        # alone (never the name/label) -- and only when the caller actually
+        # handed us materialized content. Missing stays missing: never
+        # invent a fingerprint from dataset_metadata, and never drain a
+        # single-use iterator to get one.
+        artifact_fingerprints: dict[str, str | None] | None = None
+        fingerprint_meta: dict[str, Any] | None = None
+        fingerprint_payload = build_dataset_only_fingerprint_payload(dataset)
+        if fingerprint_payload is not None:
+            artifact_fingerprints = fingerprint_payload["artifact_fingerprints"]
+            fingerprint_meta = fingerprint_payload["fingerprint_meta"]
+
         try:
             session_request = SessionCreationRequest(
                 function_name=function_name,
@@ -94,6 +134,9 @@ class PrivacyOperations:
                 max_trials=max_trials,
                 user_id=user_id,
                 billing_tier="privacy",  # Special tier for privacy mode
+                artifact_fingerprints=artifact_fingerprints,
+                fingerprint_meta=fingerprint_meta,
+                dataset_id=dataset_id,
             )
 
             # Always use session endpoints for tracking

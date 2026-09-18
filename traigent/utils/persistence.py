@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import copy
+import dataclasses
 import gzip
 import hashlib
 import json
@@ -146,6 +148,76 @@ def _serialize_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     processes nested dicts and lists.
     """
     return cast(dict[str, Any], _safe_json_value(metadata))
+
+
+# Content-bearing fields of a per-example result (`ExampleResult` or its
+# `to_dict()` form): the raw question/expected/actual text, as opposed to ids
+# and metrics. Mirrors `config_state_manager._EXAMPLE_RESULT_CONTENT_FIELDS`
+# (#2223); kept local rather than imported so `utils` does not depend on `core`.
+_EXAMPLE_CONTENT_FIELDS = ("input_data", "expected_output", "actual_output")
+
+
+def _example_content_opted_out() -> bool:
+    """Whether ``TRAIGENT_LOG_EXAMPLE_CONTENT`` asks for example content to be omitted.
+
+    Issue #2234: reuses ``optimization_logger._should_log_example_content()``,
+    the single source of truth for the switch, so this writer cannot drift
+    to a second reading of the variable with a different default.
+    """
+    from .optimization_logger import _should_log_example_content
+
+    return not _should_log_example_content()
+
+
+def _redact_example_content(example: Any) -> Any:
+    """Return ``example`` with its content fields nulled; the input is not mutated."""
+    if isinstance(example, dict):
+        redacted = dict(example)
+        for key in _EXAMPLE_CONTENT_FIELDS:
+            if key in redacted:
+                redacted[key] = None
+        return redacted
+    if dataclasses.is_dataclass(example) and not isinstance(example, type):
+        present = {
+            f.name
+            for f in dataclasses.fields(example)
+            if f.name in _EXAMPLE_CONTENT_FIELDS
+        }
+        if present:
+            return dataclasses.replace(example, **dict.fromkeys(present))
+    return example
+
+
+def _metadata_without_example_content(metadata: Any) -> Any:
+    """Return a copy of trial ``metadata`` whose ``example_results`` hold no content."""
+    if not isinstance(metadata, dict):
+        return metadata
+    example_results = metadata.get("example_results")
+    if not isinstance(example_results, list):
+        return metadata
+    redacted = dict(metadata)
+    redacted["example_results"] = [
+        _redact_example_content(ex) for ex in example_results
+    ]
+    return redacted
+
+
+def _trial_without_example_content(trial: Any) -> Any:
+    """Return a shallow copy of ``trial`` whose metadata carries no example content.
+
+    Used for the pickle artifact, which serializes whole trial objects: the
+    caller's in-memory result must not be altered by saving it.
+    """
+    metadata = getattr(trial, "metadata", None)
+    redacted_metadata = _metadata_without_example_content(metadata)
+    if redacted_metadata is metadata:
+        return trial
+    trial_copy = copy.copy(trial)
+    try:
+        trial_copy.metadata = redacted_metadata
+    except (AttributeError, dataclasses.FrozenInstanceError):
+        trial_copy = dataclasses.replace(trial, metadata=redacted_metadata)
+    return trial_copy
 
 
 def _rehydrate_evaluation_result(value: dict) -> Any:
@@ -404,12 +476,22 @@ class PersistenceManager:
 
         self._atomic_write_json(result_dir / METADATA_FILE, metadata)
 
+        # #2234: this writer ignored TRAIGENT_LOG_EXAMPLE_CONTENT. When the
+        # user opted out, drop per-example input/expected/actual content from
+        # both trial artifacts below (JSON and pickle), as #2223 did for the
+        # sibling writer in config_state_manager.
+        omit_example_content = _example_content_opted_out()
+
         # Save trials as compressed JSON (secure and portable)
         trials_data = []
         for trial in result.trials:
             # Serialize metadata, converting objects with to_dict() methods
             raw_metadata = trial.metadata if hasattr(trial, "metadata") else {}
             serialized_metadata = _serialize_metadata(raw_metadata)
+            if omit_example_content:
+                serialized_metadata = _metadata_without_example_content(
+                    serialized_metadata
+                )
 
             trial_dict = {
                 # Persist the real id so the winning_trial_ids stamp (#1854)
@@ -455,7 +537,14 @@ class PersistenceManager:
         self._atomic_write_gzip_json(result_dir / TRIALS_JSON_FILE, trials_data)
 
         # Also save as pickle for backward compatibility (will be deprecated)
-        self._atomic_write_gzip_pickle(result_dir / TRIALS_PKL_FILE, result.trials)
+        # The pickle carries whole trial objects, so redact copies rather than
+        # the caller's in-memory result.
+        pickled_trials = (
+            [_trial_without_example_content(trial) for trial in result.trials]
+            if omit_example_content
+            else result.trials
+        )
+        self._atomic_write_gzip_pickle(result_dir / TRIALS_PKL_FILE, pickled_trials)
 
         # Save successful trials summary as JSON for easy reading
         trials_summary = []

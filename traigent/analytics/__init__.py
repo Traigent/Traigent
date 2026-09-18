@@ -1,13 +1,13 @@
-"""Backward compatibility shim for traigent.analytics.
+"""Backward-compatible analytics API.
 
 .. deprecated:: 0.9.0
-    This module is deprecated. Install and use ``traigent-analytics`` plugin instead:
-    ``pip install traigent-analytics`` or ``pip install traigent[analytics]``
+    The embedded implementation is deprecated. It remains available through
+    ``traigent.analytics`` in the ``traigent`` package.
 
-The analytics functionality has been moved to the traigent-analytics plugin
-for better modularity. This shim provides backward compatibility by:
-1. Trying to import from traigent-analytics plugin (preferred)
-2. Falling back to embedded implementation (deprecated)
+When an optional ``traigent_analytics`` module is already available, this
+module prefers its implementations. Otherwise, it uses the embedded
+implementation. No separately published replacement package is required for
+the embedded path.
 """
 
 # Traceability: CONC-Layer-Core CONC-Quality-Observability CONC-Quality-Maintainability
@@ -114,8 +114,7 @@ except ImportError:
 
     _warnings.warn(
         "traigent.analytics embedded implementation is deprecated. "
-        "Install traigent-analytics plugin for better support: "
-        "pip install traigent-analytics",
+        "It remains available through traigent.analytics in the traigent package.",
         DeprecationWarning,
         stacklevel=2,
     )

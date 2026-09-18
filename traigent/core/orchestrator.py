@@ -106,6 +106,7 @@ from traigent.core.result_selection import (
     select_best_configuration,
 )
 from traigent.core.sample_budget import SampleBudgetManager
+from traigent.core.selection_receipt import build_selection_receipt
 from traigent.core.stat_significance import compute_significance
 from traigent.core.stop_condition_manager import StopConditionManager
 from traigent.core.trial_lifecycle import TrialLifecycle
@@ -450,6 +451,7 @@ class OptimizationOrchestrator:
         self.artifact_fingerprints: dict[str, str | None] | None = None
         self.fingerprint_meta: dict[str, Any] | None = None
         self.evaluator_definition_id: str | None = None
+        self.task_type: str | None = None
 
         # Interactive pause prompt adapter (None in non-interactive environments)
         from traigent.core.exception_handler import (
@@ -1002,6 +1004,8 @@ class OptimizationOrchestrator:
         self._successful_trials = 0
         self._failed_trials = 0
         self._best_trial_cached: TrialResult | None = None
+        # R3: (OptimizationResult, selection receipt) from the last result build.
+        self._selection_receipt_binding: tuple[Any, dict[str, Any] | None] | None = None
         self._consumed_examples = 0
         # Lock for protecting shared state mutations during parallel trial execution
         self._state_lock = asyncio.Lock()
@@ -1252,6 +1256,19 @@ class OptimizationOrchestrator:
         if space is not None:
             wire_governance = build_tvl_governance(space)
         return wire_policy, wire_governance
+
+    def _selection_receipt_for(self, result: Any) -> dict[str, Any] | None:
+        """The R3 selection receipt built with ``result``, else ``None``.
+
+        Identity-bound: a receipt is returned only for the exact
+        ``OptimizationResult`` object whose selection produced it, so a
+        result built elsewhere never carries another run's receipt.
+        """
+        binding = getattr(self, "_selection_receipt_binding", None)
+        if not isinstance(binding, tuple) or len(binding) != 2:
+            return None
+        bound_result, receipt = binding
+        return receipt if bound_result is result else None
 
     def _build_certified_selection_report(self) -> dict[str, Any] | None:
         """Phase 8: the client-attested certified-selection finalize report.
@@ -4085,7 +4102,9 @@ class OptimizationOrchestrator:
                 # rides the same request.
                 agg_payload = (
                     self.backend_session_manager.build_session_aggregation_payload(
-                        result, session_id
+                        result,
+                        session_id,
+                        selection_receipt=self._selection_receipt_for(result),
                     )
                 )
 
@@ -5035,6 +5054,9 @@ class OptimizationOrchestrator:
         best_config = selection.best_config
         best_score = selection.best_score
         best_config_margin = selection.best_config_margin
+        # R3: the finalize selection receipt is projected from THIS selection
+        # (never a recomputed ranking) and bound to the result built below.
+        selection_receipt = build_selection_receipt(selection)
         # Issue #1866: surface a statistical-tie winner once per run. When the
         # winner-vs-runner-up margin is not significant, the "adopt best_config"
         # action is being taken on noise — name both configs, the objective, and
@@ -5244,6 +5266,7 @@ class OptimizationOrchestrator:
             source=source,
             best_config_margin=best_config_margin,
         )
+        self._selection_receipt_binding = (optimization_result, selection_receipt)
 
         # Log optimization completion
         if self._logger:

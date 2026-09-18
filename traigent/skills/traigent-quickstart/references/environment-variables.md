@@ -14,7 +14,10 @@ Complete reference of environment variables recognized by the Traigent SDK.
 | `TRAIGENT_VENDOR_RETRY_BACKOFF`   | `1.0`           | Base backoff (seconds) between vendor auto-retries; grows exponentially and honors a vendor `Retry-After` when present. Only used when `TRAIGENT_VENDOR_MAX_RETRIES` > 0. |
 | `TRAIGENT_SKIP_PROVIDER_VALIDATION`| `false`        | When `true`, skips API key validation at decoration time. Useful in CI environments.                |
 | `TRAIGENT_VALIDATION_TIMEOUT`     | `5.0`           | Timeout in seconds for provider API key validation checks.                                          |
-| `TRAIGENT_STRICT_COST_ACCOUNTING` | `false`         | Exact value `true` fails fast before trial 1 on unpriced models and when runtime cost extraction is missing or unknown. |
+| `TRAIGENT_STRICT_COST_ACCOUNTING` | unset (strict at runtime when `cost` is an objective) | Unset: runs whose objectives include `cost` fail on an unpriced call instead of recording `$0`; other runs warn. `true`: also fails before trial 1 on unpriced models. `false`: never strict, unpriced calls are recorded as `$0` with a warning. |
+| `LITELLM_LOCAL_MODEL_COST_MAP`     | set to `True` by Traigent only if Traigent is imported before LiteLLM | `True` makes LiteLLM use its bundled price table instead of downloading one from GitHub on import. Set it yourself for reproducible cost numbers and restricted networks. See below. |
+| `HF_HUB_OFFLINE`                   | (unset)         | `1` stops token counting for Llama-family models from downloading a tokenizer from Hugging Face. Counting still works without the download. |
+| `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS` | (unset)     | `True` stops LiteLLM fetching its Anthropic beta-header config from GitHub. Only matters for Anthropic models. |
 | `TRAIGENT_LOG_LEVEL`              | `INFO`          | Logging verbosity. Options: `DEBUG`, `INFO`, `WARNING`, `ERROR`.                                    |
 | `TRAIGENT_DEBUG`                  | (unset)         | When set to `1`, shows full tracebacks for `ConfigurationError` instead of user-friendly messages.  |
 | `TRAIGENT_STRICT_VALIDATION`      | `true`          | When `true`, DTO schema validation raises exceptions. When `false`, logs warnings only.             |
@@ -101,6 +104,50 @@ export TRAIGENT_LOG_LEVEL=DEBUG
 export TRAIGENT_DEBUG=1
 python my_optimization.py
 ```
+
+## Restricted Networks and Reproducible Cost
+
+LiteLLM, which Traigent uses for pricing, can reach the network on its own:
+
+- **On import** it downloads its model price table from `raw.githubusercontent.com`
+  unless `LITELLM_LOCAL_MODEL_COST_MAP=True`. Traigent sets that variable when it is
+  imported first, but a module that imports `litellm` before `traigent` wins the race,
+  and import sorters such as Ruff put `litellm` first. Blocked networks do not break
+  the import: LiteLLM waits up to 5 seconds, prints a warning, and falls back.
+- **When counting tokens** for Llama-family models it downloads a tokenizer from
+  Hugging Face unless `HF_HUB_OFFLINE=1`.
+
+The bundled and live price tables differ, so the same run can report different costs
+depending on which one loaded. Set these before anything imports LiteLLM:
+
+```
+LITELLM_LOCAL_MODEL_COST_MAP=True
+HF_HUB_OFFLINE=1
+# Anthropic models only:
+LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True
+```
+
+A model newer than your installed LiteLLM may then have no price. When `cost` is an
+objective the run stops at the first such call and names the fix, rather than scoring
+the model as free. Provide a price with `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` or
+`TRAIGENT_CUSTOM_MODEL_PRICING_FILE`. Providers that report cost on each response,
+such as OpenRouter, are priced from that report and are not affected.
+
+Every run records which table it used in `result.metadata["pricing"]`
+(`price_table_source` is `local` or `remote`), together with whether strict cost
+accounting was on and why, and whether the run measured any LLM usage at all
+(`usage_captured`). A run that declares a cost objective and captures no usage on any
+trial has an unmeasured `$0` cost column, not a cheap one: it fails under strict
+accounting and carries the `COST_OBJECTIVE_NO_USAGE_CAPTURED` warning otherwise.
+Mock-LLM runs (`TRAIGENT_MOCK_LLM=true`) always warn rather than fail here — there is
+no spend to measure in a simulated run.
+
+The run-scoped default does **not** reach the LangChain and Pydantic AI callback
+handlers. Each reads `TRAIGENT_STRICT_COST_ACCOUNTING` once, when the handler object is
+constructed — usually at import time, before any run starts — so a run that becomes
+strict because `cost` is an objective does not make an already-built handler strict. If
+you optimize through either integration, set `TRAIGENT_STRICT_COST_ACCOUNTING=true`
+explicitly.
 
 ## .env File Support
 

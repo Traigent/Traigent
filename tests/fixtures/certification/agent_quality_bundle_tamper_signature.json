@@ -1,0 +1,411 @@
+{
+  "assertion": {
+    "aggregation_policy": {
+      "policy_digest": "sha256:5d498b94053b672465f39b5e75661042d30f0af8f3f5b9e5d7a3f20334904cf3",
+      "policy_id": "traigent.aggregation_policy.pillar1.v1",
+      "policy_version": "1.0.0"
+    },
+    "assertion_digest": "sha256:7e8be9f988197db164bc37bd9329d6fca8ee27d40e804fddb4eeaf320cd70c98",
+    "assertion_template_id": "agent_quality_measured_interval_v1",
+    "claim_id": "AQ1",
+    "objective_registry": {
+      "registry_digest": "sha256:56b051f87f645d72adbe9e514b162be8aa85583dc22c37962b6941bc58bb12bd",
+      "registry_id": "traigent.objective_registry.pillar1.v1",
+      "registry_version": "1.0.0"
+    },
+    "rendered_text": "For the committed agent, evaluation dataset, evaluator, and registered measurement contract named in this certificate, each certified objective is reported as an interval whose endpoints a relying party recomputes offline from the printed sufficient statistics at the stated nominal coverage. The sufficient statistics are the issuer's attestation, not a recomputed fact. The claim is declared against the split labelled holdout. The aggregation policy is the one stated in a separately signed declared plan, bound here by digest. No comparison, ranking, generalisation, safety, or fitness conclusion is asserted, and the dataset's and the evaluator's own validity are not assessed.",
+    "schema_version": "traigent.agent_quality.assertion.v1"
+  },
+  "claim_support_rows": [
+    {
+      "assertion_digest": "sha256:7e8be9f988197db164bc37bd9329d6fca8ee27d40e804fddb4eeaf320cd70c98",
+      "claim_id": "AQ1",
+      "claim_material_digest": "sha256:c405e3a44d34d50fd7c57d927c212fd302c3479f664efcc721455fe229918ac9",
+      "declared_plan_digest": "sha256:d37d01ea201453d30e3c5da4499ff1cfb4d7fa6a7082813112c810ef50291f52",
+      "evaluation_splits_digest": "sha256:a2cbf73f6add87bcdb3d1f6d0c112d6ca4fb6160f7605334e99522fdc74f6d40",
+      "evidence_basis": "issuer_verified",
+      "measured_claims_digest": "sha256:f099b4afd608f7d4c1415727c036106275b6bf3c1149241b677485ed3fba2814",
+      "verifier_result": "pass"
+    }
+  ],
+  "declared_plan_envelope": {
+    "declared_plan": {
+      "aggregation_policy": {
+        "policy_digest": "sha256:5d498b94053b672465f39b5e75661042d30f0af8f3f5b9e5d7a3f20334904cf3",
+        "policy_id": "traigent.aggregation_policy.pillar1.v1",
+        "policy_version": "1.0.0"
+      },
+      "declared_plan_digest": "sha256:d37d01ea201453d30e3c5da4499ff1cfb4d7fa6a7082813112c810ef50291f52",
+      "holdout_scored_arm_count": 1,
+      "objective_ids": [
+        "obj.accuracy.exact_match.v1",
+        "obj.accuracy.evaluator_score_mean.v1"
+      ],
+      "objective_registry": {
+        "registry_digest": "sha256:56b051f87f645d72adbe9e514b162be8aa85583dc22c37962b6941bc58bb12bd",
+        "registry_id": "traigent.objective_registry.pillar1.v1",
+        "registry_version": "1.0.0"
+      },
+      "primary_objective_id": "obj.accuracy.exact_match.v1",
+      "schema_version": "traigent.agent_quality.declared_plan.v1",
+      "scope_binding_digest": "sha256:e85263e6e9b2470d8a31501936070d70488f5d9c1904a3e53fc3e720090d74a0",
+      "selection_arm_count": 4,
+      "split_derivation": {
+        "canonicalization_profile": "jcs_v1",
+        "commitment_scheme": "sha256_secret_blinded_v1",
+        "dataset_commitment_ref": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "evaluated_universe_item_count": 1000,
+        "holdout_fraction_ppm": 200000,
+        "schema_version": "traigent.agent_quality.split_derivation.v1",
+        "split_derivation_digest": "sha256:90c8932fdaf916e3ce767392507588324bf6595e5efdd98b2603ec774075476e",
+        "split_key_commitment": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "split_rule_id": "hmac_sha256_prefix_threshold_v1"
+      }
+    },
+    "schema_version": "traigent.agent_quality.declared_plan_envelope.v1",
+    "signature": {
+      "algorithm": "ed25519",
+      "declared_plan_digest": "sha256:d37d01ea201453d30e3c5da4499ff1cfb4d7fa6a7082813112c810ef50291f52",
+      "issuer_key_ref": "ikey:abcdef0123456789",
+      "schema_version": "traigent.agent_quality.declared_plan_signature.v1",
+      "signature": "QR8D8inedLvx25byw9vci6jM7uQdCCbLlhbyplVt7fDlANFz1LW6CNLeO8J7eJxsViVNZwvUK+Qypdx0kB0jDA==",
+      "signed_payload": "agent_quality_declared_plan",
+      "trust_ring_ref": "ring:abcdef0123456789"
+    }
+  },
+  "evaluation_splits": [
+    {
+      "canonicalization_profile": "jcs_v1",
+      "commitment_scheme": "sha256_secret_blinded_v1",
+      "item_count": 800,
+      "schema_version": "traigent.agent_quality.evaluation_split.v1",
+      "split_commitment_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "split_derivation_digest": "sha256:90c8932fdaf916e3ce767392507588324bf6595e5efdd98b2603ec774075476e",
+      "split_id": "selection"
+    },
+    {
+      "canonicalization_profile": "jcs_v1",
+      "commitment_scheme": "sha256_secret_blinded_v1",
+      "item_count": 200,
+      "schema_version": "traigent.agent_quality.evaluation_split.v1",
+      "split_commitment_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "split_derivation_digest": "sha256:90c8932fdaf916e3ce767392507588324bf6595e5efdd98b2603ec774075476e",
+      "split_id": "holdout"
+    }
+  ],
+  "measured_claims": [
+    {
+      "direction": "maximize",
+      "evaluated_split_id": "holdout",
+      "interval_high": 972618,
+      "interval_low": 910421,
+      "interval_params": {
+        "continuity_correction": "none",
+        "interval_method": "wilson_score_v1",
+        "recomputation_profile": "exact_integer_rational_v1"
+      },
+      "measurement_contract_record_digest": "sha256:a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+      "measurement_contract_ref": "measurement:mmmmmmmm",
+      "nominal_coverage_ppm": 950000,
+      "objective_id": "obj.accuracy.exact_match.v1",
+      "objective_kind": "binary_rate",
+      "point_estimate": 950000,
+      "sample_size": 200,
+      "schema_version": "traigent.agent_quality.measured_objective.v1",
+      "sufficient_statistics": {
+        "stat_kind": "binomial_v1",
+        "success_count": 190,
+        "trial_count": 200
+      },
+      "unit": "ppm",
+      "verification_level": "construction_recomputed_v1"
+    },
+    {
+      "direction": "maximize",
+      "evaluated_split_id": "holdout",
+      "interval_high": 807001,
+      "interval_low": 792999,
+      "interval_params": {
+        "degrees_of_freedom": 199,
+        "interval_method": "student_t_normal_approx_v1",
+        "quantile_table": {
+          "table_digest": "sha256:b0ef5d21cef830b7d801b0708c49355009edba622255706d8477ea61cbc7f9cb",
+          "table_id": "traigent.quantile_table.student_t.v1",
+          "table_version": "1.0.0"
+        },
+        "recomputation_profile": "exact_integer_rational_v1"
+      },
+      "measurement_contract_record_digest": "sha256:a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+      "measurement_contract_ref": "measurement:mmmmmmmm",
+      "nominal_coverage_ppm": 950000,
+      "objective_id": "obj.accuracy.evaluator_score_mean.v1",
+      "objective_kind": "bounded_mean",
+      "point_estimate": 800000,
+      "sample_size": 200,
+      "schema_version": "traigent.agent_quality.measured_objective.v1",
+      "sufficient_statistics": {
+        "mean_fixed": 800000,
+        "sample_count": 200,
+        "sample_stddev_fixed": 50000,
+        "stat_kind": "mean_variance_v1",
+        "unit_scale": "ppm"
+      },
+      "unit": "ppm",
+      "verification_level": "construction_recomputed_v1"
+    }
+  ],
+  "non_certified_selection_estimates": [],
+  "non_claims": [
+    {
+      "non_claim_id": "NCQ_NO_GENERALIZATION",
+      "reason_template_id": "tmpl.aq.noncert.no_generalization.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_NO_EXPANDED_EVALUATION",
+      "reason_template_id": "tmpl.aq.noncert.no_expanded_evaluation.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_NO_PRODUCTION_TRAFFIC",
+      "reason_template_id": "tmpl.aq.noncert.no_production_traffic.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_NO_GENERAL_CORRECTNESS",
+      "reason_template_id": "tmpl.aq.noncert.no_general_correctness.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_NO_STATISTICAL_SUPERIORITY",
+      "reason_template_id": "tmpl.aq.noncert.no_statistical_superiority.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_NO_WINNER_REPRODUCIBILITY",
+      "reason_template_id": "tmpl.aq.noncert.no_winner_reproducibility.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_NO_MARGIN_MEANING",
+      "reason_template_id": "tmpl.aq.noncert.no_margin_meaning.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_NO_CRITERIA_CHANGE_VALIDITY",
+      "reason_template_id": "tmpl.aq.noncert.no_criteria_change_validity.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_DATASET_VALIDITY_UNASSESSED",
+      "reason_template_id": "tmpl.aq.noncert.dataset_validity_unassessed.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_EVALUATOR_VALIDITY_UNASSESSED",
+      "reason_template_id": "tmpl.aq.noncert.evaluator_validity_unassessed.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_NO_SAFETY_OR_HARM",
+      "reason_template_id": "tmpl.aq.noncert.no_safety_or_harm.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_NO_DISTRIBUTION_SHIFT",
+      "reason_template_id": "tmpl.aq.noncert.no_distribution_shift.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_NO_FITNESS_FOR_PURPOSE",
+      "reason_template_id": "tmpl.aq.noncert.no_fitness_for_purpose.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_NO_UNCERTIFIED_COMPARISON",
+      "reason_template_id": "tmpl.aq.noncert.no_uncertified_comparison.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_NOMINAL_COVERAGE_ONLY",
+      "reason_template_id": "tmpl.aq.noncert.nominal_coverage_only.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_PLAN_ORDERING_OUT_OF_SCOPE",
+      "reason_template_id": "tmpl.aq.noncert.plan_ordering_out_of_scope.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_SELECTION_ESTIMATE_NOT_CERTIFIED",
+      "reason_template_id": "tmpl.aq.noncert.selection_estimate_not_certified.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_NO_COST_LATENCY_SLA",
+      "reason_template_id": "tmpl.aq.noncert.no_cost_latency_sla.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_NO_LONGITUDINAL_STABILITY",
+      "reason_template_id": "tmpl.aq.noncert.no_longitudinal_stability.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_HOLDOUT_ONE_SHOT_SCOPE",
+      "reason_template_id": "tmpl.aq.noncert.holdout_one_shot_scope.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_SUFFICIENT_STATISTICS_ATTESTED",
+      "reason_template_id": "tmpl.aq.noncert.sufficient_statistics_attested.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_SPLIT_MEMBERSHIP_NOT_OPENED",
+      "reason_template_id": "tmpl.aq.noncert.split_membership_not_opened.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_QUANTILE_ENDPOINTS_ATTESTED",
+      "reason_template_id": "tmpl.aq.noncert.quantile_endpoints_attested.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_SPLIT_KEY_TIMING_NOT_PROVEN",
+      "reason_template_id": "tmpl.aq.noncert.split_key_timing_not_proven.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_REFS_ARE_A_LINKABILITY_CHANNEL",
+      "reason_template_id": "tmpl.aq.noncert.refs_are_a_linkability_channel.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_HOLDOUT_NONUSE_NOT_PROVEN",
+      "reason_template_id": "tmpl.aq.noncert.holdout_nonuse_not_proven.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_REF_MINTING_IS_AN_ISSUER_OBLIGATION",
+      "reason_template_id": "tmpl.aq.noncert.ref_minting_is_an_issuer_obligation.v1",
+      "record_type": "non_claim"
+    },
+    {
+      "non_claim_id": "NCQ_SCORE_SCALE_IS_THE_EVALUATORS",
+      "reason_template_id": "tmpl.aq.noncert.score_scale_is_the_evaluators.v1",
+      "record_type": "non_claim"
+    }
+  ],
+  "schema_version": "traigent.agent_quality.certificate_bundle.v1",
+  "signature": {
+    "algorithm": "ed25519",
+    "issuer_key_ref": "ikey:abcdef0123456789",
+    "schema_version": "traigent.agent_quality.signature.v1",
+    "signature": "rONDNSYA5ix5/3ZGJdl6P+TNzas1ANh1T3hm8Amybk5w5pXsviIHHD8ScZtf6bpLR9iypQM9ZNak/BCSqtytBQ==",
+    "signed_payload": "unsigned_agent_quality_manifest",
+    "trust_ring_ref": "ring:abcdef0123456789",
+    "unsigned_manifest_digest": "sha256:87110475239f9e33e06773b595349baeb1af77ac85e53655094ecdfcf203f3a6"
+  },
+  "split_derivation": {
+    "canonicalization_profile": "jcs_v1",
+    "commitment_scheme": "sha256_secret_blinded_v1",
+    "dataset_commitment_ref": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "evaluated_universe_item_count": 1000,
+    "holdout_fraction_ppm": 200000,
+    "schema_version": "traigent.agent_quality.split_derivation.v1",
+    "split_derivation_digest": "sha256:90c8932fdaf916e3ce767392507588324bf6595e5efdd98b2603ec774075476e",
+    "split_key_commitment": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "split_rule_id": "hmac_sha256_prefix_threshold_v1"
+  },
+  "unsigned_manifest": {
+    "agent_commitment_ref": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "agent_quality_claim_support_rows_digest": "sha256:844f6a392a56f5316311c2df45d9177643aa56802a53e758833b192cdefeca4b",
+    "aggregation_policy": {
+      "policy_digest": "sha256:5d498b94053b672465f39b5e75661042d30f0af8f3f5b9e5d7a3f20334904cf3",
+      "policy_id": "traigent.aggregation_policy.pillar1.v1",
+      "policy_version": "1.0.0"
+    },
+    "assertion_digest": "sha256:7e8be9f988197db164bc37bd9329d6fca8ee27d40e804fddb4eeaf320cd70c98",
+    "base_process_record_unsigned_manifest_digest": "sha256:cbf072f7d48b4e173b01c30a87146a123704997139df80422f3eb564faed62c6",
+    "build_definition_commitment_ref": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    "coverage": [
+      "base_process_record_unsigned_manifest_digest",
+      "scope_binding_digest",
+      "agent_commitment_ref",
+      "dataset_commitment_ref",
+      "evaluator_commitment_ref",
+      "build_definition_commitment_ref",
+      "measurement_contract_ref",
+      "measurement_contract_record_digest",
+      "aggregation_policy",
+      "objective_registry",
+      "non_claim_catalog",
+      "quantile_table",
+      "declared_plan_digest",
+      "declared_plan_signature_digest",
+      "split_derivation_digest",
+      "evaluation_splits_digest",
+      "measured_claims_digest",
+      "non_certified_selection_estimates_digest",
+      "primary_objective_id",
+      "selection_arm_count",
+      "holdout_scored_arm_count",
+      "pillar_support",
+      "assertion_digest",
+      "non_claims_digest",
+      "agent_quality_claim_support_rows_digest",
+      "trust_ring_ref",
+      "issuer_key_ref",
+      "issuer_signature_algorithm"
+    ],
+    "dataset_commitment_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "declared_plan_digest": "sha256:d37d01ea201453d30e3c5da4499ff1cfb4d7fa6a7082813112c810ef50291f52",
+    "declared_plan_signature_digest": "sha256:bb1852221cb131f12158b9adb472b553f129f5cf4c7db090f39b2eb69f377abc",
+    "evaluation_splits_digest": "sha256:a2cbf73f6add87bcdb3d1f6d0c112d6ca4fb6160f7605334e99522fdc74f6d40",
+    "evaluator_commitment_ref": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "holdout_scored_arm_count": 1,
+    "issuer_key_ref": "ikey:abcdef0123456789",
+    "issuer_signature_algorithm": "ed25519",
+    "measured_claims_digest": "sha256:f099b4afd608f7d4c1415727c036106275b6bf3c1149241b677485ed3fba2814",
+    "measurement_contract_record_digest": "sha256:a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+    "measurement_contract_ref": "measurement:mmmmmmmm",
+    "non_certified_selection_estimates_digest": "sha256:3909f30099497364bbfa0c122f800a0e4a6e261cf7a7adacf08737d623e65e0e",
+    "non_claim_catalog": {
+      "catalog_digest": "sha256:4c3ee7a0d9da234675bb18d83d6b0195252fee20abcee0efa2949de5b2faf31d",
+      "catalog_id": "traigent.agent_quality.non_claim_catalog.v1",
+      "catalog_version": "1.0.0"
+    },
+    "non_claims_digest": "sha256:a0560da844046d60d830f9900242512d5308d7c0b915015a358bc4d847fe6684",
+    "objective_registry": {
+      "registry_digest": "sha256:56b051f87f645d72adbe9e514b162be8aa85583dc22c37962b6941bc58bb12bd",
+      "registry_id": "traigent.objective_registry.pillar1.v1",
+      "registry_version": "1.0.0"
+    },
+    "pillar_support": [
+      {
+        "bound_commitment_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "condition_code": "dataset_certificate_not_verified",
+        "status": "condition_declared_unverified",
+        "support_subject": "dataset"
+      },
+      {
+        "bound_commitment_ref": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "condition_code": "evaluator_certificate_not_verified",
+        "status": "condition_declared_unverified",
+        "support_subject": "evaluator"
+      }
+    ],
+    "primary_objective_id": "obj.accuracy.exact_match.v1",
+    "quantile_table": {
+      "table_digest": "sha256:b0ef5d21cef830b7d801b0708c49355009edba622255706d8477ea61cbc7f9cb",
+      "table_id": "traigent.quantile_table.student_t.v1",
+      "table_version": "1.0.0"
+    },
+    "schema_version": "traigent.agent_quality.unsigned_manifest.v1",
+    "scope_binding_digest": "sha256:e85263e6e9b2470d8a31501936070d70488f5d9c1904a3e53fc3e720090d74a0",
+    "selection_arm_count": 4,
+    "split_derivation_digest": "sha256:90c8932fdaf916e3ce767392507588324bf6595e5efdd98b2603ec774075476e",
+    "trust_ring_ref": "ring:abcdef0123456789"
+  }
+}

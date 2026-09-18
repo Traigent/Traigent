@@ -155,6 +155,32 @@ class TestPrivacyCompliance:
             # the dataset or its examples, and the content scanner above still runs
             # over it -- so it is allowed here for the same reason run_title is.
             "task_type",
+            # Declared dataset identity. `dataset_id_source` is an enum literal
+            # ("declared" / "registered" / "unknown") from a server-owned
+            # vocabulary and carries nothing at all.
+            #
+            # `dataset_id` is argued rather than waved through, because it is an
+            # identity the portal groups optimization history by:
+            #   * It is either an id the caller passed explicitly, or the dataset's
+            #     own LABEL -- and that label already crosses this wire today
+            #     inside the allowlisted `dataset_metadata["name"]`. This adds no
+            #     new class of value; it promotes one already present to a
+            #     top-level, typed field.
+            #   * Same class as `agent_key` above: a name a human (or their coding
+            #     agent) chose, never anything derived from the dataset, the
+            #     prompt, or model output. Nothing in the SDK reads example content
+            #     to produce it -- that is precisely why identity is DECLARED and
+            #     not a content hash: a content-derived id would change every time
+            #     the dataset is edited and would fragment the history.
+            #   * Bounded at 255 chars and validated non-blank in
+            #     SessionCreationRequest.__post_init__.
+            #   * Omitted entirely when the caller declares nothing, so a caller
+            #     who opts out sends a byte-identical payload to before.
+            #   * The server-side content scanner above still runs over the whole
+            #     request (violation_count == 0 / compliant is True), so an id that
+            #     did contain dataset content would still be caught here.
+            "dataset_id",
+            "dataset_id_source",
         }
 
         for req in dummy_server.received_data:

@@ -1,5 +1,10 @@
 # Optimization Routing
 
+This page covers the `algorithm` / `offline` routing knobs that choose between
+Traigent's `local` and `cloud` execution modes. If your agent is itself an
+external HTTP/MCP service Traigent calls (the `hybrid_api` mode), see the
+[Execution Modes matrix](../user-guide/execution-modes.md) instead.
+
 Most users should not set routing options. Set `TRAIGENT_API_KEY`, decorate your
 function, and call `.optimize(...)`. The default uses Traigent's smart optimizer
 and syncs results to the portal.

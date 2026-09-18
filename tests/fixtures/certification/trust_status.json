@@ -1,0 +1,35 @@
+{
+  "schema_version": "traigent.process_record.trust_status_envelope.v1",
+  "signature": {
+    "algorithm": "ed25519",
+    "schema_version": "traigent.process_record.trust_status_signature.v1",
+    "signature": "2JZnK/9EUSCDDrJKzMMNjgicWAnx+Ruh6/bbb8nr0dwR77Q7pRJrq3SWe2F9BIK6fW3jUFyWJsdBEy31WyYZCA==",
+    "signed_payload": "trust_status_snapshot",
+    "snapshot_digest": "sha256:fb4aa4178d2fc4fbcf9e7dcccd718a24195a6913d32674fa41ef6e34d1580152",
+    "trust_anchor_ref": "anchor:aaaaaaaa"
+  },
+  "snapshot": {
+    "certificate_status": [
+      {
+        "certificate_ref": "certificate:opaque0001",
+        "reason": null,
+        "revoked_at": null,
+        "status": "active"
+      }
+    ],
+    "effective_time": "2026-09-08T10:10:00Z",
+    "key_status": [
+      {
+        "key_ref": "ikey:abcdef0123456789",
+        "reason": null,
+        "revoked_at": null,
+        "status": "active",
+        "trust_ring_ref": "ring:abcdef0123456789"
+      }
+    ],
+    "max_age_seconds": 86400,
+    "schema_version": "traigent.process_record.trust_status.v1",
+    "trust_anchor_ref": "anchor:aaaaaaaa",
+    "trust_policy_id": "traigent.trust_policy.process_record.v1"
+  }
+}

@@ -428,6 +428,114 @@ class TestSafetyValidator:
         assert result.satisfied is False
         assert result.observed_rate == 0.0
 
+    def test_below_gate_fails_when_most_trials_violate(self) -> None:
+        """GH #2204: a below() gate must FAIL when most trials violate it.
+
+        Regression for the reported fail-open bug: ``validate()`` used to
+        compare the Clopper-Pearson lower bound on the compliance rate
+        directly against ``threshold.value``. For ``hallucination_rate().below(0.1)``
+        that meant only ~10-18% of trials needed to comply for the gate to
+        report "safe". Here only 20% of trials comply (hallucination_rate
+        0.05, satisfying <= 0.1) and 80% badly violate it (hallucination_rate
+        0.5, 5x the cap) -- a safety gate that reports this as satisfied is
+        the exact defect #2204 describes.
+        """
+        constraint = hallucination_rate().below(0.1)
+        validator = SafetyValidator()
+        for _ in range(20):
+            validator.record_result(constraint, {}, {"hallucination_rate": 0.05})
+        for _ in range(80):
+            validator.record_result(constraint, {}, {"hallucination_rate": 0.5})
+
+        result = validator.validate(constraint)
+
+        assert result.observed_rate == 0.20
+        assert result.satisfied is False, (
+            "below(0.1) gate reported satisfied with only 20% of trials "
+            "complying -- this is the #2204 fail-open bug"
+        )
+
+    def test_below_gate_passes_when_almost_all_trials_comply(self) -> None:
+        """A below() gate must still be satisfiable when trials genuinely comply.
+
+        Companion to the failing case above: proves the fix does not simply
+        invert the bug into "below() can never pass". 98/100 trials comply
+        with hallucination_rate <= 0.1; the Clopper-Pearson lower bound on
+        that compliance rate clears the (1 - 0.1) = 0.9 required compliance
+        rate this fix derives for below() constraints.
+        """
+        constraint = hallucination_rate().below(0.1)
+        validator = SafetyValidator()
+        for _ in range(98):
+            validator.record_result(constraint, {}, {"hallucination_rate": 0.05})
+        for _ in range(2):
+            validator.record_result(constraint, {}, {"hallucination_rate": 0.5})
+
+        result = validator.validate(constraint)
+
+        assert result.observed_rate == 0.98
+        assert result.satisfied is True
+
+    def test_above_gate_unaffected_by_the_fix(self) -> None:
+        """GH #2204: fixing below() must not change above()'s pass/fail verdict.
+
+        Locks in that the required compliance rate for `>=`/`>` constraints is
+        still exactly ``threshold.value`` (unchanged), so every existing
+        ``above()`` safety gate keeps its current pass/fail behavior.
+        """
+        constraint = MetricKeyMetric(
+            name="faithfulness", metric_key="faithfulness"
+        ).above(0.9)
+        validator = SafetyValidator()
+        for _ in range(100):
+            validator.record_result(constraint, {}, {"faithfulness": 0.95})
+
+        result = validator.validate(constraint)
+
+        assert result.observed_rate == 1.0
+        assert result.satisfied is True
+        assert result.required_compliance_rate == 0.9
+
+    def test_above_and_below_at_the_same_threshold_take_different_paths(self) -> None:
+        """GH #2204: above(x) and below(x) must not be evaluated identically.
+
+        Before the fix, `validate()` never read `threshold.operator`, so an
+        `above(0.1)` and a `below(0.1)` constraint -- opposite in meaning --
+        were graded by the literal same code path: `lower_bound >= 0.1` for
+        both. Issue #2204 asks explicitly for a regression test showing they
+        now diverge at the same threshold value.
+
+        Here both constraints see the identical 20%-compliance sample
+        pattern. `above(0.1)` only ever required 10% compliance (unchanged by
+        this fix) so it PASSES. `below(0.1)` now requires 90% compliance
+        (this fix's `1 - 0.1`) so it correctly FAILS -- proving the two are no
+        longer computed the same way.
+        """
+        above = MetricKeyMetric(name="m", metric_key="m").above(0.1)
+        below = MetricKeyMetric(name="m", metric_key="m").below(0.1)
+
+        v_above, v_below = SafetyValidator(), SafetyValidator()
+        # Same per-trial pass/fail pattern (20% comply) recorded against both.
+        for _ in range(20):
+            v_above.record_result(above, {}, {"m": 0.9})  # passes >= 0.1
+            v_below.record_result(below, {}, {"m": 0.05})  # passes <= 0.1
+        for _ in range(80):
+            v_above.record_result(above, {}, {"m": 0.0})  # fails >= 0.1
+            v_below.record_result(below, {}, {"m": 0.9})  # fails <= 0.1
+
+        result_above = v_above.validate(above)
+        result_below = v_below.validate(below)
+
+        # Identical observed compliance rate (20%) on both sides...
+        assert result_above.observed_rate == result_below.observed_rate == 0.20
+        assert result_above.lower_bound == result_below.lower_bound
+        # ...but the two constraints now require different compliance rates
+        # and reach opposite verdicts, where before they were identical.
+        assert result_above.required_compliance_rate == 0.1
+        assert result_below.required_compliance_rate == 0.9
+        assert result_above.satisfied is True
+        assert result_below.satisfied is False
+
 
 class TestNonRAGASPresets:
     """Tests for non-RAGAS metric factory functions."""

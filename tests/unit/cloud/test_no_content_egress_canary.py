@@ -24,6 +24,10 @@ CANARY_OUTPUT = "CANARY_OUTPUT_c3d4"
 CANARY_PROMPT = "CANARY_PROMPT_e5f6"
 CANARY_META = "CANARY_META_g7h8"
 CANARY_SOURCE = "CANARY_SOURCE_i9j0"
+#: A customer-authored dataset row id. Not in CANARIES because the default
+#: canary dataset deliberately keeps its own benign row ids; this sentinel is
+#: used by the row-id egress test below.
+CANARY_ROW_ID = "SENTINEL-ROWID"
 CANARIES = (CANARY_INPUT, CANARY_OUTPUT, CANARY_PROMPT, CANARY_META, CANARY_SOURCE)
 FAKE_TRAIGENT_API_KEY = "uk_" + ("a" * 43)
 FP_WIRE_PATTERN = r"fp1:[0-9a-f]{64}"
@@ -515,9 +519,10 @@ def _run_canary_optimization(
     local_storage_path: Path,
     offline: bool = False,
     execution_mode: str | None = None,
+    eval_dataset: Dataset | None = None,
 ):
     kwargs: dict[str, Any] = {
-        "eval_dataset": _dataset_with_canaries(),
+        "eval_dataset": eval_dataset or _dataset_with_canaries(),
         "objectives": ["accuracy"],
         "configuration_space": {"temperature": [0.1, 0.9]},
         "algorithm": "auto",
@@ -609,6 +614,76 @@ def test_cloud_brain_auto_does_not_egress_dataset_content(
     assert "upload_dataset" not in stages
     _assert_session_create_has_artifact_fingerprints(capture)
     _assert_no_canaries_crossed_wire(capture)
+
+
+def _dataset_with_customer_row_ids() -> Dataset:
+    """A dataset whose rows carry the customer's OWN ids, as a customer writes them."""
+    return Dataset(
+        name="canary_dataset",
+        description="Dataset whose row ids are customer-authored",
+        examples=[
+            EvaluationExample(
+                input_data={
+                    "question": f"{CANARY_INPUT} customer question",
+                    "prompt": f"{CANARY_PROMPT} prompt template",
+                },
+                expected_output=f"{CANARY_OUTPUT} expected answer",
+                metadata={"example_id": f"{CANARY_ROW_ID}-0"},
+            ),
+            EvaluationExample(
+                input_data={
+                    "question": f"{CANARY_INPUT} second question",
+                    "prompt": f"{CANARY_PROMPT} second prompt",
+                },
+                expected_output=f"{CANARY_OUTPUT} second expected answer",
+                metadata={"example_id": f"{CANARY_ROW_ID}-1"},
+            ),
+        ],
+    )
+
+
+def test_customer_dataset_row_ids_never_reach_the_wire(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A customer-authored row id must not ride in ``measures[].example_id``.
+
+    Witnessed leak: a dataset row carrying ``example_id`` had that exact string
+    submitted on every trial, so a customer keying rows by the question text (or
+    a ticket subject, or an account number) shipped it to the backend. Ids sent
+    to the backend are SDK-minted; the customer's id stays local.
+    """
+    capture = _OutboundCapture()
+    _allow_backend_egress_in_test(monkeypatch, tmp_path / "rowids")
+    _install_transport_capture(monkeypatch, capture)
+
+    result = _run_canary_optimization(
+        local_storage_path=tmp_path / "rowids",
+        eval_dataset=_dataset_with_customer_row_ids(),
+    )
+
+    assert result.source == "cloud_brain"
+    _assert_required_production_bodies_were_captured(capture)
+    _assert_no_canaries_crossed_wire(capture)
+
+    for entry in capture.calls:
+        blob = json.dumps(entry["body"], sort_keys=True, default=str)
+        assert CANARY_ROW_ID not in blob, (
+            f"{entry['stage']} leaked the customer's dataset row id in "
+            f"{entry['method']} {entry['url']} payload: {blob}"
+        )
+
+    # The measures still ride -- this is not "fixed" by dropping the field.
+    measures = [
+        measure
+        for entry in capture.calls
+        if entry["stage"] == "submit-metrics"
+        for measure in (entry["body"] or {}).get("metadata", {}).get("measures", [])
+    ]
+    assert measures, "no per-example measures were submitted"
+    for measure in measures:
+        example_id = measure["example_id"]
+        assert re.fullmatch(r"example_\d+|ex_[0-9a-f]{8}_\d+", example_id), example_id
 
 
 def test_artifact_fingerprint_wire_serializer_rejects_raw_content_smuggling() -> None:

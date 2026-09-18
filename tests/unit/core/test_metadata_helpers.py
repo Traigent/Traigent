@@ -22,6 +22,7 @@ from traigent.core.metadata_helpers import (
     build_backend_metadata,
     merge_run_metrics_into_session_summary,
 )
+from traigent.utils.example_id import compute_dataset_hash, generate_stable_example_id
 
 
 @pytest.fixture
@@ -224,10 +225,15 @@ class TestBuildBackendMetadataBasic:
             "minimum"
         ] = 0.8
 
+        # ``nested_metric`` is non-numeric, so it is now dropped from every
+        # copy of the trial metrics rather than deep-copied onto the wire: a
+        # dict metric can carry arbitrary text (privacy-egress fix). The
+        # snapshot property this test guards is still asserted on the numeric
+        # metrics and on the nested structures that DO cross (summary_stats,
+        # comparability, surrogate_evaluator).
         assert metadata["all_metrics"] == {
             "accuracy": 0.85,
             "surrogate_score": 0.5,
-            "nested_metric": {"before": 1},
         }
         assert metadata["summary_stats"]["metadata"]["source"]["batch"] == 1
         assert metadata["summary_stats"]["metadata"]["aggregation_summary"][
@@ -235,14 +241,14 @@ class TestBuildBackendMetadataBasic:
         ] == {
             "accuracy": 0.85,
             "surrogate_score": 0.5,
-            "nested_metric": {"before": 1},
         }
         assert (
             metadata["comparability"]["per_metric_coverage"]["accuracy"]["present"] == 1
         )
         assert metadata["comparability"]["warning_codes"] == []
         assert metadata["surrogate_evaluator"]["config"]["thresholds"]["minimum"] == 0.2
-        assert metadata["nested_metric"] == {"before": 1}
+        assert "nested_metric" not in metadata
+        assert metadata["surrogate_score"] == 0.5
         assert "new_metric" not in metadata["all_metrics"]
 
     def test_additional_metrics_added(self, mock_trial_result, mock_config):
@@ -412,7 +418,12 @@ class TestBuildBackendMetadataPrivacy:
         assert "measures" in metadata
         assert len(metadata["measures"]) == 1
         measure = metadata["measures"][0]
-        assert measure["example_id"] == "dataset-row-001"
+        # The customer's own row id must NOT be the wire id (privacy-egress
+        # fix): a row keyed by its question text would otherwise leak it.
+        assert measure["example_id"] != "dataset-row-001"
+        assert measure["example_id"] == generate_stable_example_id(
+            compute_dataset_hash("dataset"), 0
+        )
         assert measure["metrics"]["accuracy"] == 0.91
         assert measure["metrics"]["score"] == 0.91
         assert "raw_output" not in measure["metrics"]
@@ -712,14 +723,22 @@ class TestBuildMeasuresFull:
         assert "input_data" not in sanitized[0]
         assert "actual_output" not in json.dumps(sanitized)
 
-    def test_prefers_real_example_id_and_falls_back_to_synthetic(self):
-        """Measures use real dataset IDs when present and synthetic IDs otherwise."""
-        payload_with_real_id = {
+    def test_customer_row_ids_never_become_the_wire_example_id(self):
+        """Wire ids are SDK-minted; a customer-authored row id is never used.
+
+        Until the privacy-egress fix this test asserted the opposite -- that a
+        dataset row's own ``example_id`` / nested ``row_id`` was preferred --
+        and that is exactly how a customer whose row id is the question text
+        leaked it to the backend. The leak must not return: the only value
+        accepted from the example is the SDK's own ``example_<idx>`` mint for
+        that same index, which encodes nothing but the position.
+        """
+        payload_with_customer_id = {
             "example_id": "dataset-row-a",
             "metrics": {"accuracy": 0.9},
             "execution_time": None,
         }
-        payload_with_metadata_id = {
+        payload_with_customer_metadata_id = {
             "metadata": {"dataset": {"row_id": "dataset-row-b"}},
             "metrics": {"accuracy": 0.8},
             "execution_time": None,
@@ -730,16 +749,33 @@ class TestBuildMeasuresFull:
             "metrics": {"accuracy": 0.7},
             "execution_time": None,
         }
+        payload_with_sdk_minted_id = {
+            "example_id": "example_3",
+            "metrics": {"accuracy": 0.6},
+            "execution_time": None,
+        }
 
         measures = _build_measures_full(
-            [payload_with_real_id, payload_with_metadata_id, payload_without_id],
+            [
+                payload_with_customer_id,
+                payload_with_customer_metadata_id,
+                payload_without_id,
+                payload_with_sdk_minted_id,
+            ],
             "accuracy",
         )
 
-        assert measures[0]["example_id"] == "dataset-row-a"
-        assert measures[1]["example_id"] == "dataset-row-b"
-        assert measures[2]["example_id"].startswith("ex_")
-        assert measures[2]["example_id"].endswith("_2")
+        dataset_hash = compute_dataset_hash("dataset")
+        for idx in (0, 1, 2):
+            assert measures[idx]["example_id"] == generate_stable_example_id(
+                dataset_hash, idx
+            )
+        # The SDK's own positional mint is kept, so the default wire is unchanged.
+        assert measures[3]["example_id"] == "example_3"
+
+        serialized = json.dumps(measures)
+        assert "dataset-row-a" not in serialized
+        assert "dataset-row-b" not in serialized
 
     def test_empty_metric_measure_entries_are_omitted(self):
         """Examples with no numeric metrics do not produce empty measure stubs."""
@@ -929,7 +965,12 @@ class TestBuildMeasuresPrivacy:
 
         measures = _build_measures_privacy([example_result], "accuracy")
 
-        assert measures[0]["example_id"] == "privacy-row-001"
+        # The privacy builder uses the same resolver, so it must not leak the
+        # customer's row id either (privacy-egress fix).
+        assert measures[0]["example_id"] != "privacy-row-001"
+        assert measures[0]["example_id"] == generate_stable_example_id(
+            compute_dataset_hash("dataset"), 0
+        )
         assert measures[0]["metrics"]["score"] == 0.9
         assert measures[0]["metrics"]["input_tokens"] == 100
         assert "raw_output" not in measures[0]["metrics"]
@@ -1032,3 +1073,59 @@ class TestBuildBackendMetadataIntegration:
         if "measures" in metadata:
             assert metadata["measures"] == []
         # Or measures may not be added at all for empty list
+
+
+class TestNonNumericMetricsNeverCrossTheWire:
+    """Privacy canary: the trial-metric copies must not carry text.
+
+    ``MeasuresDict`` enforces numeric-only on ``measures``, but the trial
+    metadata carried three unguarded copies of the same metrics dict --
+    ``all_metrics``, the flattened per-metric keys, and
+    ``summary_stats.metadata.aggregation_summary.metrics`` -- so an evaluator
+    returning ``{"judge_rationale": "<the model's explanation>"}`` shipped that
+    text to the backend around the guard. It must not come back.
+    """
+
+    def test_string_metric_is_dropped_from_every_wire_copy(
+        self, mock_trial_result, mock_config, caplog
+    ):
+        rationale = "SDK_JUDGE_RATIONALE_SENTINEL_DO_NOT_EMIT"
+        mock_trial_result.metrics = {
+            "accuracy": 0.85,
+            "judge_rationale": rationale,
+        }
+        mock_trial_result.summary_stats = {"metrics": {"accuracy": {"mean": 0.85}}}
+        mock_trial_result.metadata = {}
+
+        with caplog.at_level("WARNING"):
+            metadata = build_backend_metadata(
+                mock_trial_result, "accuracy", mock_config
+            )
+
+        assert metadata["all_metrics"] == {"accuracy": 0.85}
+        assert "judge_rationale" not in metadata
+        assert metadata["summary_stats"]["metadata"]["aggregation_summary"][
+            "metrics"
+        ] == {"accuracy": 0.85}
+        # Nowhere in the submitted metadata, under any key.
+        assert rationale not in json.dumps(metadata, default=str)
+        # The drop is warned about by key, never silent.
+        assert any(
+            "judge_rationale" in record.message and record.levelname == "WARNING"
+            for record in caplog.records
+        )
+
+    def test_numeric_metrics_still_ride(self, mock_trial_result, mock_config):
+        """The filter must not be a blanket drop -- numbers still cross."""
+        mock_trial_result.metrics = {"accuracy": 0.85, "cost": 0.05, "latency": 12}
+        mock_trial_result.metadata = {}
+
+        metadata = build_backend_metadata(mock_trial_result, "accuracy", mock_config)
+
+        assert metadata["all_metrics"] == {
+            "accuracy": 0.85,
+            "cost": 0.05,
+            "latency": 12,
+        }
+        assert metadata["cost"] == 0.05
+        assert metadata["latency"] == 12

@@ -71,6 +71,7 @@ from .models import (
     SessionSummary,
     TrialResultSubmission,
     TrialSuggestion,
+    session_dataset_identity_to_wire,
     session_narrative_to_wire,
     session_task_type_to_wire,
 )
@@ -2007,6 +2008,12 @@ class TraigentCloudClient(BaseTraigentClient):
         # cannot drift apart again.
         payload.update(session_narrative_to_wire(request))
         payload.update(session_task_type_to_wire(request))
+        # Declared dataset identity rides here too, for the same reason and by the
+        # same rule: history is grouped by (agent, dataset), so a serializer that
+        # drops half the identity fragments the cohort exactly as dropping
+        # `agent_key` once did. This is the cloud-brain path; ApiOperations'
+        # typed builder emits the identical fields.
+        payload.update(session_dataset_identity_to_wire(request))
         if request.budget is not None:
             payload["budget"] = request.budget
         if request.constraints is not None:

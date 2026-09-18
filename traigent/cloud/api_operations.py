@@ -29,6 +29,7 @@ from traigent.cloud.models import (
     SessionCreationRequest,
     SessionCreationResponse,
     TrialResultSubmission,
+    session_dataset_identity_to_wire,
     session_narrative_to_wire,
     session_task_type_to_wire,
 )
@@ -729,6 +730,11 @@ class ApiOperations:
         # direct serializer so the two session-create paths cannot drift.
         payload.update(session_narrative_to_wire(session_request))
         payload.update(session_task_type_to_wire(session_request))
+        # Declared dataset identity: the backend validates dataset_id /
+        # dataset_id_source ONLY on this typed path (_validate_identity_fields
+        # in traigent_session_routes.py is gated `if typed`), so this is
+        # deliberately NOT mirrored into _build_legacy_session_payload.
+        payload.update(session_dataset_identity_to_wire(session_request))
 
         # CHOKE POINT (review round 2): the allowlist serializer runs on the
         # actual request body, not only on the orchestrator path — a direct

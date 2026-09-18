@@ -183,6 +183,20 @@ def _get_source_path(func: Callable[..., Any]) -> Path | None:
 
 
 def _to_relative_path(path: Path | None, base_dir: str | Path | None) -> str:
+    """Return a project-relative source path, never an absolute one.
+
+    The descriptor's ``relative_path`` is sent to the Traigent backend as
+    ``metadata.function_relative_path`` and also feeds ``function_module``,
+    ``function_name`` and ``function_slug``. Falling back to
+    ``path.as_posix()`` therefore shipped the machine's absolute path --
+    including the OS username and the directory layout above the project --
+    whenever the entry file sat outside both the working directory and the
+    installed ``traigent`` package (running ``python /home/me/tools/train.py``
+    from elsewhere, or a notebook with a temp cwd). Nothing above the project
+    root may cross, so the fallback is the file's basename: still useful for
+    telling two functions apart, and derived from no path component the
+    customer did not put in the filename itself.
+    """
     if path is None:
         return "unknown_path"
 
@@ -212,7 +226,8 @@ def _to_relative_path(path: Path | None, base_dir: str | Path | None) -> str:
         except ValueError:
             continue
 
-    return path.as_posix()
+    # Fail closed: basename only. Never ``path.as_posix()`` -- see the docstring.
+    return path.name or "unknown_path"
 
 
 def _build_identifier(relative_path: str, module_name: str, qualname: str) -> str:
@@ -229,7 +244,13 @@ def _derive_module_component(module_name: str, relative_path: str) -> str:
     if module_name and module_name not in {"__main__", "<module>"}:
         return module_name
 
+    # A ``__main__`` script has no real module name, so one is derived from the
+    # source path. ``_to_relative_path`` never returns an absolute path now, but
+    # keep the derivation fail-closed at its own boundary: an absolute path here
+    # would otherwise become a module like ``home.<user>.projects.train``.
     candidate = relative_path
+    if Path(candidate).is_absolute() or candidate.startswith(("/", "\\")):
+        candidate = Path(candidate).name
     if candidate.endswith(".py") or candidate.endswith(".pyc"):
         candidate = candidate.rsplit(".", 1)[0]
     candidate = candidate.replace(os.sep, ".")

@@ -8,6 +8,9 @@ This module provides secure access to environment variables and configuration.
 import os
 import secrets
 import warnings
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast, overload
 
@@ -447,14 +450,73 @@ def is_mock_llm() -> bool:
     return is_truthy(os.environ.get("TRAIGENT_MOCK_LLM"))
 
 
-def is_strict_cost_accounting() -> bool:
+_STRICT_COST_ENV = "TRAIGENT_STRICT_COST_ACCOUNTING"
+
+# Run-scoped default for strict cost accounting. ``OptimizedFunction.optimize``
+# enables it for the duration of a run whose objectives include cost, so a
+# model with no price cannot be scored as free by the optimizer it is feeding.
+# A ContextVar (not an env write) keeps the default local to the run: it
+# follows the run into asyncio tasks and into evaluator worker threads (which
+# re-enter the caller's context), and it never leaks into the next run.
+_STRICT_COST_RUN_DEFAULT: ContextVar[bool] = ContextVar(
+    "traigent_strict_cost_run_default", default=False
+)
+
+
+def _explicit_strict_cost_env() -> str | None:
+    """Return the user's explicit strict-cost setting, or None when unset."""
+    raw = os.environ.get(_STRICT_COST_ENV)
+    if raw is None or not raw.strip():
+        return None
+    return raw
+
+
+def is_strict_cost_accounting(*, include_run_default: bool = True) -> bool:
     """Check whether runtime cost accounting should fail fast.
 
-    When TRAIGENT_STRICT_COST_ACCOUNTING=true, post-call cost paths should:
+    When strict, post-call cost paths:
     - Require priced models (no silent 0.0 for unknown models)
     - Raise on unknown/missing trial cost instead of fallback mode
+
+    Precedence: an explicit ``TRAIGENT_STRICT_COST_ACCOUNTING`` value always
+    wins, so ``false`` is a real opt-out. When it is unset, the run-scoped
+    default applies, which a run enables when ``cost`` is one of its
+    objectives. Pass ``include_run_default=False`` from checks that must honour
+    only the explicit setting (the pre-run price-coverage preflight, which
+    cannot see provider-reported costs and would otherwise block models whose
+    responses carry a real cost).
     """
-    return is_truthy(get_env_var("TRAIGENT_STRICT_COST_ACCOUNTING", "false"))
+    explicit = _explicit_strict_cost_env()
+    if explicit is not None:
+        return is_truthy(explicit)
+    return include_run_default and _STRICT_COST_RUN_DEFAULT.get()
+
+
+def strict_cost_accounting_origin() -> str:
+    """Name what decided the current strict-cost setting.
+
+    Returns ``"env"`` for an explicit ``TRAIGENT_STRICT_COST_ACCOUNTING``,
+    ``"cost_objective"`` for the run-scoped default, else ``"default_off"``.
+    """
+    if _explicit_strict_cost_env() is not None:
+        return "env"
+    if _STRICT_COST_RUN_DEFAULT.get():
+        return "cost_objective"
+    return "default_off"
+
+
+@contextmanager
+def strict_cost_accounting_run_default(enabled: bool) -> Iterator[None]:
+    """Set the run-scoped strict-cost default for the enclosed block.
+
+    An explicit ``TRAIGENT_STRICT_COST_ACCOUNTING`` still takes precedence;
+    this only changes the value used when that variable is unset.
+    """
+    token = _STRICT_COST_RUN_DEFAULT.set(bool(enabled))
+    try:
+        yield
+    finally:
+        _STRICT_COST_RUN_DEFAULT.reset(token)
 
 
 def should_show_cloud_notice(traigent_config: "TraigentConfig") -> bool:

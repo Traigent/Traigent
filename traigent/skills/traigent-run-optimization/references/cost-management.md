@@ -8,7 +8,7 @@ Traigent provides real-time cost tracking and enforcement to prevent runaway LLM
 |---|---|---|
 | `TRAIGENT_RUN_COST_LIMIT` | `2.0` | Maximum USD spending per optimization run. |
 | `TRAIGENT_COST_APPROVED` | `false` | Exact value `true` pre-approves both the cost-limit prompt and unpriced-model preflight. `1`, `yes`, and `on` do not approve. |
-| `TRAIGENT_STRICT_COST_ACCOUNTING` | `false` | Exact value `true` fails fast before trial 1 on unpriced models and when runtime cost extraction is missing or unknown. |
+| `TRAIGENT_STRICT_COST_ACCOUNTING` | unset: strict at runtime when `cost` is an objective | `true` also fails fast before trial 1 on unpriced models; `false` is never strict. |
 | `TRAIGENT_REQUIRE_COST_TRACKING` | `false` | Raise exception if cost tracking cannot extract costs. |
 | `TRAIGENT_COST_WARNING_THRESHOLD` | `0.5` | Warn when this fraction of the limit is consumed (0.0-1.0). |
 | `TRAIGENT_COST_DIVERGENCE_THRESHOLD` | `2.0` | Log warning if actual/estimated cost ratio exceeds this. |
@@ -115,6 +115,24 @@ export TRAIGENT_STRICT_COST_ACCOUNTING=true
 The environment value must be exactly `true`. In strict mode, unpriced models
 fail fast before trial 1, and missing or unknown runtime cost extraction raises
 `CostTrackingRequiredError` instead of logging a warning and continuing.
+
+When the variable is unset, a run whose objectives include `cost` is strict at
+runtime: an unpriced call with no provider-reported cost raises
+`CostTrackingRequiredError` instead of being recorded as `$0`, which the optimizer
+would otherwise rank cheapest. The pre-run preflight is not made strict by this
+default. Set `TRAIGENT_STRICT_COST_ACCOUNTING=false` to opt out.
+`result.metadata["pricing"]` records the setting, its origin, which LiteLLM
+price table the run used, and whether any LLM usage was measured
+(`usage_captured`). A cost objective with no usage captured on any trial is also
+strict-fatal — the `$0` column is unmeasured, not cheap — and warns with
+`COST_OBJECTIVE_NO_USAGE_CAPTURED` when not strict or when the run is a mock-LLM
+run, which has no spend to measure.
+
+The run-scoped default does not reach the LangChain and Pydantic AI callback
+handlers: each reads `TRAIGENT_STRICT_COST_ACCOUNTING` once, when the handler is
+constructed, which is normally at import time before any run starts. If you
+optimize through either integration, set `TRAIGENT_STRICT_COST_ACCOUNTING=true`
+explicitly.
 
 Budget limits are separate: `TRAIGENT_RUN_COST_LIMIT` controls the run budget.
 Mid-run overruns stop the run gracefully (check `result.stop_reason == "cost_limit"`);

@@ -31,8 +31,7 @@ class TestTraigentInit:
 
     def test_main_module_import_stays_cold(self) -> None:
         """Test plain import avoids heavy optional/runtime module cascades."""
-        script = textwrap.dedent(
-            """
+        script = textwrap.dedent("""
             import sys
 
             before = set(sys.modules)
@@ -56,8 +55,7 @@ class TestTraigentInit:
             )
             assert not loaded_blocked, loaded_blocked
             assert hasattr(traigent, "__version__")
-            """
-        )
+            """)
 
         result = subprocess.run(
             [sys.executable, "-c", script],
@@ -151,8 +149,7 @@ class TestTraigentInit:
 
     def test_deprecated_execution_surface_imports_warn_but_work(self) -> None:
         """Legacy root/package imports remain available as warning aliases."""
-        script = textwrap.dedent(
-            """
+        script = textwrap.dedent("""
             import warnings
 
             with warnings.catch_warnings(record=True) as caught:
@@ -177,8 +174,7 @@ class TestTraigentInit:
                 message for message in messages if "deprecated compatibility alias" in message
             ]
             assert len(compatibility_messages) >= 5, messages
-            """
-        )
+            """)
 
         result = subprocess.run(
             [sys.executable, "-c", script],
@@ -191,8 +187,7 @@ class TestTraigentInit:
 
     def test_main_module_imports_without_optional_cloud_modules(self) -> None:
         """Test that traigent still imports when cloud-only modules are absent."""
-        script = textwrap.dedent(
-            """
+        script = textwrap.dedent("""
             import builtins
 
             real_import = builtins.__import__
@@ -248,8 +243,7 @@ class TestTraigentInit:
                     assert expected in str(exc)
                 else:
                     raise AssertionError(f"{name} should be unavailable")
-            """
-        )
+            """)
 
         result = subprocess.run(
             [sys.executable, "-c", script],
@@ -376,6 +370,58 @@ class TestObservabilityInit:
 
 class TestAnalyticsInit:
     """Tests for traigent/analytics/__init__.py imports."""
+
+    def test_embedded_fallback_warning_has_no_unavailable_install_guidance(
+        self,
+    ) -> None:
+        """The embedded path stays usable without advertising an absent package."""
+        script = textwrap.dedent("""
+            import sys
+            import warnings
+
+            sys.modules["traigent_analytics"] = None
+
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", DeprecationWarning)
+                from traigent import analytics
+
+            analytics_warnings = [
+                warning
+                for warning in caught
+                if issubclass(warning.category, DeprecationWarning)
+                and "traigent.analytics embedded implementation is deprecated"
+                in str(warning.message)
+            ]
+
+            assert analytics.is_plugin_installed() is False
+            assert analytics.ExampleInsightsClient.__module__ == (
+                "traigent.analytics.example_insights"
+            )
+            assert analytics.OptimizationPlanClient.__module__ == (
+                "traigent.analytics.optimization_plan"
+            )
+            assert len(analytics_warnings) == 1, analytics_warnings
+            assert analytics_warnings[0].category is DeprecationWarning
+            assert analytics_warnings[0].filename == "<string>"
+
+            guidance = str(analytics_warnings[0].message)
+            assert "pip install" not in guidance, guidance
+            assert "traigent-analytics" not in guidance, guidance
+            assert "better support" not in guidance, guidance
+
+            module_doc = analytics.__doc__ or ""
+            assert "pip install traigent-analytics" not in module_doc, module_doc
+            assert "has been moved" not in module_doc, module_doc
+            """)
+
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
 
     def test_analytics_module_imports(self) -> None:
         """Test that analytics module imports (may show deprecation warning)."""

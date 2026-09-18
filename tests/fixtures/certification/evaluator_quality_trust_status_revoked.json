@@ -1,0 +1,23 @@
+{
+  "schema_version": "traigent.evaluator_quality.trust_status_envelope.v1",
+  "signature": {
+    "algorithm": "ed25519",
+    "signature": "YoMl5JI7akvZw1ASdCrn6TJjB/1rXYWHcxbD4L1Or4BPZJdYzGhoGpqe/8emrkU7/JuudOEYbfR3bzhaSboiDQ==",
+    "snapshot_digest": "sha256:b85030098c652c9610418cd16de91e3ab4b75ec89cdac53b6a0ed12b085607c9",
+    "trust_anchor_ref": "anchor:bbbbbbbb"
+  },
+  "snapshot": {
+    "effective_time": "2026-09-09T00:00:00Z",
+    "key_status": [
+      {
+        "key_ref": "issuerkey:aaaaaaaa",
+        "status": "revoked",
+        "trust_ring_ref": "trustring:aaaaaaaa"
+      }
+    ],
+    "max_age_seconds": 86400,
+    "schema_version": "traigent.evaluator_quality.trust_status.v1",
+    "trust_anchor_ref": "anchor:bbbbbbbb",
+    "trust_policy_id": "traigent.trust_policy.evaluator_quality.v1"
+  }
+}

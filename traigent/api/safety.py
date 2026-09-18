@@ -157,9 +157,19 @@ class SafetyValidationResult:
     Attributes:
         metric_name: Name of the validated metric.
         satisfied: Whether the constraint is satisfied.
-        observed_rate: Observed success rate across samples.
-        lower_bound: Clopper-Pearson lower bound (equals observed_rate if no CI).
-        threshold: Required threshold value.
+        observed_rate: Observed per-trial compliance rate across samples (the
+            fraction of recorded trials whose metric satisfied the per-trial
+            threshold+operator, e.g. ``metric <= 0.1`` for a ``below(0.1)``
+            constraint).
+        lower_bound: Clopper-Pearson lower bound on the true compliance rate
+            (equals observed_rate if no CI).
+        threshold: The constraint's per-trial metric threshold (``.above()``/
+            ``.below()`` argument) -- NOT the compliance-rate bar compared
+            against ``lower_bound``. See ``required_compliance_rate`` for that.
+        required_compliance_rate: The minimum confidence-adjusted compliance
+            rate ``lower_bound`` must reach for ``satisfied`` to be True. See
+            ``SafetyValidator.validate`` for how this is derived from
+            ``threshold`` and ``operator``.
         confidence: Confidence level used for validation.
         sample_count: Number of samples evaluated.
         message: Human-readable explanation of the result.
@@ -173,6 +183,7 @@ class SafetyValidationResult:
     confidence: float
     sample_count: int
     message: str
+    required_compliance_rate: float = 1.0
 
     @property
     def is_statistically_valid(self) -> bool:
@@ -712,11 +723,79 @@ class CallableMetric(SafetyMetric):
 # =============================================================================
 
 
+def _required_compliance_rate(threshold: SafetyThreshold) -> float:
+    """Compute the confidence-adjusted compliance rate a constraint requires.
+
+    Traceability: fixes GH issue #2204.
+
+    ``record_result`` already applies ``threshold.operator`` per trial (via
+    ``SafetyConstraint.__call__`` / ``_check_threshold``), so
+    ``SafetyValidator``'s ``_sample_results`` is a list of booleans: "did this
+    trial comply with its own per-trial metric bar". ``SafetyValidator.validate``
+    then asks a *different* question with a *different* unit: "are we
+    confident enough, across many trials, that trials comply often enough?".
+    That second question needs its own target -- a required compliance rate in
+    [0, 1] -- which is NOT the same quantity as ``threshold.value`` (a metric
+    value, e.g. a 0.1 hallucination-rate cap or a 0.9 faithfulness floor).
+
+    Before this fix, ``validate()`` reused ``threshold.value`` directly as the
+    compliance-rate target for every operator. For ``above()``/``>=``, where
+    users tend to pick threshold values that already read like "how often must
+    this hold" (e.g. 0.9), that reuse produced plausible-looking results by
+    coincidence. For ``below()``/``<=``, where a *stricter* per-trial cap is a
+    *smaller* number (e.g. 0.1 for hallucination_rate), reusing it as the
+    compliance-rate target made the gate trivially satisfiable: only 10% of
+    trials needed to comply for a "max 10% hallucination" gate to report
+    "safe". See issue #2204 for a live reproduction.
+
+    This function makes the two operator families symmetric instead: the
+    compliance-rate target for a ``below()``/``<``/``<=`` constraint is the
+    complement of its per-trial value (``1 - value``), so a strict per-trial
+    cap (small value) maps to a high required compliance rate, exactly
+    mirroring how a strict per-trial floor (large value, ``above()``) already
+    does. This keeps every existing ``above()`` test passing bit-for-bit
+    (their compliance-rate target is unchanged) while making a ``below(0.1)``
+    gate require ~90% compliance instead of ~10%.
+
+    Open question for the API owner (flagged in PR #2204's body, not decided
+    here): whether "the compliance-rate target should be derived from
+    threshold.value at all" is the right design long-term, versus exposing it
+    as its own explicit parameter on ``.above()``/``.below()`` (as issue #2204
+    itself suggests). This function documents the current, symmetric,
+    non-breaking interpretation; it is a considered default, not a proven
+    specification.
+
+    ``==`` is left mapped to ``value`` unchanged (its existing, untested
+    behavior) -- there is no evidence either way for what an equality safety
+    gate's compliance-rate target should be, and no reported bug names it.
+
+    ``SafetyThreshold.value`` is documented as "in [0, 1] range" but that is
+    not enforced (``__post_init__`` validates ``operator``, ``confidence`` and
+    ``min_samples``, not ``value``) -- e.g. ``MetricKeyMetric("latency").below(100)``
+    is a real, tested call. The ``1 - value`` complement only makes sense on a
+    [0, 1] scale; outside it, fail closed (require ~100% compliance, which is
+    effectively unreachable and therefore never trivially satisfiable) rather
+    than let a negative or >1 "target" make the gate pass or fail
+    nonsensically.
+    """
+    op = threshold.operator
+    if op in (">=", ">"):
+        return threshold.value
+    if op in ("<=", "<"):
+        if 0.0 <= threshold.value <= 1.0:
+            return 1.0 - threshold.value
+        return 1.0  # Out of [0, 1]: fail closed, don't guess a complement.
+    return threshold.value  # "==": unchanged, not covered by #2204.
+
+
 class SafetyValidator:
     """Validates safety constraints with optional statistical rigor.
 
-    Uses Clopper-Pearson exact confidence intervals to ensure the lower bound
-    of the success rate meets the threshold. Validation is always statistical.
+    Uses a Clopper-Pearson exact confidence interval on the per-trial
+    compliance rate (see ``record_result``), then requires that lower bound to
+    reach a required compliance rate derived from the constraint's threshold
+    and operator (see ``_required_compliance_rate``). Validation is always
+    statistical.
 
     Thread Safety:
         This class is thread-safe. Internal state is protected by locks.
@@ -767,6 +846,14 @@ class SafetyValidator:
         no point-estimate path. Too few samples therefore yields a loose bound and
         the constraint fails, rather than passing on an unsupported observed rate.
 
+        The lower bound is compared against a *required compliance rate*
+        derived from the constraint's operator (see
+        ``_required_compliance_rate``), NOT against the raw per-trial
+        ``threshold.value`` directly -- see GH issue #2204: comparing the
+        compliance-rate bound straight to ``threshold.value`` made
+        ``below()``/``<=`` gates with a small (strict) threshold trivially
+        satisfiable.
+
         Args:
             constraint: The safety constraint to validate.
 
@@ -774,6 +861,7 @@ class SafetyValidator:
             SafetyValidationResult with validation outcome.
         """
         key = constraint.threshold.metric_name
+        required_rate = _required_compliance_rate(constraint.threshold)
 
         with self._results_lock:
             results = list(self._sample_results.get(key, []))
@@ -788,6 +876,7 @@ class SafetyValidator:
                 confidence=constraint.threshold.confidence,
                 sample_count=0,
                 message=f"No samples recorded for {key}",
+                required_compliance_rate=required_rate,
             )
 
         n_samples = len(results)
@@ -803,7 +892,7 @@ class SafetyValidator:
             confidence=constraint.threshold.confidence,
         )
 
-        satisfied = lower_bound >= constraint.threshold.value
+        satisfied = lower_bound >= required_rate
 
         return SafetyValidationResult(
             metric_name=key,
@@ -813,11 +902,13 @@ class SafetyValidator:
             threshold=constraint.threshold.value,
             confidence=constraint.threshold.confidence,
             sample_count=n_samples,
+            required_compliance_rate=required_rate,
             message=(
-                f"{key}: observed {observed_rate:.2%}, "
+                f"{key}: observed {observed_rate:.2%} per-trial compliance "
+                f"({constraint.threshold.operator} {constraint.threshold.value:.2%}), "
                 f"{constraint.threshold.confidence:.0%} CI lower bound {lower_bound:.2%} "
                 f"{'meets' if satisfied else 'fails'} "
-                f"{constraint.threshold.value:.2%} threshold"
+                f"the {required_rate:.2%} required compliance rate"
             ),
         )
 

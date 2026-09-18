@@ -1,6 +1,6 @@
 id: CONC-CloudService
 name: Cloud Service
-purpose: "Connect to Traigent backend for hybrid session/result tracking, session sync, and billing-aware operations. Remote cloud execution is reserved for a future release."
+purpose: "Connect to Traigent backend for cloud session/result tracking, session sync, and billing-aware operations. Remote cloud execution is reserved for a future release."
 state:
   - name: auth_manager
     type: "AuthManager"

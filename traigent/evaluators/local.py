@@ -952,43 +952,58 @@ class LocalEvaluator(BaseEvaluator):
             # dropped, pinning and corrupting the search. Non-objective
             # metrics keep the legacy ``0.0``/skip behaviour.
             if isinstance(value, Mapping):
-                for result_name, result_value in value.items():
-                    # A mapping sub-value can itself be awaitable (e.g.
-                    # ``{"quality": async_score(...)}``); resolve it the same way
-                    # as a top-level async metric so it never reaches float() as
-                    # a raw coroutine (and its exceptions get the objective /
-                    # degradation-record handling, keyed by the sub-metric name).
-                    result_value = await self._resolve_metric_function_value(
-                        result_value,
-                        str(result_name),
-                        example_obj,
-                        config,
-                        example_index,
-                        metric_errors=metric_errors,
-                    )
-                    if result_value is None:
-                        if str(result_name) in self.metrics:
-                            raise self._objective_returned_none_error(
-                                str(result_name),
-                                example_id,
-                                example_index,
-                                config,
-                            )
-                        if metric_errors is not None:
-                            metric_errors.append(
-                                {
-                                    "metric_name": str(result_name),
-                                    "example_id": example_id,
-                                    "example_index": example_index,
-                                    "error_type": "NoneReturn",
-                                    "failure_mode": "returned_none",
-                                    "is_objective": False,
-                                }
-                            )
-                        continue
-                    key = str(result_name)
-                    example_metric.custom_metrics[key] = float(result_value)
-                    produced_keys.append(key)
+                sub_items = list(value.items())
+                _sub_index = -1
+                try:
+                    for _sub_index, (result_name, result_value) in enumerate(sub_items):
+                        # A mapping sub-value can itself be awaitable (e.g.
+                        # ``{"quality": async_score(...)}``); resolve it the same way
+                        # as a top-level async metric so it never reaches float() as
+                        # a raw coroutine (and its exceptions get the objective /
+                        # degradation-record handling, keyed by the sub-metric name).
+                        result_value = await self._resolve_metric_function_value(
+                            result_value,
+                            str(result_name),
+                            example_obj,
+                            config,
+                            example_index,
+                            metric_errors=metric_errors,
+                        )
+                        if result_value is None:
+                            if str(result_name) in self.metrics:
+                                raise self._objective_returned_none_error(
+                                    str(result_name),
+                                    example_id,
+                                    example_index,
+                                    config,
+                                )
+                            if metric_errors is not None:
+                                metric_errors.append(
+                                    {
+                                        "metric_name": str(result_name),
+                                        "example_id": example_id,
+                                        "example_index": example_index,
+                                        "error_type": "NoneReturn",
+                                        "failure_mode": "returned_none",
+                                        "is_objective": False,
+                                    }
+                                )
+                            continue
+                        key = str(result_name)
+                        example_metric.custom_metrics[key] = float(result_value)
+                        produced_keys.append(key)
+                except BaseException:
+                    # An objective sub-value that raised (or returned None,
+                    # which raises the guard above) aborts this loop early.
+                    # LATER sub-values that are still-unresolved coroutines
+                    # would otherwise never be awaited or closed by anything
+                    # else, leaking an unawaited-coroutine warning (and
+                    # skipping the coroutine's own cleanup). Close them before
+                    # propagating.
+                    for _, pending_value in sub_items[_sub_index + 1 :]:
+                        if inspect.iscoroutine(pending_value):
+                            pending_value.close()
+                    raise
                 continue
             if value is None:
                 if metric_name in self.metrics:
@@ -1381,6 +1396,14 @@ class LocalEvaluator(BaseEvaluator):
         # Inject usage data (tokens, response time)
         if "usage" in meta:
             self._inject_usage_from_meta(cast(dict, meta["usage"]), metrics)
+
+        # A validated ``__traigent_meta__`` carries a user-reported cost (and
+        # optionally usage): that is a real measurement, reported by the agent
+        # rather than extracted from a response object, so it counts as
+        # captured usage for the cost-objective guard.
+        from traigent.utils.cost_calculator import record_captured_usage
+
+        record_captured_usage()
 
         # Inject cost
         try:
