@@ -9,6 +9,7 @@ import inspect
 import json
 import math
 import os
+import re
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -173,6 +174,12 @@ class _SampleLeaseCleanupBoundary:
             )
 
 
+#: A leading zero immediately followed by another digit: "007", "0012",
+#: "-007". That shape is an identifier written with fixed width, never a
+#: numeric label, so a string-string pair where either side looks like this is
+#: compared literally rather than numerically. See ``_accuracy_values_match``.
+_ZERO_PADDED_NUMERIC_RE = re.compile(r"^[+-]?0\d")
+
 _ACCURACY_REL_TOL = 1e-9
 _ACCURACY_ABS_TOL = 1e-12
 
@@ -265,6 +272,19 @@ def _accuracy_values_match(actual: Any, expected: Any) -> bool:
         # numeric gold labels as strings) get zero coercion otherwise: the
         # existing coercion only fires when the EXPECTED side is typed
         # (Traigent#1772).
+        #
+        # But NOT when either side is zero-padded. A leading zero followed by
+        # another digit is how identifiers are written -- zip codes, order
+        # numbers, SKUs, phone extensions -- and never how a numeric label is.
+        # Without this, "007" scores as a correct answer to "7": a false
+        # positive in accuracy, which is the value the optimizer argmaxes, so
+        # it would rank a config that returns the wrong identifier first.
+        # Formatting differences that are NOT identifier-shaped still coerce:
+        # "1.0"/"1", ".5"/"0.5", "1e5"/"100000".
+        if _ZERO_PADDED_NUMERIC_RE.match(actual.strip()) or (
+            _ZERO_PADDED_NUMERIC_RE.match(expected.strip())
+        ):
+            return False
         try:
             actual_num = float(actual.strip())
             expected_num = float(expected.strip())

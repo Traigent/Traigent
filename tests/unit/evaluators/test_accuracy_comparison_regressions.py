@@ -205,3 +205,52 @@ async def test_issue_1772_end_to_end_structured_and_numeric_string_outputs() -> 
     result = await evaluator.evaluate(outputs, {}, dataset)
 
     assert result.metrics["accuracy"] == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize(
+    "actual,expected",
+    [
+        ("007", "7"),
+        ("7", "007"),
+        ("0012", "12"),
+        ("-007", "-7"),
+        ("00", "0"),
+    ],
+)
+def test_issue_1772_zero_padded_identifiers_are_not_coerced(actual, expected) -> None:
+    """Numeric coercion must not turn an identifier into a correct answer.
+
+    The string-string coercion above exists for the JSONL habit of storing a
+    numeric gold label as a string. It cannot tell that habit apart from a
+    fixed-width identifier -- a zip code, an order number, a SKU, a phone
+    extension -- and without this guard ``"007"`` scored as a correct answer to
+    ``"7"``.
+
+    That is a false positive in ACCURACY, which is the value the optimizer
+    argmaxes: a config that returns the wrong identifier would be ranked first,
+    confidently. An exact-match evaluator loosened this far is no longer doing
+    the job its name promises.
+    """
+    assert _accuracy_values_match(actual, expected) is False
+
+
+@pytest.mark.parametrize(
+    "actual,expected",
+    [
+        ("1.0", "1"),
+        (".5", "0.5"),
+        ("0.5", ".5"),
+        (" 42 ", "42"),
+        ("1e5", "100000"),
+        ("0.10", "0.1"),
+    ],
+)
+def test_issue_1772_ordinary_numeric_formatting_still_coerces(actual, expected) -> None:
+    """Control: the guard must not switch the fix off.
+
+    A leading zero before a DECIMAL POINT (``0.5``, ``0.10``) is ordinary
+    numeric formatting, not an identifier; only a leading zero before another
+    DIGIT is. A guard that rejected ``"0.5"`` would pass the test above and
+    undo the PR.
+    """
+    assert _accuracy_values_match(actual, expected) is True
