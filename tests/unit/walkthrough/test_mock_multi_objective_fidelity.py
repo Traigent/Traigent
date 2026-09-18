@@ -128,7 +128,6 @@ async def _run_04(objectives: ObjectiveSchema) -> Any:
         max_trials=len(MODELS),
         configuration_space={"model": MODELS},
         objectives=objectives,
-        show_progress=False,
     )
 
 
@@ -145,7 +144,6 @@ async def _run_09(objectives: ObjectiveSchema) -> Any:
             "max_tokens": [RAG_MAX_TOKENS],
         },
         objectives=objectives,
-        show_progress=False,
     )
 
 
@@ -330,7 +328,7 @@ async def test_shipped_09_cost_is_inert_without_with_usage() -> None:
         return answer
 
     results = await rag_agent_without_usage.optimize(
-        algorithm="grid", max_trials=len(DIVERGENT_RAG_MODELS), show_progress=False
+        algorithm="grid", max_trials=len(DIVERGENT_RAG_MODELS)
     )
 
     assert {trial.metrics.get("cost", 0.0) for trial in results.trials} == {0.0}

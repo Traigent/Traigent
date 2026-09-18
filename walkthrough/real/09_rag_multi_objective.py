@@ -189,7 +189,6 @@ async def main() -> None:
     results = await rag_agent.optimize(
         algorithm="random",
         max_trials=18,
-        show_progress=True,
         random_seed=42,
         callbacks=[build_results_table_callback(is_mock=False, show_progress=True)],
     )

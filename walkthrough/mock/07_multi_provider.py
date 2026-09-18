@@ -148,7 +148,6 @@ async def main() -> None:
     results = await answer_with_any_provider.optimize(
         algorithm="grid",
         max_trials=10,
-        show_progress=True,
         callbacks=[
             build_results_table_callback(
                 is_mock=True, task_type="simple_qa", show_progress=True
