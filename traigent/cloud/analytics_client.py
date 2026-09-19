@@ -53,10 +53,10 @@ Director v0 (advisory-only; frozen contract, ``~/.claude/plans/director-v0-contr
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
-import uuid
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
@@ -2102,6 +2102,32 @@ def normalize_director_intent(intent: str | None = None) -> str:
     return normalized
 
 
+def _canonical_json(value: Mapping[str, Any]) -> str:
+    """Stable JSON encoding for Idempotency-Key derivation (sorted keys, no
+    whitespace variance) -- two logically-identical bodies must encode
+    byte-identically or they hash differently (state-rules.md §8.2)."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _derive_director_idempotency_key(*parts: str) -> str:
+    """Derive a stable Idempotency-Key from request content (state-rules.md §8.2).
+
+    The SDK previously minted a fresh ``uuid4()`` per call, so a network
+    retry of the exact same request never matched the original
+    ``(session_id, idempotency_key)`` pair and the duplicate-replay branch
+    (state-rules.md §2 step 2) was dead code in practice -- a retry got
+    ``409 stale_revision`` instead of its original answer, precisely the
+    failure the replay-before-stale-revision ordering exists to prevent.
+
+    This keeps C1 intact: the key is a hash over request content, not a
+    string the client's agent composes. An explicit caller-supplied
+    ``idempotency_key`` still wins over this derivation.
+    """
+    raw = "|".join(parts)
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return f"dk_{digest[:32]}"
+
+
 class BackendAnalyticsClient:
     """Async-first read client for backend optimization-results analytics.
 
@@ -2938,7 +2964,10 @@ class BackendAnalyticsClient:
         JSON body field here (not an ``X-Project-Id`` header) -- the
         credential-scope check happens against the body value. The only
         header this call sends is ``Idempotency-Key`` (required by contract);
-        one is generated when the caller does not supply one.
+        when the caller does not supply one, it is DERIVED from the request
+        body (state-rules.md §8.2) rather than randomly generated, so a
+        genuine retry of the same request replays instead of minting a new
+        key that can never match.
 
         Args:
             project_id: Project identifier (explicit); validated by the
@@ -2946,9 +2975,9 @@ class BackendAnalyticsClient:
             workflow_kind: Closed vocabulary; v0 ships exactly
                 ``optimization_run_advisory``.
             run_ids: At most one run id to attach at create time (optional).
-            idempotency_key: Caller-stable idempotency key. Generated
-                automatically when omitted -- this is transport plumbing, not
-                a value a client agent composes.
+            idempotency_key: Caller-stable idempotency key. Derived
+                deterministically from the request body when omitted -- this
+                is transport plumbing, not a value a client agent composes.
 
         Returns:
             The session-create response (returned unchanged after the
@@ -2970,7 +2999,7 @@ class BackendAnalyticsClient:
             if cleaned:
                 body["run_ids"] = cleaned
 
-        key = idempotency_key or str(uuid.uuid4())
+        key = idempotency_key or _derive_director_idempotency_key(_canonical_json(body))
         payload = await self._post_json(
             "/api/v1/director/sessions",
             what="director session",
@@ -3015,7 +3044,12 @@ class BackendAnalyticsClient:
                 validates every element against the closed vocabularies
                 before this method is called.
             idempotency_key: Caller-stable idempotency key (required by
-                contract). Generated automatically when omitted.
+                contract). When omitted, DERIVED deterministically from
+                ``session_id``, ``session_revision``, and the rest of the
+                body (state-rules.md §8.2) -- not randomly generated, so a
+                genuine retry of the same request replays (state-rules.md §2
+                step 2) instead of minting a new key that can never match and
+                surfacing ``409 stale_revision`` in its place.
 
         Returns:
             The turn response (returned unchanged after the required-key
@@ -3042,7 +3076,25 @@ class BackendAnalyticsClient:
         if client_report is not None:
             body["client_report"] = dict(client_report)
 
-        key = idempotency_key or str(uuid.uuid4())
+        if idempotency_key is not None:
+            key = idempotency_key
+        else:
+            # session_revision is excluded from the canonicalized body and
+            # instead hashed as its own raw component (state-rules.md §8.2):
+            # a genuine retry resends the identical session_revision value
+            # it originally computed, so the derived key is unchanged even
+            # though the *session*'s current revision may have since
+            # advanced server-side.
+            body_without_revision = {
+                key_: value
+                for key_, value in body.items()
+                if key_ != "session_revision"
+            }
+            key = _derive_director_idempotency_key(
+                session_id,
+                str(session_revision),
+                _canonical_json(body_without_revision),
+            )
         payload = await self._post_json(
             f"/api/v1/director/sessions/{sid}/turn",
             what="director turn",

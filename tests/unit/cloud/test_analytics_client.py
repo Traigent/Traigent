@@ -1734,6 +1734,145 @@ class TestDirectorTurn:
         assert "client_report" not in body
 
 
+async def _capture_director_turn_key(**kwargs: object) -> str:
+    """Call ``client.director_turn(**kwargs)`` against a fresh mocked client
+    and return the ``Idempotency-Key`` header it actually sent."""
+    client = _make_client()
+    payload = {
+        "turn_id": "dt_" + "b" * 32,
+        "session_id": kwargs.get("session_id", "ds_" + "a" * 32),
+        "session_revision": 99,
+        "advisory_only": True,
+        "guidance_status": "ok",
+        "reason_code": "be_recommendation_followed",
+        "evidence": [],
+        "blockers": [],
+        "replayed": False,
+    }
+    mock_response = MagicMock()
+    mock_response.json.return_value = _success_envelope(payload)
+    mock_response.raise_for_status = MagicMock()
+    mock_http = AsyncMock()
+    mock_http.post.return_value = mock_response
+    client._client = mock_http
+
+    await client.director_turn(**kwargs)
+    headers = mock_http.post.call_args.kwargs["headers"]
+    return headers["Idempotency-Key"]
+
+
+async def _capture_director_start_key(**kwargs: object) -> str:
+    """Call ``client.director_start(**kwargs)`` against a fresh mocked client
+    and return the ``Idempotency-Key`` header it actually sent."""
+    client = _make_client()
+    payload = {
+        "session_id": "ds_" + "a" * 32,
+        "workflow_kind": "optimization_run_advisory",
+        "owner_scope": {"access": "owner"},
+        "status": "open",
+        "revision": 1,
+        "advisory_only": True,
+        "evidence": [],
+        "evidence_state": "no_registered_evidence",
+        "created_at": "2026-09-19T00:00:00Z",
+    }
+    mock_response = MagicMock()
+    mock_response.json.return_value = _success_envelope(payload)
+    mock_response.raise_for_status = MagicMock()
+    mock_http = AsyncMock()
+    mock_http.post.return_value = mock_response
+    client._client = mock_http
+
+    await client.director_start(**kwargs)
+    headers = mock_http.post.call_args.kwargs["headers"]
+    return headers["Idempotency-Key"]
+
+
+class TestDirectorIdempotencyKeyDerivation:
+    """state-rules.md §8.2 (BLOCKING).
+
+    The SDK previously minted a fresh ``uuid4()`` per call: a network retry
+    of the exact same request never matched its original
+    ``(session_id, idempotency_key)`` pair, so the duplicate-replay branch
+    (state-rules.md §2 step 2) was dead code -- a retry got
+    ``409 stale_revision`` instead of its original answer, precisely the
+    failure the replay-before-stale-revision ordering exists to prevent.
+    The key must instead be DERIVED from request content.
+    """
+
+    @pytest.mark.asyncio
+    async def test_turn_two_identical_calls_derive_the_same_key(self) -> None:
+        session_id = "ds_" + "a" * 32
+        key_a = await _capture_director_turn_key(
+            session_id=session_id, session_revision=5, intent="ask_next_step"
+        )
+        key_b = await _capture_director_turn_key(
+            session_id=session_id, session_revision=5, intent="ask_next_step"
+        )
+        assert key_a == key_b
+        assert key_a.startswith("dk_")
+
+    @pytest.mark.asyncio
+    async def test_turn_differing_body_derives_a_different_key(self) -> None:
+        session_id = "ds_" + "a" * 32
+        key_ask = await _capture_director_turn_key(
+            session_id=session_id, session_revision=5, intent="ask_next_step"
+        )
+        key_report = await _capture_director_turn_key(
+            session_id=session_id, session_revision=5, intent="report_progress"
+        )
+        assert key_ask != key_report
+
+    @pytest.mark.asyncio
+    async def test_turn_stale_session_revision_retry_with_identical_body_still_replays(
+        self,
+    ) -> None:
+        """state-rules.md §2: duplicate replay fires even when
+        session_revision is now stale server-side -- that is the whole
+        point. A genuine retry resends the exact session_revision it
+        originally computed, so the derived key must be unchanged regardless
+        of what the server's current revision has since become."""
+        session_id = "ds_" + "a" * 32
+        original = await _capture_director_turn_key(
+            session_id=session_id, session_revision=5, intent="ask_next_step"
+        )
+        retry = await _capture_director_turn_key(
+            session_id=session_id, session_revision=5, intent="ask_next_step"
+        )
+        assert original == retry
+
+    @pytest.mark.asyncio
+    async def test_turn_explicit_idempotency_key_override_is_honoured(self) -> None:
+        session_id = "ds_" + "a" * 32
+        key = await _capture_director_turn_key(
+            session_id=session_id,
+            session_revision=5,
+            intent="ask_next_step",
+            idempotency_key="caller-supplied-key",
+        )
+        assert key == "caller-supplied-key"
+
+    @pytest.mark.asyncio
+    async def test_start_two_identical_calls_derive_the_same_key(self) -> None:
+        key_a = await _capture_director_start_key(project_id="proj_abc")
+        key_b = await _capture_director_start_key(project_id="proj_abc")
+        assert key_a == key_b
+        assert key_a.startswith("dk_")
+
+    @pytest.mark.asyncio
+    async def test_start_differing_body_derives_a_different_key(self) -> None:
+        key_a = await _capture_director_start_key(project_id="proj_abc")
+        key_b = await _capture_director_start_key(project_id="proj_xyz")
+        assert key_a != key_b
+
+    @pytest.mark.asyncio
+    async def test_start_explicit_idempotency_key_override_is_honoured(self) -> None:
+        key = await _capture_director_start_key(
+            project_id="proj_abc", idempotency_key="caller-supplied-key"
+        )
+        assert key == "caller-supplied-key"
+
+
 class TestDirectorState:
     @pytest.mark.asyncio
     async def test_calls_state_endpoint(
