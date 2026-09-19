@@ -283,7 +283,7 @@ constraint-dependencies = [
     "orjson>=3.11.6",
     "pyasn1>=0.6.3",
     "python-dotenv>=1.2.2",
-    "urllib3>=2.6.3",
+    "urllib3>=2.8.0",
     "virtualenv>=20.36.1",
     "werkzeug>=3.1.6",
 ]
