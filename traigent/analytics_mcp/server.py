@@ -542,10 +542,16 @@ def create_server() -> Any:
             "state/turn read). intent is closed "
             f"({', '.join(DIRECTOR_INTENTS)}); the optional report block "
             "closes the instruction loop with {instruction_id, status "
-            f"({', '.join(DIRECTOR_REPORT_STATUSES)}), run_id?}}. No "
-            "free-text field is accepted -- a 409 stale_revision is returned "
-            "as a structured, recoverable result carrying the current "
-            "revision to re-read state with. Backend auth required."
+            f"({', '.join(DIRECTOR_REPORT_STATUSES)}), run_id?}}. The "
+            "optional client_report block reports validity checks as "
+            "{validity_checks: [{check (scorer_discrimination | "
+            "split_integrity), status (passed|failed|missing), "
+            "confidence_label?}]} (at most 20) -- a failed/missing check "
+            "deterministically blocks run_optimization/promote_winner before "
+            "any model call. No free-text field is accepted anywhere on "
+            "this call -- a 409 stale_revision is returned as a structured, "
+            "recoverable result carrying the current revision to re-read "
+            "state with. Backend auth required."
         )
     )
     async def director_turn(
@@ -553,8 +559,11 @@ def create_server() -> Any:
         session_revision: int,
         intent: str = "ask_next_step",
         report: dict[str, Any] | None = None,
+        client_report: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return await director_turn_tool(session_id, session_revision, intent, report)
+        return await director_turn_tool(
+            session_id, session_revision, intent, report, client_report
+        )
 
     @server.tool(
         description=(

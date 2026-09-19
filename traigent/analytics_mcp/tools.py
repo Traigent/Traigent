@@ -278,6 +278,90 @@ def _validate_director_report(
     return clean
 
 
+_DIRECTOR_VALIDITY_CHECKS_MAX_ITEMS = 20
+
+
+def _validate_director_client_report(
+    value: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Validate ``client_report`` against the frozen contract (R1 feed).
+
+    ``client_report.validity_checks`` feeds deterministic rule R1: a
+    client-reported failed/missing validity check BLOCKS ``run_optimization``
+    and ``promote_winner`` before any model call. Every element is validated
+    field-by-field against closed enums -- C1 still holds: there is no
+    ``detail``/``notes`` field anywhere on this object, and an unknown key on
+    either the outer object or an individual check is rejected outright.
+    """
+    from traigent.cloud.analytics_client import (
+        DIRECTOR_CONFIDENCE_LABELS,
+        DIRECTOR_VALIDITY_CHECKS,
+        DIRECTOR_VALIDITY_STATUSES,
+    )
+
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise _ToolInputError("client_report must be an object.")
+    allowed_fields = {"validity_checks"}
+    extra = sorted(set(value).difference(allowed_fields))
+    if extra:
+        raise _ToolInputError(
+            f"client_report contains unsupported field(s): {', '.join(extra)}."
+        )
+
+    checks = value.get("validity_checks")
+    if checks is None:
+        return {}
+    if not isinstance(checks, list):
+        raise _ToolInputError("client_report.validity_checks must be a list.")
+    if len(checks) > _DIRECTOR_VALIDITY_CHECKS_MAX_ITEMS:
+        raise _ToolInputError(
+            "client_report.validity_checks must contain at most "
+            f"{_DIRECTOR_VALIDITY_CHECKS_MAX_ITEMS} items."
+        )
+
+    allowed_item_fields = {"check", "status", "confidence_label"}
+    clean_checks: list[dict[str, Any]] = []
+    for index, item in enumerate(checks):
+        if not isinstance(item, dict):
+            raise _ToolInputError(
+                f"client_report.validity_checks[{index}] must be an object."
+            )
+        item_extra = sorted(set(item).difference(allowed_item_fields))
+        if item_extra:
+            raise _ToolInputError(
+                f"client_report.validity_checks[{index}] contains unsupported "
+                f"field(s): {', '.join(item_extra)}."
+            )
+        check = item.get("check")
+        if check not in DIRECTOR_VALIDITY_CHECKS:
+            allowed = ", ".join(DIRECTOR_VALIDITY_CHECKS)
+            raise _ToolInputError(
+                f"client_report.validity_checks[{index}].check must be one "
+                f"of: {allowed}."
+            )
+        status = item.get("status")
+        if status not in DIRECTOR_VALIDITY_STATUSES:
+            allowed = ", ".join(DIRECTOR_VALIDITY_STATUSES)
+            raise _ToolInputError(
+                f"client_report.validity_checks[{index}].status must be one "
+                f"of: {allowed}."
+            )
+        clean_item: dict[str, Any] = {"check": check, "status": status}
+        confidence_label = item.get("confidence_label")
+        if confidence_label is not None:
+            if confidence_label not in DIRECTOR_CONFIDENCE_LABELS:
+                allowed = ", ".join(DIRECTOR_CONFIDENCE_LABELS)
+                raise _ToolInputError(
+                    f"client_report.validity_checks[{index}].confidence_label "
+                    f"must be one of: {allowed}."
+                )
+            clean_item["confidence_label"] = confidence_label
+        clean_checks.append(clean_item)
+    return {"validity_checks": clean_checks}
+
+
 def _bounded_identifier_list(value: object, *, field: str, maximum: int) -> list[str]:
     if not isinstance(value, list):
         raise _ToolInputError(f"{field} must be a list.")
@@ -1680,6 +1764,7 @@ async def director_turn_tool(
     session_revision: int,
     intent: str = "ask_next_step",
     report: dict[str, Any] | None = None,
+    client_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Advance an advisory Director session by one turn (v0, advisory only).
 
@@ -1687,11 +1772,18 @@ async def director_turn_tool(
     structured ``ok=False`` result carrying the backend's error code -- and,
     for ``stale_revision``, the ``current_revision`` to re-read state with --
     rather than as a generic failure.
+
+    ``client_report`` carries ``{validity_checks: [{check, status,
+    confidence_label?}]}`` and feeds deterministic rule R1 (a failed/missing
+    validity check blocks ``run_optimization``/``promote_winner`` before any
+    model call). Every element is validated against closed enums; there is
+    no free-text field on this object.
     """
     try:
         sid = _bounded_identifier(session_id, field="session_id")
         clean_intent = _validate_director_intent(intent)
         clean_report = _validate_director_report(report)
+        clean_client_report = _validate_director_client_report(client_report)
         if (
             not isinstance(session_revision, int)
             or isinstance(session_revision, bool)
@@ -1706,6 +1798,7 @@ async def director_turn_tool(
             session_revision,
             intent=clean_intent,
             report=clean_report,
+            client_report=clean_client_report,
         ),
         what="director turn",
     )

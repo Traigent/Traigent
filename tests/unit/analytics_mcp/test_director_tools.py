@@ -148,7 +148,7 @@ class TestDirectorTurnTool:
         assert result["ok"] is True
         assert result["director_turn"] == {"turn_id": "dt_" + "b" * 32}
         reader.director_turn.assert_awaited_once_with(
-            session_id, 3, intent="report_progress", report=report
+            session_id, 3, intent="report_progress", report=report, client_report=None
         )
 
     @pytest.mark.asyncio
@@ -284,6 +284,192 @@ class TestDirectorTurnTool:
         assert "secret-host" not in result["message"]
 
 
+class TestDirectorTurnToolClientReport:
+    """C1/R1: client_report.validity_checks feeds the R1 validity-check
+    blocker. Strictly typed -- no free-text field anywhere on this object."""
+
+    @pytest.mark.asyncio
+    async def test_forwards_failed_scorer_discrimination_check(
+        self, monkeypatch
+    ) -> None:
+        from traigent.analytics_mcp.tools import director_turn_tool
+
+        reader = AsyncMock()
+        reader.director_turn.return_value = {"turn_id": "dt_" + "b" * 32}
+        _install_fake_client(monkeypatch, reader)
+
+        client_report = {
+            "validity_checks": [{"check": "scorer_discrimination", "status": "failed"}]
+        }
+        result = await director_turn_tool(
+            "ds_" + "a" * 32, 1, client_report=client_report
+        )
+
+        assert result["ok"] is True
+        reader.director_turn.assert_awaited_once_with(
+            "ds_" + "a" * 32,
+            1,
+            intent="ask_next_step",
+            report=None,
+            client_report=client_report,
+        )
+
+    @pytest.mark.asyncio
+    async def test_forwards_confidence_label_when_present(self, monkeypatch) -> None:
+        from traigent.analytics_mcp.tools import director_turn_tool
+
+        reader = AsyncMock()
+        reader.director_turn.return_value = {"turn_id": "dt_" + "b" * 32}
+        _install_fake_client(monkeypatch, reader)
+
+        client_report = {
+            "validity_checks": [
+                {
+                    "check": "split_integrity",
+                    "status": "missing",
+                    "confidence_label": "unknown",
+                }
+            ]
+        }
+        result = await director_turn_tool(
+            "ds_" + "a" * 32, 1, client_report=client_report
+        )
+
+        assert result["ok"] is True
+        kwargs = reader.director_turn.await_args.kwargs
+        assert kwargs["client_report"] == client_report
+
+    @pytest.mark.asyncio
+    async def test_defaults_client_report_to_none(self, monkeypatch) -> None:
+        from traigent.analytics_mcp.tools import director_turn_tool
+
+        reader = AsyncMock()
+        reader.director_turn.return_value = {"turn_id": "dt_" + "b" * 32}
+        _install_fake_client(monkeypatch, reader)
+
+        await director_turn_tool("ds_" + "a" * 32, 1)
+
+        kwargs = reader.director_turn.await_args.kwargs
+        assert kwargs["client_report"] is None
+
+    @pytest.mark.asyncio
+    async def test_rejects_unsupported_check_without_call(self, monkeypatch) -> None:
+        from traigent.analytics_mcp.tools import director_turn_tool
+
+        reader = AsyncMock()
+        _install_fake_client(monkeypatch, reader)
+
+        result = await director_turn_tool(
+            "ds_" + "a" * 32,
+            1,
+            client_report={
+                "validity_checks": [{"check": "bogus_check", "status": "failed"}]
+            },
+        )
+
+        assert result["ok"] is False
+        reader.director_turn.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rejects_unsupported_status_without_call(self, monkeypatch) -> None:
+        from traigent.analytics_mcp.tools import director_turn_tool
+
+        reader = AsyncMock()
+        _install_fake_client(monkeypatch, reader)
+
+        result = await director_turn_tool(
+            "ds_" + "a" * 32,
+            1,
+            client_report={
+                "validity_checks": [
+                    {"check": "scorer_discrimination", "status": "bogus_status"}
+                ]
+            },
+        )
+
+        assert result["ok"] is False
+        reader.director_turn.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rejects_unknown_extra_key_on_validity_check_without_call(
+        self, monkeypatch
+    ) -> None:
+        from traigent.analytics_mcp.tools import director_turn_tool
+
+        reader = AsyncMock()
+        _install_fake_client(monkeypatch, reader)
+
+        result = await director_turn_tool(
+            "ds_" + "a" * 32,
+            1,
+            client_report={
+                "validity_checks": [
+                    {
+                        "check": "scorer_discrimination",
+                        "status": "failed",
+                        "detail": "the discrimination score was flat",
+                    }
+                ]
+            },
+        )
+
+        assert result["ok"] is False
+        reader.director_turn.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rejects_unknown_extra_key_on_client_report_without_call(
+        self, monkeypatch
+    ) -> None:
+        from traigent.analytics_mcp.tools import director_turn_tool
+
+        reader = AsyncMock()
+        _install_fake_client(monkeypatch, reader)
+
+        result = await director_turn_tool(
+            "ds_" + "a" * 32,
+            1,
+            client_report={"validity_checks": [], "notes": "should not be accepted"},
+        )
+
+        assert result["ok"] is False
+        reader.director_turn.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_enforces_max_items_twenty(self, monkeypatch) -> None:
+        from traigent.analytics_mcp.tools import director_turn_tool
+
+        reader = AsyncMock()
+        _install_fake_client(monkeypatch, reader)
+
+        too_many = [
+            {"check": "scorer_discrimination", "status": "passed"} for _ in range(21)
+        ]
+        result = await director_turn_tool(
+            "ds_" + "a" * 32, 1, client_report={"validity_checks": too_many}
+        )
+
+        assert result["ok"] is False
+        reader.director_turn.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_allows_exactly_twenty_items(self, monkeypatch) -> None:
+        from traigent.analytics_mcp.tools import director_turn_tool
+
+        reader = AsyncMock()
+        reader.director_turn.return_value = {"turn_id": "dt_" + "b" * 32}
+        _install_fake_client(monkeypatch, reader)
+
+        exactly_twenty = [
+            {"check": "scorer_discrimination", "status": "passed"} for _ in range(20)
+        ]
+        result = await director_turn_tool(
+            "ds_" + "a" * 32, 1, client_report={"validity_checks": exactly_twenty}
+        )
+
+        assert result["ok"] is True
+        reader.director_turn.assert_awaited_once()
+
+
 class TestDirectorStateTool:
     @pytest.mark.asyncio
     async def test_calls_client_and_wraps_payload(self, monkeypatch) -> None:
@@ -352,15 +538,22 @@ class TestDirectorToolsNoFreeText:
                     f"parameter ({banned!r} found in {params})"
                 )
 
-    def test_director_turn_signature_is_exactly_intent_and_report_plus_identity(
+    def test_director_turn_signature_is_exactly_intent_report_and_client_report(
         self,
     ) -> None:
-        """C1: director_turn takes only session identity, intent (enum), and
-        the typed report block -- no other content field."""
+        """C1: director_turn takes only session identity, intent (enum), the
+        typed report block, and the typed client_report block -- no other
+        content field, and certainly no free-text field."""
         from traigent.analytics_mcp.tools import director_turn_tool
 
         params = set(inspect.signature(director_turn_tool).parameters)
-        assert params == {"session_id", "session_revision", "intent", "report"}
+        assert params == {
+            "session_id",
+            "session_revision",
+            "intent",
+            "report",
+            "client_report",
+        }
 
     def test_director_start_signature_has_no_extra_content_field(self) -> None:
         from traigent.analytics_mcp.tools import director_start_tool

@@ -2026,13 +2026,25 @@ def normalize_decision_intent(intent: str | None = None) -> str:
 # TraigentBackend origin/develop 0dda4a6cc. Three thin pass-throughs to the
 # backend's advisory Director endpoints. C1 (frozen contract): the request
 # shapes below carry no client-composed free text -- every field is an enum,
-# an integer, or a server-issued identifier. `intent` and `report` are the
-# only content fields `director_turn` accepts, matching the frozen
-# director-turn.schema.json Request object exactly.
+# an integer, or a server-issued identifier. `intent`, `report`, and
+# `client_report` are the only content fields `director_turn` accepts,
+# matching the frozen director-turn.schema.json Request object exactly.
 DIRECTOR_WORKFLOW_KINDS: tuple[str, ...] = ("optimization_run_advisory",)
 DIRECTOR_INTENTS: tuple[str, ...] = ("ask_next_step", "report_progress")
 _DEFAULT_DIRECTOR_INTENT = "ask_next_step"
 DIRECTOR_REPORT_STATUSES: tuple[str, ...] = ("done", "blocked", "skipped", "failed")
+# client_report.validity_checks[].check / .status / .confidence_label --
+# schemas/director-turn.schema.json $defs.Request.properties.client_report
+# and common.schema.json $defs.ConfidenceLabel. Feeds deterministic rule R1
+# (state-rules.md §3): a client-reported failed/missing validity check
+# BLOCKS run_optimization and promote_winner, before any model call.
+DIRECTOR_VALIDITY_CHECKS: tuple[str, ...] = (
+    "scorer_discrimination",
+    "split_integrity",
+)
+DIRECTOR_VALIDITY_STATUSES: tuple[str, ...] = ("passed", "failed", "missing")
+DIRECTOR_CONFIDENCE_LABELS: tuple[str, ...] = ("low", "medium", "high", "unknown")
+_DIRECTOR_VALIDITY_CHECKS_MAX_ITEMS = 20
 
 # Response201 required keys, schemas/director-session-create.schema.json.
 _DIRECTOR_SESSION_REQUIRED_KEYS = frozenset(
@@ -2975,6 +2987,7 @@ class BackendAnalyticsClient:
         *,
         intent: str = "ask_next_step",
         report: Mapping[str, Any] | None = None,
+        client_report: Mapping[str, Any] | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         """Advance an advisory Director session by one turn.
@@ -2982,9 +2995,9 @@ class BackendAnalyticsClient:
         Endpoint: ``POST /api/v1/director/sessions/{session_id}/turn``.
 
         C1 (frozen contract): this request carries no client-composed free
-        text. ``intent`` is a closed enum and ``report`` (when present) is a
-        typed object of server-issued/enum fields only -- there is no prose
-        field anywhere on this call.
+        text. ``intent`` is a closed enum; ``report`` and ``client_report``
+        (when present) are typed objects of server-issued/enum fields only --
+        there is no prose field anywhere on this call.
 
         Args:
             session_id: The Director session id.
@@ -2994,6 +3007,13 @@ class BackendAnalyticsClient:
             report: Optional ``{instruction_id, status, run_id?}`` closing the
                 instruction loop (C2). Forwarded verbatim; the backend
                 validates ``instruction_id`` ownership and ``run_id`` scope.
+            client_report: Optional ``{validity_checks: [{check, status,
+                confidence_label?}]}``. Feeds deterministic rule R1: a
+                client-reported failed/missing validity check BLOCKS
+                ``run_optimization`` and ``promote_winner`` before any model
+                call. Forwarded verbatim; the caller (MCP tool layer)
+                validates every element against the closed vocabularies
+                before this method is called.
             idempotency_key: Caller-stable idempotency key (required by
                 contract). Generated automatically when omitted.
 
@@ -3019,6 +3039,8 @@ class BackendAnalyticsClient:
         }
         if report is not None:
             body["report"] = dict(report)
+        if client_report is not None:
+            body["client_report"] = dict(client_report)
 
         key = idempotency_key or str(uuid.uuid4())
         payload = await self._post_json(

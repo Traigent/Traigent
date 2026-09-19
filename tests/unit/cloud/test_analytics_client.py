@@ -1694,6 +1694,45 @@ class TestDirectorTurn:
         with pytest.raises(AnalyticsClientError, match="missing required key"):
             await client.director_turn("ds_" + "a" * 32, 1)
 
+    @pytest.mark.asyncio
+    async def test_forwards_client_report_verbatim(
+        self, director_turn_payload: dict[str, object]
+    ) -> None:
+        """R1 feed: a client-reported validity-check failure must reach the
+        backend so it can force `investigate_first` before any model call."""
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.json.return_value = _success_envelope(director_turn_payload)
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.post.return_value = mock_response
+        client._client = mock_http
+
+        client_report = {
+            "validity_checks": [{"check": "scorer_discrimination", "status": "failed"}]
+        }
+        await client.director_turn("ds_" + "a" * 32, 1, client_report=client_report)
+
+        body = mock_http.post.call_args.kwargs["json"]
+        assert body["client_report"] == client_report
+
+    @pytest.mark.asyncio
+    async def test_omits_client_report_when_absent(
+        self, director_turn_payload: dict[str, object]
+    ) -> None:
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.json.return_value = _success_envelope(director_turn_payload)
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.post.return_value = mock_response
+        client._client = mock_http
+
+        await client.director_turn("ds_" + "a" * 32, 1)
+
+        body = mock_http.post.call_args.kwargs["json"]
+        assert "client_report" not in body
+
 
 class TestDirectorState:
     @pytest.mark.asyncio
