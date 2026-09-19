@@ -1448,3 +1448,279 @@ class TestAnalyticsTraceparentInjection:
         with _recording_span():
             result = client._request_headers({"traceparent": caller_tp})
         assert result == {"traceparent": caller_tp}
+
+
+# === Director v0 (advisory-only) ===
+#
+# Frozen contract: ~/.claude/plans/director-v0-contract/ rev 2. Three thin
+# pass-throughs (director_start / director_turn / director_state). C1: no
+# client-composed free text anywhere in these requests.
+
+
+@pytest.fixture()
+def director_session_payload() -> dict[str, object]:
+    return {
+        "session_id": "ds_" + "a" * 32,
+        "workflow_kind": "optimization_run_advisory",
+        "owner_scope": {"access": "owner"},
+        "status": "open",
+        "revision": 1,
+        "advisory_only": True,
+        "evidence": [],
+        "evidence_state": "no_registered_evidence",
+        "created_at": "2026-09-19T00:00:00Z",
+    }
+
+
+@pytest.fixture()
+def director_turn_payload() -> dict[str, object]:
+    return {
+        "turn_id": "dt_" + "b" * 32,
+        "session_id": "ds_" + "a" * 32,
+        "session_revision": 2,
+        "advisory_only": True,
+        "guidance_status": "ok",
+        "reason_code": "be_recommendation_followed",
+        "be_recommendation": None,
+        "director": None,
+        "evidence": [],
+        "blockers": [],
+        "replayed": False,
+    }
+
+
+@pytest.fixture()
+def director_state_payload() -> dict[str, object]:
+    return {
+        "session_id": "ds_" + "a" * 32,
+        "workflow_kind": "optimization_run_advisory",
+        "owner_scope": {"access": "owner"},
+        "status": "open",
+        "revision": 1,
+        "advisory_only": True,
+        "evidence_state": "no_registered_evidence",
+        "evidence": [],
+        "open_instruction": None,
+        "last_turn": None,
+        "created_at": "2026-09-19T00:00:00Z",
+        "updated_at": "2026-09-19T00:00:00Z",
+    }
+
+
+class TestDirectorStart:
+    @pytest.mark.asyncio
+    async def test_posts_project_id_in_body_with_idempotency_header(
+        self, director_session_payload: dict[str, object]
+    ) -> None:
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.json.return_value = _success_envelope(director_session_payload)
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.post.return_value = mock_response
+        client._client = mock_http
+
+        result = await client.director_start(
+            "proj_abc", run_ids=["run_1"], idempotency_key="idem-1"
+        )
+
+        assert result == director_session_payload
+        path = mock_http.post.call_args.args[0]
+        kwargs = mock_http.post.call_args.kwargs
+        assert path == "/api/v1/director/sessions"
+        assert kwargs["json"] == {
+            "project_id": "proj_abc",
+            "workflow_kind": "optimization_run_advisory",
+            "run_ids": ["run_1"],
+        }
+        assert kwargs["headers"] == {"Idempotency-Key": "idem-1"}
+
+    @pytest.mark.asyncio
+    async def test_generates_idempotency_key_when_not_supplied(
+        self, director_session_payload: dict[str, object]
+    ) -> None:
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.json.return_value = _success_envelope(director_session_payload)
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.post.return_value = mock_response
+        client._client = mock_http
+
+        await client.director_start("proj_abc")
+
+        headers = mock_http.post.call_args.kwargs["headers"]
+        assert headers["Idempotency-Key"]
+        body = mock_http.post.call_args.kwargs["json"]
+        assert "run_ids" not in body
+
+    @pytest.mark.asyncio
+    async def test_rejects_empty_project_id_before_request(self) -> None:
+        client = _make_client()
+        mock_http = AsyncMock()
+        client._client = mock_http
+        with pytest.raises(ValueError, match="project_id"):
+            await client.director_start("")
+        mock_http.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rejects_unsupported_workflow_kind_before_request(self) -> None:
+        client = _make_client()
+        mock_http = AsyncMock()
+        client._client = mock_http
+        with pytest.raises(ValueError, match="workflow_kind"):
+            await client.director_start("proj_abc", workflow_kind="bogus")
+        mock_http.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rejects_more_than_one_run_id_before_request(self) -> None:
+        client = _make_client()
+        mock_http = AsyncMock()
+        client._client = mock_http
+        with pytest.raises(ValueError, match="at most one run_id"):
+            await client.director_start("proj_abc", run_ids=["run_1", "run_2"])
+        mock_http.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_missing_contract_key_fails_closed(
+        self, director_session_payload: dict[str, object]
+    ) -> None:
+        from traigent.cloud.analytics_client import AnalyticsClientError
+
+        malformed = dict(director_session_payload)
+        malformed.pop("revision")
+
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.json.return_value = _success_envelope(malformed)
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.post.return_value = mock_response
+        client._client = mock_http
+
+        with pytest.raises(AnalyticsClientError, match="missing required key"):
+            await client.director_start("proj_abc")
+
+
+class TestDirectorTurn:
+    @pytest.mark.asyncio
+    async def test_posts_to_turn_endpoint_with_idempotency_header(
+        self, director_turn_payload: dict[str, object]
+    ) -> None:
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.json.return_value = _success_envelope(director_turn_payload)
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.post.return_value = mock_response
+        client._client = mock_http
+
+        session_id = "ds_" + "a" * 32
+        report = {"instruction_id": "di_" + "c" * 32, "status": "done"}
+        result = await client.director_turn(
+            session_id,
+            1,
+            intent="report_progress",
+            report=report,
+            idempotency_key="idem-2",
+        )
+
+        assert result == director_turn_payload
+        path = mock_http.post.call_args.args[0]
+        kwargs = mock_http.post.call_args.kwargs
+        assert path == f"/api/v1/director/sessions/{session_id}/turn"
+        assert kwargs["json"] == {
+            "session_revision": 1,
+            "intent": "report_progress",
+            "report": report,
+        }
+        assert kwargs["headers"] == {"Idempotency-Key": "idem-2"}
+
+    @pytest.mark.asyncio
+    async def test_defaults_intent_and_omits_report_when_absent(
+        self, director_turn_payload: dict[str, object]
+    ) -> None:
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.json.return_value = _success_envelope(director_turn_payload)
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.post.return_value = mock_response
+        client._client = mock_http
+
+        await client.director_turn("ds_" + "a" * 32, 1)
+
+        body = mock_http.post.call_args.kwargs["json"]
+        assert body["intent"] == "ask_next_step"
+        assert "report" not in body
+        headers = mock_http.post.call_args.kwargs["headers"]
+        assert headers["Idempotency-Key"]
+
+    @pytest.mark.asyncio
+    async def test_rejects_unsupported_intent_before_request(self) -> None:
+        client = _make_client()
+        mock_http = AsyncMock()
+        client._client = mock_http
+        with pytest.raises(ValueError, match="intent must be one of"):
+            await client.director_turn("ds_" + "a" * 32, 1, intent="bogus")
+        mock_http.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_positive_revision_before_request(self) -> None:
+        client = _make_client()
+        mock_http = AsyncMock()
+        client._client = mock_http
+        with pytest.raises(ValueError, match="session_revision"):
+            await client.director_turn("ds_" + "a" * 32, 0)
+        mock_http.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_missing_contract_key_fails_closed(
+        self, director_turn_payload: dict[str, object]
+    ) -> None:
+        from traigent.cloud.analytics_client import AnalyticsClientError
+
+        malformed = dict(director_turn_payload)
+        malformed.pop("guidance_status")
+
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.json.return_value = _success_envelope(malformed)
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.post.return_value = mock_response
+        client._client = mock_http
+
+        with pytest.raises(AnalyticsClientError, match="missing required key"):
+            await client.director_turn("ds_" + "a" * 32, 1)
+
+
+class TestDirectorState:
+    @pytest.mark.asyncio
+    async def test_calls_state_endpoint(
+        self, director_state_payload: dict[str, object]
+    ) -> None:
+        client = _make_client()
+        mock_http, _mock_response = _mock_get_response(client, director_state_payload)
+
+        session_id = "ds_" + "a" * 32
+        result = await client.director_state(session_id)
+
+        assert result == director_state_payload
+        path = mock_http.get.call_args.args[0]
+        assert path == f"/api/v1/director/sessions/{session_id}/state"
+
+    @pytest.mark.asyncio
+    async def test_missing_contract_key_fails_closed(
+        self, director_state_payload: dict[str, object]
+    ) -> None:
+        from traigent.cloud.analytics_client import AnalyticsClientError
+
+        malformed = dict(director_state_payload)
+        malformed.pop("open_instruction")
+
+        client = _make_client()
+        _mock_get_response(client, malformed)
+
+        with pytest.raises(AnalyticsClientError, match="missing required key"):
+            await client.director_state("ds_" + "a" * 32)
