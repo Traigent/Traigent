@@ -30,6 +30,7 @@ from traigent.cloud.models import (
     SessionCreationResponse,
     TrialResultSubmission,
     session_dataset_identity_to_wire,
+    session_identity_v2_to_wire,
     session_narrative_to_wire,
     session_task_type_to_wire,
 )
@@ -761,6 +762,13 @@ class ApiOperations:
             payload["smart_pruning"] = wire_smart_pruning
         self._attach_evaluator_identity(payload, session_request)
         self._attach_artifact_fingerprint_payload(payload, session_request)
+        # Identity-v2 is typed-only.  The evaluator-definition spelling is a
+        # legacy alias; v2 carries its canonical value in evaluator_id so the
+        # Schema source/value correlation remains valid.
+        identity_v2 = session_identity_v2_to_wire(session_request)
+        if "evaluator_id" in identity_v2:
+            payload.pop("evaluator_definition_id", None)
+        payload.update(identity_v2)
         return payload
 
     def _build_legacy_session_payload(

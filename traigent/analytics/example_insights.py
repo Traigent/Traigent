@@ -205,7 +205,8 @@ class ExampleInsightsClient:
         client = self._get_client()
 
         response = await client.post(
-            f"/analytics/example-scoring/{experiment_run_id}/compute"
+            f"/analytics/example-scoring/{experiment_run_id}/compute",
+            json={},
         )
         response.raise_for_status()
 
@@ -246,15 +247,16 @@ class ExampleInsightsClient:
         if example_ids:
             params["example_ids"] = example_ids
 
-        return cast(
-            dict[str, dict[str, Any]],
-            await self._poll_endpoint(
-                f"/analytics/example-scoring/{experiment_run_id}/scores",
-                "Scores",
-                poll_interval,
-                params=params,
-            ),
+        payload = await self._poll_endpoint(
+            f"/analytics/example-scoring/{experiment_run_id}/scores",
+            "Scores",
+            poll_interval,
+            params=params,
         )
+        data = payload.get("data")
+        if isinstance(data, dict) and isinstance(data.get("scores"), dict):
+            return cast(dict[str, dict[str, Any]], data["scores"])
+        return cast(dict[str, dict[str, Any]], payload)
 
     async def get_dataset_quality(
         self,

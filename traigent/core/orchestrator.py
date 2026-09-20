@@ -443,6 +443,7 @@ class OptimizationOrchestrator:
         # optimize() signature — which test doubles and callers mirror — is unchanged.
         self._run_title: str | None = kwargs.pop("run_title", None)
         self._run_description: str | None = kwargs.pop("run_description", None)
+        self._agent_key: str | None = kwargs.pop("agent_key", None)
         self._smart_pruning: dict[str, Any] | None = kwargs.pop("smart_pruning", None)
         self._config_metrics_history: dict[str, dict[str, list[float]]] = {}
         self._incumbent_config_hash: str | None = None
@@ -3063,6 +3064,7 @@ class OptimizationOrchestrator:
             promotion_policy=wire_policy,
             tvl_governance=wire_governance,
             experiment_display_name=experiment_display_name,
+            agent_key=self._agent_key,
             run_title=self._run_title,
             run_description=self._run_description,
             warm_start_from=self._warm_start_from,
@@ -3241,6 +3243,7 @@ class OptimizationOrchestrator:
 
             raw_result = self.backend_client.create_session(
                 function_name=identifier,
+                agent_key=self._agent_key,
                 search_space=getattr(self.optimizer, "config_space", {}),
                 optimization_goal="maximize",  # Default assumption
                 metadata=metadata,

@@ -2564,6 +2564,7 @@ class OptimizedFunction(Generic[_P, _R]):
             run_title=self._run_title,
             run_description=self._run_description,
         )
+        orchestrator_kwargs["agent_key"] = self.declared_agent_name
         orchestrator_kwargs["requested_algorithm"] = requested_algorithm
         # Opt-in post-selection winner rerun (0 = off). Read by the
         # orchestrator from its config dict after selection completes;
@@ -4542,6 +4543,14 @@ Remediation:
     def agent_name(self) -> str:
         """Preferred alias of :pyattr:`experiment_name` — the agent's stable identity."""
         return self.experiment_name
+
+    @property
+    def declared_agent_name(self) -> str | None:
+        """Return only an explicit decorator or environment agent identity."""
+        if self._experiment_name is not None:
+            return self._experiment_name
+        env_name = os.environ.get("TRAIGENT_EXPERIMENT_NAME")
+        return env_name or None
 
     @property
     def run_title(self) -> str | None:
