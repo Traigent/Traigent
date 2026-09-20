@@ -138,8 +138,12 @@ async def test_live_hybrid_session_round_trip() -> None:
                 "finalized",
             }
             if retain_receipt and receipt_path is not None:
-                metadata = created.metadata if isinstance(created.metadata, dict) else {}
-                project_id = metadata.get("owner_project_id") or metadata.get("project_id")
+                metadata = (
+                    created.metadata if isinstance(created.metadata, dict) else {}
+                )
+                project_id = metadata.get("owner_project_id") or metadata.get(
+                    "project_id"
+                )
                 experiment_id = metadata.get("experiment_id")
                 experiment_run_id = metadata.get("experiment_run_id")
                 assert isinstance(project_id, str) and project_id

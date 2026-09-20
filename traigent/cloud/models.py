@@ -557,12 +557,17 @@ def session_identity_v2_to_wire(session_request: Any) -> dict[str, Any]:
     these four slots are its content-free provenance projection.
     """
     agent_key = getattr(session_request, "agent_key", None)
-    agent_id = agent_key.strip() if isinstance(agent_key, str) and agent_key.strip() else None
+    agent_id = (
+        agent_key.strip() if isinstance(agent_key, str) and agent_key.strip() else None
+    )
     dataset = session_dataset_identity_to_wire(session_request)
     dataset_id = dataset.get("dataset_id")
-    artifact_fingerprints = artifact_fingerprints_to_wire(
-        getattr(session_request, "artifact_fingerprints", None)
-    ) or {}
+    artifact_fingerprints = (
+        artifact_fingerprints_to_wire(
+            getattr(session_request, "artifact_fingerprints", None)
+        )
+        or {}
+    )
     artifact_versions = {
         key: _artifact_version_from_fp1(artifact_fingerprints.get(key))
         for key in _IDENTITY_ARTIFACT_KEYS
