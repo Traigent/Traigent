@@ -29,6 +29,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
     traigent = importlib.import_module("traigent")
 
 from traigent.config.parallel import ParallelConfig
+from traigent.core.objectives import create_default_objectives
 from traigent.evaluators.base import Dataset, EvaluationExample
 
 
@@ -78,7 +79,10 @@ def test_trial_caps():
             example_concurrency=1,
             thread_workers=3,
         ),
-        objectives=["score"],
+        # The fixture returns negative distance, so the least-negative score wins.
+        objectives=create_default_objectives(
+            ["score"], orientations={"score": "maximize"}
+        ),
     )
     def optimize_with_trial_cap(x: float, y: float) -> float:
         """Simple function to optimize with trial cap."""

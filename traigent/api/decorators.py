@@ -2828,8 +2828,13 @@ def optimize(  # NOSONAR(S107)
 
         Offline local optimization:
 
+        >>> from traigent.core.objectives import create_default_objectives
+        >>> medical_objectives = create_default_objectives(
+        ...     ["accuracy", "safety"],
+        ...     orientations={"safety": "maximize"},
+        ... )
         >>> @traigent.optimize(
-        ...     objectives=["accuracy", "safety"],
+        ...     objectives=medical_objectives,
         ...     evaluation={"eval_dataset": "medical_qa.jsonl"},
         ...     execution={
         ...         "offline": True,

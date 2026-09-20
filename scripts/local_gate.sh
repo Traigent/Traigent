@@ -16,7 +16,8 @@
 #                                            found, REQUIRED and fail-closed in CI)
 #   1. ruff check + ruff format --check    (mirrors the SDK Required PR Gate
 #                                            'preflight' job in pr-gate.yml)
-#   2. pytest smoke tier                   (bounded local pre-push unit smoke
+#   2. pytest collection + smoke tier      (whole-suite import/collection guard,
+#                                            then bounded local pre-push unit smoke
 #                                            when SDK code/tests changed)
 #   3. spine preflight                     (mirrors 'spine-trail present')
 #   4. SonarQube quality gate              (main-bound branches only; see below)
@@ -198,7 +199,7 @@ sdk_code_changed() {
 }
 
 if ! skip pytest; then
-  section "pytest smoke tests on code changes (local pre-push SDK unit guard)"
+  section "pytest collection + smoke tests on code changes (local pre-push SDK guard)"
   mapfile -t CODE_CHANGED < <(changed_files | while read -r f; do sdk_code_changed "$f" && echo "$f"; done)
   if [[ "${#CODE_CHANGED[@]}" -eq 0 ]]; then
     echo "  ✅ no SDK code/test/gate files changed vs $base_ref (pytest tier not required)"
@@ -206,21 +207,31 @@ if ! skip pytest; then
     # Keep ambient user-site pytest plugins from changing the CI-shaped unit run.
     # The repo depends on pytest-asyncio, not pytest-asyncio-cooperative; the
     # latter can reorder xdist reports and produce internal errors locally.
-    pytest_args=(-p no:asyncio-cooperative -q --tb=short)
-    if [[ "${LOCAL_GATE_FULL_UNIT:-0}" == "1" ]]; then
-      pytest_workers="${LOCAL_GATE_PYTEST_WORKERS:-4}"
-      pytest_args+=(tests/unit)
-      if [[ -n "$pytest_workers" ]]; then
-        pytest_args+=(-n "$pytest_workers" --dist loadgroup)
+    collection_args=(--collect-only -q tests/ -o addopts= -p no:cacheprovider -rs)
+    echo "  • ${#CODE_CHANGED[@]} code/test/gate file(s) changed; first verifying whole-suite collection"
+    echo "  • TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true PYTHONPATH=. ${PYTEST[*]} ${collection_args[*]}"
+    if TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true PYTHONPATH=. \
+      "${PYTEST[@]}" "${collection_args[@]}"; then
+      echo "  ✅ whole test suite collects"
+      pytest_args=(-p no:asyncio-cooperative -q --tb=short)
+      if [[ "${LOCAL_GATE_FULL_UNIT:-0}" == "1" ]]; then
+        pytest_workers="${LOCAL_GATE_PYTEST_WORKERS:-4}"
+        pytest_args+=(tests/unit)
+        if [[ -n "$pytest_workers" ]]; then
+          pytest_args+=(-n "$pytest_workers" --dist loadgroup)
+        fi
+        echo "  • LOCAL_GATE_FULL_UNIT=1; running optional full unit tier"
+      else
+        pytest_args+=("${SMOKE_TESTS[@]}" -n 0)
+        echo "  • bounded smoke tier selected; set LOCAL_GATE_FULL_UNIT=1 for full tests/unit"
       fi
-      echo "  • LOCAL_GATE_FULL_UNIT=1; running optional full unit tier"
+      echo "  • running ${PYTEST[*]} ${pytest_args[*]}"
+      if PYTHONPATH=. "${PYTEST[@]}" "${pytest_args[@]}"; then echo "  ✅ pytest tier clean"
+      else echo "  ❌ pytest tier failed"; FAIL=1; fi
     else
-      pytest_args+=("${SMOKE_TESTS[@]}" -n 0)
-      echo "  • bounded smoke tier selected; set LOCAL_GATE_FULL_UNIT=1 for full tests/unit"
+      echo "  ❌ whole-suite collection failed; smoke/full-unit tier not run"
+      FAIL=1
     fi
-    echo "  • ${#CODE_CHANGED[@]} code/test/gate file(s) changed; running ${PYTEST[*]} ${pytest_args[*]}"
-    if PYTHONPATH=. "${PYTEST[@]}" "${pytest_args[@]}"; then echo "  ✅ pytest tier clean"
-    else echo "  ❌ pytest tier failed"; FAIL=1; fi
   else
     echo "  ❌ pytest is not installed; install dev deps (pip install -e '.[all,dev]') before pushing code changes"
     FAIL=1

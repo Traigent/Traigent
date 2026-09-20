@@ -137,9 +137,13 @@ EOF
       ;;
     2)
       cat <<'EOF'
+from traigent.core.objectives import create_default_objectives
+
 @traigent.optimize(
     eval_dataset=DATASET,
-    objectives=["json_score"],
+    objectives=create_default_objectives(
+        ["json_score"], orientations={"json_score": "maximize"}
+    ),
     configuration_space={
         "temperature": [0.0, 0.2],
         "format_hint": ["strict_json", "relaxed_json"],

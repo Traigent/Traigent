@@ -114,8 +114,8 @@ class CloudOptimizer(BaseOptimizer):
             context: Optional TraigentConfig for accessing global configuration
             objective_schema: Optional declared objective schema. When supplied,
                 its ``orientation`` is authoritative for early-stopping
-                direction; name-pattern heuristics are only used for objectives
-                the schema does not declare.
+                direction. Without a declaration, only exact SDK-owned metric
+                defaults are accepted; custom names fail closed.
             **kwargs: Additional algorithm-specific configuration
         """
         super().__init__(
@@ -632,8 +632,8 @@ class CloudOptimizer(BaseOptimizer):
         """Return the declared orientation for *objective_name*, if any.
 
         Returns None when no schema was supplied or the schema does not declare
-        this objective, in which case callers fall back to name-pattern
-        heuristics for backward compatibility with string-only objective flows.
+        this objective. Callers may then resolve an exact SDK-owned default;
+        undeclared custom names raise instead of using spelling heuristics.
         """
         if self.objective_schema is None:
             return None

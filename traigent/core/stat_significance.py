@@ -366,7 +366,7 @@ def compute_significance(
             higher_is_better = not is_minimization_objective(obj_name)
             logger.warning(
                 "No explicit orientation for objective '%s'; "
-                "using heuristic (higher_is_better=%s)",
+                "using its exact SDK-owned default (higher_is_better=%s)",
                 obj_name,
                 higher_is_better,
             )

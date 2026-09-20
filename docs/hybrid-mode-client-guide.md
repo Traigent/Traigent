@@ -640,7 +640,7 @@ If these are missing, optimization may still run locally but backend sync can be
 
 Traigent can optimize for any metrics you return. The `objectives` parameter accepts two forms:
 
-**Shorthand — a list of metric names.** Direction is inferred from the name: `accuracy`, `precision`, `recall`, and `f1` default to *maximize*; `cost`, `latency`, `error`, `loss`, `time`, and `memory` default to *minimize*. Unknown names default to *maximize*.
+**Shorthand — a list of SDK-owned metric names.** Exact reserved names have fixed defaults; for example, `accuracy` defaults to *maximize*, while `cost`, `total_cost`, and `latency` default to *minimize*. Any other name, including a similar-looking name such as `accuracy_score`, raises `ValueError` unless you use the explicit form below. No substring or spelling-based inference is applied.
 
 ```python
 @traigent.optimize(

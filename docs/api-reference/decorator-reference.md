@@ -115,9 +115,9 @@ def optimize(
 )
 ```
 
-Traigent automatically infers:
+For exact SDK-owned objective names, Traigent supplies:
 
-- **Orientations**: Maximize for accuracy-like metrics, minimize for cost/latency
+- **Orientations**: Fixed defaults, such as maximize for `accuracy` and minimize for `cost`/`latency`; custom names require an explicit `ObjectiveSchema`
 - **Weights**: Equal weights for all objectives
 
 **ObjectiveSchema Form** (Advanced):
@@ -126,8 +126,8 @@ Traigent automatically infers:
 from traigent.core.objectives import ObjectiveSchema, ObjectiveDefinition
 
 @traigent.optimize(
-    objectives=ObjectiveSchema(
-        definitions=[
+    objectives=ObjectiveSchema.from_objectives(
+        [
             ObjectiveDefinition(name="accuracy", weight=2.0, orientation="maximize"),
             ObjectiveDefinition(name="cost", weight=1.0, orientation="minimize"),
             ObjectiveDefinition(name="latency", weight=0.5, orientation="minimize"),
@@ -152,8 +152,8 @@ from traigent.core.objectives import ObjectiveSchema, ObjectiveDefinition
 from traigent.tvl.models import BandTarget
 
 @traigent.optimize(
-    objectives=ObjectiveSchema(
-        definitions=[
+    objectives=ObjectiveSchema.from_objectives(
+        [
             ObjectiveDefinition(name="accuracy", weight=2.0, orientation="maximize"),
             # Banded objective: target response length between 100-200 tokens
             ObjectiveDefinition(
@@ -683,8 +683,8 @@ def medical_assistant(query: str) -> str:
 from traigent.core.objectives import ObjectiveSchema, ObjectiveDefinition
 
 @traigent.optimize(
-    objectives=ObjectiveSchema(
-        definitions=[
+    objectives=ObjectiveSchema.from_objectives(
+        [
             ObjectiveDefinition(name="accuracy", weight=3.0, orientation="maximize"),
             ObjectiveDefinition(name="cost", weight=1.0, orientation="minimize"),
             ObjectiveDefinition(name="latency", weight=0.5, orientation="minimize"),

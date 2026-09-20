@@ -30,7 +30,7 @@ def is_minimization_objective(
 
     When *orientation* is supplied (the value from an
     ``ObjectiveDefinition.orientation`` field), it is used directly and
-    name-pattern heuristics are bypassed:
+    no name-based default is consulted:
 
     * ``"minimize"`` → ``True``
     * ``"maximize"`` → ``False``
