@@ -16,6 +16,12 @@ from traigent.config_generator.apply import (
 )
 from traigent.config_generator.types import AutoConfigResult, ObjectiveSpec, TVarSpec
 
+_GENERATED_IMPORTS = (
+    "import traigent\n"
+    "from traigent import Range\n"
+    "from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema\n\n"
+)
+
 
 @pytest.fixture(autouse=True)
 def _allow_tmp_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -50,9 +56,7 @@ def test_adds_imports_after_module_docstring(
 
     apply_config(src, result_with_tvars, "my_func", backup=False)
 
-    assert src.read_text().startswith(
-        '"""Agent module."""\nimport traigent\nfrom traigent import Range\n\n'
-    )
+    assert src.read_text().startswith('"""Agent module."""\n' + _GENERATED_IMPORTS)
 
 
 def test_adds_imports_after_shebang_and_encoding_comment(
@@ -71,10 +75,7 @@ def test_adds_imports_after_shebang_and_encoding_comment(
     apply_config(src, result_with_tvars, "my_func", backup=False)
 
     assert src.read_text().startswith(
-        "#!/usr/bin/env python3\n"
-        "# -*- coding: utf-8 -*-\n"
-        "import traigent\n"
-        "from traigent import Range\n\n"
+        "#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n" + _GENERATED_IMPORTS
     )
 
 
@@ -93,9 +94,7 @@ def test_adds_imports_after_future_import(
     apply_config(src, result_with_tvars, "my_func", backup=False)
 
     assert src.read_text().startswith(
-        "from __future__ import annotations\n"
-        "import traigent\n"
-        "from traigent import Range\n\n"
+        "from __future__ import annotations\n" + _GENERATED_IMPORTS
     )
 
 
