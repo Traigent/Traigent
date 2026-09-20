@@ -22,6 +22,7 @@ import pytest
 
 import traigent
 from traigent.api.types import (
+    ExampleResult,
     OptimizationResult,
     OptimizationStatus,
     TrialResult,
@@ -88,6 +89,37 @@ async def _run_grid(local_storage_path: str | None = None):
     return await answer.optimize(algorithm="grid")
 
 
+async def _run_custom_metric_grid(local_storage_path: str):
+    schema = create_default_objectives(
+        ["plugin_quality"], orientations={"plugin_quality": "maximize"}
+    )
+
+    def evaluator(func, config, example):
+        return ExampleResult(
+            example_id="custom",
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output="ok",
+            metrics={"plugin_quality": 1.0 if config["x"] == "b" else 0.1},
+            execution_time=0.001,
+            success=True,
+        )
+
+    @traigent.optimize(
+        eval_dataset=_dataset(),
+        objectives=schema,
+        configuration_space=_SPACE,
+        custom_evaluator=evaluator,
+        injection_mode="parameter",
+        offline=True,
+        local_storage_path=local_storage_path,
+    )
+    def answer(text: str, config) -> str:
+        return "ok"
+
+    return await answer.optimize(algorithm="grid")
+
+
 @pytest.mark.asyncio
 async def test_no_key_run_exposes_syncable_session_id(monkeypatch, tmp_path) -> None:
     """The issue repro: no API key, so the local store owns the run."""
@@ -134,6 +166,27 @@ async def test_no_key_run_exposes_syncable_session_id(monkeypatch, tmp_path) -> 
     outcome = sync.sync_session_to_cloud(result.sync_session_id, dry_run=True)
     assert outcome["status"] == "success"
     assert outcome["trials_converted"] == len(result.trials)
+
+
+@pytest.mark.asyncio
+async def test_offline_custom_objective_persists_every_trial(
+    monkeypatch, tmp_path, caplog
+) -> None:
+    _isolated_env(monkeypatch, tmp_path)
+    custom_store = tmp_path / "custom_metric_store"
+
+    with caplog.at_level(logging.WARNING):
+        result = await _run_custom_metric_grid(str(custom_store))
+
+    storage = LocalStorageManager(str(custom_store))
+    session = storage.load_session(result.sync_session_id)
+    assert session is not None
+    assert len(session.trials) == 2
+    assert session.best_config == {"x": "b"}
+    assert "Local trial persistence failed" not in caplog.text
+    assert (session.optimization_config or {}).get("objective_orientations") == {
+        "plugin_quality": "maximize"
+    }
 
 
 @pytest.mark.asyncio

@@ -57,6 +57,8 @@ except ImportError as e:
     print("Please install traigent and rich: pip install traigent rich")
     sys.exit(1)
 
+from traigent.core.objectives import create_default_objectives
+
 # Import local components
 from context_config import CONTEXT_ENGINEERING_SEARCH_SPACE, create_context_config
 from dataset import (
@@ -227,12 +229,15 @@ def create_evaluation_function(dataset: RAGDataset) -> Callable:
             )
         )()
     ),
-    objectives=[
-        "answer_quality",  # Primary: maximize answer quality
-        "-cost_per_query",  # Primary: minimize cost (- prefix means minimize)
-        "retrieval_f1",  # Secondary: maximize retrieval accuracy
-        "-latency_p95_ms",  # Secondary: minimize latency (- prefix means minimize)
-    ],
+    objectives=create_default_objectives(
+        ["answer_quality", "cost_per_query", "retrieval_f1", "latency_p95_ms"],
+        orientations={
+            "answer_quality": "maximize",
+            "cost_per_query": "minimize",
+            "retrieval_f1": "maximize",
+            "latency_p95_ms": "minimize",
+        },
+    ),
     offline=True,  # Run locally with no Traigent backend egress
     # REMOVED: direction, max_trials, timeout_minutes (these don't exist in decorator API)
 )

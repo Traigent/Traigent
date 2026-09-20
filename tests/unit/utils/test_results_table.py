@@ -23,6 +23,7 @@ from traigent.api.types import (
 )
 from traigent.utils.results_table import (
     _find_best_per_objective,
+    _find_best_trial,
     _format_metric_value,
     _get_objective_info,
     _trials_all_failed,
@@ -45,6 +46,48 @@ def _trial(
         duration=0.1,
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
         metadata=metadata or {},
+    )
+
+
+def test_find_best_trial_refuses_band_without_target_bounds() -> None:
+    trials = [
+        _trial(
+            {"length": "in-band"},
+            {"response_length": 100.0},
+            trial_id="in-band",
+        ),
+        _trial(
+            {"length": "too-long"},
+            {"response_length": 180.0},
+            trial_id="too-long",
+        ),
+    ]
+
+    assert (
+        _find_best_trial(
+            trials,
+            ["response_length"],
+            metric_info=[("response_length", "band")],
+        )
+        is None
+    )
+
+
+def test_find_best_trial_honors_declared_primary_order() -> None:
+    cheap = _trial({"model": "cheap"}, {"cost": 0.1, "accuracy": 0.8}, trial_id="cheap")
+    accurate = _trial(
+        {"model": "accurate"},
+        {"cost": 0.9, "accuracy": 1.0},
+        trial_id="accurate",
+    )
+
+    assert (
+        _find_best_trial(
+            [cheap, accurate],
+            ["cost", "accuracy"],
+            metric_info=[("cost", "minimize"), ("accuracy", "maximize")],
+        )
+        is cheap
     )
 
 

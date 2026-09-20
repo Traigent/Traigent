@@ -327,7 +327,12 @@ config_space = {
     "model": ["o4-mini", "GPT-4o", "claude-2"]
 }
 
-objectives = ["response_quality", "latency", "cost_per_token"]
+from traigent.core.objectives import create_default_objectives
+
+objectives = create_default_objectives(
+    ["response_quality", "latency", "cost_per_token"],
+    orientations={"response_quality": "maximize", "cost_per_token": "minimize"},
+)
 ```
 
 ### 2. ML Model Hyperparameter Optimization
@@ -341,7 +346,16 @@ config_space = {
     "dropout_rate": (0.0, 0.5)
 }
 
-objectives = ["validation_accuracy", "training_time", "model_size"]
+from traigent.core.objectives import create_default_objectives
+
+objectives = create_default_objectives(
+    ["validation_accuracy", "training_time", "model_size"],
+    orientations={
+        "validation_accuracy": "maximize",
+        "training_time": "minimize",
+        "model_size": "minimize",
+    },
+)
 ```
 
 ### 3. System Configuration Optimization
@@ -355,7 +369,12 @@ config_space = {
     "compression": ["none", "gzip", "zstd"]
 }
 
-objectives = ["throughput", "latency_p99", "error_rate"]
+from traigent.core.objectives import create_default_objectives
+
+objectives = create_default_objectives(
+    ["throughput", "latency_p99", "error_rate"],
+    orientations={"throughput": "maximize", "latency_p99": "minimize"},
+)
 ```
 
 ## Troubleshooting

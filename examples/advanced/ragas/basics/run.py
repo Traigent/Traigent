@@ -19,6 +19,7 @@ except ImportError:  # pragma: no cover
 
 from traigent.metrics import configure_ragas_defaults  # noqa: E402
 from traigent.metrics.ragas_metrics import POPULAR_RAGAS_METRICS  # noqa: E402
+from traigent.core.objectives import create_default_objectives  # noqa: E402
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -56,7 +57,10 @@ _GENERIC_RESPONSES = {
 
 @traigent.optimize(
     eval_dataset=DATASET,
-    objectives=list(SUPPORTED_RAGAS_METRICS),
+    objectives=create_default_objectives(
+        list(SUPPORTED_RAGAS_METRICS),
+        orientations=dict.fromkeys(SUPPORTED_RAGAS_METRICS, "maximize"),
+    ),
     configuration_space={
         "strategy": ["grounded_lookup", "vague_guess"],
         "tone": ["direct", "rambling"],

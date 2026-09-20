@@ -29,6 +29,8 @@ except ImportError:  # pragma: no cover - support IDE execution paths
                 continue
     traigent = importlib.import_module("traigent")
 
+from traigent.core.objectives import create_default_objectives
+
 try:
     from langchain_openai import ChatOpenAI  # type: ignore
 except Exception:
@@ -117,7 +119,10 @@ def _contains_accuracy(
         "max_tokens": [100, 200],
     },
     eval_dataset=DATASET_FILE,
-    objectives=["accuracy", "cost", "response_time"],
+    objectives=create_default_objectives(
+        ["accuracy", "cost", "response_time"],
+        orientations={"response_time": "minimize"},
+    ),
     metric_functions={"accuracy": _contains_accuracy},
     offline=True,
     max_trials=10,

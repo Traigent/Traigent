@@ -321,6 +321,7 @@ class BaseOptimizer(ABC):
         self._trial_count = 0
         self._best_score = None
         self._best_config = None
+        self._best_band_distance = None
         self._tried_config_hashes.clear()
 
     def _get_dict_param_cardinality(self, definition: dict[str, Any]) -> int | None:

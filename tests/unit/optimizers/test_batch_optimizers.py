@@ -824,6 +824,29 @@ class TestBaseOptimizerKwargForwarding:
         # Skewed weights toward the higher-value metric must score above equal weights.
         assert skewed_score > equal_score
 
+    def test_parallel_batch_ignores_passive_evaluator_metrics(self):
+        from traigent.core.objectives import create_default_objectives
+
+        schema = create_default_objectives(
+            ["quality"], orientations={"quality": "maximize"}
+        )
+        optimizer = get_optimizer(
+            "parallel_batch",
+            self.config_space,
+            ["quality"],
+            objective_schema=schema,
+        )
+
+        score = optimizer._calculate_composite_score(
+            {
+                "quality": 0.8,
+                "total_cost": 100.0,
+                "examples_attempted": 20.0,
+            }
+        )
+
+        assert score == 0.8
+
     def test_adaptive_batch_weights_affect_composite_score(self):
         """Forwarded objective_weights actually change composite scoring output."""
         equal = get_optimizer(
@@ -965,7 +988,10 @@ class TestObjectiveOrientationInCompositeScore:
     def test_minimize_objectives_resolved_on_base(self):
         """Optimizers expose the resolved minimize-objective list (#1466)."""
         optimizer = get_optimizer(
-            "grid", self.config_space, ["accuracy", "cost", "latency", "error"]
+            "grid",
+            self.config_space,
+            ["accuracy", "cost", "latency", "error"],
+            objective_orientations={"error": "minimize"},
         )
         assert set(optimizer._minimize_objectives) == {"cost", "latency", "error"}
         assert "accuracy" not in optimizer._minimize_objectives

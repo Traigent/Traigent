@@ -27,6 +27,7 @@ sys.path.insert(
     0, os.environ.get("TRAIGENT_SDK_PATH", str(Path(__file__).parent.parent))
 )
 
+from traigent.core.objectives import create_default_objectives  # noqa: E402
 from traigent.utils.logging import setup_logging  # noqa: E402
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
@@ -292,6 +293,7 @@ class ScenarioConfig:
     scenario_notes: str
     offline: bool
     objectives: list[str]
+    objective_orientations: dict[str, str]
     algorithm: str
     max_trials: int
     configuration_space: dict[str, Any]
@@ -543,17 +545,24 @@ def _parse_row_config(row_id: int) -> ScenarioConfig:
         "thread_workers": thread_workers,
     }
 
+    objectives = _parse_json(row.get("objectives"), ["accuracy"]) or ["accuracy"]
+    objective_orientations = _parse_json(row.get("objective_orientations"), {}) or {}
+    evaluator_type = (row.get("evaluator") or "default").strip()
+    if evaluator_type == "scoring_function" and objectives == ["score"]:
+        objective_orientations.setdefault("score", "maximize")
+
     return ScenarioConfig(
         row_id=row_id,
         name=row.get("name", f"Scenario {row_id}"),
         description=row.get("description", ""),
         scenario_notes=row.get("scenario_notes", ""),
         offline=_to_bool(row.get("offline", "false")),
-        objectives=_parse_json(row.get("objectives"), ["accuracy"]) or ["accuracy"],
+        objectives=objectives,
+        objective_orientations=objective_orientations,
         algorithm=(row.get("algorithm") or "grid").strip(),
         max_trials=int(row.get("max_trials") or 6),
         configuration_space=_parse_json(row.get("configuration_space"), {}) or {},
-        evaluator_type=(row.get("evaluator") or "default").strip(),
+        evaluator_type=evaluator_type,
         scoring_function_name=(row.get("scoring_function") or "").strip(),
         injection_mode=(row.get("injection_mode") or "context").strip(),
         framework_targets=_parse_json(row.get("framework_targets"), []) or [],
@@ -577,7 +586,9 @@ def _resolve_dataset_path(dataset: str) -> str:
 def _build_optimize_kwargs(config: ScenarioConfig, dataset_path: str) -> dict[str, Any]:
     return {
         "eval_dataset": dataset_path,
-        "objectives": config.objectives,
+        "objectives": create_default_objectives(
+            config.objectives, orientations=config.objective_orientations
+        ),
         "configuration_space": config.configuration_space,
         "offline": config.offline,
         "injection_mode": config.injection_mode,

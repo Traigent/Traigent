@@ -587,13 +587,32 @@ def scalarize_objectives(
 
     # Use ObjectiveSchema if provided (overrides other params)
     if objective_schema is not None:
+        declared_values: dict[str, float] = {}
         weights = {}
         minimize_objectives = []
 
         for obj_def in objective_schema.objectives:
             weights[obj_def.name] = obj_def.weight
+            if obj_def.name not in objectives:
+                continue
+            value = objectives[obj_def.name]
+            if obj_def.orientation == "band":
+                band = obj_def.band
+                if band is None or band.low is None or band.high is None:
+                    raise ValueError(
+                        f"Banded objective {obj_def.name!r} requires a complete target band"
+                    )
+                if band.low <= value <= band.high:
+                    declared_values[obj_def.name] = 0.0
+                else:
+                    declared_values[obj_def.name] = -float(
+                        min(abs(value - band.low), abs(value - band.high))
+                    )
+                continue
+            declared_values[obj_def.name] = value
             if obj_def.orientation == "minimize":
                 minimize_objectives.append(obj_def.name)
+        objectives = declared_values
 
     # No explicit list: resolve exact SDK-owned defaults. An explicitly empty
     # list remains the deliberate all-maximize declaration.

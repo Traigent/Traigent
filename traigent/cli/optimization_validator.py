@@ -77,7 +77,10 @@ class OptimizationValidator:
             # Step 3: Compare using Pareto efficiency
             console.print("⚖️  Comparing results using Pareto efficiency...")
             is_superior, improvement_details = self._compare_results(
-                baseline_metrics, optimized_metrics, func_info.objectives
+                baseline_metrics,
+                optimized_metrics,
+                func_info.objectives,
+                objective_orientations=self._objective_orientations(func_info),
             )
 
             return ValidationResult(
@@ -124,6 +127,17 @@ class OptimizationValidator:
         config_space = func_info.decorator_config.get("configuration_space", {})
         if not config_space:
             issues.append("No configuration space specified")
+
+        banded = [
+            name
+            for name, orientation in self._objective_orientations(func_info).items()
+            if orientation == "band"
+        ]
+        if banded:
+            issues.append(
+                "CLI validation does not support target-band objectives: "
+                + ", ".join(banded)
+            )
 
         return issues
 
@@ -305,6 +319,7 @@ class OptimizationValidator:
         baseline_metrics: dict[str, float],
         optimized_metrics: dict[str, float],
         objectives: list[str],
+        objective_orientations: dict[str, str] | None = None,
     ) -> tuple[bool, dict[str, float]]:
         """Compare baseline vs optimized results using Pareto efficiency.
 
@@ -331,7 +346,9 @@ class OptimizationValidator:
 
         # Define maximize behavior (assume we want to maximize all metrics by default)
         # This should be configurable based on objective types (accuracy=maximize, cost=minimize)
-        maximize_config = self._get_maximize_config(objectives)
+        maximize_config = self._get_maximize_config(
+            objectives, objective_orientations=objective_orientations
+        )
 
         # Check if optimized dominates baseline over the CONFIGURED objective
         # set (not just whichever metrics both points happen to report), so a
@@ -371,7 +388,19 @@ class OptimizationValidator:
 
         return is_superior, improvement_details
 
-    def _get_maximize_config(self, objectives: list[str]) -> dict[str, bool]:
+    @staticmethod
+    def _objective_orientations(func_info: OptimizedFunction) -> dict[str, str]:
+        schema = getattr(func_info.func, "objective_schema", None)
+        definitions = getattr(schema, "objectives", [])
+        return {
+            definition.name: str(definition.orientation) for definition in definitions
+        }
+
+    def _get_maximize_config(
+        self,
+        objectives: list[str],
+        objective_orientations: dict[str, str] | None = None,
+    ) -> dict[str, bool]:
         """Get maximize configuration for objectives.
 
         Args:
@@ -380,10 +409,18 @@ class OptimizationValidator:
         Returns:
             Dictionary mapping objective names to maximize boolean
         """
-        return {
-            objective: resolve_objective_orientation(objective) == "maximize"
-            for objective in objectives
-        }
+        maximize_config: dict[str, bool] = {}
+        for objective in objectives:
+            explicit = (objective_orientations or {}).get(objective)
+            if explicit == "band":
+                raise ValueError(
+                    "CLI validation does not support target-band objective "
+                    f"'{objective}'"
+                )
+            maximize_config[objective] = (
+                resolve_objective_orientation(objective, explicit) == "maximize"
+            )
+        return maximize_config
 
     def _check_superior_criteria(
         self, pareto_dominates: bool, improvement_details: dict[str, float]

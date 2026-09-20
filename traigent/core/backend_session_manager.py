@@ -1760,6 +1760,14 @@ class BackendSessionManager:
                 "baseline_config": None,
                 "objectives": list(self._objectives or []),
             }
+            if self._objective_schema is not None:
+                optimization_config["objective_schema"] = (
+                    self._objective_schema.to_dict()
+                )
+                optimization_config["objective_orientations"] = {
+                    objective.name: objective.orientation
+                    for objective in self._objective_schema.objectives
+                }
             metadata: dict[str, Any] = {
                 "optimization_id": self._optimization_id,
                 "max_trials": max_trials,

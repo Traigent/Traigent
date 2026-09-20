@@ -370,9 +370,10 @@ class ParallelBatchOptimizer(BaseOptimizer):
 
         return float(
             scalarize_objectives(
-                metrics,
+                {name: metrics[name] for name in self.objectives if name in metrics},
                 self.objective_weights,
                 minimize_objectives=self._minimize_objectives,
+                objective_schema=self.objective_schema,
             )
         )
 
@@ -1083,8 +1084,9 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
 
         return float(
             scalarize_objectives(
-                metrics,
+                {name: metrics[name] for name in self.objectives if name in metrics},
                 self.objective_weights,
                 minimize_objectives=self._minimize_objectives,
+                objective_schema=self.objective_schema,
             )
         )

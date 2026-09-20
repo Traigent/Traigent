@@ -60,6 +60,7 @@ def privacy_optimizer(dummy_server):
             "max_tokens": [100, 200, 300],
         },
         objectives=["accuracy", "privacy_score", "latency"],
+        objective_orientations={"privacy_score": "maximize"},
         remote_service=dummy_server,
         dataset_metadata={
             "size": 50,
@@ -327,6 +328,7 @@ class TestPrivacyCompliance:
         InteractiveOptimizer(
             config_space={"param": [1, 2, 3]},
             objectives=["metric"],
+            objective_orientations={"metric": "maximize"},
             remote_service=dummy_server,
         )
 
@@ -612,6 +614,7 @@ class TestPrivacyEdgeCases:
         optimizer = InteractiveOptimizer(
             config_space={"param": [1, 2, 3]},
             objectives=["metric"],
+            objective_orientations={"metric": "maximize"},
             remote_service=dummy_server,
             dataset_metadata={},  # Empty metadata
         )
@@ -635,6 +638,7 @@ class TestPrivacyEdgeCases:
             opt = InteractiveOptimizer(
                 config_space={"param": [1, 2, 3]},
                 objectives=["metric"],
+                objective_orientations={"metric": "maximize"},
                 remote_service=dummy_server,
                 dataset_metadata={"size": 50, "session": i},
             )

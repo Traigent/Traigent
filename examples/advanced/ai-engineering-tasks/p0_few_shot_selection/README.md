@@ -303,13 +303,17 @@ class CachedExampleSelector:
 
 ### Multi-Objective Optimization
 ```python
+from traigent.core.objectives import create_default_objectives
+
 @traigent.optimize(
-    objectives=[
-        "accuracy",           # Primary: maximize accuracy
-        "consistency",        # Primary: maximize consistency
-        "-selection_latency", # Secondary: minimize latency
-        "diversity_score"     # Secondary: maximize diversity
-    ]
+    objectives=create_default_objectives(
+        ["accuracy", "consistency", "selection_latency", "diversity_score"],
+        orientations={
+            "consistency": "maximize",
+            "selection_latency": "minimize",
+            "diversity_score": "maximize",
+        },
+    )
 )
 def optimize_selection(**config):
     # Traigent finds optimal trade-offs

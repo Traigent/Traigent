@@ -12,6 +12,11 @@ from datetime import datetime
 from unittest.mock import MagicMock
 
 from traigent.api.types import TrialResult
+from traigent.core.objectives import (
+    ObjectiveDefinition,
+    ObjectiveSchema,
+    create_default_objectives,
+)
 from traigent.optimizers.batch_optimizers import MultiObjectiveBatchOptimizer
 from traigent.optimizers.grid import GridSearchOptimizer
 from traigent.utils.multi_objective import scalarize_objectives
@@ -30,6 +35,55 @@ class TestScalarizeObjectives:
         # Expected: (0.9 * 0.7 + 0.05 * 0.3) / (0.7 + 0.3) = (0.63 + 0.015) / 1.0 = 0.645
         expected_score = 0.645
         assert abs(score - expected_score) < 1e-10
+
+    def test_schema_scalarization_ignores_passive_metrics(self):
+        schema = create_default_objectives(
+            ["quality"], orientations={"quality": "maximize"}
+        )
+
+        assert (
+            scalarize_objectives(
+                {
+                    "quality": 0.8,
+                    "total_cost": 100.0,
+                    "examples_attempted": 20.0,
+                },
+                {},
+                objective_schema=schema,
+            )
+            == 0.8
+        )
+
+    def test_schema_scalarization_scores_band_by_target_distance(self):
+        from traigent.tvl.models import BandTarget
+
+        schema = ObjectiveSchema.from_objectives(
+            [
+                ObjectiveDefinition(
+                    name="response_length",
+                    orientation="band",
+                    weight=1.0,
+                    band=BandTarget(low=90.0, high=110.0),
+                )
+            ]
+        )
+
+        in_band = scalarize_objectives(
+            {"response_length": 100.0}, {}, objective_schema=schema
+        )
+        too_long = scalarize_objectives(
+            {"response_length": 180.0}, {}, objective_schema=schema
+        )
+
+        assert in_band > too_long
+        assert schema.normalize_value(
+            "response_length", 100.0
+        ) > schema.normalize_value("response_length", 180.0)
+        in_band_aggregate = schema.compute_aggregated_score({"response_length": 100.0})
+        too_long_aggregate = schema.compute_aggregated_score({"response_length": 180.0})
+        assert in_band_aggregate is not None
+        assert too_long_aggregate is not None
+        assert in_band_aggregate > too_long_aggregate
 
     def test_scalarize_equal_weights(self):
         """Test scalarization with equal weights."""

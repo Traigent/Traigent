@@ -8,6 +8,7 @@ import pytest
 
 from traigent.api.decorators import optimize
 from traigent.core.optimized_function import OptimizedFunction
+from traigent.core.objectives import create_default_objectives
 from traigent.evaluators.base import Dataset
 from traigent.utils.exceptions import ConfigurationError
 
@@ -588,7 +589,10 @@ class TestOptimizedFunctionIntegration:
 
         @optimize(
             configuration_space={"mode": ["fast", "accurate"]},
-            objectives=["speed", "quality"],
+            objectives=create_default_objectives(
+                ["speed", "quality"],
+                orientations={"speed": "minimize", "quality": "maximize"},
+            ),
         )
         def contextual_function(data: str, mode: str = "fast") -> dict:
             return {"data": data, "mode": mode, "result": len(data)}

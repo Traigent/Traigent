@@ -51,6 +51,8 @@ except ImportError as e:
     print("Please install traigent and rich: pip install traigent rich")
     sys.exit(1)
 
+from traigent.core.objectives import create_default_objectives
+
 # Import local components
 from dataset import (
     FewShotTask,
@@ -182,12 +184,14 @@ def _create_dummy_eval_dataset() -> str:
 @traigent.optimize(
     configuration_space=EXAMPLE_SELECTION_SEARCH_SPACE,
     eval_dataset=_create_dummy_eval_dataset(),
-    objectives=[
-        "accuracy",  # Primary: maximize accuracy
-        "consistency",  # Primary: maximize consistency (1 - variance)
-        "-selection_latency_ms",  # Secondary: minimize latency
-        "diversity_score",  # Secondary: maximize diversity
-    ],  # We want to maximize our primary objectives
+    objectives=create_default_objectives(
+        ["accuracy", "consistency", "selection_latency_ms", "diversity_score"],
+        orientations={
+            "consistency": "maximize",
+            "selection_latency_ms": "minimize",
+            "diversity_score": "maximize",
+        },
+    ),
     offline=True,  # Run locally with no Traigent backend egress
 )
 def optimize_few_shot_selection(

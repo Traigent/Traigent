@@ -13,6 +13,7 @@ os.environ.setdefault("TRAIGENT_FORCE_LOCAL", "true")
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
 import traigent  # noqa: E402
+from traigent.core.objectives import create_default_objectives  # noqa: E402
 from traigent.metrics import MetricSpec, register_metric, reset_registry  # noqa: E402
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
@@ -60,7 +61,10 @@ _RESPONSES: dict[str, dict[str, str]] = {
 
 @traigent.optimize(
     eval_dataset=DATASET,
-    objectives=["accuracy", "partial_credit", "total_cost"],
+    objectives=create_default_objectives(
+        ["accuracy", "partial_credit", "total_cost"],
+        orientations={"partial_credit": "maximize"},
+    ),
     configuration_space={"strategy": list(_RESPONSES.keys())},
     metric_functions={
         "accuracy": accuracy_metric,

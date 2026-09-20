@@ -30,10 +30,13 @@ Replace the provider-specific import and LLM instantiation in `run.py` with:
 import os
 from langchain_openai import ChatOpenAI
 import traigent
+from traigent.core.objectives import create_default_objectives
 
 @traigent.optimize(
     eval_dataset="examples/datasets/text-to-sql/evaluation_set.jsonl",
-    objectives=["sql_accuracy"],
+    objectives=create_default_objectives(
+        ["sql_accuracy"], orientations={"sql_accuracy": "maximize"}
+    ),
     configuration_space={
         # Use paid models — free-tier slots (:free suffix on OpenRouter) hit
         # 429 rate limits under the example's trial concurrency and will score

@@ -125,6 +125,7 @@ python main.py
 
 ```python
 import traigent
+from traigent.core.objectives import create_default_objectives
 from extraction_config import EXTRACTION_SEARCH_SPACE
 from evaluator import extract_structured
 from dataset import generate_evaluation_dataset
@@ -135,8 +136,14 @@ dataset = generate_evaluation_dataset(total_samples=500)
 # Configure Traigent optimization
 @traigent.optimize(
     config_space=EXTRACTION_SEARCH_SPACE,
-    objectives=["parsing_success_rate", "field_micro_f1", "-latency_p95_ms"],
-    direction="maximize",
+    objectives=create_default_objectives(
+        ["parsing_success_rate", "field_micro_f1", "latency_p95_ms"],
+        orientations={
+            "parsing_success_rate": "maximize",
+            "field_micro_f1": "maximize",
+            "latency_p95_ms": "minimize",
+        },
+    ),
     max_trials=100
 )
 def optimize_extraction(**config):

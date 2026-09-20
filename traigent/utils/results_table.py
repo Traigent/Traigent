@@ -274,15 +274,16 @@ def _find_best_trial(
         return None
 
     orientation_by_metric = dict(metric_info or [])
-    primary_metric = (
-        "accuracy"
-        if "accuracy" in metric_names
-        else (metric_names[0] if metric_names else None)
-    )
+    primary_metric = metric_names[0] if metric_names else None
     if primary_metric is None:
         return eligible_trials[0]
 
-    is_minimize = orientation_by_metric.get(primary_metric) == "minimize"
+    orientation = orientation_by_metric.get(primary_metric)
+    if orientation == "band":
+        # The table lacks the target bounds needed to compute band distance.
+        # Let the persisted best trial/config fallback identify the winner.
+        return None
+    is_minimize = orientation == "minimize"
     chooser = min if is_minimize else max
     missing = float("inf") if is_minimize else float("-inf")
 

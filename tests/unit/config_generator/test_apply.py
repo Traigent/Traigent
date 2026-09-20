@@ -88,6 +88,21 @@ class TestApplyConfig:
         assert "Range(low=0.0, high=1.0)" in modified
         assert "def answer_question" in modified
 
+    def test_applied_generated_objective_schema_executes(
+        self, tmp_path: Path, simple_source: str, result_with_tvars: AutoConfigResult
+    ) -> None:
+        src = tmp_path / "agent.py"
+        src.write_text(simple_source)
+
+        apply_config(src, result_with_tvars, "answer_question", backup=False)
+
+        namespace: dict[str, object] = {}
+        exec(compile(src.read_text(), str(src), "exec"), namespace)
+        wrapped = namespace["answer_question"]
+        schema = wrapped.objective_schema
+        assert schema.objectives[0].name == "accuracy"
+        assert schema.objectives[0].orientation == "maximize"
+
     def test_backup_created(
         self, tmp_path: Path, simple_source: str, result_with_tvars: AutoConfigResult
     ) -> None:

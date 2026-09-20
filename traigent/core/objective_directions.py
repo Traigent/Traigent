@@ -32,9 +32,7 @@ _CANONICAL_OBJECTIVE_ORIENTATIONS: dict[str, ObjectiveOrientation] = {
     "truncated_output_rate": "minimize",
 }
 
-CANONICAL_OBJECTIVE_ORIENTATIONS = MappingProxyType(
-    _CANONICAL_OBJECTIVE_ORIENTATIONS
-)
+CANONICAL_OBJECTIVE_ORIENTATIONS = MappingProxyType(_CANONICAL_OBJECTIVE_ORIENTATIONS)
 
 
 def _missing_orientation_error(name: str) -> ValueError:

@@ -102,9 +102,7 @@ def test_prepare_objectives_does_not_swallow_missing_orientation() -> None:
 
 
 def test_results_table_object_without_orientation_uses_canonical_resolver() -> None:
-    objectives = SimpleNamespace(
-        objectives=[SimpleNamespace(name="total_cost")]
-    )
+    objectives = SimpleNamespace(objectives=[SimpleNamespace(name="total_cost")])
     assert _get_objective_info(objectives) == [("total_cost", "minimize")]
 
 
@@ -124,9 +122,7 @@ def test_results_table_observes_canonical_resolver_mutation(
             return "minimize"
         return original(name, explicit)
 
-    monkeypatch.setattr(
-        objective_directions, "resolve_objective_orientation", mutated
-    )
+    monkeypatch.setattr(objective_directions, "resolve_objective_orientation", mutated)
     assert _get_objective_info(["accuracy"]) == [("accuracy", "minimize")]
 
 
@@ -165,11 +161,7 @@ def test_public_decorator_rejects_unknown_bare_objective_early(
 
 def test_public_decorator_preserves_declared_custom_orientation() -> None:
     schema = ObjectiveSchema.from_objectives(
-        [
-            ObjectiveDefinition(
-                name="plugin_quality", orientation="maximize", weight=1.0
-            )
-        ]
+        [ObjectiveDefinition(name="plugin_quality", orientation="maximize", weight=1.0)]
     )
 
     @optimize(
@@ -188,9 +180,7 @@ def test_backend_wire_preserves_declared_custom_direction() -> None:
     from traigent.core.orchestrator import OptimizationOrchestrator
 
     wire = OptimizationOrchestrator._session_objective_to_wire(
-        ObjectiveDefinition(
-            name="plugin_quality", orientation="minimize", weight=1.0
-        )
+        ObjectiveDefinition(name="plugin_quality", orientation="minimize", weight=1.0)
     )
     assert wire == {
         "name": "plugin_quality",
@@ -243,3 +233,18 @@ def test_optimizer_preserves_custom_band_target_semantics() -> None:
     assert optimizer.objective_orientations == {"response_length": "band"}
     assert optimizer.best_config == {"temperature": 0.0}
     assert optimizer.best_score == 100.0
+
+    optimizer.reset()
+    optimizer.update_best(
+        TrialResult(
+            trial_id="second-run-in-band",
+            config={"temperature": 1.0},
+            metrics={"response_length": 105.0},
+            status=TrialStatus.COMPLETED,
+            duration=0.1,
+            timestamp=0.0,
+        )
+    )
+
+    assert optimizer.best_config == {"temperature": 1.0}
+    assert optimizer.best_score == 105.0
