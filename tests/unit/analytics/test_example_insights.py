@@ -289,7 +289,7 @@ class TestGetExampleScores:
         """The Backend success envelope exposes the mapping under data.scores."""
         from traigent.analytics.example_insights import ExampleInsightsClient
 
-        client = ExampleInsightsClient(api_key="test")
+        client = ExampleInsightsClient(api_key="example_key")
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "success": True,
