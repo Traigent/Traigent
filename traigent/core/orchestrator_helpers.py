@@ -118,18 +118,12 @@ def prepare_objectives(
     Returns:
         Tuple of (prepared_objectives_list, objective_schema)
         - prepared_objectives_list: List of objective names with None values filtered
-        - objective_schema: Provided schema or newly created default schema (may be None if creation fails)
+        - objective_schema: Provided schema or newly created default schema
     """
     prepared = [obj for obj in (objectives or ["accuracy"]) if obj]
     schema = objective_schema
     if schema is None and prepared:
-        try:
-            schema = create_default_objectives([str(name) for name in prepared])
-        except Exception as exc:
-            logger.debug(
-                "Failed to construct default objective schema: %s",
-                exc,
-            )
+        schema = create_default_objectives([str(name) for name in prepared])
     return prepared, schema
 
 

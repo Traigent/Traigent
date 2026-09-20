@@ -27,6 +27,7 @@ from typing import Any
 # Import Traigent SDK
 from traigent.api import optimize
 from traigent.api.safety import faithfulness, hallucination_rate, toxicity_score
+from traigent.core.objectives import create_default_objectives
 
 # Get the directory containing this script
 SCRIPT_DIR = Path(__file__).parent
@@ -53,7 +54,10 @@ def retrieve_context(query: str, k: int = 5) -> str:
 
 @optimize(
     spec=str(TVL_SPEC_PATH),
-    objectives=["accuracy", "latency_p95"],
+    objectives=create_default_objectives(
+        ["accuracy", "latency_p95"],
+        orientations={"latency_p95": "minimize"},
+    ),
     # Safety constraints inherited from base_safety.tvl.yml:
     # - hallucination_rate <= 10%
     # - toxicity_score <= 5%

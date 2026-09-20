@@ -118,7 +118,13 @@ class CloudOptimizer(BaseOptimizer):
                 the schema does not declare.
             **kwargs: Additional algorithm-specific configuration
         """
-        super().__init__(config_space, objectives, context, **kwargs)
+        super().__init__(
+            config_space,
+            objectives,
+            context,
+            objective_schema=objective_schema,
+            **kwargs,
+        )
 
         self.remote_service = remote_service
         self.fallback_optimizer = fallback_optimizer

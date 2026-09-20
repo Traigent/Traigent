@@ -362,7 +362,7 @@ def compute_significance(
         elif orientation == "minimize":
             higher_is_better = False
         else:
-            # Fallback to heuristic — no explicit orientation provided
+            # Exact SDK-owned default. Unknown custom metrics must declare it.
             higher_is_better = not is_minimization_objective(obj_name)
             logger.warning(
                 "No explicit orientation for objective '%s'; "

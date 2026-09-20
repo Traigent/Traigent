@@ -654,8 +654,15 @@ def process_ticket(ticket: str) -> str:
 ### No-Egress Local Storage
 
 ```python
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+
+safety_objectives = ObjectiveSchema.from_objectives([
+    ObjectiveDefinition("accuracy", orientation="maximize", weight=1.0),
+    ObjectiveDefinition("safety", orientation="maximize", weight=1.0),
+])
+
 @traigent.optimize(
-    objectives=["accuracy", "safety"],
+    objectives=safety_objectives,
     configuration_space={
         "model": ["gpt-4", "claude-3-sonnet"],
         "temperature": [0.1, 0.3, 0.5],

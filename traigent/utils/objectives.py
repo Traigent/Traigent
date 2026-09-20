@@ -7,14 +7,7 @@ from __future__ import annotations
 import math
 from typing import Any, Literal
 
-_MINIMIZE_OBJECTIVE_PATTERNS = (
-    "cost",
-    "latency",
-    "error",
-    "loss",
-    "time",
-    "duration",
-)
+from traigent.core.objective_directions import resolve_objective_orientation
 
 _QUALITY_OBJECTIVE_NAMES = {
     "accuracy",
@@ -43,15 +36,12 @@ def is_minimization_objective(
     * ``"maximize"`` → ``False``
     * ``"band"``     → ``False`` (banded objectives use deviation, not direction)
 
-    When *orientation* is ``None`` this falls back to substring matching of
-    *objective_name* against ``_MINIMIZE_OBJECTIVE_PATTERNS``.  This heuristic
-    is retained for backward compatibility with legacy string-only objective
-    flows and can misclassify compound names like ``"accuracy_cost_ratio"``.
+    When *orientation* is ``None``, only exact SDK-owned metric defaults are
+    accepted. Unknown custom metrics must declare an orientation.
     """
-    if orientation is not None:
-        return orientation == "minimize"
-    lowered = objective_name.lower()
-    return any(pattern in lowered for pattern in _MINIMIZE_OBJECTIVE_PATTERNS)
+    if orientation == "band":
+        return False
+    return resolve_objective_orientation(objective_name, orientation) == "minimize"
 
 
 def coerce_finite_objective_score(value: Any) -> float | None:

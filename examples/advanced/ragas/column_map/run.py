@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover
     import traigent
 
 from traigent.metrics import configure_ragas_defaults  # noqa: E402
+from traigent.core.objectives import create_default_objectives  # noqa: E402
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -36,7 +37,13 @@ _RESPONSES = {
 
 @traigent.optimize(
     eval_dataset=DATASET,
-    objectives=["context_recall", "answer_similarity"],
+    objectives=create_default_objectives(
+        ["context_recall", "answer_similarity"],
+        orientations={
+            "context_recall": "maximize",
+            "answer_similarity": "maximize",
+        },
+    ),
     configuration_space={
         "strategy": ["lookup", "summary_report"],
         "tone": ["concise", "storytelling"],

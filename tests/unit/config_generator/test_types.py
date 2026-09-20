@@ -60,7 +60,7 @@ class TestTVarSpec:
 
 class TestObjectiveSpec:
     def test_defaults(self) -> None:
-        obj = ObjectiveSpec(name="accuracy")
+        obj = ObjectiveSpec(name="accuracy", orientation="maximize")
         assert obj.orientation == "maximize"
         assert obj.weight == 1.0
         assert obj.source == "default"
@@ -225,7 +225,7 @@ class TestAutoConfigResult:
                 ),
             ),
             objectives=(
-                ObjectiveSpec(name="accuracy"),
+                ObjectiveSpec(name="accuracy", orientation="maximize"),
                 ObjectiveSpec(name="cost", orientation="minimize"),
             ),
         )
@@ -243,7 +243,15 @@ class TestAutoConfigResult:
         assert isinstance(model, Choices)
         assert "gpt-4o" in model.values
 
-        assert kwargs["objectives"] == ["accuracy", "cost"]
+        objective_schema = kwargs["objectives"]
+        assert [objective.name for objective in objective_schema.objectives] == [
+            "accuracy",
+            "cost",
+        ]
+        assert [objective.orientation for objective in objective_schema.objectives] == [
+            "maximize",
+            "minimize",
+        ]
 
     def test_to_decorator_kwargs_with_safety(self) -> None:
         from traigent.api.safety import SafetyConstraint
@@ -278,7 +286,7 @@ class TestAutoConfigResult:
                     range_kwargs={"low": 0.0, "high": 1.0},
                 ),
             ),
-            objectives=(ObjectiveSpec(name="accuracy"),),
+            objectives=(ObjectiveSpec(name="accuracy", orientation="maximize"),),
         )
         kwargs = result.to_dict_kwargs()
         assert kwargs["configuration_space"]["temperature"] == {
@@ -286,7 +294,9 @@ class TestAutoConfigResult:
             "low": 0.0,
             "high": 1.0,
         }
-        assert kwargs["objectives"] == ["accuracy"]
+        assert kwargs["objectives"] == [
+            {"name": "accuracy", "orientation": "maximize", "weight": 1.0}
+        ]
 
     def test_to_tvl_spec_basic(self) -> None:
         result = AutoConfigResult(
@@ -374,14 +384,18 @@ class TestAutoConfigResult:
                     range_kwargs={"low": 0.0, "high": 1.0},
                 ),
             ),
-            objectives=(ObjectiveSpec(name="accuracy"),),
+            objectives=(ObjectiveSpec(name="accuracy", orientation="maximize"),),
         )
         code = result.to_python_code()
         assert "@traigent.optimize(" in code
         assert "configuration_space" in code
         assert "'temperature'" in code
         assert "Range(low=0.0, high=1.0)" in code
-        assert "objectives=['accuracy']" in code
+        assert "objectives=ObjectiveSchema.from_objectives([" in code
+        assert (
+            "ObjectiveDefinition(name='accuracy', orientation='maximize', weight=1.0)"
+            in code
+        )
 
     def test_to_python_code_with_safety(self) -> None:
         result = AutoConfigResult(

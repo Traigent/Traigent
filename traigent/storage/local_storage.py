@@ -497,7 +497,12 @@ class LocalStorageManager:
             primary_objective = self._resolve_primary_objective_name(
                 session.optimization_config
             )
-            is_minimize = is_minimization_objective(primary_objective)
+            orientation = self._resolve_primary_objective_orientation(
+                session.optimization_config, primary_objective
+            )
+            is_minimize = is_minimization_objective(
+                primary_objective, orientation=orientation
+            )
             if session.best_score is None:
                 is_better = True
             elif is_minimize:
@@ -559,6 +564,37 @@ class LocalStorageManager:
             return name
 
         return "score"
+
+    def _resolve_primary_objective_orientation(
+        self,
+        optimization_config: dict[str, Any | None] | None,
+        primary_objective: str,
+    ) -> str | None:
+        if not isinstance(optimization_config, dict):
+            return "maximize" if primary_objective == "score" else None
+        schema = optimization_config.get("objective_schema")
+        if isinstance(schema, dict):
+            definitions = schema.get("objectives")
+            if isinstance(definitions, list):
+                for definition in definitions:
+                    if (
+                        isinstance(definition, dict)
+                        and definition.get("name") == primary_objective
+                    ):
+                        orientation = definition.get("orientation")
+                        return str(orientation) if orientation is not None else None
+        orientations = optimization_config.get("objective_orientations")
+        if isinstance(orientations, dict) and primary_objective in orientations:
+            return str(orientations[primary_objective])
+        has_declared_objective = bool(optimization_config.get("objectives")) or bool(
+            isinstance(schema, dict) and schema.get("objectives")
+        )
+        if primary_objective == "score" and not has_declared_objective:
+            # A session created without objective metadata uses the storage
+            # protocol's scalar score contract, which explicitly maximizes.
+            # This is not metric-name inference for a user-defined objective.
+            return "maximize"
+        return None
 
     def finalize_session(
         self, session_id: str, status: str | None = None

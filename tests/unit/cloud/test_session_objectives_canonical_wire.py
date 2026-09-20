@@ -169,10 +169,14 @@ class TestNormalizeTypedObjectives:
         _assert_no_legacy_keys(wire)
         assert [o["name"] for o in wire] == ["score", "latency", "f1", "cost"]
 
-    def test_a_named_metric_string_stays_a_string(self):
-        """A bare string that is NOT a direction word is a metric name and the
-        backend accepts it as-is; rewriting it would change meaning."""
-        assert normalize_typed_objectives(["accuracy"]) == ["accuracy"]
+    def test_a_named_metric_string_gains_its_canonical_direction(self):
+        assert normalize_typed_objectives(["accuracy"]) == [
+            {"name": "accuracy", "orientation": "maximize"}
+        ]
+
+    def test_unknown_named_metric_string_requires_direction(self):
+        with pytest.raises(ValueError, match="has no declared orientation"):
+            normalize_typed_objectives(["plugin_quality"])
 
 
 def test_an_unsupported_type_is_rejected():

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from traigent.core.objective_directions import resolve_objective_orientation
+
 from ..api.types import OptimizationResult
 from ..utils.multi_objective import ParetoFrontCalculator
 
@@ -55,7 +57,7 @@ class PlotGenerator:
 
         # Determine orientation for the selected objective
         orientations = self._determine_objective_orientations(result, [objective])
-        maximize = orientations.get(objective, True)
+        maximize = orientations[objective]
         objective_label = self._format_objective_label(objective, maximize)
 
         # Extract trial data
@@ -308,7 +310,7 @@ class PlotGenerator:
 
         # Connect Pareto points
         if len(pareto_x) > 1:
-            reverse_sort = orientations.get(obj1, True)
+            reverse_sort = orientations[obj1]
             sorted_pareto = sorted(
                 zip(pareto_x, pareto_y, strict=False),
                 key=lambda p: p[0],
@@ -317,8 +319,8 @@ class PlotGenerator:
             sorted_x, sorted_y = zip(*sorted_pareto, strict=False)
             ax.plot(sorted_x, sorted_y, "r--", alpha=0.7)
 
-        label1 = self._format_objective_label(obj1, orientations.get(obj1, True))
-        label2 = self._format_objective_label(obj2, orientations.get(obj2, True))
+        label1 = self._format_objective_label(obj1, orientations[obj1])
+        label2 = self._format_objective_label(obj2, orientations[obj2])
         ax.set_xlabel(label1)
         ax.set_ylabel(label2)
         ax.set_title(f"Pareto Front: {label1} vs {label2}")
@@ -355,8 +357,8 @@ class PlotGenerator:
         range_x = max_x - min_x if max_x > min_x else 1
         range_y = max_y - min_y if max_y > min_y else 1
 
-        label1 = self._format_objective_label(obj1, orientations.get(obj1, True))
-        label2 = self._format_objective_label(obj2, orientations.get(obj2, True))
+        label1 = self._format_objective_label(obj1, orientations[obj1])
+        label2 = self._format_objective_label(obj2, orientations[obj2])
         lines = [f"Pareto Front: {label1} vs {label2}"]
         lines.append("=" * width)
         lines.append("")
@@ -402,7 +404,7 @@ class PlotGenerator:
     def _determine_objective_orientations(
         self, result: OptimizationResult, objectives: list[str]
     ) -> dict[str, bool]:
-        """Determine objective orientations from metadata or heuristics."""
+        """Determine objective orientations from declarations or exact defaults."""
         orientations: dict[str, bool] = {}
         metadata = result.metadata or {}
 
@@ -423,26 +425,30 @@ class PlotGenerator:
                     orientation = obj_def.get("orientation")
 
                 if name and orientation:
-                    orientations[name] = str(orientation).lower() != "minimize"
+                    if str(orientation).lower() == "band":
+                        continue
+                    orientations[name] = (
+                        resolve_objective_orientation(name, str(orientation).lower())
+                        == "maximize"
+                    )
 
         metadata_orientations = metadata.get("objective_orientations")
         if isinstance(metadata_orientations, dict):
             for name, orientation in metadata_orientations.items():
                 if name not in orientations:
                     if isinstance(orientation, str):
-                        orientations[name] = orientation.lower() != "minimize"
+                        orientations[name] = (
+                            resolve_objective_orientation(name, orientation.lower())
+                            == "maximize"
+                        )
                     else:
                         orientations[name] = bool(orientation)
 
-        minimize_patterns = ["cost", "latency", "error", "loss", "time", "duration"]
         for name in objectives:
             if name not in orientations:
-                lower = name.lower()
-                orientations[name] = not any(
-                    pattern in lower for pattern in minimize_patterns
-                )
+                orientations[name] = resolve_objective_orientation(name) == "maximize"
 
-        return {name: orientations.get(name, True) for name in objectives}
+        return {name: orientations[name] for name in objectives}
 
     @staticmethod
     def _format_objective_label(name: str, maximize: bool) -> str:

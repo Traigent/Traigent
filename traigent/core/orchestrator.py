@@ -5397,6 +5397,12 @@ class OptimizationOrchestrator:
             session_summary,
             safeguards_telemetry,
         )
+        if self.objective_schema is not None:
+            result_metadata["objective_schema"] = self.objective_schema.to_dict()
+            result_metadata["objective_orientations"] = {
+                objective.name: str(objective.orientation)
+                for objective in self.objective_schema.objectives
+            }
         semantic_saturation = (
             self._stop_condition_manager.semantic_saturation_diagnostics(self._trials)
         )

@@ -710,7 +710,7 @@ class TestOptimizationResultNormalizationMethods:
             duration=5.0,
             convergence_info={},
             status=OptimizationStatus.COMPLETED,
-            objectives=["accuracy", "cost", "latency", "error_rate", "processing_time"],
+            objectives=["accuracy", "cost", "latency", "error_rate", "duration"],
             algorithm="random",
             timestamp=datetime.now(),
         )
@@ -720,7 +720,7 @@ class TestOptimizationResultNormalizationMethods:
         assert "cost" in minimize
         assert "latency" in minimize
         assert "error_rate" in minimize
-        assert "processing_time" in minimize
+        assert "duration" in minimize
         assert "accuracy" not in minimize
 
     def test_normalize_weight_map(self):

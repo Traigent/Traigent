@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 
 import traigent
+from traigent.core.objectives import create_default_objectives
 from traigent.metrics import DeepEvalScorer
 
 # ---------------------------------------------------------------------------
@@ -43,7 +44,10 @@ scorer = DeepEvalScorer(
         "temperature": (0.0, 1.0),
     },
     metric_functions=scorer.to_metric_functions(),
-    objectives=["relevancy", "faithfulness"],
+    objectives=create_default_objectives(
+        ["relevancy", "faithfulness"],
+        orientations={"relevancy": "maximize", "faithfulness": "maximize"},
+    ),
     eval_dataset=os.path.join(
         os.path.dirname(__file__),
         "..",

@@ -32,7 +32,7 @@ def result_with_tvars() -> AutoConfigResult:
                 range_kwargs={"low": 0.0, "high": 1.0},
             ),
         ),
-        objectives=(ObjectiveSpec(name="accuracy"),),
+        objectives=(ObjectiveSpec(name="accuracy", orientation="maximize"),),
     )
 
 

@@ -46,6 +46,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
     traigent = importlib.import_module("traigent")
 
 from traigent.api.types import OptimizationResult  # noqa: E402
+from traigent.core.objectives import create_default_objectives  # noqa: E402
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -186,7 +187,9 @@ def json_score_metric(output: str, expected: dict, **_: object) -> float:
 
 @traigent.optimize(
     eval_dataset=DATASET,
-    objectives=["json_score"],
+    objectives=create_default_objectives(
+        ["json_score"], orientations={"json_score": "maximize"}
+    ),
     configuration_space={
         "temperature": [0.0, 0.2],
         "format_hint": ["strict_json", "relaxed_json"],

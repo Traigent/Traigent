@@ -788,6 +788,13 @@ def process_ticket_with_constraints(ticket: str) -> str:
 ### Custom Evaluation
 
 ```python
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+
+custom_objectives = ObjectiveSchema.from_objectives([
+    ObjectiveDefinition("accuracy", orientation="maximize", weight=1.0),
+    ObjectiveDefinition("custom_metric", orientation="maximize", weight=1.0),
+])
+
 def custom_eval(func, config, example):
     # Custom evaluation logic
     result = func(example.input_data)
@@ -799,7 +806,7 @@ def custom_eval(func, config, example):
 
 @traigent.optimize(
     evaluation={"eval_dataset": "dataset.jsonl", "custom_evaluator": custom_eval},
-    objectives=["accuracy", "custom_metric"]
+    objectives=custom_objectives,
 )
 def my_function(input_text: str) -> str:
     return process(input_text)

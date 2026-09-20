@@ -14,11 +14,15 @@ from __future__ import annotations
 import json
 import logging
 import math
-import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal
+
+from traigent.core.objective_directions import (
+    CANONICAL_OBJECTIVE_ORIENTATIONS,
+    resolve_objective_orientation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -191,10 +195,15 @@ class ObjectiveDefinition:
                 band_test = band_data.get("test", "TOST")
                 band_alpha = float(band_data.get("alpha", 0.05))
 
-        # Determine orientation
-        orientation = data.get("orientation", "maximize")
-        if band is not None and orientation not in ["band"]:
-            orientation = "band"
+        # A target band is non-directional. Scalar objectives must either carry
+        # an explicit direction or use an exact SDK-owned metric default.
+        orientation = (
+            "band"
+            if band is not None
+            else resolve_objective_orientation(
+                str(data["name"]), data.get("orientation")
+            )
+        )
 
         return cls(
             name=data["name"],
@@ -785,52 +794,9 @@ class ObjectiveSchema:
         return baseline / (baseline + max(value, 0.0))
 
 
-# Default orientations for `create_default_objectives` and any other code
-# that needs to guess an objective's direction from a bare name (single
-# source of truth -- see DEFAULT_MINIMIZE_METRIC_NAMES below).
-#
-# The "minimize" entries below are exact metric names, not substrings: a
-# name must match one of these keys exactly to get a default. "cost",
-# "latency", "error", "loss", "time", "memory" are generic/legacy category
-# names kept for backward compatibility; everything from "total_cost" on is
-# a name the SDK itself emits as a metric (see
-# traigent/evaluators/metrics_tracker.py RESERVED_METRIC_KEYS) that is
-# unambiguously "lower is better". These were added because "total_cost"
-# (and its cost/time/error-rate siblings) previously fell through to the
-# unrecognized-name fallback below, defaulting to "maximize" and crowning
-# the MOST expensive/slowest configuration as best.
-DEFAULT_OBJECTIVE_ORIENTATIONS: dict[str, Literal["maximize", "minimize"]] = {
-    "accuracy": "maximize",
-    "precision": "maximize",
-    "recall": "maximize",
-    "f1": "maximize",
-    "cost": "minimize",
-    "latency": "minimize",
-    "error": "minimize",
-    "loss": "minimize",
-    "time": "minimize",
-    "memory": "minimize",
-    "total_cost": "minimize",
-    "cost_per_example_mean": "minimize",
-    "input_cost": "minimize",
-    "output_cost": "minimize",
-    "duration": "minimize",
-    "execution_time_ms": "minimize",
-    "response_time_ms": "minimize",
-    "avg_response_time": "minimize",
-    "avg_response_time_ms": "minimize",
-    "error_rate": "minimize",
-}
-
-#: Just the names above that default to "minimize", for callers (e.g.
-#: traigent/utils/results_table.py) that only need a minimize/maximize
-#: name-lookup and would otherwise hand-duplicate this table (and drift, as
-#: results_table.py's local ``("cost", "latency")`` check had).
-DEFAULT_MINIMIZE_METRIC_NAMES: frozenset[str] = frozenset(
-    name
-    for name, orientation in DEFAULT_OBJECTIVE_ORIENTATIONS.items()
-    if orientation == "minimize"
-)
+# Backward-compatible export. The immutable mapping is defined in the
+# low-dependency policy module so every ranking surface uses one resolver.
+DEFAULT_OBJECTIVE_ORIENTATIONS = CANONICAL_OBJECTIVE_ORIENTATIONS
 
 
 def create_default_objectives(
@@ -842,7 +808,7 @@ def create_default_objectives(
 
     Args:
         objective_names: List of objective names
-        orientations: Optional dict of orientations (defaults to maximize)
+        orientations: Optional explicit directions. Unknown names require one.
         weights: Optional dict of weights (defaults to equal weights)
 
     Returns:
@@ -851,33 +817,13 @@ def create_default_objectives(
     if not objective_names:
         raise ValueError("At least one objective name must be provided")
 
-    default_orientations = DEFAULT_OBJECTIVE_ORIENTATIONS
-
     # Build objectives
     objectives = []
     for name in objective_names:
-        # Get orientation
-        orientation: Literal["maximize", "minimize"]
-        if orientations and name in orientations:
-            orientation = orientations[name]  # type: ignore[assignment]
-        elif name in default_orientations:
-            orientation = default_orientations[name]  # type: ignore[assignment]
-        else:
-            # Unrecognized metric name and no explicit orientation given: we
-            # fall back to "maximize", but a minimize metric (e.g. "price",
-            # "spend", "perplexity") would then silently crown the WORST config.
-            # Fail loud so the guess is visible and overridable.
-            orientation = "maximize"  # Default to maximize
-            warnings.warn(
-                f"Objective '{name}' is not a recognized metric name, so its "
-                "orientation was defaulted to 'maximize'. If this is a metric that "
-                "should be minimized (e.g. cost/price/loss), the best configuration "
-                "will be wrong. Declare it explicitly by building an ObjectiveSchema "
-                "with ObjectiveDefinition(name='"
-                f"{name}', orientation='minimize') (or pass an orientations mapping).",
-                UserWarning,
-                stacklevel=2,
-            )
+        explicit = (
+            orientations.get(name) if orientations and name in orientations else None
+        )
+        orientation = resolve_objective_orientation(name, explicit)
 
         # Get weight
         if weights and name in weights:

@@ -16,6 +16,7 @@ from traigent.evaluators.local import LocalEvaluator
 from traigent.utils.env_config import is_mock_llm
 from traigent.utils.logging import get_logger
 from traigent.utils.multi_objective import ParetoFrontCalculator, ParetoPoint
+from traigent.core.objective_directions import resolve_objective_orientation
 
 logger = get_logger(__name__)
 console = Console()
@@ -379,37 +380,10 @@ class OptimizationValidator:
         Returns:
             Dictionary mapping objective names to maximize boolean
         """
-        # Default maximize behavior based on common metric types
-        maximize_defaults = {
-            "accuracy": True,
-            "precision": True,
-            "recall": True,
-            "f1": True,
-            "f1_score": True,
-            "score": True,
-            "success_rate": True,
-            "throughput": True,
-            "speed": True,
-            "cost": False,
-            "latency": False,
-            "response_time": False,
-            "error_rate": False,
-            "loss": False,
-            "duration": False,
+        return {
+            objective: resolve_objective_orientation(objective) == "maximize"
+            for objective in objectives
         }
-
-        maximize_config = {}
-        for obj in objectives:
-            obj_lower = obj.lower()
-            # Check for exact matches or substrings
-            maximize = True  # Default to maximize
-            for key, should_maximize in maximize_defaults.items():
-                if key in obj_lower or obj_lower in key:
-                    maximize = should_maximize
-                    break
-            maximize_config[obj] = maximize
-
-        return maximize_config
 
     def _check_superior_criteria(
         self, pareto_dominates: bool, improvement_details: dict[str, float]

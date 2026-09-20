@@ -98,8 +98,8 @@ class TestHasLlmImports:
 class TestNormalizeWeights:
     def test_normalizes_to_one(self) -> None:
         objectives = [
-            ObjectiveSpec(name="a", weight=3.0),
-            ObjectiveSpec(name="b", weight=7.0),
+            ObjectiveSpec(name="a", orientation="maximize", weight=3.0),
+            ObjectiveSpec(name="b", orientation="maximize", weight=7.0),
         ]
         normalized = _normalize_weights(objectives)
         assert abs(sum(o.weight for o in normalized) - 1.0) < 0.001
@@ -108,14 +108,14 @@ class TestNormalizeWeights:
 
     def test_zero_total_unchanged(self) -> None:
         objectives = [
-            ObjectiveSpec(name="a", weight=0.0),
+            ObjectiveSpec(name="a", orientation="maximize", weight=0.0),
         ]
         normalized = _normalize_weights(objectives)
         assert normalized[0].weight == 0.0
 
     def test_preserves_names(self) -> None:
         objectives = [
-            ObjectiveSpec(name="accuracy", weight=0.5),
+            ObjectiveSpec(name="accuracy", orientation="maximize", weight=0.5),
             ObjectiveSpec(name="cost", weight=0.5, orientation="minimize"),
         ]
         normalized = _normalize_weights(objectives)

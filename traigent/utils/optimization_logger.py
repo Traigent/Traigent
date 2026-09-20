@@ -25,7 +25,6 @@ from traigent.config.types import ExecutionMode, resolve_execution_mode
 from traigent.core.objectives import ObjectiveSchema, normalize_objectives
 from traigent.utils.file_versioning import FileVersionManager, RunVersionInfo
 from traigent.utils.logging import get_logger
-from traigent.utils.objectives import is_minimization_objective
 from traigent.utils.secure_path import (
     PathTraversalError,
     resolve_path_components,
@@ -1072,7 +1071,8 @@ class OptimizationLogger:
             from traigent.utils.multi_objective import ParetoFrontCalculator
 
             maximize = {
-                objective: not is_minimization_objective(objective)
+                objective: optimization_result._objective_orientation(objective)
+                == "maximize"
                 for objective in optimization_result.objectives
             }
             calculator = ParetoFrontCalculator(maximize=maximize)

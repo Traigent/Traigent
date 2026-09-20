@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..api.types import TrialResult, TrialStatus
+from ..core.objective_directions import resolve_objective_orientation
 from ..core.objectives import ObjectiveSchema
 
 _COMPLETED_STATUS_TOKENS = {
@@ -30,6 +31,12 @@ def _is_completed_status(status: Any) -> bool:
         return normalized.lower() in _COMPLETED_STATUS_TOKENS
 
     return False
+
+
+def _should_maximize(name: str, declared: dict[str, bool]) -> bool:
+    if name in declared:
+        return bool(declared[name])
+    return resolve_objective_orientation(name) == "maximize"
 
 
 @dataclass
@@ -88,7 +95,7 @@ class ParetoPoint:
         for obj_name in requested:
             obj_value = self.objectives[obj_name]
             other_value = other.objectives[obj_name]
-            should_maximize = maximize.get(obj_name, True)
+            should_maximize = _should_maximize(obj_name, maximize)
 
             # Use epsilon for near-equality check
             diff = obj_value - other_value
@@ -285,7 +292,7 @@ class ParetoFrontCalculator:
         reference is the orientation-aware nadir (min-1 / max+1), matching the
         2-D and Monte-Carlo paths (#1940/#1945).
         """
-        maximize = self.maximize.get(objective, True)
+        maximize = _should_maximize(objective, self.maximize)
         values = [p.objectives[objective] for p in pareto_front]
 
         if reference_point is not None and objective in reference_point:
@@ -319,8 +326,8 @@ class ParetoFrontCalculator:
             return 0.0
 
         obj1, obj2 = objectives
-        max1 = self.maximize.get(obj1, True)
-        max2 = self.maximize.get(obj2, True)
+        max1 = _should_maximize(obj1, self.maximize)
+        max2 = _should_maximize(obj2, self.maximize)
 
         # Set reference point. The auto reference is the *nadir* (worse than
         # every point) and must be orientation-aware (#1940): min-1 for a
@@ -399,7 +406,7 @@ class ParetoFrontCalculator:
         upper_bounds: dict[str, float] = {}
         for obj in objectives:
             values = [point.objectives[obj] for point in pareto_front]
-            maximize = self.maximize.get(obj, True)
+            maximize = _should_maximize(obj, self.maximize)
 
             if reference_point is not None and obj in reference_point:
                 nadir = reference_point[obj]
@@ -445,7 +452,7 @@ class ParetoFrontCalculator:
         for obj, value in pareto_point.objectives.items():
             if obj in sample_point:
                 sample_value = sample_point[obj]
-                should_maximize = self.maximize.get(obj, True)
+                should_maximize = _should_maximize(obj, self.maximize)
 
                 if should_maximize:
                     if value < sample_value:
@@ -567,8 +574,9 @@ def scalarize_objectives(
     Args:
         objectives: Dictionary of objective values
         weights: Dictionary of objective weights
-        minimize_objectives: List of objective names that should be minimized (inverted).
-                           If None, no auto-detection is performed (backward compatibility).
+        minimize_objectives: Explicit list of objectives to minimize. An empty
+            list deliberately declares all objectives as maximize. When None,
+            exact SDK-owned defaults are resolved and unknown names raise.
         objective_schema: ObjectiveSchema with orientations and weights (overrides other params).
 
     Returns:
@@ -587,9 +595,14 @@ def scalarize_objectives(
             if obj_def.orientation == "minimize":
                 minimize_objectives.append(obj_def.name)
 
-    # Only auto-detect minimization objectives if explicitly requested
+    # No explicit list: resolve exact SDK-owned defaults. An explicitly empty
+    # list remains the deliberate all-maximize declaration.
     elif minimize_objectives is None:
-        minimize_objectives = []
+        minimize_objectives = [
+            name
+            for name in objectives
+            if resolve_objective_orientation(name) == "minimize"
+        ]
 
     total_score = 0.0
     total_weight = 0.0

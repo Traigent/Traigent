@@ -21,7 +21,7 @@ import os
 import sys
 from typing import TYPE_CHECKING, Any
 
-from traigent.core.objectives import DEFAULT_MINIMIZE_METRIC_NAMES
+from traigent.core import objective_directions
 from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -173,19 +173,34 @@ def _example_success_counts(trial: Any) -> tuple[int, int] | None:
 
 def _get_objective_info(objectives: Any) -> list[tuple[str, str]]:
     """Return [(name, orientation)] from an objectives definition."""
+
+    def direction(name: str, explicit: str | None = None) -> str:
+        if explicit == "band":
+            return "band"
+        return objective_directions.resolve_objective_orientation(name, explicit)
+
+    if isinstance(objectives, dict) and isinstance(objectives.get("objectives"), list):
+        return [
+            (
+                str(obj["name"]),
+                direction(str(obj["name"]), obj.get("orientation")),
+            )
+            for obj in objectives["objectives"]
+            if isinstance(obj, dict) and "name" in obj
+        ]
     if hasattr(objectives, "objectives"):
         return [
-            (obj.name, getattr(obj, "orientation", "maximize"))
+            (
+                obj.name,
+                direction(obj.name, getattr(obj, "orientation", None)),
+            )
             for obj in objectives.objectives
         ]
     if isinstance(objectives, (list, tuple)):
         result = []
         for o in objectives:
             name = str(o)
-            if name in DEFAULT_MINIMIZE_METRIC_NAMES:
-                result.append((name, "minimize"))
-            else:
-                result.append((name, "maximize"))
+            result.append((name, direction(name)))
         return result
     return []
 
@@ -198,6 +213,9 @@ def _find_best_per_objective(
     """Return {metric_name: {best_trial_indices}} for all tied bests."""
     best_indices: dict[str, set[int]] = {}
     for metric_name, orientation in metric_info:
+        if orientation == "band":
+            best_indices[metric_name] = set()
+            continue
         best_set: set[int] = set()
         best_val: float | None = None
         is_minimize = orientation == "minimize"

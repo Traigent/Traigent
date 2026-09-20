@@ -45,6 +45,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
     traigent = importlib.import_module("traigent")
 
 from traigent.api.types import OptimizationResult  # noqa: E402
+from traigent.core.objectives import create_default_objectives  # noqa: E402
 
 
 def _load_safe_helpers():
@@ -199,7 +200,9 @@ def safety_accuracy_metric(output: str, expected: str, **_: object) -> float:
 
 @traigent.optimize(
     eval_dataset=DATASET,
-    objectives=["safety_accuracy"],
+    objectives=create_default_objectives(
+        ["safety_accuracy"], orientations={"safety_accuracy": "maximize"}
+    ),
     configuration_space={
         "safety_strength": ["low", "medium", "high"],
         "refusal_style": ["brief", "policy_cite"],

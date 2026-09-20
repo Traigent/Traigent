@@ -25,7 +25,6 @@ from traigent.optimizers.random import RandomSearchOptimizer
 from traigent.optimizers.results import BatchResult, BatchTrial
 from traigent.utils.batch_processing import AdaptiveBatchSizer
 from traigent.utils.logging import get_logger
-from traigent.utils.objectives import is_minimization_objective
 
 logger = get_logger(__name__)
 
@@ -107,7 +106,9 @@ class ParallelBatchOptimizer(BaseOptimizer):
                     "ParallelBatchOptimizer requires either a base_optimizer "
                     "or a config_space."
                 )
-            base_optimizer = RandomSearchOptimizer(config_space, objectives or [])
+            base_optimizer = RandomSearchOptimizer(
+                config_space, objectives or [], **kwargs
+            )
         if batch_config is None:
             batch_config = BatchOptimizationConfig()
 
@@ -422,8 +423,20 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
         # dominance in ``_dominates`` uses the same orientation as the
         # composite/scalarized score (cost/latency/error/loss/... → minimize).
         resolved_objectives = objectives or []
+        banded = [
+            obj
+            for obj in resolved_objectives
+            if self.objective_orientations[obj] == "band"
+        ]
+        if banded:
+            raise ValueError(
+                "MultiObjectiveBatchOptimizer does not support target-banded "
+                f"objectives: {banded}. Use a directional objective or a "
+                "band-aware optimizer."
+            )
         self.objective_directions: dict[str, Any] = {
-            obj: not is_minimization_objective(obj) for obj in resolved_objectives
+            obj: self.objective_orientations[obj] == "maximize"
+            for obj in resolved_objectives
         }
 
         # Use random search for multi-objective exploration. Thread the caller's
@@ -444,6 +457,7 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
             configuration_space,
             resolved_objectives,
             max_trials=requested_max_trials,
+            objective_orientations=self.objective_orientations,
         )
 
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
@@ -487,7 +501,11 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
         all_trials = []
 
         # Use random search for multi-objective exploration
-        base_optimizer = RandomSearchOptimizer(self.config_space, self.objectives)
+        base_optimizer = RandomSearchOptimizer(
+            self.config_space,
+            self.objectives,
+            objective_orientations=self.objective_orientations,
+        )
 
         for trial_idx in range(max_trials):
             # Generate candidate configuration
@@ -787,7 +805,7 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
 
         for objective in self.objectives:
             # Check if we should maximize (True) or minimize (False) this objective
-            should_maximize = self.objective_directions.get(objective, True)
+            should_maximize = self.objective_directions[objective]
 
             # Default a missing objective to the orientation-*worst* sentinel,
             # never 0.0 (#1944) — for a minimize objective 0.0 is the best value,
@@ -852,7 +870,9 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
                     "AdaptiveBatchOptimizer requires either a base_optimizer "
                     "or a config_space."
                 )
-            base_optimizer = RandomSearchOptimizer(config_space, objectives or [])
+            base_optimizer = RandomSearchOptimizer(
+                config_space, objectives or [], **kwargs
+            )
         if batch_config is None:
             batch_config = BatchOptimizationConfig()
 

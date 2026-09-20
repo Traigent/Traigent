@@ -17,6 +17,7 @@ from typing import Any, Literal, cast
 import yaml
 
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+from traigent.core.objective_directions import resolve_objective_orientation
 from traigent.utils.exceptions import TVLValidationError
 from traigent.utils.logging import get_logger
 
@@ -1976,11 +1977,14 @@ def _parse_standard_objective(
     name: str, entry: dict[str, Any], weight: float, unit: str | None
 ) -> ObjectiveDefinition:
     """Parse a standard objective with direction."""
-    direction = (entry.get("direction") or "maximize").lower()
-    if direction not in {"maximize", "minimize"}:
-        raise TVLValidationError(
-            f"Objective '{name}' direction must be 'maximize' or 'minimize'"
+    raw_direction = entry.get("direction")
+    try:
+        direction = resolve_objective_orientation(
+            name,
+            str(raw_direction).lower() if raw_direction is not None else None,
         )
+    except ValueError as exc:
+        raise TVLValidationError(str(exc)) from exc
     return ObjectiveDefinition(
         name=name,
         orientation=cast(Literal["maximize", "minimize"], direction),

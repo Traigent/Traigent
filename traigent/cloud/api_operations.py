@@ -777,6 +777,14 @@ class ApiOperations:
         if warn_boolean_config_values:
             _warn_boolean_config_values(session_request.configuration_space)
 
+        typed_objectives = normalize_typed_objectives(session_request.objectives)
+        first_objective = typed_objectives[0]
+        if not isinstance(first_objective, dict):
+            raise SessionContractError(
+                "Legacy sessions require an objective with an explicit orientation"
+            )
+        optimization_goal = first_objective.get("orientation")
+
         payload: dict[str, Any] = {
             "problem_statement": session_request.function_name,
             "dataset": {
@@ -787,11 +795,7 @@ class ApiOperations:
             "optimization_config": {
                 "algorithm": "grid",
                 "max_trials": max_trials,
-                "optimization_goal": (
-                    session_request.objectives[0]
-                    if session_request.objectives
-                    else "maximize"
-                ),
+                "optimization_goal": optimization_goal,
             },
             "metadata": {
                 "function_name": session_request.function_name,

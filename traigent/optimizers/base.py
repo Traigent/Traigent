@@ -9,10 +9,10 @@ from typing import Any
 
 from traigent.api.types import TrialResult
 from traigent.config.types import TraigentConfig
+from traigent.core.objective_directions import resolve_objective_orientation
 from traigent.utils.logging import get_logger
 from traigent.utils.objectives import (
     coerce_finite_objective_score,
-    is_minimization_objective,
 )
 from traigent.utils.discrete_domains import discrete_cardinality_for_config_param
 from traigent.utils.validation import validate_objectives
@@ -62,6 +62,14 @@ class BaseOptimizer(ABC):
             )
             self.objectives = []
         self.context = context
+        objective_schema = kwargs.pop("objective_schema", None)
+        self.objective_schema = objective_schema
+        declared_orientations = kwargs.pop("objective_orientations", None) or {}
+        if objective_schema is not None:
+            declared_orientations = {
+                definition.name: str(definition.orientation)
+                for definition in objective_schema.objectives
+            }
         self.algorithm_config = kwargs
 
         # Handle objective weights - support both parameter and kwargs
@@ -90,19 +98,24 @@ class BaseOptimizer(ABC):
                 if obj in self.objectives
             }
 
-        # Resolve objective orientation once so composite/scalarized scoring
-        # respects ``minimize`` objectives (cost/latency/error) instead of
-        # treating every objective as ``maximize`` (#1466). Name-pattern
-        # heuristics are used here because optimizers receive string objective
-        # names; callers with an ``ObjectiveSchema`` should pass it through to
-        # ``scalarize_objectives`` directly for exact orientation.
+        self.objective_orientations: dict[str, str] = {}
+        for obj in self.objectives:
+            declared = declared_orientations.get(obj)
+            self.objective_orientations[obj] = (
+                "band"
+                if declared == "band"
+                else resolve_objective_orientation(obj, declared)
+            )
         self._minimize_objectives: list[str] = [
-            obj for obj in self.objectives if is_minimization_objective(obj)
+            obj
+            for obj, orientation in self.objective_orientations.items()
+            if orientation == "minimize"
         ]
 
         # Initialize internal state
         self._trial_count = 0
         self._best_score: float | None = None
+        self._best_band_distance: float | None = None
         self._best_config: dict[str, Any] | None = None
         self._tried_config_hashes: set[str] = set()
         self._config_space_cardinality: int | None = self._compute_cardinality()
@@ -245,17 +258,48 @@ class BaseOptimizer(ABC):
         if score is None:
             return
 
+        orientation = self.objective_orientations[primary_objective]
+        if orientation == "band":
+            distance = self._band_distance(primary_objective, score)
+            if self._best_band_distance is None or distance < self._best_band_distance:
+                self._best_band_distance = distance
+                self._best_score = score
+                self._best_config = trial.config.copy()
+            return
+
         best_score = coerce_finite_objective_score(self._best_score)
         if best_score is None:
             self._best_score = score
             self._best_config = trial.config.copy()
             return
 
-        minimization = is_minimization_objective(primary_objective)
+        minimization = orientation == "minimize"
         is_better = score < best_score if minimization else score > best_score
         if is_better:
             self._best_score = score
             self._best_config = trial.config.copy()
+
+    def _band_distance(self, objective_name: str, score: float) -> float:
+        if self.objective_schema is None:
+            raise ValueError(
+                f"Banded objective {objective_name!r} requires its ObjectiveSchema"
+            )
+        definition = next(
+            (
+                item
+                for item in self.objective_schema.objectives
+                if item.name == objective_name
+            ),
+            None,
+        )
+        band = getattr(definition, "band", None)
+        if band is None or band.low is None or band.high is None:
+            raise ValueError(
+                f"Banded objective {objective_name!r} requires a complete target band"
+            )
+        if band.low <= score <= band.high:
+            return 0.0
+        return float(min(abs(score - band.low), abs(score - band.high)))
 
     @property
     def best_score(self) -> float | None:

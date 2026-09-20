@@ -1,7 +1,6 @@
 """Tests for objective definitions and validation."""
 
 import json
-import warnings
 
 import pytest
 
@@ -463,24 +462,9 @@ class TestCreateDefaultObjectives:
         assert schema.get_normalized_weight("accuracy") == pytest.approx(0.7)
         assert schema.get_normalized_weight("cost") == pytest.approx(0.3)
 
-    def test_unknown_metric_defaults(self):
-        """Test that unknown metrics default to maximize."""
-        schema = create_default_objectives(["unknown_metric"])
-
-        assert schema.get_orientation("unknown_metric") == "maximize"
-        assert schema.get_normalized_weight("unknown_metric") == 1.0
-
-    def test_unrecognized_name_warns_and_maximizes(self):
-        """An unrecognized name still warns and still defaults to maximize.
-
-        This fallback behavior must NOT change as part of adding names to
-        ``default_orientations`` -- only names the SDK recognizes are exempt
-        from the warning.
-        """
-        with pytest.warns(UserWarning, match="not a recognized metric name"):
-            schema = create_default_objectives(["totally_unknown_thing"])
-
-        assert schema.get_orientation("totally_unknown_thing") == "maximize"
+    def test_unknown_metric_requires_orientation(self):
+        with pytest.raises(ValueError, match="has no declared orientation"):
+            create_default_objectives(["unknown_metric"])
 
     def test_empty_names_validation(self):
         """Test that empty names list is rejected."""
@@ -492,19 +476,15 @@ class TestCreateDefaultObjectives:
         default to minimize with NO warning (issue: an optimization asked to
         optimize ``total_cost`` was silently crowning the most expensive
         configuration)."""
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            schema = create_default_objectives(["total_cost"])
+        schema = create_default_objectives(["total_cost"])
 
         assert schema.get_orientation("total_cost") == "minimize"
 
     def test_explicit_orientation_overrides_total_cost_default(self):
         """An explicit orientations mapping still wins over the new default."""
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            schema = create_default_objectives(
-                ["total_cost"], orientations={"total_cost": "maximize"}
-            )
+        schema = create_default_objectives(
+            ["total_cost"], orientations={"total_cost": "maximize"}
+        )
 
         assert schema.get_orientation("total_cost") == "maximize"
 
@@ -532,9 +512,7 @@ class TestCreateDefaultObjectives:
         """Every name added to ``default_orientations`` must be a name the
         SDK itself produces as a metric (traigent/evaluators/metrics_tracker.py
         RESERVED_METRIC_KEYS) and must default to minimize with no warning."""
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            schema = create_default_objectives([name])
+        schema = create_default_objectives([name])
 
         assert schema.get_orientation(name) == "minimize"
 
