@@ -40,6 +40,7 @@ jobs:
       API_PORT: "8016"
       DB_PORT: "25432"
       REDIS_PORT: "26379"
+      BACKEND_CONTAINER_UID: "1000"
       SDK_DIR: ${{ github.workspace }}/Traigent
       BACKEND_DIR: ${{ github.workspace }}/TraigentBackend
       SCHEMA_DIR: ${{ github.workspace }}/TraigentSchema
@@ -158,6 +159,16 @@ jobs:
           write_masked_env TRAIGENT_MASTER_KEY
           write_masked_env TRAIGENT_ID_SECRET
 
+      - name: Grant backend container checkout-root ownership
+        run: |
+          # Dockerfile.dev runs as appuser (UID 1000). Setuptools writes its
+          # temporary *.egg-info directory at each mounted checkout root while
+          # pip inspects the local package, so only those two root directories
+          # need to be writable by the container user. Keep the repository
+          # contents and .git metadata owned by the hosted runner.
+          sudo chown "${BACKEND_CONTAINER_UID}:${BACKEND_CONTAINER_UID}" \
+            "$SDK_DIR" "$SCHEMA_DIR"
+
       - name: Start dockerized backend
         working-directory: ${{ env.BACKEND_DIR }}
         run: |
@@ -165,6 +176,18 @@ jobs:
             -p "$COMPOSE_PROJECT_NAME" \
             -f docker/docker-compose.dev.yml \
             up -d --wait postgres redis backend
+
+      - name: Restore checkout-root ownership
+        if: ${{ always() }}
+        run: |
+          # Restore the roots before any host-side uv/git work and even when
+          # compose startup fails. Remove container-created build metadata so
+          # the host never inherits a UID-1000 artifact.
+          sudo rm -rf \
+            "$SDK_DIR"/*.egg-info \
+            "$SDK_DIR"/build \
+            "$SCHEMA_DIR"/*.egg-info
+          sudo chown "$(id -u):$(id -g)" "$SDK_DIR" "$SCHEMA_DIR"
 
       - name: Poll backend health
         run: |
