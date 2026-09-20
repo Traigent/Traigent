@@ -90,6 +90,7 @@ def test_live_contract_temporarily_hands_checkout_roots_to_container_user() -> N
     assert restore_step["if"] == "${{ always() }}"
     restore = str(restore_step["run"])
     assert '"$SDK_DIR"/*.egg-info' in restore
+    assert '"$SDK_DIR"/build' in restore
     assert '"$SCHEMA_DIR"/*.egg-info' in restore
     assert '"$(id -u):$(id -g)" "$SDK_DIR" "$SCHEMA_DIR"' in restore
     assert "chown -R" not in restore

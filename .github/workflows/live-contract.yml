@@ -185,6 +185,7 @@ jobs:
           # the host never inherits a UID-1000 artifact.
           sudo rm -rf \
             "$SDK_DIR"/*.egg-info \
+            "$SDK_DIR"/build \
             "$SCHEMA_DIR"/*.egg-info
           sudo chown "$(id -u):$(id -g)" "$SDK_DIR" "$SCHEMA_DIR"
 
