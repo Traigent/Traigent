@@ -25,6 +25,12 @@ def _step_script(step_name: str) -> str:
     return next(step["run"] for step in steps if step.get("name") == step_name)
 
 
+def _step(step_name: str) -> dict[str, object]:
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    steps = workflow["jobs"]["sdk-backend-live-contract"]["steps"]
+    return next(step for step in steps if step.get("name") == step_name)
+
+
 def test_generated_compose_secrets_are_masked_before_github_env_write(
     tmp_path: Path,
 ) -> None:
@@ -72,3 +78,18 @@ def test_live_contract_api_key_is_redirected_before_masking() -> None:
     assert script.index('>"$key_file"') < script.index(
         "printf '::add-mask::%s\\n' \"$key\""
     )
+
+
+def test_live_contract_temporarily_hands_checkout_roots_to_container_user() -> None:
+    grant = _step_script("Grant backend container checkout-root ownership")
+    assert '"${BACKEND_CONTAINER_UID}:${BACKEND_CONTAINER_UID}"' in grant
+    assert '"$SDK_DIR" "$SCHEMA_DIR"' in grant
+    assert "chown -R" not in grant
+
+    restore_step = _step("Restore checkout-root ownership")
+    assert restore_step["if"] == "${{ always() }}"
+    restore = str(restore_step["run"])
+    assert '"$SDK_DIR"/*.egg-info' in restore
+    assert '"$SCHEMA_DIR"/*.egg-info' in restore
+    assert '"$(id -u):$(id -g)" "$SDK_DIR" "$SCHEMA_DIR"' in restore
+    assert "chown -R" not in restore

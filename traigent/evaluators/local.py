@@ -1832,7 +1832,7 @@ class LocalEvaluator(BaseEvaluator):
                 example_metric.cost.unpriced or metrics.cost.unpriced
             )
 
-        if eval_total_cost == 0.0 and eval_tokens == 0:
+        if not eval_total_cost and eval_tokens == 0:
             # Nothing priced and nothing tokenized: there is no judge spend to
             # attribute, so ABANDON the fold and leave every field of
             # ``example_metric`` exactly as it was.
