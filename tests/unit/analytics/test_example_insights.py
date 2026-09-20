@@ -249,7 +249,8 @@ class TestComputeScores:
         assert result["status"] == "accepted"
         assert result["job_id"] == "job_123"
         mock_http.post.assert_called_once_with(
-            "/analytics/example-scoring/run_123/compute"
+            "/analytics/example-scoring/run_123/compute",
+            json={},
         )
 
 

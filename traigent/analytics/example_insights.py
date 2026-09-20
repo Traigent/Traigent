@@ -205,7 +205,8 @@ class ExampleInsightsClient:
         client = self._get_client()
 
         response = await client.post(
-            f"/analytics/example-scoring/{experiment_run_id}/compute"
+            f"/analytics/example-scoring/{experiment_run_id}/compute",
+            json={},
         )
         response.raise_for_status()
 
