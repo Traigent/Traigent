@@ -2278,6 +2278,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fails-closed-on-zero-injectable-targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fails Closed on Zero Injectable Targets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#when-to-use-seamless-mode" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4384,6 +4395,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fails-closed-on-zero-injectable-targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fails Closed on Zero Injectable Targets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#when-to-use-seamless-mode" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4859,6 +4881,16 @@
 <li>❌ Requires source code access (won't work with compiled code)</li>
 <li>❌ Less explicit than other modes</li>
 </ul>
+<h3 id="fails-closed-on-zero-injectable-targets">Fails Closed on Zero Injectable Targets<a class="headerlink" href="#fails-closed-on-zero-injectable-targets" title="Permanent link">&para;</a></h3>
+<p>If none of your function's local assignments or parameter names match any
+configuration key, seamless mode raises <code>SeamlessNoInjectableTargetsError</code>
+<strong>before the first trial</strong> rather than silently running every trial with the
+same unvaried code (which used to produce a phantom <code>best_config</code>). A
+<code>**kwargs</code> catch-all never counts as a match. Set
+<code>TRAIGENT_ALLOW_SEAMLESS_NO_TARGETS=true</code> to opt back into the previous
+warning-only behavior. If only <em>some</em> of your config keys are injectable, the
+run proceeds with a <code>WARNING</code> naming the uncovered keys -- partial coverage
+does not fail closed.</p>
 <h3 id="when-to-use-seamless-mode">When to Use (Seamless Mode)<a class="headerlink" href="#when-to-use-seamless-mode" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Optimizing existing code without modifications</li>

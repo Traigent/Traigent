@@ -1378,6 +1378,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Known Limitations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fails-closed-on-zero-injectable-targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fails closed on zero injectable targets
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3876,6 +3893,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Known Limitations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fails-closed-on-zero-injectable-targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fails closed on zero injectable targets
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3956,9 +3990,23 @@ parameters or defaults.</p>
 <li><strong>Direct call literals</strong> are not rewritten:</li>
 <li>Example: <code>ChatAnthropic(model="claude")</code> stays literal.</li>
 <li><strong>Dynamic lookups</strong> (for example <code>getattr</code>) are not modified.</li>
+<li>A <code>**kwargs</code> catch-all parameter never counts as an injectable target, even
+  though a config key would bind into it at call time.</li>
 </ul>
 <p>If you need those patterns, use <code>injection_mode="parameter"</code> or read configs via
 <code>traigent.get_config()</code>.</p>
+<h3 id="fails-closed-on-zero-injectable-targets">Fails closed on zero injectable targets<a class="headerlink" href="#fails-closed-on-zero-injectable-targets" title="Permanent link">&para;</a></h3>
+<p>If a non-empty <code>configuration_space</code> has <strong>no</strong> injectable target for the
+target function -- no local assignment and no parameter named after any
+config key -- Traigent raises <code>SeamlessNoInjectableTargetsError</code> (a
+<code>ConfigurationError</code>) before the first optimization trial, instead of running
+every trial with the same unvaried code and returning a phantom
+<code>best_config</code>. Set <code>TRAIGENT_ALLOW_SEAMLESS_NO_TARGETS=true</code> to opt back into
+the previous warning-only behavior for the rare intentional case (for
+example, a config key that only gates behavior via <code>traigent.get_config()</code>
+inside the function body). Partial coverage -- some config keys injectable,
+others not -- logs a <code>WARNING</code> naming the uncovered keys and does <strong>not</strong>
+fail closed.</p>
 <h2 id="example">Example<a class="headerlink" href="#example" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">injection_mode</span><span class="o">=</span><span class="s2">"seamless"</span><span class="p">,</span>

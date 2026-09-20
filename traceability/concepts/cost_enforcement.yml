@@ -26,9 +26,6 @@ state:
   - name: unknown_cost_mode
     type: "bool"
     description: "Fallback mode when cost extraction fails."
-  - name: mock_mode_cached
-    type: "bool"
-    description: "Mock mode cached at init to prevent mid-run env changes."
 
 actions:
   - name: acquire_permit
@@ -108,7 +105,8 @@ operational_principle:
   - "The sum of active permit amounts always equals reserved_cost (I8 invariant)."
   - "Admission-time spend bound: before launching new work, accumulated_cost + reserved_cost + estimated_cost <= limit (I4 admission guard). Actual cost may exceed estimates after a permitted trial completes."
   - "All state mutations occur atomically under a single RLock."
-  - "Mock mode bypasses all tracking to enable zero-cost development/testing."
+  - "Mock configuration (TRAIGENT_MOCK_LLM) cannot disable CostEnforcer: permit admission, reservation/release, actual-cost accounting, and check_and_approve itself run identically regardless of the flag."
+  - "Scope limit, deliberate: the CostEstimator PRE-RUN preflight IS skipped under TRAIGENT_MOCK_LLM (cost_estimator.py returns before estimate_optimization_cost and check_and_approve), because a mock run incurs no provider spend to approve. The SDK pins exactly this in tests/unit/core/test_cost_enforcement_no_bypass.py, which asserts estimate_cost and request_approval are NOT called under mock. Runtime enforcement is unaffected; only the preflight is skipped."
   - "Denied permits have id=-1, amount=0.0, active=False (I7 invariant)."
   - "Permit IDs are monotonically increasing and never reused (I6 invariant)."
 
