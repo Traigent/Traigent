@@ -25,6 +25,7 @@ from traigent.cli.main import (
     _list_local_session_results,
     cli,
 )
+from traigent.core.objectives import create_default_objectives
 from traigent.storage.local_storage import LocalStorageManager
 
 
@@ -438,7 +439,9 @@ class TestDecoratorParameters:
         # The parameter should be accepted without error
         @traigent.optimize(
             configuration_space={"x": [1, 2, 3]},
-            objectives=["score"],
+            objectives=create_default_objectives(
+                ["score"], orientations={"score": "maximize"}
+            ),
             auto_load_best=True,
         )
         def test_func(x: int) -> int:
@@ -458,7 +461,9 @@ class TestDecoratorParameters:
 
             @traigent.optimize(
                 configuration_space={"x": [1, 2, 3]},
-                objectives=["score"],
+                objectives=create_default_objectives(
+                    ["score"], orientations={"score": "maximize"}
+                ),
                 load_from=config_path,
             )
             def test_func(x: int) -> int:

@@ -459,7 +459,10 @@ class TestOptimization:
             return_value={"temperature": [0.1, 0.5, 1.0], "model": ["a", "b"]}
         )
         mock_evaluator.optimization_spec = {
-            "objective_schema": create_default_objectives(["quality", "cost"]),
+            "objective_schema": create_default_objectives(
+                ["quality", "cost"],
+                orientations={"quality": "maximize", "cost": "minimize"},
+            ),
             "constraints": [lambda _config, _metrics: True],
             "default_config": {"temperature": 0.1},
             "runtime_overrides": {

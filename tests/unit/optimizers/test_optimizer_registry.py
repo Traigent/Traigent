@@ -300,7 +300,12 @@ class TestOptimizerRegistry:
 
         objectives = ["accuracy", "latency", "memory"]
 
-        optimizer = get_optimizer("complex", config_space, objectives)
+        optimizer = get_optimizer(
+            "complex",
+            config_space,
+            objectives,
+            objective_orientations={"memory": "minimize"},
+        )
 
         assert optimizer.config_space == config_space
         assert optimizer.objectives == objectives
@@ -322,8 +327,18 @@ class TestOptimizerRegistry:
         register_optimizer("specialized", SpecializedOptimizer)
 
         # Both should work
-        opt1 = get_optimizer("base_custom", {"x": [1]}, ["obj"])
-        opt2 = get_optimizer("specialized", {"x": [1]}, ["obj"])
+        opt1 = get_optimizer(
+            "base_custom",
+            {"x": [1]},
+            ["obj"],
+            objective_orientations={"obj": "maximize"},
+        )
+        opt2 = get_optimizer(
+            "specialized",
+            {"x": [1]},
+            ["obj"],
+            objective_orientations={"obj": "maximize"},
+        )
 
         assert isinstance(opt1, BaseCustomOptimizer)
         assert isinstance(opt2, SpecializedOptimizer)
@@ -347,7 +362,12 @@ class TestOptimizerRegistry:
 
         # Get should also be fast
         start = time.time()
-        optimizer = get_optimizer("opt_50", {"x": [1]}, ["obj"])
+        optimizer = get_optimizer(
+            "opt_50",
+            {"x": [1]},
+            ["obj"],
+            objective_orientations={"obj": "maximize"},
+        )
         duration = time.time() - start
 
         assert isinstance(optimizer, MockOptimizer)

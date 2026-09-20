@@ -160,8 +160,8 @@ class TestDeclaredOrientationRespected:
 
     def test_is_minimization_objective_respects_explicit_minimize(self):
         """Explicit minimize orientation beats name-pattern logic."""
-        # "spend" is NOT in _MINIMIZE_OBJECTIVE_PATTERNS so heuristic → maximize
-        assert is_minimization_objective("spend") is False
+        with pytest.raises(ValueError, match="has no declared orientation"):
+            is_minimization_objective("spend")
         # But explicit orientation must override:
         assert is_minimization_objective("spend", orientation="minimize") is True
 

@@ -78,7 +78,10 @@ class TestEdgeCases:
         objectives = ["accuracy", "precision"]
 
         is_superior, details = validator._compare_results(
-            baseline, optimized, objectives
+            baseline,
+            optimized,
+            objectives,
+            {"accuracy": "maximize", "precision": "maximize"},
         )
 
         # Should handle zero baseline gracefully
@@ -99,7 +102,10 @@ class TestEdgeCases:
         objectives = ["loss", "error_rate"]
 
         is_superior, details = validator._compare_results(
-            baseline, optimized, objectives
+            baseline,
+            optimized,
+            objectives,
+            {"loss": "maximize", "error_rate": "maximize"},
         )
 
         # Should handle negative values correctly
@@ -113,7 +119,10 @@ class TestEdgeCases:
         objectives = ["accuracy", "precision"]
 
         is_superior, details = validator._compare_results(
-            baseline, optimized, objectives
+            baseline,
+            optimized,
+            objectives,
+            {"accuracy": "maximize", "precision": "maximize"},
         )
 
         # Identical values should not be considered superior
@@ -128,7 +137,10 @@ class TestEdgeCases:
         objectives = ["accuracy", "precision"]
 
         is_superior, details = validator._compare_results(
-            baseline, optimized, objectives
+            baseline,
+            optimized,
+            objectives,
+            {"accuracy": "maximize", "precision": "maximize"},
         )
 
         # Should handle missing metrics gracefully
@@ -460,7 +472,10 @@ class TestBoundaryConditions:
         objectives = [f"metric_{i}" for i in range(10)]
 
         is_superior, details = validator._compare_results(
-            baseline, optimized, objectives
+            baseline,
+            optimized,
+            objectives,
+            dict.fromkeys(objectives, "maximize"),
         )
 
         # All objectives improved above threshold

@@ -44,6 +44,7 @@ def optimizer(mock_remote_service):
     return InteractiveOptimizer(
         config_space={"temperature": (0.0, 1.0), "model": ["gpt-3.5", "GPT-4o"]},
         objectives=["accuracy", "speed"],
+        objective_orientations={"speed": "maximize"},
         remote_service=mock_remote_service,
         dataset_metadata={"size": 1000, "type": "qa"},
     )

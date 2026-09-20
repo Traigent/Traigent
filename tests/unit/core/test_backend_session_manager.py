@@ -3491,17 +3491,13 @@ class TestWeightedSchemaThreading1846:
             weights={"accuracy": 0.5, "tokens_used": 0.5},
         )
 
-    def test_autodetect_misranks_nonpattern_minimize_objective(self):
-        """Sensitivity guard: WITHOUT the schema the winner flips to t2.
-
-        Proves the fixture discriminates — if this ever fails, the threading
-        test below no longer guards anything and both must be revisited.
-        """
+    def test_missing_custom_orientation_fails_before_weighted_ranking(self):
+        """A custom objective cannot be ranked after its schema is dropped."""
         result = self._real_result()
-        no_schema = result.calculate_weighted_scores(
-            objective_weights={"accuracy": 0.5, "tokens_used": 0.5}
-        )
-        assert no_schema["best_weighted_config"] == {"model": "big"}
+        with pytest.raises(ValueError, match="tokens_used.*no declared orientation"):
+            result.calculate_weighted_scores(
+                objective_weights={"accuracy": 0.5, "tokens_used": 0.5}
+            )
 
     @pytest.mark.asyncio
     async def test_update_weighted_scores_threads_declared_schema(
