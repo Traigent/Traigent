@@ -16,7 +16,7 @@ def _resolve_backend_url() -> str | None:
     return os.getenv("TRAIGENT_API_URL") or os.getenv("TRAIGENT_BACKEND_URL")
 
 
-def _score_config(config: dict[str, object]) -> dict[str, float]:
+def _score_config(config: dict[str, object]) -> dict[str, float | int]:
     model = str(config["model"])
     temperature = float(config["temperature"])
 
@@ -61,6 +61,7 @@ async def test_live_hybrid_session_round_trip() -> None:
     receipt_path = Path(receipt_path_value) if receipt_path_value else None
 
     session_id: str | None = None
+    receipt_written = False
 
     async with TraigentCloudClient(
         api_key=api_key,
@@ -106,7 +107,7 @@ async def test_live_hybrid_session_round_trip() -> None:
             assert suggestion.dataset_subset.indices
             assert all(0 <= index < 4 for index in suggestion.dataset_subset.indices)
 
-            metrics = _score_config(suggestion.config)
+            metrics = {**_score_config(suggestion.config), "total_examples": 4}
 
             await client.submit_trial_result(
                 session_id=session_id,
@@ -114,7 +115,7 @@ async def test_live_hybrid_session_round_trip() -> None:
                 metrics=metrics,
                 duration=0.01,
                 status="completed",
-                metadata={"suite": "python-hybrid-live-smoke", "total_examples": 4},
+                metadata={"suite": "python-hybrid-live-smoke"},
             )
 
             finalized = await client.finalize_optimization(session_id)
@@ -147,6 +148,7 @@ async def test_live_hybrid_session_round_trip() -> None:
                             "declared_dataset_id": "python-hybrid-live-readiness-dataset",
                             "expected": {
                                 "dataset_check": "SUPPORTED",
+                                "evaluated_example_count": 4,
                                 "unsupported_checks": "UNKNOWN",
                             },
                         },
@@ -156,8 +158,9 @@ async def test_live_hybrid_session_round_trip() -> None:
                     + "\n",
                     encoding="utf-8",
                 )
+                receipt_written = True
         finally:
-            if session_id and not retain_receipt:
+            if session_id and not receipt_written:
                 try:
                     await client.delete_session(session_id, cascade=True)
                 except Exception:

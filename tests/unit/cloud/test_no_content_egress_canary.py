@@ -599,8 +599,10 @@ def _assert_session_create_has_artifact_fingerprints(
     assert body["identity_version"] == 2
     assert body["agent_id"] is None
     assert body["agent_id_source"] == "unknown"
-    assert body["dataset_id"] is None
-    assert body["dataset_id_source"] == "unknown"
+    # A named Dataset is the existing declared-label identity path; only the
+    # anonymous agent identity remains unknown in this decorator fixture.
+    assert body["dataset_id"] == "canary_dataset"
+    assert body["dataset_id_source"] == "declared"
     assert body["evaluator_id_source"] == "unknown"
     for key, fingerprint in artifact_fingerprints.items():
         artifact = body["artifact_versions"][key]

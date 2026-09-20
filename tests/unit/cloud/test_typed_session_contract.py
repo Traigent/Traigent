@@ -286,6 +286,16 @@ class TestContractGate:
             "state": "verified",
         }
 
+    def test_direct_serializer_omits_unset_optional_schema_fields(self):
+        request = _request()
+        fake_self = Mock()
+        fake_self._ensure_owner_metadata = lambda metadata: metadata or {}
+
+        payload = TraigentCloudClient._serialize_session_request(fake_self, request)
+
+        assert "optimization_strategy" not in payload
+        assert "user_id" not in payload
+
     def test_explicit_evaluator_definition_identity_is_canonicalized_for_v2(
         self, monkeypatch
     ):
