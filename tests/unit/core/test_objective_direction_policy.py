@@ -61,6 +61,20 @@ def test_semantically_misleading_custom_names_require_declaration(name: str) -> 
     assert f"orientations={{{name!r}: 'minimize'}}" in message
 
 
+def test_accuracy_score_requires_explicit_direction() -> None:
+    with pytest.raises(ValueError, match="has no declared orientation"):
+        create_default_objectives(["accuracy_score"])
+
+    maximize = create_default_objectives(
+        ["accuracy_score"], orientations={"accuracy_score": "maximize"}
+    )
+    minimize = create_default_objectives(
+        ["accuracy_score"], orientations={"accuracy_score": "minimize"}
+    )
+    assert maximize.get_orientation("accuracy_score") == "maximize"
+    assert minimize.get_orientation("accuracy_score") == "minimize"
+
+
 def test_custom_name_explicit_orientation_wins() -> None:
     schema = create_default_objectives(
         ["plugin_quality"], orientations={"plugin_quality": "maximize"}
