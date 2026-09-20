@@ -74,6 +74,28 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`objectives=["total_cost"]` (or any bare name list including it) optimized for the
+  MOST expensive configuration, not the cheapest.** `create_default_objectives` looked
+  up each bare objective name in an exact-match table that recognized `"cost"` as
+  minimize but not `"total_cost"` — the aggregate-cost metric name the SDK itself emits
+  (`traigent/evaluators/metrics_tracker.py`) and the name several shipped examples
+  already passed (`walkthrough/mock/advanced/03_multi_agent.py`,
+  `examples/advanced/metric-registry/run.py`). An unrecognized name defaults to
+  maximize, so those runs silently crowned the priciest trial as `best_config` and
+  warned only that the name was "not a recognized metric name" — easy to miss among
+  routine warnings. `total_cost` now defaults to minimize with no warning, matching
+  `"cost"`. The same default table is also used, for names given as a bare list rather
+  than an `ObjectiveSchema`, to decide which trial the results table highlights as best
+  (`traigent/utils/results_table.py`) — that table separately hand-duplicated a smaller,
+  inconsistent `("cost", "latency")` check that is now driven by the same source of
+  truth. Also added, for the same reason (unambiguously lower-is-better and a name the
+  SDK itself emits as a metric): `cost_per_example_mean`, `input_cost`, `output_cost`,
+  `duration`, `execution_time_ms`, `response_time_ms`, `avg_response_time`,
+  `avg_response_time_ms`, `error_rate`. An explicit `orientations={"total_cost":
+  "maximize"}` (or an `ObjectiveDefinition` with a declared orientation) still wins over
+  every default in this table, and an unrecognized name still defaults to maximize with
+  the same warning as before — only names now in the table are exempt from it.
+
 - **Dataset row ids you wrote yourself were sent to the Traigent service.** If your
   dataset rows carried an `example_id` (or `dataset_example_id` / `input_id` / a nested
   id in row metadata), that string was used verbatim as the per-example id on every

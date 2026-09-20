@@ -21,6 +21,7 @@ import os
 import sys
 from typing import TYPE_CHECKING, Any
 
+from traigent.core.objectives import DEFAULT_MINIMIZE_METRIC_NAMES
 from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -181,7 +182,7 @@ def _get_objective_info(objectives: Any) -> list[tuple[str, str]]:
         result = []
         for o in objectives:
             name = str(o)
-            if name in ("cost", "latency"):
+            if name in DEFAULT_MINIMIZE_METRIC_NAMES:
                 result.append((name, "minimize"))
             else:
                 result.append((name, "maximize"))

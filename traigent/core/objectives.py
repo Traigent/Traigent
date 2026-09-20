@@ -785,6 +785,54 @@ class ObjectiveSchema:
         return baseline / (baseline + max(value, 0.0))
 
 
+# Default orientations for `create_default_objectives` and any other code
+# that needs to guess an objective's direction from a bare name (single
+# source of truth -- see DEFAULT_MINIMIZE_METRIC_NAMES below).
+#
+# The "minimize" entries below are exact metric names, not substrings: a
+# name must match one of these keys exactly to get a default. "cost",
+# "latency", "error", "loss", "time", "memory" are generic/legacy category
+# names kept for backward compatibility; everything from "total_cost" on is
+# a name the SDK itself emits as a metric (see
+# traigent/evaluators/metrics_tracker.py RESERVED_METRIC_KEYS) that is
+# unambiguously "lower is better". These were added because "total_cost"
+# (and its cost/time/error-rate siblings) previously fell through to the
+# unrecognized-name fallback below, defaulting to "maximize" and crowning
+# the MOST expensive/slowest configuration as best.
+DEFAULT_OBJECTIVE_ORIENTATIONS: dict[str, Literal["maximize", "minimize"]] = {
+    "accuracy": "maximize",
+    "precision": "maximize",
+    "recall": "maximize",
+    "f1": "maximize",
+    "cost": "minimize",
+    "latency": "minimize",
+    "error": "minimize",
+    "loss": "minimize",
+    "time": "minimize",
+    "memory": "minimize",
+    "total_cost": "minimize",
+    "cost_per_example_mean": "minimize",
+    "input_cost": "minimize",
+    "output_cost": "minimize",
+    "duration": "minimize",
+    "execution_time_ms": "minimize",
+    "response_time_ms": "minimize",
+    "avg_response_time": "minimize",
+    "avg_response_time_ms": "minimize",
+    "error_rate": "minimize",
+}
+
+#: Just the names above that default to "minimize", for callers (e.g.
+#: traigent/utils/results_table.py) that only need a minimize/maximize
+#: name-lookup and would otherwise hand-duplicate this table (and drift, as
+#: results_table.py's local ``("cost", "latency")`` check had).
+DEFAULT_MINIMIZE_METRIC_NAMES: frozenset[str] = frozenset(
+    name
+    for name, orientation in DEFAULT_OBJECTIVE_ORIENTATIONS.items()
+    if orientation == "minimize"
+)
+
+
 def create_default_objectives(
     objective_names: list[str],
     orientations: dict[str, str] | None = None,
@@ -803,19 +851,7 @@ def create_default_objectives(
     if not objective_names:
         raise ValueError("At least one objective name must be provided")
 
-    # Default orientations (maximize for common metrics)
-    default_orientations = {
-        "accuracy": "maximize",
-        "precision": "maximize",
-        "recall": "maximize",
-        "f1": "maximize",
-        "cost": "minimize",
-        "latency": "minimize",
-        "error": "minimize",
-        "loss": "minimize",
-        "time": "minimize",
-        "memory": "minimize",
-    }
+    default_orientations = DEFAULT_OBJECTIVE_ORIENTATIONS
 
     # Build objectives
     objectives = []

@@ -24,6 +24,7 @@ from traigent.api.types import (
 from traigent.utils.results_table import (
     _find_best_per_objective,
     _format_metric_value,
+    _get_objective_info,
     _trials_all_failed,
     print_results_table,
 )
@@ -452,6 +453,40 @@ class TestBestPerObjective:
         best = _find_best_per_objective(trials, [("cost", "minimize")])
 
         assert best["cost"] == {1}
+
+
+class TestGetObjectiveInfo:
+    """When ``objectives`` is a bare name list (not an ObjectiveSchema), the
+    orientation-by-name table here must agree with
+    ``traigent.core.objectives.DEFAULT_OBJECTIVE_ORIENTATIONS`` -- it used to
+    hand-duplicate a much smaller ``("cost", "latency")`` table that silently
+    treated ``total_cost`` (and every other non-"cost"/"latency" minimize
+    metric) as maximize, so the ★ Overall Best / best-per-objective highlight
+    could crown the worst trial for those metrics."""
+
+    def test_total_cost_is_minimize(self) -> None:
+        assert _get_objective_info(["total_cost"]) == [("total_cost", "minimize")]
+
+    def test_cost_and_latency_remain_minimize(self) -> None:
+        assert _get_objective_info(["cost", "latency"]) == [
+            ("cost", "minimize"),
+            ("latency", "minimize"),
+        ]
+
+    def test_accuracy_remains_maximize(self) -> None:
+        assert _get_objective_info(["accuracy"]) == [("accuracy", "maximize")]
+
+    def test_objective_schema_object_unaffected(self) -> None:
+        objectives = SimpleNamespace(
+            objectives=[
+                SimpleNamespace(name="total_cost", orientation="minimize"),
+                SimpleNamespace(name="accuracy", orientation="maximize"),
+            ]
+        )
+        assert _get_objective_info(objectives) == [
+            ("total_cost", "minimize"),
+            ("accuracy", "maximize"),
+        ]
 
 
 class TestOverallBestIdentity:

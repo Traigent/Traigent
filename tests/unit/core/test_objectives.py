@@ -1,6 +1,7 @@
 """Tests for objective definitions and validation."""
 
 import json
+import warnings
 
 import pytest
 
@@ -469,10 +470,73 @@ class TestCreateDefaultObjectives:
         assert schema.get_orientation("unknown_metric") == "maximize"
         assert schema.get_normalized_weight("unknown_metric") == 1.0
 
+    def test_unrecognized_name_warns_and_maximizes(self):
+        """An unrecognized name still warns and still defaults to maximize.
+
+        This fallback behavior must NOT change as part of adding names to
+        ``default_orientations`` -- only names the SDK recognizes are exempt
+        from the warning.
+        """
+        with pytest.warns(UserWarning, match="not a recognized metric name"):
+            schema = create_default_objectives(["totally_unknown_thing"])
+
+        assert schema.get_orientation("totally_unknown_thing") == "maximize"
+
     def test_empty_names_validation(self):
         """Test that empty names list is rejected."""
         with pytest.raises(ValueError, match="At least one objective name"):
             create_default_objectives([])
+
+    def test_total_cost_defaults_to_minimize_with_no_warning(self):
+        """``total_cost`` -- the SDK's own aggregate-cost metric name -- must
+        default to minimize with NO warning (issue: an optimization asked to
+        optimize ``total_cost`` was silently crowning the most expensive
+        configuration)."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            schema = create_default_objectives(["total_cost"])
+
+        assert schema.get_orientation("total_cost") == "minimize"
+
+    def test_explicit_orientation_overrides_total_cost_default(self):
+        """An explicit orientations mapping still wins over the new default."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            schema = create_default_objectives(
+                ["total_cost"], orientations={"total_cost": "maximize"}
+            )
+
+        assert schema.get_orientation("total_cost") == "maximize"
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            # Cost family -- SDK-emitted metric names (metrics_tracker.py
+            # RESERVED_METRIC_KEYS): dollar-denominated, unambiguously lower-is-better.
+            "cost_per_example_mean",
+            "input_cost",
+            "output_cost",
+            # Time/duration family -- SDK-emitted metric names, unambiguously
+            # lower-is-better (elapsed time / latency).
+            "duration",
+            "execution_time_ms",
+            "response_time_ms",
+            "avg_response_time",
+            "avg_response_time_ms",
+            # Error-rate family -- SDK-emitted metric name, unambiguously
+            # lower-is-better.
+            "error_rate",
+        ],
+    )
+    def test_sdk_emitted_minimize_metric_names_have_no_warning(self, name):
+        """Every name added to ``default_orientations`` must be a name the
+        SDK itself produces as a metric (traigent/evaluators/metrics_tracker.py
+        RESERVED_METRIC_KEYS) and must default to minimize with no warning."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            schema = create_default_objectives([name])
+
+        assert schema.get_orientation(name) == "minimize"
 
 
 class TestIntegrationScenarios:
