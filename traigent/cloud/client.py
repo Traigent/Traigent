@@ -72,6 +72,7 @@ from .models import (
     TrialResultSubmission,
     TrialSuggestion,
     session_dataset_identity_to_wire,
+    session_identity_v2_to_wire,
     session_narrative_to_wire,
     session_task_type_to_wire,
 )
@@ -2044,6 +2045,10 @@ class TraigentCloudClient(BaseTraigentClient):
         evaluator_definition_id = getattr(request, "evaluator_definition_id", None)
         if isinstance(evaluator_definition_id, str) and evaluator_definition_id.strip():
             payload["evaluator_definition_id"] = evaluator_definition_id.strip()
+        identity_v2 = session_identity_v2_to_wire(request)
+        if "evaluator_id" in identity_v2:
+            payload.pop("evaluator_definition_id", None)
+        payload.update(identity_v2)
         return payload
 
     @staticmethod

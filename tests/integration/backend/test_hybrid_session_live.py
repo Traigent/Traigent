@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 
 import pytest
 
 from traigent.cloud.client import TraigentCloudClient
+from traigent.cloud.models import SessionCreationRequest
 
 
 def _resolve_backend_url() -> str | None:
@@ -49,6 +52,14 @@ async def test_live_hybrid_session_round_trip() -> None:
             "Set TRAIGENT_API_URL (preferred) or TRAIGENT_BACKEND_URL for the live hybrid session test"
         )
 
+    retain_receipt = os.getenv("TRAIGENT_HYBRID_LIVE_RETAIN_RECEIPT") == "1"
+    receipt_path_value = os.getenv("TRAIGENT_HYBRID_LIVE_RECEIPT")
+    if retain_receipt and not receipt_path_value:
+        pytest.skip(
+            "TRAIGENT_HYBRID_LIVE_RECEIPT is required when retaining the readiness witness"
+        )
+    receipt_path = Path(receipt_path_value) if receipt_path_value else None
+
     session_id: str | None = None
 
     async with TraigentCloudClient(
@@ -58,23 +69,27 @@ async def test_live_hybrid_session_round_trip() -> None:
     ) as client:
         try:
             created = await client.create_optimization_session(
-                "python_hybrid_live_smoke",
-                configuration_space={
-                    "model": {
-                        "type": "categorical",
-                        "choices": ["gpt-4o-mini", "gpt-4o"],
+                SessionCreationRequest(
+                    function_name="python_hybrid_live_smoke",
+                    agent_key="python-hybrid-live-readiness-agent",
+                    dataset_id="python-hybrid-live-readiness-dataset",
+                    configuration_space={
+                        "model": {
+                            "type": "categorical",
+                            "choices": ["gpt-4o-mini", "gpt-4o"],
+                        },
+                        "temperature": {
+                            "type": "float",
+                            "low": 0.0,
+                            "high": 1.0,
+                            "step": 0.2,
+                        },
                     },
-                    "temperature": {
-                        "type": "float",
-                        "low": 0.0,
-                        "high": 1.0,
-                        "step": 0.2,
-                    },
-                },
-                objectives=["accuracy", "cost"],
-                dataset_metadata={"size": 4, "suite": "python-hybrid-live-smoke"},
-                max_trials=4,
-                optimization_strategy={"algorithm": "optuna"},
+                    objectives=["accuracy", "cost"],
+                    dataset_metadata={"size": 4, "suite": "python-hybrid-live-smoke"},
+                    max_trials=4,
+                    optimization_strategy={"algorithm": "optuna"},
+                )
             )
 
             session_id = created.session_id
@@ -99,7 +114,7 @@ async def test_live_hybrid_session_round_trip() -> None:
                 metrics=metrics,
                 duration=0.01,
                 status="completed",
-                metadata={"suite": "python-hybrid-live-smoke"},
+                metadata={"suite": "python-hybrid-live-smoke", "total_examples": 4},
             )
 
             finalized = await client.finalize_optimization(session_id)
@@ -113,8 +128,36 @@ async def test_live_hybrid_session_round_trip() -> None:
                 "search_complete",
                 "finalized",
             }
+            if retain_receipt and receipt_path is not None:
+                metadata = created.metadata if isinstance(created.metadata, dict) else {}
+                for key in ("project_id", "agent_id", "experiment_id", "experiment_run_id"):
+                    assert isinstance(metadata.get(key), str) and metadata[key], (
+                        f"retained readiness witness must return {key} in session metadata"
+                    )
+                receipt_path.parent.mkdir(parents=True, exist_ok=True)
+                receipt_path.write_text(
+                    json.dumps(
+                        {
+                            "session_id": session_id,
+                            "project_id": metadata.get("project_id"),
+                            "agent_id": metadata.get("agent_id"),
+                            "experiment_id": metadata.get("experiment_id"),
+                            "experiment_run_id": metadata.get("experiment_run_id"),
+                            "declared_agent_id": "python-hybrid-live-readiness-agent",
+                            "declared_dataset_id": "python-hybrid-live-readiness-dataset",
+                            "expected": {
+                                "dataset_check": "SUPPORTED",
+                                "unsupported_checks": "UNKNOWN",
+                            },
+                        },
+                        sort_keys=True,
+                        indent=2,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
         finally:
-            if session_id:
+            if session_id and not retain_receipt:
                 try:
                     await client.delete_session(session_id, cascade=True)
                 except Exception:

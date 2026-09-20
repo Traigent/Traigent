@@ -24,6 +24,7 @@ from typing import Any
 from traigent.api.types import TrialStatus as TrialStatus
 from traigent.cloud.smart_pruning import normalize_smart_pruning_options
 from traigent.evaluators.base import Dataset
+from traigent.utils.artifact_fingerprints import artifact_fingerprints_to_wire
 
 
 class OptimizationSessionStatus(Enum):
@@ -525,6 +526,68 @@ def session_dataset_identity_to_wire(session_request: Any) -> dict[str, str]:
         "dataset_id_source": "declared",
         "dataset_id": dataset_id,
     }
+
+
+_IDENTITY_ARTIFACT_KEYS = ("agent", "dataset", "evaluator", "config_space")
+
+
+def _artifact_version_from_fp1(value: Any) -> dict[str, str | None]:
+    """Map one already-sanitized fp1 value to the Schema artifact slot.
+
+    The existing fingerprint serializer is the content-egress boundary.  This
+    function only changes the envelope: a valid ``fp1:<hex>`` value becomes the
+    identity-v2 ``sha256:<hex>`` digest, while absence and invalid values remain
+    explicit unknowns.  No caller value is copied into the wire object.
+    """
+    if isinstance(value, str) and value.startswith("fp1:") and len(value) == 68:
+        digest = value[4:]
+        if all(character in "0123456789abcdef" for character in digest):
+            return {"schema": "fp1", "digest": f"sha256:{digest}", "state": "verified"}
+    return {"schema": "fp1", "digest": None, "state": "unknown"}
+
+
+def session_identity_v2_to_wire(session_request: Any) -> dict[str, Any]:
+    """Serialize the typed session's explicit identity-v2 declaration.
+
+    Agent identity comes only from the explicit stable ``agent_key``.  Dataset
+    identity uses the existing declared-label rules, and evaluator identity is
+    emitted for either explicit evaluator spelling, canonicalized to
+    ``evaluator_id`` for the v2 contract.  The older
+    ``artifact_fingerprints`` object remains a separate compatibility field;
+    these four slots are its content-free provenance projection.
+    """
+    agent_key = getattr(session_request, "agent_key", None)
+    agent_id = agent_key.strip() if isinstance(agent_key, str) and agent_key.strip() else None
+    dataset = session_dataset_identity_to_wire(session_request)
+    dataset_id = dataset.get("dataset_id")
+    artifact_fingerprints = artifact_fingerprints_to_wire(
+        getattr(session_request, "artifact_fingerprints", None)
+    ) or {}
+    artifact_versions = {
+        key: _artifact_version_from_fp1(artifact_fingerprints.get(key))
+        for key in _IDENTITY_ARTIFACT_KEYS
+    }
+    evaluator_id = getattr(session_request, "evaluator_id", None)
+    if not isinstance(evaluator_id, str) or not evaluator_id.strip():
+        evaluator_id = getattr(session_request, "evaluator_definition_id", None)
+    evaluator_id = (
+        evaluator_id.strip()
+        if isinstance(evaluator_id, str) and evaluator_id.strip()
+        else None
+    )
+
+    identity: dict[str, Any] = {
+        "identity_version": 2,
+        "agent_id": agent_id,
+        "agent_id_source": "declared" if agent_id is not None else "unknown",
+        "dataset_id": dataset_id if isinstance(dataset_id, str) else None,
+        "dataset_id_source": "declared" if isinstance(dataset_id, str) else "unknown",
+        "evaluator_id_source": "registered" if evaluator_id is not None else "unknown",
+        "artifact_versions": artifact_versions,
+    }
+    if evaluator_id is not None:
+        identity["evaluator_id"] = evaluator_id
+    return identity
 
 
 @dataclass
