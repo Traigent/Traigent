@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, mock_open, patch
 
@@ -412,6 +413,23 @@ class TestTraigentDiagnostics:
         assert len(report.successes) >= 2
         assert any("Mock LLM mode is enabled" in s["message"] for s in report.successes)
 
+    @pytest.mark.parametrize("mock_value", ["1", "yes", "on", "TRUE", "On"])
+    @patch("traigent.initialize")
+    def test_check_traigent_config_with_mock_mode_truthy_variants(
+        self, mock_initialize: MagicMock, mock_value: str
+    ) -> None:
+        """Regression for #1766: diagnose() must agree with is_truthy()'s
+        accepted spellings (1/true/yes/on, case-insensitive), not just the
+        exact string "true"."""
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": mock_value}, clear=True):
+            report = DiagnosticReport()
+
+            TraigentDiagnostics._check_traigent_config(report)
+
+            assert any(
+                "Mock LLM mode is enabled" in s["message"] for s in report.successes
+            ), f"TRAIGENT_MOCK_LLM={mock_value!r} should be reported as enabled"
+
     @patch("traigent.initialize")
     @patch.dict(os.environ, {}, clear=True)
     def test_check_traigent_config_failure(self, mock_initialize: MagicMock) -> None:
@@ -425,27 +443,36 @@ class TestTraigentDiagnostics:
         assert "Failed to initialize" in report.issues[0]["message"]
         assert "pip install -e ." in report.issues[0]["fix"]
 
-    @patch("pathlib.Path.mkdir")
-    @patch("pathlib.Path.write_text")
-    @patch("pathlib.Path.unlink")
-    def test_check_permissions_success(
-        self,
-        mock_unlink: MagicMock,
-        mock_write: MagicMock,
-        mock_mkdir: MagicMock,
-    ) -> None:
-        """Test file permissions check when successful."""
+    def test_check_permissions_success(self, tmp_path) -> None:
+        """The probe reports a writable directory -- and leaves nothing behind.
+
+        This used to patch ``Path.write_text``/``Path.unlink`` and assert that
+        ``write_text`` had been called, which pinned the IMPLEMENTATION rather
+        than the behaviour: it went red the moment the probe stopped writing a
+        fixed ``.test_permission`` file (which destroyed a pre-existing file of
+        that name) and started using a unique temporary one. Assert what the
+        check is for instead -- it detects writability, and it is not
+        destructive -- so the next implementation change is free.
+        """
         report = DiagnosticReport()
 
-        TraigentDiagnostics._check_permissions(report)
+        with patch.object(Path, "home", return_value=tmp_path):
+            TraigentDiagnostics._check_permissions(report)
 
-        # Should succeed for all test paths and exercise write/unlink mocks
-        write_assertion_message = (
-            "write_text should have been called to test permissions"
-        )
-        assert mock_write.called, write_assertion_message
-        assert len(report.successes) >= 1
         assert any("Can write to" in s["message"] for s in report.successes)
+        assert not report.issues
+
+    def test_check_permissions_leaves_no_files_behind(self, tmp_path) -> None:
+        """The write probe cleans up after itself."""
+        report = DiagnosticReport()
+        target = tmp_path / ".traigent"
+        target.mkdir()
+        before = set(target.iterdir())
+
+        with patch.object(Path, "home", return_value=tmp_path):
+            TraigentDiagnostics._check_permissions(report)
+
+        assert set(target.iterdir()) == before, "the probe left a file behind"
 
     @patch("pathlib.Path.mkdir")
     def test_check_permissions_failure(self, mock_mkdir: MagicMock) -> None:
@@ -507,6 +534,33 @@ class TestTraigentDiagnostics:
 
         # Should not recommend mock mode if already enabled
         assert not any("Enable mock mode" in r for r in report.recommendations)
+
+    @pytest.mark.parametrize("mock_value", ["1", "yes", "on", "On"])
+    def test_add_recommendations_with_mock_mode_truthy_variants(
+        self, mock_value: str
+    ) -> None:
+        """Regression for #1766: the recommendation must be suppressed for
+        every spelling is_truthy() accepts, not just the exact string
+        "true"."""
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": mock_value}, clear=True):
+            report = DiagnosticReport()
+
+            TraigentDiagnostics._add_recommendations(report)
+
+            assert not any(
+                "Enable mock LLM mode" in r for r in report.recommendations
+            ), f"TRAIGENT_MOCK_LLM={mock_value!r} should suppress the recommendation"
+
+    def test_add_recommendations_with_mock_mode_false_still_recommends(self) -> None:
+        """Regression for #1766: a bare presence check previously treated
+        TRAIGENT_MOCK_LLM=false as "set" and suppressed the recommendation
+        even though mock mode is off."""
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}, clear=True):
+            report = DiagnosticReport()
+
+            TraigentDiagnostics._add_recommendations(report)
+
+            assert any("Enable mock LLM mode" in r for r in report.recommendations)
 
     @patch.dict(os.environ, {}, clear=True)
     def test_add_recommendations_without_api_keys(self) -> None:

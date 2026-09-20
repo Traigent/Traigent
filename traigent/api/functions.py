@@ -4,11 +4,11 @@
 
 from __future__ import annotations
 
+import math
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
-from traigent.core.cache_usage import normalize_cache_usage
 from traigent.api.types import OptimizationResult, StrategyConfig
 from traigent.config.api_keys import _API_KEY_MANAGER
 from traigent.config.context import get_applied_config
@@ -21,6 +21,7 @@ from traigent.config.parallel import (
     merge_parallel_configs,
 )
 from traigent.config.types import TraigentConfig, validate_execution_mode
+from traigent.core.cache_usage import normalize_cache_usage
 from traigent.optimizers import list_optimizers
 from traigent.optimizers.registry import _is_smart_algorithm
 from traigent.utils.exceptions import (
@@ -1015,6 +1016,7 @@ def with_usage(
     output_tokens: int | None = None,
     response_time_ms: float | None = None,
     provider_usage: dict[str, Any] | None = None,
+    model_costs: list[dict[str, Any]] | None = None,
 ) -> str | dict[str, Any]:
     """Wrap a response with usage metadata if in optimization mode.
 
@@ -1030,6 +1032,17 @@ def with_usage(
         output_tokens: Number of output tokens generated (informational, for UI display).
         response_time_ms: Response time in milliseconds (optional, for latency tracking).
             If only one token count is provided, the other defaults to 0.
+        model_costs: Optional per-call/per-model cost breakdown for multi-model
+            and multi-step agents (Traigent#1598) -- e.g. a cheap model that
+            decomposes a query and a strong model that generates the answer,
+            or a router that sends easy/hard queries to different models. Each
+            entry is ``{"model": str, "input_tokens": int, "output_tokens":
+            int, "cost": float}``. ``total_cost`` above stays the required,
+            authoritative blended total; this is additive attribution on top
+            of it, surfaced on the trial as ``metadata["model_costs"]``
+            (summed per model across the trial's examples) so downstream cost
+            analysis can attribute spend to the model that actually made each
+            call instead of falling back to a single dominant model.
 
     Returns:
         In production: text unchanged
@@ -1112,6 +1125,21 @@ def with_usage(
 
         In OSS-only builds, compute the aggregate totals directly and pass the
         numeric values to ``with_usage()`` without importing cloud DTOs.
+
+        To keep the SDK's trial measures attributable per model instead of
+        only a single blended total (Traigent#1598), also pass
+        ``model_costs``:
+
+        >>> return traigent.with_usage(
+        ...     text=answer,
+        ...     total_cost=cheap_cost + strong_cost,
+        ...     model_costs=[
+        ...         {"model": "gpt-4o-mini", "input_tokens": 200,
+        ...          "output_tokens": 40, "cost": cheap_cost},
+        ...         {"model": "gpt-4o", "input_tokens": 500,
+        ...          "output_tokens": 300, "cost": strong_cost},
+        ...     ],
+        ... )
     """
     # Enforce string type
     if not isinstance(text, str):
@@ -1126,8 +1154,30 @@ def with_usage(
 
     result: dict[str, Any] = {"text": text}
 
-    # Build metadata - always include total_cost (required)
-    meta: dict[str, Any] = {"total_cost": float(total_cost)}
+    # Build metadata - always include total_cost (required).
+    #
+    # Validate the BILLED field at least as hard as the attribution below it.
+    # Measured before this guard: `total_cost=True` was recorded as $1.00
+    # (bool subclasses int), and nan / inf / -1.0 all reached the ledger as-is.
+    # A negative total is a credit against a run's spend, which is the same
+    # defect class as the usage.cost regression fixed in #2342.
+    if isinstance(total_cost, bool) or not isinstance(total_cost, (int, float, str)):
+        raise TypeError(
+            "with_usage() requires total_cost to be a number, got "
+            f"{type(total_cost).__name__}."
+        )
+    try:
+        normalized_total_cost = float(total_cost)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(
+            f"with_usage() requires total_cost to be a number, got {total_cost!r}."
+        ) from exc
+    if not math.isfinite(normalized_total_cost) or normalized_total_cost < 0:
+        raise ValueError(
+            "with_usage() requires total_cost to be finite and non-negative, got "
+            f"{total_cost!r}."
+        )
+    meta: dict[str, Any] = {"total_cost": normalized_total_cost}
 
     # Only include usage metadata if any field is explicitly provided (not None)
     # This avoids overwriting existing extracted values with zeros
@@ -1171,6 +1221,82 @@ def with_usage(
             # asserting its own answer. Where a provider already reports disjointly
             # (Bedrock), the two values are equal and this changes nothing.
             meta.setdefault("usage", {})["input_tokens"] = cache_usage.input_tokens
+
+    # Per-call/per-model breakdown for multi-model/multi-step agents (#1598).
+    # Validated eagerly (TypeError on the caller's own line) rather than
+    # deferred to the evaluator's best-effort extraction, so a malformed
+    # breakdown fails loudly at the call site instead of being silently
+    # dropped several layers downstream.
+    if model_costs is not None:
+        if not isinstance(model_costs, list):
+            raise TypeError(
+                f"with_usage() requires model_costs to be a list of dicts, "
+                f"got {type(model_costs).__name__}."
+            )
+        normalized_calls: list[dict[str, Any]] = []
+        for i, call in enumerate(model_costs):
+            if not isinstance(call, dict):
+                raise TypeError(
+                    f"with_usage() model_costs[{i}] must be a dict, got "
+                    f"{type(call).__name__}."
+                )
+            model = call.get("model")
+            if not isinstance(model, str) or not model:
+                raise TypeError(
+                    f"with_usage() model_costs[{i}] requires a non-empty "
+                    f"string 'model' key."
+                )
+            # `bool` is a subclass of `int`, so a bare isinstance(..., (int, float))
+            # admits True/False and float(True) is 1.0 -- a boolean would land in
+            # the ledger as a $1.00 charge. The meta-side validator in
+            # traigent/core/meta_types.py rejects bools explicitly, but it never
+            # sees them from this path: we normalise to float here first, so the
+            # bool is already gone by the time it runs. Reject at the entry point.
+            cost = call.get("cost")
+            if (
+                "cost" not in call
+                or isinstance(cost, bool)
+                or not isinstance(cost, (int, float))
+                or not math.isfinite(cost)
+                or cost < 0
+            ):
+                raise TypeError(
+                    f"with_usage() model_costs[{i}] requires a finite, "
+                    f"non-negative numeric 'cost' key."
+                )
+            # Validate the RAW values, before any `or 0` coercion: `False or 0`
+            # evaluates to 0, so a coerced value can no longer be recognised as
+            # a bool and the check below would never fire for it. Measured
+            # before this ordering: `input_tokens=False` was accepted.
+            raw_tokens = (
+                ("input_tokens", call.get("input_tokens", 0)),
+                ("output_tokens", call.get("output_tokens", 0)),
+            )
+            for field_name, field_value in raw_tokens:
+                if field_value is None:
+                    continue
+                if (
+                    isinstance(field_value, bool)
+                    or not isinstance(field_value, (int, float))
+                    or not math.isfinite(field_value)
+                    or field_value < 0
+                ):
+                    raise TypeError(
+                        f"with_usage() model_costs[{i}] requires a finite, "
+                        f"non-negative numeric '{field_name}' key, got "
+                        f"{field_value!r}."
+                    )
+            input_tokens = call.get("input_tokens", 0) or 0
+            output_tokens = call.get("output_tokens", 0) or 0
+            normalized_calls.append(
+                {
+                    "model": model,
+                    "input_tokens": int(input_tokens),
+                    "output_tokens": int(output_tokens),
+                    "cost": float(cost),
+                }
+            )
+        meta["calls"] = normalized_calls
 
     result["__traigent_meta__"] = meta
 

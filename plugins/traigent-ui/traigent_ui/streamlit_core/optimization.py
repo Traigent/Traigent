@@ -9,7 +9,8 @@ the main run_optimization function and related utilities.
 import asyncio
 import os
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
+from collections.abc import Callable
 
 import streamlit as st
 
@@ -47,14 +48,14 @@ except ImportError as e:
 async def run_optimization(
     problem_name: str,
     strategy: str,
-    models: List[str],
+    models: list[str],
     max_iterations: int = 10,
-    subset_size: Optional[int] = None,
-    temperature_range: Optional[List[float]] = None,
+    subset_size: int | None = None,
+    temperature_range: list[float] | None = None,
     dry_run: bool = False,
     mock: bool = False,
-    progress_callback: Optional[Callable] = None,
-) -> Dict[str, Any]:
+    progress_callback: Callable | None = None,
+) -> dict[str, Any]:
     """Run agent comparison for a problem to find the best AI configuration."""
     try:
         # Normalize inputs for downstream logic
@@ -275,11 +276,11 @@ async def run_optimization(
                         max_trials=max_iterations,
                         callbacks=callbacks,
                         timeout=60.0,  # 1 minute timeout for faster feedback
-                        algorithm_params=(
-                            {"n_initial_points": 2}
-                            if algorithm == "bayesian"
-                            else None
-                        ),
+                        # algorithm_params= was removed: .optimize() never read
+                        # it (the name appeared nowhere else in the repo), so
+                        # the bayesian n_initial_points=2 hint has never taken
+                        # effect. It is dropped rather than renamed because
+                        # there is no call-time key that carries it today.
                     ),
                     timeout=90.0,
                 )
@@ -485,12 +486,12 @@ async def run_optimization(
 async def _run_simulation(
     problem_name: str,
     strategy: str,
-    models: List[str],
+    models: list[str],
     max_iterations: int,
-    subset_size: Optional[int],
-    temperature_range: Optional[List[float]],
-    progress_callback: Optional[Callable] = None,
-) -> Dict[str, Any]:
+    subset_size: int | None,
+    temperature_range: list[float] | None,
+    progress_callback: Callable | None = None,
+) -> dict[str, Any]:
     """Run simulation mode (for mock/dry-run)."""
     # Ensure we have a usable temperature list for the simulation loop
     safe_temperatures = (temperature_range or [0.3, 0.5, 0.7])[:3]
@@ -601,13 +602,13 @@ async def _run_simulation(
 
 
 def calculate_configuration_count(
-    models: List[str], temperature_points: int = 3
+    models: list[str], temperature_points: int = 3
 ) -> int:
     """Calculate the total number of configurations to be tested."""
     return len(models) * temperature_points
 
 
-def get_optimization_strategies() -> Dict[str, str]:
+def get_optimization_strategies() -> dict[str, str]:
     """Get available optimization strategies."""
     return {
         "🔍 Systematic Exploration": "grid",
@@ -619,7 +620,7 @@ def get_optimization_strategies() -> Dict[str, str]:
     }
 
 
-def validate_optimization_config(config: Dict[str, Any]) -> Dict[str, Any]:
+def validate_optimization_config(config: dict[str, Any]) -> dict[str, Any]:
     """Validate optimization configuration and return validation result."""
     errors = []
     warnings = []

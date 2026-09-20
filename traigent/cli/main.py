@@ -2378,5 +2378,10 @@ from traigent.cli.onboard_commands import first_prompt, onboard  # noqa: E402
 cli.add_command(onboard)
 cli.add_command(first_prompt)
 
+from traigent.cli.doctor_command import doctor  # noqa: E402
+
+cli.add_command(doctor)
+cli.add_command(doctor, name="diagnose")
+
 if __name__ == "__main__":
     cli()  # pylint: disable=no-value-for-parameter

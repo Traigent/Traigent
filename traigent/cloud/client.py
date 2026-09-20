@@ -2601,6 +2601,26 @@ class SessionContractError(CloudServiceError):
     degrading a contract refusal would launder strict mode (RFC 0001 P7)."""
 
 
+class RunIdMissingError(SessionContractError):
+    """require_run_id is set, but no authoritative experiment_run_id exists.
+
+    Raised at session-create time, before any trial, so a run that demands a
+    server-attested run identity never silently proceeds without one. The
+    optional ``reason`` is a failure-reason code (e.g. "no_api_key",
+    "session_failed", "offline") — never an id or secret."""
+
+    def __init__(
+        self, reason: str | None = None, original_error: Exception | None = None
+    ) -> None:
+        message = (
+            "require_run_id is set, but no authoritative experiment_run_id "
+            "is available for this session."
+        )
+        if reason:
+            message = f"{message} (reason={reason})"
+        super().__init__(message, original_error)
+
+
 class CloudRemoteExecutionUnavailableError(CloudServiceError):
     """Raised when remote cloud execution endpoints are intentionally unavailable."""
 

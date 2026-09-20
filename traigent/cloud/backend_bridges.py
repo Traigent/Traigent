@@ -72,11 +72,15 @@ class BackendConfigurationRunRequest:
 
 @dataclass
 class SessionExperimentMapping:
-    """Mapping between SDK session and backend experiment/run structure."""
+    """Mapping between SDK session and backend experiment/run structure.
+
+    ``experiment_id``/``experiment_run_id`` are nullable: the backend may
+    create a session without minting one or both, and the SDK must never
+    substitute ``session_id`` for a missing authoritative id."""
 
     session_id: str
-    experiment_id: str
-    experiment_run_id: str
+    experiment_id: str | None
+    experiment_run_id: str | None
     function_name: str
     configuration_space: dict[str, Any]
     objectives: list[str]
@@ -346,8 +350,8 @@ class SDKBackendBridge:
     def create_session_mapping(
         self,
         session_id: str,
-        experiment_id: str,
-        experiment_run_id: str,
+        experiment_id: str | None,
+        experiment_run_id: str | None,
         function_name: str,
         configuration_space: dict[str, Any],
         objectives: list[str],
@@ -356,8 +360,10 @@ class SDKBackendBridge:
 
         Args:
             session_id: SDK session ID
-            experiment_id: Backend experiment ID
-            experiment_run_id: Backend experiment run ID
+            experiment_id: Backend experiment ID, or None when the backend
+                did not mint one
+            experiment_run_id: Backend experiment run ID, or None when the
+                backend did not mint one
             function_name: Function being optimized
             configuration_space: Configuration space
             objectives: Optimization objectives
@@ -788,11 +794,24 @@ Response:"""
                 measure_id = objective
             else:
                 measure_id = "accuracy"
+                logger.warning(
+                    "Objective %r is not a recognized alias or a safe "
+                    "custom-metric identifier (%r); coercing to %r so the "
+                    "optimization run still proceeds, but it will target a "
+                    "different objective than requested",
+                    objective,
+                    safe_name,
+                    measure_id,
+                )
             if measure_id not in measures:
                 measures.append(measure_id)
 
         # Ensure at least one measure
         if not measures:
+            logger.warning(
+                "No objectives resolved to a measure id; defaulting to %r",
+                "accuracy",
+            )
             measures.append("accuracy")
 
         return measures

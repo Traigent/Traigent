@@ -55,7 +55,11 @@ def test_public_optimize_sync_custom_evaluator_returns_partial_result_after_keyb
     calls = 0
     dataset = Dataset([EvaluationExample({"text": "hello"}, "ok")])
 
-    def target_function(text: str, **_config: Any) -> str:
+    def target_function(text: str, temperature: float = 0.0) -> str:
+        # `temperature` is a real parameter (not **kwargs) so seamless
+        # injection has an injectable target (issue #2298: a **kwargs-only
+        # catch-all is not one of the two accepted shapes and now fails
+        # closed instead of silently no-op'ing).
         return f"ok:{text}"
 
     def interrupting_evaluator(func, config, example):

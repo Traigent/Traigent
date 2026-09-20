@@ -36,11 +36,12 @@ import time
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Generic, ParamSpec, TypeVar, cast
 
 from traigent.api.types import OptimizationResult, OptimizationStatus
-from traigent.config import get_provider
+from traigent.config import SeamlessParameterProvider, get_provider
 from traigent.config.parallel import coerce_parallel_config, merge_parallel_configs
 from traigent.config.types import (
     ExecutionIntent,
@@ -91,10 +92,7 @@ from traigent.core.optimization_pipeline import (
     resolve_effective_parallel_config,
     resolve_execution_parameters,
 )
-from traigent.core.orchestrator import (
-    OptimizationOrchestrator,
-    _safe_exception_text,
-)
+from traigent.core.orchestrator import OptimizationOrchestrator, _safe_exception_text
 from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import (
     BaseEvaluator,
@@ -218,6 +216,7 @@ def _resolve_callbacks(
     explicit_callbacks: list[Any] | None,
     decorator_callbacks: list[Any] | None,
     progress_bar: bool | None,
+    execution_mode: str = ExecutionMode.LOCAL.value,
 ) -> list[Any]:
     """Resolve callbacks with optional auto-injection of ProgressBarCallback.
 
@@ -230,15 +229,86 @@ def _resolve_callbacks(
     table) so that users see a results summary even in non-interactive
     environments.
 
+    On the managed (non-local: ``ExecutionMode.HYBRID`` or ``HYBRID_API``)
+    path, ``ProgressBarCallback`` alone is not enough: managed runs are
+    commonly launched non-interactively (``sys.stdin.isatty()`` is False),
+    where it never auto-injects, and the non-interactive fallback
+    (``ResultsTableCallback``) only prints once, at the very end -- so a
+    managed run gave zero client-side signal between start and finish
+    (Traigent#1601). Unless a progress-capable callback is already present, a
+    line-based :class:`ManagedProgressCallback` heartbeat is appended for
+    managed runs -- it is not gated on ``isatty()`` the way the progress bar
+    is, since it never redraws in place.
+
     Args:
         explicit_callbacks: Callbacks passed directly to optimize().
         decorator_callbacks: Callbacks stored on the decorator/OptimizedFunction.
         progress_bar: ``True`` to force, ``False`` to suppress, ``None`` for auto.
+        execution_mode: The ``ExecutionMode`` value for *this call*, used only to
+            decide managed-heartbeat injection. Callers must pass the per-call
+            resolved mode (see ``OptimizedFunction._resolve_runtime_execution_mode``),
+            not the construction-time ``self.execution_mode`` -- a per-call
+            ``algorithm`` override can flip cloud-vs-local routing (#1421) or add
+            an external evaluator (HYBRID_API) after construction. "Managed" here
+            matches ``_log_execution_mode_warnings``'s own definition: anything
+            other than ``ExecutionMode.LOCAL``.
 
     Returns:
         Resolved list of callback instances.
     """
-    from traigent.utils.callbacks import ProgressBarCallback, ResultsTableCallback
+    from traigent.utils.callbacks import (
+        DetailedProgressCallback,
+        ManagedProgressCallback,
+        ProgressBarCallback,
+        ResultsTableCallback,
+    )
+
+    # The heartbeat exists to fill a SILENCE, so it defers only to a callback
+    # that is KNOWN to emit on every trial completion.
+    #
+    # The two answers are not symmetric. A false "yes" suppresses the heartbeat
+    # and leaves a long managed run printing nothing -- the exact problem this
+    # feature exists to solve. A false "no" costs one duplicated line. So
+    # anything not positively known to report must answer False.
+    #
+    # Measured against each on_trial_complete, on a successful AND a failed
+    # trial (tests/unit/core/optimized_function_tests/test_resolve_callbacks.py):
+    #
+    #   ManagedProgressCallback   emits on both, flushed        -> reporter
+    #   DetailedProgressCallback  emits on both, toggles do not
+    #                             gate the trial line           -> reporter
+    #   SimpleProgressCallback    silent on a FAILED trial, and
+    #                             silent on a completed trial
+    #                             with no recognized score and
+    #                             no best score yet; also silent
+    #                             with show_details=False, and
+    #                             invisible with output="log"
+    #                             (the CLI's own default level
+    #                             is WARNING, cli/main.py)       -> NOT a reporter
+    #
+    # SimpleProgressCallback is therefore excluded outright rather than
+    # inspected: a run whose trials all fail is precisely when the user most
+    # needs a heartbeat, and that is exactly when this callback goes quiet.
+    # Excluding it also means we never read attributes off a user object here,
+    # so a subclass whose `show_details` is a property that raises can no
+    # longer take down callback resolution.
+    #
+    # Exact type rather than isinstance: a subclass may override
+    # on_trial_complete to filter or stay silent, which is invisible from here.
+    # An unrecognized subclass gets a heartbeat it may not need, which is the
+    # harmless direction.
+    #
+    # (ProgressBarCallback is listed for completeness; its presence is already
+    # handled by `has_progress` below, which short-circuits the heartbeat
+    # before this predicate can matter.)
+    _per_trial_reporters = (
+        ManagedProgressCallback,
+        DetailedProgressCallback,
+        ProgressBarCallback,
+    )
+
+    def _reports_per_trial(callback: Any) -> bool:
+        return type(callback) in _per_trial_reporters
 
     callbacks = list(explicit_callbacks or decorator_callbacks or [])
     has_progress = any(isinstance(cb, ProgressBarCallback) for cb in callbacks)
@@ -248,6 +318,25 @@ def _resolve_callbacks(
         if progress_bar is True or sys.stdin.isatty():
             callbacks.insert(0, ProgressBarCallback())
             has_progress = True
+
+    # The heartbeat decision reads ONLY _reports_per_trial, never has_progress.
+    # has_progress is an isinstance check, and it must stay one -- it answers
+    # "is a progress bar already present, so do not inject a second one", where
+    # a subclass genuinely counts. But routing the heartbeat through it
+    # reintroduced the bug this predicate exists to prevent: a silent
+    # ProgressBarCallback SUBCLASS sets has_progress, which suppressed the
+    # heartbeat regardless of the exact-type rule below it.
+    has_managed_progress = any(_reports_per_trial(cb) for cb in callbacks)
+    # "Managed" mirrors _log_execution_mode_warnings' own definition (Traigent
+    # #2352 review): anything other than LOCAL, so HYBRID_API (an external
+    # evaluator) gets a heartbeat too, not only HYBRID.
+    if (
+        progress_bar is not False
+        and execution_mode != ExecutionMode.LOCAL.value
+        and not has_managed_progress
+    ):
+        callbacks.append(ManagedProgressCallback())
+        has_managed_progress = True
 
     has_table = any(isinstance(cb, ResultsTableCallback) for cb in callbacks)
 
@@ -599,6 +688,120 @@ def _record_pricing_provenance(
     )
 
 
+# Optimizer constructor parameters the orchestrator supplies itself. They are
+# real ``__init__`` parameters, so the derived allowlist above would admit them
+# -- and then ``get_optimizer(algorithm, config_space, objectives, **kwargs)``
+# passes them positionally and Python raises
+# ``InteractiveOptimizer.__init__() got multiple values for argument
+# 'config_space'``: an internal TypeError naming a class the caller never
+# mentioned, three frames below the API they called. They get a dedicated
+# message instead.
+_ORCHESTRATOR_SUPPLIED_OPTIMIZER_PARAMS: frozenset[str] = frozenset(
+    {"config_space", "objectives"}
+)
+
+
+def _registered_optimizer_init_params() -> frozenset[str]:
+    """Every explicit ``__init__`` parameter of every REGISTERED optimizer.
+
+    These are, by definition, consumed at call time: ``.optimize()`` forwards
+    ``**algorithm_kwargs`` into the chosen optimizer's constructor, so a name
+    in one of those signatures is a real option, not a typo.
+
+    Derived rather than curated, because the curated version was wrong. The
+    hand-written allowlist missed ``batch_config``, ``pareto_frontier_size``,
+    ``base_optimizer`` and ``remote_enabled`` -- all constructor parameters of
+    the batch and remote optimizers, all reachable today. Review proved the
+    break by running ``f.optimize(algorithm="multi_objective_batch",
+    pareto_frontier_size=7)``: it works on develop and the value reaches the
+    optimizer, and it raised ``TypeError`` on this branch with a message
+    claiming the kwarg is "not consumed by any optimizer at call time" -- which
+    was simply false. Deriving the set means registering a new optimizer, or
+    adding a parameter to an existing one, cannot silently break its callers.
+
+    NOT cached: the registry is mutable (``register_optimizer`` supports
+    plugins), so a cache here would pin whatever happened to be registered at
+    the first ``.optimize()`` call and reject a later plugin's options.
+    """
+    # Local import for the same circular-import reason as below.
+    from traigent.optimizers.registry import _OPTIMIZER_REGISTRY
+
+    names: set[str] = set()
+    for optimizer_cls in _OPTIMIZER_REGISTRY.values():
+        try:
+            parameters = inspect.signature(optimizer_cls.__init__).parameters
+        except (TypeError, ValueError):  # pragma: no cover - exotic callables
+            continue
+        names.update(
+            name
+            for name, parameter in parameters.items()
+            if name != "self"
+            and parameter.kind
+            not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        )
+    return frozenset(names) - _ORCHESTRATOR_SUPPLIED_OPTIMIZER_PARAMS
+
+
+def _explicit_optimize_signature_params() -> frozenset[str]:
+    """``.optimize()``'s own named parameters, read from the real signature.
+
+    These can never reach ``**algorithm_kwargs`` -- Python binds them first --
+    so they are not decorator-only no matter what ``_OPTIMIZE_DEFAULTS`` says.
+
+    Read rather than curated, for the same reason as
+    :func:`_registered_optimizer_init_params`: the hand-written version was
+    already nine names behind the signature it claimed to mirror (``budget``,
+    ``callbacks``, ``progress_bar``, ``save_to``, ``strategy``,
+    ``strategy_params``, ``surrogate_evaluator``,
+    ``surrogate_evaluator_name``, ``timeout``). That drift happened to be
+    inert -- measured: deriving the set changes the rejected set by nothing at
+    all today -- because a name is only misclassified when it appears in BOTH
+    the signature and ``_OPTIMIZE_DEFAULTS``, and none of the nine did. The
+    next parameter added to both would have been rejected at call time as a
+    decorator-only option while sitting in the signature, and curating a list
+    is what a PR titled "derive the allowlist" exists to stop doing.
+
+    ``optimize_sync`` is included because it is a separate public entry point;
+    the two signatures agree today and this keeps them honest if they diverge.
+    """
+    names: set[str] = set()
+    for method in (OptimizedFunction.optimize, OptimizedFunction.optimize_sync):
+        for name, parameter in inspect.signature(method).parameters.items():
+            if name == "self":
+                continue
+            if parameter.kind in (
+                inspect.Parameter.VAR_KEYWORD,
+                inspect.Parameter.VAR_POSITIONAL,
+            ):
+                continue
+            names.add(name)
+    return frozenset(names)
+
+
+@lru_cache(maxsize=1)
+def _decorator_only_optimize_params() -> frozenset[str]:
+    """Decorator-only ``@traigent.optimize`` options, derived (issue #1705).
+
+    Every ``_OPTIMIZE_DEFAULTS`` (decorator) key is decorator-only *unless*
+    it is one of ``.optimize()``'s own explicit signature parameters (which
+    can never reach ``**algorithm_kwargs``) or is on the call-time
+    allowlist. This makes the set self-updating: adding a new decorator-only
+    default to ``_OPTIMIZE_DEFAULTS`` gets it rejected at call time
+    automatically, with nothing else to remember to change.
+    """
+    # Local import: traigent.api.decorators imports OptimizedFunction at
+    # module scope, so importing it back at module scope here would be a
+    # circular import. Safe at call time -- both modules are fully loaded
+    # long before any .optimize() call happens.
+    from traigent.api.decorators import _OPTIMIZE_DEFAULTS
+
+    return (
+        frozenset(_OPTIMIZE_DEFAULTS)
+        - _explicit_optimize_signature_params()
+        - OptimizedFunction._CALL_TIME_ALGORITHM_KWARGS_ALLOWLIST
+    )
+
+
 class OptimizedFunction(Generic[_P, _R]):
     """Wrapper for functions decorated with @traigent.optimize.
 
@@ -636,6 +839,7 @@ class OptimizedFunction(Generic[_P, _R]):
         evaluator_definition_id: str | None = None,
         effectuation: bool = False,
         task_type: str | None = None,
+        dataset_id: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize optimized function wrapper.
@@ -730,6 +934,7 @@ class OptimizedFunction(Generic[_P, _R]):
             evaluator_definition_id,
             effectuation,
             task_type,
+            dataset_id,
         )
 
         # Handle configuration space
@@ -771,6 +976,7 @@ class OptimizedFunction(Generic[_P, _R]):
         evaluator_definition_id,
         effectuation,
         task_type=None,
+        dataset_id=None,
     ) -> None:
         """Store core initialization parameters."""
         self.func = func
@@ -835,6 +1041,15 @@ class OptimizedFunction(Generic[_P, _R]):
             if isinstance(task_type, str) and task_type.strip()
             else None
         )
+        # Explicit, stable dataset identity for portal history (see
+        # EvaluationOptions.dataset_id). Validated here too so a direct
+        # OptimizedFunction caller fails loudly at construction, never mid-run.
+        from traigent.cloud.models import normalize_declared_dataset_id
+
+        try:
+            self.dataset_id: str | None = normalize_declared_dataset_id(dataset_id)
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
 
     def _is_cloud_execution_mode(self) -> bool:
         return False
@@ -1025,6 +1240,20 @@ class OptimizedFunction(Generic[_P, _R]):
         self.smart_pruning = self._store_optional_param(
             kwargs, sentinel, "smart_pruning", None
         )
+        # G1 v1.0.1 (g): explicit True forces the early RunIdMissingError
+        # regardless of TRAIGENT_REQUIRE_RUN_ID; explicit False forces it
+        # off regardless of TRAIGENT_REQUIRE_RUN_ID (see
+        # _build_optimization_orchestrator). Tri-state, stored directly
+        # rather than via _store_optional_param(as_bool=True): that helper's
+        # bool() coercion would collapse "unspecified" and explicit False to
+        # the same False, making an explicit False indistinguishable from
+        # "defer to the environment" (G1 v1.0.1 (g), F2).
+        require_run_id_raw = kwargs.pop("require_run_id", sentinel)
+        if require_run_id_raw is sentinel or require_run_id_raw is None:
+            self.require_run_id = None
+        else:
+            self.require_run_id = bool(require_run_id_raw)
+            kwargs["require_run_id"] = self.require_run_id
         self.optimization_history_limit = kwargs.pop("optimization_history_limit", 100)
         if (
             not isinstance(self.optimization_history_limit, int)
@@ -1077,6 +1306,7 @@ class OptimizedFunction(Generic[_P, _R]):
             "samples_include_pruned",
             "winner_stability_reps",
             "smart_pruning",
+            "require_run_id",
             # Multi-agent configuration
             "agents",
             "agent_prefixes",
@@ -1191,6 +1421,28 @@ class OptimizedFunction(Generic[_P, _R]):
     @_best_config.setter
     def _best_config(self, value: dict[str, Any] | None) -> None:
         self._csm._best_config = value
+
+    def _representative_seamless_config(
+        self, configuration_space: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """A representative config for the once-per-run seamless check.
+
+        Prefers ``default_config`` (a real, user-provided config); otherwise
+        the first value of each ``configuration_space`` dimension, which is
+        what a real trial's config looks like.
+        """
+        if self.default_config:
+            return dict(self.default_config)
+        space = configuration_space or getattr(self, "configuration_space", None) or {}
+        if not isinstance(space, dict):
+            return {}
+        sample: dict[str, Any] = {}
+        for key, values in space.items():
+            if isinstance(values, (list, tuple)) and values:
+                sample[key] = values[0]
+            elif not isinstance(values, (list, tuple, set)):
+                sample[key] = values
+        return sample
 
     def _estimate_search_space_size(self) -> int:
         """Best-effort estimation of configuration combinations."""
@@ -1342,71 +1594,82 @@ class OptimizedFunction(Generic[_P, _R]):
         )
         return cast(Callable[..., Any], application.wrapped_callable)
 
-    # Decorator-only parameters that MUST NOT be accepted as call-time
-    # ``.optimize(**algorithm_kwargs)`` keys. Before this guard they were
-    # silently absorbed into ``BaseOptimizer.algorithm_config`` with zero
-    # effect (issue #1683, Bug A: ``warm_start_from`` passed at call time was
-    # structurally dead but raised no error — no-silent-legacy policy).
+    # ------------------------------------------------------------------
+    # Call-time ``.optimize(**algorithm_kwargs)`` validation (issue #1705).
     #
-    # Keys listed here are the ``_OPTIMIZE_DEFAULTS`` decorator options that
-    # are (a) not explicit ``optimize()`` signature parameters and (b) never
-    # consumed from ``algorithm_kwargs`` anywhere downstream. Keys that ARE
-    # legitimately consumed downstream (``parallel_config``,
-    # ``max_total_examples``, ``samples_include_pruned``, ``max_examples``,
-    # ``plateau_window``, ``plateau_epsilon``, ``semantic_saturation``,
-    # ``cache_policy``, ``cost_limit``, ``cost_approved``, ``metric_*``,
-    # ``tie_breakers``, ``tvl_parameter_agents``, ``invocations_per_example``,
-    # algorithm-specific options like ``seed``/``parameter_order``) must stay
-    # OFF this list. General allowlist validation of every unknown kwarg is a
-    # tracked follow-up (see issue #1683).
-    _DECORATOR_ONLY_OPTIMIZE_PARAMS: frozenset[str] = frozenset(
+    # Source of truth is now an ALLOWLIST, not a hand-maintained denylist.
+    # Every name below is grep-verified as actually read from
+    # ``algorithm_kwargs``/``kwargs`` at call time somewhere downstream
+    # (this module, ``core/optimization_pipeline.py``,
+    # ``optimizers/grid.py``, ``optimizers/random.py``, ``optimizers/remote.py``,
+    # ``optimizers/interactive_optimizer.py``, ``api/decorators.py``'s
+    # ``_ALLOWED_RUNTIME_OVERRIDE_KEYS``). Everything else that used to reach
+    # ``.optimize()`` only because ``BaseOptimizer.__init__(**kwargs)``
+    # swallows unknown keys into ``algorithm_config`` with zero effect
+    # (issue #1683's root cause) is now rejected -- both a decorator-only
+    # option leaking to call time (the #1683/#1694 fix) and a plain typo of
+    # a real key (the general fix #1683 deferred, done here).
+    #
+    # Scope note (not fixed here): a cloud/"smart" algorithm (Bayesian,
+    # Optuna, ...) runs server-side and may accept algorithm-specific
+    # hyperparameters this repo has no local schema for (verified: no such
+    # hyperparameter name appears anywhere under ``traigent/``). ``seed`` is
+    # kept on the allowlist for exactly that reason, and because rejecting it
+    # would break the pre-existing call-time contract pinned by
+    # ``tests/unit/core/optimized_function_tests/test_optimize_calltime_kwarg_rejection.py``.
+    # A general schema for smart-algorithm kwargs is a further follow-up.
+    _CALL_TIME_ALGORITHM_KWARGS_ALLOWLIST: frozenset[str] = frozenset(
         {
-            "warm_start_from",
-            "eval_dataset",
-            "experiment_name",
-            "agent_name",
-            "run_title",
-            "run_description",
-            "default_config",
-            "constraints",
-            "safety_constraints",
-            "injection_mode",
-            "config_param",
-            "agents",
-            "agent_prefixes",
-            "agent_measures",
-            "global_measures",
-            "auto_load_best",
-            "load_from",
-            "config_id",
-            "best_config_source",
-            "best_config_strict",
-            "best_config_cache_dir",
-            "best_config_cache_ttl_seconds",
-            "best_config_stale_ok_ttl_seconds",
-            "enable_auto_load_dev_logs",
-            "smart_pruning",
-            "winner_stability_reps",
-            "mock_mode_config",
-            "evaluator",
-            "local_storage_path",
-            "minimal_logging",
-            "scoring_function",
-            "metric_functions",
-            "evaluation",
-            "injection",
-            "execution",
-            "mock",
-            "offline",
-            "framework_targets",
-            "auto_override_frameworks",
-            "effectuation",
-            "auto_detect_tvars",
-            "auto_detect_tvars_mode",
-            "auto_detect_tvars_min_confidence",
-            "auto_detect_tvars_include",
-            "auto_detect_tvars_exclude",
+            # Runtime overrides -- collect_orchestrator_kwargs() /
+            # api.decorators._ALLOWED_RUNTIME_OVERRIDE_KEYS.
+            "metric_limit",
+            "metric_name",
+            "metric_include_pruned",
+            "plateau_window",
+            "plateau_epsilon",
+            "semantic_saturation",
+            "cost_limit",
+            "cost_approved",
+            "estimated_calls_per_example",
+            "tie_breakers",
+            "tvl_parameter_agents",
+            # Decorator defaults that are ALSO legitimately re-applied at
+            # call time (dual-mode; must stay off the decorator-only set).
+            "parallel_config",
+            "max_total_examples",
+            "max_examples",  # optimization_pipeline.py: algorithm_kwargs.get("max_examples")
+            "samples_include_pruned",
+            # Algorithm-specific, call-time-only -- never a decorator default.
+            "cache_policy",  # collect_orchestrator_kwargs()
+            "invocations_per_example",  # popped before optimizer creation
+            "parameter_order",  # grid search iteration order
+            "order",  # alias of parameter_order
+            "max_grid_combinations",  # grid search
+            "random_seed",  # RandomSearchOptimizer
+            "seed",  # see scope note above
+            "objective_weights",  # BaseOptimizer; also the legacy call-time
+            # key _validate_objectives_input() pops and rejects with its own
+            # ValueError ("no longer supported") -- must reach that check,
+            # not be rejected here first.
+            "objective_orientations",  # legacy sibling of objective_weights,
+            # same pop-and-reject-downstream treatment.
+            "remote_client",  # RemoteOptimizer
+            "optimizer_ready_timeout",  # InteractiveOptimizer
+            "cloud_optimizer_ready_timeout",  # InteractiveOptimizer
         }
+    )
+
+    # ``.optimize()``'s own explicit signature parameters that also happen to
+    # be ``_OPTIMIZE_DEFAULTS`` decorator options. Python routes these to the
+    # named parameter, so they can never actually reach
+    # ``**algorithm_kwargs`` -- listed only so the derived decorator-only set
+    # below is provably exact (see ``_decorator_only_optimize_params``).
+
+    # Keys with their own dedicated rejection message below (not "unknown" --
+    # a removed/never-valid name with a specific, more helpful error).
+    # Excluded from the general allowlist check so that check fires.
+    _ALGORITHM_KWARGS_WITH_DEDICATED_REJECTION: frozenset[str] = frozenset(
+        {"parallel_trials"}
     )
 
     def _prepare_algorithm_kwargs(
@@ -1415,8 +1678,10 @@ class OptimizedFunction(Generic[_P, _R]):
         """Merge decorator overrides into algorithm kwargs and validate."""
         # Hard-fail on decorator-only params passed at call time (issue #1683
         # Bug A). Previously these were silently swallowed into the
-        # optimizer's algorithm_config and had no effect.
-        rejected = self._DECORATOR_ONLY_OPTIMIZE_PARAMS.intersection(algorithm_kwargs)
+        # optimizer's algorithm_config and had no effect. The rejected set is
+        # now derived from the allowlist above, not hand-maintained (#1705).
+        decorator_only = _decorator_only_optimize_params()
+        rejected = decorator_only.intersection(algorithm_kwargs)
         if rejected:
             rejected_names = ", ".join(sorted(rejected))
             raise TypeError(
@@ -1424,6 +1689,44 @@ class OptimizedFunction(Generic[_P, _R]):
                 "and is not accepted by .optimize() at call time; move it to "
                 f"the decorator: @traigent.optimize({sorted(rejected)[0]}=...). "
                 "Previously this was silently ignored (issue #1683)."
+            )
+
+        supplied_by_us = _ORCHESTRATOR_SUPPLIED_OPTIMIZER_PARAMS.intersection(
+            algorithm_kwargs
+        )
+        if supplied_by_us:
+            names = ", ".join(sorted(supplied_by_us))
+            raise TypeError(
+                f"{names} is supplied to the optimizer by Traigent and cannot be "
+                "passed to .optimize(); use configuration_space=... and "
+                "objectives=... instead. Previously this reached the optimizer "
+                "constructor twice and surfaced as an internal "
+                '"got multiple values for argument" TypeError (issue #1705).'
+            )
+
+        # General allowlist validation (issue #1705): a key that is neither a
+        # decorator option (handled above) nor on the call-time allowlist is
+        # unknown -- most likely a typo -- and must not be silently absorbed
+        # into BaseOptimizer.algorithm_config with zero effect.
+        # The curated set covers orchestrator/runtime overrides; the derived set
+        # covers every registered optimizer's own constructor parameters. The
+        # curated half alone was wrong -- it rejected batch_config,
+        # pareto_frontier_size, base_optimizer and remote_enabled, which the
+        # batch and remote optimizers genuinely accept.
+        accepted = (
+            self._CALL_TIME_ALGORITHM_KWARGS_ALLOWLIST
+            | _registered_optimizer_init_params()
+        )
+        unknown = (set(algorithm_kwargs) - decorator_only) - accepted
+        unknown -= self._ALGORITHM_KWARGS_WITH_DEDICATED_REJECTION
+        if unknown:
+            unknown_names = ", ".join(sorted(unknown))
+            raise TypeError(
+                f"Unknown keyword argument(s) to .optimize(): {unknown_names}. "
+                "Not a recognized @traigent.optimize decorator argument, not an "
+                "orchestrator runtime override, and not a constructor parameter "
+                "of any registered optimizer; check for a typo "
+                "(issue #1705 -- previously silently ignored)."
             )
 
         decorator_overrides = getattr(self, "_decorator_runtime_overrides", {})
@@ -1880,6 +2183,22 @@ class OptimizedFunction(Generic[_P, _R]):
 
             configuration_space, _ = normalize_configuration_space(configuration_space)
 
+        # Issue #2298 direction 1: for seamless injection, fail closed ONCE,
+        # before the first trial. A structural probe (AST compile + parameter
+        # name match; never runs the body) aborts the run with zero trials when
+        # nothing in a representative config could be injected, instead of
+        # every trial recording FAILED and the run completing with
+        # `best_config: None`. It runs here, not at decoration, so a decorated
+        # function that is only ever called directly is unaffected; the
+        # per-call checks in providers.py remain as defence in depth.
+        injection_mode_name = getattr(self.injection_mode, "value", self.injection_mode)
+        if injection_mode_name == "seamless" and isinstance(
+            self._provider, SeamlessParameterProvider
+        ):
+            sample_config = self._representative_seamless_config(configuration_space)
+            if sample_config:
+                self._provider.assert_injectable(self.func, sample_config)
+
         original_schema = self.objective_schema
         runtime_objective_input = (
             objectives if objectives is not None else legacy_objectives
@@ -1894,8 +2213,13 @@ class OptimizedFunction(Generic[_P, _R]):
 
         timeout = timeout if timeout is not None else getattr(self, "timeout", None)
         save_to = save_to if save_to is not None else getattr(self, "save_to", None)
+        # Per-call resolved mode, not the stale construction-time
+        # self.execution_mode -- see _resolve_runtime_execution_mode (#2352).
         callbacks = _resolve_callbacks(
-            callbacks, getattr(self, "callbacks", None), progress_bar
+            callbacks,
+            getattr(self, "callbacks", None),
+            progress_bar,
+            execution_mode=self._resolve_runtime_execution_mode(algorithm).value,
         )
 
         try:
@@ -2247,6 +2571,16 @@ class OptimizedFunction(Generic[_P, _R]):
         orchestrator_kwargs["winner_stability_reps"] = int(
             getattr(self, "winner_stability_reps", 0) or 0
         )
+        # G1 v1.0.1 (g), F2: only set the key when explicitly True or False.
+        # Leaving it unset for None (unspecified) lets BackendSessionManager's
+        # tri-state require_run_id default fall back to
+        # TRAIGENT_REQUIRE_RUN_ID, exactly as before this option existed. An
+        # explicit False must still be forwarded (not just True) -- omitting
+        # it collapsed explicit False into "unspecified", so it lost to the
+        # environment instead of overriding it.
+        require_run_id_value = getattr(self, "require_run_id", None)
+        if require_run_id_value is not None:
+            orchestrator_kwargs["require_run_id"] = require_run_id_value
 
         # Auto-initialize workflow traces tracker if backend is configured
         workflow_traces_tracker = create_workflow_traces_tracker(traigent_config)
@@ -2276,6 +2610,7 @@ class OptimizedFunction(Generic[_P, _R]):
         )
         orchestrator.evaluator_definition_id = self.evaluator_definition_id
         orchestrator.task_type = self.task_type
+        orchestrator.dataset_id = self.dataset_id
         # RFC 0001 §3.4: forward the user-attached knob resolver so the
         # public optimize() path resolves Fixed/CVAR bindings in-trial.
         # Attribute seam (like promotion_gate): set
@@ -2652,6 +2987,7 @@ class OptimizedFunction(Generic[_P, _R]):
                 fingerprint_meta=artifact_fingerprint_payload.get("fingerprint_meta"),
                 evaluator_definition_id=self.evaluator_definition_id,
                 task_type=self.task_type,
+                dataset_id=self.dataset_id,
                 context=traigent_config,
                 **optimizer_kwargs,
             )
@@ -2936,6 +3272,45 @@ Remediation:
             # ValueError leaking from here (error semantics unchanged, #1421).
             return stored_policy
 
+    def _resolve_runtime_execution_mode(self, algorithm: str | None) -> ExecutionMode:
+        """Re-derive the effective ``ExecutionMode`` for THIS call (Traigent#2352).
+
+        ``self.execution_mode`` is a construction-time string; it is never
+        refreshed for a per-call ``algorithm`` override. Two things can flip
+        the *actual* execution mode after construction, and callers that need
+        to know "is this call really managed right now" -- e.g. the managed-run
+        heartbeat (Traigent#1601) -- must read the resolved value, not the
+        stale attribute:
+
+        * a local override (``optimize(algorithm="grid")`` on a cloud-capable
+          ``auto`` policy) flips routing to ``LOCAL_ONLY`` (#1421) -- the
+          construction-time mode would still read ``"hybrid"``, a false
+          positive for "managed";
+        * an external evaluator resolves to ``HYBRID_API``, which the previous
+          gate (``== ExecutionMode.HYBRID.value``) excluded outright -- a false
+          negative for the exact managed path #1601 is about.
+
+        Mirrors ``decorators._runtime_execution_mode_for_policy`` exactly, using
+        the same per-call policy re-derivation (``_policy_for_runtime_algorithm``)
+        ``_execute_optimization`` already performs for cloud-vs-local routing.
+        """
+        stored_policy = getattr(self, "execution_policy", None)
+        if not isinstance(stored_policy, ResolvedExecutionPolicy):
+            stored_policy = None
+        resolved_policy = self._policy_for_runtime_algorithm(stored_policy, algorithm)
+        external_evaluator = (
+            getattr(self, "external_service_evaluator", None) is not None
+            or self.execution_mode == ExecutionMode.HYBRID_API.value
+        )
+        if external_evaluator:
+            return ExecutionMode.HYBRID_API
+        if (
+            resolved_policy is not None
+            and resolved_policy.intent is ExecutionIntent.LOCAL_ONLY
+        ):
+            return ExecutionMode.LOCAL
+        return ExecutionMode.HYBRID
+
     async def _execute_optimization(
         self,
         *,
@@ -3181,6 +3556,8 @@ Remediation:
         )
 
         # Phase 9: Run optimization and finalize
+        from traigent.cloud.client import SessionContractError
+
         try:
             return await self._run_and_finalize_optimization(
                 orchestrator=orchestrator,
@@ -3189,6 +3566,13 @@ Remediation:
                 save_to=save_to,
             )
         except OptimizationError:
+            raise
+        except SessionContractError:
+            # G1 v1.0.1 (g), F1: RunIdMissingError / SessionContractError ARE
+            # the public contract (session-create-time refusal to proceed
+            # without an authoritative run id) -- never dilute them into a
+            # generic OptimizationError the way an ordinary failure is below.
+            # Same rule as the ResolutionError branch a few lines down.
             raise
         except Exception as e:
             from traigent.knobs import ResolutionError

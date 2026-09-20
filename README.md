@@ -383,6 +383,7 @@ traigent --help                              # Full command reference
 | 0.0% accuracy | Check dataset format; for local demos, import and call `enable_mock_mode_for_quickstart()` from `traigent.testing` |
 | Missing API keys | Copy `.env.example` to `.env`; or run `python -m traigent.examples.quickstart` for a no-key demo |
 | `pytest` rejects `-n` / `--dist` | Install dev test tooling first: `pip install -e ".[all,dev]"` |
+| `uv sync --all-extras --dev` breaks `pytest tests/unit` collection (`ModuleNotFoundError: No module named 'langchain.schema'`) | Use `uv sync --all-extras --no-extra deepeval --dev` — `deepeval` is opt-in only (see Development below) |
 | `execution={"runtime": "node"}` fails | Python SDK 0.12.0 removed the temporary JS bridge. Use native `@traigent/sdk`; see [JS bridge migration](docs/guides/js-bridge.md). |
 | Permission errors | Create a fresh venv and reinstall dependencies |
 
@@ -398,6 +399,15 @@ pip install -e ".[all,dev]"              # Install with dev dependencies
 pytest                                   # Run tests
 make format && make lint                 # Format and lint
 ```
+
+Using `uv` (this repo commits `uv.lock`): run `uv sync --all-extras --no-extra deepeval --dev`,
+**not** bare `uv sync --all-extras --dev`. The `deepeval` extra is deliberately excluded from the
+`all`/`recommended`/`enterprise` bundles (opt-in only, pending an upstream telemetry-exfiltration
+fix — see `pyproject.toml`), but `--all-extras` installs every extra regardless, including the
+excluded one. The installed `deepeval` then imports `langchain.schema`, which the `langchain`
+version `--all-extras` also resolves no longer provides, and `pytest tests/unit` fails to collect.
+CI installs with `pip install -e ".[all,dev]"`, which never selects `deepeval`, so this only shows
+up locally with `uv sync --all-extras`.
 
 **[Architecture guide →](docs/architecture/ARCHITECTURE.md) · [Project structure →](docs/architecture/project-structure.md)**
 

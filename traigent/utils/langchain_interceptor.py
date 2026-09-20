@@ -9,11 +9,72 @@ that would otherwise be lost when functions return only strings.
 import threading
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Any
 
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class _CaptureBucket:
+    """One trial's captured responses.
+
+    Deliberately a MUTABLE object held by a ``ContextVar``: sync agent and
+    metric functions run through ``copy_context().run(...)``
+    (``evaluators/base.py``), and a copied context does not propagate
+    *rebinding* a ContextVar back to the caller -- but it does share this
+    object, so appends made in the worker thread are visible to the trial that
+    opened the scope.  Storing the list directly (rather than an id to look up
+    in a registry) is also self-cleaning: the bucket dies with the scope, so
+    concurrent trials cannot accumulate entries in a process-global map.
+    """
+
+    responses: list[Any] = field(default_factory=list)
+    by_key: dict[str, Any] = field(default_factory=dict)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+
+#: The capture scope for the trial running in this context, or ``None`` when no
+#: scope is active.  ``None`` keeps the pre-#2387 process-global behaviour so
+#: callers outside a trial (and any third-party use of the interceptor) are
+#: unaffected.
+_capture_scope: ContextVar[_CaptureBucket | None] = ContextVar(
+    "traigent_capture_scope", default=None
+)
+
+
+class capture_scope:
+    """Give the enclosing trial its own capture buffer (Traigent#2387).
+
+    Concurrent trials are coroutines gathered on ONE event loop, so before this
+    existed they all appended to, and drained, a single process-global list: a
+    judge call made by one trial could be charged to another, or -- when the
+    neighbour drained first -- a trial with real judge spend could be charged
+    ``0.0``.  ``threading.local()`` cannot fix that, because those coroutines
+    share a thread; ownership has to be per-context.
+
+    Usable as ``with`` or ``async with``.  Nesting is safe: the innermost scope
+    wins and the outer one is restored on exit.
+    """
+
+    __slots__ = ("_token",)
+
+    def __enter__(self) -> _CaptureBucket:
+        bucket = _CaptureBucket()
+        self._token = _capture_scope.set(bucket)
+        return bucket
+
+    def __exit__(self, *exc_info: Any) -> None:
+        _capture_scope.reset(self._token)
+
+    async def __aenter__(self) -> _CaptureBucket:
+        return self.__enter__()
+
+    async def __aexit__(self, *exc_info: Any) -> None:
+        self.__exit__(*exc_info)
 
 
 class LangChainMetadataCapture:
@@ -39,12 +100,22 @@ class LangChainMetadataCapture:
             self._storage.responses.append(response)
             logger.debug("Captured LangChain response with metadata")
 
-        # Also store in global list for batch processing
+        key = getattr(self._key_local, "current_key", None)
+
+        # Route into the trial's own buffer when one is active (Traigent#2387).
+        # Without a scope this falls back to the process-global list, which is
+        # the historical behaviour for callers outside a trial.
+        bucket = _capture_scope.get()
+        if bucket is not None:
+            with bucket.lock:
+                bucket.responses.append(response)
+                if key is not None:
+                    bucket.by_key[key] = response
+            return
+
         with self._response_lock:
             self._all_responses.append(response)
 
-        # Also store by correlation key if present
-        key = getattr(self._key_local, "current_key", None)
         if key is not None:
             with self._by_key_lock:
                 self._by_key[key] = response
@@ -59,19 +130,39 @@ class LangChainMetadataCapture:
             return None
 
     def get_all_responses(self) -> list[Any]:
-        """Get all captured responses (for batch processing)."""
+        """Get all captured responses (for batch processing).
+
+        Reads only THIS trial's responses when a capture scope is active, so a
+        concurrently running trial's spend can never be drained here.
+        """
+        bucket = _capture_scope.get()
+        if bucket is not None:
+            with bucket.lock:
+                return bucket.responses.copy()
         with self._response_lock:
             return self._all_responses.copy()
 
     def clear(self) -> None:
-        """Clear all stored responses."""
+        """Clear stored responses for the active scope (or globally).
+
+        Scoped to this trial when a capture scope is active: clearing must not
+        discard a concurrently running trial's not-yet-folded spend.
+        """
         with self._lock:
             if hasattr(self._storage, "responses"):
                 self._storage.responses.clear()
-        with self._response_lock:
-            self._all_responses.clear()
-        with self._by_key_lock:
-            self._by_key.clear()
+
+        bucket = _capture_scope.get()
+        if bucket is not None:
+            with bucket.lock:
+                bucket.responses.clear()
+                bucket.by_key.clear()
+        else:
+            with self._response_lock:
+                self._all_responses.clear()
+            with self._by_key_lock:
+                self._by_key.clear()
+
         if hasattr(self._key_local, "current_key"):
             self._key_local.current_key = None
 
@@ -83,6 +174,13 @@ class LangChainMetadataCapture:
         self._key_local.current_key = None
 
     def get_by_key(self, key: Any) -> Any:
+        # Example ids are not unique ACROSS trials -- every trial evaluates the
+        # same dataset -- so an unscoped map also collided between concurrent
+        # trials, handing one trial another's response for "its" example.
+        bucket = _capture_scope.get()
+        if bucket is not None:
+            with bucket.lock:
+                return bucket.by_key.get(key)
         with self._by_key_lock:
             return self._by_key.get(key)
 

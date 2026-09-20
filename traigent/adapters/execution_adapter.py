@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from typing import Any, cast
 
 from traigent.config.types import ExecutionMode
-from traigent.evaluators.base import _accuracy_values_match
+from traigent.evaluators.base import _accuracy_matches_after_unwrap
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +193,7 @@ class LocalExecutionAdapter(ExecutionAdapter):
             # Exact / case-insensitive match — must stay aligned with
             # LocalEvaluator and the public docs (the tracked fix). Diverging
             # here was how "Paris" vs "paris" silently scored 0.0.
-            is_correct = _accuracy_values_match(output, expected)
+            is_correct = _accuracy_matches_after_unwrap(output, expected)
             result["correct"] = is_correct
 
         elif eval_type == "contains":

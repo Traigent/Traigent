@@ -266,9 +266,13 @@ async def test_named_smart_algorithms_bind_and_send_backend_strategy(
         result = await agent.optimize(max_trials=1)
 
     backend.create_session.assert_called_once()
+    # Traigent#2271: execution_options is merged in alongside the existing
+    # top-level backend engine selection (algorithm="optuna" + sampler),
+    # never replacing it.
     assert backend.create_session.call_args.kwargs["optimization_strategy"] == {
         "algorithm": "optuna",
         "sampler": "tpe",
+        "execution_options": {"algorithm": algorithm, "offline": False},
     }
     assert next_trial.await_count == 1
     backend.request_trial_slot.assert_not_called()
@@ -462,6 +466,100 @@ async def test_explicit_local_algorithms_run_locally_and_sync_results(
     assert result.source == "explicit_local"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("algorithm", ["grid", "random"])
+async def test_local_algorithms_send_canonical_execution_options_at_session_create(
+    monkeypatch: pytest.MonkeyPatch,
+    algorithm: str,
+) -> None:
+    """Traigent#2271: TraigentBackend #3255 labels each trial's mode from the
+    session's ``optimization_strategy.execution_options``. A connected
+    grid/random run (local-decision, egress enabled) must always carry it —
+    before this fix nothing was sent, so the backend defaulted the missing
+    options to algorithm="auto"/offline=False and mislabeled these LOCAL
+    runs "hybrid"."""
+    monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+    monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+    monkeypatch.setenv("TRAIGENT_API_KEY", "tg_test_key")
+    backend = FakeBackendClient()
+    agent = _make_agent(algorithm=algorithm)
+
+    with (
+        patch(
+            "traigent.core.backend_session_manager.BackendSessionManager.create_backend_client",
+            return_value=backend,
+        ),
+        patch("traigent.cloud.client.TraigentCloudClient.get_next_trial") as next_trial,
+    ):
+        await agent.optimize(max_trials=1)
+
+    backend.create_session.assert_called_once()
+    assert backend.create_session.call_args.kwargs["optimization_strategy"] == {
+        "execution_options": {"algorithm": algorithm, "offline": False},
+    }
+    next_trial.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cloud_brain_auto_sends_canonical_execution_options_at_session_create(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Traigent#2271: an auto/cloud-brain run must also carry
+    execution_options (algorithm="auto") so the backend can distinguish it
+    from a connected local-decision (grid/random) run instead of both
+    collapsing to the same server-side default."""
+    monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+    monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+    monkeypatch.setenv("TRAIGENT_API_KEY", "tg_test_key")
+    backend = FakeBackendClient()
+    agent = _make_agent()
+
+    with (
+        patch(
+            "traigent.core.backend_session_manager.BackendSessionManager.create_backend_client",
+            return_value=backend,
+        ),
+        patch(
+            "traigent.cloud.client.TraigentCloudClient.get_next_trial",
+            new=AsyncMock(return_value=_next_trial_response()),
+        ),
+    ):
+        await agent.optimize(max_trials=1)
+
+    backend.create_session.assert_called_once()
+    assert backend.create_session.call_args.kwargs["optimization_strategy"] == {
+        "execution_options": {"algorithm": "auto", "offline": False},
+    }
+
+
+@pytest.mark.asyncio
+async def test_offline_run_sends_no_session_create_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Traigent#2271: offline=True must still create zero backend sessions —
+    always sending execution_options must never introduce new egress for a
+    zero-egress run."""
+    monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+    monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+    monkeypatch.setenv("TRAIGENT_API_KEY", "tg_test_key")
+    backend = FakeBackendClient()
+    agent = _make_agent(algorithm="grid", offline=True)
+
+    with (
+        patch(
+            "traigent.core.backend_session_manager.BackendSessionManager.create_backend_client",
+            return_value=backend,
+        ) as create_backend_client,
+        patch("traigent.cloud.client.TraigentCloudClient.get_next_trial") as next_trial,
+    ):
+        result = await agent.optimize(max_trials=1)
+
+    create_backend_client.assert_not_called()
+    backend.create_session.assert_not_called()
+    next_trial.assert_not_called()
+    assert result.source == "offline"
+
+
 class FakeHybridTransport:
     def __init__(self) -> None:
         self.execute = AsyncMock(side_effect=self._execute)
@@ -544,3 +642,64 @@ async def test_hybrid_api_options_dispatch_through_external_transport(
     transport.evaluate.assert_awaited_once()
     assert result.source == "explicit_local"
     assert result.best_score == pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
+async def test_external_evaluator_marks_execution_options_without_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Traigent#2271: an ExternalServiceEvaluator run must set
+    execution_options.external_evaluator so #3255 labels its trials
+    hybrid_api. TraigentBackend's ``_normalize_hybrid_api_options`` (same
+    module as #3255) requires a non-empty ``endpoint`` or ``transport_type``
+    -- a bare boolean is rejected -- so only the non-secret transport_type
+    classifier is sent; the endpoint URL and auth_header must never reach
+    the wire via this marker."""
+    monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+    monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+    monkeypatch.setenv("TRAIGENT_API_KEY", "tg_test_key")
+    backend = FakeBackendClient()
+    transport = FakeHybridTransport()
+
+    @optimize(
+        eval_dataset=_dataset(),
+        objectives=["accuracy"],
+        configuration_space={"temperature": [0.1]},
+        evaluator=ExternalServiceEvaluator(
+            hybrid_api=HybridAPIOptions(
+                transport=transport,
+                transport_type="http",
+                endpoint="http://internal-eval.example/secret-path",
+                auth_header="Bearer super-secret-token",
+                keep_alive=False,
+            )
+        ),
+    )
+    def external_agent(text: str) -> str:
+        return "not-called"
+
+    with (
+        patch(
+            "traigent.core.backend_session_manager.BackendSessionManager.create_backend_client",
+            return_value=backend,
+        ),
+        patch("traigent.cloud.client.TraigentCloudClient.get_next_trial") as next_trial,
+    ):
+        await external_agent.optimize(max_trials=1)
+
+    backend.create_session.assert_called_once()
+    strategy = backend.create_session.call_args.kwargs["optimization_strategy"]
+    execution_options = strategy["execution_options"]
+    # An external evaluator with the default algorithm="auto" resolves its
+    # *runtime* algorithm to "random" before the orchestrator ever sees the
+    # policy (OptimizedFunction._runtime_algorithm_for_policy /
+    # _policy_for_runtime_algorithm) -- external_evaluator still takes
+    # precedence over algorithm in the backend's #3255 mode derivation, so
+    # this is HYBRID_API either way.
+    assert execution_options["algorithm"] == "random"
+    assert execution_options["offline"] is False
+    assert execution_options["external_evaluator"] == {"transport_type": "http"}
+    strategy_text = repr(strategy)
+    assert "secret-path" not in strategy_text
+    assert "super-secret-token" not in strategy_text
+    next_trial.assert_not_called()

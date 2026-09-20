@@ -137,7 +137,6 @@ async def main() -> None:
         algorithm="grid",
         max_trials=8,
         random_seed=42,
-        show_progress=False,
         callbacks=[
             build_results_table_callback(
                 is_mock=True, task_type="code_generation", dataset_size=10

@@ -69,8 +69,8 @@ REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO = 0.5
 #: * ``MetricsTracker.format_for_backend`` outputs: ``score``, ``accuracy``,
 #:   ``duration``, ``input_tokens``, ``output_tokens``, ``total_tokens``,
 #:   ``response_time_ms``, ``cost`` (per-trial TOTAL),
-#:   ``cost_per_example_mean``, ``cost_unpriced``, ``total_examples``,
-#:   ``successful_examples``, ``tokens_per_second``;
+#:   ``cost_per_example_mean``, ``cost_unpriced``, ``tokens_estimated``,
+#:   ``total_examples``, ``successful_examples``, ``tokens_per_second``;
 #: * the LLM aggregation (``_aggregate_llm_metrics``): ``prompt_tokens``,
 #:   ``completion_tokens``, ``total_tokens``, ``input_cost``, ``output_cost``,
 #:   ``total_cost``, ``cost_unpriced``, ``avg_response_time``,
@@ -96,6 +96,11 @@ RESERVED_METRIC_KEYS: frozenset[str] = frozenset(
         # #1741). Reserved so a user tuple key cannot overwrite it and it is
         # never dropped under the measures ceiling.
         "cost_unpriced",
+        # True iff any measured example's token counts were fabricated from
+        # character length rather than captured usage (#2263). Reserved so a
+        # user tuple key can never overwrite it and it is never dropped under
+        # the measures ceiling.
+        "tokens_estimated",
         "latency",
         "score",
         # Diagnostic: the built-in exact-match scorer recorded alongside a custom
@@ -110,6 +115,14 @@ RESERVED_METRIC_KEYS: frozenset[str] = frozenset(
         # evaluator's value and it is never sacrificed to the measures ceiling —
         # portals/harnesses gate on it, so it must always survive to the trial.
         "empty_output_rate",
+        # Diagnostic: fraction of a config's examples whose provider response
+        # carried a truncated finish/stop reason -- OpenAI/LiteLLM "length",
+        # Anthropic "max_tokens", Gemini "MAX_TOKENS" (issue #1809). Reasoning
+        # models spend hidden thinking tokens against max_tokens before any
+        # answer text, so a cap sized for a non-reasoning model silently
+        # truncates the answer and the accuracy comparison measures an
+        # artifact. Reserved for the same reasons as ``empty_output_rate``.
+        "truncated_output_rate",
         # format_for_backend / summary outputs.
         "duration",
         "input_tokens",
@@ -191,6 +204,46 @@ def compute_empty_output_rate(outputs: Sequence[Any]) -> float:
         return 0.0
     empty = sum(1 for output in outputs if output_is_empty(output))
     return empty / len(outputs)
+
+
+#: Provider finish/stop-reason values that mean "hit the length cap, not a
+#: natural stop" (issue #1809). OpenAI/LiteLLM/most OpenAI-compatible APIs use
+#: "length"; Anthropic's ``stop_reason`` uses "max_tokens"; Gemini's
+#: ``finish_reason`` uses "MAX_TOKENS" (matched case-insensitively below).
+TRUNCATED_FINISH_REASONS: frozenset[str] = frozenset({"length", "max_tokens"})
+
+
+def finish_reason_is_truncated(finish_reason: str | None) -> bool:
+    """Return ``True`` if ``finish_reason`` means the output was cut off (#1809).
+
+    Reasoning models (gemini-2.5/3.x, gpt-5, o-series) spend hidden reasoning
+    tokens against ``max_tokens`` before any answer text, so a cap sized for a
+    non-reasoning model truncates the answer mid-output. The trial then scores
+    as a measurement artifact rather than on the config's real capability.
+    """
+    if not finish_reason:
+        return False
+    return finish_reason.strip().lower() in TRUNCATED_FINISH_REASONS
+
+
+def compute_truncated_output_rate(example_metrics: Sequence[Any]) -> float:
+    """Fraction of examples with a detected truncated ``finish_reason`` (#1809).
+
+    The denominator is examples that carried a recognizable finish/stop
+    reason at all, not every example in the trial: privacy mode, a plain
+    string return with no captured provider response, or an unrecognized
+    response shape leaves ``finish_reason`` unset, and counting those as
+    "not truncated" would understate the rate with a signal that was never
+    actually available. Returns ``0.0`` when no example has a finish_reason
+    (nothing to report, not a divide-by-zero).
+    """
+    reasons = [
+        metric.finish_reason for metric in example_metrics if metric.finish_reason
+    ]
+    if not reasons:
+        return 0.0
+    truncated = sum(1 for reason in reasons if finish_reason_is_truncated(reason))
+    return truncated / len(reasons)
 
 
 def aggregate_user_custom_metrics(
@@ -365,6 +418,17 @@ class TokenMetrics:
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+    # True when these counts were FABRICATED from character length
+    # (``LocalEvaluator._estimate_string_tokens``, Traigent#2263) rather than
+    # captured from a real provider response. A run whose optimized function
+    # returns a plain string with no captured LLM usage still needs SOME
+    # length-derived number for privacy-mode cost estimation, but that number
+    # must stay distinguishable from a measured one downstream -- an
+    # estimated-tokens row is not a smaller real bill, it is a guess with no
+    # bill behind it at all. Consumers (trial/result aggregation, cost
+    # pricing) must treat this as "not real usage", never merge it into the
+    # same fields as a measured count without a flag.
+    estimated: bool = False
 
     def __post_init__(self) -> None:
         # Ensure non-negative values and handle None
@@ -405,6 +469,23 @@ class CostMetrics:
     # Consumers (trial/result aggregation) must treat this as "unknown spend",
     # not "verified free".
     unpriced: bool = False
+    # True when ``total_cost`` came from a local/LiteLLM price-table estimate
+    # (``_hidden_params['response_cost']`` used as a fallback) rather than an
+    # explicit provider-reported charge (``response.cost`` or ``usage.cost``,
+    # including an explicit $0). Callers that need the observed charge, not a
+    # derived one, should treat this flag as provenance, not as "unpriced"
+    # (#2274). Distinct from ``unpriced``, which means no price was found at
+    # all.
+    cost_estimated: bool = False
+    # True when ``total_cost`` is an explicit provider-reported charge, so it
+    # is authoritative EVEN WHEN IT IS EXACTLY 0.0 (a provider telling us the
+    # call was free). Every downstream "did we find a cost?" test used to be
+    # ``total_cost > 0``, which cannot distinguish "provider said $0" from
+    # "nothing reported a cost", and so silently replaced an explicit $0 with
+    # a price-table estimate -- the exact inversion of the precedence this
+    # module documents (#2274). Carry this flag, not the magnitude, wherever
+    # that question is asked.
+    cost_explicit: bool = False
 
     def __post_init__(self) -> None:
         # Ensure non-negative costs and handle None
@@ -464,6 +545,20 @@ class ExampleMetrics:
     # ``ExampleMetrics(...)`` calls elsewhere in the codebase) keeps its
     # current behavior unless it explicitly opts out.
     measured: bool = True
+    # Per-call/per-model token+cost attribution reported via
+    # ``__traigent_meta__["calls"]`` (``with_usage(model_costs=...)``) for
+    # multi-model / multi-step agents (Traigent#1598). Each entry is
+    # ``{"model", "input_tokens", "output_tokens", "cost"}``. Empty when the
+    # caller did not report a per-call breakdown -- the example still has its
+    # normal blended ``tokens``/``cost`` above either way.
+    call_breakdown: list[dict[str, Any]] = field(default_factory=list)
+    # Raw provider finish/stop reason for this example's LLM response (issue
+    # #1809), e.g. OpenAI/LiteLLM "length", Anthropic "max_tokens", Gemini
+    # "MAX_TOKENS", or a natural "stop". ``None`` when the response handler
+    # chain found no such signal (privacy mode, a plain string return, or a
+    # response shape none of the handlers recognize) -- never fabricated.
+    # See :func:`finish_reason_is_truncated` for the truncation predicate.
+    finish_reason: str | None = None
 
 
 class MetricsTracker:
@@ -500,6 +595,45 @@ class MetricsTracker:
     def end_tracking(self) -> None:
         """End tracking and calculate duration."""
         self.end_time = time.time()
+
+    def aggregate_call_breakdown(self) -> list[dict[str, Any]]:
+        """Aggregate per-call cost breakdowns into a per-trial, per-model total.
+
+        Sums the ``call_breakdown`` entries every example in this trial
+        reported via ``__traigent_meta__["calls"]`` (Traigent#1598), grouped
+        by ``model``, across every example -- not just successful ones, since
+        a call that errored downstream can still have burned real tokens.
+
+        Returns:
+            ``[{"model", "input_tokens", "output_tokens", "cost", "calls"},
+            ...]`` sorted by model name, one entry per distinct model seen.
+            Empty when no example reported a per-call breakdown -- callers
+            must not treat that as "zero cost", only as "no attribution was
+            reported" (the example's own blended ``cost``/``tokens`` still
+            hold the real spend).
+        """
+        totals: dict[str, dict[str, Any]] = {}
+        for example_metric in self.example_metrics:
+            for call in example_metric.call_breakdown:
+                model = call.get("model")
+                if not model:
+                    continue
+                entry = totals.setdefault(
+                    model,
+                    {
+                        "model": model,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "cost": 0.0,
+                        "calls": 0,
+                    },
+                )
+                entry["input_tokens"] += int(call.get("input_tokens", 0) or 0)
+                entry["output_tokens"] += int(call.get("output_tokens", 0) or 0)
+                entry["cost"] += float(call.get("cost", 0.0) or 0.0)
+                entry["calls"] += 1
+
+        return [totals[model] for model in sorted(totals)]
 
     def get_duration(self) -> float:
         """Get total duration in seconds."""
@@ -778,6 +912,22 @@ class MetricsTracker:
         # 1.0/0.0, never a Python ``bool``.
         cost_unpriced = 1.0 if any(m.cost.unpriced for m in measured_metrics) else 0.0
 
+        # True when ANY measured example's token counts were fabricated from
+        # character length (``LocalEvaluator._estimate_string_tokens``, #2263)
+        # rather than captured from real usage. ``input_tokens``/
+        # ``output_tokens``/``total_tokens`` above are means over the SAME
+        # measured rows, so this flag is the only signal that some of that
+        # mean is a length-derived guess rather than measured usage --
+        # without it a cost/token objective or the trial summary table
+        # cannot tell "no LLM call was captured" from "a cheap one was".
+        # Numeric (1.0/0.0), never a Python ``bool``: the wire-format
+        # ``MeasuresDict`` rejects bool measures for JSON Schema parity
+        # (``traigent.cloud.dtos.MeasuresDict``), same convention as
+        # ``CostMetrics.unpriced``/``cost_unpriced`` (#1597/#1741).
+        tokens_estimated = (
+            1.0 if any(m.tokens.estimated for m in measured_metrics) else 0.0
+        )
+
         formatted = {
             # Core metrics (single values)
             "score": accuracy_value,  # Use actual accuracy for score
@@ -800,6 +950,9 @@ class MetricsTracker:
             # True iff any measured example's cost is unknown spend, not
             # verified-free $0 (#1741). See comment above.
             "cost_unpriced": cost_unpriced,
+            # True iff any measured example's token counts are a length-derived
+            # estimate, not captured usage (#2263). See comment above.
+            "tokens_estimated": tokens_estimated,
             # Additional useful metrics
             "total_examples": aggregated["total_examples"],
             "successful_examples": aggregated["successful_examples"],
@@ -1141,18 +1294,45 @@ class ResponseHandler(ABC):
     def extract_metadata_cost(self, response: Any) -> CostMetrics:
         """Extract cost information from response metadata if available.
 
-        Checks the following sources in order:
-        1. ``response.cost`` — generic cost attribute (dict or scalar).
-        2. ``response._hidden_params['response_cost']`` — LiteLLM sets this for
-           OpenRouter and other providers that return per-call cost directly.
-           OpenRouter models are often missing from LiteLLM's pricing table, so
-           their ``_hidden_params['response_cost']`` is the only reliable source.
-        3. ``response.usage.cost`` — LiteLLM's Usage object exposes ``cost`` when
-           the provider (e.g. OpenRouter) includes it in the usage block.
+        Checks the following sources in order, preferring an explicit
+        provider-reported charge — including an explicit ``$0`` — over a
+        LiteLLM/local price-table estimate (#2274):
+        1. ``response.cost`` — generic cost attribute (dict or scalar). Used
+           only when it parses to a POSITIVE amount. A bare ``.cost`` on an
+           arbitrary response object is far more often an uninitialised
+           placeholder than a provider charge, so a ``0.0`` here must not
+           short-circuit the authoritative source below (#2342).
+        2. ``response.usage.cost`` — LiteLLM's Usage object exposes ``cost``
+           when the provider (e.g. OpenRouter) includes it in the usage
+           block. litellm's own ``Usage`` does not define ``cost``, so the
+           attribute's mere presence means the provider supplied it: this is
+           the authoritative figure, retained even when it is exactly ``0.0``
+           and flagged via ``CostMetrics.cost_explicit`` so the downstream
+           cost path keeps it instead of substituting a price-table estimate.
+           Accepted only when finite, non-negative and not a ``bool``; an
+           unusable value is logged and falls back to the estimate below — it
+           is never recorded, and never silently treated as ``$0``.
+        3. ``response._hidden_params['response_cost']`` — LiteLLM sets this
+           for OpenRouter and other providers. On some routes LiteLLM copies
+           the provider's own charge here; on others it is a local
+           price-table estimate. Used only as a fallback when no explicit
+           charge was found above, and flagged via
+           ``CostMetrics.cost_estimated`` since its provenance is unknown.
         """
         cost_metrics = CostMetrics()
 
-        # 1. Generic ``response.cost`` attribute (dict or scalar).
+        # 1. Generic ``response.cost`` attribute (dict or scalar). Only a
+        #    POSITIVE value short-circuits. Returning as soon as a cost was
+        #    *parsed* — including a parsed 0.0 — let a placeholder
+        #    ``response.cost = 0`` shadow BOTH the authoritative ``usage.cost``
+        #    below and the LiteLLM figure after it, so a response carrying
+        #    ``cost = 0`` next to a real ``usage.cost = 0.0042`` was priced
+        #    from the offline table instead: a 9x UNDER-report of real spend,
+        #    and 1282x for ``usage.cost = 0.25`` (#2342). Returning a zero
+        #    here never preserved anything in the first place — the generic
+        #    path does not set ``cost_explicit``, so ``handle``'s
+        #    ``total_cost > 0 or cost_explicit`` test discarded it one frame
+        #    up regardless.
         if hasattr(response, "cost"):
             try:
                 if isinstance(response.cost, dict):
@@ -1167,8 +1347,66 @@ class ResponseHandler(ABC):
         if cost_metrics.total_cost > 0.0:
             return cost_metrics
 
-        # 2. LiteLLM hidden params — OpenRouter and other providers that report
-        #    per-call cost populate ``_hidden_params['response_cost']``.
+        # 2. LiteLLM Usage.cost field — an explicit provider-reported charge.
+        #    Checked before the hidden-params estimate below, and an explicit
+        #    0.0 is retained rather than treated as "no cost found" (#2274).
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            try:
+                usage_cost = getattr(usage, "cost", None)
+                # Validate the AUTHORITATIVE figure before trusting it, since
+                # dropping the old ``> 0`` filter also dropped every sanity
+                # check it incidentally performed (#2342):
+                #  * ``bool`` is a subclass of ``int``, so ``isinstance(True,
+                #    int)`` is True and ``float(True)`` is 1.0 — a stray
+                #    boolean would book a $1.00 charge;
+                #  * a negative reached ``format_for_backend`` verbatim
+                #    (``usage.cost = -1`` produced ``cost: -1.0``), because the
+                #    explicit-$0 bypass downstream tests ``<= 0.0`` and so also
+                #    skipped the plausibility reconciler;
+                #  * ``inf`` reached the ledger as ``inf``, and ``NaN`` set
+                #    ``cost_explicit`` on a value that then lost to the
+                #    estimate anyway — a provenance flag that lied.
+                # A rejected value is NOT a $0 charge: fall through to the
+                # estimate and say so in the log.
+                if (
+                    isinstance(usage_cost, (int, float))
+                    and not isinstance(usage_cost, bool)
+                    and math.isfinite(usage_cost)
+                    and usage_cost >= 0
+                ):
+                    cost_metrics.total_cost = float(usage_cost)
+                    # litellm's own ``Usage`` object does NOT define ``cost``
+                    # (verified: ``hasattr(Usage(...), "cost") is False``), so
+                    # the attribute exists only because the provider supplied
+                    # it. An explicit 0.0 here therefore means "the provider
+                    # charged nothing", not "no cost was reported", and must
+                    # survive to the ledger instead of being overwritten by a
+                    # price-table guess (#2274).
+                    cost_metrics.cost_explicit = True
+                    logger.debug(
+                        "Extracted cost $%.6f from usage.cost "
+                        "(explicit provider-reported cost).",
+                        cost_metrics.total_cost,
+                    )
+                    return cost_metrics
+                if usage_cost is not None:
+                    # Say it out loud: the figure the provider sent was
+                    # unusable, so what lands on the trial is an ESTIMATE.
+                    # Cost accounting fails closed — an invalid charge becomes
+                    # unknown spend, never a silent $0 and never the bad value.
+                    logger.warning(
+                        "Ignoring unusable provider-reported usage.cost %r "
+                        "(must be a finite, non-negative, non-boolean "
+                        "number). The cost recorded for this call is a "
+                        "price-table ESTIMATE, not the provider's charge.",
+                        usage_cost,
+                    )
+            except Exception as e:  # pragma: no cover
+                logger.debug(f"Failed to parse cost from usage.cost: {e}")
+
+        # 3. LiteLLM hidden params — used only as a fallback estimate when no
+        #    explicit charge was reported above; flagged as such (#2274).
         hidden_params = getattr(response, "_hidden_params", None)
         if hidden_params is not None:
             try:
@@ -1179,30 +1417,15 @@ class ResponseHandler(ABC):
                 )
                 if isinstance(response_cost, (int, float)) and response_cost > 0:
                     cost_metrics.total_cost = float(response_cost)
+                    cost_metrics.cost_estimated = True
                     logger.debug(
                         "Extracted cost $%.6f from _hidden_params.response_cost "
-                        "(OpenRouter/LiteLLM provider-reported cost).",
+                        "(LiteLLM fallback estimate, no explicit provider charge found).",
                         cost_metrics.total_cost,
                     )
                     return cost_metrics
             except Exception as e:  # pragma: no cover
                 logger.debug(f"Failed to parse cost from _hidden_params: {e}")
-
-        # 3. LiteLLM Usage.cost field — set for some provider responses.
-        usage = getattr(response, "usage", None)
-        if usage is not None:
-            try:
-                usage_cost = getattr(usage, "cost", None)
-                if isinstance(usage_cost, (int, float)) and usage_cost > 0:
-                    cost_metrics.total_cost = float(usage_cost)
-                    logger.debug(
-                        "Extracted cost $%.6f from usage.cost "
-                        "(LiteLLM provider-reported cost).",
-                        cost_metrics.total_cost,
-                    )
-                    return cost_metrics
-            except Exception as e:  # pragma: no cover
-                logger.debug(f"Failed to parse cost from usage.cost: {e}")
 
         return cost_metrics
 
@@ -1246,6 +1469,99 @@ class ResponseHandler(ABC):
             except (TypeError, ValueError):
                 pass
 
+    @staticmethod
+    def _safe_getattr(obj: Any, name: str) -> Any:
+        try:
+            return getattr(obj, name, None)
+        except Exception:
+            return None
+
+    def _extract_choices_finish_reason(self, response: Any) -> str | None:
+        """Check OpenAI/LiteLLM-style ``choices[0].finish_reason`` (object or dict).
+
+        Covers OpenAI, Azure OpenAI, and OpenAI-compatible endpoints
+        (OpenRouter, Gemini-via-LiteLLM).
+        """
+        choices = self._safe_getattr(response, "choices")
+        if choices is None and isinstance(response, dict):
+            choices = response.get("choices")
+        if not choices:
+            return None
+
+        try:
+            choice = choices[0]
+        except Exception:
+            choice = None
+        if choice is None:
+            return None
+
+        reason = self._safe_getattr(choice, "finish_reason")
+        if reason is None and isinstance(choice, dict):
+            reason = choice.get("finish_reason")
+        return str(reason) if reason else None
+
+    def _extract_toplevel_finish_reason(self, response: Any) -> str | None:
+        """Check a top-level ``finish_reason``/``stop_reason`` attribute or dict key.
+
+        Covers Anthropic's ``stop_reason`` and dict responses.
+        """
+        for attr in ("finish_reason", "stop_reason"):
+            reason = self._safe_getattr(response, attr)
+            if reason:
+                return str(reason)
+            if isinstance(response, dict):
+                reason = response.get(attr)
+                if reason:
+                    return str(reason)
+        return None
+
+    def _extract_metadata_finish_reason(self, response: Any) -> str | None:
+        """Check a ``metadata``/``response_metadata`` dict's finish/stop reason.
+
+        Covers LangChain responses and the internal response-wrapper metadata
+        in ``integrations/utils/response_wrapper.py``.
+        """
+        for meta_attr in ("metadata", "response_metadata"):
+            metadata_dict = self._safe_getattr(response, meta_attr)
+            # Fall back to the mapping lookup when the response IS a dict, the
+            # way the other two branches already do. Without it a dict-shaped
+            # response carrying its reason under ``metadata`` reported "no
+            # signal" -- including the internal wrapper shape this docstring
+            # names. Splitting the three branches apart is what made the
+            # inconsistency visible: two handled dicts, this one did not.
+            if metadata_dict is None and isinstance(response, dict):
+                metadata_dict = response.get(meta_attr)
+            if isinstance(metadata_dict, dict):
+                for key in ("finish_reason", "stop_reason"):
+                    reason = metadata_dict.get(key)
+                    if reason:
+                        return str(reason)
+        return None
+
+    def extract_finish_reason(self, response: Any) -> str | None:
+        """Extract a provider finish/stop reason from ``response`` (issue #1809).
+
+        Generic across providers so no subclass needs to override it. Tries
+        each provider-shape lookup below in order and returns the first hit;
+        see each helper's docstring for the provider shapes it covers.
+
+        Returns ``None`` when no provider signal is available -- never
+        fabricated, so an unrecognized response shape reports "no signal",
+        not a false "not truncated". Every attribute access is guarded: a
+        response object (real SDK object, ``unittest.mock.Mock``, or a test
+        double with a raising property) must never turn this best-effort
+        extraction into a hard failure of the whole metrics pipeline.
+        """
+        for lookup in (
+            self._extract_choices_finish_reason,
+            self._extract_toplevel_finish_reason,
+            self._extract_metadata_finish_reason,
+        ):
+            reason = lookup(response)
+            if reason:
+                return reason
+        return None
+
     def handle(self, response: Any) -> ExampleMetrics | None:
         """Handle the response or pass to next handler."""
         if self.can_handle(response):
@@ -1255,11 +1571,19 @@ class ResponseHandler(ABC):
 
             # Extract cost from response if available
             response_cost = self.extract_metadata_cost(response)
-            if response_cost.total_cost > 0:
+            # ``or cost_explicit`` is load-bearing: without it an explicit
+            # provider-reported $0 was dropped here and ``metrics.cost`` kept
+            # its zero-valued default, which ``_calculate_cost_for_metrics``
+            # then read as "no cost found" and replaced with a price-table
+            # estimate (#2274).
+            if response_cost.total_cost > 0 or response_cost.cost_explicit:
                 metrics.cost = response_cost
 
             # Extract additional metadata
             self.extract_metadata_info(response, metrics)
+
+            # Extract finish/stop reason for the truncation guard (#1809).
+            metrics.finish_reason = self.extract_finish_reason(response)
 
             return metrics
         elif self._next_handler:
@@ -1670,6 +1994,16 @@ def _calculate_cost_for_metrics(
     Uses cost_from_tokens() as the canonical cost path when token counts are
     available, falling back to deprecated text-based functions otherwise.
     """
+    if metrics.tokens.estimated:
+        # Traigent#2263: character-length-derived counts (``LocalEvaluator.
+        # _estimate_string_tokens``) are a guess, not a measurement -- there
+        # is no real spend behind them to price. In the current call graph
+        # this function always runs BEFORE the estimate is written, so this
+        # is currently a no-op guard; it exists so a future reordering (or a
+        # new caller) cannot silently start pricing fabricated tokens as if
+        # they were real usage.
+        return
+
     from traigent.utils.env_config import is_strict_cost_accounting
 
     strict_cost_accounting = is_strict_cost_accounting()
@@ -1683,6 +2017,25 @@ def _calculate_cost_for_metrics(
 
     if generate_mocks_env == "true":
         _handle_mock_mode(metrics, prompt_length, response_length)
+        return
+
+    if metrics.cost.cost_explicit and metrics.cost.total_cost <= 0.0:
+        # The provider explicitly reported a $0 charge (e.g. a free-tier
+        # OpenRouter route). Return before BOTH the price-table path below and
+        # ``_reconcile_reported_cost_with_tokens``: that reconciler clamps any
+        # reported total sitting below
+        # ``REPORTED_COST_PLAUSIBILITY_FLOOR_RATIO`` of the token-derived
+        # estimate, which for $0 is every priced model -- so routing an
+        # explicit $0 through it would restore the very overwrite this fixes
+        # (#2274). ``unpriced`` stays False on purpose: this is verified free,
+        # not unknown spend.
+        logger.debug(
+            "Keeping explicit provider-reported $0 cost for model %r "
+            "(tokens: in=%d, out=%d); price-table estimate suppressed.",
+            model_name,
+            metrics.tokens.input_tokens,
+            metrics.tokens.output_tokens,
+        )
         return
 
     if metrics.cost.total_cost > 0.0:

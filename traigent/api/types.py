@@ -194,6 +194,7 @@ StopReason = Literal[
     "plateau",
     "convergence",
     "semantic_saturation",
+    "safety_constraint",  # Statistical chance-constraint violated (issue #1532)
     "user_cancelled",
     "condition",  # Generic stop condition triggered
     "error",  # Optimization failed due to an exception
@@ -1111,6 +1112,23 @@ class OptimizationResult:
     # ``experiment_run_id``. See the class docstring for the full contract.
     sync_session_id: str | None = None
 
+    # Exact ranking-eligible trial-id set the terminal selector chose
+    # ``best_config`` over (issue #1832's ``SelectionResult.ranking_eligible_
+    # trial_ids``, threaded through by the orchestrator). Under non-legacy
+    # ``comparability_mode`` ("warn"/"strict") this can be a strict subset of
+    # ``successful_trials`` — a trial can be ``is_successful`` yet fail the
+    # comparability/coverage gate, so it never entered the terminal selector's
+    # observed-range computation. Post-hoc range normalization
+    # (``_calculate_objective_ranges``) restricts to this set when present so
+    # ``calculate_weighted_scores``/``score_trials`` share the exact
+    # observed-range basis terminal selection used, instead of silently
+    # re-widening it over every successful trial (issue #1704). ``None`` for
+    # hand-built ``OptimizationResult`` instances (most unit tests, restored
+    # persistence artifacts) and for the legacy path, where eligible ==
+    # successful by construction — those keep the pre-#1704
+    # all-successful-trials range, unchanged.
+    ranking_eligible_trial_ids: list[str] | None = None
+
     _experiment_stats: ExperimentStats | None = field(
         default=None, init=False, repr=False
     )
@@ -1122,6 +1140,28 @@ class OptimizationResult:
         if self._experiment_stats is None:
             self._experiment_stats = self._calculate_experiment_stats()
         return self._experiment_stats
+
+    @property
+    def _ranking_source_trials(self) -> list[TrialResult]:
+        """Trials post-hoc range normalization sources from (issue #1704).
+
+        Restricts to ``ranking_eligible_trial_ids`` when the terminal
+        selector's exact eligible set was threaded through — the same set
+        ``result_selection.select_best_configuration`` computed its observed
+        ranges over — so post-hoc weighted scoring can't re-widen the range
+        with a trial the terminal selector excluded (non-legacy
+        ``comparability_mode`` where eligible is a strict subset of
+        successful). Falls back to ``successful_trials`` when the id set is
+        unset or matches nothing (hand-built results, restored artifacts,
+        legacy mode where the two sets coincide) — unchanged pre-#1704
+        behavior.
+        """
+        if self.ranking_eligible_trial_ids is not None:
+            eligible_ids = set(self.ranking_eligible_trial_ids)
+            restricted = [t for t in self.trials if t.trial_id in eligible_ids]
+            if restricted:
+                return restricted
+        return self.successful_trials
 
     @property
     def successful_trials(self) -> list[TrialResult]:
@@ -1345,7 +1385,9 @@ class OptimizationResult:
         return {}
 
     def _calculate_objective_ranges(self) -> dict[str, tuple[float, float]]:
-        """Calculate min/max ranges for each objective across all successful trials.
+        """Calculate min/max ranges for each objective across ranking-eligible
+        (falling back to all successful) trials — see ``_ranking_source_trials``
+        (issue #1704).
 
         Returns:
             Dictionary mapping objective names to (min, max) tuples
@@ -1354,7 +1396,7 @@ class OptimizationResult:
 
         for obj in self.objectives:
             values = []
-            for trial in self.successful_trials:
+            for trial in self._ranking_source_trials:
                 if trial.metrics and obj in trial.metrics:
                     value = trial.metrics[obj]
                     if value is not None:
@@ -1928,11 +1970,18 @@ class OptimizationResult:
         minimize_objectives: list[str],
         objective_schema: Any | None,
     ) -> list[tuple[TrialResult, float]]:
-        """Compute weighted scores for each successful trial."""
+        """Compute weighted scores for each ranking-eligible trial.
+
+        Iterates ``_ranking_source_trials``, the same set the objective ranges
+        are computed from. Scoring a wider set than the ranges were built from
+        let an ineligible trial win: it is normalized against a range that
+        excludes it, so a dominant one scores above every eligible candidate --
+        and on the legacy path, above 1.0.
+        """
 
         weighted_scores: list[tuple[TrialResult, float]] = []
 
-        for trial in self.successful_trials:
+        for trial in self._ranking_source_trials:
             if not trial.metrics:
                 continue
 
@@ -2029,7 +2078,7 @@ class OptimizationResult:
                 - ``normalized``: Per-objective normalized values (0..1).
                 - ``weighted``: Weighted-sum score using sum-to-one weights.
         """
-        if not self.successful_trials:
+        if not self._ranking_source_trials:
             return []
 
         (
@@ -2043,7 +2092,8 @@ class OptimizationResult:
         ranges = self._calculate_objective_ranges()
 
         per_trial: list[dict[str, Any]] = []
-        for trial in self.successful_trials:
+        # Same set the ranges came from -- see _compute_weighted_scores.
+        for trial in self._ranking_source_trials:
             if not trial.metrics:
                 per_trial.append(
                     {"trial_id": trial.trial_id, "normalized": {}, "weighted": 0.0}

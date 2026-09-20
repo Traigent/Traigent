@@ -22,7 +22,7 @@ from traigent.evaluators.base import Dataset, EvaluationResult
 from traigent.invokers.base import BaseInvoker, InvocationResult
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.random import RandomSearchOptimizer
-from traigent.optimizers.results import OptimizationResult, Trial
+from traigent.optimizers.results import BatchResult, BatchTrial
 from traigent.utils.batch_processing import AdaptiveBatchSizer
 from traigent.utils.logging import get_logger
 from traigent.utils.objectives import is_minimization_objective
@@ -142,14 +142,14 @@ class ParallelBatchOptimizer(BaseOptimizer):
         invoker: BaseInvoker,
         evaluator: TrialBatchEvaluator,
         max_trials: int = 100,
-    ) -> OptimizationResult:
+    ) -> BatchResult:
         """Run parallel batch optimization."""
         logger.info(
             f"Starting parallel batch optimization with {self.batch_config.max_parallel_trials} workers"
         )
 
         start_time = time.time()
-        completed_trials: list[Trial] = []
+        completed_trials: list[BatchTrial] = []
         best_config = None
         best_score = float("-inf")
 
@@ -229,7 +229,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
                     except Exception as e:
                         logger.error(f"Trial failed for config {config}: {e}")
                         # Create failed trial
-                        failed_trial = Trial(
+                        failed_trial = BatchTrial(
                             configuration=config,
                             score=float("-inf"),
                             duration=0.0,
@@ -247,7 +247,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
 
         total_duration = time.time() - start_time
 
-        return OptimizationResult(
+        return BatchResult(
             best_config=best_config or {},
             best_score=best_score,
             trials=completed_trials,
@@ -267,7 +267,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
         dataset: Dataset,
         invoker: BaseInvoker,
         evaluator: TrialBatchEvaluator,
-    ) -> Trial:
+    ) -> BatchTrial:
         """Run a single optimization trial synchronously."""
         return asyncio.run(
             self._run_single_trial(config, func, dataset, invoker, evaluator)
@@ -280,7 +280,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
         dataset: Dataset,
         invoker: BaseInvoker,
         evaluator: TrialBatchEvaluator,
-    ) -> Trial:
+    ) -> BatchTrial:
         """Run a single optimization trial with batch processing."""
         trial_start = time.time()
 
@@ -336,7 +336,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
                 error_rate=error_rate,
             )
 
-            return Trial(
+            return BatchTrial(
                 configuration=config,
                 score=score,
                 duration=trial_duration,
@@ -350,7 +350,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
 
         except Exception as e:
             logger.error(f"Trial failed for config {config}: {e}")
-            return Trial(
+            return BatchTrial(
                 configuration=config,
                 score=float("-inf"),
                 duration=time.time() - trial_start,
@@ -414,7 +414,7 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
         )
         self.batch_config = batch_config
         self.pareto_frontier_size = pareto_frontier_size
-        self.pareto_frontier: list[Trial] = []
+        self.pareto_frontier: list[BatchTrial] = []
         self._current_trial_count = 0
 
         # Define objective directions (True = maximize, False = minimize).
@@ -477,7 +477,7 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
         invoker: BaseInvoker,
         evaluator: TrialBatchEvaluator,
         max_trials: int = 100,
-    ) -> OptimizationResult:
+    ) -> BatchResult:
         """Run multi-objective batch optimization."""
         logger.info(
             f"Starting multi-objective batch optimization for {len(self.objectives)} objectives"
@@ -518,7 +518,7 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
 
         total_duration = time.time() - start_time
 
-        return OptimizationResult(
+        return BatchResult(
             best_config=best_trial.configuration if best_trial else {},
             best_score=best_trial.score if best_trial else float("-inf"),
             trials=all_trials,
@@ -545,7 +545,7 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
         invoker: BaseInvoker,
         evaluator: TrialBatchEvaluator,
         trial_idx: int,
-    ) -> Trial:
+    ) -> BatchTrial:
         """Run a single trial with batch processing and multi-objective evaluation."""
         trial_start = time.time()
 
@@ -595,7 +595,7 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
                     trial_idx,
                     missing,
                 )
-                return Trial(
+                return BatchTrial(
                     configuration=config,
                     score=float("-inf"),
                     duration=trial_duration,
@@ -609,7 +609,7 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
                 )
 
             objective_scores, composite_score = composed
-            return Trial(
+            return BatchTrial(
                 configuration=config,
                 score=composite_score,
                 duration=trial_duration,
@@ -623,7 +623,7 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
 
         except Exception as e:
             logger.error(f"Multi-objective trial {trial_idx} failed: {e}")
-            return Trial(
+            return BatchTrial(
                 configuration=config,
                 score=float("-inf"),
                 duration=time.time() - trial_start,
@@ -672,7 +672,7 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
             return None
         return objective_scores, composite_score
 
-    def _update_pareto_frontier(self, new_trial: Trial) -> None:
+    def _update_pareto_frontier(self, new_trial: BatchTrial) -> None:
         """Update Pareto frontier with new trial."""
         # Fail-closed admission (#1944 hardening): gate on ``isfinite``, not a
         # ``== -inf`` sentinel comparison — NaN compares False to everything,
@@ -737,7 +737,7 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
                 )
                 self.pareto_frontier.pop(most_crowded)
 
-    def _crowding_distances(self, trials: list[Trial]) -> list[float]:
+    def _crowding_distances(self, trials: list[BatchTrial]) -> list[float]:
         """Compute NSGA-II crowding distance for each trial on the frontier.
 
         Boundary points (min/max on any objective) receive ``inf`` so the
@@ -813,7 +813,7 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
 
         return all_better_or_equal and at_least_one_better
 
-    def _select_best_from_pareto(self) -> Trial | None:
+    def _select_best_from_pareto(self) -> BatchTrial | None:
         """Select best configuration from Pareto frontier."""
         if not self.pareto_frontier:
             return None
@@ -888,7 +888,7 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
         invoker: BaseInvoker,
         evaluator: TrialBatchEvaluator,
         max_trials: int = 100,
-    ) -> OptimizationResult:
+    ) -> BatchResult:
         """Run adaptive batch optimization."""
         logger.info("Starting adaptive batch optimization")
 
@@ -922,7 +922,7 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
 
         total_duration = time.time() - start_time
 
-        return OptimizationResult(
+        return BatchResult(
             best_config=best_config or {},
             best_score=best_score,
             trials=trials,
@@ -945,7 +945,7 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
         invoker: BaseInvoker,
         evaluator: TrialBatchEvaluator,
         trial_idx: int,
-    ) -> Trial:
+    ) -> BatchTrial:
         """Run trial with adaptive batch sizing."""
         trial_start = time.time()
 
@@ -1010,7 +1010,7 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
             # Calculate score
             score = self._calculate_composite_score(evaluation_result.metrics or {})
 
-            return Trial(
+            return BatchTrial(
                 configuration=config,
                 score=score,
                 duration=trial_duration,
@@ -1026,14 +1026,14 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
 
         except Exception as e:
             logger.error(f"Adaptive trial {trial_idx} failed: {e}")
-            return Trial(
+            return BatchTrial(
                 configuration=config,
                 score=float("-inf"),
                 duration=time.time() - trial_start,
                 metadata={"error": str(e), "failed": True, "trial_index": trial_idx},
             )
 
-    def _update_performance_history(self, trial: Trial) -> None:
+    def _update_performance_history(self, trial: BatchTrial) -> None:
         """Update performance history for monitoring."""
         if trial.score != float("-inf"):
             self.performance_history.append(

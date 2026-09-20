@@ -516,6 +516,117 @@ def build_metric_functions(
     return effective_metric_functions
 
 
+def validate_metric_function_bindability(
+    effective_metric_functions: dict[str, Callable[..., Any]],
+    objectives: Sequence[str],
+) -> None:
+    """Fail fast, before any LLM call, if a metric/scoring signature can't bind.
+
+    Runs the same no-execution candidate-binding logic the runtime invocation
+    path uses (``resolve_metric_call_binding``: var-positional, then
+    recognized-keyword, then positional fallbacks of decreasing arity) against
+    a synthetic example. A required parameter outside every recognized name,
+    with no ``**kwargs`` and not positionally bindable, previously surfaced
+    only lazily at scoring time -- after the LLM call that produced ``output``
+    had already spent money -- and then failed again on every example. This
+    check runs once at evaluator construction (run start), before any LLM
+    call is issued.
+
+    Args:
+        effective_metric_functions: The dict built by
+            :func:`build_metric_functions` (``metric_functions`` merged with
+            ``scoring_function``).
+        objectives: The run's objective names. REQUIRED, with no default:
+            an empty set would downgrade every metric to a warning and
+            silently neuter this check, so a future caller must pass it
+            deliberately rather than inherit a permissive default.
+
+    Raises:
+        ValidationError: If a metric/scoring function's signature cannot be
+            introspected, or no argument candidate binds to it.
+    """
+    if not effective_metric_functions:
+        return
+
+    from traigent.evaluators.base import EvaluationExample
+    from traigent.evaluators.local import (
+        _EXPECTED_METRIC_PARAM_NAMES,
+        _LLM_METRIC_PARAM_NAMES,
+        _OUTPUT_METRIC_PARAM_NAMES,
+        resolve_metric_call_binding,
+    )
+    from traigent.utils.exceptions import ValidationError
+
+    synthetic_example = EvaluationExample(input_data={}, expected_output=None)
+    recognized_names = sorted(
+        _OUTPUT_METRIC_PARAM_NAMES
+        | _EXPECTED_METRIC_PARAM_NAMES
+        | _LLM_METRIC_PARAM_NAMES
+        | {"example", "input_data", "metadata", "config", "example_index"}
+    )
+
+    objective_names = set(objectives)
+    recognized_set = set(recognized_names)
+
+    for metric_name, metric_func in effective_metric_functions.items():
+        # An OBJECTIVE defines the search signal, so production's LocalEvaluator
+        # refuses to substitute a fabricated 0.0 for it and raises
+        # (traigent/evaluators/local.py:851). An auxiliary/informational metric
+        # only degrades to 0.0 with a `metric_errors` record. The no-execution
+        # contract inspector mirrors that split deliberately
+        # (traigent/contract/evaluation.py:930-936: objective -> "error",
+        # otherwise -> "warning"). Mirror it here too: hard-failing an
+        # informational metric at construction would refuse runs that complete
+        # today, and would be the one place in the codebase that treats the two
+        # alike.
+        is_objective = metric_name in objective_names
+
+        try:
+            binding = resolve_metric_call_binding(
+                metric_func, None, synthetic_example, {}, {}, 0
+            )
+        except (TypeError, ValueError) as exc:
+            message = (
+                f"metric/scoring function '{metric_name}' signature could not "
+                f"be introspected ({type(exc).__name__}: {exc}). Fix its "
+                "signature before running -- this check runs before any LLM "
+                "call."
+            )
+            if is_objective:
+                raise ValidationError(message) from exc
+            logger.warning(
+                "%s Continuing: it is not an optimization objective.", message
+            )
+            continue
+
+        if binding.bind_ok:
+            continue
+
+        # `unmatched_parameters` is every bindable name when nothing bound, so
+        # it includes recognized ones like `output`. Reporting those tells the
+        # user to fix a parameter that is already fine; show only the names the
+        # runtime cannot supply.
+        unbindable = [
+            p for p in binding.unmatched_parameters if p not in recognized_set
+        ]
+        unmatched = ", ".join(unbindable or binding.unmatched_parameters) or "(unknown)"
+        message = (
+            f"metric/scoring function '{metric_name}' has required "
+            f"parameter(s) that cannot be bound: {unmatched}. Accept "
+            "(output, expected) positionally, use **kwargs, or name "
+            f"parameters from the recognized set: {', '.join(recognized_names)}. "
+            "This check runs before any LLM call, so a signature mismatch "
+            "fails fast instead of costing a full run."
+        )
+        if is_objective:
+            raise ValidationError(message)
+        logger.warning(
+            "%s Continuing: it is not an optimization objective, so it degrades "
+            "to 0.0 with a metric_errors record as it does today.",
+            message,
+        )
+
+
 def resolve_effective_workers(
     effective_batch_size: int | None,
     effective_thread_workers: int | None,
@@ -639,6 +750,7 @@ def _create_local_evaluator(
     effective_metric_fns = build_metric_functions(
         metric_functions, scoring_function, objectives
     )
+    validate_metric_function_bindability(effective_metric_fns, objectives)
     effective_workers = resolve_effective_workers(
         effective_batch_size, effective_thread_workers
     )
@@ -872,6 +984,7 @@ def collect_orchestrator_kwargs(
         "semantic_saturation",
         "cost_limit",
         "cost_approved",
+        "estimated_calls_per_example",
         "tie_breakers",
         "tvl_parameter_agents",
     ]

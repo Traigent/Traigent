@@ -9,6 +9,7 @@ import inspect
 import json
 import math
 import os
+import re
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -34,6 +35,7 @@ from traigent.evaluators.metrics_tracker import (
     extract_llm_metrics,
     is_reserved_metric_key,
 )
+from traigent.utils.env_config import is_truthy
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
 from traigent.utils.exceptions import ConfigurationError, EvaluationError
@@ -172,12 +174,18 @@ class _SampleLeaseCleanupBoundary:
             )
 
 
+#: A leading zero immediately followed by another digit: "007", "0012",
+#: "-007". That shape is an identifier written with fixed width, never a
+#: numeric label, so a string-string pair where either side looks like this is
+#: compared literally rather than numerically. See ``_accuracy_values_match``.
+_ZERO_PADDED_NUMERIC_RE = re.compile(r"^[+-]?0\d")
+
 _ACCURACY_REL_TOL = 1e-9
 _ACCURACY_ABS_TOL = 1e-12
 
 
 def _coerce_string_to_expected_type(actual: str, expected: Any) -> tuple[Any, bool]:
-    """Coerce string outputs for scalar typed expected values."""
+    """Coerce string outputs for scalar (and JSON-container) typed expected values."""
     stripped = actual.strip()
     if isinstance(expected, bool):
         lowered = stripped.lower()
@@ -196,6 +204,20 @@ def _coerce_string_to_expected_type(actual: str, expected: Any) -> tuple[Any, bo
             return float(stripped), True
         except ValueError:
             return actual, False
+
+    if isinstance(expected, (dict, list, tuple)):
+        # A model that answers with a JSON string against a structured
+        # (dict/list) expected value otherwise scores 0.0 in every trial,
+        # across every config -- a config-independent ceiling (Traigent#1772).
+        try:
+            parsed = json.loads(stripped)
+        except (ValueError, TypeError):
+            return actual, False
+        if isinstance(expected, dict) and isinstance(parsed, dict):
+            return parsed, True
+        if isinstance(expected, (list, tuple)) and isinstance(parsed, list):
+            return parsed, True
+        return actual, False
 
     return actual, False
 
@@ -226,8 +248,60 @@ def _accuracy_values_match(actual: Any, expected: Any) -> bool:
                 type(expected).__name__,
             )
 
+    # Container elements get zero normalization otherwise: recurse the same
+    # scalar rules element-wise (list/tuple) or value-wise (dict), keyed on
+    # the (possibly just-JSON-coerced) expected shape (Traigent#1772).
+    if isinstance(expected, dict) and isinstance(actual, dict):
+        if set(actual.keys()) != set(expected.keys()):
+            return False
+        return all(
+            _accuracy_values_match(actual[key], expected[key]) for key in expected
+        )
+
+    if isinstance(expected, (list, tuple)) and isinstance(actual, (list, tuple)):
+        if len(actual) != len(expected):
+            return False
+        return all(
+            _accuracy_values_match(a, e) for a, e in zip(actual, expected, strict=True)
+        )
+
     if isinstance(actual, str) and isinstance(expected, str):
-        return actual.strip().lower() == expected.strip().lower()
+        if actual.strip().lower() == expected.strip().lower():
+            return True
+        # Numeric string-string pairs (e.g. the common JSONL habit of storing
+        # numeric gold labels as strings) get zero coercion otherwise: the
+        # existing coercion only fires when the EXPECTED side is typed
+        # (Traigent#1772).
+        #
+        # But NOT when either side is zero-padded. A leading zero followed by
+        # another digit is how identifiers are written -- zip codes, order
+        # numbers, SKUs, phone extensions -- and never how a numeric label is.
+        # Without this, "007" scores as a correct answer to "7": a false
+        # positive in accuracy, which is the value the optimizer argmaxes, so
+        # it would rank a config that returns the wrong identifier first.
+        # Formatting differences that are NOT identifier-shaped still coerce:
+        # "1.0"/"1", ".5"/"0.5", "1e5"/"100000".
+        if _ZERO_PADDED_NUMERIC_RE.match(actual.strip()) or (
+            _ZERO_PADDED_NUMERIC_RE.match(expected.strip())
+        ):
+            return False
+        try:
+            actual_num = float(actual.strip())
+            expected_num = float(expected.strip())
+        except ValueError:
+            return False
+        logger.warning(
+            "Coercing string output %r and expected %r to numeric for "
+            "exact-match accuracy comparison",
+            actual,
+            expected,
+        )
+        return math.isclose(
+            actual_num,
+            expected_num,
+            rel_tol=_ACCURACY_REL_TOL,
+            abs_tol=_ACCURACY_ABS_TOL,
+        )
 
     if (
         (isinstance(actual, float) or isinstance(expected, float))
@@ -245,6 +319,93 @@ def _accuracy_values_match(actual: Any, expected: Any) -> bool:
             return _typed_accuracy_equality(actual, expected)
 
     return _typed_accuracy_equality(actual, expected)
+
+
+def _normalize_output_for_accuracy_comparison(
+    raw_output: Any, expected: Any = None
+) -> Any:
+    """Unwrap ``raw_output`` the same way the fully-processed detailed path
+    already does, before it reaches an accuracy comparator (issue #1771).
+
+    Two independent output-wrapping shapes can reach an accuracy comparator
+    un-unwrapped on the non-detailed and live-progress paths, even though the
+    fully-processed detailed per-example path (``_process_single_output`` /
+    ``_evaluate_single_detailed``) already unwraps them before scoring:
+
+    * the strict ``(output, metrics)`` 2-tuple contract
+      (:meth:`BaseEvaluator._unpack_user_metrics`) -- element ``[0]`` is the
+      real output, element ``[1]`` is per-example user metrics;
+    * a ``{"text": ...}`` dict wrapper.
+
+    Comparing the raw wrapper against a scalar ``expected_output`` always
+    mismatches (a tuple or dict is never ``==`` a string), so a genuinely
+    correct example silently scores as wrong. Applying this at every
+    accuracy-comparison site (the registry ``_compute_accuracy``,
+    ``_build_progress_accuracy_metrics``, and
+    ``LocalEvaluator._compute_accuracy_aggregated``) keeps them from drifting
+    out of sync with the per-example path again.
+
+    **This is not idempotent, and must not be applied unconditionally.** An
+    earlier version of this docstring claimed that unpacking an already-
+    unpacked value is a no-op. It is not: a user output that is ITSELF a
+    ``(value, dict)`` 2-tuple matches the unpack contract, so a second unpack
+    splits it again. On the detailed path, where ``_unpack_user_metrics`` has
+    already run at ``_evaluate_single_detailed``, that turned a correct answer
+    into a wrong one -- measured, aggregate accuracy 1.0 -> 0.0. ``local.py``
+    records the same hazard at its own carrier check. Callers therefore go
+    through :func:`_accuracy_matches_after_unwrap`, which only reaches here
+    when the direct comparison has already failed.
+
+    The dict branch carries two narrowings, each from a measured defect:
+
+    * it requires a ``text`` key. ``{"a": 1}.get("text")`` is ``None``, so an
+      unconditional ``.get`` turned every non-wrapper dict output into ``None``
+      before the comparison -- a correct structured answer scoring wrong.
+    * it does not fire when ``expected`` is itself a mapping. Composed with the
+      container and JSON-string coercion in #1772, a structured answer carrying
+      BOTH a ``text`` field and real data had its real data discarded and its
+      ``text`` re-parsed: measured, ``{"text": '{"id":"7"}', "id": "007"}``
+      scored as a correct answer to ``{"id": "7"}``, with the wrong ``id``
+      thrown away. Neither change produces that alone.
+
+    The second rule is the general one: a mapping expected value is compared AS
+    a mapping. Pulling one field out of the actual and comparing that against a
+    whole structure is never the right question, whatever the field is called.
+    Keying on the expected shape also keeps the real SDK response wrapper
+    working -- ``{"text": ..., "raw_response": ...}`` against a string expected
+    value is a wrapper, and `tests/unit/evaluators/test_litellm_integration.py`
+    pins exactly that -- which a "text must be the only key" rule would have
+    broken.
+    """
+    output, _ = BaseEvaluator._unpack_user_metrics(raw_output)
+    if (
+        isinstance(output, CollectionsMapping)
+        and "text" in output
+        and not isinstance(expected, CollectionsMapping)
+    ):
+        return output["text"]
+    return output
+
+
+def _accuracy_matches_after_unwrap(actual: Any, expected: Any) -> bool:
+    """Compare, and retry once against the unwrapped output (issue #1771).
+
+    The direct comparison runs FIRST. Only if it fails is the output unwrapped
+    and compared again, so this can turn a mismatch into a match but never the
+    reverse -- which is the whole content of #1771 (a correct answer inside a
+    wrapper scoring as wrong) without the regression that unwrapping
+    unconditionally introduced on the already-unwrapped detailed path.
+
+    Ordering matters rather than being a micro-optimization: it is what makes
+    the transformation safe to apply at a call site without first knowing
+    whether that site's output arrived wrapped.
+    """
+    if _accuracy_values_match(actual, expected):
+        return True
+    unwrapped = _normalize_output_for_accuracy_comparison(actual, expected)
+    if unwrapped is actual or unwrapped == actual:
+        return False
+    return _accuracy_values_match(unwrapped, expected)
 
 
 try:  # pragma: no cover - import guard for optional dependency
@@ -738,7 +899,28 @@ def _coerce_dataset_example_mapping(
     source: str,
     location: str,
 ) -> tuple[Any, Any | None, dict[str, Any]]:
-    """Normalize a mapping-backed dataset example."""
+    """Normalize a mapping-backed dataset example.
+
+    Expected-output alias precedence is ``_EXPECTED_OUTPUT_FIELDS``, in order:
+    ``output`` > ``expected`` > ``expected_output`` > ``answer`` > ``target``
+    > ``label``. When a row carries more than one alias, the highest-
+    precedence one wins and a single ``logger.warning`` names the winner and
+    the loser(s) (issue #1768) -- every losing alias is DROPPED from the
+    resolved example, never routed into ``example.metadata``, where it would
+    otherwise masquerade as user metadata to metric functions that declare a
+    ``metadata`` parameter.
+
+    A row's own dict-valued ``metadata`` field is merged in as the example's
+    metadata (matching the ``EvaluationExample`` dataclass shape used by
+    JSONL rows and the JS SDK's ``Dataset`` class), instead of nesting under
+    ``metadata["metadata"]``. That nesting previously hid an ``example_id``
+    key inside the row's ``metadata`` dict from ``_example_correlation_key``,
+    which reads ``example.metadata["example_id"]`` at the top level -- the
+    example silently fell back to a positional ``example_N`` key. Any other
+    top-level row keys are kept alongside it; on a name collision the row's
+    explicit ``metadata`` dict wins (it is the user's deliberate metadata,
+    not an incidental extra field).
+    """
     if not isinstance(item, CollectionsMapping):
         raise ValidationError(f"{location} must be an object in {source}")
 
@@ -753,16 +935,45 @@ def _coerce_dataset_example_mapping(
             f"Missing 'input' (or 'input_data') field in {location} in {source}"
         )
 
-    expected_key = next(
-        (candidate for candidate in _EXPECTED_OUTPUT_FIELDS if candidate in item),
-        None,
-    )
+    expected_candidates = [
+        candidate for candidate in _EXPECTED_OUTPUT_FIELDS if candidate in item
+    ]
+    expected_key = expected_candidates[0] if expected_candidates else None
+    if len(expected_candidates) > 1:
+        losers = expected_candidates[1:]
+        logger.warning(
+            "%s in %s carries multiple expected-output aliases %s; using "
+            "%r (alias precedence order %s) and dropping %s rather than "
+            "leaking the losing alias(es) into example.metadata.",
+            location,
+            source,
+            expected_candidates,
+            expected_key,
+            _EXPECTED_OUTPUT_FIELDS,
+            losers,
+        )
 
-    metadata_keys = {input_key}
-    if expected_key is not None:
-        metadata_keys.add(expected_key)
+    metadata_keys = {input_key, "metadata"}
+    metadata_keys.update(expected_candidates)
 
-    metadata = {k: v for k, v in item.items() if k not in metadata_keys}
+    extra_metadata = {k: v for k, v in item.items() if k not in metadata_keys}
+
+    has_metadata_field = "metadata" in item
+    row_metadata = item.get("metadata")
+    if isinstance(row_metadata, CollectionsMapping):
+        metadata = {**extra_metadata, **row_metadata}
+    else:
+        metadata = extra_metadata
+        if has_metadata_field:
+            # Non-dict "metadata" value: cannot merge as the metadata dict, so
+            # keep it as an ordinary extra field rather than silently dropping
+            # it. Keyed on PRESENCE, not on the value being non-None: `item.get`
+            # cannot tell an absent field from an explicit `"metadata": null`,
+            # and dropping the latter contradicts this function's own promise
+            # to preserve a non-dict value. Measured against develop, which
+            # reported {"metadata": None} for that row.
+            metadata["metadata"] = row_metadata
+
     expected_output = item.get(expected_key) if expected_key is not None else None
     return item[input_key], expected_output, metadata
 
@@ -968,6 +1179,14 @@ class EvaluationResult:
     # is_objective}``. Empty when every metric computed cleanly.
     metric_errors: list[dict[str, Any]] = field(default_factory=list)
 
+    # Per-trial, per-model cost breakdown for multi-model/multi-step agents
+    # (Traigent#1598), aggregated from every example's
+    # ``__traigent_meta__["calls"]`` this trial reported (see
+    # ``MetricsTracker.aggregate_call_breakdown``). Each entry is
+    # ``{"model", "input_tokens", "output_tokens", "cost", "calls"}``. Empty
+    # when no example reported a per-call breakdown.
+    model_costs: list[dict[str, Any]] = field(default_factory=list)
+
     def __post_init__(self) -> None:
         # Backward compatibility mapping
         if self.metrics is None:
@@ -1021,6 +1240,7 @@ class EvaluationResult:
             "success_rate": self.success_rate,
             "has_errors": self.has_errors,
             "metric_errors": _safe_json_value(self.metric_errors),
+            "model_costs": _safe_json_value(self.model_costs),
         }
 
     @classmethod
@@ -1053,6 +1273,7 @@ class EvaluationResult:
             outputs=data.get("outputs"),
             errors=data.get("errors"),
             metric_errors=data.get("metric_errors") or [],
+            model_costs=data.get("model_costs") or [],
         )
 
 
@@ -1620,7 +1841,7 @@ class BaseEvaluator(ABC):
             if _is_empty_expected_output(exp):
                 continue
             total += 1
-            if error is None and _accuracy_values_match(output, exp):
+            if error is None and _accuracy_matches_after_unwrap(output, exp):
                 correct += 1
 
         return correct / total if total > 0 else 0.0
@@ -1631,7 +1852,11 @@ class BaseEvaluator(ABC):
         This simulates realistic LLM latency in mock LLM mode to make parallel execution
         visible in traces. Uses asyncio.sleep to not block the event loop.
         """
-        if os.environ.get("TRAIGENT_MOCK_LLM", "").lower() not in ("true", "1", "yes"):
+        # Use the canonical truthy parser (accepts 1/true/yes/on,
+        # case-insensitive) so this agrees with env_config.is_mock_llm();
+        # the previous tuple omitted "on", silently dropping
+        # TRAIGENT_MOCK_DELAY_MS for that spelling (issue #1766).
+        if not is_truthy(os.environ.get("TRAIGENT_MOCK_LLM")):
             return
 
         delay_str = os.environ.get("TRAIGENT_MOCK_DELAY_MS", "")
@@ -3403,7 +3628,9 @@ class BaseEvaluator(ABC):
         try:
             return {
                 "accuracy": (
-                    1.0 if _accuracy_values_match(output, expected_output) else 0.0
+                    1.0
+                    if _accuracy_matches_after_unwrap(output, expected_output)
+                    else 0.0
                 )
             }
         except Exception as exc:

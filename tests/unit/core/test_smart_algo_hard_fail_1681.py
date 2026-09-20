@@ -22,6 +22,15 @@ guard directly, the full ``orchestrator.optimize()`` flow, the decorator-level
 ``fn.optimize(algorithm=<smart>)`` surface, and the conservative non-goals
 (local/cloud-brain runs, explicit ``max_trials=0``, already-owned stop
 reasons such as cost_limit/#1684).
+
+Follow-up (#1703, sibling of #1681, flagged by #1698's independent review): the
+original guard keyed on ``bool(self._trials)`` alone, so a managed run whose
+trials all FAILED or were PRUNED (``self._trials`` non-empty, zero of them
+``is_successful``) slipped past the guard and still finalized COMPLETED with
+``best_config=None`` — the exact silent-empty shape #1681 was meant to close,
+just reached through executed-but-unsuccessful trials instead of zero trials.
+``TestFailClosedGuardAllExecutedTrialsUnsuccessful`` below covers that shape
+directly and through the ``optimize()`` flow.
 """
 
 from __future__ import annotations
@@ -34,6 +43,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 import traigent
+from tests.shared.mocks.optimizers import MockOptimizer
 from traigent.api.types import OptimizationStatus, TrialResult, TrialStatus
 from traigent.config.types import (
     ExecutionIntent,
@@ -50,8 +60,6 @@ from traigent.evaluators.base import (
     EvaluationResult,
 )
 from traigent.utils.exceptions import ConfigurationError, OptimizationError
-
-from tests.shared.mocks.optimizers import MockOptimizer
 
 SMART_ALGORITHMS = [
     "bayesian",
@@ -103,6 +111,55 @@ def _trial(trial_id: str = "t1") -> TrialResult:
         duration=0.0,
         timestamp=datetime.now(UTC),
     )
+
+
+def _failed_trial(trial_id: str = "f1") -> TrialResult:
+    return TrialResult(
+        trial_id=trial_id,
+        config={"temperature": 0.0},
+        metrics={},
+        status=TrialStatus.FAILED,
+        duration=0.0,
+        timestamp=datetime.now(UTC),
+        error_message="evaluation failed",
+    )
+
+
+def _pruned_trial(trial_id: str = "p1") -> TrialResult:
+    return TrialResult(
+        trial_id=trial_id,
+        config={"temperature": 0.0},
+        metrics={},
+        status=TrialStatus.PRUNED,
+        duration=0.0,
+        timestamp=datetime.now(UTC),
+    )
+
+
+class AllFailEvaluator(BaseEvaluator):
+    """Every trial executes but zero examples succeed -- the real-world shape
+    of #1703: ``build_success_result`` marks a trial ``FAILED`` (not
+    ``COMPLETED``) whenever every attempted example failed, so ``self._trials``
+    ends up non-empty while none of its members is ``is_successful``.
+    """
+
+    async def evaluate(
+        self,
+        func: Any,
+        config: dict[str, Any],
+        dataset: Dataset,
+        **kwargs: Any,
+    ) -> EvaluationResult:
+        metrics = {"accuracy": 0.0}
+        return EvaluationResult(
+            config=config,
+            example_results=[],
+            aggregated_metrics=metrics,
+            total_examples=1,
+            successful_examples=0,
+            duration=0.0,
+            metrics=metrics,
+        )
 
 
 def _cloud_required_policy(algorithm: str = "bayesian") -> ResolvedExecutionPolicy:
@@ -216,6 +273,71 @@ class TestFailClosedGuardUnit:
         orchestrator._fail_closed_on_empty_smart_managed_run()
 
 
+class TestFailClosedGuardAllExecutedTrialsUnsuccessful:
+    """#1703 (sibling of #1681): a non-empty ``self._trials`` whose members are
+    all FAILED/PRUNED must still fail closed -- the guard keys on whether any
+    trial actually succeeded (``is_successful``), not on ``bool(self._trials)``.
+    """
+
+    def test_all_failed_trials_still_raises(self) -> None:
+        orchestrator = _orchestrator(policy=_cloud_required_policy("bayesian"))
+        orchestrator._trials = [_failed_trial("f1"), _failed_trial("f2")]
+
+        with pytest.raises(OptimizationError, match="'bayesian'") as excinfo:
+            orchestrator._fail_closed_on_empty_smart_managed_run()
+
+        message = str(excinfo.value)
+        assert "no best configuration" in message
+        assert "'grid'" in message
+        assert "'random'" in message
+
+    def test_all_pruned_trials_still_raises(self) -> None:
+        orchestrator = _orchestrator(policy=_cloud_required_policy("tpe"))
+        orchestrator._trials = [_pruned_trial("p1")]
+
+        with pytest.raises(OptimizationError, match="'tpe'"):
+            orchestrator._fail_closed_on_empty_smart_managed_run()
+
+    def test_mixed_failed_and_pruned_trials_still_raises(self) -> None:
+        orchestrator = _orchestrator(policy=_cloud_required_policy("cmaes"))
+        orchestrator._trials = [_failed_trial("f1"), _pruned_trial("p1")]
+
+        with pytest.raises(OptimizationError, match="'cmaes'"):
+            orchestrator._fail_closed_on_empty_smart_managed_run()
+
+    def test_one_successful_trial_among_failures_does_not_raise(self) -> None:
+        """A single executed (successful) trial is enough to keep the run a
+        legitimate COMPLETED result, even alongside failures/prunes."""
+        orchestrator = _orchestrator(policy=_cloud_required_policy("bayesian"))
+        orchestrator._trials = [_failed_trial("f1"), _trial("t1"), _pruned_trial("p1")]
+
+        orchestrator._fail_closed_on_empty_smart_managed_run()
+
+    @pytest.mark.parametrize(
+        "stop_reason",
+        [
+            "timeout",
+            "user_cancelled",
+            "cost_limit",
+            "execution_budget",
+            "vendor_error",
+            "network_error",
+            "error",
+        ],
+    )
+    def test_owned_stop_reasons_still_apply_with_executed_failures(
+        self, stop_reason: str
+    ) -> None:
+        """The already-owned-stop-reasons carve-out is orthogonal to the
+        executed-vs-empty distinction: an owned stop reason still defers even
+        when trials were attempted and all failed."""
+        orchestrator = _orchestrator(policy=_cloud_required_policy("bayesian"))
+        orchestrator._trials = [_failed_trial("f1")]
+        orchestrator._stop_reason = stop_reason  # type: ignore[assignment]
+
+        orchestrator._fail_closed_on_empty_smart_managed_run()
+
+
 class TestFailClosedThroughOptimizeFlow:
     """The guard fires (or not) through the real ``orchestrator.optimize()``."""
 
@@ -229,6 +351,30 @@ class TestFailClosedThroughOptimizeFlow:
             await orchestrator.optimize(lambda **_: "ok", _dataset())
 
         # The run is FAILED — never a silent COMPLETED with best_config=None.
+        assert orchestrator._status is OptimizationStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_all_failed_trials_optimize_raises(self) -> None:
+        """#1703: every trial executes (self._trials is non-empty) but none
+        succeeds -- the real end-to-end shape, not just the guard in
+        isolation. Must raise, never finalize COMPLETED with
+        best_config=None."""
+        optimizer = MockOptimizer(_SPACE, ["accuracy"])
+        optimizer.set_max_suggestions(2)
+        config = TraigentConfig()
+        config.execution_policy = _cloud_required_policy("bayesian")
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=AllFailEvaluator(),
+            config=config,
+            max_trials=2,
+        )
+
+        with pytest.raises(OptimizationError, match="'bayesian'"):
+            await orchestrator.optimize(lambda **_: "ok", _dataset())
+
+        assert len(orchestrator._trials) == 2
+        assert all(not t.is_successful for t in orchestrator._trials)
         assert orchestrator._status is OptimizationStatus.FAILED
 
     @pytest.mark.asyncio

@@ -234,7 +234,7 @@ class TestSessionOperationsCostLimitThreading:
 
         api_ops = _make_api_ops()
         payload = api_ops._build_typed_session_payload(request, max_trials=5)
-        assert payload["objectives"] == [{"metric": "score", "direction": "maximize"}]
+        assert payload["objectives"] == [{"name": "score", "orientation": "maximize"}]
 
     def test_optimization_strategy_end_to_end_reaches_typed_wire_payload(self):
         """Full path: SessionOperations.create_session -> typed payload."""

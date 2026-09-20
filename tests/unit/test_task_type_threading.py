@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 
 from tests.unit.cloud.test_session_creation_warm_start import CapturingFakeClient
-from traigent.api.decorators import optimize
+from traigent.api.decorators import EvaluationOptions, optimize
 from traigent.cloud.backend_client import BackendIntegratedClient
 from traigent.cloud.models import SessionCreationResponse
 from traigent.cloud.session_operations import SessionOperations
@@ -29,17 +29,24 @@ pytestmark = pytest.mark.backend_online
 
 
 class TestDecoratorHop:
-    """The decorator hop is exercised through the dict form on purpose.
+    """The decorator hop is exercised through BOTH the dict and object forms.
 
-    ``_coerce_bundle`` admits a pre-built bundle via ``isinstance(value, model_cls)``,
-    so an object-form test asserts class *identity* as much as behaviour -- and CI's
-    module graph resolves ``EvaluationOptions`` to a second same-named class, which
-    fails that isinstance with "must be a dict or EvaluationOptions, got
-    EvaluationOptions" while passing locally. The dict form is the documented path,
-    is what the repo's comparable tests use (see
-    ``test_registered_evaluator_definition_identity_reaches_optimized_function``), and
-    goes through the same ``model_validate``. The object form is covered at the model
-    level by ``TestEvaluationOptionsModel`` below.
+    This class used to avoid the object form, on the stated grounds that "CI's module
+    graph resolves ``EvaluationOptions`` to a second same-named class". That
+    diagnosis was wrong about the cause. There is only one
+    ``traigent.api.decorators`` in ``sys.modules`` and one definition of the class;
+    the second class object came from an ``importlib.reload`` of that module inside
+    another test file, which re-executes the module body in the SAME module object
+    and mints brand-new class objects while every module that imported the name at
+    collection time keeps the pre-reload one. It looked like a CI-only property
+    because xdist decides whether the reloading file lands in this worker.
+
+    Both halves are fixed now, so the object form is a fair test again: those
+    reloads are gone (PR #2357), and ``_coerce_bundle`` accepts a same-named twin
+    and re-validates it against the live class
+    (``tests/unit/api/test_coerce_bundle_class_identity.py``). Keep the dict form
+    too -- it is the documented path and takes a different route through
+    ``model_validate``.
     """
 
     def test_task_type_reaches_the_optimized_function(self):
@@ -61,6 +68,35 @@ class TestDecoratorHop:
             return question
 
         assert answer.task_type == "text2sql"
+
+    def test_object_form_reaches_the_optimized_function(self):
+        """The bundle-object form, which this class used to avoid."""
+
+        @optimize(
+            evaluation=EvaluationOptions(task_type="multiple_choice"),
+            configuration_space={"temperature": [0.1, 0.9]},
+        )
+        def answer(question: str) -> str:
+            return question
+
+        assert answer.task_type == "multiple_choice"
+
+    def test_object_and_dict_forms_agree(self):
+        @optimize(
+            evaluation=EvaluationOptions(task_type="text2sql"),
+            configuration_space={"temperature": [0.1, 0.9]},
+        )
+        def via_object(question: str) -> str:
+            return question
+
+        @optimize(
+            evaluation={"task_type": "text2sql"},
+            configuration_space={"temperature": [0.1, 0.9]},
+        )
+        def via_dict(question: str) -> str:
+            return question
+
+        assert via_object.task_type == via_dict.task_type == "text2sql"
 
 
 class TestEvaluationOptionsModel:

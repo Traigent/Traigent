@@ -468,7 +468,6 @@ async def main() -> None:
     results = await bedrock_multi_agent_rag.optimize(
         algorithm="grid",
         max_trials=total_trials,
-        show_progress=True,
         random_seed=42,
         timeout=600,
     )

@@ -658,8 +658,16 @@ class TestParseSessionResponseWarmStartTransfer:
         )
         session_id, experiment_id, experiment_run_id = result
         assert session_id == "s1"
-        assert experiment_id == "s1"  # metadata fallback
-        assert experiment_run_id == "s1"
+        # Retargeted for the contract this PR establishes (#2283): when the
+        # backend omits experiment_id / experiment_run_id they stay ABSENT.
+        # Substituting session_id was the invented-run-identity bug -- it made a
+        # session masquerade as a run, so downstream writes landed against an id
+        # that never existed as a run. The parser now leaves them None and logs
+        # "missing experiment_id and experiment_run_id; leaving absent rather
+        # than substituting session_id". The tuple shape, which is what this
+        # test is named for, is unchanged.
+        assert experiment_id is None
+        assert experiment_run_id is None
 
 
 class WarmStartCreateFakeClient(CapturingFakeClient):

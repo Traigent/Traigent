@@ -20,6 +20,7 @@ from traigent.evaluators.base import (
     BaseEvaluator,
     Dataset,
     EvaluationResult,
+    _accuracy_matches_after_unwrap,
     _accuracy_values_match,
     _example_correlation_key,
     _is_empty_expected_output,
@@ -30,11 +31,13 @@ from traigent.evaluators.metrics_tracker import (
     MetricsCalculator,
     MetricsTracker,
     compute_empty_output_rate,
+    compute_truncated_output_rate,
     enforce_user_metric_ceiling,
     extract_llm_metrics,
 )
 from traigent.utils.exceptions import EvaluationError
 from traigent.utils.langchain_interceptor import (
+    capture_scope,
     clear_captured_responses,
     get_all_captured_responses,
     get_captured_response_by_key,
@@ -83,7 +86,15 @@ class MetricBinding:
         matched_parameters: Metric parameter names filled by a recognized
             keyword (empty for positional / var-positional binding).
         unmatched_parameters: Bindable metric parameter names NOT filled by a
-            recognized keyword.
+            recognized keyword. When no candidate binds at all
+            (``bind_ok=False``), this leads with any *required*
+            positional-only parameter names -- they can never be filled by a
+            recognized keyword (``build_metric_keyword_arguments`` never
+            offers one to a positional-only slot) and are the actual reason
+            binding failed, even though ``inspect.Signature.bind`` still
+            reports the trailing keyword-or-positional parameters as
+            "missing" -- followed by the other bindable (POSITIONAL_OR_KEYWORD
+            / KEYWORD_ONLY) names.
         bind_ok: Whether any candidate bound successfully.
         bind_exception: The terminal ``TypeError`` from ``Signature.bind`` when
             nothing bound; ``None`` on success. Held as the original exception
@@ -236,12 +247,25 @@ def resolve_metric_call_binding(
             bind_exception=None,
         )
 
+    # A required POSITIONAL_ONLY parameter (e.g. `def scorer(x, /, output,
+    # ...)`) can never receive a recognized keyword -- `bindable_names` above
+    # deliberately excludes it, since `build_metric_keyword_arguments` never
+    # assigns one -- but it is consuming the leading slot(s) of every
+    # positional candidate, which is *why* the trailing keyword-or-positional
+    # names end up unfilled. Report it first: it is the actual culprit, not
+    # the recognized names that follow it in the signature.
+    required_positional_only = [
+        parameter.name
+        for parameter in parameters
+        if parameter.kind is inspect.Parameter.POSITIONAL_ONLY
+        and parameter.default is inspect.Parameter.empty
+    ]
     return MetricBinding(
         args=(),
         kwargs={},
         binding_mode="unbound",
         matched_parameters=(),
-        unmatched_parameters=tuple(sorted(bindable_names)),
+        unmatched_parameters=tuple(required_positional_only + sorted(bindable_names)),
         bind_ok=False,
         bind_exception=bind_error,
     )
@@ -454,6 +478,9 @@ class LocalEvaluator(BaseEvaluator):
         # is shared across the run's trials, so this emits ONE warning per run
         # (naming the first offending config) rather than one per trial/example.
         self._empty_output_warning_logged = False
+        # One-shot guard for the truncated-finish_reason run warning (issue
+        # #1809). Same rationale as the empty-output flag.
+        self._truncated_output_warning_logged = False
 
     def _extract_prompt_info(
         self,
@@ -699,6 +726,17 @@ class LocalEvaluator(BaseEvaluator):
         Updates example_metric in place with estimated token counts.
         Uses approximation of 1 token per 4 characters.
 
+        These counts are a guess derived from character length, not a
+        measurement -- there was no captured LLM usage for this example
+        (that is the only reason this method runs at all, see the caller).
+        ``example_metric.tokens.estimated`` is set so downstream consumers
+        (trial-level aggregation, cost pricing) never mistake a fabricated
+        count for real usage (Traigent#2263). Privacy mode's own
+        length-derived cost estimation is a legitimate, intentional use of
+        this same approximation -- the flag does not disable it, it only
+        stops the estimate from being silently indistinguishable from a
+        real one once it lands on a trial.
+
         Args:
             example_metric: Metrics object to update
             output: String output from function
@@ -708,6 +746,7 @@ class LocalEvaluator(BaseEvaluator):
         """
         # Estimate output tokens
         example_metric.tokens.output_tokens = max(1, len(output) // 4)
+        example_metric.tokens.estimated = True
 
         # Estimate input tokens from local lengths only. Privacy mode may not
         # retain raw prompts, but it still needs length-derived cost metrics.
@@ -1349,6 +1388,58 @@ class LocalEvaluator(BaseEvaluator):
         except Exception as e:
             logger.error(f"Failed to inject response_time_ms: {e}")
 
+    def _inject_call_breakdown_from_meta(
+        self, calls: list[Any], metrics: ExampleMetrics
+    ) -> None:
+        """Inject the per-call/per-model cost breakdown from ``__traigent_meta__``.
+
+        Multi-model/multi-step agents (cascade, router) can report a
+        ``"calls"`` list -- one entry per LLM call, attributing tokens/cost to
+        the model that made that specific call -- alongside the existing
+        blended ``total_cost``/``usage`` (Traigent#1598). Each entry is
+        defensively normalized the same way ``_inject_usage_from_meta`` does:
+        negative values are clamped and a malformed entry is skipped (logged),
+        never allowed to raise and drop the whole example's measurement.
+
+        Args:
+            calls: Raw ``calls`` list from ``__traigent_meta__``.
+            metrics: ExampleMetrics to update (``call_breakdown`` field).
+        """
+        normalized: list[dict[str, Any]] = []
+        for call in calls:
+            if not isinstance(call, dict):
+                logger.error(f"Skipping non-dict call breakdown entry: {call!r}")
+                continue
+            try:
+                model = call.get("model")
+                if not isinstance(model, str) or not model:
+                    logger.error(
+                        f"Skipping call breakdown entry with no model: {call!r}"
+                    )
+                    continue
+                input_tokens = int(call.get("input_tokens", 0) or 0)
+                output_tokens = int(call.get("output_tokens", 0) or 0)
+                cost = float(call.get("cost", 0.0) or 0.0)
+                if input_tokens < 0 or output_tokens < 0 or cost < 0:
+                    logger.warning(
+                        f"Negative value(s) clamped to 0 in call breakdown entry "
+                        f"for model {model!r}"
+                    )
+                normalized.append(
+                    {
+                        "model": model,
+                        "input_tokens": max(0, input_tokens),
+                        "output_tokens": max(0, output_tokens),
+                        "cost": max(0.0, cost),
+                    }
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to inject call breakdown entry: {e}", extra={"call": call}
+                )
+
+        metrics.call_breakdown = normalized
+
     def _extract_and_inject_traigent_meta(
         self,
         output: Any,
@@ -1370,7 +1461,11 @@ class LocalEvaluator(BaseEvaluator):
         Returns:
             The meta dict if found, None otherwise.
         """
-        from traigent.core.meta_types import TraigentMetadata, is_traigent_metadata
+        from traigent.core.meta_types import (
+            TraigentMetadata,
+            is_traigent_metadata,
+            is_valid_call_breakdown,
+        )
 
         if not isinstance(output, dict):
             return None
@@ -1378,6 +1473,21 @@ class LocalEvaluator(BaseEvaluator):
         meta = output.get("__traigent_meta__")
         if meta is None:
             return None
+
+        # Sever a malformed `calls` before validating the envelope. `calls` is
+        # ATTRIBUTION (which model spent it); `total_cost` is the authoritative
+        # amount. Letting a bad attribution entry invalidate the whole envelope
+        # threw away a valid total_cost and the run under-reported spend -- which
+        # is fail-OPEN for a budget, whatever the old comment called it. Drop the
+        # attribution, keep the money.
+        if isinstance(meta, dict) and "calls" in meta:
+            if not is_valid_call_breakdown(meta["calls"]):
+                logger.error(
+                    "Invalid __traigent_meta__['calls'] attribution; dropping the "
+                    "per-model breakdown and keeping the reported total_cost.",
+                    extra={"calls": meta["calls"]},
+                )
+                meta = {k: v for k, v in meta.items() if k != "calls"}
 
         if not is_traigent_metadata(meta):
             logger.error(
@@ -1396,6 +1506,10 @@ class LocalEvaluator(BaseEvaluator):
         # Inject usage data (tokens, response time)
         if "usage" in meta:
             self._inject_usage_from_meta(cast(dict, meta["usage"]), metrics)
+
+        # Inject per-call/per-model cost breakdown for multi-model agents (#1598)
+        if "calls" in meta:
+            self._inject_call_breakdown_from_meta(cast(list, meta["calls"]), metrics)
 
         # A validated ``__traigent_meta__`` carries a user-reported cost (and
         # optionally usage): that is a real measurement, reported by the agent
@@ -1557,6 +1671,29 @@ class LocalEvaluator(BaseEvaluator):
                 metric_errors=metric_errors,
             )
 
+            # Fold LLM spend made *inside* a metric function / judge (e.g. an
+            # LLM-as-judge calling litellm.completion) into this example's
+            # cost/tokens. Without this, judge calls are captured by the same
+            # interceptor the agent call uses but are never read: this
+            # example's cost was already settled above by
+            # `_extract_llm_metrics_for_output`, before metric functions ran
+            # (Traigent#2297). Left uncorrected, `total_cost` and the
+            # permit-based cost enforcement in `core/cost_enforcement.py`
+            # never see judge spend.
+            target_result = (
+                example_results[index]
+                if (
+                    self.detailed
+                    and example_results
+                    and index < len(example_results)
+                    and example_results[index] is not None
+                )
+                else None
+            )
+            self._fold_metric_function_llm_cost(
+                example_metric, example_result=target_result
+            )
+
             # Transfer custom metrics to example_results if in detailed mode.
             # Iterate the keys actually produced (which include mapping
             # sub-keys and exclude any function name a mapping-returning
@@ -1593,6 +1730,166 @@ class LocalEvaluator(BaseEvaluator):
             progress_callback(index, payload)
 
         return example_metric
+
+    def _fold_metric_function_llm_cost(
+        self,
+        example_metric: ExampleMetrics,
+        *,
+        example_result: Any = None,
+    ) -> None:
+        """Attribute LLM spend made by a metric function to this example.
+
+        A metric function (or an LLM-as-judge inside one) may call an
+        intercepted provider (litellm.completion/acompletion). That call is
+        captured by the same interceptor buffer the agent's own call uses.
+        Within a single trial, evaluated sequentially, the buffer holds
+        *only* what was captured since this example's metric functions
+        started: `evaluate()` drains the buffer into
+        `all_captured_responses` and clears it before the per-example loop
+        begins, and every previous example already cleared its own share
+        here. So in that sequential-within-a-trial case, whatever is in the
+        buffer now is this example's judge/evaluator spend, and nothing
+        else's (Traigent#2297).
+
+        CAVEAT -- this guarantee does NOT extend across concurrent trials.
+        The capture buffer (`LangChainMetadataCapture._all_responses` in
+        `utils/langchain_interceptor.py`) is a single process-global list
+        with no per-trial or per-task isolation (no `ContextVar`), and
+        `optimize(..., parallel_trials>1)` gathers multiple trial coroutines
+        on one event loop. An async judge call from one trial can therefore
+        drain (or be drained by) another concurrently-running trial's
+        buffer, misattributing judge cost between trials even though the
+        run-level total stays correct. Per-trial buffer isolation
+        (ContextVar-keyed capture) is a tracked follow-up, not implemented
+        here -- see the PR body.
+
+        Folds that spend into `example_metric.cost`/`.tokens` so it enters
+        the trial's actual cost and the permit-based cost-enforcement ledger
+        (`core/cost_enforcement.py`), and records it separately under
+        `custom_metrics["evaluation_cost"]` -- a one-line metadata entry, not
+        a new public field -- so a judge's share is reported alongside the
+        agent's cost rather than silently merged into it.
+
+        CAVEAT on that visibility: `evaluation_cost` is NOT in
+        `metrics_tracker.RESERVED_METRIC_KEYS`, so it travels on the USER
+        metric channel. `enforce_user_metric_ceiling`
+        (`metrics_tracker.py:307`) drops only NON-reserved keys, in sorted
+        order, to fit the backend `MeasuresDict` ceiling of
+        `TOTAL_MEASURES_CEILING` total keys (`metrics_tracker.py:18`). So on a
+        run whose metric keys exceed that ceiling, `evaluation_cost` CAN be
+        dropped from the submitted measures -- the folded spend still lands in
+        `cost`/`tokens` (those keys ARE reserved), only the judge's separate
+        breakdown line is lost. Reserving the key would make it unconditional,
+        but that also changes user-key collision semantics on the measures
+        channel (a user metric of the same name would then be skipped with a
+        warning) and is deliberately left to a follow-up rather than widened
+        into this cost-attribution fix.
+
+        Does not touch the pre-run cost estimator (`check_and_approve`);
+        that estimator has no view of metric-function calls at all and is
+        tracked separately (see the issue's linked follow-up on
+        calls-per-example).
+
+        Pricing deliberately does NOT fall back to this example's agent-call
+        model: a judge commonly calls a different, cheaper model than the
+        agent under test (as in the issue's own repro), and each captured
+        response already carries its own ``model`` field, so
+        ``extract_llm_metrics`` infers per-response pricing directly
+        (mirroring the response-inference fallback ``_process_single_output``
+        already uses for the agent's own call).
+
+        Args:
+            example_metric: This example's metrics (mutated in place).
+            example_result: The detailed-mode ``ExampleResult`` for this
+                example, if any. ``_update_example_metric_from_result``
+                already transferred the pre-fold cost/tokens into its
+                ``metrics`` dict earlier in ``_process_single_output``; when
+                given, this refreshes that copy so it doesn't go stale.
+        """
+        eval_responses = get_all_captured_responses()
+        if not eval_responses:
+            return
+        clear_captured_responses()
+
+        eval_input_cost = 0.0
+        eval_output_cost = 0.0
+        eval_total_cost = 0.0
+        eval_input_tokens = 0
+        eval_output_tokens = 0
+        eval_tokens = 0
+        for response in eval_responses:
+            metrics = extract_llm_metrics(response=response, model_name=None)
+            eval_input_cost += metrics.cost.input_cost
+            eval_output_cost += metrics.cost.output_cost
+            eval_total_cost += metrics.cost.total_cost
+            eval_input_tokens += metrics.tokens.input_tokens
+            eval_output_tokens += metrics.tokens.output_tokens
+            eval_tokens += metrics.tokens.total_tokens
+            # Forward-compat with #2308: an unpriced judge call must not be
+            # silently reported as verified-free once folded into this
+            # example's totals.
+            example_metric.cost.unpriced = (
+                example_metric.cost.unpriced or metrics.cost.unpriced
+            )
+
+        if not eval_total_cost and eval_tokens == 0:
+            # Nothing priced and nothing tokenized: there is no judge spend to
+            # attribute, so ABANDON the fold and leave every field of
+            # ``example_metric`` exactly as it was.
+            return
+
+        # Only now -- past the abandon-guard -- is this row genuinely measured.
+        # A captured judge/evaluator response is a real measurement even when
+        # the agent's own call never produced output (e.g. every example errors
+        # before the agent responds, so `_extract_llm_metrics_for_output` set
+        # `measured=False`). The judge still ran and its spend is real, so this
+        # example must not be excluded from measured-only aggregation
+        # (`MetricsTracker.aggregate_metrics`/`format_for_backend`) the way a
+        # genuinely never-measured example is (Traigent#2297 review).
+        #
+        # This assignment MUST stay below the guard. Above it, a captured judge
+        # response that priced to zero cost AND zero tokens flipped a genuinely
+        # unmeasured row to `measured=True` carrying all-zero cost/token
+        # metrics, which then re-entered the measured-only MEAN denominators at
+        # `metrics_tracker.py`'s `measured_metrics` filter and dragged every
+        # mean down -- precisely the defect `ExampleMetrics.measured`'s own
+        # docblock warns about.
+        example_metric.measured = True
+
+        example_metric.cost.input_cost += eval_input_cost
+        example_metric.cost.output_cost += eval_output_cost
+        example_metric.cost.total_cost += eval_total_cost
+        example_metric.tokens.input_tokens += eval_input_tokens
+        example_metric.tokens.output_tokens += eval_output_tokens
+        example_metric.tokens.total_tokens += eval_tokens
+
+        # Keep the standard cost/token custom_metrics (written earlier in
+        # `_process_single_output`, before metric functions ran) consistent
+        # with the now-updated totals, and surface the judge's own share.
+        example_metric.custom_metrics["evaluation_cost"] = eval_total_cost
+        example_metric.custom_metrics["input_cost"] = example_metric.cost.input_cost
+        example_metric.custom_metrics["output_cost"] = example_metric.cost.output_cost
+        example_metric.custom_metrics["total_cost"] = example_metric.cost.total_cost
+        example_metric.custom_metrics["input_tokens"] = (
+            example_metric.tokens.input_tokens
+        )
+        example_metric.custom_metrics["output_tokens"] = (
+            example_metric.tokens.output_tokens
+        )
+        example_metric.custom_metrics["total_tokens"] = (
+            example_metric.tokens.total_tokens
+        )
+
+        if example_result is not None:
+            example_result.metrics["input_cost"] = example_metric.cost.input_cost
+            example_result.metrics["output_cost"] = example_metric.cost.output_cost
+            example_result.metrics["total_cost"] = example_metric.cost.total_cost
+            example_result.metrics["input_tokens"] = example_metric.tokens.input_tokens
+            example_result.metrics["output_tokens"] = (
+                example_metric.tokens.output_tokens
+            )
+            example_result.metrics["total_tokens"] = example_metric.tokens.total_tokens
+            example_result.metrics["evaluation_cost"] = eval_total_cost
 
     def _log_dual_scorer_notice_once(self) -> None:
         """Emit a single run-level notice when both scorers appear (issue #1845).
@@ -1638,6 +1935,40 @@ class LocalEvaluator(BaseEvaluator):
             rate * 100.0,
             config,
             EMPTY_OUTPUT_RATE_WARNING_THRESHOLD * 100.0,
+        )
+
+    def _maybe_warn_truncated_output(self, rate: float, config: dict[str, Any]) -> None:
+        """Emit a single run-level warning when outputs were truncated (#1809).
+
+        Fires at most once per evaluator instance (== once per run, naming the
+        first offending config), mirroring the empty-output-rate warning
+        (#1851). Any nonzero rate warns -- unlike the empty-output threshold,
+        a single truncated example already means at least one score in the
+        comparison is a measurement artifact, not a real signal about the
+        config: reasoning models (gemini-2.5/3.x, gpt-5, o-series) spend
+        hidden reasoning tokens against ``max_tokens`` before any answer text,
+        so a cap sized for a non-reasoning model truncates the answer
+        mid-output and that example scores as an artifact, not on the config's
+        real capability. Every trial still records its own
+        ``truncated_output_rate`` metric; this warning only decides whether to
+        also log.
+        """
+        if rate <= 0.0:
+            return
+        if self._truncated_output_warning_logged:
+            return
+        self._truncated_output_warning_logged = True
+        logger.warning(
+            "%.1f%% of measured outputs for config %r were truncated "
+            "(provider finish_reason indicates the length/token cap was hit, "
+            "not a natural stop) — reasoning models spend hidden thinking "
+            "tokens against max_tokens before any answer text, so a cap sized "
+            "for a non-reasoning model can silently truncate the answer; "
+            "accuracy comparisons are unreliable until max_tokens is raised. "
+            "Each trial's truncated_output_rate metric records the "
+            "per-config rate.",
+            rate * 100.0,
+            config,
         )
 
     def _compute_accuracy_aggregated(
@@ -1690,10 +2021,14 @@ class LocalEvaluator(BaseEvaluator):
             if error is not None:
                 continue
 
-            value = (
-                raw_output.get("text") if isinstance(raw_output, dict) else raw_output
-            )
-            if value is not None and _accuracy_values_match(value, expected):
+            # Unwrap the same way the per-example path already does (dict
+            # {"text": ...}, strict (output, metrics) tuple) before comparing
+            # -- a raw tuple/dict never equals a scalar expected value, which
+            # silently understated this aggregate on mixed-shape runs
+            # (Traigent#1771).
+            if raw_output is not None and _accuracy_matches_after_unwrap(
+                raw_output, expected
+            ):
                 correct += 1
 
         if total > 0:
@@ -1843,6 +2178,34 @@ class LocalEvaluator(BaseEvaluator):
         return aggregated
 
     async def evaluate(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        dataset: Dataset,
+        *,
+        sample_lease: SampleBudgetLease | None = None,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
+        budget: ExecutionBudget | None = None,
+    ) -> EvaluationResult:
+        """Evaluate function with given configuration on dataset.
+
+        Runs inside its own LLM-response capture scope so that two evaluations
+        running concurrently cannot drain each other's captured responses and
+        charge one trial for another's judge spend (Traigent#2387). The trial
+        lifecycle opens an outer scope per trial; this inner one keeps a DIRECT
+        concurrent caller of ``evaluate()`` correct too, and nesting is safe.
+        """
+        async with capture_scope():
+            return await self._evaluate_within_capture_scope(
+                func,
+                config,
+                dataset,
+                sample_lease=sample_lease,
+                progress_callback=progress_callback,
+                budget=budget,
+            )
+
+    async def _evaluate_within_capture_scope(
         self,
         func: Callable[..., Any],
         config: dict[str, Any],
@@ -2082,6 +2445,22 @@ class LocalEvaluator(BaseEvaluator):
         aggregated_metrics["empty_output_rate"] = empty_output_rate
         self._maybe_warn_high_empty_output_rate(empty_output_rate, config)
 
+        # Truncated-output guard (issue #1809): compute the fraction of this
+        # config's examples whose provider response carried a truncated
+        # finish/stop reason (reads the per-example finish_reason the response
+        # handler chain already recorded on ``metrics_tracker.example_metrics``
+        # while extracting tokens/cost -- no extra provider call), expose it
+        # as a reserved metric, then surface ONE run-level warning naming the
+        # first offending config. The complement to the metadata-free
+        # empty-output-rate guard above: this fires even when the truncated
+        # text is non-empty (a reasoning model's cut-off answer is rarely
+        # blank, just wrong).
+        truncated_output_rate = compute_truncated_output_rate(
+            metrics_tracker.example_metrics
+        )
+        aggregated_metrics["truncated_output_rate"] = truncated_output_rate
+        self._maybe_warn_truncated_output(truncated_output_rate, config)
+
         # Authoritative cap on the FINAL trial metrics: user keys (arriving via
         # the per-example custom_metrics -> comprehensive_metrics merge above)
         # must not push the union past the MeasuresDict ceiling. Only user keys
@@ -2122,6 +2501,12 @@ class LocalEvaluator(BaseEvaluator):
                 len(dataset.examples),
             )
 
+        # Per-trial, per-model cost breakdown for multi-model/multi-step agents
+        # (Traigent#1598) -- aggregated from every example's
+        # __traigent_meta__["calls"] reported this trial. Empty when no
+        # example reported a breakdown.
+        model_costs = metrics_tracker.aggregate_call_breakdown()
+
         result = EvaluationResult(
             config=config,
             example_results=example_results if self.detailed else [],
@@ -2134,6 +2519,7 @@ class LocalEvaluator(BaseEvaluator):
             outputs=outputs,
             errors=errors,
             metric_errors=metric_errors,
+            model_costs=model_costs,
         )
 
         # Attach summary_stats if generated

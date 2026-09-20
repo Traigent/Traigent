@@ -482,7 +482,6 @@ async def run_phase(args: argparse.Namespace) -> None:
             results = await agent.optimize(
                 algorithm=runtime.scale.algorithm,
                 max_trials=runtime.scale.max_trials,
-                show_progress=True,
                 random_seed=42,
             )
             optimization_id = as_optional_text(

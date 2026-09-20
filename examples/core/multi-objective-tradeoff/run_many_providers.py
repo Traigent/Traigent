@@ -817,12 +817,12 @@ if __name__ == "__main__":
             default=None,
             help="Override the number of optimization trials to run",
         )
-        parser.add_argument(
-            "--model",
-            type=str,
-            default="anthropic/claude-sonnet-4-6",
-            help="Model identifier (include provider prefix for non-default providers)",
-        )
+        # No --model flag: this example exists to compare providers, and the
+        # model axis is the configuration_space dimension swept in the
+        # decorator above. The flag used to be forwarded as
+        # `answer.optimize(model=...)`, which .optimize() silently discarded,
+        # so choosing a model never had any effect. Pin the sweep by editing
+        # the decorator's configuration_space["model"] list instead.
         args = parser.parse_args()
 
         print("Crunching math expressions across multiple providers…")
@@ -833,7 +833,7 @@ if __name__ == "__main__":
                 if args.max_trials is not None
                 else (10 if not MOCK else 4)
             )
-            r = await answer.optimize(max_trials=trials, model=args.model)
+            r = await answer.optimize(max_trials=trials)
             print({"best_config": r.best_config, "best_score": r.best_score})
             _print_results(r)
             if args.verbose_results:

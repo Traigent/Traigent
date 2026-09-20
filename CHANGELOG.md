@@ -8,6 +8,50 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Unrelated inline datasets no longer share one portal history.** Every inline
+  example list was named `inline_dataset`, and that name was sent as the dataset
+  identity, so all inline runs of one agent grouped together in history. The generated
+  name is no longer sent as an identity. New `EvaluationOptions(dataset_id="...")` lets you
+  declare a stable dataset id that survives content edits and `Dataset.name` renames
+  (stripped and Unicode-NFC-normalized, 1-255 characters after normalization, otherwise a
+  validation error). Two spellings of one name — composed and decomposed — are therefore one
+  id, not two histories. An explicit id containing a control or zero-width character is
+  rejected naming the codepoint, rather than silently rewritten; the same characters in a
+  `Dataset.name` are cleaned out instead, so a dataset name can never fail a run. It is sent on the connected
+  grid/random and managed session-create paths. A run with neither an explicit id nor a
+  named `Dataset` logs one warning that its history will show "Dataset not linked".
+  Offline runs record the identity locally and `traigent sync` sends it; sessions recorded
+  before this change sync with no identity. A real `Dataset(name="support-v1")` keeps the
+  same identity as before.
+
+- **Breaking: `.optimize()` now rejects a keyword argument it does not recognize.** A
+  call-time keyword that is neither a `@traigent.optimize` decorator option nor consumed by
+  an optimizer was absorbed into the optimizer's `algorithm_config` and had no effect, so a
+  typo silently ran a different optimization from the one you wrote. Such a keyword now
+  raises `TypeError` naming it. Remove the argument at the call site, or correct the
+  spelling if you meant a real option; there is no compatibility flag, because a keyword
+  that reaches this error never had an effect.
+  **Options of the optimizer you selected still work**, including every batch- and
+  remote-optimizer option (`batch_config`, `pareto_frontier_size`, `base_optimizer`,
+  `remote_enabled`, ...). The accepted set is derived from the registered optimizers'
+  constructor signatures rather than hand-written, so registering a plugin optimizer — or
+  adding a parameter to an existing one — cannot break its callers.
+  The shipped `walkthrough/` examples passed
+  `show_progress=` to `.optimize()`, which was never a parameter of it and never did
+  anything; it is removed from all 21 example call sites and no example's behaviour changes.
+  The parameter that does control the live progress bar is `progress_bar`: `True` forces one,
+  `False` suppresses it, `None` (the default) auto-enables it in an interactive terminal.
+
+- **Breaking: `PromptRewriter.rewrite()` no longer accepts `plan`, and `TextDocument` no
+  longer exposes `trainable`.** Both were dead: `rewrite()` ignored `plan` entirely and
+  nothing in the package ever read `trainable`. `PromptRewriter` is exported from
+  `traigent.generation` (`__all__`), so this is a source-breaking change for any caller
+  passing `plan=` or a third positional argument — those now raise `TypeError` rather
+  than being silently ignored, and reading `.trainable` raises `AttributeError`. The
+  TypeScript SDK's rewriter never had the parameter, so this restores cross-SDK parity.
+  Remove the argument at the call site; there is no replacement, because it never had an
+  effect.
+
 - **A model with no price is no longer scored as free when you optimize for cost.**
   Previously a call whose model had no price table entry and no provider-reported cost
   was recorded as `$0.00`, and because the optimizer minimizes cost it ranked that

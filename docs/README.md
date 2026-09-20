@@ -9,7 +9,7 @@
 Install the current Traigent SDK release with
 `pip install "traigent[recommended]"`, then run `traigent onboard`,
 `traigent auth device-login`, `traigent quickstart`,
-`traigent first-prompt --agent claude|cursor|codex`, or `traigent mcp serve`.
+`traigent first-prompt --agent claude|cursor|codex|copilot`, or `traigent mcp serve`.
 
 License: Traigent SDK is dual-licensed under
 `AGPL-3.0-only OR LicenseRef-Traigent-Commercial`.
