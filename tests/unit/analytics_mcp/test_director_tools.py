@@ -529,9 +529,9 @@ class TestDirectorToolsNoFreeText:
         ]
         for fn in tool_callables:
             params = set(inspect.signature(fn).parameters)
-            assert not any(
-                "tenant" in p.lower() for p in params
-            ), f"{fn.__name__} must not accept a tenant parameter"
+            assert not any("tenant" in p.lower() for p in params), (
+                f"{fn.__name__} must not accept a tenant parameter"
+            )
             for banned in self._BANNED_SUBSTRINGS:
                 assert not any(banned in p.lower() for p in params), (
                     f"{fn.__name__} must not accept a free-text-shaped "
