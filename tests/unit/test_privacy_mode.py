@@ -130,6 +130,10 @@ class TestPrivacyCompliance:
             # implementation, prompt, dataset content, or credentials.
             "evaluator_id",
             "evaluator_definition_id",
+            # Bounded provenance enum ("registered" / "declared" / "unknown").
+            # It classifies the evaluator identifier above without carrying
+            # evaluator implementation, prompt, dataset content, or credentials.
+            "evaluator_id_source",
             # Stable agent identity. The same class of value as function_name
             # (already allowed) and derived from it — a name the user chose for
             # their agent, carrying no dataset or example content.

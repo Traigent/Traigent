@@ -54,6 +54,7 @@ from traigent.cloud.models import (
     AgentOptimizationRequest,
     AgentOptimizationResponse,
     AgentSpecification,
+    EvaluatorIdSource,
     NextTrialRequest,
     NextTrialResponse,
     OptimizationFinalizationResponse,
@@ -1662,6 +1663,7 @@ class BackendIntegratedClient:
         run_description: str | None = None,
         task_type: str | None = None,
         dataset_id: str | None = None,
+        evaluator_id_source: EvaluatorIdSource | None = None,
     ) -> SessionCreationResult:
         """Synchronous wrapper for creating a session.
         Delegates to session_operations module. Phase 8: objectives are
@@ -1689,6 +1691,7 @@ class BackendIntegratedClient:
             run_description=run_description,
             task_type=task_type,
             dataset_id=dataset_id,
+            evaluator_id_source=evaluator_id_source,
         )
 
     async def create_hybrid_session(

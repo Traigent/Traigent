@@ -24,6 +24,7 @@ from traigent.cloud.client import (
 )
 from traigent.cloud.models import (
     DECLARED_DATASET_IDENTITY_METADATA_KEY,
+    EvaluatorIdSource,
     OptimizationFinalizationResponse,
     OptimizationSession,
     OptimizationSessionStatus,
@@ -538,6 +539,7 @@ class SessionOperations:
         run_description: str | None = None,
         task_type: str | None = None,
         dataset_id: str | None = None,
+        evaluator_id_source: EvaluatorIdSource | None = None,
     ) -> SessionCreationResult:
         """Create a session with backend metadata submission.
 
@@ -713,6 +715,7 @@ class SessionOperations:
                 fingerprint_meta=fingerprint_meta,
                 evaluator_id=evaluator_id,
                 evaluator_definition_id=evaluator_definition_id,
+                evaluator_id_source=evaluator_id_source,
                 task_type=task_type,
                 dataset_id=dataset_id,
             )

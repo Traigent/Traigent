@@ -181,7 +181,17 @@ class TestSummaryStatsIntegration:
                         "50%": 0.85,
                         "75%": 0.9,
                         "max": 0.95,
-                    }
+                    },
+                    "response_time_ms": {
+                        "count": 10,
+                        "mean": 142.5,
+                        "std": 12.0,
+                        "min": 120.0,
+                        "25%": 133.0,
+                        "50%": 140.0,
+                        "75%": 150.0,
+                        "max": 170.0,
+                    },
                 },
                 "execution_time": 10.5,
                 "total_examples": 10,
@@ -195,7 +205,10 @@ class TestSummaryStatsIntegration:
             result = await backend_client._submit_summary_stats(
                 session_id="test_session",
                 trial_id="test_trial",
-                config={"temperature": 0.7},
+                config={
+                    "temperature": 0.7,
+                    "system_prompt": "PRIVATE-EVAL-CONTENT-DO-NOT-EGRESS",
+                },
                 summary_stats=summary_stats,
                 status="completed",
             )
@@ -206,9 +219,21 @@ class TestSummaryStatsIntegration:
             call_args = mock_session.post.call_args
             assert "test_session" in call_args[0][0]  # URL contains session ID
             submitted_data = call_args[1]["json"]
+            assert submitted_data["metrics"] == {
+                "accuracy": 0.85,
+                "response_time_ms": 142.5,
+            }
             assert submitted_data["summary_stats"] == summary_stats
+            assert (
+                submitted_data["summary_stats"]["metrics"]["response_time_ms"]["count"]
+                == 10
+            )
             assert submitted_data["trial_id"] == "test_trial"
-            assert submitted_data["config"] == {"temperature": 0.7}
+            assert submitted_data["config"] == {
+                "temperature": 0.7,
+                "system_prompt": "[REDACTED:34 chars]",
+            }
+            assert "PRIVATE-EVAL-CONTENT-DO-NOT-EGRESS" not in str(submitted_data)
 
     def test_backend_client_routes_based_on_execution_mode(self):
         """Test that backend client routes to correct submission method based on mode."""

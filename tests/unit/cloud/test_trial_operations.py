@@ -710,7 +710,20 @@ class TestPrivacyConfigRedactionSubmission:
     async def test_privacy_summary_stats_redacts_sensitive_config_values(
         self,
     ) -> None:
-        sentinel = "SENTINEL-PII-8842"
+        sentinel = "PRIVATE-EVAL-CONTENT-DO-NOT-EGRESS"
+        summary_stats = {
+            "metrics": {
+                "accuracy": {"count": 4, "mean": 0.875},
+                "response_time_ms": {"count": 4, "mean": 125.5},
+                "nullable_metric": None,
+                "scalar_metric": 2,
+                "no_mean_metric": {"count": 4},
+                "label_metric": "categorical",
+            },
+            "execution_time": 0.5,
+            "total_examples": 4,
+            "metadata": {"aggregation_method": "pandas.describe"},
+        }
         ops = self._make_ops()
 
         with (
@@ -730,15 +743,24 @@ class TestPrivacyConfigRedactionSubmission:
                 session_id="test-session",
                 trial_id="test-trial",
                 config={"system_prompt": sentinel, "temperature": 0.7},
-                summary_stats={"metrics": {"accuracy": 0.95}},
+                summary_stats=summary_stats,
                 status="completed",
             )
 
         assert result is True
         payload = mock_session.post.call_args.kwargs["json"]
-        assert "system_prompt" in payload["config"]
-        assert payload["config"]["system_prompt"] == "[REDACTED:17 chars]"
-        assert payload["config"]["temperature"] == 0.7
+        assert payload["config"] == {
+            "system_prompt": "[REDACTED:34 chars]",
+            "temperature": 0.7,
+        }
+        assert payload["metrics"] == {
+            "accuracy": 0.875,
+            "response_time_ms": 125.5,
+            "nullable_metric": None,
+            "scalar_metric": 2,
+        }
+        assert payload["summary_stats"] == summary_stats
+        assert payload["summary_stats"]["metrics"]["response_time_ms"]["count"] == 4
         assert sentinel not in str(payload)
 
     @pytest.mark.asyncio
