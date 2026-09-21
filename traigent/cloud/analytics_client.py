@@ -41,12 +41,19 @@ Wired analytics endpoints:
 * ``GET /api/v1beta/projects/{project_id}/observability/analysis/tools``
 * ``GET /api/v1beta/projects/{project_id}/observability/analysis/insights``
 * ``POST /api/v1beta/projects/{project_id}/observability/analysis/cohorts/compare``
+
+Director v0 (advisory-only; frozen contract, ``~/.claude/plans/director-v0-contract/``):
+
+* ``POST /api/v1/director/sessions``
+* ``POST /api/v1/director/sessions/{session_id}/turn``
+* ``GET /api/v1/director/sessions/{session_id}/state``
 """
 
 # Traceability: CONC-Layer-Infra CONC-Security FUNC-CLOUD-HYBRID FUNC-ANALYTICS REQ-CLOUD-009
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -2013,6 +2020,114 @@ def normalize_decision_intent(intent: str | None = None) -> str:
     return normalized
 
 
+# === Director v0 (advisory-only) ===
+#
+# Frozen contract: ~/.claude/plans/director-v0-contract/ rev 2, pinned to
+# TraigentBackend origin/develop 0dda4a6cc. Three thin pass-throughs to the
+# backend's advisory Director endpoints. C1 (frozen contract): the request
+# shapes below carry no client-composed free text -- every field is an enum,
+# an integer, or a server-issued identifier. `intent`, `report`, and
+# `client_report` are the only content fields `director_turn` accepts,
+# matching the frozen director-turn.schema.json Request object exactly.
+DIRECTOR_WORKFLOW_KINDS: tuple[str, ...] = ("optimization_run_advisory",)
+DIRECTOR_INTENTS: tuple[str, ...] = ("ask_next_step", "report_progress")
+_DEFAULT_DIRECTOR_INTENT = "ask_next_step"
+DIRECTOR_REPORT_STATUSES: tuple[str, ...] = ("done", "blocked", "skipped", "failed")
+# client_report.validity_checks[].check / .status / .confidence_label --
+# schemas/director-turn.schema.json $defs.Request.properties.client_report
+# and common.schema.json $defs.ConfidenceLabel. Feeds deterministic rule R1
+# (state-rules.md §3): a client-reported failed/missing validity check
+# BLOCKS run_optimization and promote_winner, before any model call.
+DIRECTOR_VALIDITY_CHECKS: tuple[str, ...] = (
+    "scorer_discrimination",
+    "split_integrity",
+)
+DIRECTOR_VALIDITY_STATUSES: tuple[str, ...] = ("passed", "failed", "missing")
+DIRECTOR_CONFIDENCE_LABELS: tuple[str, ...] = ("low", "medium", "high", "unknown")
+_DIRECTOR_VALIDITY_CHECKS_MAX_ITEMS = 20
+
+# Response201 required keys, schemas/director-session-create.schema.json.
+_DIRECTOR_SESSION_REQUIRED_KEYS = frozenset(
+    {
+        "session_id",
+        "workflow_kind",
+        "owner_scope",
+        "status",
+        "revision",
+        "advisory_only",
+        "evidence",
+        "evidence_state",
+        "created_at",
+    }
+)
+# Response200 required keys, schemas/director-turn.schema.json.
+_DIRECTOR_TURN_REQUIRED_KEYS = frozenset(
+    {
+        "turn_id",
+        "session_id",
+        "session_revision",
+        "advisory_only",
+        "guidance_status",
+        "reason_code",
+        "evidence",
+        "blockers",
+        "replayed",
+    }
+)
+# Response200 required keys, schemas/director-state.schema.json.
+_DIRECTOR_STATE_REQUIRED_KEYS = frozenset(
+    {
+        "session_id",
+        "workflow_kind",
+        "owner_scope",
+        "status",
+        "revision",
+        "advisory_only",
+        "evidence_state",
+        "evidence",
+        "open_instruction",
+        "last_turn",
+        "created_at",
+        "updated_at",
+    }
+)
+
+
+def normalize_director_intent(intent: str | None = None) -> str:
+    """Return a supported director-turn ``intent`` or raise ``ValueError``."""
+    normalized = (intent or "").strip() or _DEFAULT_DIRECTOR_INTENT
+    if normalized not in DIRECTOR_INTENTS:
+        allowed = ", ".join(DIRECTOR_INTENTS)
+        raise ValueError(f"intent must be one of: {allowed}.")
+    return normalized
+
+
+def _canonical_json(value: Mapping[str, Any]) -> str:
+    """Stable JSON encoding for Idempotency-Key derivation (sorted keys, no
+    whitespace variance) -- two logically-identical bodies must encode
+    byte-identically or they hash differently (state-rules.md §8.2)."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _derive_director_idempotency_key(*parts: str) -> str:
+    """Derive a stable Idempotency-Key from request content (state-rules.md §8.2).
+
+    The SDK previously minted a fresh ``uuid4()`` per call, so a network
+    retry of the exact same request never matched the original
+    ``(session_id, idempotency_key)`` pair and the duplicate-replay branch
+    (state-rules.md §2 step 2) was dead code in practice -- a retry got
+    ``409 stale_revision`` instead of its original answer, precisely the
+    failure the replay-before-stale-revision ordering exists to prevent.
+
+    This keeps C1 intact: the key is a hash over request content, not a
+    string the client's agent composes. An explicit caller-supplied
+    ``idempotency_key`` still wins over this derivation.
+    """
+    raw = "|".join(parts)
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return f"dk_{digest[:32]}"
+
+
 class BackendAnalyticsClient:
     """Async-first read client for backend optimization-results analytics.
 
@@ -2177,10 +2292,11 @@ class BackendAnalyticsClient:
         *,
         what: str,
         json_body: dict[str, Any],
+        headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         client = self._get_client()
         response = await client.post(
-            path, headers=self._request_headers(), json=json_body
+            path, headers=self._request_headers(headers), json=json_body
         )
         response.raise_for_status()
         return _unwrap_success_data(response.json(), what=what)
@@ -2829,6 +2945,185 @@ class BackendAnalyticsClient:
             params={"page": str(page), "page_size": str(page_size)},
         )
         return GroupedConfigurationRunsPageDTO.from_dict(payload)
+
+    # === Director v0 (advisory-only; see the frozen contract note above) ===
+
+    async def director_start(
+        self,
+        project_id: str,
+        *,
+        workflow_kind: str = "optimization_run_advisory",
+        run_ids: Sequence[str] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Open an advisory Director session.
+
+        Endpoint: ``POST /api/v1/director/sessions``.
+
+        Per the frozen ``director-session-create`` schema, ``project_id`` is a
+        JSON body field here (not an ``X-Project-Id`` header) -- the
+        credential-scope check happens against the body value. The only
+        header this call sends is ``Idempotency-Key`` (required by contract);
+        when the caller does not supply one, it is DERIVED from the request
+        body (state-rules.md §8.2) rather than randomly generated, so a
+        genuine retry of the same request replays instead of minting a new
+        key that can never match.
+
+        Args:
+            project_id: Project identifier (explicit); validated by the
+                backend against the credential's scope.
+            workflow_kind: Closed vocabulary; v0 ships exactly
+                ``optimization_run_advisory``.
+            run_ids: At most one run id to attach at create time (optional).
+            idempotency_key: Caller-stable idempotency key. Derived
+                deterministically from the request body when omitted -- this
+                is transport plumbing, not a value a client agent composes.
+
+        Returns:
+            The session-create response (returned unchanged after the
+            required-key contract check).
+        """
+        pid = _require_non_empty(project_id, field="project_id")
+        if workflow_kind not in DIRECTOR_WORKFLOW_KINDS:
+            allowed = ", ".join(DIRECTOR_WORKFLOW_KINDS)
+            raise ValueError(f"workflow_kind must be one of: {allowed}.")
+
+        body: dict[str, Any] = {"project_id": pid, "workflow_kind": workflow_kind}
+        if run_ids:
+            cleaned = [str(run_id).strip() for run_id in run_ids]
+            cleaned = [run_id for run_id in cleaned if run_id]
+            if len(cleaned) > 1:
+                raise ValueError(
+                    "director_start accepts at most one run_id in slice 1."
+                )
+            if cleaned:
+                body["run_ids"] = cleaned
+
+        key = idempotency_key or _derive_director_idempotency_key(_canonical_json(body))
+        payload = await self._post_json(
+            "/api/v1/director/sessions",
+            what="director session",
+            json_body=body,
+            headers={"Idempotency-Key": key},
+        )
+        _require_keys(payload, _DIRECTOR_SESSION_REQUIRED_KEYS, what="director session")
+        return payload
+
+    async def director_turn(
+        self,
+        session_id: str,
+        session_revision: int,
+        *,
+        intent: str = "ask_next_step",
+        report: Mapping[str, Any] | None = None,
+        client_report: Mapping[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Advance an advisory Director session by one turn.
+
+        Endpoint: ``POST /api/v1/director/sessions/{session_id}/turn``.
+
+        C1 (frozen contract): this request carries no client-composed free
+        text. ``intent`` is a closed enum; ``report`` and ``client_report``
+        (when present) are typed objects of server-issued/enum fields only --
+        there is no prose field anywhere on this call.
+
+        Args:
+            session_id: The Director session id.
+            session_revision: The revision the caller believes is current
+                (echoed back on ``409 stale_revision``).
+            intent: ``ask_next_step`` | ``report_progress``.
+            report: Optional ``{instruction_id, status, run_id?}`` closing the
+                instruction loop (C2). Forwarded verbatim; the backend
+                validates ``instruction_id`` ownership and ``run_id`` scope.
+            client_report: Optional ``{validity_checks: [{check, status,
+                confidence_label?}]}``. Feeds deterministic rule R1: a
+                client-reported failed/missing validity check BLOCKS
+                ``run_optimization`` and ``promote_winner`` before any model
+                call. Forwarded verbatim; the caller (MCP tool layer)
+                validates every element against the closed vocabularies
+                before this method is called.
+            idempotency_key: Caller-stable idempotency key (required by
+                contract). When omitted, DERIVED deterministically from
+                ``session_id``, ``session_revision``, and the rest of the
+                body (state-rules.md §8.2) -- not randomly generated, so a
+                genuine retry of the same request replays (state-rules.md §2
+                step 2) instead of minting a new key that can never match and
+                surfacing ``409 stale_revision`` in its place.
+
+        Returns:
+            The turn response (returned unchanged after the required-key
+            contract check). A ``409 stale_revision`` or other conflict is
+            raised by the transport as ``httpx.HTTPStatusError`` -- the MCP
+            tool layer normalizes that into a structured, recoverable result
+            rather than letting it surface as a generic failure.
+        """
+        normalized_intent = normalize_director_intent(intent)
+        if (
+            not isinstance(session_revision, int)
+            or isinstance(session_revision, bool)
+            or session_revision < 1
+        ):
+            raise ValueError("session_revision must be an integer of at least 1.")
+
+        sid = _quote_segment(session_id, field="session_id")
+        body: dict[str, Any] = {
+            "session_revision": session_revision,
+            "intent": normalized_intent,
+        }
+        if report is not None:
+            body["report"] = dict(report)
+        if client_report is not None:
+            body["client_report"] = dict(client_report)
+
+        if idempotency_key is not None:
+            key = idempotency_key
+        else:
+            # session_revision is excluded from the canonicalized body and
+            # instead hashed as its own raw component (state-rules.md §8.2):
+            # a genuine retry resends the identical session_revision value
+            # it originally computed, so the derived key is unchanged even
+            # though the *session*'s current revision may have since
+            # advanced server-side.
+            body_without_revision = {
+                key_: value
+                for key_, value in body.items()
+                if key_ != "session_revision"
+            }
+            key = _derive_director_idempotency_key(
+                session_id,
+                str(session_revision),
+                _canonical_json(body_without_revision),
+            )
+        payload = await self._post_json(
+            f"/api/v1/director/sessions/{sid}/turn",
+            what="director turn",
+            json_body=body,
+            headers={"Idempotency-Key": key},
+        )
+        _require_keys(payload, _DIRECTOR_TURN_REQUIRED_KEYS, what="director turn")
+        return payload
+
+    async def director_state(self, session_id: str) -> dict[str, Any]:
+        """Read the current state of an advisory Director session.
+
+        Endpoint: ``GET /api/v1/director/sessions/{session_id}/state``. Pure
+        read: never advances ``revision``, no idempotency header needed.
+
+        Args:
+            session_id: The Director session id.
+
+        Returns:
+            The state response (returned unchanged after the required-key
+            contract check).
+        """
+        sid = _quote_segment(session_id, field="session_id")
+        payload = await self._get_json(
+            f"/api/v1/director/sessions/{sid}/state",
+            what="director state",
+        )
+        _require_keys(payload, _DIRECTOR_STATE_REQUIRED_KEYS, what="director state")
+        return payload
 
 
 def _require_non_empty(value: str, *, field: str) -> str:
