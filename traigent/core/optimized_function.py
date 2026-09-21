@@ -3526,6 +3526,8 @@ Remediation:
         optimizer_kwargs = algorithm_kwargs.copy()
         if max_trials:
             optimizer_kwargs["max_trials"] = max_trials
+        if self.objective_schema is not None:
+            optimizer_kwargs["objective_schema"] = self.objective_schema
 
         # Apply mock config overrides if present
         algorithm = self._apply_mock_config_overrides(algorithm, optimizer_kwargs)

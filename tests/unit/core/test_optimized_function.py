@@ -661,6 +661,7 @@ class TestOptimizedFunction:
             sample_config_space,
             sample_objectives,
             max_trials=DEFAULT_MAX_TRIALS,
+            objective_schema=opt_func.objective_schema,
         )
         notices = [
             record.message
@@ -738,6 +739,7 @@ class TestOptimizedFunction:
             sample_config_space,
             sample_objectives,
             max_trials=17,
+            objective_schema=opt_func.objective_schema,
         )
         assert not any(
             "Using default max_trials=" in record.message for record in caplog.records

@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 import traigent
+from traigent.core.objectives import create_default_objectives
 
 
 class TestOptimizationWithPlatforms:
@@ -79,7 +80,10 @@ class TestOptimizationWithPlatforms:
         # Mock function to optimize
         @traigent.optimize(
             configuration_space=config_space,
-            objectives=["quality", "cost", "latency"],
+            objectives=create_default_objectives(
+                ["quality", "cost", "latency"],
+                orientations={"quality": "maximize"},
+            ),
         )
         async def multi_platform_task(
             text: str,
@@ -242,7 +246,10 @@ class TestOptimizationWithPlatforms:
 
         @traigent.optimize(
             configuration_space=config_space,
-            objectives=["performance", "cost"],
+            objectives=create_default_objectives(
+                ["performance", "cost"],
+                orientations={"performance": "maximize"},
+            ),
         )
         async def subset_selection_task(
             text: str,
@@ -408,7 +415,10 @@ class TestOptimizationWithPlatforms:
                 "platform": ["openai", "anthropic", "cohere", "huggingface"],
                 "temperature": [0.0, 0.3, 0.5, 0.7, 1.0],
             },
-            objectives=["quality", "speed"],
+            objectives=create_default_objectives(
+                ["quality", "speed"],
+                orientations={"quality": "maximize", "speed": "maximize"},
+            ),
         )
         async def aggregation_task(
             text: str, platform: str = "openai", temperature: float = 0.5
@@ -537,7 +547,10 @@ class TestOptimizationWithPlatforms:
 
         @traigent.optimize(
             configuration_space=config_space,
-            objectives=["quality", "latency", "cost", "reliability"],
+            objectives=create_default_objectives(
+                ["quality", "latency", "cost", "reliability"],
+                orientations={"quality": "maximize", "reliability": "maximize"},
+            ),
             parallel_config={"trial_concurrency": 3},  # Run 3 trials in parallel
         )
         async def complex_optimization_task(

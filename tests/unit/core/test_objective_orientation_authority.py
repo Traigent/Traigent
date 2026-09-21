@@ -3,24 +3,16 @@
 Findings T1 + T3 (customer-facing selection correctness).
 
 T1 — ``calculate_weighted_scores`` used to discard the declared
-``ObjectiveSchema`` at its call sites (orchestrator → persisted
-``weighted_results_v2.json``; backend_session_manager → portal) and re-guess
-minimize/maximize from the metric NAME. The substring guess inverted the winner
-both ways:
+``ObjectiveSchema`` at its call sites and re-guessed direction from the metric
+name. The fix preserves declarations and rejects undeclared custom names.
 
 * false-negative — a custom minimize name (``spend``/``perplexity``/``toxicity``)
   is not matched → treated as maximize → the PRICIEST config is crowned;
 * false-positive — ``uptime`` contains the substring ``time`` → treated as
   minimize → the WORST config is crowned.
 
-The fix threads the declared schema through every call site (so declared
-orientation wins), keeps the name guess only as a schema-less last resort, makes
-that fallback match WHOLE TOKENS (killing ``uptime ⊃ time``), and makes it emit
-a ``UserWarning`` naming each guessed orientation.
-
 T3 — a plain-list ``objectives=["accuracy", "price"]`` silently defaulted an
-unknown minimize name to ``maximize`` with no signal, so ``best_config`` itself
-crowned the priciest. The fix emits a loud ``UserWarning`` on that fallthrough.
+unknown minimize name to ``maximize``. It now raises before any selection.
 """
 
 from __future__ import annotations
@@ -35,7 +27,6 @@ from traigent.api.types import (
     TrialResult,
     TrialStatus,
     _name_suggests_minimize,
-    _tokenize_metric_name,
 )
 from traigent.core.objectives import (
     ObjectiveDefinition,
@@ -91,26 +82,15 @@ def _spend_schema() -> ObjectiveSchema:
     )
 
 
-class TestTokenHeuristic:
-    """The schema-less fallback must match whole tokens, not substrings."""
-
-    def test_uptime_is_not_minimize_false_positive(self) -> None:
-        # Pre-fix: "uptime" contained "time" -> minimize. Post-fix: not.
-        assert _tokenize_metric_name("uptime") == {"uptime"}
-        assert _name_suggests_minimize("uptime") is False
-
-    def test_real_minimize_names_still_detected(self) -> None:
+class TestExactCanonicalPolicy:
+    def test_sdk_owned_minimize_names_are_resolved(self) -> None:
         assert _name_suggests_minimize("cost") is True
         assert _name_suggests_minimize("total_cost") is True
-        assert _name_suggests_minimize("response_time") is True
-        assert _name_suggests_minimize("responseTime") is True
-        assert _name_suggests_minimize("avg-latency-ms") is True
 
-    def test_custom_minimize_name_is_not_guessed(self) -> None:
-        # Exactly why the declared schema must be authoritative: these read as
-        # maximize to the heuristic.
-        assert _name_suggests_minimize("spend") is False
-        assert _name_suggests_minimize("perplexity") is False
+    @pytest.mark.parametrize("name", ["uptime", "spend", "response_time"])
+    def test_custom_names_are_rejected(self, name: str) -> None:
+        with pytest.raises(ValueError, match="has no declared orientation"):
+            _name_suggests_minimize(name)
 
 
 class TestDeclaredOrientationAuthoritative:
@@ -121,20 +101,13 @@ class TestDeclaredOrientationAuthoritative:
         weighted = result.calculate_weighted_scores(objective_schema=_spend_schema())
         assert weighted["best_weighted_config"] == _CHEAP_CONFIG
 
-    def test_name_guess_without_schema_crowns_priciest_and_warns(self) -> None:
-        """Documents the pre-fix call-site bug: with the schema discarded, the
-        name guess treats 'spend' as maximize and crowns the PRICIEST config,
-        and now does so LOUDLY (fail-loud warning)."""
+    def test_missing_schema_is_rejected_before_selection(self) -> None:
         result = _spend_result()
-        with pytest.warns(UserWarning, match="guessed from metric names"):
-            weighted = result.calculate_weighted_scores()
-        assert weighted["best_weighted_config"] == _PRICEY_CONFIG
+        with pytest.raises(ValueError, match="has no declared orientation"):
+            result.calculate_weighted_scores()
 
 
-class TestUptimeFalsePositiveInWeightedScores:
-    """T1(b): a maximize metric named 'uptime' is NOT treated as minimize by the
-    schema-less weighted-scores fallback."""
-
+class TestUptimeRequiresDeclaration:
     def test_uptime_not_in_resolved_minimize_objectives(self) -> None:
         result = OptimizationResult(
             trials=[
@@ -151,21 +124,14 @@ class TestUptimeFalsePositiveInWeightedScores:
             algorithm="grid",
             timestamp=0.0,
         )
-        with pytest.warns(UserWarning, match="guessed from metric names"):
-            weighted = result.calculate_weighted_scores()
-        # Pre-fix "uptime" ⊃ "time" put it here; post-fix it must be absent.
-        assert "uptime" not in weighted["minimize_objectives"]
+        with pytest.raises(ValueError, match="has no declared orientation"):
+            result.calculate_weighted_scores()
 
 
-class TestPlainListUnknownNameWarns:
-    """T3(c): a plain-list unknown name warns about the guessed orientation."""
-
-    def test_price_defaults_to_maximize_with_loud_warning(self) -> None:
-        with pytest.warns(UserWarning, match="price"):
-            schema = create_default_objectives(["accuracy", "price"])
-        price = next(o for o in schema.objectives if o.name == "price")
-        # Still defaults to maximize (behavior preserved) — but no longer silent.
-        assert price.orientation == "maximize"
+class TestPlainListUnknownNameFailsClosed:
+    def test_price_requires_explicit_orientation(self) -> None:
+        with pytest.raises(ValueError, match="price"):
+            create_default_objectives(["accuracy", "price"])
 
     def test_known_names_do_not_warn(self) -> None:
         import warnings as _warnings

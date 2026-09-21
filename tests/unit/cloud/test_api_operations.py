@@ -449,7 +449,9 @@ class TestBuildSessionPayload:
         assert payload["configuration_space"] == {
             "param": {"type": "categorical", "choices": [1, 2, 3]}
         }
-        assert payload["objectives"] == ["accuracy"]
+        assert payload["objectives"] == [
+            {"name": "accuracy", "orientation": "maximize"}
+        ]
         assert payload["max_trials"] == 10
         assert "problem_statement" not in payload
 
@@ -531,8 +533,8 @@ class TestBuildSessionPayload:
             {"name": "latency", "orientation": "minimize", "weight": 0.1},
         ]
 
-    def test_plain_string_objective_payload_remains_bare_names(self):
-        """Plain objective lists remain backward-compatible bare strings."""
+    def test_plain_string_objective_payload_gains_canonical_directions(self):
+        """SDK-owned shorthand names are normalized to typed declarations."""
         request = SessionCreationRequest(
             function_name="test_func",
             configuration_space={"model": ["fast", "accurate"]},
@@ -543,7 +545,11 @@ class TestBuildSessionPayload:
 
         payload = self.ops._build_session_payload(request, 10)
 
-        assert payload["objectives"] == ["accuracy", "cost", "latency"]
+        assert payload["objectives"] == [
+            {"name": "accuracy", "orientation": "maximize"},
+            {"name": "cost", "orientation": "minimize"},
+            {"name": "latency", "orientation": "minimize"},
+        ]
 
     def test_weighted_objective_schema_payload_is_json_serializable(self):
         """ObjectiveSchema-derived weighted objective payloads encode as JSON."""

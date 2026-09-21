@@ -547,7 +547,11 @@ class TestBaseOptimizer:
     def test_multi_objective(self):
         """Test with multiple objectives."""
         objectives = ["accuracy", "latency", "memory"]
-        optimizer = ConcreteOptimizer({"x": [0, 1]}, objectives)
+        optimizer = ConcreteOptimizer(
+            {"x": [0, 1]},
+            objectives,
+            objective_orientations={"memory": "minimize"},
+        )
 
         assert optimizer.objectives == objectives
 

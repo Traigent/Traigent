@@ -44,11 +44,15 @@ import pytest
 
 import traigent
 from traigent.core.optimized_function import OptimizedFunction
+from traigent.core.objectives import create_default_objectives
 from traigent.evaluators.base import Dataset, EvaluationExample
 
 # Declared on the decorator, and never repeated at call time. This is the value
 # the retired preset used to overwrite.
 DECORATOR_OBJECTIVES = ["quality"]
+DECORATOR_OBJECTIVE_SCHEMA = create_default_objectives(
+    DECORATOR_OBJECTIVES, orientations={"quality": "maximize"}
+)
 
 RETIRED_PRESET_CALLS = [
     # The exact shape reported in #2100.
@@ -132,7 +136,7 @@ def decorated_function(recorder: _Recorder) -> OptimizedFunction:
 
     @traigent.optimize(
         configuration_space={"model": ["fast", "smart"]},
-        objectives=DECORATOR_OBJECTIVES,
+        objectives=DECORATOR_OBJECTIVE_SCHEMA,
         eval_dataset=dataset,
         metric_functions={"quality": recorder.score},
         max_trials=2,
@@ -208,7 +212,7 @@ class TestConstructorDoor:
         return OptimizedFunction(
             func=plain,
             configuration_space={"model": ["fast", "smart"]},
-            objectives=DECORATOR_OBJECTIVES,
+            objectives=DECORATOR_OBJECTIVE_SCHEMA,
             **kwargs,
         )
 

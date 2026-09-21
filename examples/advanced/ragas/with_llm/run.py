@@ -19,6 +19,7 @@ except ImportError:  # pragma: no cover
     import traigent
 
 from traigent.metrics import configure_ragas_defaults  # noqa: E402
+from traigent.core.objectives import create_default_objectives  # noqa: E402
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -104,7 +105,13 @@ _HEDGED_RESPONSES = {
 
 @traigent.optimize(
     eval_dataset=DATASET,
-    objectives=["faithfulness", "answer_relevancy"],
+    objectives=create_default_objectives(
+        ["faithfulness", "answer_relevancy"],
+        orientations={
+            "faithfulness": "maximize",
+            "answer_relevancy": "maximize",
+        },
+    ),
     configuration_space={
         "evidence_policy": ["cite_context", "omit_context"],
         "answer_style": ["succinct", "speculative"],

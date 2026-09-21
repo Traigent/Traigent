@@ -50,6 +50,8 @@ except ImportError:  # pragma: no cover - support IDE execution paths
                 continue
     traigent = importlib.import_module("traigent")
 
+from traigent.core.objectives import create_default_objectives
+
 DATASET = os.path.join(os.path.dirname(__file__), "calculator_eval.jsonl")
 
 
@@ -85,7 +87,10 @@ def _calc_accuracy(
         "temperature": [0.0, 0.2],
     },
     eval_dataset=DATASET,
-    objectives=["accuracy", "response_time"],
+    objectives=create_default_objectives(
+        ["accuracy", "response_time"],
+        orientations={"response_time": "minimize"},
+    ),
     metric_functions={"accuracy": _calc_accuracy},
     offline=True,
     max_trials=10,

@@ -8,6 +8,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Breaking: bare custom objective names now require an explicit orientation.**
+  Traigent previously guessed from spelling and ultimately defaulted every unknown
+  name to `maximize`. That made `total_cost` select the most expensive configuration
+  and misread names such as `cost_savings` and `accuracy_loss`. Bare names now receive
+  a default only for exact SDK-owned metrics: `accuracy`, `success`, `success_rate`,
+  and `exact_match_default` maximize; `cost`, `total_cost`,
+  `cost_per_example_mean`, `input_cost`, `output_cost`, `latency`, `duration`,
+  `response_time_ms`, `avg_response_time`, `avg_response_time_ms`,
+  `execution_time_ms`, `error_rate`, `empty_output_rate`, and
+  `truncated_output_rate` minimize. Any other bare name raises `ValueError` before a
+  trial or hosted session begins. Declare custom metrics with `ObjectiveSchema`, or
+  call `create_default_objectives(["my_metric"], orientations={"my_metric":
+  "maximize"})`. Explicit valid directions always win. Invalid directions now raise;
+  target-banded objectives keep their non-directional band semantics.
+
 - **Unrelated inline datasets no longer share one portal history.** Every inline
   example list was named `inline_dataset`, and that name was sent as the dataset
   identity, so all inline runs of one agent grouped together in history. The generated

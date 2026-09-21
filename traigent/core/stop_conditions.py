@@ -78,19 +78,6 @@ _CONTINUOUS_NAME_MARKERS = (
     "price",
     "memory",
 )
-_MINIMIZE_NAME_MARKERS = (
-    "cost",
-    "latency",
-    "token",
-    "duration",
-    "time",
-    "ms",
-    "seconds",
-    "error",
-    "loss",
-    "price",
-    "memory",
-)
 _SEMANTIC_DEFAULT_WINDOW = 4
 _SEMANTIC_DEFAULT_MIN_TRIALS = 4
 _SEMANTIC_DEFAULT_SCORE_TOLERANCE = 1e-9
@@ -291,10 +278,9 @@ def _looks_like_continuous_metric(name: str) -> bool:
 
 
 def _infer_direction_from_name(name: str) -> str:
-    lowered = name.lower()
-    if any(marker in lowered for marker in _MINIMIZE_NAME_MARKERS):
-        return "minimize"
-    return "maximize"
+    from traigent.core.objective_directions import resolve_objective_orientation
+
+    return resolve_objective_orientation(name)
 
 
 class StopCondition(ABC):

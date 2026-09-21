@@ -32,6 +32,7 @@ def test_unmatched_objective_metric_returns_honest_failed_result() -> None:
     optimizer = _StaticOptimizer(
         {"model": ["mock"]},
         objectives=["accuarcy"],
+        objective_orientations={"accuarcy": "maximize"},
     )
     orchestrator = OptimizationOrchestrator(
         optimizer=optimizer,

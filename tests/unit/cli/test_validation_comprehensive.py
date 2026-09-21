@@ -303,7 +303,10 @@ class TestEdgeCases:
         objectives = ["accuracy", "precision"]
 
         is_superior, details = validator._compare_results(
-            baseline, optimized, objectives
+            baseline,
+            optimized,
+            objectives,
+            {"accuracy": "maximize", "precision": "maximize"},
         )
 
         # Should handle missing metrics gracefully
@@ -479,7 +482,10 @@ class TestPerformanceAndScaling:
         objectives = [f"metric_{i}" for i in range(50)]
 
         is_superior, details = validator._compare_results(
-            baseline, optimized, objectives
+            baseline,
+            optimized,
+            objectives,
+            dict.fromkeys(objectives, "maximize"),
         )
 
         # Should handle many objectives efficiently

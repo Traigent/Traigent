@@ -2579,10 +2579,10 @@ def optimize(  # NOSONAR(S107)
     expansive signature when needed.
 
     Args:
-        objectives: Target metrics to optimize. Accepts a list of names (Traigent
-            infers sensible orientations and equal weights) or an ObjectiveSchema
-            for explicit weights, orientations, and metadata. Omitted values fall
-            back to ``traigent.configure(objectives=...)`` or ``["accuracy"]``.
+        objectives: Target metrics to optimize. A bare name receives a direction
+            only when it exactly names an SDK-owned metric; custom names require
+            an ObjectiveSchema with explicit orientation and weight. Omitted values
+            fall back to ``traigent.configure(objectives=...)`` or ``["accuracy"]``.
         strategy: Retained only for signature compatibility; a non-``None`` value
             now raises ``TypeError``. Use ``algorithm`` to select an optimizer by
             name, or ``objectives`` to set what is optimized.
@@ -2828,8 +2828,13 @@ def optimize(  # NOSONAR(S107)
 
         Offline local optimization:
 
+        >>> from traigent.core.objectives import create_default_objectives
+        >>> medical_objectives = create_default_objectives(
+        ...     ["accuracy", "safety"],
+        ...     orientations={"safety": "maximize"},
+        ... )
         >>> @traigent.optimize(
-        ...     objectives=["accuracy", "safety"],
+        ...     objectives=medical_objectives,
         ...     evaluation={"eval_dataset": "medical_qa.jsonl"},
         ...     execution={
         ...         "offline": True,

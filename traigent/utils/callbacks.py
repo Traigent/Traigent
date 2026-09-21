@@ -413,10 +413,13 @@ class ProgressBarCallback(OptimizationCallback):
             metric_overrides = self._table_metric_overrides
             if self._table_metric_override_factory is not None:
                 metric_overrides = self._table_metric_override_factory(result)
+            table_objectives = (result.metadata or {}).get("objective_schema")
+            if table_objectives is None:
+                table_objectives = self._objectives
             print_results_table(
                 result,
                 self._config_space,
-                self._objectives,
+                table_objectives,
                 mode_label=self._table_mode_label,
                 metric_overrides=metric_overrides,
             )
@@ -476,10 +479,13 @@ class ResultsTableCallback(OptimizationCallback):
             metric_overrides = self._table_metric_overrides
             if self._table_metric_override_factory is not None:
                 metric_overrides = self._table_metric_override_factory(result)
+            table_objectives = (result.metadata or {}).get("objective_schema")
+            if table_objectives is None:
+                table_objectives = self._objectives
             print_results_table(
                 result,
                 self._config_space,
-                self._objectives,
+                table_objectives,
                 mode_label=self._table_mode_label,
                 metric_overrides=metric_overrides,
             )

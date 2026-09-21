@@ -548,14 +548,7 @@ def _secondary_metric_total(
     exclude_objective: str,
     objective_orientations: dict[str, str] | None = None,
 ) -> float:
-    """Sum secondary metrics, subtracting minimization objectives.
-
-    Orientation is taken from the DECLARED schema (``objective_orientations``)
-    when available — the same source of truth the primary selector honors
-    (issue #1955). Name-pattern guessing is only the schema-less fallback, so a
-    custom-named declared-minimize secondary (e.g. ``token_budget``) is no
-    longer silently inverted in tie-breaks.
-    """
+    """Score declared secondary objectives and ignore passive metrics."""
     orientations = objective_orientations or {}
     total = 0.0
     for name, value in metrics.items():
@@ -581,17 +574,19 @@ def _secondary_metric_key(
     """Return a secondary-objective ordering key.
 
     Declared objectives break ties lexicographically in the run's objective order
-    after the primary. If the caller has no declared secondary objectives, retain
-    the legacy aggregate secondary score. The declared orientation map is
-    threaded through so a minimize-oriented secondary sorts downward (#1955).
+    after the primary. With no declared secondaries, every trial receives the
+    same key so input order remains stable; passive diagnostics never affect the
+    winner.
     """
     declared_secondaries = _declared_secondary_objectives(
         exclude_objective, objective_order
     )
+    if not declared_secondaries and objective_orientations:
+        declared_secondaries = [
+            name for name in objective_orientations if name != exclude_objective
+        ]
     if not declared_secondaries:
-        return (
-            _secondary_metric_total(metrics, exclude_objective, objective_orientations),
-        )
+        return (0.0,)
 
     ordered_scores: list[float] = []
     for objective in declared_secondaries:
@@ -647,9 +642,13 @@ def _select_best_single_trial(
     objective_orientations: dict[str, str] | None = None,
 ) -> SelectionResult:
     """Select best trial without aggregation, applying tie-breakers."""
-    minimization = is_minimization_objective(
-        primary_objective,
-        orientation=(objective_orientations or {}).get(primary_objective),
+    minimization = (
+        False
+        if band_target is not None
+        else is_minimization_objective(
+            primary_objective,
+            orientation=(objective_orientations or {}).get(primary_objective),
+        )
     )
     chooser = min if minimization else max
 
@@ -1011,9 +1010,13 @@ def _select_best_aggregated(
             reason_code=NO_RANKING_ELIGIBLE_TRIALS,
         )
 
-    minimization = is_minimization_objective(
-        primary_objective,
-        orientation=(objective_orientations or {}).get(primary_objective),
+    minimization = (
+        False
+        if band_target is not None
+        else is_minimization_objective(
+            primary_objective,
+            orientation=(objective_orientations or {}).get(primary_objective),
+        )
     )
 
     def score(entry: dict[str, Any]) -> float:
@@ -1399,12 +1402,13 @@ def select_best_configuration(
         _mark_weighted_selection_unavailable(
             single_result, weighted_selection_unavailable
         )
-        _attach_best_config_margin(
-            single_result,
-            eligible_trials,
-            primary_objective,
-            objective_orientations,
-        )
+        if band_target is None:
+            _attach_best_config_margin(
+                single_result,
+                eligible_trials,
+                primary_objective,
+                objective_orientations,
+            )
         return single_result
 
     aggregated = _aggregate_trials(eligible_trials, set(config_space_keys))
@@ -1421,10 +1425,11 @@ def select_best_configuration(
     _mark_weighted_selection_unavailable(
         aggregated_result, weighted_selection_unavailable
     )
-    _attach_best_config_margin(
-        aggregated_result,
-        eligible_trials,
-        primary_objective,
-        objective_orientations,
-    )
+    if band_target is None:
+        _attach_best_config_margin(
+            aggregated_result,
+            eligible_trials,
+            primary_objective,
+            objective_orientations,
+        )
     return aggregated_result

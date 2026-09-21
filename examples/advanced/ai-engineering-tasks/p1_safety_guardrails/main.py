@@ -53,6 +53,8 @@ except ImportError as e:
     print("Please install traigent and rich: pip install traigent rich")
     sys.exit(1)
 
+from traigent.core.objectives import create_default_objectives
+
 # Import local components
 from dataset import (
     analyze_safety_dataset,
@@ -184,14 +186,24 @@ def _create_dummy_eval_dataset() -> str:
 @traigent.optimize(
     configuration_space=SAFETY_SEARCH_SPACE,  # Fixed: should be configuration_space
     eval_dataset=_create_dummy_eval_dataset(),
-    objectives=[
-        "avg_safety_score",  # Primary: maximize safety
-        "detection_precision",  # Primary: accurate PII detection
-        "avg_hallucination_detection_rate",  # Primary: prevent hallucinations
-        "user_satisfaction",  # Secondary: preserve user experience
-        "-avg_false_positive_rate",  # Secondary: minimize false positives (- prefix means minimize)
-        "-avg_processing_time_ms",  # Secondary: maintain performance (- prefix means minimize)
-    ],
+    objectives=create_default_objectives(
+        [
+            "avg_safety_score",
+            "detection_precision",
+            "avg_hallucination_detection_rate",
+            "user_satisfaction",
+            "avg_false_positive_rate",
+            "avg_processing_time_ms",
+        ],
+        orientations={
+            "avg_safety_score": "maximize",
+            "detection_precision": "maximize",
+            "avg_hallucination_detection_rate": "maximize",
+            "user_satisfaction": "maximize",
+            "avg_false_positive_rate": "minimize",
+            "avg_processing_time_ms": "minimize",
+        },
+    ),
     offline=True,  # Run locally with no Traigent backend egress
     # REMOVED: direction, max_trials, timeout_minutes (these don't exist in decorator API)
 )

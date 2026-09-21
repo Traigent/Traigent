@@ -12,6 +12,11 @@ from datetime import datetime
 from unittest.mock import MagicMock
 
 from traigent.api.types import TrialResult
+from traigent.core.objectives import (
+    ObjectiveDefinition,
+    ObjectiveSchema,
+    create_default_objectives,
+)
 from traigent.optimizers.batch_optimizers import MultiObjectiveBatchOptimizer
 from traigent.optimizers.grid import GridSearchOptimizer
 from traigent.utils.multi_objective import scalarize_objectives
@@ -25,18 +30,67 @@ class TestScalarizeObjectives:
         objectives = {"accuracy": 0.9, "cost": 0.05}
         weights = {"accuracy": 0.7, "cost": 0.3}
 
-        score = scalarize_objectives(objectives, weights)
+        score = scalarize_objectives(objectives, weights, minimize_objectives=[])
 
         # Expected: (0.9 * 0.7 + 0.05 * 0.3) / (0.7 + 0.3) = (0.63 + 0.015) / 1.0 = 0.645
         expected_score = 0.645
         assert abs(score - expected_score) < 1e-10
+
+    def test_schema_scalarization_ignores_passive_metrics(self):
+        schema = create_default_objectives(
+            ["quality"], orientations={"quality": "maximize"}
+        )
+
+        assert (
+            scalarize_objectives(
+                {
+                    "quality": 0.8,
+                    "total_cost": 100.0,
+                    "examples_attempted": 20.0,
+                },
+                {},
+                objective_schema=schema,
+            )
+            == 0.8
+        )
+
+    def test_schema_scalarization_scores_band_by_target_distance(self):
+        from traigent.tvl.models import BandTarget
+
+        schema = ObjectiveSchema.from_objectives(
+            [
+                ObjectiveDefinition(
+                    name="response_length",
+                    orientation="band",
+                    weight=1.0,
+                    band=BandTarget(low=90.0, high=110.0),
+                )
+            ]
+        )
+
+        in_band = scalarize_objectives(
+            {"response_length": 100.0}, {}, objective_schema=schema
+        )
+        too_long = scalarize_objectives(
+            {"response_length": 180.0}, {}, objective_schema=schema
+        )
+
+        assert in_band > too_long
+        assert schema.normalize_value(
+            "response_length", 100.0
+        ) > schema.normalize_value("response_length", 180.0)
+        in_band_aggregate = schema.compute_aggregated_score({"response_length": 100.0})
+        too_long_aggregate = schema.compute_aggregated_score({"response_length": 180.0})
+        assert in_band_aggregate is not None
+        assert too_long_aggregate is not None
+        assert in_band_aggregate > too_long_aggregate
 
     def test_scalarize_equal_weights(self):
         """Test scalarization with equal weights."""
         objectives = {"accuracy": 0.8, "latency": 1.2, "cost": 0.03}
         weights = {"accuracy": 1.0, "latency": 1.0, "cost": 1.0}
 
-        score = scalarize_objectives(objectives, weights)
+        score = scalarize_objectives(objectives, weights, minimize_objectives=[])
 
         # Expected: (0.8 + 1.2 + 0.03) / 3 = 2.03 / 3 ≈ 0.6767
         expected_score = (0.8 + 1.2 + 0.03) / 3
@@ -47,7 +101,7 @@ class TestScalarizeObjectives:
         objectives = {"accuracy": 0.95}
         weights = {"accuracy": 1.0}
 
-        score = scalarize_objectives(objectives, weights)
+        score = scalarize_objectives(objectives, weights, minimize_objectives=[])
 
         # Should return the objective value directly
         assert score == 0.95
@@ -57,7 +111,7 @@ class TestScalarizeObjectives:
         objectives = {"accuracy": 0.9, "cost": 0.05}
         weights = {"accuracy": 0.0, "cost": 0.0}
 
-        score = scalarize_objectives(objectives, weights)
+        score = scalarize_objectives(objectives, weights, minimize_objectives=[])
 
         # With zero total weight, should use equal weights (default behavior)
         expected_score = (0.9 + 0.05) / 2
@@ -68,7 +122,7 @@ class TestScalarizeObjectives:
         objectives = {"accuracy": 0.85, "cost": 0.04}
         weights = {}
 
-        score = scalarize_objectives(objectives, weights)
+        score = scalarize_objectives(objectives, weights, minimize_objectives=[])
 
         # Should use default weights of 1.0 for each objective
         expected_score = (0.85 + 0.04) / 2
@@ -79,7 +133,7 @@ class TestScalarizeObjectives:
         objectives = {"accuracy": 0.9, "cost": 0.05, "latency": 1.0}
         weights = {"accuracy": 0.6, "cost": 0.4}  # Missing latency weight
 
-        score = scalarize_objectives(objectives, weights)
+        score = scalarize_objectives(objectives, weights, minimize_objectives=[])
 
         # Should use default weight of 1.0 for missing objectives
         # (0.9 * 0.6 + 0.05 * 0.4 + 1.0 * 1.0) / (0.6 + 0.4 + 1.0) = (0.54 + 0.02 + 1.0) / 2.0 = 0.78
@@ -95,7 +149,7 @@ class TestScalarizeObjectives:
             "latency": 0.2,
         }  # Extra weight for latency
 
-        score = scalarize_objectives(objectives, weights)
+        score = scalarize_objectives(objectives, weights, minimize_objectives=[])
 
         # Should ignore weights for missing objectives
         expected_score = (0.9 * 0.7 + 0.05 * 0.3) / (0.7 + 0.3)
@@ -106,7 +160,7 @@ class TestScalarizeObjectives:
         objectives = {"accuracy": 0.9, "cost": 0.05}
         weights = {"accuracy": 0.8, "cost": -0.2}  # Negative weight for cost (minimize)
 
-        score = scalarize_objectives(objectives, weights)
+        score = scalarize_objectives(objectives, weights, minimize_objectives=[])
 
         # Should handle negative weights correctly
         expected_score = (0.9 * 0.8 + 0.05 * (-0.2)) / (0.8 + (-0.2))
@@ -117,7 +171,7 @@ class TestScalarizeObjectives:
         objectives = {"accuracy": 0.95, "throughput": 10000.0}
         weights = {"accuracy": 0.1, "throughput": 0.9}
 
-        score = scalarize_objectives(objectives, weights)
+        score = scalarize_objectives(objectives, weights, minimize_objectives=[])
 
         # Should handle large values correctly
         expected_score = (0.95 * 0.1 + 10000.0 * 0.9) / (0.1 + 0.9)
@@ -128,7 +182,7 @@ class TestScalarizeObjectives:
         objectives = {"precision": 1e-8, "recall": 2e-8}
         weights = {"precision": 0.6, "recall": 0.4}
 
-        score = scalarize_objectives(objectives, weights)
+        score = scalarize_objectives(objectives, weights, minimize_objectives=[])
 
         expected_score = (1e-8 * 0.6 + 2e-8 * 0.4) / (0.6 + 0.4)
         assert abs(score - expected_score) < 1e-15
@@ -621,7 +675,9 @@ class TestWeightedObjectivesIntegration:
                 obj: val for obj, val in trial.metrics.items() if obj in objectives
             }
             if available_objectives:  # Only calculate if we have some objectives
-                score = scalarize_objectives(available_objectives, weights)
+                score = scalarize_objectives(
+                    available_objectives, weights, minimize_objectives=[]
+                )
                 assert isinstance(score, (int, float))
                 assert score >= 0
 
@@ -670,7 +726,7 @@ class TestWeightedObjectivesErrorHandling:
         objectives = {}
         weights = {"accuracy": 1.0}
 
-        score = scalarize_objectives(objectives, weights)
+        score = scalarize_objectives(objectives, weights, minimize_objectives=[])
 
         # Should return 0 for empty objectives
         assert score == 0.0

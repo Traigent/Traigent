@@ -93,7 +93,9 @@ class TestContractGate:
         # governed path (is_typed_create_request)
         assert payload["function_name"] == "answer_question"
         assert payload["configuration_space"]["model"]["choices"] == ["cheap", "strong"]
-        assert payload["objectives"] == ["accuracy"]
+        assert payload["objectives"] == [
+            {"name": "accuracy", "orientation": "maximize"}
+        ]
         assert payload["dataset_metadata"]["size"] == 12
         assert payload["promotion_policy"] == STRICT_POLICY
         assert payload["tvl_governance"] == GOVERNANCE
@@ -111,10 +113,12 @@ class TestContractGate:
         payload = _ops()._build_session_payload(_request(objectives=["minimize"]), 5)
         assert payload["objectives"] == [{"name": "score", "orientation": "minimize"}]
 
-    def test_typed_real_metric_objective_is_unchanged(self, monkeypatch):
+    def test_typed_real_metric_objective_gains_canonical_direction(self, monkeypatch):
         monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
         payload = _ops()._build_session_payload(_request(objectives=["accuracy"]), 5)
-        assert payload["objectives"] == ["accuracy"]
+        assert payload["objectives"] == [
+            {"name": "accuracy", "orientation": "maximize"}
+        ]
 
     def test_typed_direction_objective_dedupes_generated_score(self, monkeypatch):
         monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
@@ -130,7 +134,7 @@ class TestContractGate:
         )
         assert payload["objectives"] == [
             {"name": "score", "orientation": "maximize"},
-            "accuracy",
+            {"name": "accuracy", "orientation": "maximize"},
         ]
 
     def test_legacy_contract_refuses_governed_sessions(self, monkeypatch):

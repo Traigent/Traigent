@@ -49,6 +49,8 @@ except ImportError as e:
     print("Please install traigent and rich: pip install traigent rich")
     sys.exit(1)
 
+from traigent.core.objectives import create_default_objectives
+
 # Import local components
 from dataset import (
     analyze_task_distribution,
@@ -169,13 +171,22 @@ def _create_dummy_eval_dataset() -> str:
 @traigent.optimize(
     configuration_space=FUNCTION_SEARCH_SPACE,
     eval_dataset=_create_dummy_eval_dataset(),
-    objectives=[
-        "tool_selection_accuracy",  # Primary: maximize correct tool selection
-        "parameter_validity_rate",  # Primary: maximize valid parameters
-        "execution_success_rate",  # Primary: maximize execution success
-        "-unnecessary_retry_rate",  # Secondary: minimize unnecessary retries
-        "-avg_latency_ms",  # Secondary: minimize latency
-    ],  # We want to maximize our primary objectives
+    objectives=create_default_objectives(
+        [
+            "tool_selection_accuracy",
+            "parameter_validity_rate",
+            "execution_success_rate",
+            "unnecessary_retry_rate",
+            "avg_latency_ms",
+        ],
+        orientations={
+            "tool_selection_accuracy": "maximize",
+            "parameter_validity_rate": "maximize",
+            "execution_success_rate": "maximize",
+            "unnecessary_retry_rate": "minimize",
+            "avg_latency_ms": "minimize",
+        },
+    ),
     offline=True,  # Run locally with no Traigent backend egress
 )
 def optimize_function_calling(

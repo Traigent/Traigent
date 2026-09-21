@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 import traigent
+from traigent.core.objectives import create_default_objectives
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.evaluators.local import LocalEvaluator
 from traigent.utils.exceptions import EvaluationError
@@ -67,7 +68,9 @@ async def test_optimize_awaits_async_scoring_function(
             [EvaluationExample(input_data={"text": "q"}, expected_output="YES")],
             name="async_scoring_function",
         ),
-        objectives=["quality"],
+        objectives=create_default_objectives(
+            ["quality"], orientations={"quality": "maximize"}
+        ),
         configuration_space={"style": ["plain"]},
         scoring_function=scorer,
     )

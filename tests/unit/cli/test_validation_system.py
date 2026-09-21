@@ -193,6 +193,86 @@ local_func = OptimizedFunction(local_func)
         assert len(functions) == 1
         assert functions[0].name == "local_func"
 
+    def test_discovered_objective_schema_drives_validator_direction(
+        self, tmp_path, monkeypatch
+    ):
+        module_path = tmp_path / "declared_directions.py"
+        module_path.write_text(
+            """
+import traigent
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+
+OBJECTIVES = ObjectiveSchema.from_objectives([
+    ObjectiveDefinition("cost", orientation="maximize", weight=1.0),
+    ObjectiveDefinition("plugin_quality", orientation="minimize", weight=1.0),
+])
+
+@traigent.optimize(
+    eval_dataset="test.jsonl",
+    objectives=OBJECTIVES,
+    configuration_space={"mode": ["a", "b"]},
+)
+def declared_agent(text: str, mode: str = "a"):
+    return text
+"""
+        )
+        monkeypatch.chdir(tmp_path)
+
+        [func_info] = discover_optimized_functions("declared_directions.py")
+        validator = OptimizationValidator()
+        orientations = validator._objective_orientations(func_info)
+
+        assert orientations == {"cost": "maximize", "plugin_quality": "minimize"}
+        assert validator._get_maximize_config(
+            func_info.objectives, objective_orientations=orientations
+        ) == {"cost": True, "plugin_quality": False}
+
+    def test_discovered_known_name_band_is_rejected_before_execution(
+        self, tmp_path, monkeypatch
+    ):
+        module_path = tmp_path / "band_direction.py"
+        module_path.write_text(
+            """
+import traigent
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+from traigent.tvl.models import BandTarget
+
+OBJECTIVES = ObjectiveSchema.from_objectives([
+    ObjectiveDefinition(
+        "accuracy",
+        orientation="band",
+        weight=1.0,
+        band=BandTarget(low=0.8, high=0.9),
+    ),
+])
+
+@traigent.optimize(
+    eval_dataset="test.jsonl",
+    objectives=OBJECTIVES,
+    configuration_space={"mode": ["a", "b"]},
+)
+def declared_agent(text: str, mode: str = "a"):
+    return text
+"""
+        )
+        monkeypatch.chdir(tmp_path)
+
+        [func_info] = discover_optimized_functions("band_direction.py")
+        validator = OptimizationValidator()
+        orientations = validator._objective_orientations(func_info)
+
+        assert orientations == {"accuracy": "band"}
+        assert validator._check_prerequisites(func_info) == [
+            "CLI validation does not support target-band objectives: accuracy"
+        ]
+        with pytest.raises(
+            ValueError,
+            match="does not support target-band objective 'accuracy'",
+        ):
+            validator._get_maximize_config(
+                func_info.objectives, objective_orientations=orientations
+            )
+
     def test_discover_invalid_module(self):
         """Test function discovery with invalid module path."""
         with pytest.raises(
@@ -314,7 +394,10 @@ class TestOptimizationValidator:
         objectives = ["accuracy", "cost"]
 
         is_superior, details = validator._compare_results(
-            baseline, optimized, objectives
+            baseline,
+            optimized,
+            objectives,
+            {"accuracy": "maximize", "precision": "maximize"},
         )
 
         assert is_superior is True
@@ -490,7 +573,10 @@ class TestErrorHandling:
 
         # Should handle missing metrics gracefully
         is_superior, details = validator._compare_results(
-            baseline, optimized, objectives
+            baseline,
+            optimized,
+            objectives,
+            {"accuracy": "maximize", "precision": "maximize"},
         )
         assert isinstance(is_superior, bool)
         assert isinstance(details, dict)

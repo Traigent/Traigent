@@ -62,6 +62,7 @@ _write_jsonl(
 )
 
 import traigent  # noqa: E402  (intentional: imported after dataset fixture setup)
+from traigent.core.objectives import create_default_objectives  # noqa: E402
 
 
 @traigent.optimize(
@@ -118,7 +119,8 @@ def unoptimized_function(text: str) -> str:
 
 @traigent.optimize(
     eval_dataset=_SIMPLE_DATASET,
-    objectives=["speed"],
+    # ``speed`` means throughput here: a larger value is better.
+    objectives=create_default_objectives(["speed"], orientations={"speed": "maximize"}),
     configuration_space={"method": ["fast", "slow"]},
 )
 def process_data(data: str, method: str) -> str:
@@ -170,6 +172,11 @@ def test_process_data_executes_without_defaults():
     """Decorated function with no default param values must still execute."""
     result = process_data("payload", "fast")
     assert result == "Processed payload using fast method"
+
+
+def test_process_data_declares_speed_as_throughput() -> None:
+    """The custom ``speed`` objective must explicitly prefer larger throughput."""
+    assert process_data.objective_schema.get_orientation("speed") == "maximize"
 
 
 def test_decorated_functions_register_configuration_space():

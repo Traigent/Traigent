@@ -16,6 +16,7 @@ from traigent.evaluators.local import LocalEvaluator
 from traigent.utils.env_config import is_mock_llm
 from traigent.utils.logging import get_logger
 from traigent.utils.multi_objective import ParetoFrontCalculator, ParetoPoint
+from traigent.core.objective_directions import resolve_objective_orientation
 
 logger = get_logger(__name__)
 console = Console()
@@ -76,7 +77,10 @@ class OptimizationValidator:
             # Step 3: Compare using Pareto efficiency
             console.print("⚖️  Comparing results using Pareto efficiency...")
             is_superior, improvement_details = self._compare_results(
-                baseline_metrics, optimized_metrics, func_info.objectives
+                baseline_metrics,
+                optimized_metrics,
+                func_info.objectives,
+                objective_orientations=self._objective_orientations(func_info),
             )
 
             return ValidationResult(
@@ -123,6 +127,17 @@ class OptimizationValidator:
         config_space = func_info.decorator_config.get("configuration_space", {})
         if not config_space:
             issues.append("No configuration space specified")
+
+        banded = [
+            name
+            for name, orientation in self._objective_orientations(func_info).items()
+            if orientation == "band"
+        ]
+        if banded:
+            issues.append(
+                "CLI validation does not support target-band objectives: "
+                + ", ".join(banded)
+            )
 
         return issues
 
@@ -304,6 +319,7 @@ class OptimizationValidator:
         baseline_metrics: dict[str, float],
         optimized_metrics: dict[str, float],
         objectives: list[str],
+        objective_orientations: dict[str, str] | None = None,
     ) -> tuple[bool, dict[str, float]]:
         """Compare baseline vs optimized results using Pareto efficiency.
 
@@ -330,7 +346,9 @@ class OptimizationValidator:
 
         # Define maximize behavior (assume we want to maximize all metrics by default)
         # This should be configurable based on objective types (accuracy=maximize, cost=minimize)
-        maximize_config = self._get_maximize_config(objectives)
+        maximize_config = self._get_maximize_config(
+            objectives, objective_orientations=objective_orientations
+        )
 
         # Check if optimized dominates baseline over the CONFIGURED objective
         # set (not just whichever metrics both points happen to report), so a
@@ -370,7 +388,19 @@ class OptimizationValidator:
 
         return is_superior, improvement_details
 
-    def _get_maximize_config(self, objectives: list[str]) -> dict[str, bool]:
+    @staticmethod
+    def _objective_orientations(func_info: OptimizedFunction) -> dict[str, str]:
+        schema = getattr(func_info.func, "objective_schema", None)
+        definitions = getattr(schema, "objectives", [])
+        return {
+            definition.name: str(definition.orientation) for definition in definitions
+        }
+
+    def _get_maximize_config(
+        self,
+        objectives: list[str],
+        objective_orientations: dict[str, str] | None = None,
+    ) -> dict[str, bool]:
         """Get maximize configuration for objectives.
 
         Args:
@@ -379,36 +409,17 @@ class OptimizationValidator:
         Returns:
             Dictionary mapping objective names to maximize boolean
         """
-        # Default maximize behavior based on common metric types
-        maximize_defaults = {
-            "accuracy": True,
-            "precision": True,
-            "recall": True,
-            "f1": True,
-            "f1_score": True,
-            "score": True,
-            "success_rate": True,
-            "throughput": True,
-            "speed": True,
-            "cost": False,
-            "latency": False,
-            "response_time": False,
-            "error_rate": False,
-            "loss": False,
-            "duration": False,
-        }
-
-        maximize_config = {}
-        for obj in objectives:
-            obj_lower = obj.lower()
-            # Check for exact matches or substrings
-            maximize = True  # Default to maximize
-            for key, should_maximize in maximize_defaults.items():
-                if key in obj_lower or obj_lower in key:
-                    maximize = should_maximize
-                    break
-            maximize_config[obj] = maximize
-
+        maximize_config: dict[str, bool] = {}
+        for objective in objectives:
+            explicit = (objective_orientations or {}).get(objective)
+            if explicit == "band":
+                raise ValueError(
+                    "CLI validation does not support target-band objective "
+                    f"'{objective}'"
+                )
+            maximize_config[objective] = (
+                resolve_objective_orientation(objective, explicit) == "maximize"
+            )
         return maximize_config
 
     def _check_superior_criteria(

@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import traceback as traceback_module
 import warnings
 from collections import Counter
@@ -17,6 +16,10 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
+from traigent.core.objective_directions import (
+    resolve_objective_orientation,
+    validate_objective_orientation,
+)
 from traigent.utils.exceptions import PlatformCapabilityError
 from traigent.utils.logging import get_logger
 
@@ -25,40 +28,10 @@ logger = get_logger(__name__)
 SelectionGrade = Literal["advisory"]
 ADVISORY_SELECTION_GRADE: SelectionGrade = "advisory"
 
-# Whole-token markers used ONLY by the last-resort, schema-less orientation
-# heuristic (see ``_name_suggests_minimize``). Declared
-# ``ObjectiveSchema.orientation`` is always authoritative when a schema is
-# available; this list is never consulted in that case.
-_MINIMIZE_NAME_TOKENS: frozenset[str] = frozenset(
-    {"cost", "latency", "error", "loss", "time", "duration"}
-)
-
-
-def _tokenize_metric_name(name: str) -> set[str]:
-    """Split a metric name into lowercased word tokens.
-
-    Handles ``snake_case``, ``kebab-case``, spaces, and ``camelCase`` so that,
-    e.g., ``"response_time"`` / ``"responseTime"`` both yield ``{"response",
-    "time"}`` while ``"uptime"`` yields ``{"uptime"}`` (crucially NOT
-    ``{"time"}``). Prevents arbitrary-substring false positives such as
-    ``"uptime" ⊃ "time"``.
-    """
-
-    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name)
-    return {token.lower() for token in re.findall(r"[A-Za-z0-9]+", spaced)}
-
 
 def _name_suggests_minimize(name: str) -> bool:
-    """Heuristic: does this metric name look like a minimize objective?
-
-    Whole-token match against :data:`_MINIMIZE_NAME_TOKENS` (not substring),
-    so ``"uptime"`` is NOT flagged as minimize while ``"latency_ms"`` and
-    ``"total_cost"`` are. Best-effort only — used solely as a last resort when
-    no declared :class:`~traigent.core.objectives.ObjectiveSchema` orientation
-    is available.
-    """
-
-    return bool(_tokenize_metric_name(name) & _MINIMIZE_NAME_TOKENS)
+    """Return the exact canonical SDK direction for a bare metric name."""
+    return resolve_objective_orientation(name) == "minimize"
 
 
 # Type checking imports to avoid circular dependencies
@@ -1748,41 +1721,45 @@ class OptimizationResult:
 
         return computed_total_cost
 
+    def _objective_orientation(self, name: str) -> Literal["maximize", "minimize"]:
+        """Resolve one objective from persisted declarations or exact defaults."""
+        metadata = self.metadata or {}
+        schema = metadata.get("objective_schema")
+        definitions: Any = []
+        if isinstance(schema, dict):
+            definitions = schema.get("objectives", [])
+        else:
+            definitions = getattr(schema, "objectives", [])
+        for definition in definitions or []:
+            definition_name = getattr(definition, "name", None)
+            orientation = getattr(definition, "orientation", None)
+            if isinstance(definition, dict):
+                definition_name = definition.get("name", definition_name)
+                orientation = definition.get("orientation", orientation)
+            if definition_name == name:
+                if orientation == "band":
+                    raise ValueError(
+                        f"Objective {name!r} is target-banded and has no scalar "
+                        "maximize/minimize direction."
+                    )
+                return validate_objective_orientation(name, str(orientation))
+
+        persisted = metadata.get("objective_orientations")
+        if isinstance(persisted, dict) and name in persisted:
+            declared = persisted[name]
+            if isinstance(declared, bool):
+                declared = "maximize" if declared else "minimize"
+            return validate_objective_orientation(name, str(declared))
+
+        return resolve_objective_orientation(name)
+
     def _auto_detect_minimize_objectives(self) -> list[str]:
-        """Infer minimize objectives from names — last-resort fallback only.
-
-        This runs ONLY when no declared :class:`ObjectiveSchema` orientation and
-        no explicit ``minimize_objectives`` list are available. The declared
-        orientation is always authoritative when a schema is threaded through
-        (see :meth:`_prepare_objective_preferences`). Because a name-based guess
-        can be wrong in both directions (a custom minimize metric such as
-        ``spend``/``perplexity`` is silently treated as maximize; a maximize
-        metric can no longer be mis-flagged, e.g. ``uptime`` is not read as
-        ``time``), a :class:`UserWarning` names each guessed orientation and how
-        to override it.
-        """
-
-        detected = [obj for obj in self.objectives if _name_suggests_minimize(obj)]
-
-        if self.objectives:
-            minimize_set = set(detected)
-            guessed = ", ".join(
-                f"'{obj}'={'minimize' if obj in minimize_set else 'maximize'}"
-                for obj in self.objectives
-            )
-            warnings.warn(
-                "Objective orientation was guessed from metric names because no "
-                "ObjectiveSchema orientation (or explicit minimize_objectives list) "
-                f"was provided: {guessed}. This guess can be wrong for custom metric "
-                "names and is NOT authoritative. Declare orientation explicitly by "
-                "building an ObjectiveSchema with ObjectiveDefinition(name=..., "
-                "orientation='minimize'|'maximize') and passing it as "
-                "objective_schema.",
-                UserWarning,
-                stacklevel=3,
-            )
-
-        return detected
+        """Resolve minimize objectives from exact SDK-owned metric defaults."""
+        return [
+            obj
+            for obj in self.objectives
+            if self._objective_orientation(obj) == "minimize"
+        ]
 
     def _resolve_schema_preferences(
         self, objective_schema: ObjectiveSchema | None
@@ -2331,13 +2308,13 @@ class OptimizationResult:
             rows.append(row)
         return rows
 
-    @staticmethod
     def _sort_aggregated_dataframe(
-        df: pd.DataFrame, primary_objective: str | None
+        self, df: pd.DataFrame, primary_objective: str | None
     ) -> pd.DataFrame:
         if not primary_objective or primary_objective not in df.columns:
             return df
-        ascending = _name_suggests_minimize(primary_objective)
+        orientation = self._objective_orientation(primary_objective)
+        ascending = orientation == "minimize"
         return df.sort_values(
             by=[primary_objective], ascending=ascending, na_position="last"
         )
@@ -2488,13 +2465,21 @@ class OptimizationResult:
                 "Please specify an objective to analyze."
             )
 
-        # Auto-detect directions if not provided
+        # Reuse declarations persisted on the result; canonical exact-name
+        # defaults are only used when metadata has no declaration.
         if directions is None:
-            directions = {}
-            for obj in self.objectives:
-                directions[obj] = (
-                    "minimize" if _name_suggests_minimize(obj) else "maximize"
+            directions = {
+                obj: self._objective_orientation(obj) for obj in self.objectives
+            }
+        else:
+            directions = {
+                obj: (
+                    validate_objective_orientation(obj, directions[obj])
+                    if obj in directions
+                    else self._objective_orientation(obj)
                 )
+                for obj in self.objectives
+            }
 
         # Create analyzer
         analyzer = VariableAnalyzer(

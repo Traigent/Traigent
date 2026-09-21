@@ -48,6 +48,8 @@ except ImportError:  # pragma: no cover - support IDE execution paths
                 continue
     traigent = importlib.import_module("traigent")
 
+from traigent.core.objectives import create_default_objectives
+
 from traigent.evaluators.base import Dataset, EvaluationExample  # noqa: E402
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
@@ -152,7 +154,10 @@ def create_python_dataset() -> Dataset:
         "prompt_style": ["direct", "detailed", "structured"],
     },
     eval_dataset=create_python_dataset(),  # Python list
-    objectives=["accuracy", "consistency"],
+    objectives=create_default_objectives(
+        ["accuracy", "consistency"],
+        orientations={"consistency": "maximize"},
+    ),
     offline=True,
     max_trials=10,
 )

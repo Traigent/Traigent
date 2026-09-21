@@ -48,7 +48,11 @@ except ImportError:  # pragma: no cover - support IDE execution paths
                 continue
     traigent = importlib.import_module("traigent")
 
-from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema  # noqa: E402
+from traigent.core.objectives import (  # noqa: E402
+    ObjectiveDefinition,
+    ObjectiveSchema,
+    create_default_objectives,
+)
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -210,7 +214,10 @@ def balanced_support_bot(query: str) -> str:
         "response_format": ["brief", "standard", "detailed"],
     },
     eval_dataset=DATASET_FILE,
-    objectives=["cost", "response_quality"],
+    objectives=create_default_objectives(
+        ["cost", "response_quality"],
+        orientations={"response_quality": "maximize"},
+    ),
     metric_functions={"response_quality": response_quality_score},
     constraints=[
         _max_cost_per_call,

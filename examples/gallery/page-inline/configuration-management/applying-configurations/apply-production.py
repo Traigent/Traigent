@@ -50,6 +50,8 @@ except ImportError:  # pragma: no cover - support IDE execution paths
                 continue
     traigent = importlib.import_module("traigent")
 
+from traigent.core.objectives import create_default_objectives
+
 
 def _load_safe_helpers():
     """Load examples/utils/safe_helpers.py without depending on sys.path."""
@@ -144,7 +146,9 @@ class OptimizedChatBot:
                 "temperature": [config.get("temperature", 0.7)],
                 "max_tokens": [config.get("max_tokens", 300)],
             },
-            objectives=["quality"],
+            objectives=create_default_objectives(
+                ["quality"], orientations={"quality": "maximize"}
+            ),
             offline=True,
             max_trials=5,
         )

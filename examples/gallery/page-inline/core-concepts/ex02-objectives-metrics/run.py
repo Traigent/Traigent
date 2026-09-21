@@ -38,12 +38,19 @@ async def main() -> None:
                 "use_case": "When you have a clear priority",
             },
             "multi_objective": {
-                "example": "objectives=['cost', 'quality', 'speed']",
+                "example": (
+                    "create_default_objectives(['cost', 'quality', 'speed'], "
+                    "orientations={'quality': 'maximize', 'speed': 'maximize'})"
+                ),
                 "description": "Balance multiple competing goals",
                 "use_case": "Real-world scenarios with tradeoffs",
             },
             "weighted_objectives": {
-                "example": "weights={'cost': 0.3, 'quality': 0.5, 'speed': 0.2}",
+                "example": (
+                    "create_default_objectives(['cost', 'quality', 'speed'], "
+                    "orientations={'quality': 'maximize', 'speed': 'maximize'}, "
+                    "weights={'cost': 0.3, 'quality': 0.5, 'speed': 0.2})"
+                ),
                 "description": "Specify relative importance",
                 "use_case": "Fine-tune the balance between objectives",
             },
@@ -57,8 +64,8 @@ async def main() -> None:
             "cost - Minimize API costs",
             "latency - Minimize response time",
             "accuracy - Maximize correctness",
-            "quality - Maximize output quality",
-            "response_time - Minimize total processing time",
+            "success - Maximize successful outcomes",
+            "total_cost - Minimize aggregate API cost",
         ],
         "constraints_example": {
             "max_cost_per_call": 0.05,

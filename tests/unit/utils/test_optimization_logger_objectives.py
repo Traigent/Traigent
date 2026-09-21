@@ -156,10 +156,14 @@ class TestOptimizationLoggerObjectives:
             base_path=tmp_path,
         )
 
-        # Log session start without explicit orientations
+        # Canonical objectives use SDK defaults; the custom objective declares intent.
+        schema = create_default_objectives(
+            ["accuracy", "cost", "custom_metric"],
+            orientations={"custom_metric": "maximize"},
+        )
         logger.log_session_start(
             config={"model": "gpt-4o"},
-            objectives=["accuracy", "cost", "custom_metric"],
+            objectives=schema,
             algorithm="random_search",
         )
 
@@ -178,9 +182,7 @@ class TestOptimizationLoggerObjectives:
         assert (
             objectives_by_name["cost"]["orientation"] == "minimize"
         )  # Default for cost
-        assert (
-            objectives_by_name["custom_metric"]["orientation"] == "maximize"
-        )  # Default for unknown
+        assert objectives_by_name["custom_metric"]["orientation"] == "maximize"
 
         # Check equal weights were assigned
         assert abs(data["weights_normalized"]["accuracy"] - 1 / 3) < 1e-10
@@ -197,10 +199,10 @@ class TestOptimizationLoggerObjectives:
             base_path=tmp_path,
         )
 
-        # Log session start with just a list of objectives (legacy style)
+        # A legacy list remains supported for exact SDK-owned objective names.
         logger.log_session_start(
             config={"model": "gpt-3.5-turbo"},
-            objectives=["accuracy", "speed"],
+            objectives=["accuracy", "latency"],
             algorithm="bayesian",
         )
 
@@ -223,9 +225,7 @@ class TestOptimizationLoggerObjectives:
         assert len(data["objectives"]) == 2
         objectives_by_name = {obj["name"]: obj for obj in data["objectives"]}
         assert objectives_by_name["accuracy"]["orientation"] == "maximize"
-        assert (
-            objectives_by_name["speed"]["orientation"] == "maximize"
-        )  # Unknown defaults to maximize
+        assert objectives_by_name["latency"]["orientation"] == "minimize"
 
     def test_complex_objective_schema(self, tmp_path):
         """Test logging with complex objective definitions including bounds and units."""

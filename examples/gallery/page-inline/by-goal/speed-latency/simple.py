@@ -51,6 +51,8 @@ except ImportError:  # pragma: no cover - support IDE execution paths
             continue
     traigent = importlib.import_module("traigent")
 
+from traigent.core.objectives import create_default_objectives
+
 
 def _load_safe_helpers():
     """Load examples/utils/safe_helpers.py without depending on sys.path."""
@@ -109,7 +111,9 @@ def _calc_accuracy(
         "temperature": [0.0, 0.2],
     },
     eval_dataset=DATASET,
-    objectives=["response_time"],
+    objectives=create_default_objectives(
+        ["response_time"], orientations={"response_time": "minimize"}
+    ),
     metric_functions={"accuracy": _calc_accuracy},
     offline=True,
     max_trials=10,

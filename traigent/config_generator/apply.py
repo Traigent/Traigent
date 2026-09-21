@@ -229,6 +229,7 @@ def _indent_decorator(decorator_code: str, indent: str) -> str:
 
 # Symbols that can appear in generated decorator code and their imports.
 _RANGE_SYMBOLS = {"Range", "IntRange", "LogRange", "Choices"}
+_OBJECTIVE_SYMBOLS = {"ObjectiveDefinition", "ObjectiveSchema"}
 _SAFETY_SYMBOLS = {
     "faithfulness",
     "hallucination_rate",
@@ -253,6 +254,16 @@ def _collect_needed_imports(decorator_code: str, tree: ast.Module) -> list[str]:
     if range_missing:
         symbols = ", ".join(sorted(range_missing))
         needed.append(f"from traigent import {symbols}")
+
+    objective_used = {
+        symbol
+        for symbol in _OBJECTIVE_SYMBOLS
+        if re.search(rf"\b{symbol}\b", decorator_code)
+    }
+    objective_missing = objective_used - existing
+    if objective_missing:
+        symbols = ", ".join(sorted(objective_missing))
+        needed.append(f"from traigent.core.objectives import {symbols}")
 
     # Check for safety metric usage
     safety_used = {

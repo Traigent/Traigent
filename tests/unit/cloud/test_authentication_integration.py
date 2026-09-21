@@ -983,7 +983,12 @@ class TestMultiClientWorkflows:
                                 configuration_space={
                                     f"param_{client_name}": [0.1, 0.5, 0.9]
                                 },
-                                objectives=[f"metric_{client_name}"],
+                                objectives=[
+                                    {
+                                        "name": f"metric_{client_name}",
+                                        "orientation": "maximize",
+                                    }
+                                ],
                             )
 
                             return client_name
@@ -1082,7 +1087,7 @@ class TestMultiClientWorkflows:
                         await client.create_optimization_session(
                             "initial_function",
                             configuration_space={"param": [1, 2, 3]},
-                            objectives=["metric1"],
+                            objectives=[{"name": "metric1", "orientation": "maximize"}],
                         )
 
                     # Update to new API key (simulating key rotation)
@@ -1107,7 +1112,7 @@ class TestMultiClientWorkflows:
                         await client.create_optimization_session(
                             "updated_function",
                             configuration_space={"param": [4, 5, 6]},
-                            objectives=["metric2"],
+                            objectives=[{"name": "metric2", "orientation": "maximize"}],
                         )
 
                     # Verify state transitions

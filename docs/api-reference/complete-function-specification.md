@@ -151,7 +151,7 @@ def my_agent(question: str) -> str:
 - Use `offline=True` when policy requires zero Traigent backend egress. Local `grid` and `random` runs still sync results to the portal unless `offline=True`.
 - Legacy `execution_mode` inputs are deprecated compatibility shims. Use `algorithm` and `offline` for new code.
 - `config_param` is required whenever you choose `injection_mode="parameter"`; forgetting it leaves your function without injected configs.
-- Provide plain lists for quick starts; Traigent infers orientations (maximize for accuracy-like metrics, minimize for cost/latency) and assigns equal weights. Use an `ObjectiveSchema` when you need explicit control over orientations, weights, or metric metadata.
+- Provide plain lists only for exact SDK-owned metric names; Traigent applies their fixed defaults (for example, maximize `accuracy` and minimize `cost`/`latency`) and assigns equal weights. Custom names require an `ObjectiveSchema` with an explicit orientation; no name-similarity inference is applied.
 - Inline tuned-variable definitions accept `Range`, `IntRange`, `LogRange`, `Choices`, or numeric `(low, high)` tuples. Inline lists are not recognized; use `Choices([...])` instead.
 - If you pass a `ConfigSpace` with constraints, omit `constraints=`. Supplying both raises `TypeError`.
 
@@ -788,6 +788,13 @@ def process_ticket_with_constraints(ticket: str) -> str:
 ### Custom Evaluation
 
 ```python
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+
+custom_objectives = ObjectiveSchema.from_objectives([
+    ObjectiveDefinition("accuracy", orientation="maximize", weight=1.0),
+    ObjectiveDefinition("custom_metric", orientation="maximize", weight=1.0),
+])
+
 def custom_eval(func, config, example):
     # Custom evaluation logic
     result = func(example.input_data)
@@ -799,7 +806,7 @@ def custom_eval(func, config, example):
 
 @traigent.optimize(
     evaluation={"eval_dataset": "dataset.jsonl", "custom_evaluator": custom_eval},
-    objectives=["accuracy", "custom_metric"]
+    objectives=custom_objectives,
 )
 def my_function(input_text: str) -> str:
     return process(input_text)

@@ -45,6 +45,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
     traigent = importlib.import_module("traigent")
 
 from traigent.api.types import OptimizationResult  # noqa: E402
+from traigent.core.objectives import create_default_objectives  # noqa: E402
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -182,7 +183,9 @@ def style_accuracy_metric(output: str, expected: str, **_: object) -> float:
 
 @traigent.optimize(
     eval_dataset=DATASET,
-    objectives=["style_accuracy"],
+    objectives=create_default_objectives(
+        ["style_accuracy"], orientations={"style_accuracy": "maximize"}
+    ),
     configuration_space={
         "style": ["bulleted", "paragraph"],
         "tone": ["formal", "friendly"],
