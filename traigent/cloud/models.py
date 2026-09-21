@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal
 
 # Single source of truth for trial status (issue #1302 AC4): the public SDK
 # enum lives in ``traigent.api.types``. Re-export it here so the cloud layer and
@@ -529,6 +529,7 @@ def session_dataset_identity_to_wire(session_request: Any) -> dict[str, str]:
 
 
 _IDENTITY_ARTIFACT_KEYS = ("agent", "dataset", "evaluator", "config_space")
+EvaluatorIdSource = Literal["registered", "declared", "unknown"]
 
 
 def _artifact_version_from_fp1(value: Any) -> dict[str, str | None]:
@@ -580,6 +581,9 @@ def session_identity_v2_to_wire(session_request: Any) -> dict[str, Any]:
         if isinstance(evaluator_id, str) and evaluator_id.strip()
         else None
     )
+    evaluator_id_source = getattr(session_request, "evaluator_id_source", None)
+    if evaluator_id_source is None:
+        evaluator_id_source = "registered" if evaluator_id is not None else "unknown"
 
     identity: dict[str, Any] = {
         "identity_version": 2,
@@ -587,7 +591,7 @@ def session_identity_v2_to_wire(session_request: Any) -> dict[str, Any]:
         "agent_id_source": "declared" if agent_id is not None else "unknown",
         "dataset_id": dataset_id if isinstance(dataset_id, str) else None,
         "dataset_id_source": "declared" if isinstance(dataset_id, str) else "unknown",
-        "evaluator_id_source": "registered" if evaluator_id is not None else "unknown",
+        "evaluator_id_source": evaluator_id_source,
         "artifact_versions": artifact_versions,
     }
     if evaluator_id is not None:
@@ -650,6 +654,10 @@ class SessionCreationRequest:
     dataset_id: str | None = None
     # Alternative parameter names for test compatibility
     problem_type: str | None = None
+    # Explicit provenance for evaluator_id. Kept last to preserve positional
+    # construction compatibility. Existing ids default to registered; callers
+    # may declare a logical id without claiming a registered evaluator version.
+    evaluator_id_source: EvaluatorIdSource | None = None
 
     def __post_init__(self) -> None:
         """Handle default values and alternative parameter names."""
@@ -677,6 +685,27 @@ class SessionCreationRequest:
         self.evaluator_definition_id = normalized_evaluator_ids[
             "evaluator_definition_id"
         ]
+        if self.evaluator_id_source is not None and self.evaluator_id_source not in {
+            "registered",
+            "declared",
+            "unknown",
+        }:
+            raise ValueError(
+                "evaluator_id_source must be registered, declared, or unknown"
+            )
+        evaluator_id = self.evaluator_id or self.evaluator_definition_id
+        if evaluator_id is None:
+            if self.evaluator_id_source in {"registered", "declared"}:
+                raise ValueError(
+                    "evaluator_id_source registered or declared requires an evaluator id"
+                )
+            self.evaluator_id_source = "unknown"
+        else:
+            if self.evaluator_id_source == "unknown":
+                raise ValueError(
+                    "evaluator_id_source unknown cannot be used with an evaluator id"
+                )
+            self.evaluator_id_source = self.evaluator_id_source or "registered"
         self.dataset_id = normalize_declared_dataset_id(self.dataset_id)
         if self.function_name is None:
             self.function_name = "test_function"

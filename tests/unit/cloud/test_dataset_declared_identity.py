@@ -631,6 +631,22 @@ def test_two_explicit_ids_stay_distinct_even_with_equal_names():
     assert b["dataset_id"] == "ds-b"
 
 
+def test_backend_client_submits_declared_evaluator_source_verbatim():
+    payload = _typed_payload_via_session_ops(
+        {
+            "function_name": "qa_agent",
+            "search_space": {"model": ["a", "b"]},
+            "optimization_goal": "maximize",
+            "metadata": {"max_trials": 5, "dataset_size": 1},
+            "evaluator_id": "logical-evaluator",
+            "evaluator_id_source": "declared",
+        }
+    )
+
+    assert payload["evaluator_id"] == "logical-evaluator"
+    assert payload["evaluator_id_source"] == "declared"
+
+
 def test_session_operations_threads_dataset_id_to_the_request():
     fake = CapturingFakeClient()
     SessionOperations(cast(Any, fake)).create_session(

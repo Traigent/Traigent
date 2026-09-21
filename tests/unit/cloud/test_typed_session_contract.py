@@ -72,6 +72,38 @@ class TestContractGate:
 
         assert request.evaluator_id is None
         assert request.evaluator_definition_id == "evaluator-1"
+        assert request.evaluator_id_source == "registered"
+
+    def test_session_request_accepts_declared_evaluator_identity(self):
+        request = _request(
+            evaluator_id=" logical-evaluator ", evaluator_id_source="declared"
+        )
+
+        assert request.evaluator_id == "logical-evaluator"
+        assert request.evaluator_id_source == "declared"
+
+    def test_session_request_preserves_explicit_registered_evaluator_identity(self):
+        request = _request(
+            evaluator_id="registered-evaluator", evaluator_id_source="registered"
+        )
+
+        payload = _ops()._build_session_payload(request, 5)
+
+        assert payload["evaluator_id"] == "registered-evaluator"
+        assert payload["evaluator_id_source"] == "registered"
+
+    def test_session_request_rejects_invalid_evaluator_source(self):
+        with pytest.raises(ValueError, match="registered, declared, or unknown"):
+            _request(evaluator_id="evaluator-1", evaluator_id_source="derived")
+
+    @pytest.mark.parametrize("source", ["registered", "declared"])
+    def test_session_request_rejects_evaluator_source_without_id(self, source):
+        with pytest.raises(ValueError, match="requires an evaluator id"):
+            _request(evaluator_id_source=source)
+
+    def test_session_request_rejects_unknown_source_with_id(self):
+        with pytest.raises(ValueError, match="unknown cannot be used"):
+            _request(evaluator_id="evaluator-1", evaluator_id_source="unknown")
 
     def test_session_request_rejects_both_evaluator_identity_aliases(self):
         with pytest.raises(ValueError, match="provide only one"):
@@ -340,6 +372,18 @@ class TestContractGate:
             "state": "verified",
         }
 
+    def test_declared_evaluator_identity_is_not_promoted_to_registered(self):
+        request = _request(
+            evaluator_id="logical-evaluator", evaluator_id_source="declared"
+        )
+        fake_self = Mock()
+        fake_self._ensure_owner_metadata = lambda metadata: metadata or {}
+
+        payload = TraigentCloudClient._serialize_session_request(fake_self, request)
+
+        assert payload["evaluator_id"] == "logical-evaluator"
+        assert payload["evaluator_id_source"] == "declared"
+
     def test_direct_serializer_omits_unset_optional_schema_fields(self):
         request = _request()
         fake_self = Mock()
@@ -371,6 +415,7 @@ class TestContractGate:
 
         assert "evaluator_id" not in payload
         assert "evaluator_definition_id" not in payload
+        assert payload["evaluator_id_source"] == "unknown"
 
 
 class TestAutoFallback:
