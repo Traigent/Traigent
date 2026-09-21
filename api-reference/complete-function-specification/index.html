@@ -5479,7 +5479,7 @@ object with structured constraints.</p>
 <li>Use <code>offline=True</code> when policy requires zero Traigent backend egress. Local <code>grid</code> and <code>random</code> runs still sync results to the portal unless <code>offline=True</code>.</li>
 <li>Legacy <code>execution_mode</code> inputs are deprecated compatibility shims. Use <code>algorithm</code> and <code>offline</code> for new code.</li>
 <li><code>config_param</code> is required whenever you choose <code>injection_mode="parameter"</code>; forgetting it leaves your function without injected configs.</li>
-<li>Provide plain lists for quick starts; Traigent infers orientations (maximize for accuracy-like metrics, minimize for cost/latency) and assigns equal weights. Use an <code>ObjectiveSchema</code> when you need explicit control over orientations, weights, or metric metadata.</li>
+<li>Provide plain lists only for exact SDK-owned metric names; Traigent applies their fixed defaults (for example, maximize <code>accuracy</code> and minimize <code>cost</code>/<code>latency</code>) and assigns equal weights. Custom names require an <code>ObjectiveSchema</code> with an explicit orientation; no name-similarity inference is applied.</li>
 <li>Inline tuned-variable definitions accept <code>Range</code>, <code>IntRange</code>, <code>LogRange</code>, <code>Choices</code>, or numeric <code>(low, high)</code> tuples. Inline lists are not recognized; use <code>Choices([...])</code> instead.</li>
 <li>If you pass a <code>ConfigSpace</code> with constraints, omit <code>constraints=</code>. Supplying both raises <code>TypeError</code>.</li>
 </ul>
@@ -6171,7 +6171,14 @@ the aggregate toward the heavier objective. (Issues #1682, #1846.)</p>
     <span class="k">return</span> <span class="n">support_chain</span><span class="o">.</span><span class="n">process</span><span class="p">(</span><span class="n">ticket</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="custom-evaluation">Custom Evaluation<a class="headerlink" href="#custom-evaluation" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">custom_eval</span><span class="p">(</span><span class="n">func</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">example</span><span class="p">):</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">traigent.core.objectives</span><span class="w"> </span><span class="kn">import</span> <span class="n">ObjectiveDefinition</span><span class="p">,</span> <span class="n">ObjectiveSchema</span>
+
+<span class="n">custom_objectives</span> <span class="o">=</span> <span class="n">ObjectiveSchema</span><span class="o">.</span><span class="n">from_objectives</span><span class="p">([</span>
+    <span class="n">ObjectiveDefinition</span><span class="p">(</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="n">orientation</span><span class="o">=</span><span class="s2">"maximize"</span><span class="p">,</span> <span class="n">weight</span><span class="o">=</span><span class="mf">1.0</span><span class="p">),</span>
+    <span class="n">ObjectiveDefinition</span><span class="p">(</span><span class="s2">"custom_metric"</span><span class="p">,</span> <span class="n">orientation</span><span class="o">=</span><span class="s2">"maximize"</span><span class="p">,</span> <span class="n">weight</span><span class="o">=</span><span class="mf">1.0</span><span class="p">),</span>
+<span class="p">])</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">custom_eval</span><span class="p">(</span><span class="n">func</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">example</span><span class="p">):</span>
     <span class="c1"># Custom evaluation logic</span>
     <span class="n">result</span> <span class="o">=</span> <span class="n">func</span><span class="p">(</span><span class="n">example</span><span class="o">.</span><span class="n">input_data</span><span class="p">)</span>
     <span class="n">accuracy</span> <span class="o">=</span> <span class="n">compute_accuracy</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">example</span><span class="o">.</span><span class="n">expected_output</span><span class="p">)</span>
@@ -6182,7 +6189,7 @@ the aggregate toward the heavier objective. (Issues #1682, #1846.)</p>
 
 <span class="nd">@traigent</span><span class="o">.</span><span class="n">optimize</span><span class="p">(</span>
     <span class="n">evaluation</span><span class="o">=</span><span class="p">{</span><span class="s2">"eval_dataset"</span><span class="p">:</span> <span class="s2">"dataset.jsonl"</span><span class="p">,</span> <span class="s2">"custom_evaluator"</span><span class="p">:</span> <span class="n">custom_eval</span><span class="p">},</span>
-    <span class="n">objectives</span><span class="o">=</span><span class="p">[</span><span class="s2">"accuracy"</span><span class="p">,</span> <span class="s2">"custom_metric"</span><span class="p">]</span>
+    <span class="n">objectives</span><span class="o">=</span><span class="n">custom_objectives</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">my_function</span><span class="p">(</span><span class="n">input_text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">process</span><span class="p">(</span><span class="n">input_text</span><span class="p">)</span>

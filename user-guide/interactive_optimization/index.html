@@ -4833,7 +4833,12 @@ keep the client inside its own <code>async with</code> block (or call
     <span class="s2">"model"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"o4-mini"</span><span class="p">,</span> <span class="s2">"GPT-4o"</span><span class="p">,</span> <span class="s2">"claude-2"</span><span class="p">]</span>
 <span class="p">}</span>
 
-<span class="n">objectives</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"response_quality"</span><span class="p">,</span> <span class="s2">"latency"</span><span class="p">,</span> <span class="s2">"cost_per_token"</span><span class="p">]</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">traigent.core.objectives</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_default_objectives</span>
+
+<span class="n">objectives</span> <span class="o">=</span> <span class="n">create_default_objectives</span><span class="p">(</span>
+    <span class="p">[</span><span class="s2">"response_quality"</span><span class="p">,</span> <span class="s2">"latency"</span><span class="p">,</span> <span class="s2">"cost_per_token"</span><span class="p">],</span>
+    <span class="n">orientations</span><span class="o">=</span><span class="p">{</span><span class="s2">"response_quality"</span><span class="p">:</span> <span class="s2">"maximize"</span><span class="p">,</span> <span class="s2">"cost_per_token"</span><span class="p">:</span> <span class="s2">"minimize"</span><span class="p">},</span>
+<span class="p">)</span>
 </code></pre></div>
 <h3 id="2-ml-model-hyperparameter-optimization">2. ML Model Hyperparameter Optimization<a class="headerlink" href="#2-ml-model-hyperparameter-optimization" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">config_space</span> <span class="o">=</span> <span class="p">{</span>
@@ -4844,7 +4849,16 @@ keep the client inside its own <code>async with</code> block (or call
     <span class="s2">"dropout_rate"</span><span class="p">:</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)</span>
 <span class="p">}</span>
 
-<span class="n">objectives</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"validation_accuracy"</span><span class="p">,</span> <span class="s2">"training_time"</span><span class="p">,</span> <span class="s2">"model_size"</span><span class="p">]</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">traigent.core.objectives</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_default_objectives</span>
+
+<span class="n">objectives</span> <span class="o">=</span> <span class="n">create_default_objectives</span><span class="p">(</span>
+    <span class="p">[</span><span class="s2">"validation_accuracy"</span><span class="p">,</span> <span class="s2">"training_time"</span><span class="p">,</span> <span class="s2">"model_size"</span><span class="p">],</span>
+    <span class="n">orientations</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">"validation_accuracy"</span><span class="p">:</span> <span class="s2">"maximize"</span><span class="p">,</span>
+        <span class="s2">"training_time"</span><span class="p">:</span> <span class="s2">"minimize"</span><span class="p">,</span>
+        <span class="s2">"model_size"</span><span class="p">:</span> <span class="s2">"minimize"</span><span class="p">,</span>
+    <span class="p">},</span>
+<span class="p">)</span>
 </code></pre></div>
 <h3 id="3-system-configuration-optimization">3. System Configuration Optimization<a class="headerlink" href="#3-system-configuration-optimization" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">config_space</span> <span class="o">=</span> <span class="p">{</span>
@@ -4855,7 +4869,12 @@ keep the client inside its own <code>async with</code> block (or call
     <span class="s2">"compression"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"none"</span><span class="p">,</span> <span class="s2">"gzip"</span><span class="p">,</span> <span class="s2">"zstd"</span><span class="p">]</span>
 <span class="p">}</span>
 
-<span class="n">objectives</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"throughput"</span><span class="p">,</span> <span class="s2">"latency_p99"</span><span class="p">,</span> <span class="s2">"error_rate"</span><span class="p">]</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">traigent.core.objectives</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_default_objectives</span>
+
+<span class="n">objectives</span> <span class="o">=</span> <span class="n">create_default_objectives</span><span class="p">(</span>
+    <span class="p">[</span><span class="s2">"throughput"</span><span class="p">,</span> <span class="s2">"latency_p99"</span><span class="p">,</span> <span class="s2">"error_rate"</span><span class="p">],</span>
+    <span class="n">orientations</span><span class="o">=</span><span class="p">{</span><span class="s2">"throughput"</span><span class="p">:</span> <span class="s2">"maximize"</span><span class="p">,</span> <span class="s2">"latency_p99"</span><span class="p">:</span> <span class="s2">"minimize"</span><span class="p">},</span>
+<span class="p">)</span>
 </code></pre></div>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <h3 id="session-timeout">Session Timeout<a class="headerlink" href="#session-timeout" title="Permanent link">&para;</a></h3>
