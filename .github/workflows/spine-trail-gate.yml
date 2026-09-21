@@ -8,6 +8,7 @@ name: Spine Trail Gate
 #
 # Accepted markers (any one):
 #   Spine-Trail: st_xxxxxxxxxxxx   (a Tier-0 WorkIntent)
+#   Spine-Session: cs_xxxxxxxx     (a canonical ChangeSession marker)
 #   Spine: cs_xxxxxxxx             (a promoted ChangeSession)
 #   Spine: none (reason: ...)      (an explicit, owner-visible waiver)
 
@@ -59,19 +60,20 @@ jobs:
 
           # Valid markers (anchored to line start, tolerant of leading spaces).
           trail='^[[:space:]]*Spine-Trail:[[:space:]]*st_[0-9a-f]{12}[[:space:]]*$'
-          session='^[[:space:]]*Spine:[[:space:]]*cs_[0-9a-z]{6,}[[:space:]]*$'
+          session='^[[:space:]]*Spine(-Session)?:[[:space:]]*cs_[0-9a-z]{6,}[[:space:]]*$'
           waiver='^[[:space:]]*Spine:[[:space:]]*none[[:space:]]*\(reason:.+\)[[:space:]]*$'
 
           if printf '%s\n' "$PR_BODY" | grep -Eqi "$trail"; then
             echo "✅ Spine-Trail present."
           elif printf '%s\n' "$PR_BODY" | grep -Eqi "$session"; then
-            echo "✅ Promoted ChangeSession (Spine:) present."
+            echo "✅ ChangeSession marker (Spine-Session:/Spine:) present."
           elif printf '%s\n' "$PR_BODY" | grep -Eqi "$waiver"; then
             echo "⚠️  Explicit governance waiver (Spine: none) accepted."
           else
             echo "::error title=Spine trail missing::This product PR has no validation-spine mark."
             echo "Governed product work must leave a spine mark. Add ONE line to the PR body:"
             echo "  Spine-Trail: st_xxxxxxxxxxxx   (a Tier-0 WorkIntent)"
+            echo "  Spine-Session: cs_xxxxxxxx     (a canonical ChangeSession marker)"
             echo "  Spine: cs_xxxxxxxx             (a promoted ChangeSession)"
             echo "  Spine: none (reason: <why ungoverned>)"
             echo "Open one with: python3 tools/spine-trail/spine_trail.py get-or-create ..."
