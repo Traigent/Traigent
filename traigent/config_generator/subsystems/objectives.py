@@ -160,7 +160,7 @@ def _parse_objective_item(item: dict, current_names: set[str]) -> ObjectiveSpec 
     name = item.get("name", "")
     if not name or name in current_names:
         return None
-    orientation = item.get("orientation", "maximize")
+    orientation = item.get("orientation")
     if orientation not in ("maximize", "minimize"):
         return None
     try:

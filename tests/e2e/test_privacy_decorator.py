@@ -19,6 +19,7 @@ import traigent
 # Import our testing infrastructure
 from tests.mocks.dummy_privacy_server import DummyPrivacyServer
 from traigent.api.decorators import optimize
+from traigent.core.objectives import create_default_objectives
 from traigent.evaluators.base import Dataset, EvaluationExample
 
 
@@ -122,7 +123,13 @@ class TestPrivacyDecoratorE2E:
             # Define a function that processes sensitive medical data
             @optimize(
                 eval_dataset=dataset_file,
-                objectives=["accuracy", "hipaa_compliance", "response_time"],
+                objectives=create_default_objectives(
+                    ["accuracy", "hipaa_compliance", "response_time"],
+                    orientations={
+                        "hipaa_compliance": "maximize",
+                        "response_time": "minimize",
+                    },
+                ),
                 configuration_space={
                     "model": ["o4-mini", "GPT-4o"],
                     "temperature": [0.1, 0.3, 0.5, 0.7],
@@ -273,7 +280,9 @@ class TestPrivacyDecoratorE2E:
 
             @optimize(
                 eval_dataset=dataset_file,
-                objectives=["performance"],
+                objectives=create_default_objectives(
+                    ["performance"], orientations={"performance": "maximize"}
+                ),
                 configuration_space={
                     "param1": [0.0, 0.25, 0.5, 0.75, 1.0],
                     "param2": ["A", "B", "C"],
@@ -430,7 +439,13 @@ class TestPrivacyDecoratorE2E:
 
             @optimize(
                 eval_dataset=dataset_file,
-                objectives=["accuracy", "fraud_detection", "processing_speed"],
+                objectives=create_default_objectives(
+                    ["accuracy", "fraud_detection", "processing_speed"],
+                    orientations={
+                        "fraud_detection": "maximize",
+                        "processing_speed": "maximize",
+                    },
+                ),
                 configuration_space={
                     "model_complexity": [1, 2, 3, 4, 5],
                     "risk_threshold": [0.1, 0.3, 0.5, 0.7, 0.9],
@@ -568,7 +583,9 @@ class TestPrivacyIntegrationEdgeCases:
 
             @optimize(
                 eval_dataset=dataset_file,
-                objectives=["metric"],
+                objectives=create_default_objectives(
+                    ["metric"], orientations={"metric": "maximize"}
+                ),
                 configuration_space={"param": [1, 2, 3]},
                 execution_mode="hybrid",
                 privacy_enabled=True,
@@ -625,7 +642,9 @@ class TestPrivacyIntegrationEdgeCases:
             # Define multiple functions to optimize concurrently
             @optimize(
                 eval_dataset=dataset_file,
-                objectives=["score"],
+                objectives=create_default_objectives(
+                    ["score"], orientations={"score": "maximize"}
+                ),
                 configuration_space={"x": [1, 2, 3]},
                 execution_mode="hybrid",
                 privacy_enabled=True,
@@ -635,7 +654,9 @@ class TestPrivacyIntegrationEdgeCases:
 
             @optimize(
                 eval_dataset=dataset_file,
-                objectives=["performance"],
+                objectives=create_default_objectives(
+                    ["performance"], orientations={"performance": "maximize"}
+                ),
                 configuration_space={"y": [0.1, 0.5, 0.9]},
                 execution_mode="hybrid",
                 privacy_enabled=True,

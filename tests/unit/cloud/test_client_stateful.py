@@ -194,7 +194,7 @@ class TestSessionCreation:
         [
             (None, [{"name": "score", "orientation": "maximize"}]),
             (["maximize"], [{"name": "score", "orientation": "maximize"}]),
-            (["accuracy"], ["accuracy"]),
+            (["accuracy"], [{"name": "accuracy", "orientation": "maximize"}]),
         ],
     )
     async def test_create_optimization_session_normalizes_typed_objectives(

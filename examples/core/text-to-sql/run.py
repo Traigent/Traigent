@@ -61,6 +61,8 @@ except ImportError:  # pragma: no cover
                 continue
     traigent = importlib.import_module("traigent")
 
+from traigent.core.objectives import create_default_objectives
+
 DATA_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "text-to-sql"
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
 _schema_path = BASE / "schema.sql"
@@ -202,7 +204,9 @@ def _mock_generate_sql(question: str) -> str:
 
 @traigent.optimize(
     eval_dataset=DATASET,
-    objectives=["sql_accuracy"],
+    objectives=create_default_objectives(
+        ["sql_accuracy"], orientations={"sql_accuracy": "maximize"}
+    ),
     configuration_space={
         "model": ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"],
         "temperature": [0.0, 0.2],

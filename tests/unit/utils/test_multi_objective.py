@@ -693,7 +693,7 @@ class TestErrorHandling:
         objectives = {"accuracy": 0.9, "cost": 0.05}
         weights = {"accuracy": 0.0, "cost": 1.0}
 
-        score = scalarize_objectives(objectives, weights)
+        score = scalarize_objectives(objectives, weights, minimize_objectives=[])
 
         # Should handle zero weights
         assert isinstance(score, float)
@@ -811,7 +811,7 @@ class TestCTDScenarios:
             weights = {"accuracy": weight_sum * 0.6, "cost": weight_sum * 0.4}
 
         metrics = {"accuracy": 0.9, "cost": 0.05}
-        score = scalarize_objectives(metrics, weights)
+        score = scalarize_objectives(metrics, weights, minimize_objectives=[])
 
         if expected_behavior == "valid":
             assert isinstance(score, float)
@@ -970,14 +970,13 @@ class TestConfiguredObjectiveScope:
         # spurious positive volume.)
         assert calc.calculate_hypervolume(front) == 0.0
 
-    def test_hypervolume_no_arg_falls_back_to_observed_only_when_unconfigured(self):
-        # Degenerate case: a calculator built with NO configured directions
-        # (empty maximize, no schema) and a no-arg call has zero configuration
-        # signal, so it can only compute over the observed keys — here a
-        # legitimate 1-D front over `a`. Documents the sole remaining fallback.
+    def test_hypervolume_no_arg_rejects_unknown_observed_objective(self):
+        # No configured directions means a custom observed name has no declared
+        # optimization semantics and cannot be ranked.
         calc = ParetoFrontCalculator()
         front = [_pt(a=3.0), _pt(a=7.0)]
-        assert calc.calculate_hypervolume(front) > 0.0
+        with pytest.raises(ValueError, match="Objective 'a'.*no declared orientation"):
+            calc.calculate_hypervolume(front)
 
     def test_hypervolume_single_configured_objective_still_computes(self):
         # A genuinely 1-configured-objective front is unaffected.

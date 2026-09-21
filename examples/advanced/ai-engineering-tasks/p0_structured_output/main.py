@@ -39,6 +39,8 @@ except ImportError:  # pragma: no cover - support IDE execution paths
                 continue
     traigent = importlib.import_module("traigent")
 
+from traigent.core.objectives import create_default_objectives
+
 # Mock mode for demo
 os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
@@ -123,7 +125,10 @@ def _format_entities(entities: dict[str, str], output_format: str) -> str:
 
 @traigent.optimize(
     eval_dataset=create_extraction_dataset(),
-    objectives=["accuracy", "parsing_success"],
+    objectives=create_default_objectives(
+        ["accuracy", "parsing_success"],
+        orientations={"parsing_success": "maximize"},
+    ),
     configuration_space={
         "output_format": ["json", "xml", "markdown"],
         "validation": ["strict", "lenient"],

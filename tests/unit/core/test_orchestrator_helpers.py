@@ -235,14 +235,9 @@ class TestPrepareObjectives:
         assert objectives == ["accuracy"]
         assert schema is not None
 
-    def test_single_objective(self):
-        """Test single objective is preserved."""
-        objectives, schema = prepare_objectives(
-            objectives=["f1_score"], objective_schema=None
-        )
-
-        assert objectives == ["f1_score"]
-        assert schema is not None
+    def test_single_unknown_objective_requires_direction(self):
+        with pytest.raises(ValueError, match="f1_score.*no declared orientation"):
+            prepare_objectives(objectives=["f1_score"], objective_schema=None)
 
     def test_multiple_objectives(self):
         """Test multiple objectives are preserved."""
@@ -281,33 +276,32 @@ class TestPrepareObjectives:
     def test_creates_default_schema_when_none_provided(self):
         """Test that default schema is created when not provided."""
         objectives, schema = prepare_objectives(
-            objectives=["accuracy", "precision"], objective_schema=None
+            objectives=["accuracy", "success"], objective_schema=None
         )
 
-        assert objectives == ["accuracy", "precision"]
+        assert objectives == ["accuracy", "success"]
         assert schema is not None
         assert isinstance(schema, ObjectiveSchema)
 
-    def test_schema_creation_failure_handled_gracefully(self):
-        """Test that schema creation failure is handled gracefully."""
-        # Use an objective name that might cause schema creation issues
-        objectives, schema = prepare_objectives(
-            objectives=["custom_metric_123"], objective_schema=None
-        )
-
-        # Should still return objectives even if schema creation fails
-        assert objectives == ["custom_metric_123"]
-        # Schema might be None if creation failed, but objectives are preserved
-        # This tests the graceful fallback behavior
+    def test_schema_creation_failure_is_not_swallowed(self):
+        with pytest.raises(
+            ValueError, match="custom_metric_123.*no declared orientation"
+        ):
+            prepare_objectives(objectives=["custom_metric_123"], objective_schema=None)
 
     def test_mixed_valid_and_none_objectives(self):
         """Test handling of mixed valid and None objectives."""
+        custom_schema = create_default_objectives(
+            ["accuracy", "f1_score"], orientations={"f1_score": "maximize"}
+        )
         objectives, schema = prepare_objectives(
-            objectives=[None, "accuracy", None, "f1_score", None], objective_schema=None
+            objectives=[None, "accuracy", None, "f1_score", None],
+            objective_schema=custom_schema,
         )
 
         assert objectives == ["accuracy", "f1_score"]
         assert len(objectives) == 2
+        assert schema is custom_schema
 
 
 class TestConstructorHelperIntegration:
@@ -513,7 +507,10 @@ class TestModulePrepareObjectives:
 
     def test_filters_none_values(self):
         """Test that None values are filtered from objectives."""
-        objectives, _ = prepare_objectives(["acc", None, "cost", None], None)
+        schema = create_default_objectives(
+            ["acc", "cost"], orientations={"acc": "maximize"}
+        )
+        objectives, _ = prepare_objectives(["acc", None, "cost", None], schema)
         assert objectives == ["acc", "cost"]
 
     def test_preserves_custom_schema(self):

@@ -6,6 +6,7 @@ Inspired by DeepEval's approach to local JSON file storage.
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability CONC-Quality-Performance FUNC-STORAGE REQ-STOR-007 SYNC-StorageLogging
 
 import json
+import math
 import os
 import time
 from collections.abc import Mapping
@@ -497,13 +498,32 @@ class LocalStorageManager:
             primary_objective = self._resolve_primary_objective_name(
                 session.optimization_config
             )
-            is_minimize = is_minimization_objective(primary_objective)
+            orientation = self._resolve_primary_objective_orientation(
+                session.optimization_config, primary_objective
+            )
             if session.best_score is None:
                 is_better = True
-            elif is_minimize:
-                is_better = score < session.best_score
+            elif orientation == "band":
+                low, high = self._resolve_primary_objective_band(
+                    session.optimization_config, primary_objective
+                )
+
+                def distance_from_band(value: float) -> float:
+                    if low <= value <= high:
+                        return 0.0
+                    return min(abs(value - low), abs(value - high))
+
+                is_better = distance_from_band(score) < distance_from_band(
+                    session.best_score
+                )
             else:
-                is_better = score > session.best_score
+                is_minimize = is_minimization_objective(
+                    primary_objective, orientation=orientation
+                )
+                if is_minimize:
+                    is_better = score < session.best_score
+                else:
+                    is_better = score > session.best_score
             if is_better:
                 session.best_score = score
                 session.best_config = config.copy()
@@ -559,6 +579,71 @@ class LocalStorageManager:
             return name
 
         return "score"
+
+    def _resolve_primary_objective_orientation(
+        self,
+        optimization_config: dict[str, Any | None] | None,
+        primary_objective: str,
+    ) -> str | None:
+        if not isinstance(optimization_config, dict):
+            return "maximize" if primary_objective == "score" else None
+        schema = optimization_config.get("objective_schema")
+        if isinstance(schema, dict):
+            definitions = schema.get("objectives")
+            if isinstance(definitions, list):
+                for definition in definitions:
+                    if (
+                        isinstance(definition, dict)
+                        and definition.get("name") == primary_objective
+                    ):
+                        orientation = definition.get("orientation")
+                        return str(orientation) if orientation is not None else None
+        orientations = optimization_config.get("objective_orientations")
+        if isinstance(orientations, dict) and primary_objective in orientations:
+            return str(orientations[primary_objective])
+        has_declared_objective = bool(optimization_config.get("objectives")) or bool(
+            isinstance(schema, dict) and schema.get("objectives")
+        )
+        if primary_objective == "score" and not has_declared_objective:
+            # A session created without objective metadata uses the storage
+            # protocol's scalar score contract, which explicitly maximizes.
+            # This is not metric-name inference for a user-defined objective.
+            return "maximize"
+        return None
+
+    @staticmethod
+    def _resolve_primary_objective_band(
+        optimization_config: dict[str, Any | None] | None,
+        primary_objective: str,
+    ) -> tuple[float, float]:
+        if isinstance(optimization_config, dict):
+            schema = optimization_config.get("objective_schema")
+            if isinstance(schema, dict):
+                definitions = schema.get("objectives")
+                if isinstance(definitions, list):
+                    for definition in definitions:
+                        if not (
+                            isinstance(definition, dict)
+                            and definition.get("name") == primary_objective
+                        ):
+                            continue
+                        band = definition.get("band")
+                        target = band.get("target") if isinstance(band, dict) else None
+                        if isinstance(target, list) and len(target) == 2:
+                            low, high = target
+                            if (
+                                isinstance(low, (int, float))
+                                and not isinstance(low, bool)
+                                and isinstance(high, (int, float))
+                                and not isinstance(high, bool)
+                                and math.isfinite(low)
+                                and math.isfinite(high)
+                                and low <= high
+                            ):
+                                return float(low), float(high)
+        raise ValueError(
+            f"Banded objective '{primary_objective}' requires a complete target band"
+        )
 
     def finalize_session(
         self, session_id: str, status: str | None = None

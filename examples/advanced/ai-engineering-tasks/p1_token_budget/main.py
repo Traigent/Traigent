@@ -52,6 +52,8 @@ except ImportError as e:
     print("Please install traigent and rich: pip install traigent rich")
     sys.exit(1)
 
+from traigent.core.objectives import create_default_objectives
+
 # Import local components
 from budget_config import (
     TOKEN_BUDGET_SEARCH_SPACE,
@@ -174,13 +176,22 @@ def _create_dummy_eval_dataset() -> str:
 @traigent.optimize(
     configuration_space=TOKEN_BUDGET_SEARCH_SPACE,
     eval_dataset=_create_dummy_eval_dataset(),
-    objectives=[
-        "avg_performance",  # Primary: maintain high performance
-        "cost_efficiency",  # Primary: maximize performance per dollar
-        "content_preservation",  # Primary: minimize information loss
-        "token_utilization",  # Secondary: efficient token usage
-        "-avg_processing_time_ms",  # Secondary: minimize latency
-    ],  # We want to maximize our primary objectives
+    objectives=create_default_objectives(
+        [
+            "avg_performance",
+            "cost_efficiency",
+            "content_preservation",
+            "token_utilization",
+            "avg_processing_time_ms",
+        ],
+        orientations={
+            "avg_performance": "maximize",
+            "cost_efficiency": "maximize",
+            "content_preservation": "maximize",
+            "token_utilization": "maximize",
+            "avg_processing_time_ms": "minimize",
+        },
+    ),
     offline=True,  # Run locally with no Traigent backend egress
 )
 def optimize_token_budget(

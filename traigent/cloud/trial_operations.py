@@ -1119,6 +1119,38 @@ class TrialOperations:
             )
             return False
 
+    @staticmethod
+    def _project_summary_metrics(summary_stats: dict[str, Any]) -> dict[str, Any]:
+        """Project aggregate summary metrics onto the scalar wire contract.
+
+        ``summary_stats`` retains the complete pandas.describe()-compatible
+        object. The sibling top-level ``metrics`` field accepts only numeric or
+        null values, so aggregate entries contribute their explicit ``mean``.
+        Already-scalar numeric/null entries pass through. Entries without a
+        numeric/null scalar or mean stay only in ``summary_stats``; inventing a
+        replacement value would misstate the result.
+        """
+        summary_metrics = summary_stats.get("metrics", {})
+        if not isinstance(summary_metrics, dict):
+            return {}
+
+        projected: dict[str, Any] = {}
+        for metric_name, aggregate in summary_metrics.items():
+            if isinstance(aggregate, dict):
+                if "mean" not in aggregate:
+                    continue
+                scalar = aggregate["mean"]
+            else:
+                scalar = aggregate
+
+            if scalar is not None and (
+                isinstance(scalar, bool) or not isinstance(scalar, (int, float))
+            ):
+                continue
+            projected[metric_name] = scalar
+
+        return dict(MeasuresDict(projected))
+
     async def submit_summary_stats(
         self,
         session_id: str,
@@ -1170,14 +1202,12 @@ class TrialOperations:
                 "total_examples": summary_stats.get("total_examples", 0),
             }
 
-            # IMPORTANT: Backend always expects metrics field
-            # For privacy mode, send summary stats as metrics
+            # Backend requires the scalar MeasureResults contract at the top
+            # level. Keep the complete aggregate object in summary_stats.
             submission_data = {
                 "trial_id": trial_id,
                 "config": self._redact_privacy_config(config),
-                "metrics": summary_stats.get(
-                    "metrics", {}
-                ),  # Send summary stats metrics here
+                "metrics": self._project_summary_metrics(summary_stats),
                 "metadata": submission_metadata,  # REQUIRED - backend expects this
                 "status": backend_status,
                 # Also include summary_stats for backend to detect privacy mode

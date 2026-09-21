@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+import pytest
+
 from traigent.core.stat_significance import (
     compute_significance,
     extract_trial_data_for_metric,
@@ -408,8 +410,7 @@ class TestComputeSignificance:
         # Trial 0 (lower cost) should win
         assert 0 in result["cost"]["winners"]
 
-    def test_heuristic_fallback_maximize(self):
-        """Heuristic defaults to maximize for unknown objectives."""
+    def test_unknown_objective_requires_orientation(self):
         trials = self._make_trials(
             [
                 [0.95, 0.92, 0.93, 0.94, 0.96, 0.91, 0.93, 0.95, 0.94, 0.92],
@@ -417,13 +418,12 @@ class TestComputeSignificance:
             ],
             "custom_score",
         )
-        result = compute_significance(
-            trials=trials,
-            objectives=["custom_score"],
-            objective_orientations=None,
-        )
-        assert "custom_score" in result
-        assert 0 in result["custom_score"]["winners"]
+        with pytest.raises(ValueError, match="has no declared orientation"):
+            compute_significance(
+                trials=trials,
+                objectives=["custom_score"],
+                objective_orientations=None,
+            )
 
     def test_multiple_objectives(self):
         """Handles multiple objectives in a single call."""

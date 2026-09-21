@@ -1452,6 +1452,7 @@ class BackendSessionManager:
         promotion_policy: dict[str, Any] | None = None,
         tvl_governance: dict[str, Any] | None = None,
         experiment_display_name: str | None = None,
+        agent_key: str | None = None,
         run_title: str | None = None,
         run_description: str | None = None,
         warm_start_from: str | None = None,
@@ -1625,15 +1626,18 @@ class BackendSessionManager:
                 policy_requires_cloud(_policy) or policy_is_cloud_brain(_policy)
             )
 
-            # `agent_key` pins agent identity explicitly on the wire. It is set to
-            # `portal_name` — byte-identical to the value the backend has always
-            # normalized into an identity — so nothing re-keys on upgrade. Sending it
-            # explicitly means identity no longer depends on whatever `function_name`
-            # happens to carry, which is what let a per-run label fragment an agent's
-            # optimization history into one-run cohorts.
+            # `agent_key` is declared only when the caller supplied a stable agent
+            # identity. The generated portal label remains the legacy display/routing
+            # key, but is not promoted to identity when it is derived from objectives,
+            # knobs, or the function descriptor.
+            declared_agent_key = (
+                agent_key.strip()
+                if isinstance(agent_key, str) and agent_key.strip()
+                else None
+            )
             raw_result = self._backend_client.create_session(
                 function_name=portal_name,
-                agent_key=portal_name,
+                agent_key=declared_agent_key,
                 run_title=run_title,
                 run_description=run_description,
                 search_space=getattr(self._optimizer, "config_space", {}),
@@ -1760,6 +1764,14 @@ class BackendSessionManager:
                 "baseline_config": None,
                 "objectives": list(self._objectives or []),
             }
+            if self._objective_schema is not None:
+                optimization_config["objective_schema"] = (
+                    self._objective_schema.to_dict()
+                )
+                optimization_config["objective_orientations"] = {
+                    objective.name: objective.orientation
+                    for objective in self._objective_schema.objectives
+                }
             metadata: dict[str, Any] = {
                 "optimization_id": self._optimization_id,
                 "max_trials": max_trials,

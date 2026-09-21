@@ -17,11 +17,13 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from traigent.cloud.api_operations import ApiOperations
-from traigent.cloud.client import CloudServiceError
+from traigent.cloud.client import CloudServiceError, TraigentCloudClient
 from traigent.cloud.governance import build_tvl_governance, promotion_policy_to_wire
 from traigent.cloud.models import SessionCreationRequest
 from traigent.config.types import _reset_deprecation_warning_state_for_tests
+from traigent.config.types import TraigentConfig
 from traigent.core.session_types import SessionCreationFailureDetail
+from traigent.core.optimized_function import OptimizedFunction
 
 # SDK #2033: opt into the connected/backend code paths (see pyproject markers).
 pytestmark = pytest.mark.backend_online
@@ -70,6 +72,38 @@ class TestContractGate:
 
         assert request.evaluator_id is None
         assert request.evaluator_definition_id == "evaluator-1"
+        assert request.evaluator_id_source == "registered"
+
+    def test_session_request_accepts_declared_evaluator_identity(self):
+        request = _request(
+            evaluator_id=" logical-evaluator ", evaluator_id_source="declared"
+        )
+
+        assert request.evaluator_id == "logical-evaluator"
+        assert request.evaluator_id_source == "declared"
+
+    def test_session_request_preserves_explicit_registered_evaluator_identity(self):
+        request = _request(
+            evaluator_id="registered-evaluator", evaluator_id_source="registered"
+        )
+
+        payload = _ops()._build_session_payload(request, 5)
+
+        assert payload["evaluator_id"] == "registered-evaluator"
+        assert payload["evaluator_id_source"] == "registered"
+
+    def test_session_request_rejects_invalid_evaluator_source(self):
+        with pytest.raises(ValueError, match="registered, declared, or unknown"):
+            _request(evaluator_id="evaluator-1", evaluator_id_source="derived")
+
+    @pytest.mark.parametrize("source", ["registered", "declared"])
+    def test_session_request_rejects_evaluator_source_without_id(self, source):
+        with pytest.raises(ValueError, match="requires an evaluator id"):
+            _request(evaluator_id_source=source)
+
+    def test_session_request_rejects_unknown_source_with_id(self):
+        with pytest.raises(ValueError, match="unknown cannot be used"):
+            _request(evaluator_id="evaluator-1", evaluator_id_source="unknown")
 
     def test_session_request_rejects_both_evaluator_identity_aliases(self):
         with pytest.raises(ValueError, match="provide only one"):
@@ -91,7 +125,9 @@ class TestContractGate:
         # governed path (is_typed_create_request)
         assert payload["function_name"] == "answer_question"
         assert payload["configuration_space"]["model"]["choices"] == ["cheap", "strong"]
-        assert payload["objectives"] == ["accuracy"]
+        assert payload["objectives"] == [
+            {"name": "accuracy", "orientation": "maximize"}
+        ]
         assert payload["dataset_metadata"]["size"] == 12
         assert payload["promotion_policy"] == STRICT_POLICY
         assert payload["tvl_governance"] == GOVERNANCE
@@ -109,10 +145,12 @@ class TestContractGate:
         payload = _ops()._build_session_payload(_request(objectives=["minimize"]), 5)
         assert payload["objectives"] == [{"name": "score", "orientation": "minimize"}]
 
-    def test_typed_real_metric_objective_is_unchanged(self, monkeypatch):
+    def test_typed_real_metric_objective_gains_canonical_direction(self, monkeypatch):
         monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
         payload = _ops()._build_session_payload(_request(objectives=["accuracy"]), 5)
-        assert payload["objectives"] == ["accuracy"]
+        assert payload["objectives"] == [
+            {"name": "accuracy", "orientation": "maximize"}
+        ]
 
     def test_typed_direction_objective_dedupes_generated_score(self, monkeypatch):
         monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
@@ -128,7 +166,7 @@ class TestContractGate:
         )
         assert payload["objectives"] == [
             {"name": "score", "orientation": "maximize"},
-            "accuracy",
+            {"name": "accuracy", "orientation": "maximize"},
         ]
 
     def test_legacy_contract_refuses_governed_sessions(self, monkeypatch):
@@ -221,15 +259,157 @@ class TestContractGate:
         assert "raw evaluator source" not in blob
         assert "SECRET_PROMPT_b7e1" not in blob
 
-    def test_explicit_evaluator_definition_identity_is_preserved(self, monkeypatch):
+        assert payload["identity_version"] == 2
+        assert payload["agent_id"] is None
+        assert payload["agent_id_source"] == "unknown"
+        assert payload["dataset_id"] == "dev"
+        assert payload["dataset_id_source"] == "declared"
+        assert payload["evaluator_id_source"] == "unknown"
+        assert payload["artifact_versions"] == {
+            "agent": {
+                "schema": "fp1",
+                "digest": "sha256:" + ("b" * 64),
+                "state": "verified",
+            },
+            "dataset": {
+                "schema": "fp1",
+                "digest": "sha256:" + ("a" * 64),
+                "state": "verified",
+            },
+            "evaluator": {"schema": "fp1", "digest": None, "state": "unknown"},
+            "config_space": {"schema": "fp1", "digest": None, "state": "unknown"},
+        }
+
+    def test_identity_v2_uses_only_explicit_agent_key_and_marks_absence_unknown(
+        self, monkeypatch
+    ):
+        monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
+        payload = _ops()._build_session_payload(
+            _request(
+                function_name="this_must_never_be_an_identity",
+                agent_key="  stable-agent  ",
+                metadata={},
+                dataset_metadata={"size": 12},
+            ),
+            5,
+        )
+        assert payload["agent_id"] == "stable-agent"
+        assert payload["agent_id_source"] == "declared"
+        assert payload["dataset_id"] is None
+        assert payload["dataset_id_source"] == "unknown"
+        assert all(
+            version == {"schema": "fp1", "digest": None, "state": "unknown"}
+            for version in payload["artifact_versions"].values()
+        )
+
+    @pytest.mark.parametrize(
+        ("experiment_name", "expected_agent_key"),
+        [("stable-agent", "stable-agent"), (None, None)],
+    )
+    def test_optimized_function_handoff_preserves_only_explicit_agent_identity(
+        self, monkeypatch, experiment_name, expected_agent_key
+    ):
+        """The production decorator handoff must not promote display labels."""
+
+        captured: dict[str, object] = {}
+
+        class CapturingOrchestrator:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        monkeypatch.setattr(
+            "traigent.core.optimized_function.OptimizationOrchestrator",
+            CapturingOrchestrator,
+        )
+
+        def answer(text: str) -> str:
+            return text
+
+        optimized = OptimizedFunction(
+            func=answer,
+            objectives=["accuracy"],
+            configuration_space={"model": ["cheap"]},
+            experiment_name=experiment_name,
+        )
+        optimizer = Mock()
+        optimizer.config_space = {"model": ["cheap"]}
+        evaluator = Mock()
+
+        optimized._build_optimization_orchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=1,
+            max_total_examples_value=None,
+            timeout=None,
+            callbacks=None,
+            traigent_config=TraigentConfig(
+                no_egress=True,
+                enable_usage_analytics=False,
+            ),
+            effective_parallel_trials=None,
+            samples_include_pruned_value=True,
+            algorithm_kwargs={},
+            artifact_fingerprint_payload={},
+        )
+
+        assert captured["agent_key"] == expected_agent_key
+
+    def test_direct_cloud_client_serializer_emits_the_same_identity_v2_contract(self):
+        request = _request(
+            agent_key="stable-agent",
+            dataset_id="stable-dataset",
+            evaluator_id="registered-evaluator",
+            artifact_fingerprints={"config_space": "fp1:" + ("c" * 64)},
+        )
+        fake_self = Mock()
+        fake_self._ensure_owner_metadata = lambda metadata: metadata or {}
+        payload = TraigentCloudClient._serialize_session_request(fake_self, request)
+
+        assert payload["identity_version"] == 2
+        assert payload["agent_id"] == "stable-agent"
+        assert payload["dataset_id"] == "stable-dataset"
+        assert payload["evaluator_id"] == "registered-evaluator"
+        assert payload["evaluator_id_source"] == "registered"
+        assert payload["artifact_versions"]["config_space"] == {
+            "schema": "fp1",
+            "digest": "sha256:" + ("c" * 64),
+            "state": "verified",
+        }
+
+    def test_declared_evaluator_identity_is_not_promoted_to_registered(self):
+        request = _request(
+            evaluator_id="logical-evaluator", evaluator_id_source="declared"
+        )
+        fake_self = Mock()
+        fake_self._ensure_owner_metadata = lambda metadata: metadata or {}
+
+        payload = TraigentCloudClient._serialize_session_request(fake_self, request)
+
+        assert payload["evaluator_id"] == "logical-evaluator"
+        assert payload["evaluator_id_source"] == "declared"
+
+    def test_direct_serializer_omits_unset_optional_schema_fields(self):
+        request = _request()
+        fake_self = Mock()
+        fake_self._ensure_owner_metadata = lambda metadata: metadata or {}
+
+        payload = TraigentCloudClient._serialize_session_request(fake_self, request)
+
+        assert "optimization_strategy" not in payload
+        assert "user_id" not in payload
+
+    def test_explicit_evaluator_definition_identity_is_canonicalized_for_v2(
+        self, monkeypatch
+    ):
         monkeypatch.delenv("TRAIGENT_SESSION_CONTRACT", raising=False)
         payload = _ops()._build_session_payload(
             _request(evaluator_definition_id="eval_registered_1"),
             5,
         )
 
-        assert "evaluator_id" not in payload
-        assert payload["evaluator_definition_id"] == "eval_registered_1"
+        assert payload["evaluator_id"] == "eval_registered_1"
+        assert payload["evaluator_id_source"] == "registered"
+        assert "evaluator_definition_id" not in payload
 
     def test_unregistered_evaluator_does_not_fabricate_definition_identity(
         self, monkeypatch
@@ -239,6 +419,7 @@ class TestContractGate:
 
         assert "evaluator_id" not in payload
         assert "evaluator_definition_id" not in payload
+        assert payload["evaluator_id_source"] == "unknown"
 
 
 class TestAutoFallback:

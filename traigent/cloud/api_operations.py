@@ -30,6 +30,7 @@ from traigent.cloud.models import (
     SessionCreationResponse,
     TrialResultSubmission,
     session_dataset_identity_to_wire,
+    session_identity_v2_to_wire,
     session_narrative_to_wire,
     session_task_type_to_wire,
 )
@@ -761,6 +762,13 @@ class ApiOperations:
             payload["smart_pruning"] = wire_smart_pruning
         self._attach_evaluator_identity(payload, session_request)
         self._attach_artifact_fingerprint_payload(payload, session_request)
+        # Identity-v2 is typed-only.  The evaluator-definition spelling is a
+        # legacy alias; v2 carries its canonical value in evaluator_id so the
+        # Schema source/value correlation remains valid.
+        identity_v2 = session_identity_v2_to_wire(session_request)
+        if "evaluator_id" in identity_v2:
+            payload.pop("evaluator_definition_id", None)
+        payload.update(identity_v2)
         return payload
 
     def _build_legacy_session_payload(
@@ -777,6 +785,14 @@ class ApiOperations:
         if warn_boolean_config_values:
             _warn_boolean_config_values(session_request.configuration_space)
 
+        typed_objectives = normalize_typed_objectives(session_request.objectives)
+        first_objective = typed_objectives[0]
+        if not isinstance(first_objective, dict):
+            raise SessionContractError(
+                "Legacy sessions require an objective with an explicit orientation"
+            )
+        optimization_goal = first_objective.get("orientation")
+
         payload: dict[str, Any] = {
             "problem_statement": session_request.function_name,
             "dataset": {
@@ -787,11 +803,7 @@ class ApiOperations:
             "optimization_config": {
                 "algorithm": "grid",
                 "max_trials": max_trials,
-                "optimization_goal": (
-                    session_request.objectives[0]
-                    if session_request.objectives
-                    else "maximize"
-                ),
+                "optimization_goal": optimization_goal,
             },
             "metadata": {
                 "function_name": session_request.function_name,

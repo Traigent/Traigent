@@ -698,8 +698,9 @@ class TestDetermineObjectiveOrientations:
         assert orientations["accuracy"] is True
         assert orientations["cost"] is False
 
-    def test_falls_back_to_heuristics(self, plotter: PlotGenerator) -> None:
-        """Test that heuristics are used when no metadata available."""
+    def test_falls_back_to_exact_canonical_defaults(
+        self, plotter: PlotGenerator
+    ) -> None:
         result = OptimizationResult(
             trials=[],
             best_config={},
@@ -708,26 +709,25 @@ class TestDetermineObjectiveOrientations:
             duration=1.0,
             convergence_info={},
             status=OptimizationStatus.COMPLETED,
-            objectives=["accuracy", "cost", "latency", "error", "f1_score"],
+            objectives=["accuracy", "cost", "latency", "error_rate", "success"],
             algorithm="test",
             timestamp=datetime.now(UTC),
             metadata={},
         )
 
         orientations = plotter._determine_objective_orientations(
-            result, ["accuracy", "cost", "latency", "error", "f1_score"]
+            result, ["accuracy", "cost", "latency", "error_rate", "success"]
         )
 
-        # accuracy and f1_score should be maximize (heuristic)
         assert orientations["accuracy"] is True
-        assert orientations["f1_score"] is True
-        # cost, latency, error should be minimize (heuristic)
+        assert orientations["success"] is True
         assert orientations["cost"] is False
         assert orientations["latency"] is False
-        assert orientations["error"] is False
+        assert orientations["error_rate"] is False
 
-    def test_heuristic_patterns(self, plotter: PlotGenerator) -> None:
-        """Test various heuristic patterns for minimize."""
+    def test_custom_name_without_metadata_is_rejected(
+        self, plotter: PlotGenerator
+    ) -> None:
         result = OptimizationResult(
             trials=[],
             best_config={},
@@ -736,20 +736,16 @@ class TestDetermineObjectiveOrientations:
             duration=1.0,
             convergence_info={},
             status=OptimizationStatus.COMPLETED,
-            objectives=["loss", "time", "duration", "accuracy"],
+            objectives=["cost_savings", "duration", "accuracy"],
             algorithm="test",
             timestamp=datetime.now(UTC),
             metadata={},
         )
 
-        orientations = plotter._determine_objective_orientations(
-            result, ["loss", "time", "duration", "accuracy"]
-        )
-
-        assert orientations["loss"] is False  # minimize
-        assert orientations["time"] is False  # minimize
-        assert orientations["duration"] is False  # minimize
-        assert orientations["accuracy"] is True  # maximize
+        with pytest.raises(ValueError, match="has no declared orientation"):
+            plotter._determine_objective_orientations(
+                result, ["cost_savings", "duration", "accuracy"]
+            )
 
     def test_metadata_orientations_override_schema(
         self, plotter: PlotGenerator

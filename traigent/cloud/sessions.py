@@ -24,12 +24,48 @@ from traigent.cloud.models import (
     TrialStatus,
     TrialSuggestion,
 )
+from traigent.core.objective_directions import (
+    resolve_objective_orientation,
+    validate_objective_orientation,
+)
 from traigent.utils.exceptions import SessionError
 from traigent.utils.logging import get_logger
-from traigent.utils.objectives import is_minimization_objective
 
 logger = get_logger(__name__)
 _SECURE_RANDOM = SystemRandom()
+
+
+def _session_objective_orientation(name: str, metadata: dict[str, Any] | None) -> str:
+    """Resolve a session objective from its persisted declaration."""
+    metadata = metadata or {}
+    schema = metadata.get("objective_schema")
+    definitions: Any = []
+    if isinstance(schema, dict):
+        definitions = schema.get("objectives", [])
+    else:
+        definitions = getattr(schema, "objectives", [])
+    for definition in definitions or []:
+        definition_name = getattr(definition, "name", None)
+        orientation = getattr(definition, "orientation", None)
+        if isinstance(definition, dict):
+            definition_name = definition.get("name", definition_name)
+            orientation = definition.get("orientation", orientation)
+        if definition_name == name:
+            if orientation == "band":
+                raise ValueError(
+                    f"Objective {name!r} is target-banded and cannot be ranked "
+                    "by this scalar session comparator."
+                )
+            return validate_objective_orientation(name, str(orientation))
+
+    persisted = metadata.get("objective_orientations")
+    if isinstance(persisted, dict) and name in persisted:
+        declared = persisted[name]
+        if isinstance(declared, bool):
+            declared = "maximize" if declared else "minimize"
+        return validate_objective_orientation(name, str(declared))
+    return resolve_objective_orientation(name)
+
 
 # Import validation utilities for enhanced state management
 try:
@@ -160,6 +196,8 @@ class SessionState:
             raise ValueError("Session cannot be None")
 
         self.session = session
+        for objective in session.objectives:
+            _session_objective_orientation(objective, session.metadata)
         self.mapping = mapping
         self.created_at = time.time()
         self.last_updated = self.created_at
@@ -341,7 +379,10 @@ class SessionState:
         if current_value is None or new_value is None:
             return new_value is not None  # Prefer having a value
 
-        if is_minimization_objective(primary_objective):
+        if (
+            _session_objective_orientation(primary_objective, self.session.metadata)
+            == "minimize"
+        ):
             return new_value < current_value
         return new_value > current_value
 
@@ -584,6 +625,10 @@ class SessionManager:
                     f"{self.max_sessions_per_user} active sessions"
                 )
 
+        session_metadata = metadata or {}
+        for objective in objectives:
+            _session_objective_orientation(objective, session_metadata)
+
         # Create session
         session = OptimizationSession(
             session_id=str(uuid.uuid4()),
@@ -595,7 +640,7 @@ class SessionManager:
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
             optimization_strategy=optimization_strategy or self._default_strategy(),
-            metadata=metadata or {},
+            metadata=session_metadata,
         )
 
         await self.storage.create(session)
@@ -701,9 +746,7 @@ class SessionManager:
 
         # Update best results if improved
         if result.status == TrialStatus.COMPLETED and result.metrics:
-            if self._is_better(
-                result.metrics, session.best_metrics, session.objectives
-            ):
+            if self._is_better(result.metrics, session.best_metrics, session):
                 # Get config from the suggestion
                 suggestion = self._pending_trials.get(result.trial_id)
                 if suggestion:
@@ -901,7 +944,7 @@ class SessionManager:
         self,
         new_metrics: dict[str, float],
         best_metrics: dict[str, float] | None,
-        objectives: list[str],
+        session: OptimizationSession,
     ) -> bool:
         """Check if new metrics are better than current best."""
         if not best_metrics:
@@ -909,12 +952,12 @@ class SessionManager:
 
         # Simple comparison: check if primary objective improved
         if (
-            objectives
-            and objectives[0] in new_metrics
-            and objectives[0] in best_metrics
+            session.objectives
+            and session.objectives[0] in new_metrics
+            and session.objectives[0] in best_metrics
         ):
-            primary = objectives[0]
-            if is_minimization_objective(primary):
+            primary = session.objectives[0]
+            if _session_objective_orientation(primary, session.metadata) == "minimize":
                 return new_metrics[primary] < best_metrics[primary]
             return new_metrics[primary] > best_metrics[primary]
 

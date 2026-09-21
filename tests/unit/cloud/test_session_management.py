@@ -182,7 +182,10 @@ class TestSessionManager:
             configuration_space={"temperature": (0.0, 1.0)},
             objectives=["accuracy", "speed"],
             max_trials=100,
-            metadata={"user_id": "test_user"},
+            metadata={
+                "user_id": "test_user",
+                "objective_orientations": {"speed": "maximize"},
+            },
         )
 
         assert session.session_id is not None
@@ -190,6 +193,48 @@ class TestSessionManager:
         assert session.max_trials == 100
         assert session.status == OptimizationSessionStatus.ACTIVE
         assert session.optimization_strategy is not None
+
+    @pytest.mark.asyncio
+    async def test_create_session_rejects_unknown_bare_objective_early(
+        self, session_manager
+    ):
+        with pytest.raises(ValueError, match="has no declared orientation"):
+            await session_manager.create_session(
+                function_name="plugin_agent",
+                configuration_space={},
+                objectives=["plugin_quality"],
+                max_trials=2,
+            )
+
+    @pytest.mark.asyncio
+    async def test_session_comparison_uses_declared_custom_direction(
+        self, session_manager
+    ):
+        session = await session_manager.create_session(
+            function_name="plugin_agent",
+            configuration_space={},
+            objectives=["plugin_quality"],
+            max_trials=2,
+            metadata={"objective_orientations": {"plugin_quality": "minimize"}},
+        )
+
+        assert session_manager._is_better(
+            {"plugin_quality": 0.1}, {"plugin_quality": 0.2}, session
+        )
+
+    @pytest.mark.asyncio
+    async def test_session_comparison_honors_explicit_known_name_override(
+        self, session_manager
+    ):
+        session = await session_manager.create_session(
+            function_name="revenue_agent",
+            configuration_space={},
+            objectives=["cost"],
+            max_trials=2,
+            metadata={"objective_orientations": {"cost": "maximize"}},
+        )
+
+        assert session_manager._is_better({"cost": 2.0}, {"cost": 1.0}, session)
 
     @pytest.mark.asyncio
     async def test_user_session_limit(self, session_manager):

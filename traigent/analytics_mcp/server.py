@@ -39,9 +39,12 @@ from traigent.analytics_mcp.tools import (
     analytics_list_experiment_groups_tool,
     analytics_render_chart_tool,
     auth_status_tool,
+    director_start_tool,
+    director_state_tool,
+    director_turn_tool,
     health_check_tool,
-    observability_compare_cohorts_tool,
     observability_build_change_brief_tool,
+    observability_compare_cohorts_tool,
     observability_get_analysis_insights_tool,
     observability_get_issue_tool,
     observability_get_related_changes_tool,
@@ -50,7 +53,12 @@ from traigent.analytics_mcp.tools import (
     observability_list_issues_tool,
     observability_search_traces_tool,
 )
-from traigent.cloud.analytics_client import SUPPORTED_DECISION_INTENTS
+from traigent.cloud.analytics_client import (
+    DIRECTOR_INTENTS,
+    DIRECTOR_REPORT_STATUSES,
+    DIRECTOR_WORKFLOW_KINDS,
+    SUPPORTED_DECISION_INTENTS,
+)
 
 _MCP_INSTALL_MESSAGE = (
     "The optional MCP dependency is not installed. "
@@ -509,6 +517,63 @@ def create_server() -> Any:
             tool_limit,
             insights_limit,
         )
+
+    @server.tool(
+        description=(
+            "Open an advisory Director session (v0, ADVISORY ONLY -- never "
+            "authorizes spend, promotion, or change). Requires an explicit "
+            "project_id; workflow_kind is closed "
+            f"({', '.join(DIRECTOR_WORKFLOW_KINDS)}); run_ids attaches at "
+            "most one run at create time. No free-text field is accepted. "
+            "Backend auth required."
+        )
+    )
+    async def director_start(
+        project_id: str,
+        workflow_kind: str = "optimization_run_advisory",
+        run_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return await director_start_tool(project_id, workflow_kind, run_ids)
+
+    @server.tool(
+        description=(
+            "Advance an advisory Director session by one turn (v0, ADVISORY "
+            "ONLY). Requires session_id and session_revision (from the last "
+            "state/turn read). intent is closed "
+            f"({', '.join(DIRECTOR_INTENTS)}); the optional report block "
+            "closes the instruction loop with {instruction_id, status "
+            f"({', '.join(DIRECTOR_REPORT_STATUSES)}), run_id?}}. The "
+            "optional client_report block reports validity checks as "
+            "{validity_checks: [{check (scorer_discrimination | "
+            "split_integrity), status (passed|failed|missing), "
+            "confidence_label?}]} (at most 20) -- a failed/missing check "
+            "deterministically blocks run_optimization/promote_winner before "
+            "any model call. No free-text field is accepted anywhere on "
+            "this call -- a 409 stale_revision is returned as a structured, "
+            "recoverable result carrying the current revision to re-read "
+            "state with. Backend auth required."
+        )
+    )
+    async def director_turn(
+        session_id: str,
+        session_revision: int,
+        intent: str = "ask_next_step",
+        report: dict[str, Any] | None = None,
+        client_report: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return await director_turn_tool(
+            session_id, session_revision, intent, report, client_report
+        )
+
+    @server.tool(
+        description=(
+            "Read the current state of an advisory Director session (v0, "
+            "ADVISORY ONLY). Pure read: never advances revision, never calls "
+            "the model. Requires session_id. Backend auth required."
+        )
+    )
+    async def director_state(session_id: str) -> dict[str, Any]:
+        return await director_state_tool(session_id)
 
     return server
 

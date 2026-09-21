@@ -24,6 +24,7 @@ Design rules enforced here:
 from __future__ import annotations
 
 import math
+import re
 from datetime import datetime, timedelta
 from typing import Any, cast
 
@@ -75,6 +76,9 @@ ANALYTICS_TOOL_NAMES: tuple[str, ...] = (
     "observability_compare_cohorts",
     "observability_get_related_changes",
     "observability_build_change_brief",
+    "director_start",
+    "director_turn",
+    "director_state",
     "analytics_list_experiment_groups",
     "analytics_get_experiment_group",
     "analytics_list_experiment_group_configuration_runs",
@@ -201,6 +205,161 @@ def _bounded_optional_text(
 
 class _ToolInputError(ValueError):
     """Raised for user-correctable analytics MCP tool input errors."""
+
+
+# === Director v0 (advisory-only) input validation ===
+#
+# C1 (frozen contract): the Director tools accept no client-composed free
+# text. Every field validated below is an enum, an integer, or a
+# server-issued identifier pattern.
+_DIRECTOR_INSTRUCTION_ID_PATTERN = re.compile(r"^di_[0-9a-f]{32}$")
+
+
+def _validate_workflow_kind(value: str) -> str:
+    from traigent.cloud.analytics_client import DIRECTOR_WORKFLOW_KINDS
+
+    text = _require_identifier(value, field="workflow_kind")
+    if text not in DIRECTOR_WORKFLOW_KINDS:
+        allowed = ", ".join(DIRECTOR_WORKFLOW_KINDS)
+        raise _ToolInputError(f"workflow_kind must be one of: {allowed}.")
+    return text
+
+
+def _validate_director_run_ids(value: list[str] | None) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise _ToolInputError("run_ids must be a list of run identifiers.")
+    if len(value) > 1:
+        raise _ToolInputError("run_ids accepts at most one run id in slice 1.")
+    return [_bounded_identifier(run_id, field="run_ids") for run_id in value]
+
+
+def _validate_director_intent(value: str) -> str:
+    from traigent.cloud.analytics_client import DIRECTOR_INTENTS
+
+    text = _require_identifier(value, field="intent")
+    if text not in DIRECTOR_INTENTS:
+        allowed = ", ".join(DIRECTOR_INTENTS)
+        raise _ToolInputError(f"intent must be one of: {allowed}.")
+    return text
+
+
+def _validate_director_report(
+    value: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    from traigent.cloud.analytics_client import DIRECTOR_REPORT_STATUSES
+
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise _ToolInputError("report must be an object.")
+    allowed_fields = {"instruction_id", "status", "run_id"}
+    extra = sorted(set(value).difference(allowed_fields))
+    if extra:
+        raise _ToolInputError(
+            f"report contains unsupported field(s): {', '.join(extra)}."
+        )
+    instruction_id = value.get("instruction_id")
+    if not isinstance(
+        instruction_id, str
+    ) or not _DIRECTOR_INSTRUCTION_ID_PATTERN.match(instruction_id):
+        raise _ToolInputError(
+            "report.instruction_id must match 'di_' followed by 32 hex characters."
+        )
+    status = value.get("status")
+    if status not in DIRECTOR_REPORT_STATUSES:
+        allowed = ", ".join(DIRECTOR_REPORT_STATUSES)
+        raise _ToolInputError(f"report.status must be one of: {allowed}.")
+    clean: dict[str, Any] = {"instruction_id": instruction_id, "status": status}
+    run_id = value.get("run_id")
+    if run_id is not None:
+        clean["run_id"] = _bounded_identifier(str(run_id), field="report.run_id")
+    return clean
+
+
+_DIRECTOR_VALIDITY_CHECKS_MAX_ITEMS = 20
+
+
+def _validate_director_client_report(
+    value: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Validate ``client_report`` against the frozen contract (R1 feed).
+
+    ``client_report.validity_checks`` feeds deterministic rule R1: a
+    client-reported failed/missing validity check BLOCKS ``run_optimization``
+    and ``promote_winner`` before any model call. Every element is validated
+    field-by-field against closed enums -- C1 still holds: there is no
+    ``detail``/``notes`` field anywhere on this object, and an unknown key on
+    either the outer object or an individual check is rejected outright.
+    """
+    from traigent.cloud.analytics_client import (
+        DIRECTOR_CONFIDENCE_LABELS,
+        DIRECTOR_VALIDITY_CHECKS,
+        DIRECTOR_VALIDITY_STATUSES,
+    )
+
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise _ToolInputError("client_report must be an object.")
+    allowed_fields = {"validity_checks"}
+    extra = sorted(set(value).difference(allowed_fields))
+    if extra:
+        raise _ToolInputError(
+            f"client_report contains unsupported field(s): {', '.join(extra)}."
+        )
+
+    checks = value.get("validity_checks")
+    if checks is None:
+        return {}
+    if not isinstance(checks, list):
+        raise _ToolInputError("client_report.validity_checks must be a list.")
+    if len(checks) > _DIRECTOR_VALIDITY_CHECKS_MAX_ITEMS:
+        raise _ToolInputError(
+            "client_report.validity_checks must contain at most "
+            f"{_DIRECTOR_VALIDITY_CHECKS_MAX_ITEMS} items."
+        )
+
+    allowed_item_fields = {"check", "status", "confidence_label"}
+    clean_checks: list[dict[str, Any]] = []
+    for index, item in enumerate(checks):
+        if not isinstance(item, dict):
+            raise _ToolInputError(
+                f"client_report.validity_checks[{index}] must be an object."
+            )
+        item_extra = sorted(set(item).difference(allowed_item_fields))
+        if item_extra:
+            raise _ToolInputError(
+                f"client_report.validity_checks[{index}] contains unsupported "
+                f"field(s): {', '.join(item_extra)}."
+            )
+        check = item.get("check")
+        if check not in DIRECTOR_VALIDITY_CHECKS:
+            allowed = ", ".join(DIRECTOR_VALIDITY_CHECKS)
+            raise _ToolInputError(
+                f"client_report.validity_checks[{index}].check must be one "
+                f"of: {allowed}."
+            )
+        status = item.get("status")
+        if status not in DIRECTOR_VALIDITY_STATUSES:
+            allowed = ", ".join(DIRECTOR_VALIDITY_STATUSES)
+            raise _ToolInputError(
+                f"client_report.validity_checks[{index}].status must be one "
+                f"of: {allowed}."
+            )
+        clean_item: dict[str, Any] = {"check": check, "status": status}
+        confidence_label = item.get("confidence_label")
+        if confidence_label is not None:
+            if confidence_label not in DIRECTOR_CONFIDENCE_LABELS:
+                allowed = ", ".join(DIRECTOR_CONFIDENCE_LABELS)
+                raise _ToolInputError(
+                    f"client_report.validity_checks[{index}].confidence_label "
+                    f"must be one of: {allowed}."
+                )
+            clean_item["confidence_label"] = confidence_label
+        clean_checks.append(clean_item)
+    return {"validity_checks": clean_checks}
 
 
 def _bounded_identifier_list(value: object, *, field: str, maximum: int) -> list[str]:
@@ -429,6 +588,41 @@ def _http_status_failure(
         return _failure(
             f"The requested {what} was not found on the configured backend.",
             code="not_found",
+            http_status=status,
+            backend_url=backend_url,
+        )
+    if status == 409:
+        # Director v0 state-rules.md §2: a stale-revision or idempotency
+        # conflict is a NORMAL, recoverable outcome -- never a generic
+        # failure. Surface the backend's own error code (and, for
+        # stale_revision, the current revision so the caller can re-read
+        # state and retry) instead of collapsing it into backend_unavailable.
+        payload = _response_payload(response)
+        error = payload.get("error") if isinstance(payload, dict) else None
+        code = error.get("code") if isinstance(error, dict) else None
+        message = error.get("message") if isinstance(error, dict) else None
+        recognized_codes = {
+            "stale_revision",
+            "idempotency_key_reuse",
+            "turn_in_flight",
+        }
+        result = _failure(
+            message
+            or f"The {what} request conflicts with the session's current state.",
+            code=code if code in recognized_codes else "conflict",
+            http_status=status,
+            backend_url=backend_url,
+        )
+        if isinstance(error, dict) and isinstance(error.get("current_revision"), int):
+            result["current_revision"] = error["current_revision"]
+        return result
+    if status == 400:
+        payload = _response_payload(response)
+        error = payload.get("error") if isinstance(payload, dict) else None
+        message = error.get("message") if isinstance(error, dict) else None
+        return _failure(
+            message or f"The {what} request was rejected as invalid.",
+            code="validation_error",
             http_status=status,
             backend_url=backend_url,
         )
@@ -1532,3 +1726,90 @@ async def observability_build_change_brief_tool(
             "recommendations": recommendations,
         },
     }
+
+
+# === Director v0 (advisory-only) tools ===
+#
+# Thin pass-throughs to the backend's three advisory Director endpoints
+# (BackendAnalyticsClient.director_start / director_turn / director_state).
+# Frozen contract: ~/.claude/plans/director-v0-contract/ rev 2. v0 is
+# ADVISORY ONLY -- these tools never authorize spend, promotion, or change.
+#
+# C1: no free-text parameter anywhere. director_turn accepts only session
+# identity, the closed `intent` enum, and the typed `report` block.
+
+
+async def director_start_tool(
+    project_id: str,
+    workflow_kind: str = "optimization_run_advisory",
+    run_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Open an advisory Director session for a project (v0, advisory only)."""
+    try:
+        pid = _require_identifier(project_id, field="project_id")
+        kind = _validate_workflow_kind(workflow_kind)
+        cleaned_run_ids = _validate_director_run_ids(run_ids)
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_backend(
+        lambda reader: reader.director_start(
+            pid, workflow_kind=kind, run_ids=cleaned_run_ids
+        ),
+        what="director session",
+    )
+
+
+async def director_turn_tool(
+    session_id: str,
+    session_revision: int,
+    intent: str = "ask_next_step",
+    report: dict[str, Any] | None = None,
+    client_report: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Advance an advisory Director session by one turn (v0, advisory only).
+
+    A ``409 stale_revision`` (or other turn conflict) is returned as a
+    structured ``ok=False`` result carrying the backend's error code -- and,
+    for ``stale_revision``, the ``current_revision`` to re-read state with --
+    rather than as a generic failure.
+
+    ``client_report`` carries ``{validity_checks: [{check, status,
+    confidence_label?}]}`` and feeds deterministic rule R1 (a failed/missing
+    validity check blocks ``run_optimization``/``promote_winner`` before any
+    model call). Every element is validated against closed enums; there is
+    no free-text field on this object.
+    """
+    try:
+        sid = _bounded_identifier(session_id, field="session_id")
+        clean_intent = _validate_director_intent(intent)
+        clean_report = _validate_director_report(report)
+        clean_client_report = _validate_director_client_report(client_report)
+        if (
+            not isinstance(session_revision, int)
+            or isinstance(session_revision, bool)
+            or session_revision < 1
+        ):
+            raise _ToolInputError("session_revision must be an integer of at least 1.")
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_backend(
+        lambda reader: reader.director_turn(
+            sid,
+            session_revision,
+            intent=clean_intent,
+            report=clean_report,
+            client_report=clean_client_report,
+        ),
+        what="director turn",
+    )
+
+
+async def director_state_tool(session_id: str) -> dict[str, Any]:
+    """Fetch the current state of an advisory Director session (read-only)."""
+    try:
+        sid = _bounded_identifier(session_id, field="session_id")
+    except _ToolInputError as exc:
+        return _failure(str(exc))
+    return await _call_backend(
+        lambda reader: reader.director_state(sid), what="director state"
+    )

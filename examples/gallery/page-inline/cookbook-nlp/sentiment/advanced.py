@@ -52,6 +52,8 @@ except ImportError:  # pragma: no cover - support IDE execution paths
                 continue
     traigent = importlib.import_module("traigent")
 
+from traigent.core.objectives import create_default_objectives
+
 DATASET = os.path.join(os.path.dirname(__file__), "sentiment_eval.jsonl")
 
 
@@ -65,7 +67,10 @@ DATASET = os.path.join(os.path.dirname(__file__), "sentiment_eval.jsonl")
         "output_format": ["label_only", "json"],
     },
     eval_dataset=DATASET,
-    objectives=["accuracy", "cost", "response_time"],
+    objectives=create_default_objectives(
+        ["accuracy", "cost", "response_time"],
+        orientations={"response_time": "minimize"},
+    ),
     offline=True,
     max_trials=10,
 )

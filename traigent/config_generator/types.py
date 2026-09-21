@@ -6,7 +6,7 @@ All types are frozen dataclasses for immutability and thread safety.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass(frozen=True)
@@ -31,7 +31,7 @@ class ObjectiveSpec:
     """A generated objective definition."""
 
     name: str
-    orientation: str = "maximize"  # "maximize" | "minimize"
+    orientation: Literal["maximize", "minimize"]
     weight: float = 1.0
     source: str = "default"  # "default" | "heuristic" | "llm"
     reasoning: str = ""
@@ -146,7 +146,18 @@ class AutoConfigResult:
             kwargs["configuration_space"] = config_space
 
         if self.objectives:
-            kwargs["objectives"] = [obj.name for obj in self.objectives]
+            from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+
+            kwargs["objectives"] = ObjectiveSchema.from_objectives(
+                [
+                    ObjectiveDefinition(
+                        name=obj.name,
+                        orientation=obj.orientation,
+                        weight=obj.weight,
+                    )
+                    for obj in self.objectives
+                ]
+            )
 
         if self.safety_constraints:
             kwargs["safety_constraints"] = [
@@ -173,7 +184,14 @@ class AutoConfigResult:
             kwargs["configuration_space"] = config_space
 
         if self.objectives:
-            kwargs["objectives"] = [obj.name for obj in self.objectives]
+            kwargs["objectives"] = [
+                {
+                    "name": obj.name,
+                    "orientation": obj.orientation,
+                    "weight": obj.weight,
+                }
+                for obj in self.objectives
+            ]
 
         return kwargs
 
@@ -257,8 +275,14 @@ class AutoConfigResult:
 
         # objectives
         if self.objectives:
-            obj_list = ", ".join(f"{o.name!r}" for o in self.objectives)
-            lines.append(f"    objectives=[{obj_list}],")
+            lines.append("    objectives=ObjectiveSchema.from_objectives([")
+            for objective in self.objectives:
+                lines.append(
+                    "        ObjectiveDefinition("
+                    f"name={objective.name!r}, orientation={objective.orientation!r}, "
+                    f"weight={objective.weight!r}),"
+                )
+            lines.append("    ]),")
 
         # safety_constraints
         if self.safety_constraints:

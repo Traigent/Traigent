@@ -23,7 +23,9 @@ from traigent.api.types import (
 )
 from traigent.utils.results_table import (
     _find_best_per_objective,
+    _find_best_trial,
     _format_metric_value,
+    _get_objective_info,
     _trials_all_failed,
     print_results_table,
 )
@@ -44,6 +46,48 @@ def _trial(
         duration=0.1,
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
         metadata=metadata or {},
+    )
+
+
+def test_find_best_trial_refuses_band_without_target_bounds() -> None:
+    trials = [
+        _trial(
+            {"length": "in-band"},
+            {"response_length": 100.0},
+            trial_id="in-band",
+        ),
+        _trial(
+            {"length": "too-long"},
+            {"response_length": 180.0},
+            trial_id="too-long",
+        ),
+    ]
+
+    assert (
+        _find_best_trial(
+            trials,
+            ["response_length"],
+            metric_info=[("response_length", "band")],
+        )
+        is None
+    )
+
+
+def test_find_best_trial_honors_declared_primary_order() -> None:
+    cheap = _trial({"model": "cheap"}, {"cost": 0.1, "accuracy": 0.8}, trial_id="cheap")
+    accurate = _trial(
+        {"model": "accurate"},
+        {"cost": 0.9, "accuracy": 1.0},
+        trial_id="accurate",
+    )
+
+    assert (
+        _find_best_trial(
+            [cheap, accurate],
+            ["cost", "accuracy"],
+            metric_info=[("cost", "minimize"), ("accuracy", "maximize")],
+        )
+        is cheap
     )
 
 
@@ -452,6 +496,40 @@ class TestBestPerObjective:
         best = _find_best_per_objective(trials, [("cost", "minimize")])
 
         assert best["cost"] == {1}
+
+
+class TestGetObjectiveInfo:
+    """When ``objectives`` is a bare name list (not an ObjectiveSchema), the
+    orientation-by-name table here must agree with
+    ``traigent.core.objectives.DEFAULT_OBJECTIVE_ORIENTATIONS`` -- it used to
+    hand-duplicate a much smaller ``("cost", "latency")`` table that silently
+    treated ``total_cost`` (and every other non-"cost"/"latency" minimize
+    metric) as maximize, so the ★ Overall Best / best-per-objective highlight
+    could crown the worst trial for those metrics."""
+
+    def test_total_cost_is_minimize(self) -> None:
+        assert _get_objective_info(["total_cost"]) == [("total_cost", "minimize")]
+
+    def test_cost_and_latency_remain_minimize(self) -> None:
+        assert _get_objective_info(["cost", "latency"]) == [
+            ("cost", "minimize"),
+            ("latency", "minimize"),
+        ]
+
+    def test_accuracy_remains_maximize(self) -> None:
+        assert _get_objective_info(["accuracy"]) == [("accuracy", "maximize")]
+
+    def test_objective_schema_object_unaffected(self) -> None:
+        objectives = SimpleNamespace(
+            objectives=[
+                SimpleNamespace(name="total_cost", orientation="minimize"),
+                SimpleNamespace(name="accuracy", orientation="maximize"),
+            ]
+        )
+        assert _get_objective_info(objectives) == [
+            ("total_cost", "minimize"),
+            ("accuracy", "maximize"),
+        ]
 
 
 class TestOverallBestIdentity:

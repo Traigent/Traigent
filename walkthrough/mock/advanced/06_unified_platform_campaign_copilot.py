@@ -45,6 +45,7 @@ except ImportError:  # pragma: no cover - optional convenience import
 
 import traigent
 from traigent.config.backend_config import BackendConfig
+from traigent.core.objectives import create_default_objectives
 from traigent.integrations.observability.workflow_traces import (
     WorkflowEdge,
     WorkflowGraphPayload,
@@ -401,7 +402,13 @@ def operational_efficiency_metric(output: str, expected: str) -> float:
 
 @traigent.optimize(
     eval_dataset=DATASET_PATH,
-    objectives=["business_fit", "operational_efficiency"],
+    objectives=create_default_objectives(
+        ["business_fit", "operational_efficiency"],
+        orientations={
+            "business_fit": "maximize",
+            "operational_efficiency": "maximize",
+        },
+    ),
     metric_functions={
         "business_fit": business_fit_metric,
         "operational_efficiency": operational_efficiency_metric,

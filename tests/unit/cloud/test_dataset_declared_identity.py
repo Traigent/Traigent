@@ -219,8 +219,8 @@ def test_no_label_and_no_explicit_id_sends_no_declared_identity():
     explicit dataset_id -- absence must stay absence. No identity is
     invented from example content or anything else."""
     payload = _wire(_request(dataset_metadata={"size": 1}))
-    assert "dataset_id" not in payload
-    assert "dataset_id_source" not in payload
+    assert payload["dataset_id"] is None
+    assert payload["dataset_id_source"] == "unknown"
 
 
 def test_sdk_default_dataset_name_sentinel_is_not_promoted_to_identity():
@@ -229,34 +229,33 @@ def test_sdk_default_dataset_name_sentinel_is_not_promoted_to_identity():
     a declared id would collide every unnamed dataset onto one shared
     identity -- exactly the bug this feature exists to prevent."""
     payload = _wire(_request(dataset_metadata={"size": 1, "name": "dataset"}))
-    assert "dataset_id" not in payload
-    assert "dataset_id_source" not in payload
+    assert payload["dataset_id"] is None
+    assert payload["dataset_id_source"] == "unknown"
 
 
 def test_default_evaluation_set_sentinel_is_not_promoted_to_identity():
     payload = _wire(
         _request(dataset_metadata={"size": 1}, metadata={"evaluation_set": "default"})
     )
-    assert "dataset_id" not in payload
-    assert "dataset_id_source" not in payload
+    assert payload["dataset_id"] is None
+    assert payload["dataset_id_source"] == "unknown"
 
 
 def test_dataset_id_present_only_with_declared_source_contract_valid():
-    """Every payload emitted by this path either omits both fields, or
-    carries them in the only combination the backend accepts for a
-    client-declared id: dataset_id present iff dataset_id_source=="declared"."""
+    """Every typed payload carries a correlated identity source and value."""
     cases = [
         _wire(_request(dataset_metadata={"size": 1})),  # nothing declared
         _wire(_request(dataset_id="x", dataset_metadata={"size": 1})),  # explicit
         _wire(_request(dataset_metadata={"size": 1, "name": "lbl"})),  # derived
     ]
     for payload in cases:
-        has_id = "dataset_id" in payload
-        has_source = "dataset_id_source" in payload
-        assert has_id == has_source
-        if has_id:
+        assert "dataset_id_source" in payload
+        if payload["dataset_id_source"] == "declared":
             assert payload["dataset_id_source"] == "declared"
             assert isinstance(payload["dataset_id"], str) and payload["dataset_id"]
+        else:
+            assert payload["dataset_id_source"] == "unknown"
+            assert payload["dataset_id"] is None
 
 
 def test_session_creation_request_rejects_blank_dataset_id():
@@ -507,8 +506,8 @@ class TestInlineDatasetSentinel:
                 metadata={"evaluation_set": dataset.name},
             )
         )
-        assert "dataset_id" not in payload
-        assert "dataset_id_source" not in payload
+        assert payload["dataset_id"] is None
+        assert payload["dataset_id_source"] == "unknown"
 
     def test_explicit_id_spelled_inline_dataset_is_sent_verbatim(self):
         payload = _wire(
@@ -618,8 +617,8 @@ class TestConnectedGridDecoratorToWire:
             payload = await _public_connected_grid_run(
                 monkeypatch, tmp_path, {"eval_dataset": _INLINE}
             )
-        assert "dataset_id" not in payload
-        assert "dataset_id_source" not in payload
+        assert payload["dataset_id"] is None
+        assert payload["dataset_id_source"] == "unknown"
         hits = [r for r in caplog.records if "Dataset not linked" in r.getMessage()]
         assert len(hits) == 1
         assert "EvaluationOptions(dataset_id=" in hits[0].getMessage()
@@ -630,6 +629,22 @@ def test_two_explicit_ids_stay_distinct_even_with_equal_names():
     b = _wire(_request(dataset_id="ds-b", dataset_metadata={"size": 1, "name": "x"}))
     assert a["dataset_id"] == "ds-a"
     assert b["dataset_id"] == "ds-b"
+
+
+def test_backend_client_submits_declared_evaluator_source_verbatim():
+    payload = _typed_payload_via_session_ops(
+        {
+            "function_name": "qa_agent",
+            "search_space": {"model": ["a", "b"]},
+            "optimization_goal": "maximize",
+            "metadata": {"max_trials": 5, "dataset_size": 1},
+            "evaluator_id": "logical-evaluator",
+            "evaluator_id_source": "declared",
+        }
+    )
+
+    assert payload["evaluator_id"] == "logical-evaluator"
+    assert payload["evaluator_id_source"] == "declared"
 
 
 def test_session_operations_threads_dataset_id_to_the_request():
@@ -689,7 +704,8 @@ class TestManagedPaths:
         request = service.create_session.call_args[0][0]
         stub = SimpleNamespace(_ensure_owner_metadata=lambda m: m or {})
         payload = TraigentCloudClient._serialize_session_request(stub, request)
-        assert "dataset_id" not in payload
+        assert payload["dataset_id"] is None
+        assert payload["dataset_id_source"] == "unknown"
 
 
 class TestOfflineSyncIdentity:
@@ -873,8 +889,8 @@ class TestInvisibleCharacters:
         payload = _wire(
             _request(dataset_metadata={"size": 1, "name": _ZWSP + "\ufeff"})
         )
-        assert "dataset_id" not in payload
-        assert "dataset_id_source" not in payload
+        assert payload["dataset_id"] is None
+        assert payload["dataset_id_source"] == "unknown"
 
     def test_cleaning_happens_before_the_sentinel_check(self):
         """An invisibly-decorated placeholder is still the placeholder."""
@@ -883,7 +899,8 @@ class TestInvisibleCharacters:
                 dataset_metadata={"size": 1, "name": "inline" + _ZWSP + "_dataset"}
             )
         )
-        assert "dataset_id" not in payload
+        assert payload["dataset_id"] is None
+        assert payload["dataset_id_source"] == "unknown"
 
     def test_a_cleaned_label_groups_with_its_plain_spelling(self):
         decorated = _wire(
@@ -932,4 +949,5 @@ class TestPlainAsciiIsUnchanged:
         payload = _wire(
             _request(dataset_metadata={"size": 1, "name": "Inline_Dataset"})
         )
-        assert "dataset_id" not in payload
+        assert payload["dataset_id"] is None
+        assert payload["dataset_id_source"] == "unknown"

@@ -72,6 +72,7 @@ from .models import (
     TrialResultSubmission,
     TrialSuggestion,
     session_dataset_identity_to_wire,
+    session_identity_v2_to_wire,
     session_narrative_to_wire,
     session_task_type_to_wire,
 )
@@ -1999,6 +2000,13 @@ class TraigentCloudClient(BaseTraigentClient):
             "billing_tier": request.billing_tier,
             "metadata": metadata,
         }
+        # The Schema declares these optional fields as object/string when
+        # present; null is not a valid value. Preserve omission for unset
+        # fields while leaving explicit values unchanged.
+        if request.optimization_strategy is None:
+            payload.pop("optimization_strategy")
+        if request.user_id is None:
+            payload.pop("user_id")
         # Agent identity + per-run narrative, top-level and typed. This path used to
         # drop them: `SessionCreationRequest` declared the fields, this serializer
         # posted only `function_name`, so a caller who pinned `agent_key` alongside a
@@ -2044,6 +2052,10 @@ class TraigentCloudClient(BaseTraigentClient):
         evaluator_definition_id = getattr(request, "evaluator_definition_id", None)
         if isinstance(evaluator_definition_id, str) and evaluator_definition_id.strip():
             payload["evaluator_definition_id"] = evaluator_definition_id.strip()
+        identity_v2 = session_identity_v2_to_wire(request)
+        if "evaluator_id" in identity_v2:
+            payload.pop("evaluator_definition_id", None)
+        payload.update(identity_v2)
         return payload
 
     @staticmethod

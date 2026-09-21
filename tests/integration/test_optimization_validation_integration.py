@@ -36,6 +36,7 @@ os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
 # Import traigent after setting mock mode
 import traigent
+from traigent.core.objectives import create_default_objectives
 
 
 @traigent.optimize(
@@ -82,7 +83,9 @@ def answer_question(question: str, context: str, model: str = "gpt-3.5-turbo", t
 
 @traigent.optimize(
     eval_dataset="simple_dataset.jsonl",
-    objectives=["speed"],
+    objectives=create_default_objectives(
+        ["speed"], orientations={"speed": "maximize"}
+    ),
     configuration_space={
         "batch_size": [1, 5, 10, 20],
         "parallel": [True, False],
@@ -410,12 +413,18 @@ def simple_function(text: str, param: str = "default"):
 import os
 os.environ["TRAIGENT_MOCK_LLM"] = "true"
 import traigent
+from traigent.core.objectives import create_default_objectives
 
 @traigent.optimize(eval_dataset="test1.jsonl", objectives=["accuracy"])
 def function1(text: str, param1: str = "default1"):
     return {"accuracy": 0.8}
 
-@traigent.optimize(eval_dataset="test2.jsonl", objectives=["speed"])
+@traigent.optimize(
+    eval_dataset="test2.jsonl",
+    objectives=create_default_objectives(
+        ["speed"], orientations={"speed": "maximize"}
+    ),
+)
 def function2(data: list, param2: int = 10):
     return {"speed": 0.5}
 

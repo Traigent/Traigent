@@ -32,6 +32,7 @@ from traigent.api.safety import (
     safety_score,
     toxicity_score,
 )
+from traigent.core.objectives import create_default_objectives
 
 # Get the directory containing this script
 SCRIPT_DIR = Path(__file__).parent
@@ -69,12 +70,20 @@ def get_customer_context(customer_id: str) -> dict[str, Any]:
 
 @optimize(
     spec=str(TVL_SPEC_PATH),
-    objectives=[
-        "latency_p50",
-        "cost_per_request",
-        "resolution_accuracy",
-        "customer_satisfaction",
-    ],
+    objectives=create_default_objectives(
+        [
+            "latency_p50",
+            "cost_per_request",
+            "resolution_accuracy",
+            "customer_satisfaction",
+        ],
+        orientations={
+            "latency_p50": "minimize",
+            "cost_per_request": "minimize",
+            "resolution_accuracy": "maximize",
+            "customer_satisfaction": "maximize",
+        },
+    ),
     # Safety constraints inherited from base_safety.tvl.yml:
     # - hallucination_rate <= 10%
     # - toxicity_score <= 5%

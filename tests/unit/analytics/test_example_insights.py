@@ -249,7 +249,8 @@ class TestComputeScores:
         assert result["status"] == "accepted"
         assert result["job_id"] == "job_123"
         mock_http.post.assert_called_once_with(
-            "/analytics/example-scoring/run_123/compute"
+            "/analytics/example-scoring/run_123/compute",
+            json={},
         )
 
 
@@ -282,6 +283,41 @@ class TestGetExampleScores:
         assert "example_2" in result
         assert result["example_1"]["scored"] is True
         mock_http.get.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_example_scores_unwraps_success_envelope(self) -> None:
+        """The Backend success envelope exposes the mapping under data.scores."""
+        from traigent.analytics.example_insights import ExampleInsightsClient
+
+        client = ExampleInsightsClient(api_key="example_key")
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "success": True,
+            "message": "Example scores retrieved successfully",
+            "data": {
+                "scores": {
+                    "example_1": {
+                        "example_id": "example_1",
+                        "sample_count": 5,
+                        "scored": True,
+                    }
+                }
+            },
+        }
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_response
+        client._client = mock_http
+
+        result = await client.get_example_scores(experiment_run_id="run_123")
+
+        assert result == {
+            "example_1": {
+                "example_id": "example_1",
+                "sample_count": 5,
+                "scored": True,
+            }
+        }
 
     @pytest.mark.asyncio
     async def test_get_example_scores_with_filter(self) -> None:

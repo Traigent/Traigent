@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from traigent.cloud.models import SessionObjectiveDefinition
+from traigent.core.objective_directions import resolve_objective_orientation
 
 _DIRECTION_OBJECTIVES = frozenset({"maximize", "minimize"})
 
@@ -86,6 +87,12 @@ def _canonicalize_objective_dict(objective: dict[str, Any]) -> dict[str, Any]:
     elif "band" in canonical:
         canonical.pop("band")
 
+    name = canonical.get("name")
+    if isinstance(name, str) and canonical.get("orientation") != "band":
+        canonical["orientation"] = resolve_objective_orientation(
+            name, canonical.get("orientation")
+        )
+
     return canonical
 
 
@@ -95,7 +102,12 @@ def session_objective_to_wire(
     """Serialize one typed objective to the canonical session-create wire shape."""
 
     if isinstance(objective, str):
-        return objective
+        if objective.strip().lower() in _DIRECTION_OBJECTIVES:
+            return objective
+        return {
+            "name": objective,
+            "orientation": resolve_objective_orientation(objective),
+        }
     if isinstance(objective, SessionObjectiveDefinition):
         payload: dict[str, Any] = {"name": objective.metric}
         if objective.band is not None:
@@ -104,7 +116,11 @@ def session_objective_to_wire(
                 payload["band"] = band
                 payload["orientation"] = "band"
         elif objective.direction is not None:
-            payload["orientation"] = objective.direction
+            payload["orientation"] = resolve_objective_orientation(
+                objective.metric, objective.direction
+            )
+        else:
+            payload["orientation"] = resolve_objective_orientation(objective.metric)
         if objective.weight is not None:
             payload["weight"] = objective.weight
         return payload
@@ -134,7 +150,7 @@ def _score_objective_orientation(
 
 
 def normalize_typed_objectives(objectives: Any) -> list[Any]:
-    """Normalize typed objective shorthands without changing legacy semantics.
+    """Normalize typed objective shorthands to declared canonical objectives.
 
     Bare direction words are legacy optimization-goal placeholders, not metric
     names. The typed session contract uses "score" for that fallback because

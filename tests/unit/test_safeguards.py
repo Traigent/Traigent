@@ -12,11 +12,16 @@ import pytest
 from traigent.api.types import TrialResult as APITrialResult
 from traigent.config.types import TraigentConfig
 from traigent.core.optimized_function import OptimizedFunction
+from traigent.core.objectives import create_default_objectives
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationExample
 from traigent.optimizers.base import BaseOptimizer
 from traigent.storage.local_storage import LocalStorageManager
 from traigent.utils.exceptions import OptimizationError
+
+SCORE_OBJECTIVES = create_default_objectives(
+    ["score"], orientations={"score": "maximize"}
+)
 
 
 @pytest.fixture(autouse=True)
@@ -112,7 +117,10 @@ class TestTrialCaps:
         """Test trial cap in sequential execution."""
         # Use the MockOptimizer class
         optimizer = MockOptimizer(
-            config_space={"x": [1, 2, 3]}, objectives=["score"], max_trials=3
+            config_space={"x": [1, 2, 3]},
+            objectives=["score"],
+            objective_orientations={"score": "maximize"},
+            max_trials=3,
         )
 
         evaluator = MockEvaluator()
@@ -181,7 +189,7 @@ class TestExampleCaps:
             func = OptimizedFunction(
                 func=lambda x: x,
                 eval_dataset="test.jsonl",
-                objectives=["score"],
+                objectives=SCORE_OBJECTIVES,
                 configuration_space={"x": [1, 2, 3]},  # Required parameter
             )
             func.traigent_config = Mock(is_edge_analytics_mode=lambda: False)
@@ -331,7 +339,11 @@ class TestDeduplication:
     def test_cache_policy_filtering(self, tmp_path):
         """Test that cache policy correctly filters configurations."""
         # Create minimal optimizer
-        optimizer = MockOptimizer(config_space={"x": [1, 2, 3]}, objectives=["score"])
+        optimizer = MockOptimizer(
+            config_space={"x": [1, 2, 3]},
+            objectives=["score"],
+            objective_orientations={"score": "maximize"},
+        )
 
         evaluator = MockEvaluator()
 
@@ -416,7 +428,11 @@ class TestSafeguardTelemetry:
     def test_telemetry_in_results(self):
         """Test that safeguard telemetry appears in optimization results."""
         # Create optimizer with trial cap
-        optimizer = MockOptimizer(config_space={"x": [1, 2, 3]}, objectives=["score"])
+        optimizer = MockOptimizer(
+            config_space={"x": [1, 2, 3]},
+            objectives=["score"],
+            objective_orientations={"score": "maximize"},
+        )
 
         evaluator = MockEvaluator()
 
@@ -476,7 +492,7 @@ class TestCIApproval:
         func = OptimizedFunction(
             func=lambda x: x,
             eval_dataset="test.jsonl",
-            objectives=["score"],
+            objectives=SCORE_OBJECTIVES,
             configuration_space={"x": [1, 2, 3]},  # Required parameter
         )
         func.traigent_config = Mock(
@@ -512,7 +528,7 @@ class TestCIApproval:
         func = OptimizedFunction(
             func=lambda x: x,
             eval_dataset="test.jsonl",
-            objectives=["score"],
+            objectives=SCORE_OBJECTIVES,
             configuration_space={"x": [1, 2, 3]},  # Required parameter
         )
         func.traigent_config = Mock(
@@ -537,7 +553,7 @@ class TestCIApproval:
         func = OptimizedFunction(
             func=lambda x: x,
             eval_dataset="test.jsonl",
-            objectives=["score"],
+            objectives=SCORE_OBJECTIVES,
             configuration_space={"x": [1, 2, 3]},
         )
         func.traigent_config = Mock(
@@ -557,7 +573,7 @@ class TestCIApproval:
             func = OptimizedFunction(
                 func=lambda x: x,
                 eval_dataset="test.jsonl",
-                objectives=["score"],
+                objectives=SCORE_OBJECTIVES,
                 configuration_space={"x": [1, 2, 3]},  # Required parameter
             )
             func.traigent_config = Mock(
@@ -587,7 +603,7 @@ class TestCIApproval:
             func = OptimizedFunction(
                 func=lambda x: x,
                 eval_dataset="test.jsonl",
-                objectives=["score"],
+                objectives=SCORE_OBJECTIVES,
                 configuration_space={"x": [1, 2, 3]},  # Required parameter
             )
             func.traigent_config = Mock(
@@ -622,7 +638,7 @@ class TestCIApproval:
         func = OptimizedFunction(
             func=lambda x: x,
             eval_dataset="test.jsonl",
-            objectives=["score"],
+            objectives=SCORE_OBJECTIVES,
             configuration_space={"x": [1, 2, 3]},
         )
         func.traigent_config = Mock(
@@ -669,7 +685,7 @@ class TestCIApproval:
         func = OptimizedFunction(
             func=lambda x: x,
             eval_dataset="test.jsonl",
-            objectives=["score"],
+            objectives=SCORE_OBJECTIVES,
             configuration_space={"x": [1, 2, 3]},
         )
         func.traigent_config = Mock(
@@ -706,7 +722,7 @@ class TestCIApproval:
         func = OptimizedFunction(
             func=lambda x: x,
             eval_dataset="test.jsonl",
-            objectives=["score"],
+            objectives=SCORE_OBJECTIVES,
             configuration_space={"x": [1, 2, 3]},  # Required parameter
         )
         func.traigent_config = Mock(

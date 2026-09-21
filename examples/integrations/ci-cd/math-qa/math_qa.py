@@ -27,6 +27,8 @@ except ImportError:  # pragma: no cover - support IDE execution paths
                 continue
     traigent = importlib.import_module("traigent")
 
+from traigent.core.objectives import create_default_objectives
+
 # Dataset file path
 DATASET_FILE = os.path.join(os.path.dirname(__file__), "math_qa.jsonl")
 
@@ -39,7 +41,10 @@ DATASET_FILE = os.path.join(os.path.dirname(__file__), "math_qa.jsonl")
         "max_tokens": [50, 100, 150],
     },
     eval_dataset=DATASET_FILE,
-    objectives=["accuracy", "cost", "response_time"],
+    objectives=create_default_objectives(
+        ["accuracy", "cost", "response_time"],
+        orientations={"response_time": "minimize"},
+    ),
     offline=True,
     max_trials=10,
 )

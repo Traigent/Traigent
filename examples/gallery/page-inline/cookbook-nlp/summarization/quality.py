@@ -52,6 +52,8 @@ except ImportError:  # pragma: no cover - support IDE execution paths
                 continue
     traigent = importlib.import_module("traigent")
 
+from traigent.core.objectives import create_default_objectives
+
 DATASET = os.path.join(os.path.dirname(__file__), "summarization_eval.jsonl")
 
 
@@ -74,7 +76,9 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
 @traigent.optimize(
     configuration_space={"temperature": [0.0, 0.3]},
     eval_dataset=DATASET,
-    objectives=["quality", "cost"],
+    objectives=create_default_objectives(
+        ["quality", "cost"], orientations={"quality": "maximize"}
+    ),
     metric_functions={"quality": _summary_f1},
     offline=True,
     max_trials=10,

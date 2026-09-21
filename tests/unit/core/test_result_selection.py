@@ -190,9 +190,10 @@ def test_minimization_objective_is_respected():
 
     result = select_best_configuration(
         trials=trials,
-        primary_objective="cost_per_call",  # contains "cost" -> minimization
+        primary_objective="cost_per_call",
         config_space_keys={"model"},
         aggregate_configs=False,
+        objective_orientations={"cost_per_call": "minimize"},
     )
 
     assert result.best_config["model"] == "expensive"
@@ -393,6 +394,12 @@ class TestTieBreaker:
             trials,
             tie_breakers,
             "accuracy",
+            objective_order=["accuracy", "latency", "quality"],
+            objective_orientations={
+                "accuracy": "maximize",
+                "latency": "minimize",
+                "quality": "maximize",
+            },
             band_target=0.88,
         )
 
@@ -425,6 +432,12 @@ class TestTieBreaker:
             trials,
             tie_breakers,
             "accuracy",
+            objective_order=["accuracy", "latency", "quality"],
+            objective_orientations={
+                "accuracy": "maximize",
+                "latency": "minimize",
+                "quality": "maximize",
+            },
         )
 
         # Trial B has best secondary: -50 (latency) + 0.9 (quality) vs others
@@ -465,7 +478,16 @@ class TestTieBreaker:
         ]
 
         # No tie-breaker registered for accuracy - defaults to min_abs_deviation
-        result = apply_tie_breaker(trials, {}, "accuracy")
+        result = apply_tie_breaker(
+            trials,
+            {},
+            "accuracy",
+            objective_order=["accuracy", "latency"],
+            objective_orientations={
+                "accuracy": "maximize",
+                "latency": "minimize",
+            },
+        )
 
         # min_abs_deviation uses secondary metrics, B has lower latency
         assert result.config["model"] == "B"
@@ -497,6 +519,11 @@ class TestSelectBestConfigurationWithTieBreakers:
             config_space_keys={"model"},
             aggregate_configs=False,
             tie_breakers={"accuracy": "min_abs_deviation"},
+            objective_order=["accuracy", "latency"],
+            objective_orientations={
+                "accuracy": "maximize",
+                "latency": "minimize",
+            },
         )
 
         # All have 0.9 accuracy, tie-breaker uses secondary metrics
@@ -504,6 +531,40 @@ class TestSelectBestConfigurationWithTieBreakers:
         # B has lowest latency (100), should win
         assert result.best_config["model"] == "B"
         assert result.best_score == pytest.approx(0.9)
+
+    @pytest.mark.parametrize("aggregate_configs", [False, True])
+    def test_passive_metrics_do_not_break_primary_ties(
+        self, aggregate_configs: bool
+    ) -> None:
+        trials = [
+            FakeTrial(
+                metrics={
+                    "accuracy": 0.9,
+                    "total_tokens": 50.0,
+                    "custom_debug_metric": -100.0,
+                },
+                config={"model": "first"},
+            ),
+            FakeTrial(
+                metrics={
+                    "accuracy": 0.9,
+                    "total_tokens": 5000.0,
+                    "custom_debug_metric": 100.0,
+                },
+                config={"model": "second"},
+            ),
+        ]
+
+        result = select_best_configuration(
+            trials=trials,
+            primary_objective="accuracy",
+            config_space_keys={"model"},
+            aggregate_configs=aggregate_configs,
+            objective_order=["accuracy"],
+            objective_orientations={"accuracy": "maximize"},
+        )
+
+        assert result.best_config["model"] == "first"
 
     def test_tie_breaker_with_band_target(self) -> None:
         """Tie-breaker with band_target should pick closest to target."""
@@ -999,6 +1060,8 @@ class TestMinimizationObjectiveTieBreaker:
             config_space_keys={"model"},
             aggregate_configs=False,
             tie_breakers={"cost": "min_abs_deviation"},
+            objective_order=["cost", "accuracy"],
+            objective_orientations={"cost": "minimize", "accuracy": "maximize"},
         )
 
         # All have same cost (0.1), tie-breaker uses secondary metrics
@@ -1025,6 +1088,11 @@ class TestMinimizationObjectiveTieBreaker:
             config_space_keys={"model"},
             aggregate_configs=False,
             tie_breakers={"latency": "min_abs_deviation"},
+            objective_order=["latency", "quality"],
+            objective_orientations={
+                "latency": "minimize",
+                "quality": "maximize",
+            },
         )
 
         # Both have latency 50, B has better quality
@@ -1062,6 +1130,11 @@ class TestAggregatedTieBreaker:
             config_space_keys={"model", "temp"},
             aggregate_configs=True,
             tie_breakers={"accuracy": "min_abs_deviation"},
+            objective_order=["accuracy", "latency"],
+            objective_orientations={
+                "accuracy": "maximize",
+                "latency": "minimize",
+            },
         )
 
         # Both configs have mean accuracy 0.8

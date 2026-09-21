@@ -1,6 +1,7 @@
 import pytest
 
 import traigent
+from traigent.core.objectives import create_default_objectives
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.evaluators.local import LocalEvaluator
 
@@ -217,7 +218,9 @@ async def test_optimize_scoring_function_binds_to_custom_primary_objective(
 
     @traigent.optimize(
         eval_dataset=Dataset([EvaluationExample({"text": "q"}, "YES")], name="g4"),
-        objectives=["quality"],
+        objectives=create_default_objectives(
+            ["quality"], orientations={"quality": "maximize"}
+        ),
         configuration_space={"style": ["a", "b"]},
         scoring_function=scorer,
     )
