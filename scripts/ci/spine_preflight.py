@@ -6,7 +6,8 @@ only discovers *after* pushing:
 
 * ``spine-trail present`` (``.github/workflows/spine-trail-gate.yml``) — every
   product PR must carry a validation-spine mark in its body: a
-  ``Spine-Session: cs_<id>`` line (a promoted ChangeSession), a
+  ``Spine-Session: cs_<id>`` line (the canonical ChangeSession marker), a
+  legacy ``Spine: cs_<id>`` line, a
   ``Spine-Trail: st_<id>`` line (a Tier-0 WorkIntent), or an explicit
   ``Spine: none (reason: …)``
   waiver.
