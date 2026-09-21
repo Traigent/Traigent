@@ -32,7 +32,8 @@ jobs:
   changes:
     name: detect-changes
     # Skip CI on draft PRs (they can't merge); merge_group always runs.
-    # Downstream jobs skip and required-pr-gate still passes (skipped deps = pass).
+    # Substantive jobs are suppressed on draft PRs; the skipped classifier leaves
+    # required-pr-gate red. Marking the PR ready starts the real gate.
     if: ${{ github.event_name == 'merge_group' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

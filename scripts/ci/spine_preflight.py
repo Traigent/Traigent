@@ -6,8 +6,9 @@ only discovers *after* pushing:
 
 * ``spine-trail present`` (``.github/workflows/spine-trail-gate.yml``) — every
   product PR must carry a validation-spine mark in its body: a
-  ``Spine-Trail: st_<id>`` line (a Tier-0 WorkIntent), a ``Spine: cs_<id>``
-  line (a promoted ChangeSession), or an explicit ``Spine: none (reason: …)``
+  ``Spine-Session: cs_<id>`` line (a promoted ChangeSession), a
+  ``Spine-Trail: st_<id>`` line (a Tier-0 WorkIntent), or an explicit
+  ``Spine: none (reason: …)``
   waiver.
 
 Unlike TraigentBackend, this repo currently has **no** ``require-spine-session``
@@ -165,8 +166,10 @@ def main(argv: list[str] | None = None) -> int:
                     "        1. Open/relate a ChangeSession (/spine:change).\n"
                     "        2. Add a trailer to a commit on this branch AND the"
                     " PR body:\n"
-                    "             Spine: cs_xxxxxxxx\n"
-                    "      (CI reads the PR BODY — keep both in sync.)"
+                    "             Spine-Session: cs_xxxxxxxx\n"
+                    "      (canonical; legacy Spine: cs_xxxxxxxx is also accepted. "
+                    "CI reads the PR BODY — keep the commit trailer and PR body "
+                    "in sync.)"
                 )
         else:
             print("   ✅ no policy-surface files in diff (no Spine-Session required)")
