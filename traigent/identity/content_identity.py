@@ -4,8 +4,8 @@ Ported, not imported: ``pyproject.toml`` forbids a runtime dependency on
 TraigentSchema (PyPI rejects direct git references, see
 ``scripts/ci/schema-pin.txt``), so this module is a line-for-line port of
 TraigentSchema ``traigent_schema/example_identity.py`` at commit
-``86a3bac861884d7b57de1b1253a932b743ab2be7`` (branch
-``feat/content-identity-v1``, TraigentSchema PR #515). The only substantive
+``024d55b0514c8c961d9496c34e8c5fc3548e1eb1`` (TraigentSchema ``develop``, the merge of PR #515;
+identical to the PR's final head ``86a3bac8``). The only substantive
 change is the import: canonicalization uses the SDK's own fp2 port
 (:mod:`traigent.utils.fp2`, itself a line-for-line port of
 ``traigent_schema/fp2.py``); the rest is the SDK's ruff formatting and one

@@ -22,6 +22,7 @@ from traigent.evaluators.base import (
     EvaluationResult,
     _maybe_restore_trial_context,
 )
+from traigent.identity.examples import result_identity_fields
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.logging import get_logger
 
@@ -349,7 +350,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             ExampleResult with failure information
         """
         return ExampleResult(
-            example_id=f"example_{index}",
+            **result_identity_fields(example, f"example_{index}"),
             input_data=example.input_data,
             expected_output=example.expected_output,
             actual_output=None,

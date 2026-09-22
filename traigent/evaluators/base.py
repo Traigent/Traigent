@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from traigent.api.types import ExampleResult
+from traigent.identity.examples import result_identity_fields
 from traigent.evaluators.dataset_registry import (
     DatasetRegistryEntry,
     resolve_dataset_reference,
@@ -2779,7 +2780,7 @@ class BaseEvaluator(ABC):
     ) -> ExampleResult:
         """Create ExampleResult for a failed concurrent evaluation."""
         return ExampleResult(
-            example_id=f"example_{index}",
+            **result_identity_fields(example, f"example_{index}"),
             input_data=example.input_data,
             expected_output=example.expected_output,
             actual_output=None,
@@ -3729,7 +3730,7 @@ class BaseEvaluator(ABC):
     ) -> ExampleResult:
         """Create an ExampleResult for a failed evaluation."""
         return ExampleResult(
-            example_id=example_id,
+            **result_identity_fields(example, example_id),
             input_data=example.input_data,
             expected_output=example.expected_output,
             actual_output=None,
@@ -3876,7 +3877,7 @@ class BaseEvaluator(ABC):
             output, user_metrics = self._unpack_user_metrics(raw_output)
 
             result = ExampleResult(
-                example_id=example_id,
+                **result_identity_fields(example, example_id),
                 input_data=example.input_data,
                 expected_output=example.expected_output,
                 actual_output=output,
@@ -4573,7 +4574,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
 
                 # Create ExampleResult
                 example_result = ExampleResult(
-                    example_id=f"example_{i}",
+                    **result_identity_fields(example, f"example_{i}"),
                     input_data=example.input_data,
                     expected_output=example.expected_output,
                     actual_output=output,
@@ -4816,7 +4817,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
             ExampleResult with failure information
         """
         return ExampleResult(
-            example_id=f"example_{index}",
+            **result_identity_fields(example, f"example_{index}"),
             input_data=example.input_data,
             expected_output=example.expected_output,
             actual_output=None,

@@ -4,9 +4,9 @@
 (not hand-edited) from TraigentSchema:
 
 - Source path: `traigent_schema/data/content_identity_v1_vectors.json`
-- Source commit: `86a3bac861884d7b57de1b1253a932b743ab2be7` (branch
-  `feat/content-identity-v1`, TraigentSchema PR #515). The file is byte-identical
-  at `002ff566` (the M1-approved head).
+- Source commit: `024d55b0514c8c961d9496c34e8c5fc3548e1eb1` (TraigentSchema `develop`, the merge of PR #515).
+  Byte-identical at the PR's final head `86a3bac861884d7b57de1b1253a932b743ab2be7`
+  and at `002ff566` (the M1-approved head).
 - SHA-256 of the vendored file:
   `7a75e6ab1316a015d1be91211b23e1ac3a0ce169ba29d6913e877856ce34b66e`
 
