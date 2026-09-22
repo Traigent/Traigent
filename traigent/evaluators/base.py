@@ -35,7 +35,7 @@ from traigent.evaluators.metrics_tracker import (
     extract_llm_metrics,
     is_reserved_metric_key,
 )
-from traigent.utils.env_config import is_truthy
+from traigent.utils.env_config import is_strict_cost_accounting, is_truthy
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
 from traigent.utils.exceptions import ConfigurationError, EvaluationError
@@ -89,6 +89,55 @@ example_evaluation_span = None  # type: ignore
 record_example_result = None  # type: ignore
 
 logger = get_logger(__name__)
+
+# Cost keys are measurements, not scores: a row that failed or did not report
+# one has an UNKNOWN cost. Imputing 0.0 for it makes a trial look cheaper than
+# it was and can let it win a cost objective (issue #2404).
+MEASURED_ONLY_METRICS = frozenset({"cost", "input_cost", "output_cost", "total_cost"})
+
+
+def failed_row_metrics(metric_names: Iterable[str]) -> dict[str, float]:
+    """Metrics for a failed example: 0.0 quality, no fabricated cost."""
+    return {name: 0.0 for name in metric_names if name not in MEASURED_ONLY_METRICS}
+
+
+def _measured_value(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def aggregate_measured_metric(metric: str, all_metrics: list[dict[str, Any]]) -> float:
+    """Mean of a cost metric over the rows that actually measured it.
+
+    With partial coverage the mean of the measured rows is the estimate; under
+    strict cost accounting (explicit, or because cost is an objective of the
+    run) partial coverage fails the trial instead. No coverage at all keeps the
+    historical 0.0 and is left to the run-level no-usage handling.
+    """
+    measured = [
+        number
+        for row in all_metrics
+        if row and (number := _measured_value(row.get(metric))) is not None
+    ]
+    if not measured:
+        return 0.0
+    if len(measured) < len(all_metrics):
+        message = (
+            f"'{metric}' was measured for only {len(measured)} of "
+            f"{len(all_metrics)} examples; failed or unpriced examples have an "
+            "unknown cost, so this trial's cost is a partial estimate"
+        )
+        if is_strict_cost_accounting():
+            from traigent.core.cost_enforcement import CostTrackingRequiredError
+
+            raise CostTrackingRequiredError(
+                message + " and strict cost accounting is on."
+            )
+        logger.warning("%s.", message)
+    return sum(measured) / len(measured)
+
 
 _T = TypeVar("_T")
 
@@ -3733,7 +3782,7 @@ class BaseEvaluator(ABC):
             input_data=example.input_data,
             expected_output=example.expected_output,
             actual_output=None,
-            metrics=dict.fromkeys(self.metrics, 0.0),
+            metrics=failed_row_metrics(self.metrics),
             execution_time=execution_time,
             success=False,
             error_message=str(error),
@@ -4347,6 +4396,9 @@ class SimpleScoringEvaluator(BaseEvaluator):
         """
         aggregated = {}
         for metric in self.metrics:
+            if metric in MEASURED_ONLY_METRICS:
+                aggregated[metric] = aggregate_measured_metric(metric, all_metrics)
+                continue
             metric_values = [m.get(metric, 0.0) for m in all_metrics if m]
             if metric_values:
                 if "p95" in metric.lower():
@@ -4820,7 +4872,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
             input_data=example.input_data,
             expected_output=example.expected_output,
             actual_output=None,
-            metrics=dict.fromkeys(self.metrics, 0.0),
+            metrics=failed_row_metrics(self.metrics),
             execution_time=0.0,
             success=False,
             error_message=str(error),
