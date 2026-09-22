@@ -63,9 +63,11 @@ def _success_envelope(data: object) -> dict[str, object]:
     return {"success": True, "message": "ok", "data": data}
 
 
-def _mock_get_response(client, data: object):
+def _mock_get_response(client, data: object, *, envelope: bool = True):
     mock_response = MagicMock()
-    mock_response.json.return_value = _success_envelope(data)
+    # The Director's endpoints return BARE objects (their frozen contract);
+    # every other analytics endpoint returns the {success, data} envelope.
+    mock_response.json.return_value = _success_envelope(data) if envelope else data
     mock_response.raise_for_status = MagicMock()
     mock_http = AsyncMock()
     mock_http.get.return_value = mock_response
@@ -1514,7 +1516,7 @@ class TestDirectorStart:
     ) -> None:
         client = _make_client()
         mock_response = MagicMock()
-        mock_response.json.return_value = _success_envelope(director_session_payload)
+        mock_response.json.return_value = director_session_payload
         mock_response.raise_for_status = MagicMock()
         mock_http = AsyncMock()
         mock_http.post.return_value = mock_response
@@ -1541,7 +1543,7 @@ class TestDirectorStart:
     ) -> None:
         client = _make_client()
         mock_response = MagicMock()
-        mock_response.json.return_value = _success_envelope(director_session_payload)
+        mock_response.json.return_value = director_session_payload
         mock_response.raise_for_status = MagicMock()
         mock_http = AsyncMock()
         mock_http.post.return_value = mock_response
@@ -1592,7 +1594,7 @@ class TestDirectorStart:
 
         client = _make_client()
         mock_response = MagicMock()
-        mock_response.json.return_value = _success_envelope(malformed)
+        mock_response.json.return_value = malformed
         mock_response.raise_for_status = MagicMock()
         mock_http = AsyncMock()
         mock_http.post.return_value = mock_response
@@ -1609,7 +1611,7 @@ class TestDirectorTurn:
     ) -> None:
         client = _make_client()
         mock_response = MagicMock()
-        mock_response.json.return_value = _success_envelope(director_turn_payload)
+        mock_response.json.return_value = director_turn_payload
         mock_response.raise_for_status = MagicMock()
         mock_http = AsyncMock()
         mock_http.post.return_value = mock_response
@@ -1642,7 +1644,7 @@ class TestDirectorTurn:
     ) -> None:
         client = _make_client()
         mock_response = MagicMock()
-        mock_response.json.return_value = _success_envelope(director_turn_payload)
+        mock_response.json.return_value = director_turn_payload
         mock_response.raise_for_status = MagicMock()
         mock_http = AsyncMock()
         mock_http.post.return_value = mock_response
@@ -1685,7 +1687,7 @@ class TestDirectorTurn:
 
         client = _make_client()
         mock_response = MagicMock()
-        mock_response.json.return_value = _success_envelope(malformed)
+        mock_response.json.return_value = malformed
         mock_response.raise_for_status = MagicMock()
         mock_http = AsyncMock()
         mock_http.post.return_value = mock_response
@@ -1702,7 +1704,7 @@ class TestDirectorTurn:
         backend so it can force `investigate_first` before any model call."""
         client = _make_client()
         mock_response = MagicMock()
-        mock_response.json.return_value = _success_envelope(director_turn_payload)
+        mock_response.json.return_value = director_turn_payload
         mock_response.raise_for_status = MagicMock()
         mock_http = AsyncMock()
         mock_http.post.return_value = mock_response
@@ -1722,7 +1724,7 @@ class TestDirectorTurn:
     ) -> None:
         client = _make_client()
         mock_response = MagicMock()
-        mock_response.json.return_value = _success_envelope(director_turn_payload)
+        mock_response.json.return_value = director_turn_payload
         mock_response.raise_for_status = MagicMock()
         mock_http = AsyncMock()
         mock_http.post.return_value = mock_response
@@ -1750,7 +1752,7 @@ async def _capture_director_turn_key(**kwargs: object) -> str:
         "replayed": False,
     }
     mock_response = MagicMock()
-    mock_response.json.return_value = _success_envelope(payload)
+    mock_response.json.return_value = payload
     mock_response.raise_for_status = MagicMock()
     mock_http = AsyncMock()
     mock_http.post.return_value = mock_response
@@ -1777,7 +1779,7 @@ async def _capture_director_start_key(**kwargs: object) -> str:
         "created_at": "2026-09-19T00:00:00Z",
     }
     mock_response = MagicMock()
-    mock_response.json.return_value = _success_envelope(payload)
+    mock_response.json.return_value = payload
     mock_response.raise_for_status = MagicMock()
     mock_http = AsyncMock()
     mock_http.post.return_value = mock_response
@@ -1879,7 +1881,9 @@ class TestDirectorState:
         self, director_state_payload: dict[str, object]
     ) -> None:
         client = _make_client()
-        mock_http, _mock_response = _mock_get_response(client, director_state_payload)
+        mock_http, _mock_response = _mock_get_response(
+            client, director_state_payload, envelope=False
+        )
 
         session_id = "ds_" + "a" * 32
         result = await client.director_state(session_id)
@@ -1902,3 +1906,30 @@ class TestDirectorState:
 
         with pytest.raises(AnalyticsClientError, match="missing required key"):
             await client.director_state("ds_" + "a" * 32)
+
+
+class TestDirectorResponsesAreBareObjects:
+    """The Director's frozen contract defines BARE response bodies.
+
+    Found against a real backend on 2026-09-21: every Director call raised
+    ``malformed_response`` because the client demanded the analytics
+    ``{success, data}`` envelope, while the tests above wrapped the payload the
+    same wrong way and passed. These pin the contract shape directly.
+    """
+
+    @pytest.mark.asyncio
+    async def test_an_enveloped_director_reply_is_not_the_contract(
+        self, director_session_payload: dict[str, object]
+    ) -> None:
+        from traigent.cloud.analytics_client import AnalyticsClientError
+
+        client = _make_client()
+        mock_response = MagicMock()
+        mock_response.json.return_value = _success_envelope(director_session_payload)
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.post.return_value = mock_response
+        client._client = mock_http
+
+        with pytest.raises(AnalyticsClientError):
+            await client.director_start("proj_1")
