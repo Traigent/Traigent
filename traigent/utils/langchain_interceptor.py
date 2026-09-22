@@ -35,6 +35,21 @@ class _CaptureBucket:
     responses: list[Any] = field(default_factory=list)
     by_key: dict[str, Any] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
+    #: Provider/model versions observed from REAL provider responses in this
+    #: trial (content identity v1, ``ObservedProviderVersionV1``), keyed by
+    #: ``(provider, requested_model, response_model, system_fingerprint)``.
+    #: Deliberately NOT emptied by :meth:`LangChainMetadataCapture.clear`,
+    #: which drains per-example spend; observations describe the whole trial.
+    observed: dict[tuple[str, str, str | None, str | None], int] = field(
+        default_factory=dict
+    )
+
+    def observed_provider_versions(self) -> list[dict[str, Any]]:
+        """This trial's observations as an ``ObservedProviderVersionV1`` list."""
+        from traigent.identity.provider_versions import observations_payload
+
+        with self.lock:
+            return observations_payload(dict(self.observed))
 
 
 #: The capture scope for the trial running in this context, or ``None`` when no
@@ -199,6 +214,43 @@ def capture_langchain_response(response: Any) -> Any:
     return response
 
 
+def capture_observed_response(
+    response: Any, *, provider: str, requested_model: Any
+) -> Any:
+    """Capture a REAL provider response and record its observed model version.
+
+    Call this only on the non-mock path: a mock response witnesses nothing
+    about what a provider served. The observation lands in the active trial
+    capture scope; outside a scope it is dropped (there is no trial to
+    attribute it to). Recording never raises into the caller's LLM call.
+    """
+    bucket = _capture_scope.get()
+    if bucket is not None:
+        try:
+            from traigent.identity.provider_versions import observation_key
+
+            key = observation_key(
+                response, provider=provider, requested_model=requested_model
+            )
+            with bucket.lock:
+                bucket.observed[key] = bucket.observed.get(key, 0) + 1
+        except Exception:  # noqa: BLE001 - observation is best-effort metadata
+            logger.debug("Could not record an observed provider version")
+    return capture_langchain_response(response)
+
+
+def requested_model_of(client: Any) -> Any:
+    """The model a LangChain chat client was configured to request, if exposed."""
+    for attr in ("model_name", "model", "model_id"):
+        try:
+            value = getattr(client, attr, None)
+        except Exception:  # noqa: BLE001
+            value = None
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
 def get_captured_response() -> Any | None:
     """Retrieve the last captured LangChain response."""
     return _metadata_capture.get_last_response()
@@ -239,7 +291,7 @@ def capture_key(key: Any):
         _metadata_capture.clear_current_key()
 
 
-def _create_stream_wrapper(original_meth: Any) -> Any:
+def _create_stream_wrapper(original_meth: Any, provider: str = "unknown") -> Any:
     def stream_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         start_time = time.perf_counter()
         last = None
@@ -251,12 +303,14 @@ def _create_stream_wrapper(original_meth: Any) -> Any:
             if not hasattr(last, "response_metadata"):
                 last.response_metadata = {}
             last.response_metadata["response_time_ms"] = response_time_ms
-            capture_langchain_response(last)
+            capture_observed_response(
+                last, provider=provider, requested_model=requested_model_of(self)
+            )
 
     return stream_wrapper
 
 
-def _create_astream_wrapper(original_meth: Any) -> Any:
+def _create_astream_wrapper(original_meth: Any, provider: str = "unknown") -> Any:
     async def astream_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         start_time = time.perf_counter()
         last = None
@@ -268,7 +322,9 @@ def _create_astream_wrapper(original_meth: Any) -> Any:
             if not hasattr(last, "response_metadata"):
                 last.response_metadata = {}
             last.response_metadata["response_time_ms"] = response_time_ms
-            capture_langchain_response(last)
+            capture_observed_response(
+                last, provider=provider, requested_model=requested_model_of(self)
+            )
 
     return astream_wrapper
 
@@ -320,7 +376,9 @@ def _patch_langchain_bedrock_model(model_cls: Any, class_name: str) -> bool:
                 response.response_metadata = {}
             response.response_metadata["response_time_ms"] = response_time_ms
 
-            capture_langchain_response(response)
+            capture_observed_response(
+                response, provider="bedrock", requested_model=requested_model_of(self)
+            )
             logger.debug(
                 "Captured %s invoke usage: %s, response_time_ms: %.2f",
                 class_name,
@@ -341,9 +399,17 @@ def _patch_langchain_bedrock_model(model_cls: Any, class_name: str) -> bool:
         if hasattr(model_cls, meth_name) and not getattr(model_cls, flag, False):
             original_meth = getattr(model_cls, meth_name)
             if meth_name == "stream":
-                setattr(model_cls, meth_name, _create_stream_wrapper(original_meth))
+                setattr(
+                    model_cls,
+                    meth_name,
+                    _create_stream_wrapper(original_meth, provider="bedrock"),
+                )
             else:
-                setattr(model_cls, meth_name, _create_astream_wrapper(original_meth))
+                setattr(
+                    model_cls,
+                    meth_name,
+                    _create_astream_wrapper(original_meth, provider="bedrock"),
+                )
             setattr(model_cls, flag, True)
             logger.info("✅ Patched %s.%s for metadata capture", class_name, meth_name)
             patched_any = True
@@ -407,7 +473,11 @@ def patch_langchain_for_metadata_capture() -> bool:
                     response.response_metadata = {}
                 response.response_metadata["response_time_ms"] = response_time_ms
 
-                capture_langchain_response(response)
+                capture_observed_response(
+                    response,
+                    provider="anthropic",
+                    requested_model=requested_model_of(self),
+                )
                 logger.debug(
                     f"Captured ChatAnthropic invoke usage: {getattr(response, 'usage_metadata', None)}, "
                     f"response_time_ms: {response_time_ms:.2f}"
@@ -431,11 +501,15 @@ def patch_langchain_for_metadata_capture() -> bool:
 
                 if meth_name == "stream":
                     setattr(
-                        ChatAnthropic, meth_name, _create_stream_wrapper(original_meth)
+                        ChatAnthropic,
+                        meth_name,
+                        _create_stream_wrapper(original_meth, provider="anthropic"),
                     )
                 else:
                     setattr(
-                        ChatAnthropic, meth_name, _create_astream_wrapper(original_meth)
+                        ChatAnthropic,
+                        meth_name,
+                        _create_astream_wrapper(original_meth, provider="anthropic"),
                     )
                 setattr(ChatAnthropic, flag, True)
                 logger.info(
@@ -494,7 +568,11 @@ def patch_langchain_for_metadata_capture() -> bool:
                     response.response_metadata = {}
                 response.response_metadata["response_time_ms"] = response_time_ms
 
-                capture_langchain_response(response)
+                capture_observed_response(
+                    response,
+                    provider="openai",
+                    requested_model=requested_model_of(self),
+                )
                 logger.debug(
                     f"Captured ChatOpenAI invoke usage: {getattr(response, 'usage_metadata', None)}, "
                     f"response_time_ms: {response_time_ms:.2f}"
@@ -514,11 +592,15 @@ def patch_langchain_for_metadata_capture() -> bool:
                 original_meth = getattr(ChatOpenAI, meth_name)
                 if meth_name == "stream":
                     setattr(
-                        ChatOpenAI, meth_name, _create_stream_wrapper(original_meth)
+                        ChatOpenAI,
+                        meth_name,
+                        _create_stream_wrapper(original_meth, provider="openai"),
                     )
                 else:
                     setattr(
-                        ChatOpenAI, meth_name, _create_astream_wrapper(original_meth)
+                        ChatOpenAI,
+                        meth_name,
+                        _create_astream_wrapper(original_meth, provider="openai"),
                     )
                 setattr(ChatOpenAI, flag, True)
                 logger.info(f"✅ Patched ChatOpenAI.{meth_name} for metadata capture")

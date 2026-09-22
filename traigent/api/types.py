@@ -630,6 +630,18 @@ class ExampleResult:
     #: into the per-example custom metrics (and then mean-aggregate onto the
     #: trial) through the normal metrics path, not the example record.
     user_metrics: dict[str, float] | None = None
+    #: Content identity v1 (TraigentSchema ``docs/identity/content-identity-v1.md``).
+    #: When the SDK holds a Backend purpose-key grant, ``example_id`` is the
+    #: keyed ``ex1:`` id of the example's INPUT (+ context) and
+    #: ``example_version`` the keyed ``exv1:`` version over id + expected
+    #: output + version-relevant metadata. Without a grant both identities are
+    #: withheld (fail closed): ``example_id`` is then only the SDK's per-row
+    #: handle and ``example_version`` is ``None``.
+    example_version: str | None = None
+    #: The user's own id for this example (``metadata["external_id"]`` or
+    #: ``metadata["example_id"]``). An annotation only: never hashed, never
+    #: used as the identity.
+    external_id: str | None = None
 
     @property
     def is_successful(self) -> bool:
@@ -644,7 +656,7 @@ class ExampleResult:
         """Convert to JSON-serializable dictionary."""
         from traigent.utils.persistence import _safe_json_value
 
-        return {
+        payload: dict[str, Any] = {
             "example_id": self.example_id,
             "input_data": _safe_json_value(self.input_data),
             "expected_output": _safe_json_value(self.expected_output),
@@ -655,6 +667,13 @@ class ExampleResult:
             "error_message": self.error_message,
             "metadata": _safe_json_value(self.metadata),
         }
+        # Omitted when unset so a run without content identity serializes
+        # exactly as before.
+        if self.example_version is not None:
+            payload["example_version"] = self.example_version
+        if self.external_id is not None:
+            payload["external_id"] = self.external_id
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ExampleResult:
@@ -669,6 +688,8 @@ class ExampleResult:
             success=data.get("success", False),
             error_message=data.get("error_message"),
             metadata=data.get("metadata", {}),
+            example_version=data.get("example_version"),
+            external_id=data.get("external_id"),
         )
 
 

@@ -61,6 +61,7 @@ __all__ = [
     "identify_dataset",
     "identify_evaluation_example",
     "result_identity_fields",
+    "stamped_identity",
 ]
 
 #: Attribute stamped on an ``EvaluationExample`` holding ``(kid, ExampleIdentity)``.
