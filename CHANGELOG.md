@@ -6,6 +6,31 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Candidate runs: `optimize(apply=False)`.** Returns the result, with
+  `result.best_config` as the candidate, without applying it to the wrapper. A
+  candidate run executes on an isolated copy of the wrapper taken at rest: it does
+  not change the wrapper's state, results history, current config or runtime
+  overrides. Any number of candidate runs may run in parallel with each other and
+  with an applying run. Promote a candidate later with `apply_best_config(result)`.
+  The default (`apply=True`) is unchanged.
+- **Overlapping applying runs on one wrapper are refused.** A second
+  `optimize()` (`apply=True`) on an `OptimizedFunction` that already has one in
+  flight now raises `traigent.utils.exceptions.OverlappingOptimizationError` (a
+  subclass of `OptimizationStateError`) instead of racing it, where the last
+  finisher silently replaced the first winner. `apply_best_config()` is refused
+  the same way while an applying run is in flight.
+
+### Fixed
+
+- **Per-run cost accounting state.** The unpriced-at-runtime model registry and
+  the usage-capture counter are now scoped to each `optimize()` run (a
+  `ContextVar` inherited by the run's asyncio tasks and SDK worker threads)
+  instead of being process-global and reset at every run start. Two agents
+  optimizing concurrently in one process no longer wipe or pick up each other's
+  records. Code outside a run keeps the previous process-level behaviour.
+
 ### Changed
 
 - **Breaking: bare custom objective names now require an explicit orientation.**

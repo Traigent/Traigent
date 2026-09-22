@@ -679,3 +679,19 @@ class OptimizationStateError(TraigentError):
         super().__init__(message, details)
         self.current_state = current_state
         self.expected_states = expected_states or []
+
+
+class OverlappingOptimizationError(OptimizationStateError):
+    """Raised when a second advancing run targets a wrapper that already has one.
+
+    ``optimize()`` with ``apply=True`` (the default) applies its winner to the
+    wrapper when it finishes, so two such runs on one ``OptimizedFunction``
+    race: the last finisher silently replaces the first winner. Only one
+    advancing run per wrapper may be in flight; the second is refused with
+    this error. Promotion with ``apply_best_config()`` is refused the same way
+    while an advancing run is in flight.
+
+    Candidate runs (``optimize(apply=False)``) are not advancing runs: they run
+    on an isolated copy of the wrapper, never apply, and may run in parallel
+    with each other and with an advancing run.
+    """

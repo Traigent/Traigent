@@ -9,6 +9,7 @@ OptimizedFunction to reduce class complexity.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import threading
@@ -201,6 +202,26 @@ class ConfigStateManager:
             source=BestConfigSource.DEFAULT.value,
         )
         self._override_sticky = False
+
+    def fork_detached(
+        self, *, setup_wrapper_callback: Callable[[], None]
+    ) -> ConfigStateManager:
+        """Return a copy whose mutable run state is independent of this one.
+
+        Used for a candidate run (``optimize(apply=False)``): the copy's
+        lifecycle state, results history and current/best config can change
+        without touching this manager. Read-only settings are shared.
+        """
+        with self._state_lock:
+            fork = copy.copy(self)
+            fork._state_lock = threading.RLock()
+            fork._optimization_history = list(self._optimization_history)
+            fork._current_config = dict(self._current_config)
+            fork._best_config = (
+                dict(self._best_config) if self._best_config is not None else None
+            )
+        fork._setup_wrapper_callback = setup_wrapper_callback
+        return fork
 
     # -- Properties --------------------------------------------------------
 

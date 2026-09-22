@@ -120,6 +120,7 @@ from traigent.utils.exceptions import (
     AuthenticationError,
     ConfigurationError,
     OptimizationError,
+    OverlappingOptimizationError,
     TVLValidationError,
     ValidationError,
 )
@@ -133,6 +134,12 @@ from traigent.utils.validation import (
 )
 
 logger = get_logger(__name__)
+
+# Guards every wrapper's advancing-run slot (check-and-set of
+# ``_advancing_run_active`` plus the at-rest snapshot). Held only for those few
+# attribute reads/writes, never across a run, so one process-wide lock suffices
+# and needs no per-instance initialisation.
+_RUN_GUARD_LOCK = threading.Lock()
 
 # Type parameters for the @optimize decorator's generic return type.
 # _P captures the wrapped function's parameter spec; _R captures its return type.
@@ -2095,6 +2102,7 @@ class OptimizedFunction(Generic[_P, _R]):
         strategy_params: Mapping[str, Any] | None = None,
         progress_bar: bool | None = None,
         budget: ExecutionBudget | None = None,
+        apply: bool = True,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization on the function.
@@ -2136,6 +2144,20 @@ class OptimizedFunction(Generic[_P, _R]):
                 and the deadline are hard limits; the monetary cap is a lower bound
                 when cost is unobservable (see ``ExecutionBudget`` docs). ``None``
                 (default) leaves behavior unchanged.
+            apply: ``True`` (default, the historical behaviour) makes this an
+                *advancing* run: when it finishes, its winner is applied to
+                this wrapper (``apply_best_config``) and the run is recorded in
+                the wrapper's results history. Only one advancing run per
+                wrapper may be in flight; a second one raises
+                :class:`~traigent.utils.exceptions.OverlappingOptimizationError`.
+                ``False`` makes this a *candidate* run: it returns the result
+                (``result.best_config`` is the candidate) WITHOUT applying it.
+                A candidate run executes on an isolated per-run copy of the
+                wrapper taken at rest, so it may run in parallel with other
+                candidate runs and with an advancing run, and none of its run
+                state (lifecycle state, results history, runtime overrides)
+                reaches the wrapper. Promote a candidate later, explicitly,
+                with ``apply_best_config(result)``.
             **algorithm_kwargs: Additional algorithm-specific parameters.
                 For grid search (algorithm="grid"):
                     - parameter_order: dict[str, int | float] controlling iteration order.
@@ -2148,7 +2170,68 @@ class OptimizedFunction(Generic[_P, _R]):
 
         Raises:
             OptimizationError: If optimization fails
+            OverlappingOptimizationError: If ``apply=True`` and another
+                advancing run is already in flight on this wrapper.
         """
+        run_kwargs: dict[str, Any] = {
+            "algorithm": algorithm,
+            "max_trials": max_trials,
+            "timeout": timeout,
+            "save_to": save_to,
+            "custom_evaluator": custom_evaluator,
+            "surrogate_evaluator": surrogate_evaluator,
+            "surrogate_evaluator_name": surrogate_evaluator_name,
+            "callbacks": callbacks,
+            "configuration_space": configuration_space,
+            "objectives": objectives,
+            "tvl_spec": tvl_spec,
+            "tvl_environment": tvl_environment,
+            "tvl": tvl,
+            "strategy": strategy,
+            "strategy_params": strategy_params,
+            "progress_bar": progress_bar,
+            "budget": budget,
+            "algorithm_kwargs": algorithm_kwargs,
+        }
+        from traigent.utils.cost_calculator import cost_run_scope
+
+        if not apply:
+            # Candidate run: an isolated copy of the wrapper at rest. It takes
+            # no guard, so it neither blocks nor is blocked by other runs.
+            candidate = self._fork_for_candidate_run()
+            with cost_run_scope():
+                return await candidate._optimize_run(**run_kwargs)
+
+        self._begin_advancing_run()
+        try:
+            with cost_run_scope():
+                return await self._optimize_run(**run_kwargs)
+        finally:
+            self._end_advancing_run()
+
+    async def _optimize_run(
+        self,
+        *,
+        algorithm: str | None,
+        max_trials: int | None,
+        timeout: float | None,
+        save_to: str | None,
+        custom_evaluator: Callable[..., Any] | None,
+        surrogate_evaluator: Callable[..., Any] | None,
+        surrogate_evaluator_name: str | None,
+        callbacks: list[Callable[..., Any]] | None,
+        configuration_space: dict[str, Any] | None,
+        objectives: ObjectiveSchema | Sequence[str] | None,
+        tvl_spec: str | Path | None,
+        tvl_environment: str | None,
+        tvl: TVLOptions | dict[str, Any] | None,
+        strategy: str | None,
+        strategy_params: Mapping[str, Any] | None,
+        progress_bar: bool | None,
+        budget: ExecutionBudget | None,
+        algorithm_kwargs: dict[str, Any],
+    ) -> OptimizationResult:
+        """Body of :meth:`optimize` for one run (advancing or candidate)."""
         logger.info(f"Starting optimization of {self.func.__name__}")
         _emit_cost_warning_once()
 
@@ -2279,6 +2362,7 @@ class OptimizedFunction(Generic[_P, _R]):
         strategy_params: Mapping[str, Any] | None = None,
         progress_bar: bool | None = None,
         budget: ExecutionBudget | None = None,
+        apply: bool = True,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization synchronously (convenience wrapper).
@@ -2306,6 +2390,9 @@ class OptimizedFunction(Generic[_P, _R]):
                 value raises ``TypeError``.
             progress_bar: ``True`` to force, ``False`` to suppress, ``None``
                 (default) auto-enables in interactive terminals.
+            apply: ``True`` (default) applies the winner to this wrapper;
+                ``False`` returns a candidate without applying it. See
+                :meth:`optimize`.
             **algorithm_kwargs: Additional algorithm parameters
 
         Returns:
@@ -2342,6 +2429,7 @@ class OptimizedFunction(Generic[_P, _R]):
             strategy_params=strategy_params,
             progress_bar=progress_bar,
             budget=budget,
+            apply=apply,
             **algorithm_kwargs,
         )
 
@@ -2686,9 +2774,11 @@ class OptimizedFunction(Generic[_P, _R]):
                 self._optimization_results = result
                 self._csm.append_optimization_result(result)
 
-                # Update current config to best found
-                if result.best_config:
-                    self.apply_best_config(result)
+                # Update current config to best found. A candidate run
+                # (optimize(apply=False)) runs on an isolated copy and never
+                # applies; promotion is the caller's explicit, later step.
+                if result.best_config and not self._is_candidate_run:
+                    self._commit_best_config(result)
 
                 # Set state to OPTIMIZED on success
                 self._state = OptimizationState.OPTIMIZED
@@ -4375,12 +4465,111 @@ Remediation:
         return self._csm.best_config_snapshot
 
     def apply_best_config(self, results: OptimizationResult | None = None) -> bool:
-        """Apply best configuration from optimization results."""
+        """Apply best configuration from optimization results.
+
+        This is also how a candidate from ``optimize(apply=False)`` is
+        promoted. Promotion is serialized with advancing runs: while an
+        ``optimize(apply=True)`` run is in flight on this wrapper (its own
+        apply would overwrite this one), it raises
+        :class:`~traigent.utils.exceptions.OverlappingOptimizationError`.
+        """
+        if self._advancing_run_in_flight():
+            raise OverlappingOptimizationError(
+                f"Cannot apply a configuration to {self.func.__name__!r} while an "
+                "optimize(apply=True) run is in flight on it: that run applies its "
+                "own winner when it finishes and would overwrite this one. Wait for "
+                "it to finish, then call apply_best_config(result).",
+                current_state=OptimizationState.OPTIMIZING.name,
+                expected_states=[
+                    OptimizationState.UNOPTIMIZED.name,
+                    OptimizationState.OPTIMIZED.name,
+                    OptimizationState.ERROR.name,
+                ],
+            )
+        return self._commit_best_config(results)
+
+    def _commit_best_config(self, results: OptimizationResult | None = None) -> bool:
+        """Apply ``results`` to this wrapper without the advancing-run guard.
+
+        Used by the advancing run itself, which owns the guard.
+        """
         return self._csm.apply_best_config(  # type: ignore[no-any-return]
             results,
             get_wrapped_func=lambda: self._wrapped_func,
             set_wrapped_func=lambda f: setattr(self, "_wrapped_func", f),
         )
+
+    # ------------------------------------------------------------------
+    # Advancing run vs candidate runs (identity/concurrency decision,
+    # owner ruling "option A"): any number of isolated candidate runs per
+    # wrapper, at most one advancing run -- the one that changes what the
+    # wrapper serves.
+    # ------------------------------------------------------------------
+
+    @property
+    def _is_candidate_run(self) -> bool:
+        return bool(self.__dict__.get("_candidate_run", False))
+
+    def _advancing_run_in_flight(self) -> bool:
+        with _RUN_GUARD_LOCK:
+            return bool(self.__dict__.get("_advancing_run_active", False))
+
+    def _begin_advancing_run(self) -> None:
+        """Claim this wrapper's single advancing-run slot, or refuse."""
+        with _RUN_GUARD_LOCK:
+            if self.__dict__.get("_advancing_run_active", False):
+                raise OverlappingOptimizationError(
+                    f"An optimize() run is already in flight on {self.func.__name__!r}. "
+                    "Two runs that both apply their winner to the same wrapper race "
+                    "(the last to finish silently replaces the first winner), so only "
+                    "one optimize(apply=True) per wrapper may run at a time. Wait for "
+                    "it to finish, or use optimize(apply=False) to produce a candidate "
+                    "in parallel and promote it later with apply_best_config(result).",
+                    current_state=OptimizationState.OPTIMIZING.name,
+                    expected_states=[
+                        OptimizationState.UNOPTIMIZED.name,
+                        OptimizationState.OPTIMIZED.name,
+                        OptimizationState.ERROR.name,
+                    ],
+                )
+            # Snapshot the wrapper AT REST before this run mutates it
+            # (transient objective/TVL overrides, lifecycle state), so candidate
+            # runs forked while it is in flight start from the resting wrapper.
+            self.__dict__["_at_rest_view"] = self._shallow_run_copy(self)
+            self.__dict__["_advancing_run_active"] = True
+
+    def _end_advancing_run(self) -> None:
+        with _RUN_GUARD_LOCK:
+            self.__dict__["_advancing_run_active"] = False
+            self.__dict__["_at_rest_view"] = None
+
+    def _fork_for_candidate_run(self) -> OptimizedFunction[_P, _R]:
+        """Return an isolated copy of this wrapper for one candidate run."""
+        with _RUN_GUARD_LOCK:
+            source = self
+            if self.__dict__.get("_advancing_run_active", False):
+                source = self.__dict__.get("_at_rest_view") or self
+            fork = self._shallow_run_copy(source)
+        fork.__dict__["_candidate_run"] = True
+        return fork
+
+    def _shallow_run_copy(
+        self, source: OptimizedFunction[_P, _R]
+    ) -> OptimizedFunction[_P, _R]:
+        """Shallow-copy ``source`` with its own detached config-state manager.
+
+        Attribute *rebinding* on the copy (``objective_schema``,
+        ``traigent_config``, ``constraints``...) never reaches ``source``; the
+        lifecycle state, results history and current config live on the
+        config-state manager, which is forked so they do not either.
+        """
+        fork = copy.copy(source)
+        fork.__dict__["_advancing_run_active"] = False
+        fork.__dict__["_at_rest_view"] = None
+        fork._csm = source._csm.fork_detached(
+            setup_wrapper_callback=fork._setup_function_wrapper
+        )
+        return fork
 
     def export_config(
         self,
