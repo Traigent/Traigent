@@ -6,8 +6,11 @@ Custom metrics must declare whether greater or smaller values are better.
 
 from __future__ import annotations
 
+import warnings
 from types import MappingProxyType
 from typing import Literal, cast
+
+from traigent.utils.exceptions import ObjectiveDirectionOverrideWarning
 
 ObjectiveOrientation = Literal["maximize", "minimize"]
 
@@ -59,6 +62,20 @@ def validate_objective_orientation(
     return cast(ObjectiveOrientation, orientation)
 
 
+def _direction_conflict_warning(
+    name: str,
+    declared: ObjectiveOrientation,
+    default: ObjectiveOrientation,
+) -> ObjectiveDirectionOverrideWarning:
+    return ObjectiveDirectionOverrideWarning(
+        f"Objective {name!r} is a reserved keyword: its built-in direction is "
+        f"{default!r}, but you declared {declared!r}. Traigent will use your "
+        f"declared direction for this run, but a Traigent certificate for this "
+        f"run will refuse to assert a comparison claim for {name!r}, because the "
+        "declared direction contradicts the reserved keyword's preset."
+    )
+
+
 def resolve_objective_orientation(
     name: str,
     explicit: str | None = None,
@@ -66,10 +83,24 @@ def resolve_objective_orientation(
     """Return an explicit direction or the exact SDK-owned default.
 
     Explicit valid declarations always win, including declarations that reverse
-    the SDK-owned default for a known metric. Unknown bare names fail closed.
+    the SDK-owned default for a known metric -- this function never raises for
+    that case. When ``name`` is a reserved keyword (has a canonical default)
+    and ``explicit`` disagrees with it, an :class:`ObjectiveDirectionOverrideWarning`
+    is emitted so the caller learns, at declaration time, that a Traigent
+    certificate for the run will refuse to assert a comparison claim for this
+    objective. Custom (non-reserved) names never trigger this warning, since
+    they have no built-in direction to conflict with. Unknown bare names fail
+    closed.
     """
     if explicit is not None:
-        return validate_objective_orientation(name, explicit)
+        validated = validate_objective_orientation(name, explicit)
+        default = CANONICAL_OBJECTIVE_ORIENTATIONS.get(name)
+        if default is not None and validated != default:
+            warnings.warn(
+                _direction_conflict_warning(name, validated, default),
+                stacklevel=3,
+            )
+        return validated
     try:
         return CANONICAL_OBJECTIVE_ORIENTATIONS[name]
     except KeyError:
