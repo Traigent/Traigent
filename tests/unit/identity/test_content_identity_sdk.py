@@ -27,8 +27,8 @@ from traigent.identity.agent_build import (
     collect_agent_build_base,
     declare_agent_assets,
 )
+from traigent.identity import run as run_module
 from traigent.identity.examples import (
-    build_evaluated_set,
     identify_dataset,
     result_identity_fields,
     stamped_identity,
@@ -39,7 +39,7 @@ from traigent.identity.keys import (
     get_content_identity_keys,
     set_content_identity_keys,
 )
-from traigent.identity.trial import build_trial_content_identity
+from traigent.identity.run import MAX_INLINE_MEMBERS, prepare_content_identity_run
 from traigent.utils.langchain_interceptor import (
     capture_langchain_response,
     capture_observed_response,
@@ -241,38 +241,100 @@ def _result(fields: dict[str, Any]) -> ExampleResult:
     )
 
 
-def test_evaluated_set_full_subset_and_recomputable(tenant_a: Any) -> None:
+def _agent(q: str) -> str:
+    return q
+
+
+def test_trial_wire_evaluated_full_subset_and_recomputable(tenant_a: Any) -> None:
     dataset = _dataset(ROWS)
-    identity = identify_dataset(dataset)
-    assert identity is not None
-    full = build_evaluated_set(
-        [_result(result_identity_fields(e, "x")) for e in dataset.examples], identity
-    )
-    assert full is not None
-    assert full["evaluated_root"] == identity.dataset_root
-    subset = build_evaluated_set(
-        [_result(result_identity_fields(dataset.examples[0], "x"))], identity
-    )
-    assert subset is not None
-    assert subset["evaluated_root"] != identity.dataset_root
-    assert subset["dataset_root"] == identity.dataset_root
+    run = prepare_content_identity_run(_agent, dataset, agent_key="agent_1")
+    assert run.dataset is not None
+    results = [_result(result_identity_fields(e, "x")) for e in dataset.examples]
+    full = run.trial_wire("trial_1", {"a": 1}, results, [])
+    assert full["provenance"] == "declared"
+    assert full["evaluated"]["trial_id"] == "trial_1"
+    assert full["evaluated"]["evaluated_root"] == run.dataset.dataset_root
+    subset = run.trial_wire("trial_2", {"a": 1}, results[:1], [])["evaluated"]
+    assert subset["evaluated_root"] != run.dataset.dataset_root
+    assert subset["dataset_root"] == run.dataset.dataset_root
     # A consumer recomputes the stated root from the member list (spec section 5).
-    recomputed = ci.compute_multiset_root(
-        [(m["example_id"], m["example_version"], m["count"]) for m in subset["members"]]
-    )
-    assert recomputed.root == subset["evaluated_root"]
     evaluated = ci.compute_multiset_root(
         [(m["example_id"], m["example_version"], m["count"]) for m in subset["members"]]
     )
-    assert ci.is_sub_multiset(evaluated, identity.multiset)
+    assert evaluated.root == subset["evaluated_root"]
+    assert ci.is_sub_multiset(evaluated, run.dataset.multiset)
+    # Repeated dataset rows raise the member count.
+    repeated = run.trial_wire("t3", {}, [results[0], results[0]], [])["evaluated"]
+    assert repeated["members"][0]["count"] == 2
 
 
-def test_evaluated_set_withheld_when_any_result_lacks_identity(tenant_a: Any) -> None:
+def test_trial_wire_states_why_a_slot_is_empty(tenant_a: Any) -> None:
     dataset = _dataset(ROWS)
-    identity = identify_dataset(dataset)
+    run = prepare_content_identity_run(_agent, dataset, agent_key="agent_1")
     results = [_result(result_identity_fields(e, "x")) for e in dataset.examples]
     results.append(_result({"example_id": "example_3"}))
-    assert build_evaluated_set(results, identity) is None
+    wire = run.trial_wire("trial_1", {"a": object()}, results, [])
+    assert wire["evaluated"] is None and wire["candidate"] is None
+    assert wire["unavailable"] == {
+        "evaluated": "row_outside_dataset",
+        "candidate": "config_not_canonicalizable",
+    }
+    assert run.trial_wire("t", {}, None, [])["unavailable"]["evaluated"] == (
+        "evaluation_results_unavailable"
+    )
+
+
+def test_no_grant_run_wire_is_explicit_about_missing_keys() -> None:
+    run = prepare_content_identity_run(_agent, _dataset(ROWS), agent_key="agent_1")
+    session = run.session_wire({})
+    assert session["key_status"] == "unavailable" and "key_id" not in session
+    assert session["dataset"] is None
+    assert session["unavailable"]["dataset"] == "purpose_keys_unavailable"
+    trial = run.trial_wire("t", {}, [], [])
+    assert trial["evaluated"] is None
+    assert trial["unavailable"]["evaluated"] == "purpose_keys_unavailable"
+
+
+def test_session_wire_with_grant(tenant_a: Any) -> None:
+    run = prepare_content_identity_run(_agent, _dataset(ROWS), agent_key="agent_1")
+    session = run.session_wire({})
+    assert session["key_status"] == "available"
+    assert session["key_id"] == tenant_a.kid
+    dataset = session["dataset"]
+    assert dataset["record_state"] == "draft"
+    assert (dataset["distinct_count"], dataset["total_count"]) == (3, 3)
+    assert len(dataset["members"]) == 3
+    agent = session["agent"]
+    assert agent["agent_id_source"] == "declared"
+    assert agent["agent_id"] == "agent_1"
+    assert ci.compute_agent_build_digest(agent["manifest"]) == agent["build_digest"]
+    assert session["unavailable"] == {}
+
+
+def test_member_lists_above_the_inline_cap_are_replaced(
+    tenant_a: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(run_module, "MAX_INLINE_MEMBERS", 2)
+    run = prepare_content_identity_run(_agent, _dataset(ROWS), agent_key="agent_1")
+    dataset = run.session_wire({})["dataset"]
+    assert "members" not in dataset
+    assert dataset["members_unavailable"] == "members_exceed_inline_cap"
+    assert dataset["distinct_count"] == 3
+    assert MAX_INLINE_MEMBERS == 2_000
+
+
+def test_agent_id_falls_back_to_the_function_name() -> None:
+    run_module._reset_warnings_for_tests()
+    with pytest.warns(UserWarning, match="fallback agent id"):
+        run = prepare_content_identity_run(_agent, _dataset(ROWS), agent_key=None)
+    assert (run.agent_id, run.agent_id_source) == ("_agent", "fallback")
+    unrepresentable = prepare_content_identity_run(
+        _agent, _dataset(ROWS), agent_key="has spaces"
+    )
+    assert unrepresentable.agent_id is None
+    assert unrepresentable.session_wire({})["unavailable"]["agent"] == (
+        "agent_id_unavailable"
+    )
 
 
 def test_example_result_serialization_is_unchanged_without_identity() -> None:
@@ -492,21 +554,25 @@ def test_observations_are_recorded_from_real_responses_only() -> None:
         capture_observed_response(
             _Response(), provider="anthropic", requested_model=None
         )
+        capture_observed_response(
+            _Response(), provider="openai", requested_model="gpt-4o-mini"
+        )
         capture_langchain_response(_Response(model="mock-model"))  # mock path
         observed = bucket.observed_provider_versions()
+    # The anthropic call named no requested model: not recorded (JS parity).
     assert observed == [
-        {
-            "provider": "anthropic",
-            "requested_model": "unknown",
-            "response_model": None,
-            "call_count": 1,
-        },
         {
             "provider": "openai",
             "requested_model": "gpt-4o",
             "response_model": "gpt-4o-2024-08-06",
             "call_count": 2,
             "system_fingerprint": "fp_1",
+        },
+        {
+            "provider": "openai",
+            "requested_model": "gpt-4o-mini",
+            "response_model": None,  # never copied from the request
+            "call_count": 1,
         },
     ]
 
@@ -520,31 +586,3 @@ def test_langchain_style_metadata_is_read() -> None:
         )
         observed = bucket.observed_provider_versions()
     assert observed[0]["response_model"] == "claude-x-20260101"
-
-
-# ---------------------------------------------------------------------------
-# Trial block
-# ---------------------------------------------------------------------------
-
-
-def test_trial_block_omits_what_cannot_be_stated() -> None:
-    assert (
-        build_trial_content_identity(
-            dataset_identity=None,
-            example_results=None,
-            candidate=None,
-            observed_provider_versions=[],
-        )
-        is None
-    )
-    block = build_trial_content_identity(
-        dataset_identity=None,
-        example_results=None,
-        candidate={"agent_id": "a", "build_digest": "sha256:" + "0" * 64},
-        observed_provider_versions=None,
-    )
-    assert block == {
-        "scheme": ci.SCHEME,
-        "candidate": {"agent_id": "a", "build_digest": "sha256:" + "0" * 64},
-        "observed_provider_versions": [],
-    }

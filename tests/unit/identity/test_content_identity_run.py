@@ -119,9 +119,12 @@ async def test_keyed_run_records_identity_per_trial() -> None:
 
         block = trial.metadata["content_identity"]
         assert block["scheme"] == ci.SCHEME
+        assert block["provenance"] == "declared"
+        assert block["trial_id"] == trial.trial_id
+        assert block["unavailable"] == {}
         evaluated = block["evaluated"]
-        assert evaluated["dataset_root"] == block["dataset"]["dataset_root"]
-        assert evaluated["evaluated_root"] == block["dataset"]["dataset_root"]
+        dataset_root = evaluated["dataset_root"]
+        assert evaluated["evaluated_root"] == dataset_root  # whole dataset, once
         assert (evaluated["distinct_count"], evaluated["total_count"]) == (2, 3)
         recomputed = ci.compute_multiset_root(
             [
@@ -158,8 +161,10 @@ async def test_unkeyed_run_mints_no_content_ids() -> None:
         examples = _example_results(trial)
         assert [e["example_id"] for e in examples] == ["row-a", "row-b", "row-a2"]
         assert all("example_version" not in e for e in examples)
-        block = trial.metadata.get("content_identity") or {}
-        assert "dataset" not in block and "evaluated" not in block
+        block = trial.metadata["content_identity"]
+        assert block["evaluated"] is None
+        assert block["unavailable"]["evaluated"] == "purpose_keys_unavailable"
+        assert block["candidate"] is not None  # the build version needs no key
         assert "ex1:" not in json.dumps(trial.metadata, default=str)
 
 
@@ -177,9 +182,89 @@ async def test_privacy_mode_withholds_the_block_from_the_backend_payload() -> No
 
 
 @pytest.mark.asyncio
-async def test_no_agent_key_means_no_candidate_version() -> None:
+async def test_no_agent_key_falls_back_to_the_function_name() -> None:
     set_content_identity_keys(_grant())
     result = await _run(agent_key=None)
     block = result.trials[0].metadata["content_identity"]
-    assert "candidate" not in block
-    assert "evaluated" in block
+    # No declared agent name: the function name is the (flagged) fallback id.
+    assert block["candidate"]["agent_id"] == "identity_agent"
+    assert block["evaluated"] is not None
+
+
+def _session_request(content_identity: dict[str, Any] | None) -> Any:
+    from traigent.cloud.models import SessionCreationRequest
+
+    return SessionCreationRequest(
+        function_name="identity_agent",
+        configuration_space={"alpha": [0, 1]},
+        objectives=[{"name": "accuracy", "orientation": "maximize", "weight": 1.0}],
+        dataset_metadata={"size": 3},
+        content_identity=content_identity,
+    )
+
+
+def test_both_session_serializers_carry_the_top_level_object() -> None:
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from traigent.cloud.api_operations import ApiOperations
+    from traigent.cloud.client import TraigentCloudClient
+    from traigent.identity.run import prepare_content_identity_run
+
+    set_content_identity_keys(_grant())
+    wire = prepare_content_identity_run(
+        identity_agent, _dataset(), agent_key="agent_identity_test"
+    ).session_wire({})
+    request = _session_request(wire)
+    typed = ApiOperations(Mock())._build_session_payload(request, max_trials=2)
+    stub = SimpleNamespace(_ensure_owner_metadata=lambda metadata: metadata or {})
+    cloud = TraigentCloudClient._serialize_session_request(stub, request)
+    for payload in (typed, cloud):
+        assert payload["content_identity"] == wire
+        assert payload["content_identity"]["dataset"]["record_state"] == "draft"
+    # Absent object: the body is unchanged (no key at all).
+    plain = ApiOperations(Mock())._build_session_payload(
+        _session_request(None), max_trials=2
+    )
+    assert "content_identity" not in plain
+
+
+def test_session_manager_builds_the_object_and_withholds_it_in_privacy_mode() -> None:
+    from traigent.core.backend_session_manager import BackendSessionManager
+
+    set_content_identity_keys(_grant())
+    manager = BackendSessionManager.__new__(BackendSessionManager)
+    manager._traigent_config = TraigentConfig(offline=True)
+    wire = manager._session_content_identity(
+        identity_agent, _dataset(), "agent_identity_test", None
+    )
+    assert wire is not None and wire["key_status"] == "available"
+    private = TraigentConfig(offline=True)
+    with pytest.warns(DeprecationWarning):
+        private.privacy_enabled = True
+    manager._traigent_config = private
+    assert (
+        manager._session_content_identity(
+            identity_agent, _dataset(), "agent_identity_test", None
+        )
+        is None
+    )
+
+
+@pytest.mark.backend_online  # SDK #2033: exercise the connected create path
+def test_session_operations_threads_the_object_to_the_request() -> None:
+    from typing import cast
+
+    from tests.unit.cloud.test_dataset_declared_identity import CapturingFakeClient
+    from traigent.cloud.session_operations import SessionOperations
+
+    fake = CapturingFakeClient()
+    wire = {"scheme": ci.SCHEME, "provenance": "declared", "key_status": "unavailable"}
+    SessionOperations(cast(Any, fake)).create_session(
+        "my_func",
+        {"model": ["a", "b"]},
+        metadata={"max_trials": 5, "dataset_size": 1, "evaluation_set": "lbl"},
+        content_identity=wire,
+    )
+    assert fake.captured_session_request is not None
+    assert fake.captured_session_request.content_identity == wire

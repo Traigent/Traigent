@@ -1635,6 +1635,16 @@ class BackendSessionManager:
                 if isinstance(agent_key, str) and agent_key.strip()
                 else None
             )
+            content_identity = self._session_content_identity(
+                func, dataset, declared_agent_key, default_config
+            )
+            # Only passed when built, so clients (and fakes) predating the
+            # field keep their exact call shape.
+            identity_kwargs: dict[str, Any] = (
+                {"content_identity": content_identity}
+                if content_identity is not None
+                else {}
+            )
             raw_result = self._backend_client.create_session(
                 function_name=portal_name,
                 agent_key=declared_agent_key,
@@ -1657,6 +1667,7 @@ class BackendSessionManager:
                 optimization_strategy=optimization_strategy,
                 task_type=task_type,
                 dataset_id=dataset_id,
+                **identity_kwargs,
             )
             result = self.normalize_session_creation_result(raw_result)
             if self._effective_require_run_id() and not result.backend_connected:
@@ -2141,6 +2152,32 @@ class BackendSessionManager:
                 prune_reason if prune_reason is None else str(prune_reason)
             ),
         }
+
+    def _session_content_identity(
+        self,
+        func: Callable[..., Any],
+        dataset: Any,
+        agent_key: str | None,
+        default_config: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """The session-create ``content_identity`` object (content identity v1).
+
+        The run's base agent version and dataset root, as the SDK declares them;
+        same shape as the JS SDK. ``None`` in privacy mode (member lists,
+        dataset sizes and project file names are disclosures a privacy-mode run
+        has not agreed to) and on any failure -- identity never blocks a run.
+        """
+        if getattr(self._traigent_config, "privacy_enabled", False):
+            return None
+        try:
+            from traigent.identity.run import prepare_content_identity_run
+
+            run = prepare_content_identity_run(func, dataset, agent_key=agent_key)
+            wire: dict[str, Any] = run.session_wire(default_config)
+            return wire
+        except Exception as exc:  # noqa: BLE001 - identity must never block a run
+            logger.debug("Session content identity omitted: %s", type(exc).__name__)
+            return None
 
     async def submit_trial(
         self,

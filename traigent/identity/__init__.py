@@ -13,6 +13,8 @@ Spec: TraigentSchema ``docs/identity/content-identity-v1.md``
   ``build_digest``.
 * :mod:`traigent.identity.provider_versions` -- provider/model versions
   observed from responses.
+* :mod:`traigent.identity.run` -- the session-create and per-trial
+  ``content_identity`` wire objects (same shape as the JS SDK).
 """
 
 from traigent.identity.content_identity import SCHEME, ContentIdentityError

@@ -6,8 +6,9 @@ shipped; observation is what ran. Each observation records:
 
 * ``provider`` -- which provider SDK the intercepted call went through;
 * ``requested_model`` -- what the caller asked for, read from the calling
-  client/arguments at call time (``"unknown"`` when the client does not expose
-  it: the schema requires a string, and a guess would be worse);
+  client/arguments at call time. When the client does not expose it the call
+  is NOT recorded (the schema requires a string, and a placeholder would be a
+  guess) -- the same rule as the JS SDK;
 * ``response_model`` -- what the RESPONSE says served it, or ``None``. It is
   never copied from ``requested_model``: an alias like ``gpt-4o`` is not a
   version;
@@ -28,12 +29,10 @@ from collections.abc import Mapping
 from typing import Any
 
 __all__ = [
-    "UNKNOWN_REQUESTED_MODEL",
     "observation_key",
     "observations_payload",
 ]
 
-UNKNOWN_REQUESTED_MODEL = "unknown"
 _PROVIDER_RE = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}")
 _MAX_TEXT = 256
 _MAX_OBSERVATIONS = 256
@@ -74,12 +73,16 @@ def _from_response(response: Any, names: tuple[str, ...]) -> str | None:
 
 def observation_key(
     response: Any, *, provider: str, requested_model: Any
-) -> tuple[str, str, str | None, str | None]:
-    """The ``(provider, requested_model, response_model, system_fingerprint)`` of one call."""
+) -> tuple[str, str, str | None, str | None] | None:
+    """``(provider, requested_model, response_model, system_fingerprint)`` of one call.
+
+    ``None`` -- record nothing -- when the provider name is not representable
+    or the requested model is unknown.
+    """
     normalized_provider = provider.lower() if isinstance(provider, str) else ""
-    if not _PROVIDER_RE.fullmatch(normalized_provider):
-        normalized_provider = "unknown"
-    requested = _text(requested_model) or UNKNOWN_REQUESTED_MODEL
+    requested = _text(requested_model)
+    if not _PROVIDER_RE.fullmatch(normalized_provider) or requested is None:
+        return None
     response_model = _from_response(response, ("model", "model_name", "model_id"))
     fingerprint = _from_response(response, ("system_fingerprint",))
     return normalized_provider, requested, response_model, fingerprint

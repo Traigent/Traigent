@@ -64,9 +64,6 @@ from traigent.core.cost_enforcement import Permit
 
 logger = get_logger(__name__)
 
-#: Orchestrator attribute caching the run's agent build manifest base.
-_AGENT_BUILD_CACHE_ATTR = "_content_identity_agent_build_base"
-
 
 def _resolve_primary_objective(orchestrator: Any) -> str | None:
     """Return the run's primary objective name, or None when unavailable.
@@ -530,10 +527,11 @@ class TrialLifecycle:
         orchestrator = self._orchestrator
         closure: LeaseClosure | None = None
         capture_bucket: Any = None
-        # Content identity v1: stamp every example with its keyed id/version
-        # BEFORE evaluation so each ExampleResult carries it. None (and no
-        # stamps) without a Backend key grant -- fail closed.
-        dataset_identity = self._identify_dataset(dataset)
+        # Content identity v1: prepare the run's identity (cached per run) and
+        # stamp every example with its keyed id/version BEFORE evaluation so
+        # each ExampleResult carries it. Without a Backend key grant nothing
+        # is stamped -- fail closed.
+        identity_run = self._content_identity_run(func, dataset)
 
         try:
             # Phase 3: Execute evaluation within TrialContext
@@ -629,9 +627,8 @@ class TrialLifecycle:
             self._apply_effectuation_metadata(result, func)
             self._apply_content_identity(
                 result,
-                func,
                 evaluation_config,
-                dataset_identity,
+                identity_run,
                 getattr(eval_result, "example_results", None),
                 capture_bucket,
             )
@@ -664,9 +661,8 @@ class TrialLifecycle:
             self._apply_effectuation_metadata(result, func)
             self._apply_content_identity(
                 result,
-                func,
                 evaluation_config,
-                dataset_identity,
+                identity_run,
                 prune_error.example_results,
                 capture_bucket,
             )
@@ -688,7 +684,7 @@ class TrialLifecycle:
             self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_effectuation_metadata(result, func)
             self._apply_content_identity(
-                result, func, evaluation_config, None, None, capture_bucket
+                result, evaluation_config, identity_run, None, capture_bucket
             )
             record_trial_result(span, status="failed", error=str(constraint_error))
             end_time = time.time()
@@ -736,7 +732,7 @@ class TrialLifecycle:
             self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_effectuation_metadata(result, func)
             self._apply_content_identity(
-                result, func, evaluation_config, None, None, capture_bucket
+                result, evaluation_config, identity_run, None, capture_bucket
             )
             record_trial_result(span, status="failed", error=str(exc))
             end_time = time.time()
@@ -759,85 +755,53 @@ class TrialLifecycle:
         metadata["backend_trial_id_source"] = "cloud_brain"
         result.metadata = metadata
 
-    @staticmethod
-    def _identify_dataset(dataset: Dataset) -> Any:
-        """The run dataset's content identity, or ``None`` (no grant / unidentifiable)."""
+    def _content_identity_run(self, func: Callable[..., Any], dataset: Dataset) -> Any:
+        """The run's content identity (cached on the dataset), or ``None`` on failure."""
         try:
-            from traigent.identity.examples import identify_dataset
+            from traigent.identity.run import prepare_content_identity_run
 
-            return identify_dataset(dataset)
+            return prepare_content_identity_run(
+                func,
+                dataset,
+                agent_key=getattr(self._orchestrator, "_agent_key", None),
+            )
         except Exception as exc:  # noqa: BLE001 - identity must never fail a trial
             logger.warning(
-                "Content identity unavailable for this dataset (%s); no example "
-                "ids or roots will be emitted.",
+                "Content identity unavailable for this run (%s); no example ids, "
+                "roots or build versions will be emitted.",
                 type(exc).__name__,
             )
             return None
 
-    def _agent_build_base(self, func: Callable[..., Any]) -> Any:
-        """The run-constant agent build manifest part, computed once per run.
-
-        Collected lazily at the end of the first trial to finish, so project
-        modules the agent imports on its first call are enumerated too.
-        """
-        orchestrator = self._orchestrator
-        cache = getattr(orchestrator, "__dict__", {})
-        if _AGENT_BUILD_CACHE_ATTR in cache:
-            return cache[_AGENT_BUILD_CACHE_ATTR]
-        base = None
-        try:
-            from traigent.identity.agent_build import collect_agent_build_base
-
-            base = collect_agent_build_base(
-                func, agent_id=getattr(orchestrator, "_agent_key", None)
-            )
-        except Exception as exc:  # noqa: BLE001 - identity must never fail a trial
-            logger.debug("Agent build manifest unavailable: %s", type(exc).__name__)
-        try:
-            cache[_AGENT_BUILD_CACHE_ATTR] = base
-        except TypeError:
-            pass
-        return base
-
     def _apply_content_identity(
         self,
         result: TrialResult,
-        func: Callable[..., Any],
         evaluation_config: dict[str, Any],
-        dataset_identity: Any,
+        identity_run: Any,
         example_results: Any,
         capture_bucket: Any,
     ) -> None:
-        """Attach the trial's content-identity block (TrialIdentityV1 shape).
+        """Attach the trial's ``metadata.content_identity`` object.
 
-        Carries the dataset root and this trial's evaluated set (keyed; only
-        with a Backend key grant), the candidate agent version (build manifest
-        with this trial's configuration applied) and the provider/model
-        versions observed from real responses. Best-effort: a failure here
-        omits the block and never fails the trial.
+        Carries the candidate agent version (build manifest with this trial's
+        configuration), the trial's evaluated set (keyed; only with a Backend
+        key grant), the provider/model versions observed from real responses,
+        and content-free reasons for every slot it could not fill.
+        Best-effort: a failure omits the block and never fails the trial.
         """
+        if identity_run is None:
+            return
         try:
-            from traigent.identity.agent_build import candidate_agent_version
-            from traigent.identity.trial import (
-                CONTENT_IDENTITY_METADATA_KEY,
-                build_trial_content_identity,
-            )
+            from traigent.identity.run import CONTENT_IDENTITY_METADATA_KEY
 
             observed = (
                 capture_bucket.observed_provider_versions()
                 if capture_bucket is not None
                 else []
             )
-            block = build_trial_content_identity(
-                dataset_identity=dataset_identity,
-                example_results=example_results,
-                candidate=candidate_agent_version(
-                    self._agent_build_base(func), evaluation_config
-                ),
-                observed_provider_versions=observed,
+            result.metadata[CONTENT_IDENTITY_METADATA_KEY] = identity_run.trial_wire(
+                str(result.trial_id), evaluation_config, example_results, observed
             )
-            if block is not None:
-                result.metadata[CONTENT_IDENTITY_METADATA_KEY] = block
         except Exception as exc:  # noqa: BLE001 - identity must never fail a trial
             logger.debug(
                 "Content identity block omitted for trial %s: %s",

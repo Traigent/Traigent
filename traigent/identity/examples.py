@@ -11,7 +11,7 @@ What this module does for one optimization run:
   ``dataset_root``. Each example is stamped with its identity so every
   ``ExampleResult`` built from it can carry the content id instead of the old
   positional ``example_<i>`` fallback (:func:`result_identity_fields`).
-* :func:`build_evaluated_set` turns one trial's example results into the
+* :mod:`traigent.identity.run` turns one trial's example results into the
   trial's ``EvaluatedSetV1`` (``evaluated_root`` + members), keyed to the run's
   ``dataset_root``.
 
@@ -34,7 +34,7 @@ within-trial pointer, never an identity, and it is never sent as one.
 from __future__ import annotations
 
 import warnings
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -45,7 +45,6 @@ from traigent.identity.content_identity import (
     MultisetRoot,
     compute_multiset_root,
     identify_example,
-    key_id_of,
     project_sdk_example,
 )
 from traigent.identity.keys import ContentIdentityKeys, get_content_identity_keys
@@ -56,7 +55,6 @@ logger = get_logger(__name__)
 __all__ = [
     "DatasetContentIdentity",
     "ExampleIdentity",
-    "build_evaluated_set",
     "external_id_of",
     "identify_dataset",
     "identify_evaluation_example",
@@ -109,17 +107,6 @@ class DatasetContentIdentity:
             "total_count": self.multiset.total_count,
             "conflicting_example_ids": list(self.multiset.conflicting_example_ids),
         }
-
-    def to_record(self) -> dict[str, Any]:
-        """A ``DatasetIdentityV1`` record with the member list inlined.
-
-        ``record_state`` is ``complete``: the SDK enumerated every example of
-        the dataset it was given. ``dataset_id`` is omitted -- it is a Backend
-        name the SDK does not mint.
-        """
-        record = {"record_state": "complete", **self.summary()}
-        record["members"] = _members_payload(self.multiset)
-        return record
 
 
 def external_id_of(metadata: Mapping[str, Any] | None) -> str | None:
@@ -283,65 +270,4 @@ def result_identity_fields(example: Any, fallback_example_id: str) -> dict[str, 
         "example_id": identity.example_id,
         "example_version": identity.example_version,
         "external_id": identity.external_id,
-    }
-
-
-def _members_payload(multiset: MultisetRoot) -> list[dict[str, Any]]:
-    return [
-        {
-            "example_id": member.example_id,
-            "example_version": member.example_version,
-            "count": member.count,
-        }
-        for member in multiset.members
-    ]
-
-
-def _result_field(result: Any, name: str) -> Any:
-    if isinstance(result, Mapping):
-        return result.get(name)
-    return getattr(result, name, None)
-
-
-def build_evaluated_set(
-    example_results: Iterable[Any] | None,
-    dataset_identity: DatasetContentIdentity | None,
-) -> dict[str, Any] | None:
-    """One trial's ``EvaluatedSetV1``: what it actually evaluated, as a multiset.
-
-    Every attempted example counts, failed ones included: a failed example is
-    part of the set the trial's aggregate was computed over. Returns ``None``
-    (no evaluated set is claimed) when there is no dataset identity, no
-    results, or any result lacks a content identity under the dataset's key --
-    a root over the identified subset would misstate what the trial ran.
-    """
-    if dataset_identity is None or example_results is None:
-        return None
-    pairs: list[tuple[str, str]] = []
-    for result in example_results:
-        example_id = _result_field(result, "example_id")
-        example_version = _result_field(result, "example_version")
-        try:
-            if (
-                key_id_of(example_id) != dataset_identity.key_id
-                or key_id_of(example_version) != dataset_identity.key_id
-            ):
-                return None
-        except ContentIdentityError:
-            return None
-        pairs.append((example_id, example_version))
-    if not pairs:
-        return None
-    with warnings.catch_warnings():
-        # Conflicts were already reported once for the dataset.
-        warnings.simplefilter("ignore", ConflictingExampleVersionsWarning)
-        evaluated = compute_multiset_root(pairs, key_id=dataset_identity.key_id)
-    return {
-        "scheme": SCHEME,
-        "key_id": dataset_identity.key_id,
-        "dataset_root": dataset_identity.dataset_root,
-        "evaluated_root": evaluated.root,
-        "distinct_count": evaluated.distinct_count,
-        "total_count": evaluated.total_count,
-        "members": _members_payload(evaluated),
     }

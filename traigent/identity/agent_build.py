@@ -68,6 +68,7 @@ __all__ = [
     "candidate_agent_version",
     "collect_agent_build_base",
     "declare_agent_assets",
+    "innermost_callable",
 ]
 
 _AGENT_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
@@ -198,6 +199,11 @@ def _unwrap_chain(func: Any) -> list[Any]:
 
 def _innermost(func: Any) -> Any:
     return _unwrap_chain(func)[-1]
+
+
+def innermost_callable(func: Any) -> Any:
+    """The user-authored callable under any decorator / OptimizedFunction layers."""
+    return _innermost(func)
 
 
 def _source_without_decorators(target: Any) -> str | None:

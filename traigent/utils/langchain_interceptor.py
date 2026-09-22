@@ -232,8 +232,10 @@ def capture_observed_response(
             key = observation_key(
                 response, provider=provider, requested_model=requested_model
             )
-            with bucket.lock:
-                bucket.observed[key] = bucket.observed.get(key, 0) + 1
+            if key is not None:
+                with bucket.lock:
+                    if key in bucket.observed or len(bucket.observed) < 256:
+                        bucket.observed[key] = bucket.observed.get(key, 0) + 1
         except Exception:  # noqa: BLE001 - observation is best-effort metadata
             logger.debug("Could not record an observed provider version")
     return capture_langchain_response(response)
