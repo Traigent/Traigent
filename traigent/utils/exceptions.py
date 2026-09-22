@@ -624,6 +624,21 @@ class TraigentDeprecationWarning(TraigentWarning):
     """
 
 
+class ObjectiveDirectionOverrideWarning(TraigentWarning):
+    """An explicit direction reverses a reserved keyword's built-in direction.
+
+    Raised when a caller declares ``orientation`` for a metric name this SDK
+    owns (e.g. ``total_cost``) that disagrees with that name's canonical
+    default (e.g. declaring ``total_cost`` as ``maximize`` when the canonical
+    default is ``minimize``). The SDK still honors the explicit direction --
+    this is a warning, not a validation error -- but the Traigent Backend
+    certificate refuses to assert a comparison claim for an objective whose
+    declared direction contradicts its reserved-keyword preset (see
+    TraigentBackend ``front_claim_producer.check_preset_direction``), so a
+    run declared this way cannot get a comparison claim on its certificate.
+    """
+
+
 # =============================================================================
 # Lifecycle and State Errors
 # =============================================================================
