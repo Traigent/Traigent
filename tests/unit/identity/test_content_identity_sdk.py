@@ -354,51 +354,142 @@ def test_session_wire_with_grant(tenant_a: Any) -> None:
     assert session["unavailable"] == {}
 
 
-def test_evaluator_binding_is_declared_and_recomputable(tenant_a: Any) -> None:
-    def exact(output: Any, expected: Any, **_: Any) -> float:
-        return float(output == expected)
-
+def _local(**kwargs: Any) -> Any:
     from traigent.evaluators.local import LocalEvaluator
 
-    builtin = _run(_dataset(ROWS)).session_wire({})["evaluator"]
-    custom = _run(
-        _dataset(ROWS),
-        evaluator=LocalEvaluator(metric_functions={"accuracy": exact}),
-        evaluator_id="ev_exact",
-    ).session_wire({})
-    binding = custom["evaluator"]
-    assert custom["evaluator_id_source"] == "declared"
+    return LocalEvaluator(**kwargs)
+
+
+def _evaluator_session(**overrides: Any) -> dict[str, Any]:
+    return _run(_dataset(ROWS), **overrides).session_wire({})
+
+
+def test_builtin_only_evaluator_states_a_known_null_judge(tenant_a: Any) -> None:
+    session = _evaluator_session()
+    binding = session["evaluator"]
+    assert session["evaluator_id_source"] == "fallback"
     assert binding["resolution"] == "declared_at_session_start"
     manifest = binding["manifest"]
-    assert manifest["judge"] is None  # explicit null, never omitted
+    assert manifest["evaluator_id"] == "sdk_local_evaluator"
+    assert manifest["judge"] is None  # a fact: deterministic built-in metrics
+    assert manifest["helper_digests"] == {} and manifest["dependency_versions"] == {}
     assert manifest["objectives"] == [
         {"name": "accuracy", "orientation": "maximize", "weight": 1.0}
     ]
     assert ci.compute_evaluator_version_digest(manifest) == binding["version_digest"]
-    assert binding["version_digest"] != builtin["version_digest"]
-    assert builtin["manifest"]["evaluator_id"] == "sdk_local_evaluator"
-    assert builtin["manifest"]["dependency_versions"] == {}
     # An objective change is a new evaluator version.
-    minimize = _run(
-        _dataset(ROWS), objectives=[_Objective("accuracy", "minimize")]
-    ).session_wire({})["evaluator"]
-    assert minimize["version_digest"] != builtin["version_digest"]
+    minimize = _evaluator_session(objectives=[_Objective("accuracy", "minimize")])
+    assert minimize["evaluator"]["version_digest"] != binding["version_digest"]
 
-    # A threshold captured by the scoring code is part of the version.
+
+def test_builtin_metric_outside_the_deterministic_set_needs_a_declaration(
+    tenant_a: Any,
+) -> None:
+    session = _evaluator_session(evaluator=_local(metrics=["faithfulness"]))
+    assert session["evaluator"] is None
+    assert session["unavailable"]["evaluator"] == "evaluator_manifest_unavailable"
+
+
+def _exact(output: Any, expected: Any, **_: Any) -> float:
+    return float(output == expected)
+
+
+def test_custom_scoring_without_a_judge_declaration_sends_no_version(
+    tenant_a: Any,
+) -> None:
+    session = _evaluator_session(
+        evaluator=_local(metric_functions={"accuracy": _exact})
+    )
+    assert session["evaluator"] is None
+    assert session["unavailable"]["evaluator"] == "evaluator_manifest_unavailable"
+
+
+def test_custom_scoring_with_declared_judge(tenant_a: Any) -> None:
+    from traigent.identity.evaluator_version import declare_evaluator
+
+    free = _local(metric_functions={"accuracy": _exact})
+    declare_evaluator(free, evaluator_id="ev_exact", judge=None)
+    session = _evaluator_session(evaluator=free)
+    manifest = session["evaluator"]["manifest"]
+    assert session["evaluator_id_source"] == "declared"
+    assert manifest["evaluator_id"] == "ev_exact"
+    assert manifest["judge"] is None  # declared model-free
+    # The SDK's own evidence stands for a custom scorer: this module's file.
+    assert any(
+        name.endswith("test_content_identity_sdk.py")
+        for name in manifest["helper_digests"]
+    )
+
+    judged = _local(metric_functions={"accuracy": _exact})
+    declare_evaluator(
+        judged,
+        judge={"provider": "openai", "model": "gpt-4o-mini", "config": {"t": 0}},
+        config_digest="sha256:" + "a" * 64,
+        helper_digests={},
+        dependency_versions={"ragas": "0.2.1"},
+    )
+    judged_manifest = _evaluator_session(evaluator=judged)["evaluator"]["manifest"]
+    assert judged_manifest["judge"]["model"] == "gpt-4o-mini"
+    assert judged_manifest["judge"]["config_digest"].startswith("sha256:")
+    assert judged_manifest["config_digest"] == "sha256:" + "a" * 64
+    assert judged_manifest["helper_digests"] == {}
+    assert judged_manifest["dependency_versions"] == {"ragas": "0.2.1"}
+    assert ci.compute_evaluator_version_digest(judged_manifest)
+
+
+def test_declaration_on_a_scoring_function_and_conflicts(tenant_a: Any) -> None:
+    from traigent.identity.evaluator_version import declare_evaluator
+
+    @declare_evaluator(judge=None)
+    def declared(output: Any, expected: Any, **_: Any) -> float:
+        return float(output == expected)
+
+    @declare_evaluator(judge={"provider": "openai", "model": "gpt-4o"})
+    def other(output: Any, expected: Any, **_: Any) -> float:
+        return 0.0
+
+    one = _evaluator_session(evaluator=_local(metric_functions={"accuracy": declared}))
+    assert one["evaluator"]["manifest"]["judge"] is None
+    both = _evaluator_session(
+        evaluator=_local(metric_functions={"accuracy": declared, "other": other}),
+        objectives=[_Objective("accuracy"), _Objective("other")],
+    )
+    assert both["evaluator"] is None
+    assert both["unavailable"]["evaluator"] == "evaluator_manifest_unavailable"
+
+
+def test_captured_threshold_is_part_of_the_evaluator_version(tenant_a: Any) -> None:
+    from traigent.identity.evaluator_version import declare_evaluator
+
     def make(threshold: float) -> Any:
         def thresholded(output: Any, expected: Any, **_: Any) -> float:
             return float(len(str(output)) > threshold)
 
+        declare_evaluator(thresholded, judge=None)
         return thresholded
 
     low, high = (
-        _run(
-            _dataset(ROWS),
-            evaluator=LocalEvaluator(metric_functions={"accuracy": make(t)}),
-        ).session_wire({})["evaluator"]["version_digest"]
+        _evaluator_session(evaluator=_local(metric_functions={"accuracy": make(t)}))[
+            "evaluator"
+        ]["version_digest"]
         for t in (1.0, 2.0)
     )
     assert low != high
+
+
+def test_malformed_declarations_are_rejected() -> None:
+    from traigent.identity.evaluator_version import declare_evaluator
+
+    for kwargs in (
+        {"evaluator_id": "has spaces"},
+        {"judge": {"provider": "OpenAI", "model": "x"}},
+        {"judge": "gpt-4o"},
+        {"config_digest": "sha256:short"},
+        {"helper_digests": {"a.py": "not-a-digest"}},
+        {"dependency_versions": {"ragas": ""}},
+    ):
+        with pytest.raises(ci.ContentIdentityError):
+            declare_evaluator(_exact, **kwargs)
 
 
 def test_band_objective_withholds_the_evaluator_slot(tenant_a: Any) -> None:

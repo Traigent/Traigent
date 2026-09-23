@@ -11,6 +11,8 @@ Spec: TraigentSchema ``docs/identity/content-identity-v1.md``
   ``dataset_root`` and per-trial ``evaluated_root``.
 * :mod:`traigent.identity.agent_build` -- the agent build manifest and
   ``build_digest``.
+* :mod:`traigent.identity.evaluator_version` -- the declared evaluator version
+  (``declare_evaluator``).
 * :mod:`traigent.identity.provider_versions` -- provider/model versions
   observed from responses.
 * :mod:`traigent.identity.run` -- the session-create and per-trial
