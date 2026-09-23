@@ -210,6 +210,29 @@ def is_traigent_offline_requested() -> bool:
     return _read_bool_env("TRAIGENT_OFFLINE")
 
 
+def is_content_identity_requested() -> bool:
+    """Return whether ``TRAIGENT_CONTENT_IDENTITY`` opts in to content identity.
+
+    Opt-in (Release 1): when set, a run that talks to a Backend fetches its
+    tenant's content-identity purpose-key grant before session create.
+    """
+
+    return _read_bool_env("TRAIGENT_CONTENT_IDENTITY")
+
+
+def content_identity_enabled(config: Any) -> bool:
+    """Whether content identity is switched on for ``config``.
+
+    An explicit ``TraigentConfig.content_identity`` (True/False) wins; ``None``
+    (the default) defers to ``TRAIGENT_CONTENT_IDENTITY``.
+    """
+
+    explicit = getattr(config, "content_identity", None)
+    if isinstance(explicit, bool):
+        return explicit
+    return is_content_identity_requested()
+
+
 def is_traigent_require_cloud_requested() -> bool:
     """Return whether ``TRAIGENT_REQUIRE_CLOUD`` disables local fallback."""
 
@@ -645,6 +668,12 @@ class TraigentConfig:
         local_storage_path: Path for local result storage.
         auto_sync: Whether local results may sync to the backend/portal when
             credentials are configured.
+        content_identity: Opt in to content identity v1. When True a run
+            that talks to a Backend fetches its tenant's purpose-key grant once
+            before session create and sends keyed example ids, versions and
+            roots. ``None`` (default) defers to ``TRAIGENT_CONTENT_IDENTITY``
+            (1/true/yes/on); an explicit True/False overrides the env. Off by
+            default: payloads are unchanged. A failed fetch never fails the run.
         custom_params: Additional custom parameters
 
     Example:
@@ -689,6 +718,11 @@ class TraigentConfig:
         False  # When True, use None instead of 0.0 for missing metrics
     )
     comparability_mode: Literal["legacy", "warn", "strict"] = "warn"
+
+    # Content identity v1 (opt-in): fetch the tenant's purpose-key grant from
+    # the Backend for each run. None defers to TRAIGENT_CONTENT_IDENTITY; an
+    # explicit bool overrides it. Never serialized by to_dict().
+    content_identity: bool | None = None
 
     # Analytics and telemetry settings
     enable_usage_analytics: bool = True  # Send privacy-safe usage stats when backend/portal integration is configured
@@ -862,6 +896,7 @@ class TraigentConfig:
             "privacy_enabled",
             "strict_metrics_nulls",
             "comparability_mode",
+            "content_identity",
         }
 
         known_params = {k: v for k, v in config_dict.items() if k in known_fields}
@@ -1166,6 +1201,7 @@ class TraigentConfig:
         - TRAIGENT_PRIVACY_MODE: Deprecated compatibility content-redaction flag
         - TRAIGENT_STRICT_METRICS_NULLS: Use None instead of 0.0 for missing metrics
         - TRAIGENT_COMPARABILITY_MODE: one of legacy|warn|strict
+        - TRAIGENT_CONTENT_IDENTITY: Opt in to content identity (grant fetch)
 
         Returns:
             TraigentConfig with environment-based settings
@@ -1232,6 +1268,9 @@ class TraigentConfig:
         if mode in {"legacy", "warn", "strict"}:
             config.comparability_mode = mode  # type: ignore[assignment]
 
+        if is_content_identity_requested():
+            config.content_identity = True
+
         return config
 
 
@@ -1263,6 +1302,7 @@ TraigentConfig.__signature__ = Signature(  # type: ignore[attr-defined]
         _public_config_param(
             "comparability_mode", "warn", Literal["legacy", "warn", "strict"]
         ),
+        _public_config_param("content_identity", None, bool | None),
         _public_config_param("custom_params", None, dict[str, Any] | None),
     ]
 )

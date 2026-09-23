@@ -10,6 +10,7 @@ import asyncio
 import concurrent.futures
 import json
 import os
+import re
 import secrets
 import sys
 import time
@@ -200,6 +201,41 @@ class _SyncBackendTransientError(RetryableError):
         self.status_code = status_code
 
 
+_SAFE_ERROR_CODE_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+_PURPOSE_KEYS_PATH = "/content-identity/purpose-keys"
+
+
+class PurposeKeyGrantFetchError(CloudServiceError):
+    """The content-identity purpose-key grant could not be fetched.
+
+    Content-free by construction: carries only the HTTP status and the
+    envelope's ``error_code`` when it is a plain token -- never a response body
+    (a 200 body is key material).
+    """
+
+    def __init__(self, status_code: int | None, error_code: str | None) -> None:
+        self.status_code = status_code
+        self.error_code = error_code
+        super().__init__(
+            f"purpose-key grant fetch failed (status={status_code}, "
+            f"error_code={error_code})"
+        )
+
+
+def _envelope_error_code(response: Any) -> str | None:
+    """The standard error envelope's ``error_code``, if it is a plain token."""
+    try:
+        payload = response.json()
+    except ValueError:  # silent-ok: the HTTP status already reports the failure; an unreadable error body only means "no error code"
+        return None
+    if not isinstance(payload, dict):
+        return None
+    code = payload.get("error_code")
+    if isinstance(code, str) and _SAFE_ERROR_CODE_RE.fullmatch(code):
+        return code
+    return None
+
+
 _SYNC_BACKEND_RETRY_CONFIG = RetryConfig(
     max_attempts=3,
     initial_delay=0.25,
@@ -277,6 +313,7 @@ __all__ = [
     "BackendClientConfig",
     "BackendIntegratedClient",
     "ExperimentGroupsNamespace",
+    "PurposeKeyGrantFetchError",
 ]
 
 
@@ -2071,6 +2108,66 @@ class BackendIntegratedClient:
                 f"{response.text[:200]}"
             )
         return self._extract_backend_data(response)
+
+    def _build_purpose_keys_url(self) -> str | None:
+        """Return the purpose-key grant URL for the configured backend API."""
+        parsed = urlparse(self.api_base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+        if (
+            parsed.username
+            or parsed.password
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        path = f"{parsed.path.rstrip('/')}{_PURPOSE_KEYS_PATH}"
+        return cast(
+            str,
+            urlunparse(parsed._replace(path=path, params="", query="", fragment="")),
+        )
+
+    def fetch_content_identity_grant_sync(self) -> dict[str, Any]:
+        """Fetch this tenant's content-identity purpose-key grant (bare mapping).
+
+        ``POST /api/v1/content-identity/purpose-keys`` with the SDK's normal
+        auth headers and no body (TraigentSchema
+        ``datasets/content_identity_endpoints.json``). Returns the raw 200
+        body for :meth:`ContentIdentityKeys.from_grant` to validate. One
+        attempt, no retry: a failed fetch only means this run carries no
+        content identity. Raises :class:`PurposeKeyGrantFetchError` (status and
+        error code only) on any non-200 answer or a non-object body; transport
+        errors propagate. The body is SECRET: it is never cached, logged or
+        persisted here.
+        """
+        self._raise_if_backend_egress_disabled("fetch content-identity keys")
+        try:
+            import requests
+        except ImportError as exc:  # pragma: no cover - requests is required
+            raise CloudServiceError("requests is unavailable") from exc
+
+        url = self._build_purpose_keys_url()
+        if not url:
+            raise PurposeKeyGrantFetchError(None, "invalid_backend_url")
+        headers = self._get_sync_auth_headers(target="backend")
+        headers["Cache-Control"] = "no-store"
+        response = requests.post(  # nosec B113 - timeout is provided
+            url,
+            headers=headers,
+            timeout=min(self.timeout, 30.0),
+        )
+        if response.status_code != 200:
+            raise PurposeKeyGrantFetchError(
+                response.status_code, _envelope_error_code(response)
+            )
+        try:
+            grant = response.json()
+        except Exception:  # noqa: BLE001 - never echo a secret-bearing body
+            raise PurposeKeyGrantFetchError(200, "non_json_body") from None
+        if not isinstance(grant, dict):
+            raise PurposeKeyGrantFetchError(200, "non_object_body")
+        return grant
 
     def upload_example_features(
         self,
