@@ -105,9 +105,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   was read as `0.0`, so a trial with half its examples failed reported about half its
   true cost and could win a cost objective (#2404). Cost keys (`cost`, `input_cost`,
   `output_cost`, `total_cost`) are now averaged only over examples that measured
-  them, with a warning naming the coverage. With strict cost accounting — set
-  explicitly, or on because `cost` is an objective of the run — partial coverage
-  fails that trial with `CostTrackingRequiredError` instead. Quality metrics keep
+  them, with a warning naming the coverage. A failed example does not fail its
+  trial or the run, including under strict cost accounting. Quality metrics keep
   their existing behaviour (a failed example still scores 0.0), and a run where no
   example reports cost is unchanged.
 

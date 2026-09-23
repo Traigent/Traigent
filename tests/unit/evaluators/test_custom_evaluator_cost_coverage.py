@@ -8,7 +8,6 @@ was read as ``0.0``, so a trial whose true per-example cost was 0.005 reported
 import pytest
 
 from traigent.api.types import ExampleResult
-from traigent.core.cost_enforcement import CostTrackingRequiredError
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
 from traigent.evaluators.base import Dataset, EvaluationExample, SimpleScoringEvaluator
 
@@ -84,10 +83,16 @@ async def test_failed_rows_still_count_as_zero_quality(lenient):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("missing", ["raise", "nocost"])
-async def test_strict_accounting_fails_a_trial_with_partial_cost(strict, missing):
+async def test_strict_accounting_warns_but_does_not_fail_partial_cost(
+    strict, missing, caplog
+):
+    # Raising here fails the trial, and a failed trial's unknown cost then
+    # aborts the whole strict run at the spend check — one timeout would
+    # cost the user every result.
     evaluator = _evaluator(["priced", "priced", missing, missing])
-    with pytest.raises(CostTrackingRequiredError, match=r"cost.*2 of 4"):
-        await evaluator.evaluate(_identity, {}, _dataset())
+    result = await evaluator.evaluate(_identity, {}, _dataset())
+    assert result.aggregated_metrics["cost"] == pytest.approx(0.005)
+    assert "2 of 4" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -122,3 +127,46 @@ def test_simple_scoring_aggregation_ignores_unmeasured_cost(lenient):
     aggregated = evaluator._aggregate_custom_metrics(rows)
     assert aggregated["cost"] == pytest.approx(0.005)
     assert aggregated["accuracy"] == pytest.approx(2 / 3)
+
+
+def test_cost_objective_run_survives_failed_rows(monkeypatch, tmp_path):
+    # End to end through the orchestrator's spend accounting, which the tests
+    # above never reach: cost is an objective, so strict accounting is on.
+    from traigent.core.optimized_function import OptimizedFunction
+
+    monkeypatch.delenv("TRAIGENT_STRICT_COST_ACCOUNTING", raising=False)
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
+
+    def target(value: int, **_config) -> int:
+        return value
+
+    def custom_evaluator(func, config, example):
+        index = example.input_data["value"]
+        if config["model"] == "flaky" and index % 2:
+            raise RuntimeError("provider call failed after spending")
+        return ExampleResult(
+            example_id=f"row-{index}",
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output=func(**example.input_data),
+            metrics={"accuracy": 1.0, "cost": 0.005},
+            execution_time=0.0,
+            success=True,
+            error_message=None,
+            metadata={},
+        )
+
+    opt_func = OptimizedFunction(
+        func=target,
+        configuration_space={"model": ["steady", "flaky"]},
+        objectives=["accuracy", "cost"],
+        eval_dataset=_dataset(),
+        custom_evaluator=custom_evaluator,
+        max_trials=2,
+    )
+    result = opt_func.optimize_sync(algorithm="grid", max_trials=2, progress_bar=False)
+
+    by_model = {t.config["model"]: t for t in result.trials}
+    assert by_model["flaky"].metrics["cost"] == pytest.approx(0.005)
+    assert by_model["flaky"].metrics["accuracy"] == pytest.approx(0.5)
+    assert result.best_config["model"] == "steady"

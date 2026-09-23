@@ -35,7 +35,7 @@ from traigent.evaluators.metrics_tracker import (
     extract_llm_metrics,
     is_reserved_metric_key,
 )
-from traigent.utils.env_config import is_strict_cost_accounting, is_truthy
+from traigent.utils.env_config import is_truthy
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
 from traigent.utils.exceptions import ConfigurationError, EvaluationError
@@ -111,9 +111,10 @@ def _measured_value(value: Any) -> float | None:
 def aggregate_measured_metric(metric: str, all_metrics: list[dict[str, Any]]) -> float:
     """Mean of a cost metric over the rows that actually measured it.
 
-    With partial coverage the mean of the measured rows is the estimate; under
-    strict cost accounting (explicit, or because cost is an objective of the
-    run) partial coverage fails the trial instead. No coverage at all keeps the
+    With partial coverage the mean of the measured rows is the estimate and a
+    warning names the coverage. It does not raise: a failed trial has no cost,
+    and under strict cost accounting the run-level spend check would then abort
+    the whole run over one failed example. No coverage at all keeps the
     historical 0.0 and is left to the run-level no-usage handling.
     """
     measured = [
@@ -129,12 +130,6 @@ def aggregate_measured_metric(metric: str, all_metrics: list[dict[str, Any]]) ->
             f"{len(all_metrics)} examples; failed or unpriced examples have an "
             "unknown cost, so this trial's cost is a partial estimate"
         )
-        if is_strict_cost_accounting():
-            from traigent.core.cost_enforcement import CostTrackingRequiredError
-
-            raise CostTrackingRequiredError(
-                message + " and strict cost accounting is on."
-            )
         logger.warning("%s.", message)
     return sum(measured) / len(measured)
 
