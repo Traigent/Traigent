@@ -520,3 +520,274 @@ async def test_failed_in_flight_apply_run_releases_the_slot(
     assert agent.current_config == {"temperature": 0.1}
     result = await agent.optimize(max_trials=3)
     assert result.best_config == {"temperature": 0.9}
+
+
+# ---------------------------------------------------------------------------
+# 5. Candidate isolation by a type-preserving structural detacher (Astra
+#    delta review @ db91ce0c). Exact dict/list/tuple are rebuilt (tuples stay
+#    tuples), JSON scalars are copied by value, functions/builtins/classes/Enum
+#    members pass by reference; anything else fails closed with
+#    CandidateIsolationError. No user hook ever runs, and detaching happens
+#    outside the process-wide guard lock.
+# ---------------------------------------------------------------------------
+
+
+def _isolation_error():
+    from traigent.utils.exceptions import CandidateIsolationError
+
+    return CandidateIsolationError
+
+
+@pytest.mark.asyncio
+async def test_live_config_holding_a_lock_is_refused_and_served_config_untouched():
+    """Astra's reproduction: a lock nested in live config used to make the
+    fallback share the surrounding dict, so a candidate appended to the
+    served list. Now the candidate is refused and nothing is shared."""
+    import threading
+
+    agent = _make_agent()
+    lock = threading.Lock()
+    agent._csm._current_config["extra"] = {"stops": ["END"], "lock": lock}
+
+    with pytest.raises(_isolation_error()) as excinfo:
+        await agent.optimize(max_trials=3, apply=False)
+    assert "extra" in str(excinfo.value) and "lock" in str(excinfo.value)
+
+    served = agent._csm._current_config["extra"]
+    assert served["stops"] == ["END"]
+    assert served["lock"] is lock
+    assert agent.state == OptimizationState.UNOPTIMIZED
+    # The refused candidate held nothing: an applying run is admitted.
+    del agent._csm._current_config["extra"]
+    result = await agent.optimize(max_trials=3)
+    assert result.best_config == {"temperature": 0.9}
+
+
+@pytest.mark.asyncio
+async def test_shared_list_default_and_choice_mutated_by_candidate_trial_stays_put():
+    """The same list object is a default AND a categorical choice; a candidate
+    trial mutating the value it was handed must not reach the wrapper."""
+    import json
+
+    shared = ["END"]
+
+    @traigent.optimize(
+        eval_dataset=_dataset(),
+        objectives=["accuracy"],
+        configuration_space={"stops": [shared, ["STOP"]]},
+        default_config={"stops": shared},
+        scoring_function=_scorer,
+        algorithm="grid",
+    )
+    async def agent(text: str) -> str:
+        traigent.get_config()["stops"].append("LEAK")
+        return "HOT"
+
+    assert agent.default_config["stops"] is agent.configuration_space["stops"][0]
+    before_default = json.dumps(agent.default_config, sort_keys=True)
+    before_space = json.dumps(agent.configuration_space, sort_keys=True)
+    before_current = json.dumps(agent.current_config, sort_keys=True)
+
+    await agent.optimize(max_trials=3, apply=False)
+
+    assert json.dumps(agent.default_config, sort_keys=True) == before_default
+    assert json.dumps(agent.configuration_space, sort_keys=True) == before_space
+    assert json.dumps(agent.current_config, sort_keys=True) == before_current
+    assert shared == ["END"]
+
+
+def test_deepcopy_hook_is_never_invoked_and_cannot_deadlock_admission():
+    """A list subclass whose __deepcopy__ calls another wrapper's
+    apply_best_config() used to deadlock (copying ran under the global guard
+    lock). Now the subclass is refused without running any hook."""
+    import threading
+
+    other = _make_agent()
+    other_candidate = other.optimize_sync(max_trials=3, apply=False)
+    invoked: list[bool] = []
+
+    class HookList(list):
+        def __deepcopy__(self, memo):
+            invoked.append(True)
+            other.apply_best_config(other_candidate)
+            return HookList(self)
+
+        def __copy__(self):
+            invoked.append(True)
+            return HookList(self)
+
+    agent = _make_agent()
+    agent._csm._current_config["hook"] = HookList(["x"])
+
+    outcome: list[BaseException | object] = []
+
+    def run_candidate() -> None:
+        try:
+            outcome.append(asyncio.run(agent.optimize(max_trials=3, apply=False)))
+        except BaseException as exc:
+            outcome.append(exc)
+
+    worker = threading.Thread(target=run_candidate, daemon=True)
+    worker.start()
+    worker.join(timeout=60)
+    assert not worker.is_alive(), "candidate fork deadlocked"
+    assert len(outcome) == 1 and isinstance(outcome[0], _isolation_error())
+    assert "hook" in str(outcome[0])
+    assert invoked == []
+    # Admission is not wedged: the other wrapper can still promote.
+    assert other.apply_best_config(other_candidate) is True
+
+
+def test_detaching_never_runs_under_the_global_guard_lock(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Structural: every detach call happens with _RUN_GUARD_LOCK free."""
+    from traigent.core import config_state_manager, optimized_function
+
+    held: list[bool] = []
+    real = config_state_manager.detach_candidate_value
+
+    def spy(value, path="config"):
+        held.append(optimized_function._RUN_GUARD_LOCK.locked())
+        return real(value, path)
+
+    monkeypatch.setattr(config_state_manager, "detach_candidate_value", spy)
+    monkeypatch.setattr(optimized_function, "detach_candidate_value", spy)
+
+    agent = _make_agent()
+    agent._fork_for_candidate_run()
+    assert held and not any(held)
+
+
+def _mutable_ids(value, acc):
+    if isinstance(value, (dict, list, tuple)):
+        if isinstance(value, (dict, list)):
+            acc.add(id(value))
+        items = value.values() if isinstance(value, dict) else value
+        for item in items:
+            _mutable_ids(item, acc)
+    return acc
+
+
+def test_candidate_fork_search_space_shares_no_mutable_value():
+    """The structural no-shared-value check, extended to the search space."""
+    agent = _make_agent()
+    agent.configuration_space = {
+        "temperature": [0.1, 0.9],
+        "stops": [["END"], ["STOP"]],
+        "nested": [{"k": ["v"]}],
+    }
+    agent._csm.configuration_space = agent.configuration_space
+
+    fork = agent._fork_for_candidate_run()
+
+    served = _mutable_ids(agent.configuration_space, set())
+    _mutable_ids(agent._csm.configuration_space, served)
+    assert not (_mutable_ids(fork.configuration_space, set()) & served)
+    assert not (_mutable_ids(fork._csm.configuration_space, set()) & served)
+    assert fork.configuration_space == agent.configuration_space
+
+
+@pytest.mark.asyncio
+async def test_call_time_search_space_override_is_detached(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A call-time configuration_space override is detached for a candidate."""
+    import json
+
+    override = {"temperature": [0.1, 0.9], "stops": [["END"]]}
+    before = json.dumps(override, sort_keys=True)
+
+    @traigent.optimize(
+        eval_dataset=_dataset(),
+        objectives=["accuracy"],
+        configuration_space={"temperature": [0.1, 0.9], "stops": [["END"]]},
+        scoring_function=_scorer,
+        algorithm="grid",
+    )
+    async def agent(text: str) -> str:
+        traigent.get_config()["stops"].append("LEAK")
+        return "HOT"
+
+    await agent.optimize(max_trials=2, apply=False, configuration_space=override)
+    assert json.dumps(override, sort_keys=True) == before
+
+
+@pytest.mark.asyncio
+async def test_candidate_on_range_and_intrange_searches_the_continuous_range():
+    """Tuples mean continuous ranges; detaching must keep them tuples (a JSON
+    round-trip would turn Range(0, 1) into the two-value categorical [0, 1])."""
+    from traigent.api.parameter_ranges import IntRange, Range
+
+    @traigent.optimize(
+        eval_dataset=_dataset(),
+        objectives=["accuracy"],
+        configuration_space={"temperature": Range(0.0, 1.0), "k": IntRange(1, 8)},
+        scoring_function=_scorer,
+        algorithm="random",
+    )
+    async def agent(text: str) -> str:
+        return "HOT"
+
+    fork = agent._fork_for_candidate_run()
+    assert fork.configuration_space["temperature"] == (0.0, 1.0)
+    assert isinstance(fork.configuration_space["temperature"], tuple)
+    assert isinstance(fork.configuration_space["k"], tuple)
+
+    result = await agent.optimize(max_trials=8, apply=False)
+    temps = {t.config["temperature"] for t in result.trials}
+    ks = {t.config["k"] for t in result.trials}
+    assert temps - {0.0, 1.0}, temps
+    assert ks - {1, 8}, ks
+
+
+def test_allowlisted_callable_class_and_enum_choices_pass_by_reference():
+    """Functions, builtins, classes and Enum members are passed by reference:
+    never copied, never invoked while detaching."""
+    import enum
+
+    calls: list[str] = []
+
+    def fmt_a() -> str:
+        calls.append("a")
+        return "a"
+
+    def fmt_b() -> str:
+        calls.append("b")
+        return "b"
+
+    class Strategy(enum.Enum):
+        FAST = "fast"
+        SLOW = "slow"
+
+    class Planner:
+        pass
+
+    space = {
+        "fmt": [fmt_a, fmt_b],
+        "builtin": [len, max],
+        "strategy": [Strategy.FAST, Strategy.SLOW],
+        "planner": [Planner, dict],
+    }
+
+    @traigent.optimize(
+        eval_dataset=_dataset(),
+        objectives=["accuracy"],
+        configuration_space=space,
+        scoring_function=_scorer,
+        algorithm="grid",
+    )
+    async def agent(text: str) -> str:
+        return "HOT"
+
+    fork = agent._fork_for_candidate_run()
+    for key, choices in agent.configuration_space.items():
+        assert all(
+            a is b for a, b in zip(fork.configuration_space[key], choices, strict=True)
+        )
+    assert calls == []
+    # Note: an end-to-end run over non-JSON choices is not exercised here: at
+    # base (bad5953b) the offline run pipeline itself already rejects them
+    # ("Object of type function is not JSON serializable"), for apply=True
+    # as well. The allowlist only guarantees detachment never copies,
+    # invokes or refuses these values.

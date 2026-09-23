@@ -681,6 +681,21 @@ class OptimizationStateError(TraigentError):
         self.expected_states = expected_states or []
 
 
+class CandidateIsolationError(ConfigurationError):
+    """Raised when a candidate run's config or search space cannot be isolated.
+
+    ``optimize(apply=False)`` runs on a copy of the wrapper whose config and
+    search space are detached by a type-preserving structural copy: exact
+    ``dict``/``list``/``tuple`` containers are rebuilt (tuples stay tuples,
+    because a 2-tuple is a continuous range), JSON scalars are copied by value,
+    and functions, builtins, classes and ``Enum`` members are passed by
+    reference. Any other value (a container subclass, a lock, a client or other
+    live object) cannot be detached without running user code or sharing it
+    with the served wrapper, so the candidate run is refused instead. The
+    message names the offending key path.
+    """
+
+
 class OverlappingOptimizationError(OptimizationStateError):
     """Raised when a second advancing run targets a wrapper that already has one.
 

@@ -56,7 +56,7 @@ from traigent.core.ci_approval import check_ci_approval
 from traigent.core.config_state_manager import (
     ConfigStateManager,
     OptimizationState,
-    detach_config_values,
+    detach_candidate_value,
 )
 from traigent.core.cost_enforcement import is_cost_preapproved, normalize_cost_approved
 from traigent.core.execution_budget import ExecutionBudget
@@ -2269,6 +2269,12 @@ class OptimizedFunction(Generic[_P, _R]):
             from traigent.api.parameter_ranges import normalize_configuration_space
 
             configuration_space, _ = normalize_configuration_space(configuration_space)
+            if self._is_candidate_run:
+                # A candidate must not share the caller's override objects:
+                # a trial mutating a choice would change the caller's dict.
+                configuration_space = detach_candidate_value(
+                    configuration_space, "configuration_space (call-time override)"
+                )
 
         # Issue #2298 direction 1: for seamless injection, fail closed ONCE,
         # before the first trial. A structural probe (AST compile + parameter
@@ -4553,8 +4559,10 @@ Remediation:
                 # Snapshot the wrapper AT REST before this run mutates it
                 # (transient objective/TVL overrides, lifecycle state), so
                 # candidate runs forked while it is in flight start from the
-                # resting wrapper.
-                self.__dict__["_at_rest_view"] = self._shallow_run_copy(self)
+                # resting wrapper. Pure attribute copies: no user code runs
+                # under this lock. Values are detached later, per candidate,
+                # outside it.
+                self.__dict__["_at_rest_view"] = self._shallow_view(self)
             self.__dict__["_exclusive_slot"] = holder
 
     def _release_exclusive_slot(self) -> None:
@@ -4570,41 +4578,61 @@ Remediation:
         self._release_exclusive_slot()
 
     def _fork_for_candidate_run(self) -> OptimizedFunction[_P, _R]:
-        """Return an isolated copy of this wrapper for one candidate run."""
+        """Return an isolated copy of this wrapper for one candidate run.
+
+        Two phases. Under ``_RUN_GUARD_LOCK``: pick the source (the at-rest
+        snapshot if an applying run is in flight, else this wrapper) and take a
+        pure shallow copy -- no user code runs under the lock. Outside it:
+        detach every config value and the search space with the
+        type-preserving structural detacher (fail closed with
+        ``CandidateIsolationError``), then rebuild the copy's injected callable
+        against the detached config. A candidate holds no slot, so a failure
+        here has nothing to release.
+        """
         with _RUN_GUARD_LOCK:
             source = self
             if self.__dict__.get("_exclusive_slot") == "run":
                 source = self.__dict__.get("_at_rest_view") or self
-            fork = self._shallow_run_copy(source)
-        fork.__dict__["_candidate_run"] = True
-        return fork
-
-    def _shallow_run_copy(
-        self, source: OptimizedFunction[_P, _R]
-    ) -> OptimizedFunction[_P, _R]:
-        """Copy ``source`` with detached config state and its own callable.
-
-        Attribute *rebinding* on the copy (``objective_schema``,
-        ``traigent_config``, ``constraints``...) never reaches ``source``. The
-        lifecycle state, results history and current/best config live on the
-        config-state manager, which is forked with its config values
-        deep-detached; ``default_config`` is deep-detached too; and the copy's
-        injected callable is rebuilt against the detached config, because the
-        original ``_wrapped_func`` closes over ``source``'s config dict. So a
-        candidate body mutating a nested value it reaches through the
-        injection path (e.g. appending to ``get_config()["stop_sequences"]``)
-        cannot change what ``source`` serves.
-        """
-        fork = copy.copy(source)
-        fork.__dict__["_exclusive_slot"] = None
-        fork.__dict__["_at_rest_view"] = None
-        fork.default_config = detach_config_values(source.default_config)
+            fork = self._shallow_view(source, fork_state=False)
+        # --- outside the lock from here on ---
+        space = detach_candidate_value(
+            source.__dict__.get("_configuration_space"), "configuration_space"
+        )
+        fork.__dict__["_configuration_space"] = space if space is not None else {}
+        fork.default_config = detach_candidate_value(
+            source.default_config, "default_config"
+        )
+        shares_space = source._csm.configuration_space is source.__dict__.get(
+            "_configuration_space"
+        )
         fork._csm = source._csm.fork_detached(
-            setup_wrapper_callback=fork._setup_function_wrapper
+            setup_wrapper_callback=fork._setup_function_wrapper,
+            configuration_space=fork._configuration_space if shares_space else None,
         )
         fork._csm.default_config = fork.default_config
         fork._setup_function_wrapper()
+        fork.__dict__["_candidate_run"] = True
         return fork
+
+    def _shallow_view(
+        self, source: OptimizedFunction[_P, _R], *, fork_state: bool = True
+    ) -> OptimizedFunction[_P, _R]:
+        """Pure shallow copy of ``source``: attribute references only.
+
+        Built with ``object.__new__`` + ``__dict__.update`` so no ``__copy__``
+        or ``__reduce__`` hook runs; safe under ``_RUN_GUARD_LOCK``. With
+        ``fork_state`` the config-state manager is shallow-forked too, so the
+        view keeps ``source``'s lifecycle/config state as of now (the at-rest
+        snapshot); otherwise it still references ``source``'s manager, which
+        the caller replaces with a detached fork.
+        """
+        view = object.__new__(type(source))
+        view.__dict__.update(source.__dict__)
+        view.__dict__["_exclusive_slot"] = None
+        view.__dict__["_at_rest_view"] = None
+        if fork_state:
+            view.__dict__["_csm"] = source._csm.fork_shallow()
+        return view
 
     def export_config(
         self,

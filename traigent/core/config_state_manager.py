@@ -9,10 +9,10 @@ OptimizedFunction to reduce class complexity.
 
 from __future__ import annotations
 
-import copy
 import json
 import os
 import threading
+import types
 from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import Enum, auto
@@ -41,7 +41,11 @@ from traigent.core.best_config_runtime import (
     write_cloud_cache_best_config,
     write_repo_best_config,
 )
-from traigent.utils.exceptions import ConfigurationError, OptimizationStateError
+from traigent.utils.exceptions import (
+    CandidateIsolationError,
+    ConfigurationError,
+    OptimizationStateError,
+)
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import (
     PathTraversalError,
@@ -59,28 +63,77 @@ class CloudBestConfigIntegrityError(ConfigurationError):
     """Raised when a cloud best-config response fails hash integrity checks."""
 
 
-def detach_config_values(config: dict[str, Any]) -> dict[str, Any]:
-    """Return a copy of ``config`` sharing no mutable value with it.
+_DETACH_SCALAR_TYPES = (str, int, float, bool)
+# Passed by reference: the candidate-isolation leak is mutation through the
+# config, and functions, builtins, classes and Enum members expose no such
+# mutation path, so sharing them cannot change what the wrapper serves.
+_DETACH_BY_REFERENCE_TYPES = (types.FunctionType, types.BuiltinFunctionType, type)
 
-    Deep-copies the whole mapping; a value that cannot be deep-copied (e.g. a
-    live client object placed in a config) is kept by reference, since there is
-    no faithful way to duplicate it, and that is logged at debug level.
+
+def detach_candidate_value(value: Any, path: str = "config") -> Any:
+    """Return a copy of ``value`` sharing no mutable object with it, or refuse.
+
+    Type-preserving structural copy for candidate runs:
+
+    * exact ``dict`` / ``list`` / ``tuple`` are rebuilt recursively; tuples stay
+      tuples (a 2-tuple in a search space is a continuous range, a list is a
+      categorical choice);
+    * ``None`` and exact ``str`` / ``int`` / ``float`` / ``bool`` are returned
+      as-is (immutable);
+    * functions, builtins, classes and ``Enum`` members are passed by reference;
+    * anything else -- a container subclass, a lock, a live client -- raises
+      :class:`~traigent.utils.exceptions.CandidateIsolationError` naming the key
+      path. Nothing is shared silently.
+
+    No user code runs: no ``__deepcopy__``/``__copy__``/``__reduce__`` hook, no
+    ``__eq__``/``__hash__`` beyond the dict keys already stored.
     """
-    try:
-        return copy.deepcopy(config)
-    except Exception:
-        detached: dict[str, Any] = {}
-        for key, value in config.items():
-            try:
-                detached[key] = copy.deepcopy(value)
-            except Exception:
-                logger.debug(
-                    "Config value %r cannot be deep-copied; a candidate run "
-                    "shares it by reference",
-                    key,
-                )
-                detached[key] = value
-        return detached
+    return _detach(value, path, set())
+
+
+def _detach(value: Any, path: str, on_path: set[int]) -> Any:
+    kind = type(value)
+    if value is None or kind in _DETACH_SCALAR_TYPES:
+        return value
+    if kind is dict or kind is list or kind is tuple:
+        marker = id(value)
+        if marker in on_path:
+            raise CandidateIsolationError(
+                f"Cannot isolate candidate run: {path} contains a circular "
+                "reference. A candidate's config and search space must be "
+                "plain data."
+            )
+        on_path.add(marker)
+        try:
+            if kind is dict:
+                detached: dict[Any, Any] = {}
+                for key, item in value.items():
+                    if key is not None and type(key) not in _DETACH_SCALAR_TYPES:
+                        raise CandidateIsolationError(
+                            f"Cannot isolate candidate run: {path} has a key of "
+                            f"type {type(key).__name__}; only str/int/float/bool/"
+                            "None keys can be detached."
+                        )
+                    detached[key] = _detach(item, f"{path}[{key!r}]", on_path)
+                return detached
+            items = [
+                _detach(item, f"{path}[{index}]", on_path)
+                for index, item in enumerate(value)
+            ]
+            return items if kind is list else tuple(items)
+        finally:
+            on_path.discard(marker)
+    if isinstance(value, _DETACH_BY_REFERENCE_TYPES) or isinstance(value, Enum):
+        return value
+    raise CandidateIsolationError(
+        f"Cannot isolate candidate run (optimize(apply=False)): {path} holds a "
+        f"value of type {kind.__module__}.{kind.__qualname__}. A candidate's "
+        "config and search space must be plain data (exact dict/list/tuple, "
+        "str/int/float/bool/None) or functions, classes and Enum members; other "
+        "objects cannot be copied without running their code, and sharing them "
+        "would let the candidate change what the wrapper serves. Remove it "
+        "from the config, or use optimize(apply=True)."
+    )
 
 
 class OptimizationState(Enum):
@@ -227,29 +280,59 @@ class ConfigStateManager:
         )
         self._override_sticky = False
 
+    def fork_shallow(self) -> ConfigStateManager:
+        """Return a private shallow view of this manager's current state.
+
+        Pure attribute copies (no lock taken, no user code), so it is safe
+        under the process-wide run-guard lock. Used to snapshot a wrapper at
+        rest when an applying run is admitted; values are detached later, by
+        :meth:`fork_detached`, outside that lock.
+        """
+        view = object.__new__(type(self))
+        view.__dict__.update(self.__dict__)
+        view._state_lock = threading.RLock()
+        view._optimization_history = list(self._optimization_history)
+        return view
+
     def fork_detached(
-        self, *, setup_wrapper_callback: Callable[[], None]
+        self,
+        *,
+        setup_wrapper_callback: Callable[[], None],
+        configuration_space: Any = None,
     ) -> ConfigStateManager:
         """Return a copy whose mutable run state is independent of this one.
 
         Used for a candidate run (``optimize(apply=False)``): the copy's
-        lifecycle state, results history and current/best config can change
-        without touching this manager. Read-only settings are shared.
+        lifecycle state, results history and current/best/default config and
+        search space can change without touching this manager. Values are
+        detached with :func:`detach_candidate_value` (fail closed: an
+        undetachable value raises ``CandidateIsolationError``). Pass the
+        already-detached ``configuration_space`` when the wrapper shares its
+        search-space object with this manager, so both stay one object.
         """
         with self._state_lock:
-            fork = copy.copy(self)
+            fork = object.__new__(type(self))
+            fork.__dict__.update(self.__dict__)
             fork._state_lock = threading.RLock()
             fork._optimization_history = list(self._optimization_history)
-            # Deep-detached, not just the outer dict: injection merges trial
-            # config over these shallowly, so a nested list/dict value would
-            # otherwise be shared with the served wrapper.
-            fork._current_config = detach_config_values(self._current_config)
+            fork._current_config = detach_candidate_value(
+                self._current_config, "current_config"
+            )
             fork._best_config = (
-                detach_config_values(self._best_config)
+                detach_candidate_value(self._best_config, "best_config")
                 if self._best_config is not None
                 else None
             )
-            fork.default_config = detach_config_values(self.default_config)
+            fork.default_config = detach_candidate_value(
+                self.default_config, "default_config"
+            )
+            fork.configuration_space = (
+                configuration_space
+                if configuration_space is not None
+                else detach_candidate_value(
+                    self.configuration_space, "configuration_space"
+                )
+            )
         fork._setup_wrapper_callback = setup_wrapper_callback
         return fork
 
