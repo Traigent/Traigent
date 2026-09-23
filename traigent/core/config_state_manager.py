@@ -59,6 +59,30 @@ class CloudBestConfigIntegrityError(ConfigurationError):
     """Raised when a cloud best-config response fails hash integrity checks."""
 
 
+def detach_config_values(config: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of ``config`` sharing no mutable value with it.
+
+    Deep-copies the whole mapping; a value that cannot be deep-copied (e.g. a
+    live client object placed in a config) is kept by reference, since there is
+    no faithful way to duplicate it, and that is logged at debug level.
+    """
+    try:
+        return copy.deepcopy(config)
+    except Exception:
+        detached: dict[str, Any] = {}
+        for key, value in config.items():
+            try:
+                detached[key] = copy.deepcopy(value)
+            except Exception:
+                logger.debug(
+                    "Config value %r cannot be deep-copied; a candidate run "
+                    "shares it by reference",
+                    key,
+                )
+                detached[key] = value
+        return detached
+
+
 class OptimizationState(Enum):
     """Lifecycle state of an OptimizedFunction.
 
@@ -216,10 +240,16 @@ class ConfigStateManager:
             fork = copy.copy(self)
             fork._state_lock = threading.RLock()
             fork._optimization_history = list(self._optimization_history)
-            fork._current_config = dict(self._current_config)
+            # Deep-detached, not just the outer dict: injection merges trial
+            # config over these shallowly, so a nested list/dict value would
+            # otherwise be shared with the served wrapper.
+            fork._current_config = detach_config_values(self._current_config)
             fork._best_config = (
-                dict(self._best_config) if self._best_config is not None else None
+                detach_config_values(self._best_config)
+                if self._best_config is not None
+                else None
             )
+            fork.default_config = detach_config_values(self.default_config)
         fork._setup_wrapper_callback = setup_wrapper_callback
         return fork
 

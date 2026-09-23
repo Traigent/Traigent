@@ -19,8 +19,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `optimize()` (`apply=True`) on an `OptimizedFunction` that already has one in
   flight now raises `traigent.utils.exceptions.OverlappingOptimizationError` (a
   subclass of `OptimizationStateError`) instead of racing it, where the last
-  finisher silently replaced the first winner. `apply_best_config()` is refused
-  the same way while an applying run is in flight.
+  finisher silently replaced the first winner. `apply_best_config()` takes the
+  same exclusive slot and holds it across its commit, so a promotion and an
+  applying run can never interleave.
 
 ### Fixed
 
@@ -30,6 +31,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   instead of being process-global and reset at every run start. Two agents
   optimizing concurrently in one process no longer wipe or pick up each other's
   records. Code outside a run keeps the previous process-level behaviour.
+  `copy_context_to_thread()` / `snapshot.restore()` carry the run's cost state
+  into user-created worker threads.
+- **A `CancelledError` or `KeyboardInterrupt` that escapes an `optimize()` run no
+  longer leaves the wrapper stuck in `OPTIMIZING`** (where `current_config`
+  raises); the lifecycle moves to `ERROR`, as for any other failure.
 
 ### Changed
 

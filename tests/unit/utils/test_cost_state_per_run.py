@@ -226,3 +226,24 @@ def test_scope_is_inherited_by_parallel_batch_trial_threads():
             return get_unpriced_runtime_occurrences()
 
     assert asyncio.run(main()) == {"model-in-batch-thread": 2}
+
+
+def test_documented_thread_helper_carries_the_run_cost_state():
+    """Blocker 3: copy_context_to_thread()/restore() propagate the run cost state."""
+    from traigent.config.context import copy_context_to_thread
+
+    process_before = cost_calculator._PROCESS_COST_STATE.unpriced_snapshot()
+    with cost_run_scope() as state:
+        snapshot = copy_context_to_thread()
+
+        def worker() -> None:
+            # A plain thread starts with an empty context, as a user-created
+            # executor thread does; the documented helper must carry the run.
+            with snapshot.restore():
+                record_unpriced_runtime_model("model-via-helper")
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join()
+        assert state.unpriced_snapshot() == {"model-via-helper": 1}
+    assert cost_calculator._PROCESS_COST_STATE.unpriced_snapshot() == process_before

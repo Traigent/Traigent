@@ -263,3 +263,258 @@ async def test_promotion_is_refused_while_an_advancing_run_is_in_flight():
     gate.release.set()
     await asyncio.wait_for(advancing, timeout=30)
     assert held.apply_best_config(candidate) is True
+
+
+# ---------------------------------------------------------------------------
+# 4. Review fixes (Astra, PR #2406 @ 22604bb2)
+# ---------------------------------------------------------------------------
+
+
+def test_promotion_holds_the_admission_slot_across_the_commit(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Blocker 1: promotion and run admission are one exclusive slot.
+
+    Deterministic two-thread schedule: thread P promotes and is parked inside
+    the commit; the main thread then tries to admit an applying run and a
+    second promotion. Both must be refused until P's commit returns.
+    """
+    import threading
+
+    from traigent.core.config_state_manager import ConfigStateManager
+
+    agent = _make_agent()
+    candidate = agent.optimize_sync(max_trials=3, apply=False)
+
+    in_commit = threading.Event()
+    release = threading.Event()
+    real_apply = ConfigStateManager.apply_best_config
+    parked: list[bool] = []
+
+    def parking_apply(self, *args, **kwargs):
+        if not parked:
+            parked.append(True)
+            in_commit.set()
+            assert release.wait(timeout=30)
+        return real_apply(self, *args, **kwargs)
+
+    monkeypatch.setattr(ConfigStateManager, "apply_best_config", parking_apply)
+
+    outcome: list[object] = []
+
+    def promote() -> None:
+        try:
+            outcome.append(agent.apply_best_config(candidate))
+        except BaseException as exc:  # surfaced by the assertion below
+            outcome.append(exc)
+
+    promoter = threading.Thread(target=promote)
+    promoter.start()
+    assert in_commit.wait(timeout=30)
+    try:
+        # Promotion is mid-commit: an applying run must not be admitted...
+        with pytest.raises(OverlappingOptimizationError):
+            asyncio.run(agent.optimize(max_trials=3))
+        # ...and neither may a second promotion.
+        with pytest.raises(OverlappingOptimizationError):
+            agent.apply_best_config(candidate)
+    finally:
+        release.set()
+        promoter.join()
+
+    assert outcome == [True]
+    assert agent.current_config["temperature"] == 0.9
+    # The slot was released: an applying run is admitted again.
+    result = asyncio.run(agent.optimize(max_trials=3))
+    assert result.best_config == {"temperature": 0.9}
+
+
+@pytest.mark.asyncio
+async def test_candidate_cannot_mutate_served_nested_config_defaults():
+    """Blocker 2: nested mutable defaults are detached for a candidate run."""
+    import json
+
+    mutate = {"on": True}
+    served_seen: list[dict] = []
+
+    @traigent.optimize(
+        eval_dataset=_dataset(),
+        objectives=["accuracy"],
+        configuration_space={"temperature": [0.1, 0.9]},
+        default_config={
+            "temperature": 0.1,
+            "stop_sequences": ["END"],
+            "extra": {"k": "v"},
+        },
+        scoring_function=_scorer,
+        algorithm="grid",
+    )
+    async def agent(text: str) -> str:
+        cfg = traigent.get_config()
+        if mutate["on"]:
+            # A candidate body scribbling on nested defaults it can reach
+            # through the actual injection path.
+            cfg["stop_sequences"].append("LEAK")
+            cfg["extra"]["leak"] = True
+        else:
+            served_seen.append(json.loads(json.dumps(cfg, sort_keys=True)))
+        return "HOT" if cfg.get("temperature") == 0.9 else "COLD"
+
+    before_current = json.dumps(agent.current_config, sort_keys=True)
+    before_default = json.dumps(agent.default_config, sort_keys=True)
+
+    result = await agent.optimize(max_trials=3, apply=False)
+    assert result.best_config is not None
+
+    # The served wrapper's config is byte-identical afterwards...
+    assert json.dumps(agent.current_config, sort_keys=True) == before_current
+    assert json.dumps(agent.default_config, sort_keys=True) == before_default
+    # ...and so is what the served callable actually injects.
+    mutate["on"] = False
+    await agent("q")
+    assert served_seen[-1]["stop_sequences"] == ["END"]
+    assert served_seen[-1]["extra"] == {"k": "v"}
+
+
+def test_candidate_fork_shares_no_mutable_config_value_with_the_wrapper():
+    """Blocker 2, structurally: every config dict a candidate can reach is detached.
+
+    The injection-path test above covers current_config; this pins the rest
+    (default_config on the wrapper and on its state manager, best_config),
+    which are reachable through runtime TVL/discovery code paths.
+    """
+    agent = _make_agent()
+    agent.default_config["stop_sequences"] = ["END"]
+    agent.default_config["extra"] = {"k": "v"}
+    agent._csm._best_config = {"stop_sequences": ["B"]}
+
+    fork = agent._fork_for_candidate_run()
+
+    def mutable_ids(value, acc):
+        if isinstance(value, (dict, list)):
+            acc.add(id(value))
+            for item in value.values() if isinstance(value, dict) else value:
+                mutable_ids(item, acc)
+        return acc
+
+    served = set()
+    for cfg in (
+        agent.default_config,
+        agent._csm.default_config,
+        agent._csm._current_config,
+        agent._csm._best_config,
+    ):
+        mutable_ids(cfg, served)
+    for cfg in (
+        fork.default_config,
+        fork._csm.default_config,
+        fork._csm._current_config,
+        fork._csm._best_config,
+    ):
+        assert not (mutable_ids(cfg, set()) & served)
+    assert fork.default_config == agent.default_config
+    assert fork._csm._best_config == agent._csm._best_config
+
+
+def _hold_and_fail(gate: _Gate, exc: BaseException):
+    """Patch target: an orchestrator run that is in flight, then fails."""
+
+    async def optimize(self, *args, **kwargs):
+        await gate.maybe_hold()
+        raise exc
+
+    return optimize
+
+
+@pytest.mark.asyncio
+async def test_cancelled_apply_run_releases_the_slot():
+    """Follow-up 4: cancelling the caller's task mid-run frees the slot.
+
+    The orchestrator turns a cancellation inside the trial loop into a
+    user-cancelled result by design, so either outcome is legitimate here:
+    a returned (cancelled) result or a propagated CancelledError. What must
+    hold in both: no lingering OPTIMIZING state, readable config, and the
+    next applying run is admitted.
+    """
+    gate = _Gate(hold_calls=1)
+    agent = _make_agent(gate)
+
+    run = asyncio.ensure_future(agent.optimize(max_trials=3))
+    await _wait(gate.entered)
+    assert agent.state == OptimizationState.OPTIMIZING
+
+    run.cancel()
+    try:
+        await run
+    except asyncio.CancelledError:
+        pass
+
+    assert agent.state != OptimizationState.OPTIMIZING
+    assert "temperature" in agent.current_config  # readable
+    gate.release.set()
+    result = await agent.optimize(max_trials=3)  # admitted again
+    assert result.best_config == {"temperature": 0.9}
+
+
+@pytest.mark.asyncio
+async def test_cancellation_escaping_the_orchestrator_does_not_strand_optimizing(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Follow-up 4: a CancelledError that escapes past the orchestrator.
+
+    Pre-existing defect: ``_run_and_finalize_optimization`` only moved the
+    lifecycle to ERROR on ``Exception``, so a ``CancelledError`` (a
+    ``BaseException``) left the wrapper in OPTIMIZING, where
+    ``current_config`` raises forever.
+    """
+    from traigent.core.orchestrator import OptimizationOrchestrator
+
+    gate = _Gate(hold_calls=1)
+    agent = _make_agent()
+    monkeypatch.setattr(
+        OptimizationOrchestrator,
+        "optimize",
+        _hold_and_fail(gate, asyncio.CancelledError()),
+    )
+
+    run = asyncio.ensure_future(agent.optimize(max_trials=3))
+    await _wait(gate.entered)
+    gate.release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+
+    assert agent.state == OptimizationState.ERROR
+    assert agent.current_config == {"temperature": 0.1}  # readable, unchanged
+    monkeypatch.undo()
+    result = await agent.optimize(max_trials=3)  # admitted again
+    assert result.best_config == {"temperature": 0.9}
+
+
+@pytest.mark.asyncio
+async def test_failed_in_flight_apply_run_releases_the_slot(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Follow-up 4: a failure raised mid-run frees the slot."""
+    from traigent.core.orchestrator import OptimizationOrchestrator
+
+    gate = _Gate(hold_calls=1)
+    agent = _make_agent()
+    monkeypatch.setattr(
+        OptimizationOrchestrator,
+        "optimize",
+        _hold_and_fail(gate, RuntimeError("boom mid-run")),
+    )
+
+    run = asyncio.ensure_future(agent.optimize(max_trials=3))
+    await _wait(gate.entered)
+    with pytest.raises(OverlappingOptimizationError):
+        await agent.optimize(max_trials=3)
+    gate.release.set()
+    with pytest.raises(Exception, match="boom mid-run"):
+        await run
+
+    assert agent.state == OptimizationState.ERROR
+    assert agent.current_config == {"temperature": 0.1}
+    monkeypatch.undo()
+    result = await agent.optimize(max_trials=3)
+    assert result.best_config == {"temperature": 0.9}
