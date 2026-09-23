@@ -422,6 +422,8 @@ class DummyPrivacyServer:
                 "request_type": type(request).__name__,
                 "fields": list(request_dict.keys()),
                 "metadata": request_dict.get("dataset_metadata", {}),
+                "content_identity_sent": request_dict.get("content_identity")
+                is not None,
             }
         )
 
