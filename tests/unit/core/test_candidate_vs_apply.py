@@ -471,21 +471,23 @@ async def test_cancellation_escaping_the_orchestrator_does_not_strand_optimizing
 
     gate = _Gate(hold_calls=1)
     agent = _make_agent()
-    monkeypatch.setattr(
-        OptimizationOrchestrator,
-        "optimize",
-        _hold_and_fail(gate, asyncio.CancelledError()),
-    )
+    # Scoped patch: monkeypatch.undo() would also drop the env set by the
+    # autouse fixtures (e.g. CI run approval).
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            OptimizationOrchestrator,
+            "optimize",
+            _hold_and_fail(gate, asyncio.CancelledError()),
+        )
 
-    run = asyncio.ensure_future(agent.optimize(max_trials=3))
-    await _wait(gate.entered)
-    gate.release.set()
-    with pytest.raises(asyncio.CancelledError):
-        await run
+        run = asyncio.ensure_future(agent.optimize(max_trials=3))
+        await _wait(gate.entered)
+        gate.release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await run
 
     assert agent.state == OptimizationState.ERROR
     assert agent.current_config == {"temperature": 0.1}  # readable, unchanged
-    monkeypatch.undo()
     result = await agent.optimize(max_trials=3)  # admitted again
     assert result.best_config == {"temperature": 0.9}
 
@@ -499,22 +501,22 @@ async def test_failed_in_flight_apply_run_releases_the_slot(
 
     gate = _Gate(hold_calls=1)
     agent = _make_agent()
-    monkeypatch.setattr(
-        OptimizationOrchestrator,
-        "optimize",
-        _hold_and_fail(gate, RuntimeError("boom mid-run")),
-    )
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            OptimizationOrchestrator,
+            "optimize",
+            _hold_and_fail(gate, RuntimeError("boom mid-run")),
+        )
 
-    run = asyncio.ensure_future(agent.optimize(max_trials=3))
-    await _wait(gate.entered)
-    with pytest.raises(OverlappingOptimizationError):
-        await agent.optimize(max_trials=3)
-    gate.release.set()
-    with pytest.raises(Exception, match="boom mid-run"):
-        await run
+        run = asyncio.ensure_future(agent.optimize(max_trials=3))
+        await _wait(gate.entered)
+        with pytest.raises(OverlappingOptimizationError):
+            await agent.optimize(max_trials=3)
+        gate.release.set()
+        with pytest.raises(Exception, match="boom mid-run"):
+            await run
 
     assert agent.state == OptimizationState.ERROR
     assert agent.current_config == {"temperature": 0.1}
-    monkeypatch.undo()
     result = await agent.optimize(max_trials=3)
     assert result.best_config == {"temperature": 0.9}
