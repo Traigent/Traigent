@@ -40,6 +40,12 @@ _TENANT_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
 _KID_RE = re.compile(r"k[0-9a-f]{16}")
 _KEY_HEX_RE = re.compile(r"[0-9a-f]{64}")
 
+#: Exactly PurposeKeyGrantV1's fields (TraigentSchema
+#: ``datasets/purpose_key_grant_v1_schema.json``, ``additionalProperties: false``).
+_GRANT_FIELDS = frozenset(
+    {"tenant_id", "kid", "example_id_key", "example_version_key", "encoding"}
+)
+
 
 @dataclass(frozen=True)
 class ContentIdentityKeys:
@@ -77,18 +83,32 @@ class ContentIdentityKeys:
     def from_grant(cls, grant: Mapping[str, Any]) -> ContentIdentityKeys:
         """Build keys from a Backend purpose-key grant.
 
-        Expected shape (spec section 17, Backend item 1; the endpoint lands in
-        milestone M3)::
+        Validated against ``PurposeKeyGrantV1`` (TraigentSchema
+        ``datasets/purpose_key_grant_v1_schema.json``, spec section 18)::
 
             {"tenant_id": "...", "kid": "k<16 hex>",
              "example_id_key": "<64 lowercase hex>",
-             "example_version_key": "<64 lowercase hex>"}
+             "example_version_key": "<64 lowercase hex>",
+             "encoding": "hex"}
 
-        The key encoding is lowercase hex until the M3 endpoint contract fixes
-        it; a different encoding is rejected, never guessed.
+        Closed shape: an unknown/extra field is rejected. ``encoding`` must be
+        exactly ``"hex"`` -- any other value (or a missing ``encoding``) is
+        rejected rather than guessed. ``tenant_id`` / ``kid`` format and the
+        two purpose keys' length/casing are validated here and in
+        ``__post_init__``; anything malformed fails closed with
+        :class:`ContentIdentityError` so the run degrades to no content
+        identity (``key_status`` unavailable) rather than minting ids from a
+        grant that cannot be trusted.
         """
         if not isinstance(grant, Mapping):
             raise ContentIdentityError("purpose-key grant must be a mapping")
+        extra = set(grant.keys()) - _GRANT_FIELDS
+        if extra:
+            raise ContentIdentityError(
+                f"purpose-key grant has unknown field(s): {sorted(extra)}"
+            )
+        if grant.get("encoding") != "hex":
+            raise ContentIdentityError('purpose-key grant encoding must be "hex"')
         keys: dict[str, bytes] = {}
         for name in ("example_id_key", "example_version_key"):
             value = grant.get(name)

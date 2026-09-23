@@ -79,6 +79,7 @@ def _grant_for(tenant: str) -> ContentIdentityKeys:
             "kid": row["key_id"],
             "example_id_key": row["example_id_key_hex"],
             "example_version_key": row["example_version_key_hex"],
+            "encoding": "hex",
         }
     )
 
