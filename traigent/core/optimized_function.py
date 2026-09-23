@@ -120,6 +120,7 @@ from traigent.utils.exceptions import (
     AuthenticationError,
     ConfigurationError,
     OptimizationError,
+    OverlappingOptimizationError,
     TVLValidationError,
     ValidationError,
 )
@@ -133,6 +134,12 @@ from traigent.utils.validation import (
 )
 
 logger = get_logger(__name__)
+
+# Guards every wrapper's exclusive slot (check-and-set of ``_exclusive_slot``).
+# Held only for those few attribute reads/writes,
+# never across a run or a commit -- the SLOT is what is held across those -- so
+# one process-wide lock suffices and needs no per-instance initialisation.
+_RUN_GUARD_LOCK = threading.Lock()
 
 # Type parameters for the @optimize decorator's generic return type.
 # _P captures the wrapped function's parameter spec; _R captures its return type.
@@ -2148,7 +2155,65 @@ class OptimizedFunction(Generic[_P, _R]):
 
         Raises:
             OptimizationError: If optimization fails
+            OverlappingOptimizationError: If another ``optimize()`` run or an
+                ``apply_best_config()`` commit is already in flight on this
+                wrapper (they share one exclusive per-wrapper slot).
         """
+        run_kwargs: dict[str, Any] = {
+            "algorithm": algorithm,
+            "max_trials": max_trials,
+            "timeout": timeout,
+            "save_to": save_to,
+            "custom_evaluator": custom_evaluator,
+            "surrogate_evaluator": surrogate_evaluator,
+            "surrogate_evaluator_name": surrogate_evaluator_name,
+            "callbacks": callbacks,
+            "configuration_space": configuration_space,
+            "objectives": objectives,
+            "tvl_spec": tvl_spec,
+            "tvl_environment": tvl_environment,
+            "tvl": tvl,
+            "strategy": strategy,
+            "strategy_params": strategy_params,
+            "progress_bar": progress_bar,
+            "budget": budget,
+            "algorithm_kwargs": algorithm_kwargs,
+        }
+        from traigent.utils.cost_calculator import cost_run_scope
+
+        # One applying run per wrapper: it applies its winner when it finishes,
+        # so a second one would race it. The per-run cost scope keeps this
+        # run's cost records apart from any other run in the process.
+        self._begin_advancing_run()
+        try:
+            with cost_run_scope():
+                return await self._optimize_run(**run_kwargs)
+        finally:
+            self._end_advancing_run()
+
+    async def _optimize_run(
+        self,
+        *,
+        algorithm: str | None,
+        max_trials: int | None,
+        timeout: float | None,
+        save_to: str | None,
+        custom_evaluator: Callable[..., Any] | None,
+        surrogate_evaluator: Callable[..., Any] | None,
+        surrogate_evaluator_name: str | None,
+        callbacks: list[Callable[..., Any]] | None,
+        configuration_space: dict[str, Any] | None,
+        objectives: ObjectiveSchema | Sequence[str] | None,
+        tvl_spec: str | Path | None,
+        tvl_environment: str | None,
+        tvl: TVLOptions | dict[str, Any] | None,
+        strategy: str | None,
+        strategy_params: Mapping[str, Any] | None,
+        progress_bar: bool | None,
+        budget: ExecutionBudget | None,
+        algorithm_kwargs: dict[str, Any],
+    ) -> OptimizationResult:
+        """Body of :meth:`optimize` for one run, inside its slot and cost scope."""
         logger.info(f"Starting optimization of {self.func.__name__}")
         _emit_cost_warning_once()
 
@@ -2686,15 +2751,18 @@ class OptimizedFunction(Generic[_P, _R]):
                 self._optimization_results = result
                 self._csm.append_optimization_result(result)
 
-                # Update current config to best found
+                # Update current config to best found. This run holds the
+                # wrapper's exclusive slot, so it commits without re-claiming it.
                 if result.best_config:
-                    self.apply_best_config(result)
+                    self._commit_best_config(result)
 
                 # Set state to OPTIMIZED on success
                 self._state = OptimizationState.OPTIMIZED
 
-            except Exception:
-                # Set state to ERROR on failure
+            except BaseException:
+                # Set state to ERROR on failure -- including CancelledError and
+                # KeyboardInterrupt (BaseException), which used to leave the
+                # wrapper stuck in OPTIMIZING, where current_config raises.
                 self._state = OptimizationState.ERROR
                 raise
             # Surface any models that priced to $0 at runtime despite non-zero tokens
@@ -4375,12 +4443,89 @@ Remediation:
         return self._csm.best_config_snapshot
 
     def apply_best_config(self, results: OptimizationResult | None = None) -> bool:
-        """Apply best configuration from optimization results."""
+        """Apply best configuration from optimization results.
+
+        Promotion takes the same exclusive per-wrapper slot as an
+        ``optimize()`` run and holds it across the commit, so it is atomic with
+        run admission: while an applying run or another promotion holds the
+        slot it raises
+        :class:`~traigent.utils.exceptions.OverlappingOptimizationError`, and
+        no applying run is admitted until this commit has returned.
+        """
+        self._acquire_exclusive_slot("promotion")
+        try:
+            return self._commit_best_config(results)
+        finally:
+            self._release_exclusive_slot()
+
+    def _commit_best_config(self, results: OptimizationResult | None = None) -> bool:
+        """Apply ``results`` to this wrapper without claiming the slot.
+
+        Used by the ``optimize()`` run itself, which already holds the slot.
+        """
         return self._csm.apply_best_config(  # type: ignore[no-any-return]
             results,
             get_wrapped_func=lambda: self._wrapped_func,
             set_wrapped_func=lambda f: setattr(self, "_wrapped_func", f),
         )
+
+    # ------------------------------------------------------------------
+    # One exclusive slot per wrapper (identity/concurrency decision, owner
+    # ruling "option A": only promotion is serialized). An optimize() run and
+    # an apply_best_config() commit both change what the wrapper serves, so
+    # at most one of them may hold the wrapper at a time.
+    # ------------------------------------------------------------------
+
+    def _acquire_exclusive_slot(self, holder: str) -> None:
+        """Claim this wrapper's single exclusive slot, or refuse.
+
+        ``holder`` is ``"run"`` (an ``optimize()`` run) or
+        ``"promotion"`` (an ``apply_best_config`` commit). Both change what the
+        wrapper serves, so at most one of them may hold the slot at a time.
+        """
+        name = self.func.__name__
+        with _RUN_GUARD_LOCK:
+            current = self.__dict__.get("_exclusive_slot")
+            if current is not None:
+                if current == "run":
+                    what = "an optimize() run is already in flight on it"
+                else:
+                    what = "a promotion (apply_best_config) is being committed to it"
+                if holder == "run":
+                    message = (
+                        f"Cannot start optimize() on {name!r}: {what}. Two runs or "
+                        "promotions that both apply a winner to the same wrapper race "
+                        "(the last to finish silently replaces the first), so only one "
+                        "may hold the wrapper at a time. Wait for it to finish."
+                    )
+                else:
+                    message = (
+                        f"Cannot apply a configuration to {name!r}: {what}, and it "
+                        "would overwrite this one. Wait for it to finish, then call "
+                        "apply_best_config(result)."
+                    )
+                raise OverlappingOptimizationError(
+                    message,
+                    current_state=OptimizationState.OPTIMIZING.name,
+                    expected_states=[
+                        OptimizationState.UNOPTIMIZED.name,
+                        OptimizationState.OPTIMIZED.name,
+                        OptimizationState.ERROR.name,
+                    ],
+                    details={"slot_holder": current, "requested_by": holder},
+                )
+            self.__dict__["_exclusive_slot"] = holder
+
+    def _release_exclusive_slot(self) -> None:
+        with _RUN_GUARD_LOCK:
+            self.__dict__["_exclusive_slot"] = None
+
+    def _begin_advancing_run(self) -> None:
+        """Claim the exclusive slot for an ``optimize()`` run."""
+        self._acquire_exclusive_slot("run")
+
+    def _end_advancing_run(self) -> None:
+        self._release_exclusive_slot()
 
     def export_config(
         self,

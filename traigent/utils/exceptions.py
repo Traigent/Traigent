@@ -679,3 +679,14 @@ class OptimizationStateError(TraigentError):
         super().__init__(message, details)
         self.current_state = current_state
         self.expected_states = expected_states or []
+
+
+class OverlappingOptimizationError(OptimizationStateError):
+    """Raised when a second applying run or promotion targets a busy wrapper.
+
+    ``optimize()`` applies its winner to the wrapper when it finishes, so two
+    such runs on one ``OptimizedFunction`` race: the last finisher silently
+    replaces the first winner. ``optimize()`` and ``apply_best_config()`` share
+    one exclusive per-wrapper slot, held for the whole run or commit; a second
+    one while the slot is held is refused with this error.
+    """

@@ -6,6 +6,30 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Overlapping applying runs on one wrapper are refused.** A second
+  `optimize()` on an `OptimizedFunction` that already has one in flight now raises
+  `traigent.utils.exceptions.OverlappingOptimizationError` (a subclass of
+  `OptimizationStateError`) instead of racing it, where the last finisher silently
+  replaced the first winner. `apply_best_config()` takes the same exclusive
+  per-wrapper slot and holds it across its commit, so a promotion and an applying
+  run can never interleave.
+
+### Fixed
+
+- **A `CancelledError` or `KeyboardInterrupt` that escapes an `optimize()` run no
+  longer leaves the wrapper stuck in `OPTIMIZING`** (where `current_config`
+  raises); the lifecycle moves to `ERROR`, as for any other failure.
+- **Per-run cost accounting state.** The unpriced-at-runtime model registry and
+  the usage-capture counter are now scoped to each `optimize()` run (a
+  `ContextVar` inherited by the run's asyncio tasks and SDK worker threads)
+  instead of being process-global and reset at every run start. Two agents
+  optimizing concurrently in one process no longer wipe or pick up each other's
+  records. Code outside a run keeps the previous process-level behaviour.
+  `copy_context_to_thread()` / `snapshot.restore()` carry the run's cost state
+  into user-created worker threads.
+
 ### Changed
 
 - **Breaking: bare custom objective names now require an explicit orientation.**

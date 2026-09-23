@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextvars
 import inspect
 import time
 from collections.abc import Callable
@@ -183,7 +184,14 @@ class LocalInvoker(BaseInvoker):
         self, func: Callable[..., Any], input_data: dict[str, Any], start_time: float
     ) -> Any:
         """Invoke sync function in thread pool with timeout."""
-        future = _SYNC_INVOKER_EXECUTOR.submit(func, **input_data)
+        # Run under a copy of the caller's context, like ``asyncio.to_thread``:
+        # the pool thread must see the run-scoped state (trial config, the
+        # per-run cost state) of the run that dispatched it, not whatever the
+        # thread last saw.
+        caller_context = contextvars.copy_context()
+        future = _SYNC_INVOKER_EXECUTOR.submit(
+            lambda: caller_context.run(func, **input_data)
+        )
         deadline = (time.monotonic() + self.timeout) if self.timeout else None
 
         # Python 3.14 in this environment intermittently fails to wake the event
