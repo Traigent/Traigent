@@ -430,6 +430,18 @@ def build_backend_metadata(
     privacy_on = getattr(traigent_config, "privacy_enabled", False)
     example_results = trial_result.metadata.get("example_results")
 
+    # Content identity v1 (TraigentSchema docs/identity/content-identity-v1.md):
+    # dataset/evaluated roots + members, the candidate agent build manifest and
+    # observed provider versions, carried in the configuration-run ``metadata``
+    # extension point until the Backend's run identity binding (milestone M3)
+    # gives them a typed home. Digests, revisions, version strings and
+    # project-relative file names only -- no content. Withheld entirely in
+    # privacy mode: member lists, dataset sizes and project file names are
+    # disclosures a privacy-mode run has not agreed to (spec section 14).
+    content_identity = trial_result.metadata.get("content_identity")
+    if isinstance(content_identity, dict) and not privacy_on:
+        trial_metadata["content_identity"] = copy.deepcopy(content_identity)
+
     _add_measures_to_metadata(
         trial_metadata,
         example_results,

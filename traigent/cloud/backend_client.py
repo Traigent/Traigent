@@ -1664,6 +1664,7 @@ class BackendIntegratedClient:
         task_type: str | None = None,
         dataset_id: str | None = None,
         evaluator_id_source: EvaluatorIdSource | None = None,
+        content_identity: dict[str, Any] | None = None,
     ) -> SessionCreationResult:
         """Synchronous wrapper for creating a session.
         Delegates to session_operations module. Phase 8: objectives are
@@ -1692,6 +1693,7 @@ class BackendIntegratedClient:
             task_type=task_type,
             dataset_id=dataset_id,
             evaluator_id_source=evaluator_id_source,
+            content_identity=content_identity,
         )
 
     async def create_hybrid_session(
