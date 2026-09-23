@@ -28,6 +28,8 @@ from traigent.identity import content_identity as ci
 from traigent.identity.examples import identify_evaluation_example
 from traigent.identity.keys import ContentIdentityKeys
 
+from .support import key_derivation as kd
+
 FIXTURE = Path(__file__).parent / "fixtures" / "content_identity_v1_vectors.json"
 EXPECTED_SHA256 = "7a75e6ab1316a015d1be91211b23e1ac3a0ce169ba29d6913e877856ce34b66e"
 VECTORS: dict[str, Any] = json.loads(FIXTURE.read_text(encoding="utf-8"))
@@ -63,7 +65,7 @@ REJECTION_KINDS = {
 
 def _keys_for(tenant: str) -> ci.TenantIdentityKeys:
     row = next(k for k in VECTORS["key_derivation"] if k["tenant"] == tenant)
-    return ci.derive_tenant_keys(
+    return kd.derive_tenant_keys(
         bytes.fromhex(row["tenant_master_hex"]), row["tenant_id"]
     )
 
@@ -91,6 +93,12 @@ def _field(case: dict[str, Any], name: str) -> Any:
 # ---------------------------------------------------------------------------
 # Provenance
 # ---------------------------------------------------------------------------
+
+
+def test_master_key_derivation_is_not_shipped() -> None:
+    """The SDK never holds a tenant master (ruling D1): no derivation ships."""
+    for name in ("derive_tenant_keys", "hkdf_sha256", "hkdf_info"):
+        assert not hasattr(ci, name), name
 
 
 def test_vendored_file_is_unedited() -> None:
@@ -137,7 +145,7 @@ def test_vector_constants_match_the_module() -> None:
         "multiset_leaf": ci.DOMAIN_MULTISET_LEAF,
         "public_input": ci.DOMAIN_PUBLIC_INPUT,
     }
-    assert ci.hkdf_info("d", "t_1") == b"d\x00t_1"
+    assert kd.hkdf_info("d", "t_1") == b"d\x00t_1"
     tenant_pattern = constants["tenant_id_pattern"]
     assert re.search(tenant_pattern, "tenant_0a0a0a0a")
     assert not re.search(tenant_pattern, "tenant_0a0a0a0a\n")
@@ -150,7 +158,7 @@ def test_vector_constants_match_the_module() -> None:
 
 @pytest.mark.parametrize("case", VECTORS["key_derivation"], ids=lambda c: c["tenant"])
 def test_key_derivation_vectors(case: dict[str, Any]) -> None:
-    keys = ci.derive_tenant_keys(
+    keys = kd.derive_tenant_keys(
         bytes.fromhex(case["tenant_master_hex"]), case["tenant_id"]
     )
     assert keys.key_id == case["key_id"]
@@ -163,7 +171,7 @@ def test_key_derivation_vectors(case: dict[str, Any]) -> None:
 
 def test_rfc5869_hkdf_known_answers() -> None:
     # RFC 5869 A.1 and A.3 (SHA-256).
-    okm = ci.hkdf_sha256(
+    okm = kd.hkdf_sha256(
         bytes.fromhex("0b" * 22),
         salt=bytes.fromhex("000102030405060708090a0b0c"),
         info=bytes.fromhex("f0f1f2f3f4f5f6f7f8f9"),
@@ -173,7 +181,7 @@ def test_rfc5869_hkdf_known_answers() -> None:
         "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf"
         "34007208d5b887185865"
     )
-    okm = ci.hkdf_sha256(bytes.fromhex("0b" * 22), salt=b"", info=b"", length=42)
+    okm = kd.hkdf_sha256(bytes.fromhex("0b" * 22), salt=b"", info=b"", length=42)
     assert okm.hex() == (
         "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d"
         "9d201395faa4b61a96c8"
@@ -370,7 +378,7 @@ def test_rejection_vectors(case: dict[str, Any]) -> None:
         elif kind == "multiset":
             ci.compute_multiset_root([tuple(item) for item in case["items"]])
         elif kind == "key_derivation":
-            ci.derive_tenant_keys(
+            kd.derive_tenant_keys(
                 bytes.fromhex(case["tenant_master_hex"]), case["tenant_id"]
             )
         elif kind == "example_input":
