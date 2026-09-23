@@ -61,6 +61,7 @@ def _grant(tenant: str) -> ContentIdentityKeys:
             "kid": row["key_id"],
             "example_id_key": row["example_id_key_hex"],
             "example_version_key": row["example_version_key_hex"],
+            "encoding": "hex",
         }
     )
 
@@ -125,24 +126,68 @@ def test_key_material_never_in_repr() -> None:
             "kid": "k" + "0" * 16,
             "example_id_key": "a" * 64,
             "example_version_key": "b" * 64,
+            "encoding": "hex",
         },
         {
             "tenant_id": "t",
             "kid": "K" + "0" * 16,
             "example_id_key": "a" * 64,
             "example_version_key": "b" * 64,
+            "encoding": "hex",
         },
         {
             "tenant_id": "t",
             "kid": "k" + "0" * 16,
             "example_id_key": "A" * 64,
             "example_version_key": "b" * 64,
+            "encoding": "hex",
         },
         {
             "tenant_id": "t",
             "kid": "k" + "0" * 16,
             "example_id_key": "a" * 64,
             "example_version_key": "a" * 64,
+            "encoding": "hex",
+        },
+        # PurposeKeyGrantV1: encoding missing entirely (otherwise well-formed).
+        {
+            "tenant_id": "t",
+            "kid": "k" + "0" * 16,
+            "example_id_key": "a" * 64,
+            "example_version_key": "b" * 64,
+        },
+        # encoding present but not "hex" -- rejected, never guessed.
+        {
+            "tenant_id": "t",
+            "kid": "k" + "0" * 16,
+            "example_id_key": "a" * 64,
+            "example_version_key": "b" * 64,
+            "encoding": "base64",
+        },
+        # kid too short (not k[0-9a-f]{16}).
+        {
+            "tenant_id": "t",
+            "kid": "k" + "0" * 15,
+            "example_id_key": "a" * 64,
+            "example_version_key": "b" * 64,
+            "encoding": "hex",
+        },
+        # key wrong length.
+        {
+            "tenant_id": "t",
+            "kid": "k" + "0" * 16,
+            "example_id_key": "a" * 63,
+            "example_version_key": "b" * 64,
+            "encoding": "hex",
+        },
+        # PurposeKeyGrantV1 is closed (additionalProperties: false).
+        {
+            "tenant_id": "t",
+            "kid": "k" + "0" * 16,
+            "example_id_key": "a" * 64,
+            "example_version_key": "b" * 64,
+            "encoding": "hex",
+            "tenant_master": "x" * 64,
         },
     ],
 )
@@ -382,6 +427,41 @@ def test_builtin_only_evaluator_states_a_known_null_judge(tenant_a: Any) -> None
     assert minimize["evaluator"]["version_digest"] != binding["version_digest"]
 
 
+def test_builtin_scoring_honours_explicit_declarations(tenant_a: Any) -> None:
+    """Cross-SDK decision (2026-09-23, GOAL.md M2 evaluator-honesty ruling +
+    identity-vs-version-20260922 Fable follow-up): an explicit declaration on
+    built-in scoring is honoured by BOTH SDKs; only the undeclared defaults
+    differ from a plain declaration-free run. Python already did this
+    (evaluator_version.py ~320-391); this pins it so the JS side can match.
+    """
+    from traigent.identity.evaluator_version import declare_evaluator
+
+    builtin = _local(metrics=["accuracy"])
+    declare_evaluator(
+        builtin,
+        judge={
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "config": {"temperature": 0},
+        },
+        config_digest="sha256:" + "a" * 64,
+        helper_digests={"pkg/prompt.py": "sha256:" + "b" * 64},
+        dependency_versions={"ragas": "0.1.0"},
+    )
+    session = _evaluator_session(evaluator=builtin)
+    manifest = session["evaluator"]["manifest"]
+    # A declared judge is honoured even though the metric itself is a
+    # deterministic built-in that would otherwise default judge to null.
+    assert manifest["judge"]["provider"] == "openai"
+    assert manifest["judge"]["model"] == "gpt-4o-mini"
+    assert manifest["judge"]["config_digest"] is not None
+    assert manifest["config_digest"] == "sha256:" + "a" * 64
+    assert manifest["helper_digests"] == {"pkg/prompt.py": "sha256:" + "b" * 64}
+    assert manifest["dependency_versions"] == {"ragas": "0.1.0"}
+    # Undeclared fields on the same built-in scoring still default (unchanged).
+    assert _evaluator_session()["evaluator"]["manifest"]["judge"] is None
+
+
 def test_builtin_metric_outside_the_deterministic_set_needs_a_declaration(
     tenant_a: Any,
 ) -> None:
@@ -456,6 +536,25 @@ def test_declaration_on_a_scoring_function_and_conflicts(tenant_a: Any) -> None:
     )
     assert both["evaluator"] is None
     assert both["unavailable"]["evaluator"] == "evaluator_manifest_unavailable"
+
+
+def test_malformed_declared_evaluator_id_is_evaluator_id_unavailable(
+    tenant_a: Any,
+) -> None:
+    """Pins a spec-mandated, RECORDED (not converged) cross-SDK divergence.
+
+    TraigentSchema docs/identity/content-identity-v1.md section 18, "Known
+    divergence between the SDKs": a malformed declared evaluator id is
+    ``evaluator_id_unavailable`` in Python and ``evaluator_manifest_unavailable``
+    in JS -- both are inside the wire schema's closed vocabulary for the
+    evaluator slot (execution/content_identity_wire_v1_schema.json). The spec
+    says this is recorded rather than hidden and pinned by tests; it is not a
+    bug to converge.
+    """
+    session = _evaluator_session(evaluator_id="not a valid foreign key id!!")
+    assert session["evaluator"] is None
+    assert session["evaluator_id_source"] is None
+    assert session["unavailable"]["evaluator"] == "evaluator_id_unavailable"
 
 
 def test_captured_threshold_is_part_of_the_evaluator_version(tenant_a: Any) -> None:
