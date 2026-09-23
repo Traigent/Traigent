@@ -44,7 +44,12 @@ if TYPE_CHECKING:
         WorkflowTracesTracker,
     )
 
-from traigent.config.types import ExecutionIntent, ExecutionMode, TraigentConfig
+from traigent.config.types import (
+    ExecutionIntent,
+    ExecutionMode,
+    TraigentConfig,
+    content_identity_enabled,
+)
 from traigent.core.backend_session_manager import (
     BackendSessionManager,
     session_aggregation_echoed,
@@ -3270,6 +3275,59 @@ class OptimizationOrchestrator:
             logger.debug(f"Created mock session: {mock_session_id}")
             return mock_session_id
 
+    def _content_identity_grant_client(self) -> Any:
+        """The Backend client to fetch the purpose-key grant from, or ``None``.
+
+        Opt-in (Release 1): an explicit ``TraigentConfig.content_identity``,
+        else ``TRAIGENT_CONTENT_IDENTITY``. Closed without a Backend client
+        (offline / no-egress runs have none) and in privacy mode, which
+        withholds content identity from every Backend payload anyway.
+        """
+        config = self.traigent_config
+        if not content_identity_enabled(config):
+            return None
+        if bool(getattr(config, "privacy_enabled", False)):
+            return None
+        return self.backend_client
+
+    async def _install_fetched_content_identity_keys(self) -> Any:
+        """Fetch and install this run's purpose keys; return them, or ``None``.
+
+        A grant the user installed (``set_content_identity_keys``) takes
+        precedence: nothing is fetched and nothing is replaced. Fetched keys
+        are held in memory for this run only (see :meth:`optimize`).
+        """
+        from traigent.identity.keys import (
+            get_content_identity_keys,
+            set_content_identity_keys,
+        )
+
+        if get_content_identity_keys() is not None:
+            return None
+        client = self._content_identity_grant_client()
+        if client is None:
+            return None
+        from traigent.identity.grant_fetch import fetch_content_identity_keys
+
+        keys = await asyncio.to_thread(fetch_content_identity_keys, client)
+        if keys is None:
+            return None
+        set_content_identity_keys(keys)
+        return keys
+
+    @staticmethod
+    def _release_fetched_content_identity_keys(keys: Any) -> None:
+        """Forget the keys this run fetched (never a grant installed since)."""
+        if keys is None:
+            return
+        from traigent.identity.keys import (
+            get_content_identity_keys,
+            set_content_identity_keys,
+        )
+
+        if get_content_identity_keys() is keys:
+            set_content_identity_keys(None)
+
     def _prepare_content_identity(
         self, func: Callable[..., Any], dataset: Dataset
     ) -> Any:
@@ -3340,36 +3398,43 @@ class OptimizationOrchestrator:
         # Validate dataset
         self._validate_dataset(dataset)
 
-        # Content identity v1: one snapshot per run, taken from the rows' and
-        # the agent's CURRENT state before the session is created. None without
-        # a Backend purpose-key grant -- then nothing new is emitted anywhere.
-        self._content_identity_run = self._prepare_content_identity(func, dataset)
+        # Content identity v1 (opt-in): fetch this tenant's purpose-key grant
+        # once, before session create. Any failure leaves no keys (the run
+        # proceeds without content identity); keys live for this run only.
+        fetched_identity_keys = await self._install_fetched_content_identity_keys()
+        try:
+            # Content identity v1: one snapshot per run, taken from the rows' and
+            # the agent's CURRENT state before the session is created. None without
+            # a Backend purpose-key grant -- then nothing new is emitted anywhere.
+            self._content_identity_run = self._prepare_content_identity(func, dataset)
 
-        # Perform standard initialization (logging, session creation, callbacks)
-        session_id = self._initialize_optimization_run(func, dataset, function_name)
+            # Perform standard initialization (logging, session creation, callbacks)
+            session_id = self._initialize_optimization_run(func, dataset, function_name)
 
-        function_identifier = (
-            self._function_descriptor.identifier
-            if self._function_descriptor is not None
-            else function_name
-        )
-
-        # Start tracing span for the optimization session
-        with optimization_session_span(
-            function_name=function_identifier or func.__name__,
-            max_trials=self.max_trials,
-            timeout=self.timeout,
-            algorithm=getattr(self.optimizer, "name", None),
-            objectives=self.objectives,
-            config_space=getattr(self.optimizer, "config_space", None),
-        ) as session_span:
-            return await self._run_optimization_with_tracing(
-                func=func,
-                dataset=dataset,
-                session_id=session_id,
-                function_identifier=function_identifier,
-                session_span=session_span,
+            function_identifier = (
+                self._function_descriptor.identifier
+                if self._function_descriptor is not None
+                else function_name
             )
+
+            # Start tracing span for the optimization session
+            with optimization_session_span(
+                function_name=function_identifier or func.__name__,
+                max_trials=self.max_trials,
+                timeout=self.timeout,
+                algorithm=getattr(self.optimizer, "name", None),
+                objectives=self.objectives,
+                config_space=getattr(self.optimizer, "config_space", None),
+            ) as session_span:
+                return await self._run_optimization_with_tracing(
+                    func=func,
+                    dataset=dataset,
+                    session_id=session_id,
+                    function_identifier=function_identifier,
+                    session_span=session_span,
+                )
+        finally:
+            self._release_fetched_content_identity_keys(fetched_identity_keys)
 
     def _check_cost_approval(self, dataset: Dataset) -> None:
         """Check pre-run cost approval before optimization.
