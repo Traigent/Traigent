@@ -34,7 +34,19 @@ from traigent.identity.keys import (
 GOLDEN = Path(__file__).parent / "fixtures" / "no_grant_payloads_develop.json"
 
 
-def test_no_grant_payloads_are_identical_to_develop() -> None:
+def test_no_grant_payloads_are_identical_to_develop(monkeypatch) -> None:
+    # The keyed per-example outcome signals (example_digest / output_digest /
+    # signal_key_id) are emitted only when a project API key is configured, so
+    # their PRESENCE would otherwise depend on the machine. The fixture was
+    # captured with them present; pin a fixed dummy key so every environment
+    # matches (their values are normalized to "<hex>" by the snapshot).
+    from traigent.utils import outcome_signals
+
+    monkeypatch.setattr(
+        outcome_signals,
+        "_resolve_signal_key",
+        lambda: outcome_signals._cached_key_pair("no-grant-snapshot-fixed-key"),
+    )
     clear_content_identity_keys()
     assert get_content_identity_keys() is None
     expected = json.loads(GOLDEN.read_text(encoding="utf-8"))
