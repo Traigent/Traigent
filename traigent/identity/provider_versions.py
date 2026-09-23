@@ -95,15 +95,17 @@ def observations_payload(
     payload: list[dict[str, Any]] = []
     for key in sorted(counts, key=lambda k: tuple("" if v is None else v for v in k)):
         provider, requested, response_model, fingerprint = key
-        entry: dict[str, Any] = {
-            "provider": provider,
-            "requested_model": requested,
-            "response_model": response_model,
-            "call_count": int(counts[key]),
-        }
-        if fingerprint is not None:
-            entry["system_fingerprint"] = fingerprint
-        payload.append(entry)
+        # Every optional field is present, null when unknown, in the JS SDK's
+        # key order, so both SDKs serialize one observation identically.
+        payload.append(
+            {
+                "provider": provider,
+                "requested_model": requested,
+                "response_model": response_model,
+                "system_fingerprint": fingerprint,
+                "call_count": int(counts[key]),
+            }
+        )
         if len(payload) >= _MAX_OBSERVATIONS:
             break
     return payload

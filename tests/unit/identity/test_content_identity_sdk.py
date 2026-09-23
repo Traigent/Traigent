@@ -104,7 +104,8 @@ def test_no_grant_means_no_ids() -> None:
     assert identify_dataset(dataset) is None
     assert all(stamped_identity(example) is None for example in dataset.examples)
     fields = result_identity_fields(dataset.examples[0], "example_0")
-    assert fields == {"example_id": "example_0", "external_id": None}
+    # Exactly the pre-identity result: no external_id, no example_version.
+    assert fields == {"example_id": "example_0"}
 
 
 def test_key_material_never_in_repr() -> None:
@@ -245,13 +246,54 @@ def _agent(q: str) -> str:
     return q
 
 
+class _Objective:
+    def __init__(self, name: str, orientation: str = "maximize", weight: float = 1.0):
+        self.name, self.orientation, self.weight = name, orientation, weight
+
+
+def _run(dataset: Dataset, **overrides: Any) -> Any:
+    from traigent.evaluators.local import LocalEvaluator
+
+    kwargs: dict[str, Any] = {
+        "agent_key": "agent_1",
+        "evaluator": LocalEvaluator(metrics=["accuracy"]),
+        "objectives": [_Objective("accuracy")],
+        "evaluator_id": None,
+    }
+    kwargs.update(overrides)
+    return prepare_content_identity_run(_agent, dataset, **kwargs)
+
+
+def _reasons(wire: dict[str, Any]) -> set[str]:
+    return set(wire["unavailable"].values())
+
+
+def test_no_grant_means_no_run_and_no_warning() -> None:
+    run_module._reset_warnings_for_tests()
+    import warnings as _warnings
+
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("error")  # any warning fails the test
+        assert _run(_dataset(ROWS), agent_key=None) is None
+
+
 def test_trial_wire_evaluated_full_subset_and_recomputable(tenant_a: Any) -> None:
     dataset = _dataset(ROWS)
-    run = prepare_content_identity_run(_agent, dataset, agent_key="agent_1")
+    run = _run(dataset)
     assert run.dataset is not None
     results = [_result(result_identity_fields(e, "x")) for e in dataset.examples]
     full = run.trial_wire("trial_1", {"a": 1}, results, [])
     assert full["provenance"] == "declared"
+    assert list(full) == [
+        "scheme",
+        "provenance",
+        "trial_id",
+        "candidate",
+        "evaluated",
+        "observed_provider_versions",
+        "unavailable",
+    ]
+    assert set(full["candidate"]) == {"agent_id", "build_digest", "manifest"}
     assert full["evaluated"]["trial_id"] == "trial_1"
     assert full["evaluated"]["evaluated_root"] == run.dataset.dataset_root
     subset = run.trial_wire("trial_2", {"a": 1}, results[:1], [])["evaluated"]
@@ -270,7 +312,7 @@ def test_trial_wire_evaluated_full_subset_and_recomputable(tenant_a: Any) -> Non
 
 def test_trial_wire_states_why_a_slot_is_empty(tenant_a: Any) -> None:
     dataset = _dataset(ROWS)
-    run = prepare_content_identity_run(_agent, dataset, agent_key="agent_1")
+    run = _run(dataset)
     results = [_result(result_identity_fields(e, "x")) for e in dataset.examples]
     results.append(_result({"example_id": "example_3"}))
     wire = run.trial_wire("trial_1", {"a": object()}, results, [])
@@ -282,22 +324,23 @@ def test_trial_wire_states_why_a_slot_is_empty(tenant_a: Any) -> None:
     assert run.trial_wire("t", {}, None, [])["unavailable"]["evaluated"] == (
         "evaluation_results_unavailable"
     )
-
-
-def test_no_grant_run_wire_is_explicit_about_missing_keys() -> None:
-    run = prepare_content_identity_run(_agent, _dataset(ROWS), agent_key="agent_1")
-    session = run.session_wire({})
-    assert session["key_status"] == "unavailable" and "key_id" not in session
-    assert session["dataset"] is None
-    assert session["unavailable"]["dataset"] == "purpose_keys_unavailable"
-    trial = run.trial_wire("t", {}, [], [])
-    assert trial["evaluated"] is None
-    assert trial["unavailable"]["evaluated"] == "purpose_keys_unavailable"
+    assert _reasons(wire) <= run_module.UNAVAILABLE_REASONS
 
 
 def test_session_wire_with_grant(tenant_a: Any) -> None:
-    run = prepare_content_identity_run(_agent, _dataset(ROWS), agent_key="agent_1")
-    session = run.session_wire({})
+    session = _run(_dataset(ROWS)).session_wire({})
+    assert list(session) == [
+        "scheme",
+        "provenance",
+        "key_status",
+        "key_id",
+        "agent_id_source",
+        "agent",
+        "evaluator_id_source",
+        "evaluator",
+        "dataset",
+        "unavailable",
+    ]
     assert session["key_status"] == "available"
     assert session["key_id"] == tenant_a.kid
     dataset = session["dataset"]
@@ -305,36 +348,122 @@ def test_session_wire_with_grant(tenant_a: Any) -> None:
     assert (dataset["distinct_count"], dataset["total_count"]) == (3, 3)
     assert len(dataset["members"]) == 3
     agent = session["agent"]
-    assert agent["agent_id_source"] == "declared"
-    assert agent["agent_id"] == "agent_1"
+    assert session["agent_id_source"] == "declared"
+    assert set(agent) == {"agent_id", "build_digest", "manifest"}
     assert ci.compute_agent_build_digest(agent["manifest"]) == agent["build_digest"]
     assert session["unavailable"] == {}
 
 
-def test_member_lists_above_the_inline_cap_are_replaced(
+def test_evaluator_binding_is_declared_and_recomputable(tenant_a: Any) -> None:
+    def exact(output: Any, expected: Any, **_: Any) -> float:
+        return float(output == expected)
+
+    from traigent.evaluators.local import LocalEvaluator
+
+    builtin = _run(_dataset(ROWS)).session_wire({})["evaluator"]
+    custom = _run(
+        _dataset(ROWS),
+        evaluator=LocalEvaluator(metric_functions={"accuracy": exact}),
+        evaluator_id="ev_exact",
+    ).session_wire({})
+    binding = custom["evaluator"]
+    assert custom["evaluator_id_source"] == "declared"
+    assert binding["resolution"] == "declared_at_session_start"
+    manifest = binding["manifest"]
+    assert manifest["judge"] is None  # explicit null, never omitted
+    assert manifest["objectives"] == [
+        {"name": "accuracy", "orientation": "maximize", "weight": 1.0}
+    ]
+    assert ci.compute_evaluator_version_digest(manifest) == binding["version_digest"]
+    assert binding["version_digest"] != builtin["version_digest"]
+    assert builtin["manifest"]["evaluator_id"] == "sdk_local_evaluator"
+    assert builtin["manifest"]["dependency_versions"] == {}
+    # An objective change is a new evaluator version.
+    minimize = _run(
+        _dataset(ROWS), objectives=[_Objective("accuracy", "minimize")]
+    ).session_wire({})["evaluator"]
+    assert minimize["version_digest"] != builtin["version_digest"]
+
+    # A threshold captured by the scoring code is part of the version.
+    def make(threshold: float) -> Any:
+        def thresholded(output: Any, expected: Any, **_: Any) -> float:
+            return float(len(str(output)) > threshold)
+
+        return thresholded
+
+    low, high = (
+        _run(
+            _dataset(ROWS),
+            evaluator=LocalEvaluator(metric_functions={"accuracy": make(t)}),
+        ).session_wire({})["evaluator"]["version_digest"]
+        for t in (1.0, 2.0)
+    )
+    assert low != high
+
+
+def test_band_objective_withholds_the_evaluator_slot(tenant_a: Any) -> None:
+    session = _run(
+        _dataset(ROWS), objectives=[_Objective("accuracy", "band")]
+    ).session_wire({})
+    assert session["evaluator"] is None
+    assert session["unavailable"]["evaluator"] == "evaluator_manifest_unavailable"
+
+
+def test_member_lists_above_the_inline_cap_withhold_the_slot(
     tenant_a: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(run_module, "MAX_INLINE_MEMBERS", 2)
-    run = prepare_content_identity_run(_agent, _dataset(ROWS), agent_key="agent_1")
-    dataset = run.session_wire({})["dataset"]
-    assert "members" not in dataset
-    assert dataset["members_unavailable"] == "members_exceed_inline_cap"
-    assert dataset["distinct_count"] == 3
+    dataset = _dataset(ROWS)
+    run = _run(dataset)
+    session = run.session_wire({})
+    assert session["dataset"] is None
+    assert session["unavailable"]["dataset"] == "members_exceed_inline_cap"
+    results = [_result(result_identity_fields(e, "x")) for e in dataset.examples]
+    trial = run.trial_wire("t", {}, results, [])
+    assert trial["evaluated"] is None
+    assert trial["unavailable"]["evaluated"] == "members_exceed_inline_cap"
     assert MAX_INLINE_MEMBERS == 2_000
 
 
-def test_agent_id_falls_back_to_the_function_name() -> None:
+def test_conflicting_example_ids_are_capped_and_flagged(
+    tenant_a: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(run_module, "MAX_CONFLICTING_EXAMPLE_IDS", 1)
+    rows = [({"q": "a"}, "1"), ({"q": "a"}, "2"), ({"q": "b"}, "1"), ({"q": "b"}, "2")]
+    session = _run(_dataset(rows)).session_wire({})
+    assert len(session["dataset"]["conflicting_example_ids"]) == 1
+    assert session["unavailable"]["conflicting_example_ids"] == (
+        "conflicting_example_ids_truncated"
+    )
+
+
+def test_editing_a_row_between_runs_changes_version_and_root(tenant_a: Any) -> None:
+    """Regression (astra M2 P1): an identity cache keyed by object address kept
+    the old version and root after an in-place edit."""
+    dataset = _dataset(ROWS)
+    first = _run(dataset)
+    dataset.examples[0].expected_output = "changed in place"
+    second = _run(dataset)
+    assert first.dataset is not None and second.dataset is not None
+    assert second.dataset.examples[0].example_id == first.dataset.examples[0].example_id
+    assert (
+        second.dataset.examples[0].example_version
+        != first.dataset.examples[0].example_version
+    )
+    assert second.dataset.dataset_root != first.dataset.dataset_root
+    # The stamp the next ExampleResult reads is the new version, too.
+    fields = result_identity_fields(dataset.examples[0], "x")
+    assert fields["example_version"] == second.dataset.examples[0].example_version
+
+
+def test_agent_id_falls_back_to_the_function_name(tenant_a: Any) -> None:
     run_module._reset_warnings_for_tests()
     with pytest.warns(UserWarning, match="fallback agent id"):
-        run = prepare_content_identity_run(_agent, _dataset(ROWS), agent_key=None)
+        run = _run(_dataset(ROWS), agent_key=None)
     assert (run.agent_id, run.agent_id_source) == ("_agent", "fallback")
-    unrepresentable = prepare_content_identity_run(
-        _agent, _dataset(ROWS), agent_key="has spaces"
-    )
-    assert unrepresentable.agent_id is None
-    assert unrepresentable.session_wire({})["unavailable"]["agent"] == (
-        "agent_id_unavailable"
-    )
+    session = _run(_dataset(ROWS), agent_key="has spaces").session_wire({})
+    assert session["agent"] is None
+    assert session["unavailable"]["agent"] == "agent_id_unavailable"
 
 
 def test_example_result_serialization_is_unchanged_without_identity() -> None:
@@ -398,8 +527,18 @@ def _load_agent(repo: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
 def test_clean_commit_with_declared_assets_is_complete(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    agent = _load_agent(_agent_project(tmp_path), monkeypatch)
-    declare_agent_assets(agent, prompts={"system": "Be terse."}, tool_definitions={})
+    repo = _agent_project(tmp_path)
+    agent = _load_agent(repo, monkeypatch)
+    declare_agent_assets(
+        agent,
+        prompts={"system": "Be terse."},
+        tool_definitions={},
+        helper_modules={
+            "agent_mod_ci.py": (repo / "agent_mod_ci.py").read_bytes(),
+            "helper_mod_ci.py": (repo / "helper_mod_ci.py").read_bytes(),
+        },
+        coverage="complete",
+    )
     base = collect_agent_build_base(agent, agent_id="agent_1")
     assert base is not None
     assert base.coverage == "complete", base.gaps
@@ -420,6 +559,42 @@ def test_clean_commit_with_declared_assets_is_complete(
     )
     other = candidate_agent_version(base, {"alpha": 2})
     assert other is not None and other["build_digest"] != version["build_digest"]
+
+
+def test_sdk_enumerated_helpers_never_support_a_complete_claim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Loaded-module enumeration cannot prove coverage (astra M2 P1)."""
+    agent = _load_agent(_agent_project(tmp_path), monkeypatch)
+    declare_agent_assets(agent, prompts={}, tool_definitions={}, coverage="complete")
+    base = collect_agent_build_base(agent, agent_id="agent_1")
+    assert base is not None
+    # The helpers were found, but only by the SDK looking at loaded modules.
+    assert set(base.asset_digests["helper_modules"]) == {
+        "agent_mod_ci.py",
+        "helper_mod_ci.py",
+    }
+    assert base.coverage == "partial"
+    assert "helper_modules_not_declared" in base.gaps
+
+
+def test_complete_needs_an_explicit_claim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _agent_project(tmp_path)
+    agent = _load_agent(repo, monkeypatch)
+    declare_agent_assets(
+        agent,
+        prompts={},
+        tool_definitions={},
+        helper_modules={"helper_mod_ci.py": (repo / "helper_mod_ci.py").read_bytes()},
+    )
+    base = collect_agent_build_base(agent, agent_id="agent_1")
+    assert base is not None
+    assert base.coverage == "partial"
+    assert "coverage_not_declared_complete" in base.gaps
+    with pytest.raises(ci.ContentIdentityError):
+        declare_agent_assets(agent, coverage="all of it")
 
 
 def test_undeclared_prompts_and_tools_make_coverage_partial(
@@ -471,7 +646,13 @@ def test_dirty_file_outside_the_manifest_makes_coverage_partial(
 ) -> None:
     repo = _agent_project(tmp_path)
     agent = _load_agent(repo, monkeypatch)
-    declare_agent_assets(agent, prompts={}, tool_definitions={})
+    declare_agent_assets(
+        agent,
+        prompts={},
+        tool_definitions={},
+        helper_modules={"helper_mod_ci.py": b"RULE = 1\n"},
+        coverage="complete",
+    )
     (repo / "prompt.txt").write_text("unlisted prompt file", encoding="utf-8")
     base = collect_agent_build_base(agent, agent_id="agent_1")
     assert base is not None
@@ -565,16 +746,25 @@ def test_observations_are_recorded_from_real_responses_only() -> None:
             "provider": "openai",
             "requested_model": "gpt-4o",
             "response_model": "gpt-4o-2024-08-06",
-            "call_count": 2,
             "system_fingerprint": "fp_1",
+            "call_count": 2,
         },
         {
             "provider": "openai",
             "requested_model": "gpt-4o-mini",
             "response_model": None,  # never copied from the request
+            "system_fingerprint": None,  # explicit null, never omitted
             "call_count": 1,
         },
     ]
+    for entry in observed:
+        assert list(entry) == [
+            "provider",
+            "requested_model",
+            "response_model",
+            "system_fingerprint",
+            "call_count",
+        ]
 
 
 def test_langchain_style_metadata_is_read() -> None:

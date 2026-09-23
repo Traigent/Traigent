@@ -527,10 +527,9 @@ class TrialLifecycle:
         orchestrator = self._orchestrator
         closure: LeaseClosure | None = None
         capture_bucket: Any = None
-        # Content identity v1: prepare the run's identity (cached per run) and
-        # stamp every example with its keyed id/version BEFORE evaluation so
-        # each ExampleResult carries it. Without a Backend key grant nothing
-        # is stamped -- fail closed.
+        # Content identity v1: the run's snapshot (taken by optimize(), which
+        # also stamped every example with its keyed id/version so each
+        # ExampleResult carries it). None without a Backend key grant.
         identity_run = self._content_identity_run(func, dataset)
 
         try:
@@ -756,22 +755,13 @@ class TrialLifecycle:
         result.metadata = metadata
 
     def _content_identity_run(self, func: Callable[..., Any], dataset: Dataset) -> Any:
-        """The run's content identity (cached on the dataset), or ``None`` on failure."""
-        try:
-            from traigent.identity.run import prepare_content_identity_run
+        """The run's content-identity snapshot, taken by ``optimize()`` at run start.
 
-            return prepare_content_identity_run(
-                func,
-                dataset,
-                agent_key=getattr(self._orchestrator, "_agent_key", None),
-            )
-        except Exception as exc:  # noqa: BLE001 - identity must never fail a trial
-            logger.warning(
-                "Content identity unavailable for this run (%s); no example ids, "
-                "roots or build versions will be emitted.",
-                type(exc).__name__,
-            )
-            return None
+        ``None`` without a Backend purpose-key grant (then no trial carries a
+        ``content_identity`` block) or when the trial runs outside ``optimize()``.
+        """
+        _ = (func, dataset)
+        return getattr(self._orchestrator, "_content_identity_run", None)
 
     def _apply_content_identity(
         self,

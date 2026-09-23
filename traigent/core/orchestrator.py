@@ -1104,6 +1104,8 @@ class OptimizationOrchestrator:
         self._start_time: float | None = None
         self._status = OptimizationStatus.PENDING
         self._optimization_id = str(uuid.uuid4())
+        # Content identity v1 snapshot for the run in progress (see optimize()).
+        self._content_identity_run: Any = None
         self._stop_reason: StopReason | None = None
         # #1404: bounded auto-retry budget for transient vendor errors (429/503)
         # before the run loop gives up. Cumulative per category so the run always
@@ -3061,6 +3063,7 @@ class OptimizationOrchestrator:
             agent_configuration=self._agent_configuration,
             objectives=objectives_payload,
             default_config=default_config_payload,
+            **self._session_content_identity_kwargs(default_config_payload),
             promotion_policy=wire_policy,
             tvl_governance=wire_governance,
             experiment_display_name=experiment_display_name,
@@ -3253,6 +3256,7 @@ class OptimizationOrchestrator:
                 evaluator_definition_id=self.evaluator_definition_id,
                 task_type=getattr(self, "task_type", None),
                 dataset_id=getattr(self, "dataset_id", None),
+                **self._session_content_identity_kwargs(None, privacy_filter=True),
             )
             session_id = self.backend_session_manager.handle_session_creation_result(
                 self.backend_session_manager.normalize_session_creation_result(
@@ -3265,6 +3269,50 @@ class OptimizationOrchestrator:
             mock_session_id = f"mock-session-{self._optimization_id[:8]}"
             logger.debug(f"Created mock session: {mock_session_id}")
             return mock_session_id
+
+    def _prepare_content_identity(
+        self, func: Callable[..., Any], dataset: Dataset
+    ) -> Any:
+        """This run's content-identity snapshot, or ``None`` (no grant / failure)."""
+        try:
+            from traigent.identity.run import prepare_content_identity_run
+
+            schema = getattr(self, "objective_schema", None)
+            return prepare_content_identity_run(
+                func,
+                dataset,
+                agent_key=self._agent_key,
+                evaluator=self.evaluator,
+                objectives=getattr(schema, "objectives", None),
+                evaluator_id=self.evaluator_definition_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - identity must never fail a run
+            logger.warning(
+                "Content identity unavailable for this run (%s); no example ids, "
+                "roots or versions will be emitted.",
+                type(exc).__name__,
+            )
+            return None
+
+    def _session_content_identity_kwargs(
+        self, default_config: dict[str, Any] | None, *, privacy_filter: bool = False
+    ) -> dict[str, Any]:
+        """``{"content_identity": ...}`` for session create, or ``{}`` (nothing new).
+
+        Empty without a snapshot (no grant) so the call -- and the request body
+        -- stay exactly as without content identity. ``privacy_filter`` applies
+        the privacy-mode withholding on paths that bypass the session manager.
+        """
+        run = getattr(self, "_content_identity_run", None)
+        if run is None:
+            return {}
+        if privacy_filter and getattr(self.traigent_config, "privacy_enabled", False):
+            return {}
+        try:
+            return {"content_identity": run.session_wire(default_config)}
+        except Exception as exc:  # noqa: BLE001 - identity must never block a run
+            logger.debug("Session content identity omitted: %s", type(exc).__name__)
+            return {}
 
     async def optimize(  # noqa: C901
         self,
@@ -3291,6 +3339,11 @@ class OptimizationOrchestrator:
         """
         # Validate dataset
         self._validate_dataset(dataset)
+
+        # Content identity v1: one snapshot per run, taken from the rows' and
+        # the agent's CURRENT state before the session is created. None without
+        # a Backend purpose-key grant -- then nothing new is emitted anywhere.
+        self._content_identity_run = self._prepare_content_identity(func, dataset)
 
         # Perform standard initialization (logging, session creation, callbacks)
         session_id = self._initialize_optimization_run(func, dataset, function_name)

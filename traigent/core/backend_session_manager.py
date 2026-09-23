@@ -1465,6 +1465,7 @@ class BackendSessionManager:
         optimization_strategy: dict[str, Any] | None = None,
         task_type: str | None = None,
         dataset_id: str | None = None,
+        content_identity: dict[str, Any] | None = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -1635,16 +1636,12 @@ class BackendSessionManager:
                 if isinstance(agent_key, str) and agent_key.strip()
                 else None
             )
-            content_identity = self._session_content_identity(
-                func, dataset, declared_agent_key, default_config
-            )
-            # Only passed when built, so clients (and fakes) predating the
-            # field keep their exact call shape.
-            identity_kwargs: dict[str, Any] = (
-                {"content_identity": content_identity}
-                if content_identity is not None
-                else {}
-            )
+            # Content identity v1 (built by the orchestrator per run; absent
+            # without a purpose-key grant). Withheld in privacy mode: member
+            # lists, dataset sizes and project file names are disclosures a
+            # privacy-mode run has not agreed to. Only passed when present, so
+            # clients (and fakes) predating the field keep their exact call shape.
+            identity_kwargs = self._content_identity_kwargs(content_identity)
             raw_result = self._backend_client.create_session(
                 function_name=portal_name,
                 agent_key=declared_agent_key,
@@ -2153,31 +2150,19 @@ class BackendSessionManager:
             ),
         }
 
-    def _session_content_identity(
-        self,
-        func: Callable[..., Any],
-        dataset: Any,
-        agent_key: str | None,
-        default_config: dict[str, Any] | None,
-    ) -> dict[str, Any] | None:
-        """The session-create ``content_identity`` object (content identity v1).
+    def _content_identity_kwargs(
+        self, content_identity: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        """``{"content_identity": ...}`` for the backend create call, or ``{}``.
 
-        The run's base agent version and dataset root, as the SDK declares them;
-        same shape as the JS SDK. ``None`` in privacy mode (member lists,
-        dataset sizes and project file names are disclosures a privacy-mode run
-        has not agreed to) and on any failure -- identity never blocks a run.
+        Empty when absent (no purpose-key grant) or in privacy mode, so the
+        call keeps its exact pre-identity shape.
         """
-        if getattr(self._traigent_config, "privacy_enabled", False):
-            return None
-        try:
-            from traigent.identity.run import prepare_content_identity_run
-
-            run = prepare_content_identity_run(func, dataset, agent_key=agent_key)
-            wire: dict[str, Any] = run.session_wire(default_config)
-            return wire
-        except Exception as exc:  # noqa: BLE001 - identity must never block a run
-            logger.debug("Session content identity omitted: %s", type(exc).__name__)
-            return None
+        if content_identity is None or getattr(
+            self._traigent_config, "privacy_enabled", False
+        ):
+            return {}
+        return {"content_identity": content_identity}
 
     async def submit_trial(
         self,

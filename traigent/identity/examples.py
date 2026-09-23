@@ -64,8 +64,6 @@ __all__ = [
 
 #: Attribute stamped on an ``EvaluationExample`` holding ``(kid, ExampleIdentity)``.
 _STAMP_ATTR = "_traigent_content_identity"
-#: Attribute cached on a ``Dataset`` holding ``(kid, example object ids, identity)``.
-_DATASET_CACHE_ATTR = "_traigent_content_identity_cache"
 #: User-supplied id keys in example metadata, in precedence order. Both are
 #: reserved annotation keys, so neither ever participates in example_version.
 _EXTERNAL_ID_KEYS = ("external_id", "example_id")
@@ -193,20 +191,18 @@ def identify_dataset(
 
     ``keys`` defaults to the installed grant. Returns ``None`` -- and stamps
     nothing -- when there is no grant or any example cannot be identified.
-    The result is cached on the dataset object for the same key and the same
-    example objects, so repeated trials over one dataset hash it once.
+
+    Always recomputed from the rows' CURRENT content, never cached on the
+    dataset: a cache keyed by object identity kept an old version and root
+    after a row's expected output was edited in place (M2 review, astra P1).
+    Callers take one snapshot per optimization run
+    (:func:`traigent.identity.run.prepare_content_identity_run`).
     """
     if keys is None:
         keys = get_content_identity_keys()
     if keys is None:
         return None
     examples: Sequence[Any] = list(getattr(dataset, "examples", None) or [])
-    fingerprint = (keys.kid, tuple(id(example) for example in examples))
-    cached = getattr(dataset, "__dict__", {}).get(_DATASET_CACHE_ATTR)
-    if isinstance(cached, tuple) and len(cached) == 2 and cached[0] == fingerprint:
-        cached_identity = cached[1]
-        if isinstance(cached_identity, DatasetContentIdentity):
-            return cached_identity
 
     identities: list[ExampleIdentity] = []
     try:
@@ -239,14 +235,9 @@ def identify_dataset(
 
     for example, identity in zip(examples, identities, strict=True):
         _set_stamp(example, keys.kid, identity)
-    result = DatasetContentIdentity(
+    return DatasetContentIdentity(
         key_id=keys.kid, examples=tuple(identities), multiset=multiset
     )
-    try:
-        dataset.__dict__[_DATASET_CACHE_ATTR] = (fingerprint, result)
-    except AttributeError:
-        pass
-    return result
 
 
 def result_identity_fields(example: Any, fallback_example_id: str) -> dict[str, Any]:
@@ -255,17 +246,13 @@ def result_identity_fields(example: Any, fallback_example_id: str) -> dict[str, 
     With a stamped content identity: ``example_id`` is the keyed ``ex1`` id,
     ``example_version`` its ``exv1`` version, and a user-supplied id moves to
     ``external_id``. Without one (no key grant, or the dataset could not be
-    identified): ``example_id`` is ``fallback_example_id`` -- the SDK's legacy
-    per-row handle, which is NOT a content identity -- and ``example_version``
-    stays ``None``.
+    identified): only ``example_id`` = ``fallback_example_id`` -- the SDK's
+    legacy per-row handle, which is NOT a content identity -- so the result is
+    exactly what it was before content identity existed.
     """
-    metadata = getattr(example, "metadata", None)
     identity = stamped_identity(example)
     if identity is None:
-        return {
-            "example_id": fallback_example_id,
-            "external_id": external_id_of(metadata),
-        }
+        return {"example_id": fallback_example_id}
     return {
         "example_id": identity.example_id,
         "example_version": identity.example_version,

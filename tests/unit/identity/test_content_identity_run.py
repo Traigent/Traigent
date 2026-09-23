@@ -9,8 +9,8 @@ what each trial records and what the Backend submission carries:
   ``dataset_root`` plus its ``EvaluatedSetV1`` (root recomputable from the
   members) and a candidate agent version whose ``applied_config_digest``
   follows the trial's configuration;
-* without a grant: no content id anywhere (fail closed) and the legacy per-row
-  handle is unchanged;
+* without a grant: nothing new at all -- no ``content_identity`` block, no
+  ``external_id``/``example_version`` on results (fail closed);
 * privacy mode withholds the whole block from the Backend payload.
 """
 
@@ -160,11 +160,9 @@ async def test_unkeyed_run_mints_no_content_ids() -> None:
     for trial in result.trials:
         examples = _example_results(trial)
         assert [e["example_id"] for e in examples] == ["row-a", "row-b", "row-a2"]
-        assert all("example_version" not in e for e in examples)
-        block = trial.metadata["content_identity"]
-        assert block["evaluated"] is None
-        assert block["unavailable"]["evaluated"] == "purpose_keys_unavailable"
-        assert block["candidate"] is not None  # the build version needs no key
+        for example in examples:
+            assert "example_version" not in example and "external_id" not in example
+        assert "content_identity" not in trial.metadata
         assert "ex1:" not in json.dumps(trial.metadata, default=str)
 
 
@@ -212,9 +210,11 @@ def test_both_session_serializers_carry_the_top_level_object() -> None:
     from traigent.identity.run import prepare_content_identity_run
 
     set_content_identity_keys(_grant())
-    wire = prepare_content_identity_run(
+    run = prepare_content_identity_run(
         identity_agent, _dataset(), agent_key="agent_identity_test"
-    ).session_wire({})
+    )
+    assert run is not None
+    wire = run.session_wire({})
     request = _session_request(wire)
     typed = ApiOperations(Mock())._build_session_payload(request, max_trials=2)
     stub = SimpleNamespace(_ensure_owner_metadata=lambda metadata: metadata or {})
@@ -229,26 +229,65 @@ def test_both_session_serializers_carry_the_top_level_object() -> None:
     assert "content_identity" not in plain
 
 
-def test_session_manager_builds_the_object_and_withholds_it_in_privacy_mode() -> None:
+def test_session_manager_withholds_the_object_in_privacy_mode() -> None:
     from traigent.core.backend_session_manager import BackendSessionManager
 
-    set_content_identity_keys(_grant())
     manager = BackendSessionManager.__new__(BackendSessionManager)
     manager._traigent_config = TraigentConfig(offline=True)
-    wire = manager._session_content_identity(
-        identity_agent, _dataset(), "agent_identity_test", None
-    )
-    assert wire is not None and wire["key_status"] == "available"
+    wire = {"scheme": ci.SCHEME}
+    assert manager._content_identity_kwargs(wire) == {"content_identity": wire}
+    assert manager._content_identity_kwargs(None) == {}
     private = TraigentConfig(offline=True)
     with pytest.warns(DeprecationWarning):
         private.privacy_enabled = True
     manager._traigent_config = private
-    assert (
-        manager._session_content_identity(
-            identity_agent, _dataset(), "agent_identity_test", None
-        )
-        is None
-    )
+    assert manager._content_identity_kwargs(wire) == {}
+
+
+async def _captured_session_kwargs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    from traigent.core.backend_session_manager import BackendSessionManager
+
+    captured: dict[str, Any] = {}
+    original = BackendSessionManager.create_session
+
+    def capture(self: Any, *args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(BackendSessionManager, "create_session", capture)
+    await _run()
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_optimize_sends_the_session_object_only_with_a_grant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    unkeyed = await _captured_session_kwargs(monkeypatch)
+    assert "content_identity" not in unkeyed  # no grant: the call is unchanged
+    set_content_identity_keys(_grant())
+    keyed = await _captured_session_kwargs(monkeypatch)
+    wire = keyed["content_identity"]
+    assert wire["key_status"] == "available"
+    assert wire["agent_id_source"] == "declared"
+    assert wire["dataset"]["total_count"] == 3
+    assert wire["evaluator"]["resolution"] == "declared_at_session_start"
+
+
+@pytest.mark.asyncio
+async def test_build_evidence_is_refreshed_between_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The second optimize() sees the agent's new declared assets (astra M2 P1)."""
+    from traigent.identity.agent_build import declare_agent_assets
+
+    set_content_identity_keys(_grant())
+    declare_agent_assets(identity_agent, prompts={"system": "v1"})
+    first = (await _captured_session_kwargs(monkeypatch))["content_identity"]
+    declare_agent_assets(identity_agent, prompts={"system": "v2"})
+    second = (await _captured_session_kwargs(monkeypatch))["content_identity"]
+    assert first["agent"]["build_digest"] != second["agent"]["build_digest"]
+    assert first["dataset"]["dataset_root"] == second["dataset"]["dataset_root"]
 
 
 @pytest.mark.backend_online  # SDK #2033: exercise the connected create path

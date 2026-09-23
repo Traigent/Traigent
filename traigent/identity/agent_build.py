@@ -133,8 +133,10 @@ def declare_agent_assets(
     *,
     prompts: Mapping[str, Any] | None = None,
     tool_definitions: Mapping[str, Any] | None = None,
+    helper_modules: Mapping[str, Any] | None = None,
+    coverage: str | None = None,
 ) -> Any:
-    """Declare the prompts and tool definitions an agent's behaviour depends on.
+    """Declare the assets an agent's behaviour depends on, and claim coverage.
 
     Usable as a decorator (``@declare_agent_assets(prompts=..., ...)``) or as a
     call (``declare_agent_assets(fn, prompts=...)``). Each value is the asset's
@@ -145,10 +147,24 @@ def declare_agent_assets(
     Pass ``{}`` to declare that a category is empty. A category left
     undeclared keeps the agent's manifest at ``coverage: "partial"`` -- the SDK
     cannot discover prompts or tools on its own, and never assumes "none".
+    ``helper_modules`` (project source files the agent imports, keyed by a
+    stable name such as the project-relative path) overrides the SDK's own
+    enumeration of loaded project modules, which can never prove it saw every
+    helper (a module may load later, live outside the project, or not be a
+    ``.py`` file).
+
+    ``coverage="complete"`` is the caller's claim that the declaration covers
+    every behaviour-affecting input. It is honoured only when all three
+    categories are declared and the code is pinned; otherwise the manifest is
+    ``partial`` (same rule as the JS SDK).
     """
-    declared = {
+    if coverage not in (None, "complete", "partial"):
+        raise ContentIdentityError("coverage must be 'complete' or 'partial'")
+    declared: dict[str, Any] = {
         "prompts": _declared_category(prompts),
         "tool_definitions": _declared_category(tool_definitions),
+        "helper_modules": _declared_category(helper_modules),
+        "coverage": coverage,
     }
 
     def apply(target: Callable[..., Any]) -> Callable[..., Any]:
@@ -170,8 +186,12 @@ def _declared_assets_of(func: Any) -> dict[str, dict[str, str]]:
         declared = getattr(layer, _DECLARED_ASSETS_ATTR, None)
         if isinstance(declared, dict):
             for category, digests in declared.items():
-                if category not in found and isinstance(digests, dict):
+                if category in found:
+                    continue
+                if isinstance(digests, dict):
                     found[category] = dict(digests)
+                elif category == "coverage" and isinstance(digests, str):
+                    found[category] = digests  # type: ignore[assignment]
     return found
 
 
@@ -206,18 +226,23 @@ def innermost_callable(func: Any) -> Any:
     return _innermost(func)
 
 
+def normalize_source(
+    source: str, *, first_line: tuple[str, ...] = ("def ", "async def ")
+) -> str | None:
+    """fp2 source normalization: drop decorator lines, ``\\n`` endings, dedent, rstrip."""
+    lines = source.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    for index, line in enumerate(lines):
+        if line.lstrip().startswith(first_line):
+            return textwrap.dedent("\n".join(lines[index:])).rstrip()
+    return None  # a lambda or other def-less source: not digestible
+
+
 def _source_without_decorators(target: Any) -> str | None:
     try:
         source = inspect.getsource(target)
     except (OSError, TypeError):
         return None
-    lines = source.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    for index, line in enumerate(lines):
-        stripped = line.lstrip()
-        if stripped.startswith(("def ", "async def ")):
-            text = textwrap.dedent("\n".join(lines[index:]))
-            return text.rstrip()
-    return None  # a lambda or other def-less source: not a digestible agent
+    return normalize_source(source)
 
 
 def _bound_state(
@@ -397,6 +422,23 @@ def _dependency_lock_digest(project_root: Path) -> str | None:
     return None
 
 
+def project_relative_name(path: Path) -> str | None:
+    """A representable asset name for a project file: relative to its git top level
+    (else its directory), ``None`` when the name cannot be represented."""
+    state = _git(path.parent, "rev-parse", "--show-toplevel")
+    root = Path(state.strip()).resolve() if state else path.parent
+    try:
+        name = path.relative_to(root).as_posix()
+    except ValueError:
+        return None
+    return name if _ASSET_NAME_RE.fullmatch(name) else None
+
+
+def sdk_version() -> str:
+    """The running Traigent SDK version (``"unknown"`` if unreadable)."""
+    return _sdk_version()
+
+
 def _sdk_version() -> str:
     try:
         from traigent._version import get_version
@@ -504,21 +546,29 @@ def collect_agent_build_base(
         )
         return None
 
-    helper_modules: dict[str, str] = {}
-    if project_root is not None:
-        helper_modules, enumerated, helper_gaps = _enumerate_helper_modules(
-            project_root
-        )
-        gaps.extend(helper_gaps)
-        if dirty_paths - enumerated:
-            gaps.append("dirty_files_outside_manifest")
-    else:
-        gaps.append("helper_modules_not_enumerated")
-
     declared = _declared_assets_of(func)
+    helper_modules: dict[str, str] = {}
+    if "helper_modules" in declared:
+        helper_modules = dict(declared["helper_modules"])
+        covered = set(helper_modules)
+    elif project_root is not None:
+        # The SDK's own enumeration sees only modules already loaded from
+        # inside the project, as .py files; it cannot prove it saw every
+        # helper, so it never supports a complete claim (M2 review, astra P1).
+        helper_modules, covered, helper_gaps = _enumerate_helper_modules(project_root)
+        gaps.extend(helper_gaps)
+        gaps.append("helper_modules_not_declared")
+    else:
+        covered = set()
+        gaps.append("helper_modules_not_declared")
+    if dirty_paths - covered:
+        gaps.append("dirty_files_outside_manifest")
+
     for category in ("prompts", "tool_definitions"):
         if category not in declared:
             gaps.append(f"{category}_not_declared")
+    if declared.get("coverage") != "complete":
+        gaps.append("coverage_not_declared_complete")
 
     dependency_lock = (
         _dependency_lock_digest(project_root) if project_root is not None else None
