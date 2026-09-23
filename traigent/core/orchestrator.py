@@ -3290,43 +3290,24 @@ class OptimizationOrchestrator:
             return None
         return self.backend_client
 
-    async def _install_fetched_content_identity_keys(self) -> Any:
-        """Fetch and install this run's purpose keys; return them, or ``None``.
+    async def _fetch_run_content_identity_keys(self) -> Any:
+        """This run's fetched purpose keys, or ``None``.
 
         A grant the user installed (``set_content_identity_keys``) takes
-        precedence: nothing is fetched and nothing is replaced. Fetched keys
-        are held in memory for this run only (see :meth:`optimize`).
+        precedence: nothing is fetched. Fetched keys are never installed
+        process-wide; :meth:`optimize` binds them to this run's execution
+        context only (see :mod:`traigent.identity.keys`).
         """
-        from traigent.identity.keys import (
-            get_content_identity_keys,
-            set_content_identity_keys,
-        )
+        from traigent.identity.keys import installed_content_identity_keys
 
-        if get_content_identity_keys() is not None:
+        if installed_content_identity_keys() is not None:
             return None
         client = self._content_identity_grant_client()
         if client is None:
             return None
         from traigent.identity.grant_fetch import fetch_content_identity_keys
 
-        keys = await asyncio.to_thread(fetch_content_identity_keys, client)
-        if keys is None:
-            return None
-        set_content_identity_keys(keys)
-        return keys
-
-    @staticmethod
-    def _release_fetched_content_identity_keys(keys: Any) -> None:
-        """Forget the keys this run fetched (never a grant installed since)."""
-        if keys is None:
-            return
-        from traigent.identity.keys import (
-            get_content_identity_keys,
-            set_content_identity_keys,
-        )
-
-        if get_content_identity_keys() is keys:
-            set_content_identity_keys(None)
+        return await asyncio.to_thread(fetch_content_identity_keys, client)
 
     def _prepare_content_identity(
         self, func: Callable[..., Any], dataset: Dataset
@@ -3400,8 +3381,18 @@ class OptimizationOrchestrator:
 
         # Content identity v1 (opt-in): fetch this tenant's purpose-key grant
         # once, before session create. Any failure leaves no keys (the run
-        # proceeds without content identity); keys live for this run only.
-        fetched_identity_keys = await self._install_fetched_content_identity_keys()
+        # proceeds without content identity). The keys are bound to THIS run's
+        # execution context (a ContextVar), never process-global: a concurrent
+        # run -- another tenant's, or one with the switch off -- never sees
+        # them, and this run ending clears nothing another run uses. Binding
+        # None when nothing was fetched keeps an enclosing context's keys out.
+        from traigent.identity.keys import (
+            bind_run_content_identity_keys,
+            reset_run_content_identity_keys,
+        )
+
+        fetched_identity_keys = await self._fetch_run_content_identity_keys()
+        identity_keys_token = bind_run_content_identity_keys(fetched_identity_keys)
         try:
             # Content identity v1: one snapshot per run, taken from the rows' and
             # the agent's CURRENT state before the session is created. None without
@@ -3434,7 +3425,7 @@ class OptimizationOrchestrator:
                     session_span=session_span,
                 )
         finally:
-            self._release_fetched_content_identity_keys(fetched_identity_keys)
+            reset_run_content_identity_keys(identity_keys_token)
 
     def _check_cost_approval(self, dataset: Dataset) -> None:
         """Check pre-run cost approval before optimization.

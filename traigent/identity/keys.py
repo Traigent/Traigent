@@ -24,6 +24,7 @@ from __future__ import annotations
 import re
 import threading
 from collections.abc import Mapping
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -133,12 +134,32 @@ class ContentIdentityKeys:
         )
 
 
+# Two sources, in precedence order:
+#
+# 1. ``_active`` -- the grant the USER installed with
+#    :func:`set_content_identity_keys`. Process-global by design: it is the
+#    user's explicit, process-wide choice.
+# 2. ``_run_keys`` -- a grant an ``optimize()`` run FETCHED for itself. Scoped
+#    to that run's execution context (a ``ContextVar``), never process-global:
+#    two runs in one process (possibly for different tenants, or one with the
+#    switch off) must never see each other's grant, and one run ending must
+#    never clear keys another run is still using. asyncio tasks and
+#    ``asyncio.to_thread`` copy the context; the SDK's own thread-pool hops
+#    (sync evaluators, the local invoker, the parallel batch optimizer) run
+#    under ``contextvars.copy_context()``. A bare ``ThreadPoolExecutor.submit``
+#    does NOT copy it and therefore sees no fetched keys -- fail closed.
 _lock = threading.Lock()
 _active: ContentIdentityKeys | None = None
+_run_keys: ContextVar[ContentIdentityKeys | None] = ContextVar(
+    "traigent_run_content_identity_keys", default=None
+)
 
 
 def set_content_identity_keys(keys: ContentIdentityKeys | None) -> None:
-    """Install (or, with ``None``, remove) the process's purpose-key grant."""
+    """Install (or, with ``None``, remove) the process's purpose-key grant.
+
+    A user-installed grant takes precedence over any grant a run fetched.
+    """
     global _active
     if keys is not None and not isinstance(keys, ContentIdentityKeys):
         raise ContentIdentityError("keys must be ContentIdentityKeys")
@@ -147,11 +168,47 @@ def set_content_identity_keys(keys: ContentIdentityKeys | None) -> None:
 
 
 def get_content_identity_keys() -> ContentIdentityKeys | None:
-    """The installed grant, or ``None`` -- in which case NO content ids are minted."""
+    """The grant in effect here, or ``None`` -- in which case NO content ids are minted.
+
+    The user-installed grant if there is one, else the grant the current
+    ``optimize()`` run fetched for itself (run-scoped), else ``None``.
+    """
+    with _lock:
+        installed = _active
+    if installed is not None:
+        return installed
+    return _run_keys.get()
+
+
+def installed_content_identity_keys() -> ContentIdentityKeys | None:
+    """Only the user-installed grant (never a run's fetched one), or ``None``."""
     with _lock:
         return _active
 
 
 def clear_content_identity_keys() -> None:
-    """Forget the installed grant (e.g. on logout or tenant switch)."""
+    """Forget the user-installed grant (e.g. on logout or tenant switch).
+
+    Run-scoped fetched grants are unaffected; each run drops its own on exit.
+    """
     set_content_identity_keys(None)
+
+
+def bind_run_content_identity_keys(
+    keys: ContentIdentityKeys | None,
+) -> Token[ContentIdentityKeys | None]:
+    """Scope ``keys`` (or explicitly none) to the current run's execution context.
+
+    SDK-internal (called by the orchestrator once per ``optimize()`` run).
+    Binding ``None`` is deliberate: a run with no fetched grant must not
+    inherit one from an enclosing context. Undo with
+    :func:`reset_run_content_identity_keys` in the same context.
+    """
+    if keys is not None and not isinstance(keys, ContentIdentityKeys):
+        raise ContentIdentityError("keys must be ContentIdentityKeys")
+    return _run_keys.set(keys)
+
+
+def reset_run_content_identity_keys(token: Token[ContentIdentityKeys | None]) -> None:
+    """Restore the run-scoped grant to what it was before the matching bind."""
+    _run_keys.reset(token)

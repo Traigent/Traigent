@@ -10,8 +10,10 @@ exactly the no-grant behaviour); key material never reaches logs or payloads.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -553,3 +555,258 @@ async def test_privacy_mode_makes_no_request(monkeypatch: pytest.MonkeyPatch) ->
     captured, _ = await _run(monkeypatch, content_identity=True, grant_client=None)
     fake.fetch_content_identity_grant_sync.assert_not_called()
     assert "content_identity" not in captured
+
+
+# --------------------------------------------------------------------------
+# Fetched keys are scoped to the run that fetched them (review finding on
+# #2423): two optimize() runs in one process never see each other's grant,
+# and one run ending never clears keys another run is still using.
+# --------------------------------------------------------------------------
+
+_ROW_B = VECTORS["key_derivation"][2]
+GRANT_B: dict[str, Any] = {
+    "tenant_id": _ROW_B["tenant_id"],
+    "kid": _ROW_B["key_id"],
+    "example_id_key": _ROW_B["example_id_key_hex"],
+    "example_version_key": _ROW_B["example_version_key_hex"],
+    "encoding": "hex",
+}
+_WAIT = 10.0  # seconds; a deadlock fails the test instead of hanging it
+
+
+def _expected_example_ids(grant: dict[str, Any]) -> set[str]:
+    from traigent.identity.examples import identify_dataset
+
+    identity = identify_dataset(_dataset(), ContentIdentityKeys.from_grant(grant))
+    assert identity is not None
+    return {ex.example_id for ex in identity.examples}
+
+
+def _concurrent_capture(monkeypatch: pytest.MonkeyPatch) -> dict[Any, Any]:
+    """Session-create kwargs per agent function (each run has its own agent)."""
+    from traigent.core.backend_session_manager import BackendSessionManager
+
+    captured: dict[Any, Any] = {}
+    original = BackendSessionManager.create_session
+
+    def capture(self: Any, *args: Any, **kwargs: Any) -> Any:
+        captured[kwargs.get("func")] = dict(kwargs)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(BackendSessionManager, "create_session", capture)
+    return captured
+
+
+async def _scoped_run(agent: Any, *, content_identity: bool, grant_source: Any) -> Any:
+    optimizer = MockOptimizer(config_space={"alpha": [0, 1]}, objectives=["accuracy"])
+    optimizer.set_max_suggestions(2)
+    orchestrator = OptimizationOrchestrator(
+        optimizer=optimizer,
+        evaluator=LocalEvaluator(metrics=["accuracy"], detailed=True),
+        max_trials=2,
+        config=TraigentConfig(
+            offline=True, algorithm="grid", content_identity=content_identity
+        ),
+        agent_key="agent_identity_test",
+    )
+    real_gate = OptimizationOrchestrator._content_identity_grant_client
+    # Per-instance gate: this run's (fake, offline) Backend grant source.
+    orchestrator._content_identity_grant_client = lambda: real_gate(  # type: ignore[method-assign]
+        SimpleNamespace(
+            traigent_config=orchestrator.traigent_config, backend_client=grant_source
+        )
+    )
+    return await orchestrator.optimize(agent, _dataset())
+
+
+def _assert_all_trials_keyed(result: Any, grant: dict[str, Any]) -> None:
+    expected_ids = _expected_example_ids(grant)
+    assert len(result.trials) == 2
+    for trial in result.trials:
+        assert trial.metadata["content_identity"]["evaluated"]["key_id"] == grant["kid"]
+        examples = list(trial.metadata.get("example_results") or [])
+        assert len(examples) == 3
+        assert {e["example_id"] for e in examples} == expected_ids
+
+
+def _assert_no_content_identity(captured: dict[str, Any], result: Any) -> None:
+    assert "content_identity" not in captured
+    for trial in result.trials:
+        assert "content_identity" not in trial.metadata
+        for example in trial.metadata.get("example_results") or []:
+            assert not str(example["example_id"]).startswith("ex1:")
+
+
+@pytest.mark.asyncio
+async def test_switch_off_run_never_sees_a_concurrent_runs_fetched_grant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _concurrent_capture(monkeypatch)
+    a_in_trial = asyncio.Event()
+    release_a = asyncio.Event()
+
+    async def agent_a(text: str) -> str:
+        # Run A holds its fetched grant, mid-trial, for the whole of run B.
+        a_in_trial.set()
+        await asyncio.wait_for(release_a.wait(), _WAIT)
+        return text.upper()
+
+    async def agent_b(text: str) -> str:
+        return text.upper()
+
+    source_a = _source(dict(GRANT))
+    source_b = _source(dict(GRANT_B))
+
+    async def run_b() -> Any:
+        await asyncio.wait_for(a_in_trial.wait(), _WAIT)
+        try:
+            return await _scoped_run(
+                agent_b, content_identity=False, grant_source=source_b
+            )
+        finally:
+            release_a.set()
+
+    result_a, result_b = await asyncio.gather(
+        _scoped_run(agent_a, content_identity=True, grant_source=source_a), run_b()
+    )
+    source_b.fetch_content_identity_grant_sync.assert_not_called()
+    _assert_no_content_identity(captured[agent_b], result_b)
+    assert captured[agent_a]["content_identity"]["key_id"] == GRANT["kid"]
+    _assert_all_trials_keyed(result_a, GRANT)
+    assert get_content_identity_keys() is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_runs_each_use_their_own_tenants_grant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _concurrent_capture(monkeypatch)
+    b_in_trial = asyncio.Event()
+    a_done = asyncio.Event()
+
+    async def agent_a(text: str) -> str:
+        return text.upper()
+
+    async def agent_b(text: str) -> str:
+        # Run B is mid-trial while run A starts, runs and FINISHES; B's later
+        # results must still carry B's keys (A's teardown clears nothing of B's).
+        b_in_trial.set()
+        await asyncio.wait_for(a_done.wait(), _WAIT)
+        return text.upper()
+
+    source_a = _source(dict(GRANT))
+    source_b = _source(dict(GRANT_B))
+
+    async def run_a() -> Any:
+        await asyncio.wait_for(b_in_trial.wait(), _WAIT)
+        try:
+            return await _scoped_run(
+                agent_a, content_identity=True, grant_source=source_a
+            )
+        finally:
+            a_done.set()
+
+    result_b, result_a = await asyncio.gather(
+        _scoped_run(agent_b, content_identity=True, grant_source=source_b), run_a()
+    )
+    source_a.fetch_content_identity_grant_sync.assert_called_once()
+    source_b.fetch_content_identity_grant_sync.assert_called_once()
+    assert captured[agent_a]["content_identity"]["key_id"] == GRANT["kid"]
+    assert captured[agent_b]["content_identity"]["key_id"] == GRANT_B["kid"]
+    _assert_all_trials_keyed(result_a, GRANT)
+    _assert_all_trials_keyed(result_b, GRANT_B)
+    assert GRANT["kid"] != GRANT_B["kid"]
+    assert get_content_identity_keys() is None
+
+
+@pytest.mark.asyncio
+async def test_threaded_sync_trials_carry_the_runs_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sync agents run in worker threads; per-trial ids still use the run's keys."""
+    captured = _concurrent_capture(monkeypatch)
+    worker_threads: set[int] = set()
+    a_in_trial = threading.Event()
+    b_done = threading.Event()
+
+    def sync_agent_a(text: str) -> str:
+        # Blocks a worker thread (A's keys live) until run B has finished.
+        worker_threads.add(threading.get_ident())
+        a_in_trial.set()
+        assert b_done.wait(_WAIT)
+        return text.upper()
+
+    def sync_agent_b(text: str) -> str:
+        worker_threads.add(threading.get_ident())
+        return text.upper()
+
+    async def run_b() -> Any:
+        # Start B only once A's keys are live and A is evaluating.
+        assert await asyncio.to_thread(a_in_trial.wait, _WAIT)
+        try:
+            return await _scoped_run(
+                sync_agent_b,
+                content_identity=True,
+                grant_source=_source(dict(GRANT_B)),
+            )
+        finally:
+            b_done.set()
+
+    result_a, result_b = await asyncio.gather(
+        _scoped_run(
+            sync_agent_a, content_identity=True, grant_source=_source(dict(GRANT))
+        ),
+        run_b(),
+    )
+    assert threading.get_ident() not in worker_threads  # really off the loop thread
+    _assert_all_trials_keyed(result_a, GRANT)
+    _assert_all_trials_keyed(result_b, GRANT_B)
+    assert captured[sync_agent_a]["content_identity"]["key_id"] == GRANT["kid"]
+    assert captured[sync_agent_b]["content_identity"]["key_id"] == GRANT_B["kid"]
+
+
+def test_fetched_keys_follow_copied_context_into_executor_threads() -> None:
+    """Pool threads see the run's keys only under a copy of the run's context."""
+    import contextvars
+    from concurrent.futures import ThreadPoolExecutor
+
+    from traigent.identity.keys import (
+        bind_run_content_identity_keys,
+        reset_run_content_identity_keys,
+    )
+
+    keys = ContentIdentityKeys.from_grant(GRANT)
+    token = bind_run_content_identity_keys(keys)
+    try:
+        assert get_content_identity_keys() is keys
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            copied = pool.submit(
+                contextvars.copy_context().run, get_content_identity_keys
+            ).result()
+            bare = pool.submit(get_content_identity_keys).result()
+        assert copied is keys
+        assert bare is None  # fail closed: no context, no keys
+    finally:
+        reset_run_content_identity_keys(token)
+    assert get_content_identity_keys() is None
+
+
+def test_user_installed_keys_outrank_run_scoped_keys() -> None:
+    from traigent.identity.keys import (
+        bind_run_content_identity_keys,
+        installed_content_identity_keys,
+        reset_run_content_identity_keys,
+    )
+
+    fetched = ContentIdentityKeys.from_grant(GRANT_B)
+    user = ContentIdentityKeys.from_grant(GRANT)
+    token = bind_run_content_identity_keys(fetched)
+    try:
+        set_content_identity_keys(user)
+        assert get_content_identity_keys() is user
+        assert installed_content_identity_keys() is user
+        clear_content_identity_keys()
+        assert get_content_identity_keys() is fetched
+        assert installed_content_identity_keys() is None
+    finally:
+        reset_run_content_identity_keys(token)

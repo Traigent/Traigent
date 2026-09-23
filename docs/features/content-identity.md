@@ -41,8 +41,10 @@ POST /api/v1/content-identity/purpose-keys
 
 using the same API key / JWT headers the SDK already sends. The Backend answers
 with the tenant's purpose-key grant (`tenant_id`, `kid`, two hex keys). The SDK
-validates it strictly (`ContentIdentityKeys.from_grant`), installs it for that
-run only, and removes it when the run ends. The session and every trial then
+validates it strictly (`ContentIdentityKeys.from_grant`) and scopes it to that
+run only: it is never installed process-wide, so another `optimize()` run in the
+same process (another tenant's, or one with the switch off) never sees it, and
+it is dropped when the run ends. The session and every trial then
 carry a `content_identity` object with `key_status: "available"` and the
 grant's `kid`.
 
