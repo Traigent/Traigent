@@ -305,6 +305,7 @@ class ContextSnapshot:
         config: TraigentConfig | dict[str, Any] | None,
         config_space: dict[str, Any] | None,
         applied_config: TraigentConfig | dict[str, Any] | None,
+        run_cost_state: Any = None,
     ) -> None:
         """Initialize context snapshot.
 
@@ -314,12 +315,15 @@ class ContextSnapshot:
             config: Configuration (TraigentConfig or dict) or None
             config_space: Configuration space dict or None
             applied_config: Applied configuration dict or TraigentConfig or None
+            run_cost_state: The optimization run's per-run cost state
+                (``traigent.utils.cost_calculator.RunCostState``) or None
         """
         self.trial_context = trial_ctx
         self.workflow_trace_context = workflow_trace_ctx
         self.config = config
         self.config_space = config_space
         self.applied_config = applied_config
+        self.run_cost_state = run_cost_state
 
     def restore(self) -> ContextRestorer:
         """Return a context manager that restores this snapshot.
@@ -375,6 +379,14 @@ class ContextRestorer:
         if self.snapshot.config_space is not None:
             token = config_space_context.set(self.snapshot.config_space)
             self._tokens.append((config_space_context, token))
+
+        if self.snapshot.run_cost_state is not None:
+            # Same object, not a copy: records made in the worker thread must
+            # land on the run that captured the snapshot.
+            from traigent.utils.cost_calculator import _RUN_COST_STATE
+
+            cost_token = _RUN_COST_STATE.set(self.snapshot.run_cost_state)
+            self._tokens.append((_RUN_COST_STATE, cost_token))
 
         return self.snapshot
 
@@ -434,12 +446,16 @@ def copy_context_to_thread() -> ContextSnapshot:
         For asyncio tasks spawned with asyncio.create_task(), context is
         automatically inherited - no manual propagation is needed.
     """
+    # Lazy import: cost_calculator is heavy (litellm) and imports config code.
+    from traigent.utils.cost_calculator import _RUN_COST_STATE
+
     return ContextSnapshot(
         trial_ctx=get_trial_context(),
         workflow_trace_ctx=get_workflow_trace_context(),
         config=get_config(),
         config_space=get_config_space(),
         applied_config=get_applied_config(),
+        run_cost_state=_RUN_COST_STATE.get(),
     )
 
 
