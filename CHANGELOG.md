@@ -15,12 +15,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   overrides. Any number of candidate runs may run in parallel with each other and
   with an applying run. Promote a candidate later with `apply_best_config(result)`.
   The default (`apply=True`) is unchanged. The candidate's config and search space
-  are detached by a type-preserving structural copy (exact `dict`/`list`/`tuple`
-  rebuilt, tuples kept as tuples, JSON scalars by value; functions, builtins,
-  classes and `Enum` members by reference). Any other value, such as a container
-  subclass, a lock or a live client, makes `optimize(apply=False)` raise
-  `traigent.utils.exceptions.CandidateIsolationError` naming the key path;
-  nothing is shared and no user `__deepcopy__`/`__copy__` hook runs.
+  are snapshotted at candidate start by a type-preserving structural copy
+  (classified by type identity: exact `dict`/`list`/`tuple` rebuilt, tuples kept
+  as tuples, `None`/`str`/`int`/`float`/`bool` kept, NumPy scalars normalized to
+  Python scalars). Any other value -- including container subclasses (a known
+  restriction), functions, bound methods, classes, `Enum` members, locks and live
+  clients -- makes `optimize(apply=False)` raise
+  `traigent.utils.exceptions.CandidateIsolationError` naming the key path; no
+  user code runs during the copy.
 - **Overlapping applying runs on one wrapper are refused.** A second
   `optimize()` (`apply=True`) on an `OptimizedFunction` that already has one in
   flight now raises `traigent.utils.exceptions.OverlappingOptimizationError` (a

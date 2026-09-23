@@ -57,6 +57,7 @@ from traigent.core.config_state_manager import (
     ConfigStateManager,
     OptimizationState,
     detach_candidate_value,
+    snapshot_with_retry,
 )
 from traigent.core.cost_enforcement import is_cost_preapproved, normalize_cost_approved
 from traigent.core.execution_budget import ExecutionBudget
@@ -122,6 +123,7 @@ from traigent.utils.env_config import (
 )
 from traigent.utils.exceptions import (
     AuthenticationError,
+    CandidateIsolationError,
     ConfigurationError,
     OptimizationError,
     OverlappingOptimizationError,
@@ -2272,8 +2274,11 @@ class OptimizedFunction(Generic[_P, _R]):
             if self._is_candidate_run:
                 # A candidate must not share the caller's override objects:
                 # a trial mutating a choice would change the caller's dict.
-                configuration_space = detach_candidate_value(
-                    configuration_space, "configuration_space (call-time override)"
+                override = configuration_space
+                configuration_space = snapshot_with_retry(
+                    lambda: detach_candidate_value(
+                        override, "configuration_space (call-time override)"
+                    )
                 )
 
         # Issue #2298 direction 1: for seamless injection, fail closed ONCE,
@@ -4557,12 +4562,20 @@ Remediation:
                 )
             if holder == "run":
                 # Snapshot the wrapper AT REST before this run mutates it
-                # (transient objective/TVL overrides, lifecycle state), so
-                # candidate runs forked while it is in flight start from the
-                # resting wrapper. Pure attribute copies: no user code runs
-                # under this lock. Values are detached later, per candidate,
-                # outside it.
-                self.__dict__["_at_rest_view"] = self._shallow_view(self)
+                # (transient objective/TVL overrides, lifecycle state, in-place
+                # edits of served config), so candidate runs forked while it is
+                # in flight start from the resting wrapper. A REAL detached
+                # copy, taken here: the detacher runs no user code, so it is
+                # safe under this lock. If the served state cannot be detached,
+                # the applying run still proceeds (its behaviour is unchanged);
+                # only candidate forks during it are refused, with the reason.
+                try:
+                    at_rest: Any = snapshot_with_retry(
+                        lambda: self._detached_view(self)
+                    )
+                except CandidateIsolationError as exc:
+                    at_rest = exc
+                self.__dict__["_at_rest_view"] = at_rest
             self.__dict__["_exclusive_slot"] = holder
 
     def _release_exclusive_slot(self) -> None:
@@ -4580,58 +4593,60 @@ Remediation:
     def _fork_for_candidate_run(self) -> OptimizedFunction[_P, _R]:
         """Return an isolated copy of this wrapper for one candidate run.
 
-        Two phases. Under ``_RUN_GUARD_LOCK``: pick the source (the at-rest
-        snapshot if an applying run is in flight, else this wrapper) and take a
-        pure shallow copy -- no user code runs under the lock. Outside it:
-        detach every config value and the search space with the
-        type-preserving structural detacher (fail closed with
-        ``CandidateIsolationError``), then rebuild the copy's injected callable
-        against the detached config. A candidate holds no slot, so a failure
-        here has nothing to release.
+        The candidate snapshot is taken at candidate start, under
+        ``_RUN_GUARD_LOCK``, as a real detached copy of the current, best and
+        default config and the search space (from the at-rest snapshot if an
+        applying run is in flight, else from this wrapper). The detacher runs
+        no user code, so holding the lock is safe; a concurrent in-place
+        mutation of the served config from another thread is retried (see
+        :func:`snapshot_with_retry`). The copy's injected callable is rebuilt
+        against the detached config after the lock is released. A candidate
+        holds no slot, so a refusal has nothing to release.
         """
         with _RUN_GUARD_LOCK:
-            source = self
+            source: Any = self
             if self.__dict__.get("_exclusive_slot") == "run":
                 source = self.__dict__.get("_at_rest_view") or self
-            fork = self._shallow_view(source, fork_state=False)
-        # --- outside the lock from here on ---
-        space = detach_candidate_value(
-            source.__dict__.get("_configuration_space"), "configuration_space"
-        )
-        fork.__dict__["_configuration_space"] = space if space is not None else {}
-        fork.default_config = detach_candidate_value(
-            source.default_config, "default_config"
-        )
-        shares_space = source._csm.configuration_space is source.__dict__.get(
-            "_configuration_space"
-        )
-        fork._csm = source._csm.fork_detached(
-            setup_wrapper_callback=fork._setup_function_wrapper,
-            configuration_space=fork._configuration_space if shares_space else None,
-        )
-        fork._csm.default_config = fork.default_config
+            if isinstance(source, BaseException):
+                raise CandidateIsolationError(
+                    "Cannot start a candidate run while an optimize(apply=True) run "
+                    "is in flight on this wrapper: its at-rest snapshot could not "
+                    f"be isolated ({source})."
+                ) from source
+            fork = snapshot_with_retry(lambda: self._detached_view(source))
         fork._setup_function_wrapper()
         fork.__dict__["_candidate_run"] = True
         return fork
 
-    def _shallow_view(
-        self, source: OptimizedFunction[_P, _R], *, fork_state: bool = True
+    def _detached_view(
+        self, source: OptimizedFunction[_P, _R]
     ) -> OptimizedFunction[_P, _R]:
-        """Pure shallow copy of ``source``: attribute references only.
+        """Copy of ``source`` whose config and search space share nothing with it.
 
-        Built with ``object.__new__`` + ``__dict__.update`` so no ``__copy__``
-        or ``__reduce__`` hook runs; safe under ``_RUN_GUARD_LOCK``. With
-        ``fork_state`` the config-state manager is shallow-forked too, so the
-        view keeps ``source``'s lifecycle/config state as of now (the at-rest
-        snapshot); otherwise it still references ``source``'s manager, which
-        the caller replaces with a detached fork.
+        Built with ``object.__new__`` + ``__dict__.update`` (no ``__copy__`` /
+        ``__reduce__`` hook) and :func:`detach_candidate_value` (identity-typed
+        builtins only), so no user code runs; callers hold ``_RUN_GUARD_LOCK``.
+        The config-state manager is forked with detached values too. The
+        injected callable is NOT rebuilt here (the caller does that outside the
+        lock).
         """
         view = object.__new__(type(source))
         view.__dict__.update(source.__dict__)
         view.__dict__["_exclusive_slot"] = None
         view.__dict__["_at_rest_view"] = None
-        if fork_state:
-            view.__dict__["_csm"] = source._csm.fork_shallow()
+        view.__dict__["_candidate_run"] = False
+        source_space = source.__dict__.get("_configuration_space")
+        space = detach_candidate_value(source_space, "configuration_space")
+        view.__dict__["_configuration_space"] = space if space is not None else {}
+        view.__dict__["default_config"] = detach_candidate_value(
+            source.default_config, "default_config"
+        )
+        shares_space = source._csm.configuration_space is source_space
+        view.__dict__["_csm"] = source._csm.fork_detached(
+            setup_wrapper_callback=view._setup_function_wrapper,
+            configuration_space=view._configuration_space if shares_space else None,
+        )
+        view._csm.default_config = view.default_config
         return view
 
     def export_config(

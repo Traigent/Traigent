@@ -685,14 +685,19 @@ class CandidateIsolationError(ConfigurationError):
     """Raised when a candidate run's config or search space cannot be isolated.
 
     ``optimize(apply=False)`` runs on a copy of the wrapper whose config and
-    search space are detached by a type-preserving structural copy: exact
+    search space are snapshotted at candidate start by a type-preserving
+    structural copy that classifies values by type identity only: exact
     ``dict``/``list``/``tuple`` containers are rebuilt (tuples stay tuples,
-    because a 2-tuple is a continuous range), JSON scalars are copied by value,
-    and functions, builtins, classes and ``Enum`` members are passed by
-    reference. Any other value (a container subclass, a lock, a client or other
-    live object) cannot be detached without running user code or sharing it
-    with the served wrapper, so the candidate run is refused instead. The
-    message names the offending key path.
+    because a 2-tuple is a continuous range), ``None`` and exact
+    ``str``/``int``/``float``/``bool`` are kept, and NumPy scalars are
+    normalized to plain Python scalars. Any other value -- a container
+    subclass (a known restriction), a function, builtin or bound method, a
+    class, an ``Enum`` member, a lock or other live object -- can carry state
+    the candidate could mutate on the served wrapper, so the candidate run is
+    refused instead. The message names the offending key path. It is also
+    raised when the served config keeps changing concurrently while the
+    snapshot is taken ("served config changed during candidate snapshot;
+    retry").
     """
 
 

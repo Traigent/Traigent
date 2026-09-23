@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
-import types
 from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from traigent.api.types import OptimizationResult, OptimizationStatus
 from traigent.core.best_config_runtime import (
@@ -56,6 +56,8 @@ from traigent.utils.secure_path import (
 
 logger = get_logger(__name__)
 
+_T = TypeVar("_T")
+
 DEFAULT_OPTIMIZATION_HISTORY_LIMIT = 100
 
 
@@ -63,38 +65,93 @@ class CloudBestConfigIntegrityError(ConfigurationError):
     """Raised when a cloud best-config response fails hash integrity checks."""
 
 
-_DETACH_SCALAR_TYPES = (str, int, float, bool)
-# Passed by reference: the candidate-isolation leak is mutation through the
-# config, and functions, builtins, classes and Enum members expose no such
-# mutation path, so sharing them cannot change what the wrapper serves.
-_DETACH_BY_REFERENCE_TYPES = (types.FunctionType, types.BuiltinFunctionType, type)
+_SNAPSHOT_ATTEMPTS = 3
 
 
 def detach_candidate_value(value: Any, path: str = "config") -> Any:
     """Return a copy of ``value`` sharing no mutable object with it, or refuse.
 
-    Type-preserving structural copy for candidate runs:
+    Type-preserving structural copy for candidate runs, classified by type
+    IDENTITY only (``type(x) is ...``; no ``isinstance``, which trusts a
+    ``__class__`` property, and no tuple/set membership, which consults a
+    metaclass ``__eq__``/``__hash__``):
 
     * exact ``dict`` / ``list`` / ``tuple`` are rebuilt recursively; tuples stay
       tuples (a 2-tuple in a search space is a continuous range, a list is a
       categorical choice);
     * ``None`` and exact ``str`` / ``int`` / ``float`` / ``bool`` are returned
       as-is (immutable);
-    * functions, builtins, classes and ``Enum`` members are passed by reference;
-    * anything else -- a container subclass, a lock, a live client -- raises
+    * a genuine NumPy scalar or 0-d array (exact NumPy type) goes through the
+      SDK's existing JSON normalizer
+      (:func:`traigent.core.best_config_runtime._normalize_json_value`) to a
+      plain Python scalar;
+    * anything else raises
       :class:`~traigent.utils.exceptions.CandidateIsolationError` naming the key
-      path. Nothing is shared silently.
+      path. That includes container subclasses (a known restriction),
+      functions, builtins and bound methods, classes, ``Enum`` members and live
+      objects: each can carry mutable state reachable from the candidate.
 
-    No user code runs: no ``__deepcopy__``/``__copy__``/``__reduce__`` hook, no
-    ``__eq__``/``__hash__`` beyond the dict keys already stored.
+    Only builtin containers, builtin scalars and NumPy's own scalar methods are
+    touched, so no user code runs during a copy; it is safe under the run-guard
+    lock.
     """
     return _detach(value, path, set())
 
 
-def _detach(value: Any, path: str, on_path: set[int]) -> Any:
+def _is_plain_scalar(value: Any) -> bool:
     kind = type(value)
-    if value is None or kind in _DETACH_SCALAR_TYPES:
+    return value is None or kind is str or kind is int or kind is float or kind is bool
+
+
+def _numpy_scalar_types() -> tuple[type, ...]:
+    """Exact NumPy scalar/0-d array types, only if NumPy is already imported."""
+    np = sys.modules.get("numpy")
+    if np is None:
+        return ()
+    names = (
+        "bool_", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32",
+        "uint64", "float16", "float32", "float64", "str_", "ndarray",
+    )  # fmt: skip
+    found = []
+    for name in names:
+        candidate = getattr(np, name, None)
+        if candidate is not None:
+            found.append(candidate)
+    return tuple(found)
+
+
+def _normalize_numpy_scalar(value: Any, path: str) -> Any:
+    kind = type(value)
+    for numpy_type in _numpy_scalar_types():
+        if kind is numpy_type:
+            break
+    else:
+        return _REFUSE
+    from traigent.core.best_config_runtime import _normalize_json_value
+
+    try:
+        normalized = _normalize_json_value(value)
+    except ConfigurationError as exc:
+        raise CandidateIsolationError(
+            f"Cannot isolate candidate run: {path} holds a NumPy value that is "
+            f"not a JSON-native scalar ({exc})."
+        ) from exc
+    if _is_plain_scalar(normalized):
+        return normalized
+    if normalized is value:
+        # np.float64 / np.str_ subclass float / str, which the normalizer
+        # returns unchanged: an immutable NumPy scalar of an exact NumPy type.
+        return normalized
+    return _REFUSE
+
+
+_REFUSE = object()
+
+
+def _detach(value: Any, path: str, on_path: set[int]) -> Any:
+    if _is_plain_scalar(value):
         return value
+    kind = type(value)
     if kind is dict or kind is list or kind is tuple:
         marker = id(value)
         if marker in on_path:
@@ -108,7 +165,7 @@ def _detach(value: Any, path: str, on_path: set[int]) -> Any:
             if kind is dict:
                 detached: dict[Any, Any] = {}
                 for key, item in value.items():
-                    if key is not None and type(key) not in _DETACH_SCALAR_TYPES:
+                    if not _is_plain_scalar(key):
                         raise CandidateIsolationError(
                             f"Cannot isolate candidate run: {path} has a key of "
                             f"type {type(key).__name__}; only str/int/float/bool/"
@@ -123,16 +180,40 @@ def _detach(value: Any, path: str, on_path: set[int]) -> Any:
             return items if kind is list else tuple(items)
         finally:
             on_path.discard(marker)
-    if isinstance(value, _DETACH_BY_REFERENCE_TYPES) or isinstance(value, Enum):
-        return value
+    normalized = _normalize_numpy_scalar(value, path)
+    if normalized is not _REFUSE:
+        return normalized
     raise CandidateIsolationError(
         f"Cannot isolate candidate run (optimize(apply=False)): {path} holds a "
         f"value of type {kind.__module__}.{kind.__qualname__}. A candidate's "
-        "config and search space must be plain data (exact dict/list/tuple, "
-        "str/int/float/bool/None) or functions, classes and Enum members; other "
-        "objects cannot be copied without running their code, and sharing them "
-        "would let the candidate change what the wrapper serves. Remove it "
-        "from the config, or use optimize(apply=True)."
+        "config and search space must be plain data: exact dict/list/tuple, "
+        "str/int/float/bool/None, or NumPy scalars. Other values -- container "
+        "subclasses, functions, bound methods, classes, Enum members, live "
+        "objects -- can carry mutable state the candidate could change on the "
+        "served wrapper. Remove it from the config, or use optimize(apply=True)."
+    )
+
+
+def snapshot_with_retry(take: Callable[[], _T]) -> _T:
+    """Run ``take`` (a candidate snapshot) retrying on concurrent mutation.
+
+    The served config can be mutated in place from another thread (e.g. a
+    ``get_config()`` writer) without any lock, which makes iteration raise
+    ``RuntimeError: dictionary changed size during iteration``. Retry up to
+    ``_SNAPSHOT_ATTEMPTS`` times, then refuse cleanly.
+    """
+    for _attempt in range(_SNAPSHOT_ATTEMPTS):
+        try:
+            return take()
+        except RecursionError as exc:
+            raise CandidateIsolationError(
+                "Cannot isolate candidate run: config or search space is nested "
+                "too deeply to snapshot."
+            ) from exc
+        except RuntimeError:
+            continue
+    raise CandidateIsolationError(
+        "served config changed during candidate snapshot; retry"
     )
 
 
@@ -280,20 +361,6 @@ class ConfigStateManager:
         )
         self._override_sticky = False
 
-    def fork_shallow(self) -> ConfigStateManager:
-        """Return a private shallow view of this manager's current state.
-
-        Pure attribute copies (no lock taken, no user code), so it is safe
-        under the process-wide run-guard lock. Used to snapshot a wrapper at
-        rest when an applying run is admitted; values are detached later, by
-        :meth:`fork_detached`, outside that lock.
-        """
-        view = object.__new__(type(self))
-        view.__dict__.update(self.__dict__)
-        view._state_lock = threading.RLock()
-        view._optimization_history = list(self._optimization_history)
-        return view
-
     def fork_detached(
         self,
         *,
@@ -302,13 +369,15 @@ class ConfigStateManager:
     ) -> ConfigStateManager:
         """Return a copy whose mutable run state is independent of this one.
 
-        Used for a candidate run (``optimize(apply=False)``): the copy's
-        lifecycle state, results history and current/best/default config and
-        search space can change without touching this manager. Values are
-        detached with :func:`detach_candidate_value` (fail closed: an
-        undetachable value raises ``CandidateIsolationError``). Pass the
-        already-detached ``configuration_space`` when the wrapper shares its
-        search-space object with this manager, so both stay one object.
+        Used for a candidate run (``optimize(apply=False)``) and for the
+        at-rest snapshot of an applying run: the copy's lifecycle state,
+        results history and current/best/default config and search space can
+        change without touching this manager. Values are detached with
+        :func:`detach_candidate_value` (fail closed: an undetachable value
+        raises ``CandidateIsolationError``), which runs no user code, so this
+        is called under the run-guard lock. Pass the already-detached
+        ``configuration_space`` when the wrapper shares its search-space object
+        with this manager, so both stay one object.
         """
         with self._state_lock:
             fork = object.__new__(type(self))

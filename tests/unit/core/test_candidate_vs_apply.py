@@ -638,10 +638,13 @@ def test_deepcopy_hook_is_never_invoked_and_cannot_deadlock_admission():
     assert other.apply_best_config(other_candidate) is True
 
 
-def test_detaching_never_runs_under_the_global_guard_lock(
+def test_candidate_snapshot_is_taken_under_the_guard_lock(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Structural: every detach call happens with _RUN_GUARD_LOCK free."""
+    """Owner contract (round 4): the detacher runs no user code (identity-typed
+    builtins and NumPy scalars only -- see the hook/spoof tests), so the
+    candidate snapshot is a real copy taken atomically under _RUN_GUARD_LOCK,
+    consistent with run admission and promotion."""
     from traigent.core import config_state_manager, optimized_function
 
     held: list[bool] = []
@@ -656,7 +659,7 @@ def test_detaching_never_runs_under_the_global_guard_lock(
 
     agent = _make_agent()
     agent._fork_for_candidate_run()
-    assert held and not any(held)
+    assert held and all(held)
 
 
 def _mutable_ids(value, acc):
@@ -741,9 +744,13 @@ async def test_candidate_on_range_and_intrange_searches_the_continuous_range():
     assert ks - {1, 8}, ks
 
 
-def test_allowlisted_callable_class_and_enum_choices_pass_by_reference():
-    """Functions, builtins, classes and Enum members are passed by reference:
-    never copied, never invoked while detaching."""
+@pytest.mark.parametrize("kind", ["function", "builtin", "enum", "class"])
+def test_function_builtin_class_and_enum_choices_are_refused_never_invoked(kind):
+    """No by-reference allowlist: functions, builtins, classes and Enum members
+    can carry mutable state (defaults, attributes, class attributes), so they
+    are refused with the key path -- and never invoked while classifying.
+    (At base bad5953b such choices already fail end to end offline with "not
+    JSON serializable", for apply=True too, so nothing that worked is lost.)"""
     import enum
 
     calls: list[str] = []
@@ -763,17 +770,131 @@ def test_allowlisted_callable_class_and_enum_choices_pass_by_reference():
     class Planner:
         pass
 
-    space = {
-        "fmt": [fmt_a, fmt_b],
+    choices = {
+        "function": [fmt_a, fmt_b],
         "builtin": [len, max],
-        "strategy": [Strategy.FAST, Strategy.SLOW],
-        "planner": [Planner, dict],
+        "enum": [Strategy.FAST, Strategy.SLOW],
+        "class": [Planner, dict],
+    }[kind]
+
+    agent = _make_agent()
+    agent.configuration_space = {"temperature": [0.1, 0.9], "choice": choices}
+    agent._csm.configuration_space = agent.configuration_space
+
+    with pytest.raises(_isolation_error()) as excinfo:
+        agent._fork_for_candidate_run()
+    assert "configuration_space['choice'][0]" in str(excinfo.value)
+    assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# 6. Identity-only classification, real snapshot inside the lock, retry on
+#    concurrent served mutation (Astra review @ cfc8f4b6; owner contract).
+# ---------------------------------------------------------------------------
+
+
+def _fork_with_served(**served_config):
+    agent = _make_agent()
+    agent._csm._current_config.update(served_config)
+    return agent
+
+
+def test_intenum_with_mutable_attribute_is_refused():
+    """Astra: an IntEnum member carrying a mutable attribute leaked mutation."""
+    import enum
+
+    class Level(enum.IntEnum):
+        LOW = 1
+        HIGH = 2
+
+    Level.LOW.tags = ["served"]  # type: ignore[attr-defined]
+    agent = _fork_with_served(level=Level.LOW)
+    with pytest.raises(_isolation_error()) as excinfo:
+        agent._fork_for_candidate_run()
+    assert "current_config['level']" in str(excinfo.value)
+    assert Level.LOW.tags == ["served"]  # type: ignore[attr-defined]
+
+
+def test_function_with_mutable_default_is_refused():
+    """A function's mutable default (or attribute) is shared state."""
+
+    def pick(stops=["END"]):  # noqa: B006 - the shared default IS the hazard
+        return stops
+
+    agent = _fork_with_served(picker=pick)
+    with pytest.raises(_isolation_error()) as excinfo:
+        agent._fork_for_candidate_run()
+    assert "current_config['picker']" in str(excinfo.value)
+
+
+def test_bound_method_choice_is_refused():
+    """``some_list.append`` is a builtin_function_or_method bound to a mutable
+    object: passing it by reference would let a candidate mutate that list."""
+    served_list = ["END"]
+    agent = _make_agent()
+    agent.configuration_space = {
+        "temperature": [0.1, 0.9],
+        "hook": [served_list.append],
     }
+    agent._csm.configuration_space = agent.configuration_space
+    with pytest.raises(_isolation_error()) as excinfo:
+        agent._fork_for_candidate_run()
+    assert "configuration_space['hook'][0]" in str(excinfo.value)
+    assert served_list == ["END"]
+
+
+def test_metaclass_eq_spoof_is_refused():
+    """A class whose metaclass __eq__ claims equality with str must not be
+    classified as a scalar (tuple/set membership would consult it)."""
+    eq_calls: list[object] = []
+
+    class Liar(type):
+        def __eq__(cls, other):
+            eq_calls.append(other)
+            return True
+
+        __hash__ = type.__hash__
+
+    class Sneaky(metaclass=Liar):
+        def __init__(self) -> None:
+            self.payload = ["served"]
+
+    value = Sneaky()
+    agent = _fork_with_served(sneaky=value)
+    with pytest.raises(_isolation_error()):
+        agent._fork_for_candidate_run()
+    assert eq_calls == []  # classification never consulted the hook
+
+
+def test_class_property_spoof_is_refused():
+    """``isinstance`` trusts a ``__class__`` property; ``type()`` does not."""
+
+    class Pretender:
+        def __init__(self) -> None:
+            self.payload = ["served"]
+
+        @property  # type: ignore[misc]
+        def __class__(self):  # noqa: D401
+            return int
+
+    value = Pretender()
+    assert isinstance(value, int)  # the spoof works against isinstance
+    agent = _fork_with_served(pretender=value)
+    with pytest.raises(_isolation_error()):
+        agent._fork_for_candidate_run()
+
+
+@pytest.mark.asyncio
+async def test_numpy_int64_default_and_choice_are_accepted_and_normalized():
+    """NumPy scalars go through the SDK's existing JSON normalizer
+    (best_config_runtime._normalize_json_value) to plain Python scalars."""
+    np = pytest.importorskip("numpy")
 
     @traigent.optimize(
         eval_dataset=_dataset(),
         objectives=["accuracy"],
-        configuration_space=space,
+        configuration_space={"k": [np.int64(1), np.int64(3)]},
+        default_config={"k": np.int64(3)},
         scoring_function=_scorer,
         algorithm="grid",
     )
@@ -781,13 +902,117 @@ def test_allowlisted_callable_class_and_enum_choices_pass_by_reference():
         return "HOT"
 
     fork = agent._fork_for_candidate_run()
-    for key, choices in agent.configuration_space.items():
-        assert all(
-            a is b for a, b in zip(fork.configuration_space[key], choices, strict=True)
-        )
-    assert calls == []
-    # Note: an end-to-end run over non-JSON choices is not exercised here: at
-    # base (bad5953b) the offline run pipeline itself already rejects them
-    # ("Object of type function is not JSON serializable"), for apply=True
-    # as well. The allowlist only guarantees detachment never copies,
-    # invokes or refuses these values.
+    assert fork.default_config == {"k": 3}
+    assert type(fork.default_config["k"]) is int
+    assert fork.configuration_space["k"] == [1, 3]
+    assert all(type(v) is int for v in fork.configuration_space["k"])
+    # The served wrapper still holds its own numpy values.
+    assert type(agent.default_config["k"]) is np.int64
+
+    result = await agent.optimize(max_trials=2, apply=False)
+    assert result.best_config["k"] in (1, 3)
+
+
+def test_concurrent_served_mutation_during_copy_retries_to_a_consistent_copy(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Deterministic interleaving: the served dict grows while the copy is
+    iterating it (as a get_config() writer in another thread would). The copy
+    retries and yields a consistent snapshot, never a RuntimeError."""
+    from traigent.core import config_state_manager
+
+    marker = ["m"]
+    agent = _fork_with_served(a=marker, b=1)
+    served = agent._csm._current_config
+    real = config_state_manager._detach
+    hits: list[int] = []
+
+    def racing(value, path, on_path):
+        if value is marker and not hits:
+            hits.append(1)
+            served["late"] = 2  # mutation lands mid-iteration of `served`
+        return real(value, path, on_path)
+
+    monkeypatch.setattr(config_state_manager, "_detach", racing)
+    fork = agent._fork_for_candidate_run()
+    assert fork._csm._current_config == served
+    assert fork._csm._current_config["late"] == 2
+    assert fork._csm._current_config["a"] is not marker
+
+
+def test_persistent_served_mutation_during_copy_raises_the_clean_error(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from traigent.core import config_state_manager
+
+    marker = ["m"]
+    agent = _fork_with_served(a=marker)
+    served = agent._csm._current_config
+    real = config_state_manager._detach
+    counter = iter(range(10_000))
+
+    def always_racing(value, path, on_path):
+        if value is marker:
+            served[f"late{next(counter)}"] = 1
+        return real(value, path, on_path)
+
+    monkeypatch.setattr(config_state_manager, "_detach", always_racing)
+    with pytest.raises(_isolation_error(), match="changed during candidate snapshot"):
+        agent._fork_for_candidate_run()
+
+
+def test_threaded_served_mutation_never_crashes_the_candidate_snapshot():
+    """Real threads: a writer mutates the served config through get_config()-
+    style dict writes while candidates are forked. Every fork is either a
+    consistent copy or the clean CandidateIsolationError -- never a crash."""
+    import threading
+
+    agent = _fork_with_served(**{f"k{i}": [i] for i in range(200)})
+    served = agent._csm._current_config
+    stop = threading.Event()
+
+    def writer() -> None:
+        n = 0
+        while not stop.is_set():
+            served[f"w{n % 50}"] = [n]
+            served.pop(f"w{(n + 25) % 50}", None)
+            n += 1
+
+    thread = threading.Thread(target=writer, daemon=True)
+    thread.start()
+    try:
+        for _ in range(200):
+            try:
+                fork = agent._fork_for_candidate_run()
+            except _isolation_error() as exc:
+                assert "changed during candidate snapshot" in str(exc)
+                continue
+            assert type(fork._csm._current_config) is dict
+    finally:
+        stop.set()
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+
+
+@pytest.mark.asyncio
+async def test_at_rest_snapshot_is_unaffected_by_mutation_after_admission():
+    """The at-rest snapshot is a real copy taken at admission: in-place
+    mutations of the served config/search space during the applying run do
+    not reach candidates forked afterwards."""
+    gate = _Gate(hold_calls=1)
+    agent = _make_agent(gate)
+    agent._csm._current_config["extra"] = {"stops": ["END"]}
+
+    run = asyncio.ensure_future(agent.optimize(max_trials=3))
+    await _wait(gate.entered)
+    # Mutate the served state in place after admission.
+    agent._csm._current_config["extra"]["stops"].append("MID-RUN")
+    agent.configuration_space["temperature"].append(0.5)
+
+    fork = agent._fork_for_candidate_run()
+    assert fork._csm._current_config["extra"]["stops"] == ["END"]
+    assert fork.configuration_space["temperature"] == [0.1, 0.9]
+
+    gate.release.set()
+    await asyncio.wait_for(run, timeout=30)
+    agent.configuration_space["temperature"].remove(0.5)
