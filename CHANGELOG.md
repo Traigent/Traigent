@@ -100,6 +100,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A custom evaluator's failed or unpriced examples no longer lower a trial's cost.**
+  A failed example was recorded with `cost: 0.0`, and an example that omitted `cost`
+  was read as `0.0`, so a trial with half its examples failed reported about half its
+  true cost and could win a cost objective (#2404). Cost keys (`cost`, `input_cost`,
+  `output_cost`, `total_cost`) are now averaged only over examples that measured
+  them, with a warning naming the coverage. A failed example does not fail its
+  trial or the run, including under strict cost accounting. Quality metrics keep
+  their existing behaviour (a failed example still scores 0.0), and a run where no
+  example reports cost is unchanged.
+
 - **Dataset row ids you wrote yourself were sent to the Traigent service.** If your
   dataset rows carried an `example_id` (or `dataset_example_id` / `input_id` / a nested
   id in row metadata), that string was used verbatim as the per-example id on every
