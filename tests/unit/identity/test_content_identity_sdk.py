@@ -408,7 +408,7 @@ def test_custom_scoring_with_declared_judge(tenant_a: Any) -> None:
     from traigent.identity.evaluator_version import declare_evaluator
 
     free = _local(metric_functions={"accuracy": _exact})
-    declare_evaluator(free, evaluator_id="ev_exact", judge=None)
+    declare_evaluator(free, evaluator_id="ev_exact", judge=None, dependency_versions={})
     session = _evaluator_session(evaluator=free)
     manifest = session["evaluator"]["manifest"]
     assert session["evaluator_id_source"] == "declared"
@@ -440,7 +440,7 @@ def test_custom_scoring_with_declared_judge(tenant_a: Any) -> None:
 def test_declaration_on_a_scoring_function_and_conflicts(tenant_a: Any) -> None:
     from traigent.identity.evaluator_version import declare_evaluator
 
-    @declare_evaluator(judge=None)
+    @declare_evaluator(judge=None, dependency_versions={})
     def declared(output: Any, expected: Any, **_: Any) -> float:
         return float(output == expected)
 
@@ -465,7 +465,7 @@ def test_captured_threshold_is_part_of_the_evaluator_version(tenant_a: Any) -> N
         def thresholded(output: Any, expected: Any, **_: Any) -> float:
             return float(len(str(output)) > threshold)
 
-        declare_evaluator(thresholded, judge=None)
+        declare_evaluator(thresholded, judge=None, dependency_versions={})
         return thresholded
 
     low, high = (
@@ -498,6 +498,101 @@ def test_band_objective_withholds_the_evaluator_slot(tenant_a: Any) -> None:
     ).session_wire({})
     assert session["evaluator"] is None
     assert session["unavailable"]["evaluator"] == "evaluator_manifest_unavailable"
+
+
+# --- Evaluator honesty: every manifest field is KNOWN or no manifest (astra M2 r3)
+
+
+def test_undeclared_dependency_versions_withhold_a_custom_evaluator(
+    tenant_a: Any,
+) -> None:
+    from traigent.identity.evaluator_version import declare_evaluator
+
+    undeclared = _local(metric_functions={"accuracy": _exact})
+    declare_evaluator(undeclared, judge=None)
+    session = _evaluator_session(evaluator=undeclared)
+    assert session["evaluator"] is None
+    assert session["unavailable"]["evaluator"] == "evaluator_manifest_unavailable"
+
+    # An explicit empty declaration is known.
+    declared_empty = _local(metric_functions={"accuracy": _exact})
+    declare_evaluator(declared_empty, judge=None, dependency_versions={})
+    manifest = _evaluator_session(evaluator=declared_empty)["evaluator"]["manifest"]
+    assert manifest["dependency_versions"] == {}
+
+
+def test_judge_without_configuration_withholds_the_manifest(tenant_a: Any) -> None:
+    from traigent.identity.evaluator_version import declare_evaluator
+
+    bare = _local(metric_functions={"accuracy": _exact})
+    declare_evaluator(
+        bare, judge={"provider": "openai", "model": "gpt-4o"}, dependency_versions={}
+    )
+    session = _evaluator_session(evaluator=bare)
+    assert session["evaluator"] is None
+    assert session["unavailable"]["evaluator"] == "evaluator_manifest_unavailable"
+
+    # An explicit empty judge configuration is a declaration, hence known.
+    empty = _local(metric_functions={"accuracy": _exact})
+    declare_evaluator(
+        empty,
+        judge={"provider": "openai", "model": "gpt-4o", "config": {}},
+        dependency_versions={},
+    )
+    judge = _evaluator_session(evaluator=empty)["evaluator"]["manifest"]["judge"]
+    assert judge["config_digest"].startswith("sha256:")
+
+
+class _ThresholdEvaluator:
+    """A user-defined evaluator class whose instance state changes the scores."""
+
+    metrics = ["accuracy"]
+
+    def __init__(self, threshold: float) -> None:
+        self.threshold = threshold
+
+    def score(self, output: Any, expected: Any) -> float:
+        return float(float(output) > self.threshold)
+
+
+def test_instance_evaluator_state_is_withheld_unless_config_is_declared(
+    tenant_a: Any,
+) -> None:
+    from traigent.identity.evaluator_version import declare_evaluator
+
+    sessions = []
+    for threshold in (0.2, 0.8):
+        evaluator = _ThresholdEvaluator(threshold)
+        declare_evaluator(evaluator, judge=None, dependency_versions={})
+        sessions.append(_evaluator_session(evaluator=evaluator))
+    for session in sessions:
+        assert session["evaluator"] is None
+        assert session["unavailable"]["evaluator"] == "evaluator_manifest_unavailable"
+
+    digests = []
+    for threshold, digit in ((0.2, "2"), (0.8, "8")):
+        evaluator = _ThresholdEvaluator(threshold)
+        declare_evaluator(
+            evaluator,
+            judge=None,
+            dependency_versions={},
+            config_digest="sha256:" + digit * 64,
+        )
+        digests.append(
+            _evaluator_session(evaluator=evaluator)["evaluator"]["version_digest"]
+        )
+    assert digests[0] != digests[1]
+
+
+def test_withheld_slots_carry_a_null_id_source(tenant_a: Any) -> None:
+    from traigent.identity.evaluator_version import declare_evaluator
+
+    withheld = _local(metric_functions={"accuracy": _exact})
+    declare_evaluator(withheld, evaluator_id="ev_exact")  # judge undeclared
+    session = _run(_dataset(ROWS), agent_key="has spaces", evaluator=withheld)
+    wire = session.session_wire({})
+    assert wire["evaluator"] is None and wire["evaluator_id_source"] is None
+    assert wire["agent"] is None and wire["agent_id_source"] is None
 
 
 def test_member_lists_above_the_inline_cap_withhold_the_slot(

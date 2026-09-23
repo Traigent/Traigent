@@ -237,9 +237,12 @@ class ContentIdentityRun:
             "provenance": "declared",
             "key_status": "available",
             "key_id": self.key_id,
-            "agent_id_source": self.agent_id_source,
+            # A withheld slot claims no id source (JS parity).
+            "agent_id_source": self.agent_id_source if agent is not None else None,
             "agent": agent,
-            "evaluator_id_source": self.evaluator_id_source,
+            "evaluator_id_source": self.evaluator_id_source
+            if evaluator is not None
+            else None,
             "evaluator": evaluator,
             "dataset": dataset,
             "unavailable": unavailable,

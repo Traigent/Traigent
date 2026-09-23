@@ -23,8 +23,10 @@ How each field is built for the evaluator the run actually uses:
     (``evaluator_manifest_unavailable``).
 ``config_digest``
     fp2 digest of ``{"metrics": [...], "bound": {slot: bound state}}`` -- the
-    metric list and every closure / partial / instance value the scoring code
-    carries. Not canonically serializable -> no manifest.
+    metric list and every closure / partial value the scoring code carries.
+    Not canonically serializable -> no manifest. A user-defined evaluator
+    class's instance state cannot be captured honestly, so such an evaluator
+    must declare ``config_digest`` or no manifest is sent.
 ``helper_digests``
     Contents of the project-local source files defining that user code
     (never third-party or SDK files) -- evidence the SDK collected, or the
@@ -34,7 +36,9 @@ How each field is built for the evaluator the run actually uses:
     cases: the evaluator scores exclusively with the SDK's deterministic
     built-in metrics (every configured metric is in ``RESERVED_METRIC_KEYS``,
     which excludes RAGAS and other LLM-backed metrics), so ``null`` is
-    a fact; or the caller DECLARED it with :func:`declare_evaluator`. Custom
+    a fact; or the caller DECLARED it with :func:`declare_evaluator`, including
+    the judge configuration (``config`` or ``config_digest``; an explicit
+    ``{}`` counts, an omitted one does not). Custom
     scoring code without a judge declaration -> no manifest
     (``evaluator_manifest_unavailable``): the SDK cannot see an LLM call inside
     user code.
@@ -42,8 +46,9 @@ How each field is built for the evaluator the run actually uses:
     The run's objectives, sorted by name. A ``band`` objective has no
     maximize/minimize orientation in this schema -> no manifest.
 ``dependency_versions``
-    ``{}`` (JS parity). For built-in scoring the SDK version is already the
-    ``efp2`` external revision.
+    A claim like ``judge``: ``{}`` for deterministic built-in scoring (the SDK
+    version is already the ``efp2`` external revision); otherwise it must be
+    declared (``{}`` explicitly counts) or no manifest is sent.
 """
 
 from __future__ import annotations
@@ -93,13 +98,18 @@ def _judge(judge: Any) -> dict[str, Any] | None:
         digest = judge["config_digest"]
         if not isinstance(digest, str) or not _SHA256_RE.fullmatch(digest):
             raise ContentIdentityError("judge config_digest must be sha256:<64 hex>")
-    else:
+    elif "config" in judge:
+        # An explicit configuration, including an explicit empty one, is known.
         try:
-            digest = str(fp2.digest(judge.get("config", {})))
+            digest = str(fp2.digest(judge["config"]))
         except fp2.Fp2UnsupportedValue as error:
             raise ContentIdentityError(
                 "judge config must be JSON-serializable"
             ) from error
+    else:
+        # Configuration not declared: unknown, never a default. The manifest
+        # built from this declaration is withheld.
+        digest = None
     return {"provider": provider, "model": model, "config_digest": digest}
 
 
@@ -140,9 +150,11 @@ def declare_evaluator(
     decorator: ``@declare_evaluator(judge=None)``). ``judge`` is a CLAIM:
     ``None`` asserts the scoring is model-free; a mapping ``{"provider",
     "model", "config_digest"}`` (or ``"config"``, digested here) names the
-    judge model. Custom scoring code MUST declare it or no evaluator version is
-    sent. ``config_digest`` / ``helper_digests`` / ``dependency_versions``
-    replace the SDK's own evidence when given. Only digests and version
+    judge model; omitting the judge configuration leaves it unknown (no
+    manifest). Custom scoring code MUST declare ``judge`` and
+    ``dependency_versions`` or no evaluator version is sent; a user-defined
+    evaluator class must also declare ``config_digest``. ``config_digest`` /
+    ``helper_digests`` replace the SDK's own evidence when given. Only digests and version
     strings are kept.
     """
     if evaluator_id is not None and (
@@ -301,12 +313,27 @@ def build_evaluator_binding(
     else:
         resolved_id, source = FALLBACK_EVALUATOR_ID, "fallback"
 
-    # judge is a claim: known for pure built-in scoring, else it must be declared.
+    # judge and dependency_versions are claims: known for pure deterministic
+    # built-in scoring (no model, no dependency beyond the SDK, whose version is
+    # the efp2 external revision), else they must be declared.
+    builtin_only = not code and _builtin_is_model_free(evaluator)
     if "judge" in declaration:
         judge = declaration["judge"]
-    elif not code and _builtin_is_model_free(evaluator):
+    elif builtin_only:
         judge = None
     else:
+        return None, source, "evaluator_manifest_unavailable"
+    if judge is not None and judge.get("config_digest") is None:
+        return None, source, "evaluator_manifest_unavailable"
+    dependency_versions = declaration.get("dependency_versions")
+    if dependency_versions is None:
+        if not builtin_only:
+            return None, source, "evaluator_manifest_unavailable"
+        dependency_versions = {}
+    # A user-defined evaluator class carries instance state (thresholds, ...)
+    # the SDK cannot canonicalize honestly for arbitrary objects: its
+    # configuration must be declared.
+    if "evaluator_class" in code and not declaration.get("config_digest"):
         return None, source, "evaluator_manifest_unavailable"
     sdk_version = _ab.sdk_version()
     try:
@@ -365,7 +392,7 @@ def build_evaluator_binding(
             "helper_digests": helper_digests,
             "judge": judge,
             "objectives": objective_rows,
-            "dependency_versions": declaration.get("dependency_versions") or {},
+            "dependency_versions": dependency_versions,
         }
         version_digest = compute_evaluator_version_digest(manifest)
     except (fp2.Fp2UnsupportedValue, ContentIdentityError, TypeError, ValueError):
