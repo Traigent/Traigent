@@ -226,7 +226,7 @@ def _envelope_error_code(response: Any) -> str | None:
     """The standard error envelope's ``error_code``, if it is a plain token."""
     try:
         payload = response.json()
-    except Exception:  # noqa: BLE001 - any unreadable body means "no code"
+    except ValueError:  # silent-ok: the HTTP status already reports the failure; an unreadable error body only means "no error code"
         return None
     if not isinstance(payload, dict):
         return None
