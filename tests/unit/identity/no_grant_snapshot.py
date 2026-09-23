@@ -157,7 +157,3 @@ def build_snapshot() -> dict[str, Any]:
         "trials": trials,
     }
     return json.loads(json.dumps(_normalize(snapshot), sort_keys=True))
-
-
-if __name__ == "__main__":  # pragma: no cover - used to regenerate the fixture
-    print(json.dumps(build_snapshot(), indent=1, sort_keys=True))

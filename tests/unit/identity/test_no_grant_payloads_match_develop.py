@@ -15,7 +15,9 @@ captures, for one deterministic offline optimize() run with no grant:
 Timing values, generated ids and the SDK version string are normalized; every
 other key and value must be identical. On the reviewed head ``cc20b4aa`` this
 comparison failed (trials carried ``content_identity`` and results carried
-``external_id``). Regenerate only from a develop commit, never from this branch.
+``external_id``). Regenerate only from a develop commit, never from this branch: in that
+worktree, write ``json.dumps(build_snapshot(), indent=1, sort_keys=True)`` to
+the fixture path.
 """
 
 from __future__ import annotations
