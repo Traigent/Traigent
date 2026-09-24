@@ -30,6 +30,7 @@ from traigent.cloud.models import (
     SessionCreationResponse,
     TrialResultSubmission,
     session_dataset_identity_to_wire,
+    session_content_identity_to_wire,
     session_identity_v2_to_wire,
     session_narrative_to_wire,
     session_task_type_to_wire,
@@ -736,6 +737,7 @@ class ApiOperations:
         # in traigent_session_routes.py is gated `if typed`), so this is
         # deliberately NOT mirrored into _build_legacy_session_payload.
         payload.update(session_dataset_identity_to_wire(session_request))
+        payload.update(session_content_identity_to_wire(session_request))
 
         # CHOKE POINT (review round 2): the allowlist serializer runs on the
         # actual request body, not only on the orchestrator path — a direct

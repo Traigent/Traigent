@@ -540,6 +540,7 @@ class SessionOperations:
         task_type: str | None = None,
         dataset_id: str | None = None,
         evaluator_id_source: EvaluatorIdSource | None = None,
+        content_identity: dict[str, Any] | None = None,
     ) -> SessionCreationResult:
         """Create a session with backend metadata submission.
 
@@ -716,6 +717,7 @@ class SessionOperations:
                 evaluator_id=evaluator_id,
                 evaluator_definition_id=evaluator_definition_id,
                 evaluator_id_source=evaluator_id_source,
+                content_identity=content_identity,
                 task_type=task_type,
                 dataset_id=dataset_id,
             )

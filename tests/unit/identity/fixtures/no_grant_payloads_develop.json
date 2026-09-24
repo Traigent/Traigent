@@ -1,0 +1,628 @@
+{
+ "session_create_bodies": {
+  "cloud": {
+   "agent_id": "agent_snapshot",
+   "agent_id_source": "declared",
+   "agent_key": "agent_snapshot",
+   "artifact_versions": {
+    "agent": {
+     "digest": null,
+     "schema": "fp1",
+     "state": "unknown"
+    },
+    "config_space": {
+     "digest": null,
+     "schema": "fp1",
+     "state": "unknown"
+    },
+    "dataset": {
+     "digest": null,
+     "schema": "fp1",
+     "state": "unknown"
+    },
+    "evaluator": {
+     "digest": null,
+     "schema": "fp1",
+     "state": "unknown"
+    }
+   },
+   "billing_tier": "standard",
+   "configuration_space": {
+    "alpha": [
+     0,
+     1
+    ]
+   },
+   "dataset_id": "no_grant",
+   "dataset_id_source": "declared",
+   "dataset_metadata": {
+    "name": "no_grant",
+    "size": 3
+   },
+   "evaluator_id_source": "unknown",
+   "function_name": "snapshot_agent",
+   "identity_version": 2,
+   "max_trials": 2,
+   "metadata": {},
+   "objectives": [
+    {
+     "name": "accuracy",
+     "orientation": "maximize",
+     "weight": 1.0
+    }
+   ]
+  },
+  "typed": {
+   "agent_id": "agent_snapshot",
+   "agent_id_source": "declared",
+   "agent_key": "agent_snapshot",
+   "artifact_versions": {
+    "agent": {
+     "digest": null,
+     "schema": "fp1",
+     "state": "unknown"
+    },
+    "config_space": {
+     "digest": null,
+     "schema": "fp1",
+     "state": "unknown"
+    },
+    "dataset": {
+     "digest": null,
+     "schema": "fp1",
+     "state": "unknown"
+    },
+    "evaluator": {
+     "digest": null,
+     "schema": "fp1",
+     "state": "unknown"
+    }
+   },
+   "configuration_space": {
+    "alpha": {
+     "choices": [
+      0,
+      1
+     ],
+     "type": "categorical"
+    }
+   },
+   "dataset_id": "no_grant",
+   "dataset_id_source": "declared",
+   "dataset_metadata": {
+    "name": "no_grant",
+    "size": 3
+   },
+   "evaluator_id_source": "unknown",
+   "function_name": "snapshot_agent",
+   "identity_version": 2,
+   "max_trials": 2,
+   "metadata": {
+    "evaluation_set": "default",
+    "function_name": "snapshot_agent"
+   },
+   "objectives": [
+    {
+     "name": "accuracy",
+     "orientation": "maximize",
+     "weight": 1.0
+    }
+   ]
+  }
+ },
+ "session_create_call": {
+  "kwarg_names": [
+   "agent_configuration",
+   "agent_key",
+   "artifact_fingerprints",
+   "cost_limit",
+   "dataset",
+   "dataset_id",
+   "default_config",
+   "evaluator_definition_id",
+   "experiment_display_name",
+   "fingerprint_meta",
+   "func",
+   "function_descriptor",
+   "max_total_examples",
+   "max_trials",
+   "objectives",
+   "optimization_strategy",
+   "promotion_policy",
+   "run_description",
+   "run_title",
+   "smart_pruning",
+   "start_time",
+   "task_type",
+   "tvl_governance",
+   "warm_start_from"
+  ],
+  "values": {
+   "agent_configuration": null,
+   "agent_key": "agent_snapshot",
+   "artifact_fingerprints": null,
+   "cost_limit": null,
+   "dataset_id": null,
+   "default_config": null,
+   "evaluator_definition_id": null,
+   "experiment_display_name": null,
+   "fingerprint_meta": null,
+   "max_total_examples": null,
+   "max_trials": 2,
+   "objectives": [
+    {
+     "name": "accuracy",
+     "orientation": "maximize",
+     "weight": 1.0
+    }
+   ],
+   "optimization_strategy": {
+    "execution_options": {
+     "algorithm": "auto",
+     "offline": false
+    }
+   },
+   "promotion_policy": null,
+   "run_description": null,
+   "run_title": null,
+   "smart_pruning": null,
+   "task_type": null,
+   "tvl_governance": null,
+   "warm_start_from": null
+  }
+ },
+ "trials": [
+  {
+   "backend_metadata": {
+    "comparability": {
+     "coverage_ratio": 1.0,
+     "derivation_path": "none",
+     "evaluation_mode": "evaluated",
+     "examples_with_primary_metric": 3,
+     "missing_example_ids": [],
+     "per_metric_coverage": {
+      "accuracy": {
+       "present": 3,
+       "ratio": 1.0,
+       "total": 3
+      },
+      "input_cost": {
+       "present": 3,
+       "ratio": 1.0,
+       "total": 3
+      },
+      "input_tokens": {
+       "present": 3,
+       "ratio": 1.0,
+       "total": 3
+      },
+      "output_cost": {
+       "present": 3,
+       "ratio": 1.0,
+       "total": 3
+      },
+      "output_tokens": {
+       "present": 3,
+       "ratio": 1.0,
+       "total": 3
+      },
+      "total_cost": {
+       "present": 3,
+       "ratio": 1.0,
+       "total": 3
+      },
+      "total_tokens": {
+       "present": 3,
+       "ratio": 1.0,
+       "total": 3
+      }
+     },
+     "primary_objective": "accuracy",
+     "ranking_eligible": true,
+     "schema_version": "1.0",
+     "total_examples": 3,
+     "warning_codes": []
+    },
+    "cost": 0.0,
+    "cost_per_example_mean": 0.0,
+    "cost_unpriced": 0.0,
+    "duration": "<volatile>",
+    "empty_output_rate": 0.0,
+    "examples_attempted": 3,
+    "execution_time_ms": "<volatile>",
+    "input_tokens": 1.0,
+    "measures": [
+     {
+      "example_digest": "<hex>",
+      "example_id": "ex_ffd55dee_0",
+      "metrics": {
+       "accuracy": 1.0,
+       "execution_time_ms": "<volatile>",
+       "input_cost": 0.0,
+       "input_tokens": 1,
+       "output_cost": 0.0,
+       "output_tokens": 1,
+       "response_time": "<volatile>",
+       "score": 1.0,
+       "total_cost": 0.0,
+       "total_tokens": 2
+      },
+      "output_digest": "<hex>",
+      "signal_key_id": "<hex>",
+      "verified_match": 1.0
+     },
+     {
+      "example_digest": "<hex>",
+      "example_id": "ex_df67fdfd_1",
+      "metrics": {
+       "accuracy": 1.0,
+       "execution_time_ms": "<volatile>",
+       "input_cost": 0.0,
+       "input_tokens": 1,
+       "output_cost": 0.0,
+       "output_tokens": 1,
+       "response_time": "<volatile>",
+       "score": 1.0,
+       "total_cost": 0.0,
+       "total_tokens": 2
+      },
+      "output_digest": "<hex>",
+      "signal_key_id": "<hex>",
+      "verified_match": 1.0
+     },
+     {
+      "example_digest": "<hex>",
+      "example_id": "ex_18f3e157_2",
+      "metrics": {
+       "accuracy": 1.0,
+       "execution_time_ms": "<volatile>",
+       "input_cost": 0.0,
+       "input_tokens": 1,
+       "output_cost": 0.0,
+       "output_tokens": 1,
+       "response_time": "<volatile>",
+       "score": 1.0,
+       "total_cost": 0.0,
+       "total_tokens": 2
+      },
+      "output_digest": "<hex>",
+      "signal_key_id": "<hex>",
+      "verified_match": 1.0
+     }
+    ],
+    "output_tokens": 1.0,
+    "response_time_ms": "<volatile>",
+    "score": 1.0,
+    "successful_examples": 3,
+    "tokens_estimated": 1.0,
+    "total_cost": 0.0,
+    "total_examples": 3,
+    "total_tokens": 2.0,
+    "trial_id": "<volatile>",
+    "truncated_output_rate": 0.0
+   },
+   "example_results": [
+    {
+     "actual_output": "A",
+     "error_message": null,
+     "example_digest": "<hex>",
+     "example_id": "row-a",
+     "execution_time": "<volatile>",
+     "expected_output": "A",
+     "input_data": {
+      "text": "a"
+     },
+     "metadata": {
+      "example_id": "row-a"
+     },
+     "metrics": {
+      "accuracy": 1.0,
+      "input_cost": 0.0,
+      "input_tokens": 1,
+      "output_cost": 0.0,
+      "output_tokens": 1,
+      "total_cost": 0.0,
+      "total_tokens": 2
+     },
+     "output_digest": "<hex>",
+     "signal_key_id": "<hex>",
+     "success": true,
+     "verified_match": 1.0
+    },
+    {
+     "actual_output": "B",
+     "error_message": null,
+     "example_digest": "<hex>",
+     "example_id": "row-b",
+     "execution_time": "<volatile>",
+     "expected_output": "B",
+     "input_data": {
+      "text": "b"
+     },
+     "metadata": {
+      "example_id": "row-b"
+     },
+     "metrics": {
+      "accuracy": 1.0,
+      "input_cost": 0.0,
+      "input_tokens": 1,
+      "output_cost": 0.0,
+      "output_tokens": 1,
+      "total_cost": 0.0,
+      "total_tokens": 2
+     },
+     "output_digest": "<hex>",
+     "signal_key_id": "<hex>",
+     "success": true,
+     "verified_match": 1.0
+    },
+    {
+     "actual_output": "A",
+     "error_message": null,
+     "example_digest": "<hex>",
+     "example_id": "row-a2",
+     "execution_time": "<volatile>",
+     "expected_output": "A",
+     "input_data": {
+      "text": "a"
+     },
+     "metadata": {
+      "example_id": "row-a2"
+     },
+     "metrics": {
+      "accuracy": 1.0,
+      "input_cost": 0.0,
+      "input_tokens": 1,
+      "output_cost": 0.0,
+      "output_tokens": 1,
+      "total_cost": 0.0,
+      "total_tokens": 2
+     },
+     "output_digest": "<hex>",
+     "signal_key_id": "<hex>",
+     "success": true,
+     "verified_match": 1.0
+    }
+   ],
+   "metadata_keys": [
+    "comparability",
+    "evaluation_result",
+    "example_results",
+    "example_success_summary",
+    "examples_attempted",
+    "has_errors",
+    "output_count",
+    "sample_budget_exhausted",
+    "success_rate",
+    "successful_examples",
+    "total_example_cost"
+   ]
+  },
+  {
+   "backend_metadata": {
+    "comparability": {
+     "coverage_ratio": 1.0,
+     "derivation_path": "none",
+     "evaluation_mode": "evaluated",
+     "examples_with_primary_metric": 3,
+     "missing_example_ids": [],
+     "per_metric_coverage": {
+      "accuracy": {
+       "present": 3,
+       "ratio": 1.0,
+       "total": 3
+      },
+      "input_cost": {
+       "present": 3,
+       "ratio": 1.0,
+       "total": 3
+      },
+      "input_tokens": {
+       "present": 3,
+       "ratio": 1.0,
+       "total": 3
+      },
+      "output_cost": {
+       "present": 3,
+       "ratio": 1.0,
+       "total": 3
+      },
+      "output_tokens": {
+       "present": 3,
+       "ratio": 1.0,
+       "total": 3
+      },
+      "total_cost": {
+       "present": 3,
+       "ratio": 1.0,
+       "total": 3
+      },
+      "total_tokens": {
+       "present": 3,
+       "ratio": 1.0,
+       "total": 3
+      }
+     },
+     "primary_objective": "accuracy",
+     "ranking_eligible": true,
+     "schema_version": "1.0",
+     "total_examples": 3,
+     "warning_codes": []
+    },
+    "cost": 0.0,
+    "cost_per_example_mean": 0.0,
+    "cost_unpriced": 0.0,
+    "duration": "<volatile>",
+    "empty_output_rate": 0.0,
+    "examples_attempted": 3,
+    "execution_time_ms": "<volatile>",
+    "input_tokens": 1.0,
+    "measures": [
+     {
+      "example_digest": "<hex>",
+      "example_id": "ex_ffd55dee_0",
+      "metrics": {
+       "accuracy": 1.0,
+       "execution_time_ms": "<volatile>",
+       "input_cost": 0.0,
+       "input_tokens": 1,
+       "output_cost": 0.0,
+       "output_tokens": 1,
+       "response_time": "<volatile>",
+       "score": 1.0,
+       "total_cost": 0.0,
+       "total_tokens": 2
+      },
+      "output_digest": "<hex>",
+      "signal_key_id": "<hex>",
+      "verified_match": 1.0
+     },
+     {
+      "example_digest": "<hex>",
+      "example_id": "ex_df67fdfd_1",
+      "metrics": {
+       "accuracy": 1.0,
+       "execution_time_ms": "<volatile>",
+       "input_cost": 0.0,
+       "input_tokens": 1,
+       "output_cost": 0.0,
+       "output_tokens": 1,
+       "response_time": "<volatile>",
+       "score": 1.0,
+       "total_cost": 0.0,
+       "total_tokens": 2
+      },
+      "output_digest": "<hex>",
+      "signal_key_id": "<hex>",
+      "verified_match": 1.0
+     },
+     {
+      "example_digest": "<hex>",
+      "example_id": "ex_18f3e157_2",
+      "metrics": {
+       "accuracy": 1.0,
+       "execution_time_ms": "<volatile>",
+       "input_cost": 0.0,
+       "input_tokens": 1,
+       "output_cost": 0.0,
+       "output_tokens": 1,
+       "response_time": "<volatile>",
+       "score": 1.0,
+       "total_cost": 0.0,
+       "total_tokens": 2
+      },
+      "output_digest": "<hex>",
+      "signal_key_id": "<hex>",
+      "verified_match": 1.0
+     }
+    ],
+    "output_tokens": 1.0,
+    "response_time_ms": "<volatile>",
+    "score": 1.0,
+    "successful_examples": 3,
+    "tokens_estimated": 1.0,
+    "total_cost": 0.0,
+    "total_examples": 3,
+    "total_tokens": 2.0,
+    "trial_id": "<volatile>",
+    "truncated_output_rate": 0.0
+   },
+   "example_results": [
+    {
+     "actual_output": "A",
+     "error_message": null,
+     "example_digest": "<hex>",
+     "example_id": "row-a",
+     "execution_time": "<volatile>",
+     "expected_output": "A",
+     "input_data": {
+      "text": "a"
+     },
+     "metadata": {
+      "example_id": "row-a"
+     },
+     "metrics": {
+      "accuracy": 1.0,
+      "input_cost": 0.0,
+      "input_tokens": 1,
+      "output_cost": 0.0,
+      "output_tokens": 1,
+      "total_cost": 0.0,
+      "total_tokens": 2
+     },
+     "output_digest": "<hex>",
+     "signal_key_id": "<hex>",
+     "success": true,
+     "verified_match": 1.0
+    },
+    {
+     "actual_output": "B",
+     "error_message": null,
+     "example_digest": "<hex>",
+     "example_id": "row-b",
+     "execution_time": "<volatile>",
+     "expected_output": "B",
+     "input_data": {
+      "text": "b"
+     },
+     "metadata": {
+      "example_id": "row-b"
+     },
+     "metrics": {
+      "accuracy": 1.0,
+      "input_cost": 0.0,
+      "input_tokens": 1,
+      "output_cost": 0.0,
+      "output_tokens": 1,
+      "total_cost": 0.0,
+      "total_tokens": 2
+     },
+     "output_digest": "<hex>",
+     "signal_key_id": "<hex>",
+     "success": true,
+     "verified_match": 1.0
+    },
+    {
+     "actual_output": "A",
+     "error_message": null,
+     "example_digest": "<hex>",
+     "example_id": "row-a2",
+     "execution_time": "<volatile>",
+     "expected_output": "A",
+     "input_data": {
+      "text": "a"
+     },
+     "metadata": {
+      "example_id": "row-a2"
+     },
+     "metrics": {
+      "accuracy": 1.0,
+      "input_cost": 0.0,
+      "input_tokens": 1,
+      "output_cost": 0.0,
+      "output_tokens": 1,
+      "total_cost": 0.0,
+      "total_tokens": 2
+     },
+     "output_digest": "<hex>",
+     "signal_key_id": "<hex>",
+     "success": true,
+     "verified_match": 1.0
+    }
+   ],
+   "metadata_keys": [
+    "comparability",
+    "evaluation_result",
+    "example_results",
+    "example_success_summary",
+    "examples_attempted",
+    "has_errors",
+    "output_count",
+    "sample_budget_exhausted",
+    "success_rate",
+    "successful_examples",
+    "total_example_cost"
+   ]
+  }
+ ]
+}

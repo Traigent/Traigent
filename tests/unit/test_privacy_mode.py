@@ -186,11 +186,17 @@ class TestPrivacyCompliance:
             #     did contain dataset content would still be caught here.
             "dataset_id",
             "dataset_id_source",
+            # Content identity (keyed HMAC ids and digests, no example content).
+            # The dataclass always lists the field; a value is sent only when the
+            # SDK holds a purpose-key grant, and never in privacy mode -- asserted
+            # below on the value, not just the key.
+            "content_identity",
         }
 
         for req in dummy_server.received_data:
             if req["request_type"] == "SessionCreationRequest":
                 assert set(req["fields"]).issubset(allowed_fields)
+                assert req["content_identity_sent"] is False
 
     @pytest.mark.asyncio
     async def test_only_indices_in_suggestions(self, privacy_optimizer, dummy_server):

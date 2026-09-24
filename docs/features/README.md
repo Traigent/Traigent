@@ -15,6 +15,7 @@ Documentation for Traigent SDK features and configuration options.
 - **[Local MCP Server](mcp-server.md)** - Local stdio MCP tools for coding agents, datasets, cost estimates, and dry-run-first optimization.
 - **[Safety Gates](safety-gates.md)** - Cost coverage, CI approval, dataset containment, backend validation, and content logging controls.
 - **[Agent Observability Spans](observability-spans.md)** - Public workflow-span API plus Bedrock token, cost, and mock capture paths.
+- **[Content Identity](content-identity.md)** - Opt-in keyed example ids and dataset roots; `TRAIGENT_CONTENT_IDENTITY` / `TraigentConfig(content_identity=...)` and the Backend purpose-key grant fetch.
 
 ## Overview
 

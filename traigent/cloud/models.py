@@ -9,6 +9,8 @@ are reserved for a future cloud release.
 
 from __future__ import annotations
 
+import copy
+
 import hashlib
 import unicodedata
 from collections.abc import Mapping, Sequence
@@ -547,6 +549,19 @@ def _artifact_version_from_fp1(value: Any) -> dict[str, str | None]:
     return {"schema": "fp1", "digest": None, "state": "unknown"}
 
 
+def session_content_identity_to_wire(session_request: Any) -> dict[str, Any]:
+    """The top-level ``content_identity`` session-create field, when the SDK built one.
+
+    A deep copy of the SDK-built object (``traigent.identity.run``); nothing is
+    derived from the request here. Omitted entirely when absent, so a request
+    without content identity serializes exactly as before.
+    """
+    value = getattr(session_request, "content_identity", None)
+    if not isinstance(value, dict) or not value:
+        return {}
+    return {"content_identity": copy.deepcopy(value)}
+
+
 def session_identity_v2_to_wire(session_request: Any) -> dict[str, Any]:
     """Serialize the typed session's explicit identity-v2 declaration.
 
@@ -658,6 +673,12 @@ class SessionCreationRequest:
     # construction compatibility. Existing ids default to registered; callers
     # may declare a logical id without claiming a registered evaluator version.
     evaluator_id_source: EvaluatorIdSource | None = None
+    # Content identity v1 (TraigentSchema docs/identity/content-identity-v1.md):
+    # the SDK-declared base agent version and dataset root, sent as a top-level
+    # ``content_identity`` object on the typed session-create body -- the same
+    # shape the JS SDK sends -- until milestone M3 gives it a typed contract.
+    # Digests, ids, revisions and project-relative file names only.
+    content_identity: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         """Handle default values and alternative parameter names."""

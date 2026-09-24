@@ -72,6 +72,7 @@ from .models import (
     TrialResultSubmission,
     TrialSuggestion,
     session_dataset_identity_to_wire,
+    session_content_identity_to_wire,
     session_identity_v2_to_wire,
     session_narrative_to_wire,
     session_task_type_to_wire,
@@ -2022,6 +2023,7 @@ class TraigentCloudClient(BaseTraigentClient):
         # `agent_key` once did. This is the cloud-brain path; ApiOperations'
         # typed builder emits the identical fields.
         payload.update(session_dataset_identity_to_wire(request))
+        payload.update(session_content_identity_to_wire(request))
         if request.budget is not None:
             payload["budget"] = request.budget
         if request.constraints is not None:

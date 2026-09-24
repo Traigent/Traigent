@@ -526,6 +526,11 @@ class TrialLifecycle:
         """Execute trial with tracing span active."""
         orchestrator = self._orchestrator
         closure: LeaseClosure | None = None
+        capture_bucket: Any = None
+        # Content identity v1: the run's snapshot (taken by optimize(), which
+        # also stamped every example with its keyed id/version so each
+        # ExampleResult carries it). None without a Backend key grant.
+        identity_run = self._content_identity_run(func, dataset)
 
         try:
             # Phase 3: Execute evaluation within TrialContext
@@ -537,7 +542,7 @@ class TrialLifecycle:
                 # trial drain -- and be charged for -- another's judge calls
                 # (Traigent#2387). Opened OUTSIDE the evaluator so it spans the
                 # agent's own calls as well as the metric functions'.
-                capture_scope(),
+                capture_scope() as capture_bucket,
                 TrialContext(
                     trial_id=trial_id,
                     metadata={
@@ -619,6 +624,13 @@ class TrialLifecycle:
             self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_budget_metadata(result, closure, budget_exhausted)
             self._apply_effectuation_metadata(result, func)
+            self._apply_content_identity(
+                result,
+                evaluation_config,
+                identity_run,
+                getattr(eval_result, "example_results", None),
+                capture_bucket,
+            )
 
             # Record success in tracing span
             record_trial_result(
@@ -646,6 +658,13 @@ class TrialLifecycle:
             )
             self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_effectuation_metadata(result, func)
+            self._apply_content_identity(
+                result,
+                evaluation_config,
+                identity_run,
+                prune_error.example_results,
+                capture_bucket,
+            )
             record_trial_result(span, status="pruned", error=str(prune_error))
             end_time = time.time()
             self._collect_workflow_span(trial_id, result, start_time, end_time)
@@ -663,6 +682,9 @@ class TrialLifecycle:
             )
             self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_effectuation_metadata(result, func)
+            self._apply_content_identity(
+                result, evaluation_config, identity_run, None, capture_bucket
+            )
             record_trial_result(span, status="failed", error=str(constraint_error))
             end_time = time.time()
             self._collect_workflow_span(trial_id, result, start_time, end_time)
@@ -708,6 +730,9 @@ class TrialLifecycle:
             )
             self._mark_backend_trial_id_acquired(result, backend_trial_id)
             self._apply_effectuation_metadata(result, func)
+            self._apply_content_identity(
+                result, evaluation_config, identity_run, None, capture_bucket
+            )
             record_trial_result(span, status="failed", error=str(exc))
             end_time = time.time()
             self._collect_workflow_span(trial_id, result, start_time, end_time)
@@ -728,6 +753,51 @@ class TrialLifecycle:
         metadata["backend_trial_id_acquired"] = True
         metadata["backend_trial_id_source"] = "cloud_brain"
         result.metadata = metadata
+
+    def _content_identity_run(self, func: Callable[..., Any], dataset: Dataset) -> Any:
+        """The run's content-identity snapshot, taken by ``optimize()`` at run start.
+
+        ``None`` without a Backend purpose-key grant (then no trial carries a
+        ``content_identity`` block) or when the trial runs outside ``optimize()``.
+        """
+        _ = (func, dataset)
+        return getattr(self._orchestrator, "_content_identity_run", None)
+
+    def _apply_content_identity(
+        self,
+        result: TrialResult,
+        evaluation_config: dict[str, Any],
+        identity_run: Any,
+        example_results: Any,
+        capture_bucket: Any,
+    ) -> None:
+        """Attach the trial's ``metadata.content_identity`` object.
+
+        Carries the candidate agent version (build manifest with this trial's
+        configuration), the trial's evaluated set (keyed; only with a Backend
+        key grant), the provider/model versions observed from real responses,
+        and content-free reasons for every slot it could not fill.
+        Best-effort: a failure omits the block and never fails the trial.
+        """
+        if identity_run is None:
+            return
+        try:
+            from traigent.identity.run import CONTENT_IDENTITY_METADATA_KEY
+
+            observed = (
+                capture_bucket.observed_provider_versions()
+                if capture_bucket is not None
+                else []
+            )
+            result.metadata[CONTENT_IDENTITY_METADATA_KEY] = identity_run.trial_wire(
+                str(result.trial_id), evaluation_config, example_results, observed
+            )
+        except Exception as exc:  # noqa: BLE001 - identity must never fail a trial
+            logger.debug(
+                "Content identity block omitted for trial %s: %s",
+                getattr(result, "trial_id", "<unknown>"),
+                type(exc).__name__,
+            )
 
     def _apply_effectuation_metadata(
         self,

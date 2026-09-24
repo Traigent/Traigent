@@ -13,10 +13,23 @@ len(text) // 4 — producing inaccurate cost data.
 import time
 from typing import Any
 
-from traigent.utils.langchain_interceptor import capture_langchain_response
+from traigent.utils.langchain_interceptor import (
+    capture_langchain_response,
+    capture_observed_response,
+)
 from traigent.utils.logging import configure_litellm_logging, get_logger
 
 logger = get_logger(__name__)
+
+
+def _litellm_provider(response: Any) -> str:
+    """The upstream provider LiteLLM routed a call to, when it reports one."""
+    hidden = getattr(response, "_hidden_params", None)
+    if isinstance(hidden, dict):
+        provider = hidden.get("custom_llm_provider")
+        if isinstance(provider, str) and provider:
+            return provider
+    return "litellm"
 
 
 def patch_litellm_for_metadata_capture() -> bool:
@@ -72,7 +85,11 @@ def patch_litellm_for_metadata_capture() -> bool:
                 # Inject timing into response for the handler chain
                 response.response_time_ms = response_time_ms
 
-                capture_langchain_response(response)
+                capture_observed_response(
+                    response,
+                    provider=_litellm_provider(response),
+                    requested_model=kwargs.get("model", args[0] if args else None),
+                )
                 logger.debug(
                     "Captured litellm.completion response: model=%s, "
                     "tokens=%s, response_time_ms=%.2f",
@@ -121,7 +138,11 @@ def patch_litellm_for_metadata_capture() -> bool:
                 # Inject timing into response for the handler chain
                 response.response_time_ms = response_time_ms
 
-                capture_langchain_response(response)
+                capture_observed_response(
+                    response,
+                    provider=_litellm_provider(response),
+                    requested_model=kwargs.get("model", args[0] if args else None),
+                )
                 logger.debug(
                     "Captured litellm.acompletion response: model=%s, "
                     "tokens=%s, response_time_ms=%.2f",
