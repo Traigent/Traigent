@@ -2152,10 +2152,15 @@ class BackendIntegratedClient:
             raise PurposeKeyGrantFetchError(None, "invalid_backend_url")
         headers = self._get_sync_auth_headers(target="backend")
         headers["Cache-Control"] = "no-store"
+        # Redirects are refused: requests would forward X-API-Key to the new
+        # host and accept key material from it. A (connect, read) timeout pair
+        # bounds a stalled Backend; the body is a few hundred bytes, so the
+        # read limit effectively bounds the whole answer.
         response = requests.post(  # nosec B113 - timeout is provided
             url,
             headers=headers,
-            timeout=min(self.timeout, 30.0),
+            timeout=(min(self.timeout, 5.0), min(self.timeout, 10.0)),
+            allow_redirects=False,
         )
         if response.status_code != 200:
             raise PurposeKeyGrantFetchError(
