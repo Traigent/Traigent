@@ -53,7 +53,12 @@ from traigent.config.types import (
     validate_execution_mode,
 )
 from traigent.core.ci_approval import check_ci_approval
-from traigent.core.config_state_manager import ConfigStateManager, OptimizationState
+from traigent.core.config_state_manager import (
+    ConfigStateManager,
+    OptimizationState,
+    detach_candidate_value,
+    snapshot_with_retry,
+)
 from traigent.core.cost_enforcement import is_cost_preapproved, normalize_cost_approved
 from traigent.core.execution_budget import ExecutionBudget
 from traigent.core.execution_policy_runtime import (
@@ -118,6 +123,7 @@ from traigent.utils.env_config import (
 )
 from traigent.utils.exceptions import (
     AuthenticationError,
+    CandidateIsolationError,
     ConfigurationError,
     OptimizationError,
     OverlappingOptimizationError,
@@ -135,8 +141,8 @@ from traigent.utils.validation import (
 
 logger = get_logger(__name__)
 
-# Guards every wrapper's exclusive slot (check-and-set of ``_exclusive_slot``).
-# Held only for those few attribute reads/writes,
+# Guards every wrapper's exclusive slot (check-and-set of ``_exclusive_slot``
+# plus the at-rest snapshot). Held only for those few attribute reads/writes,
 # never across a run or a commit -- the SLOT is what is held across those -- so
 # one process-wide lock suffices and needs no per-instance initialisation.
 _RUN_GUARD_LOCK = threading.Lock()
@@ -2102,6 +2108,7 @@ class OptimizedFunction(Generic[_P, _R]):
         strategy_params: Mapping[str, Any] | None = None,
         progress_bar: bool | None = None,
         budget: ExecutionBudget | None = None,
+        apply: bool = True,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization on the function.
@@ -2143,6 +2150,20 @@ class OptimizedFunction(Generic[_P, _R]):
                 and the deadline are hard limits; the monetary cap is a lower bound
                 when cost is unobservable (see ``ExecutionBudget`` docs). ``None``
                 (default) leaves behavior unchanged.
+            apply: ``True`` (default, the historical behaviour) makes this an
+                *advancing* run: when it finishes, its winner is applied to
+                this wrapper (``apply_best_config``) and the run is recorded in
+                the wrapper's results history. Only one advancing run per
+                wrapper may be in flight; a second one raises
+                :class:`~traigent.utils.exceptions.OverlappingOptimizationError`.
+                ``False`` makes this a *candidate* run: it returns the result
+                (``result.best_config`` is the candidate) WITHOUT applying it.
+                A candidate run executes on an isolated per-run copy of the
+                wrapper taken at rest, so it may run in parallel with other
+                candidate runs and with an advancing run, and none of its run
+                state (lifecycle state, results history, runtime overrides)
+                reaches the wrapper. Promote a candidate later, explicitly,
+                with ``apply_best_config(result)``.
             **algorithm_kwargs: Additional algorithm-specific parameters.
                 For grid search (algorithm="grid"):
                     - parameter_order: dict[str, int | float] controlling iteration order.
@@ -2155,9 +2176,8 @@ class OptimizedFunction(Generic[_P, _R]):
 
         Raises:
             OptimizationError: If optimization fails
-            OverlappingOptimizationError: If another ``optimize()`` run or an
-                ``apply_best_config()`` commit is already in flight on this
-                wrapper (they share one exclusive per-wrapper slot).
+            OverlappingOptimizationError: If ``apply=True`` and another
+                advancing run is already in flight on this wrapper.
         """
         run_kwargs: dict[str, Any] = {
             "algorithm": algorithm,
@@ -2181,9 +2201,13 @@ class OptimizedFunction(Generic[_P, _R]):
         }
         from traigent.utils.cost_calculator import cost_run_scope
 
-        # One applying run per wrapper: it applies its winner when it finishes,
-        # so a second one would race it. The per-run cost scope keeps this
-        # run's cost records apart from any other run in the process.
+        if not apply:
+            # Candidate run: an isolated copy of the wrapper at rest. It takes
+            # no guard, so it neither blocks nor is blocked by other runs.
+            candidate = self._fork_for_candidate_run()
+            with cost_run_scope():
+                return await candidate._optimize_run(**run_kwargs)
+
         self._begin_advancing_run()
         try:
             with cost_run_scope():
@@ -2213,7 +2237,7 @@ class OptimizedFunction(Generic[_P, _R]):
         budget: ExecutionBudget | None,
         algorithm_kwargs: dict[str, Any],
     ) -> OptimizationResult:
-        """Body of :meth:`optimize` for one run, inside its slot and cost scope."""
+        """Body of :meth:`optimize` for one run (advancing or candidate)."""
         logger.info(f"Starting optimization of {self.func.__name__}")
         _emit_cost_warning_once()
 
@@ -2247,6 +2271,15 @@ class OptimizedFunction(Generic[_P, _R]):
             from traigent.api.parameter_ranges import normalize_configuration_space
 
             configuration_space, _ = normalize_configuration_space(configuration_space)
+            if self._is_candidate_run:
+                # A candidate must not share the caller's override objects:
+                # a trial mutating a choice would change the caller's dict.
+                override = configuration_space
+                configuration_space = snapshot_with_retry(
+                    lambda: detach_candidate_value(
+                        override, "configuration_space (call-time override)"
+                    )
+                )
 
         # Issue #2298 direction 1: for seamless injection, fail closed ONCE,
         # before the first trial. A structural probe (AST compile + parameter
@@ -2344,6 +2377,7 @@ class OptimizedFunction(Generic[_P, _R]):
         strategy_params: Mapping[str, Any] | None = None,
         progress_bar: bool | None = None,
         budget: ExecutionBudget | None = None,
+        apply: bool = True,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization synchronously (convenience wrapper).
@@ -2371,6 +2405,9 @@ class OptimizedFunction(Generic[_P, _R]):
                 value raises ``TypeError``.
             progress_bar: ``True`` to force, ``False`` to suppress, ``None``
                 (default) auto-enables in interactive terminals.
+            apply: ``True`` (default) applies the winner to this wrapper;
+                ``False`` returns a candidate without applying it. See
+                :meth:`optimize`.
             **algorithm_kwargs: Additional algorithm parameters
 
         Returns:
@@ -2407,6 +2444,7 @@ class OptimizedFunction(Generic[_P, _R]):
             strategy_params=strategy_params,
             progress_bar=progress_bar,
             budget=budget,
+            apply=apply,
             **algorithm_kwargs,
         )
 
@@ -2751,9 +2789,10 @@ class OptimizedFunction(Generic[_P, _R]):
                 self._optimization_results = result
                 self._csm.append_optimization_result(result)
 
-                # Update current config to best found. This run holds the
-                # wrapper's exclusive slot, so it commits without re-claiming it.
-                if result.best_config:
+                # Update current config to best found. A candidate run
+                # (optimize(apply=False)) runs on an isolated copy and never
+                # applies; promotion is the caller's explicit, later step.
+                if result.best_config and not self._is_candidate_run:
                     self._commit_best_config(result)
 
                 # Set state to OPTIMIZED on success
@@ -4445,10 +4484,11 @@ Remediation:
     def apply_best_config(self, results: OptimizationResult | None = None) -> bool:
         """Apply best configuration from optimization results.
 
-        Promotion takes the same exclusive per-wrapper slot as an
-        ``optimize()`` run and holds it across the commit, so it is atomic with
-        run admission: while an applying run or another promotion holds the
-        slot it raises
+        This is also how a candidate from ``optimize(apply=False)`` is
+        promoted. Promotion takes the same exclusive per-wrapper slot as an
+        ``optimize(apply=True)`` run and holds it across the commit, so it is
+        atomic with run admission: while an applying run or another promotion
+        holds the slot it raises
         :class:`~traigent.utils.exceptions.OverlappingOptimizationError`, and
         no applying run is admitted until this commit has returned.
         """
@@ -4459,9 +4499,9 @@ Remediation:
             self._release_exclusive_slot()
 
     def _commit_best_config(self, results: OptimizationResult | None = None) -> bool:
-        """Apply ``results`` to this wrapper without claiming the slot.
+        """Apply ``results`` to this wrapper without the advancing-run guard.
 
-        Used by the ``optimize()`` run itself, which already holds the slot.
+        Used by the advancing run itself, which owns the guard.
         """
         return self._csm.apply_best_config(  # type: ignore[no-any-return]
             results,
@@ -4470,16 +4510,20 @@ Remediation:
         )
 
     # ------------------------------------------------------------------
-    # One exclusive slot per wrapper (identity/concurrency decision, owner
-    # ruling "option A": only promotion is serialized). An optimize() run and
-    # an apply_best_config() commit both change what the wrapper serves, so
-    # at most one of them may hold the wrapper at a time.
+    # Advancing run vs candidate runs (identity/concurrency decision,
+    # owner ruling "option A"): any number of isolated candidate runs per
+    # wrapper, at most one advancing run -- the one that changes what the
+    # wrapper serves.
     # ------------------------------------------------------------------
+
+    @property
+    def _is_candidate_run(self) -> bool:
+        return bool(self.__dict__.get("_candidate_run", False))
 
     def _acquire_exclusive_slot(self, holder: str) -> None:
         """Claim this wrapper's single exclusive slot, or refuse.
 
-        ``holder`` is ``"run"`` (an ``optimize()`` run) or
+        ``holder`` is ``"run"`` (an ``optimize(apply=True)`` run) or
         ``"promotion"`` (an ``apply_best_config`` commit). Both change what the
         wrapper serves, so at most one of them may hold the slot at a time.
         """
@@ -4488,7 +4532,7 @@ Remediation:
             current = self.__dict__.get("_exclusive_slot")
             if current is not None:
                 if current == "run":
-                    what = "an optimize() run is already in flight on it"
+                    what = "an optimize(apply=True) run is already in flight on it"
                 else:
                     what = "a promotion (apply_best_config) is being committed to it"
                 if holder == "run":
@@ -4496,7 +4540,9 @@ Remediation:
                         f"Cannot start optimize() on {name!r}: {what}. Two runs or "
                         "promotions that both apply a winner to the same wrapper race "
                         "(the last to finish silently replaces the first), so only one "
-                        "may hold the wrapper at a time. Wait for it to finish."
+                        "may hold the wrapper at a time. Wait for it to finish, or use "
+                        "optimize(apply=False) to produce a candidate in parallel and "
+                        "promote it later with apply_best_config(result)."
                     )
                 else:
                     message = (
@@ -4514,18 +4560,94 @@ Remediation:
                     ],
                     details={"slot_holder": current, "requested_by": holder},
                 )
+            if holder == "run":
+                # Snapshot the wrapper AT REST before this run mutates it
+                # (transient objective/TVL overrides, lifecycle state, in-place
+                # edits of served config), so candidate runs forked while it is
+                # in flight start from the resting wrapper. A REAL detached
+                # copy, taken here: the detacher runs no user code, so it is
+                # safe under this lock. If the served state cannot be detached,
+                # the applying run still proceeds (its behaviour is unchanged);
+                # only candidate forks during it are refused, with the reason.
+                try:
+                    at_rest: Any = snapshot_with_retry(
+                        lambda: self._detached_view(self)
+                    )
+                except CandidateIsolationError as exc:
+                    at_rest = exc
+                self.__dict__["_at_rest_view"] = at_rest
             self.__dict__["_exclusive_slot"] = holder
 
     def _release_exclusive_slot(self) -> None:
         with _RUN_GUARD_LOCK:
             self.__dict__["_exclusive_slot"] = None
+            self.__dict__["_at_rest_view"] = None
 
     def _begin_advancing_run(self) -> None:
-        """Claim the exclusive slot for an ``optimize()`` run."""
+        """Claim the exclusive slot for an ``optimize(apply=True)`` run."""
         self._acquire_exclusive_slot("run")
 
     def _end_advancing_run(self) -> None:
         self._release_exclusive_slot()
+
+    def _fork_for_candidate_run(self) -> OptimizedFunction[_P, _R]:
+        """Return an isolated copy of this wrapper for one candidate run.
+
+        The candidate snapshot is taken at candidate start, under
+        ``_RUN_GUARD_LOCK``, as a real detached copy of the current, best and
+        default config and the search space (from the at-rest snapshot if an
+        applying run is in flight, else from this wrapper). The detacher runs
+        no user code, so holding the lock is safe; a concurrent in-place
+        mutation of the served config from another thread is retried (see
+        :func:`snapshot_with_retry`). The copy's injected callable is rebuilt
+        against the detached config after the lock is released. A candidate
+        holds no slot, so a refusal has nothing to release.
+        """
+        with _RUN_GUARD_LOCK:
+            source: Any = self
+            if self.__dict__.get("_exclusive_slot") == "run":
+                source = self.__dict__.get("_at_rest_view") or self
+            if isinstance(source, BaseException):
+                raise CandidateIsolationError(
+                    "Cannot start a candidate run while an optimize(apply=True) run "
+                    "is in flight on this wrapper: its at-rest snapshot could not "
+                    f"be isolated ({source})."
+                ) from source
+            fork = snapshot_with_retry(lambda: self._detached_view(source))
+        fork._setup_function_wrapper()
+        fork.__dict__["_candidate_run"] = True
+        return fork
+
+    def _detached_view(
+        self, source: OptimizedFunction[_P, _R]
+    ) -> OptimizedFunction[_P, _R]:
+        """Copy of ``source`` whose config and search space share nothing with it.
+
+        Built with ``object.__new__`` + ``__dict__.update`` (no ``__copy__`` /
+        ``__reduce__`` hook) and :func:`detach_candidate_value` (identity-typed
+        builtins only), so no user code runs; callers hold ``_RUN_GUARD_LOCK``.
+        The config-state manager is forked with detached values too. The
+        injected callable is NOT rebuilt here (the caller does that outside the
+        lock).
+        """
+        view = object.__new__(type(source))
+        view.__dict__.update(source.__dict__)
+        view.__dict__["_exclusive_slot"] = None
+        view.__dict__["_at_rest_view"] = None
+        view.__dict__["_candidate_run"] = False
+        source_space = source.__dict__.get("_configuration_space")
+        space = detach_candidate_value(source_space, "configuration_space")
+        view.__dict__["_configuration_space"] = space if space is not None else {}
+        view.__dict__["default_config"] = detach_candidate_value(
+            source.default_config, "default_config"
+        )
+        shares_space = source._csm.configuration_space is source_space
+        view.__dict__["_csm"] = source._csm.fork_detached(
+            setup_wrapper_callback=view._setup_function_wrapper,
+            configuration_space=view._configuration_space if shares_space else None,
+        )
+        view._csm.default_config = view.default_config
+        return view
 
     def export_config(
         self,

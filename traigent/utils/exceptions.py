@@ -681,12 +681,37 @@ class OptimizationStateError(TraigentError):
         self.expected_states = expected_states or []
 
 
-class OverlappingOptimizationError(OptimizationStateError):
-    """Raised when a second applying run or promotion targets a busy wrapper.
+class CandidateIsolationError(ConfigurationError):
+    """Raised when a candidate run's config or search space cannot be isolated.
 
-    ``optimize()`` applies its winner to the wrapper when it finishes, so two
-    such runs on one ``OptimizedFunction`` race: the last finisher silently
-    replaces the first winner. ``optimize()`` and ``apply_best_config()`` share
-    one exclusive per-wrapper slot, held for the whole run or commit; a second
-    one while the slot is held is refused with this error.
+    ``optimize(apply=False)`` runs on a copy of the wrapper whose config and
+    search space are snapshotted at candidate start by a type-preserving
+    structural copy that classifies values by type identity only: exact
+    ``dict``/``list``/``tuple`` containers are rebuilt (tuples stay tuples,
+    because a 2-tuple is a continuous range), ``None`` and exact
+    ``str``/``int``/``float``/``bool`` are kept, and NumPy scalars are
+    normalized to plain Python scalars. Any other value -- a container
+    subclass (a known restriction), a function, builtin or bound method, a
+    class, an ``Enum`` member, a lock or other live object -- can carry state
+    the candidate could mutate on the served wrapper, so the candidate run is
+    refused instead. The message names the offending key path. It is also
+    raised when the served config keeps changing concurrently while the
+    snapshot is taken ("served config changed during candidate snapshot;
+    retry").
+    """
+
+
+class OverlappingOptimizationError(OptimizationStateError):
+    """Raised when a second advancing run targets a wrapper that already has one.
+
+    ``optimize()`` with ``apply=True`` (the default) applies its winner to the
+    wrapper when it finishes, so two such runs on one ``OptimizedFunction``
+    race: the last finisher silently replaces the first winner. Only one
+    advancing run per wrapper may be in flight; the second is refused with
+    this error. Promotion with ``apply_best_config()`` is refused the same way
+    while an advancing run is in flight.
+
+    Candidate runs (``optimize(apply=False)``) are not advancing runs: they run
+    on an isolated copy of the wrapper, never apply, and may run in parallel
+    with each other and with an advancing run.
     """

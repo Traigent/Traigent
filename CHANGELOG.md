@@ -8,19 +8,31 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Candidate runs: `optimize(apply=False)`.** Returns the result, with
+  `result.best_config` as the candidate, without applying it to the wrapper. A
+  candidate run executes on an isolated copy of the wrapper taken at rest: it does
+  not change the wrapper's state, results history, current config or runtime
+  overrides. Any number of candidate runs may run in parallel with each other and
+  with an applying run. Promote a candidate later with `apply_best_config(result)`.
+  The default (`apply=True`) is unchanged. The candidate's config and search space
+  are snapshotted at candidate start by a type-preserving structural copy
+  (classified by type identity: exact `dict`/`list`/`tuple` rebuilt, tuples kept
+  as tuples, `None`/`str`/`int`/`float`/`bool` kept, NumPy scalars normalized to
+  Python scalars). Any other value -- including container subclasses (a known
+  restriction), functions, bound methods, classes, `Enum` members, locks and live
+  clients -- makes `optimize(apply=False)` raise
+  `traigent.utils.exceptions.CandidateIsolationError` naming the key path; no
+  user code runs during the copy.
 - **Overlapping applying runs on one wrapper are refused.** A second
-  `optimize()` on an `OptimizedFunction` that already has one in flight now raises
-  `traigent.utils.exceptions.OverlappingOptimizationError` (a subclass of
-  `OptimizationStateError`) instead of racing it, where the last finisher silently
-  replaced the first winner. `apply_best_config()` takes the same exclusive
-  per-wrapper slot and holds it across its commit, so a promotion and an applying
-  run can never interleave.
+  `optimize()` (`apply=True`) on an `OptimizedFunction` that already has one in
+  flight now raises `traigent.utils.exceptions.OverlappingOptimizationError` (a
+  subclass of `OptimizationStateError`) instead of racing it, where the last
+  finisher silently replaced the first winner. `apply_best_config()` takes the
+  same exclusive slot and holds it across its commit, so a promotion and an
+  applying run can never interleave.
 
 ### Fixed
 
-- **A `CancelledError` or `KeyboardInterrupt` that escapes an `optimize()` run no
-  longer leaves the wrapper stuck in `OPTIMIZING`** (where `current_config`
-  raises); the lifecycle moves to `ERROR`, as for any other failure.
 - **Per-run cost accounting state.** The unpriced-at-runtime model registry and
   the usage-capture counter are now scoped to each `optimize()` run (a
   `ContextVar` inherited by the run's asyncio tasks and SDK worker threads)
@@ -29,6 +41,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   records. Code outside a run keeps the previous process-level behaviour.
   `copy_context_to_thread()` / `snapshot.restore()` carry the run's cost state
   into user-created worker threads.
+- **A `CancelledError` or `KeyboardInterrupt` that escapes an `optimize()` run no
+  longer leaves the wrapper stuck in `OPTIMIZING`** (where `current_config`
+  raises); the lifecycle moves to `ERROR`, as for any other failure.
 
 ### Changed
 
