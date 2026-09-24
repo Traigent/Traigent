@@ -220,6 +220,31 @@ def is_content_identity_requested() -> bool:
     return _read_bool_env("TRAIGENT_CONTENT_IDENTITY")
 
 
+_FALSY_CONFIG_VALUES = frozenset({"0", "false", "no", "off"})
+
+
+def _coerce_content_identity(value: Any) -> bool | None:
+    """Normalize ``TraigentConfig.content_identity`` to ``bool | None``.
+
+    YAML/JSON configs often carry ``"false"``/``"true"`` strings. Without this a
+    string opt-out was silently ignored and ``TRAIGENT_CONTENT_IDENTITY`` won,
+    so a run the user switched off still fetched keys. Unknown values fail loud.
+    """
+
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in _TRUTHY_ENV_VALUES:
+            return True
+        if token in _FALSY_CONFIG_VALUES:
+            return False
+    raise ValueError(
+        "content_identity must be a boolean (or 'true'/'false'), "
+        f"got {type(value).__name__}"
+    )
+
+
 def content_identity_enabled(config: Any) -> bool:
     """Whether content identity is switched on for ``config``.
 
@@ -746,6 +771,8 @@ class TraigentConfig:
 
     def __post_init__(self) -> None:
         """Validate configuration parameters using unified validators."""
+        self.content_identity = _coerce_content_identity(self.content_identity)
+
         # Validate temperature
         if self.temperature is not None:
             result = Validators.validate_number(

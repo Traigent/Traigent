@@ -135,6 +135,30 @@ def test_explicit_config_overrides_the_env(monkeypatch: pytest.MonkeyPatch) -> N
     assert content_identity_enabled(TraigentConfig(content_identity=True)) is True
 
 
+@pytest.mark.parametrize("value", ["false", "False", " off ", "0", "no"])
+def test_string_opt_out_beats_the_env(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    # YAML/JSON configs carry strings; an opt-out string must not be ignored.
+    monkeypatch.setenv("TRAIGENT_CONTENT_IDENTITY", "1")
+    assert content_identity_enabled(TraigentConfig(content_identity=value)) is False
+    from_dict = TraigentConfig.from_dict({"content_identity": value})
+    assert content_identity_enabled(from_dict) is False
+
+
+@pytest.mark.parametrize("value", ["true", "1", "YES", "on"])
+def test_string_opt_in_is_honoured(value: str) -> None:
+    config = TraigentConfig(content_identity=value)
+    assert config.content_identity is True
+    assert content_identity_enabled(config) is True
+
+
+@pytest.mark.parametrize("value", ["maybe", "", 1, 0.0, ["false"]])
+def test_unknown_content_identity_value_fails_loud(value: Any) -> None:
+    with pytest.raises(ValueError, match="content_identity must be a boolean"):
+        TraigentConfig(content_identity=value)
+
+
 def _gate(config: TraigentConfig, client: Any) -> Any:
     fake_self = SimpleNamespace(traigent_config=config, backend_client=client)
     return OptimizationOrchestrator._content_identity_grant_client(fake_self)  # type: ignore[arg-type]
@@ -178,6 +202,35 @@ def test_client_posts_to_the_purpose_keys_route(mock_post: Any) -> None:
     assert call.args[0] == "https://api.test/api/v1/content-identity/purpose-keys"
     assert call.kwargs["headers"]["Authorization"] == "Bearer test-token"
     assert "json" not in call.kwargs and "data" not in call.kwargs  # no body
+    assert mock_post.call_count == 1
+
+
+@pytest.mark.backend_online
+@patch("requests.post")
+def test_client_refuses_redirects_and_bounds_the_wait(mock_post: Any) -> None:
+    # A redirect would carry X-API-Key to another host and accept key material
+    # from it; requests follows redirects unless told not to.
+    mock_post.return_value = _grant_ok = _response(200, GRANT)
+    _client().fetch_content_identity_grant_sync()
+    kwargs = mock_post.call_args.kwargs
+    assert kwargs["allow_redirects"] is False
+    connect, read = kwargs["timeout"]
+    assert 0 < connect <= 5.0 and 0 < read <= 10.0
+    assert _grant_ok.json.called
+
+
+@pytest.mark.backend_online
+@pytest.mark.parametrize("status", [301, 302, 307, 308])
+@patch("requests.post")
+def test_client_treats_a_redirect_as_a_failed_fetch(
+    mock_post: Any, status: int
+) -> None:
+    redirect = _response(status, None)
+    redirect.headers = {"Location": "https://attacker.test/keys"}
+    mock_post.return_value = redirect
+    with pytest.raises(PurposeKeyGrantFetchError) as caught:
+        _client().fetch_content_identity_grant_sync()
+    assert caught.value.status_code == status
     assert mock_post.call_count == 1
 
 
