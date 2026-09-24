@@ -771,8 +771,6 @@ class TraigentConfig:
 
     def __post_init__(self) -> None:
         """Validate configuration parameters using unified validators."""
-        self.content_identity = _coerce_content_identity(self.content_identity)
-
         # Validate temperature
         if self.temperature is not None:
             result = Validators.validate_number(
@@ -1116,6 +1114,11 @@ class TraigentConfig:
             validate_or_raise(Validators.validate_number(value, key, -2.0, 2.0))
         elif key == "algorithm":
             value = validate_algorithm_name(value)
+        elif key == "content_identity":
+            # Covers construction (dataclass __init__ assigns through here),
+            # attribute/item assignment and merge(), so a string opt-out can
+            # never be stored raw and silently lose to the env var.
+            value = _coerce_content_identity(value)
         elif key == "offline":
             if not isinstance(value, bool):
                 raise TypeError(f"offline must be a bool, got {type(value).__name__}")
