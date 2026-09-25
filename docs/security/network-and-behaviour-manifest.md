@@ -22,9 +22,9 @@ python scripts/security/behaviour_audit.py run optimize_mock token_count_llama -
 | Destination | Port | Needed? | Contacted when | Turn off with |
 |---|---|---|---|---|
 | `portal.traigent.ai` (or your `TRAIGENT_BACKEND_URL`) | 443 | Only for cloud features | A connected run: the SDK resolves the host when it validates the URL (`traigent/cloud/url_security.py:270`), then calls `POST /api/v1/keys/validate` and session endpoints [R] | `TRAIGENT_OFFLINE_MODE=true`, or no `TRAIGENT_API_KEY` |
-| `raw.githubusercontent.com` | 443 | No | Every `import litellm` (the SDK imports it), to refresh litellm's model price table; falls back to the bundled copy if unreachable [R] | `LITELLM_LOCAL_MODEL_COST_MAP=True` (the keyless quickstart sets it itself, `traigent/__init__.py:90-100`). Owner ruling 2026-09-25: the SDK will set it by default, opt-out `TRAIGENT_LITELLM_LIVE_PRICES=1` (branch `fix/litellm-local-cost-map-by-default`, not on this commit) |
-| `raw.githubusercontent.com` (Anthropic beta-header config) | 443 | No | Not observed in any workload on litellm 1.98.0 [R]; litellm has the fetch (`litellm/__init__.py:416-419`, `anthropic_beta_headers_manager.py`) | `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True` |
-| `huggingface.co` | 443 | No | Pricing/counting tokens for a Llama-family model (`traigent/utils/cost_calculator.py:397` → `litellm.token_counter` → `huggingface_hub`) downloads a tokenizer [R] | `HF_HUB_OFFLINE=1` |
+| `raw.githubusercontent.com` | 443 | No | **Not contacted by default** as of `traigent/__init__.py:72-77` / `traigent/utils/cost_calculator.py:30-46`: `import traigent` pins `LITELLM_LOCAL_MODEL_COST_MAP=True` before litellm's own import-time fetch runs, for every code path (including `from traigent.api.decorators import EvaluationOptions`, which used to re-set the pin unconditionally and mask a broken opt-out — fixed). Opt back in with `TRAIGENT_LITELLM_LIVE_PRICES=1` [R]. Residual: if the *application* imports `litellm` before `traigent`, the pin cannot retroactively apply — see "Residual risk — import order" below |
+| `raw.githubusercontent.com` (Anthropic beta-header config) | 443 | No | Not observed in any workload on litellm 1.98.0 [R]; litellm has the fetch (`litellm/__init__.py:416-419`, `anthropic_beta_headers_manager.py`); pinned the same way and by the same default as the price table above | `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True` (also on by default) |
+| `huggingface.co` | 443 | No | **Not contacted by default**: pricing/counting tokens for a Llama-family model (`traigent/utils/cost_calculator.py:397` → `litellm.token_counter` → `huggingface_hub`) no longer downloads a tokenizer just to count tokens (fixed) [R] | `HF_HUB_OFFLINE=1` (redundant with the fix, kept as defense in depth) |
 | LLM provider endpoints (OpenAI, Anthropic, …) | 443 | Yes, for real runs | Only when your own code calls a model; mock mode sends nothing [R] | n/a (your provider choice) |
 | Optional integrations: Langfuse (`cloud.langfuse.com`, `LANGFUSE_HOST`), a hybrid-API agent service you configure | 443 | Only if you enable them | `traigent/integrations/langfuse/client.py:230`; hybrid heartbeats every 30 s to *your* service when it advertises keep-alive (`traigent/evaluators/hybrid_api.py:437-441`) [S] | Do not configure them |
 
@@ -43,8 +43,10 @@ export TRAIGENT_OFFLINE_MODE=true
 **Residual risk — import order.** If the application imports `litellm` *before*
 `traigent`, litellm fetches its price table at its own import, before the SDK
 can set any default [R: workload `import_litellm_first`]. Only the environment
-variable set before the process starts prevents that; the SDK default in the
-pending branch cannot. The egress test keeps this as a strict xfail.
+variable set before the process starts prevents that; the SDK's own default
+pin cannot, because it only runs when `traigent/__init__.py` first executes,
+which is already too late. The egress test keeps this as a strict xfail
+(`test_litellm_imported_first_reaches_no_third_party_host`).
 
 **What happens when the network is blocked.** In `docker run --network none`
 every workload completed [R, evidence §5]. A refused DNS lookup costs litellm
@@ -60,11 +62,11 @@ different: 8 attempts and about 22 s added (32.5 s vs 10.3 s with
 | Workload | Default settings | With the four pins |
 |---|---|---|
 | Keyless quickstart (`traigent quickstart`) | no external host | no external host |
-| `@traigent.optimize`, mock LLM, dummy key, loopback stub backend | `raw.githubusercontent.com:443`; `127.0.0.1` stub (`POST /api/v1/keys/validate` → 503 → local fallback) | stub only |
+| `@traigent.optimize`, mock LLM, dummy key, loopback stub backend | no external host (default pin, `--pins` not needed) [R]; `raw.githubusercontent.com:443` only if `TRAIGENT_LITELLM_LIVE_PRICES=1` | stub only |
 | Same, `injection_mode="seamless"` | same as above | stub only |
-| `import litellm` before `import traigent` | `raw.githubusercontent.com:443` | stub only |
-| Llama token count (`calculate_prompt_cost`) | `huggingface.co:443` ×8 | none |
-| Mock run with built-in backend, production policy | `portal.traigent.ai`, `raw.githubusercontent.com` | `portal.traigent.ai` only |
+| `import litellm` before `import traigent` | `raw.githubusercontent.com:443` (residual — see above; pins/opt-out cannot help here) | stub only |
+| Llama token count (`calculate_prompt_cost`) | no external host (fixed: no longer downloads a tokenizer to count tokens) [R] | none |
+| Mock run with built-in backend, production policy | `portal.traigent.ai` only (the `raw.githubusercontent.com` contact this row used to show is gone with the default pin) [R] | `portal.traigent.ai` only |
 
 Also seen at import, not traffic: `urllib3` binds a socket to `::1` port 0 to
 test IPv6 support (first seen via `traigent/integrations/observability/workflow_traces.py:77`
@@ -73,7 +75,18 @@ was not measured.
 
 ## Child processes
 
-No workload launched any process [R]. The SDK source can launch these [S]:
+**Known finding, fix in flight:** a pinned `optimize_mock` / `optimize_seamless`
+/ `import_litellm_first` run spawns one `subprocess.Popen: uname` [R,
+`test_pinned_run_spawns_no_process_and_loads_no_foreign_library`, currently
+failing on this branch]. Root cause: `import mlflow`
+(`traigent/integrations/observability/mlflow.py:13`), eagerly imported via
+`traigent/integrations/__init__.py:77` — mlflow's own import shells out to
+`uname` on Linux/macOS. No other workload launched a process [R]. Being fixed
+on a separate branch, `fix/lazy-mlflow-import` (make the mlflow integration a
+lazy import so it is not paid by every `import traigent`); this document
+should drop this paragraph once that lands and the test above passes again.
+
+The SDK source can also launch these [S]:
 
 | Call site | Command (argv[0]) | Why | Trigger |
 |---|---|---|---|
@@ -146,16 +159,24 @@ source is unavailable (frozen, obfuscated, or zipped apps) it fails with a
 
 ## Findings that could matter to AV/EDR
 
-1. Unpinned third-party fetches on import (`raw.githubusercontent.com`) and on Llama
-   token counting (`huggingface.co`, with retries). Most likely to trip egress
-   rules. Fix pending for the first; none yet for the second.
-2. Seamless mode's in-memory AST rewrite + `compile` of user source: benign, but
+1. Third-party fetches on import (`raw.githubusercontent.com` for litellm's price
+   table and Anthropic beta-header config; `huggingface.co` for Llama tokenizer
+   downloads): both now pinned off by default, fixed. Two residuals remain:
+   (a) the application importing `litellm` before `traigent` (import order —
+   the SDK's own pin cannot help, see "Residual risk — import order"), and
+   (b) the documented opt-out `TRAIGENT_LITELLM_LIVE_PRICES=1`, which
+   deliberately restores the `raw.githubusercontent.com` fetch on request.
+2. A pinned run spawns `subprocess.Popen: uname` via mlflow's own import
+   (`traigent/integrations/observability/mlflow.py:13`, eagerly imported
+   through `traigent/integrations/__init__.py:77`). Fix in flight on
+   `fix/lazy-mlflow-import` (lazy-import the mlflow integration).
+3. Seamless mode's in-memory AST rewrite + `compile` of user source: benign, but
    behaviour monitors that flag runtime code generation may notice it. The
    `context` injection mode avoids it.
-3. `git` subprocess during connected runs with content identity; `pip install`
+4. `git` subprocess during connected runs with content identity; `pip install`
    subprocess in examples (prompted).
-4. `ctypes.memset` on an in-process buffer (credential wipe).
-5. Hybrid-API heartbeats every 30 s: periodic, but only to a service you configure.
+5. `ctypes.memset` on an in-process buffer (credential wipe).
+6. Hybrid-API heartbeats every 30 s: periodic, but only to a service you configure.
 
 None observed: writing then executing a file, spawning a shell, `chmod +x`,
 loading a non-system native library, or periodic traffic during the recorded

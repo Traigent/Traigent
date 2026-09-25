@@ -35,7 +35,18 @@ logger = logging.getLogger(__name__)
 # importing traigent. Previously this gate fired only when the user explicitly
 # set TRAIGENT_OFFLINE_MODE=true, which meant the default behavior leaked an
 # outbound HTTP request in offline/air-gapped/regulated environments. (See #912.)
-os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+#
+# Must honor the same TRAIGENT_LITELLM_LIVE_PRICES opt-out that
+# traigent/__init__.py's earlier, package-level pin already checks. An
+# unconditional setdefault here silently re-applied the pin the moment any
+# submodule reaching this file was imported -- e.g. `from
+# traigent.api.decorators import EvaluationOptions`, which every real
+# optimize workload does before ever importing litellm itself -- because
+# __init__.py deliberately leaves the var unset when the user opts out, and
+# this line then set it anyway. That defeated the documented opt-out for
+# every workload except a bare `import traigent`.
+if not is_truthy(os.environ.get("TRAIGENT_LITELLM_LIVE_PRICES")):
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 # Import litellm with graceful fallback
 try:

@@ -524,6 +524,14 @@ def _child_main(workload: str, out_path: str, block_egress: bool) -> int:
             payload["litellm_version"] = _dist_version("litellm")
         except Exception:  # noqa: BLE001
             payload["litellm_version"] = None
+        # Direct evidence of whether the SDK's litellm-download pin landed in
+        # this child's environment -- lets a test assert on the *cause*
+        # (pin unset) rather than only the *effect* (a host got recorded),
+        # which would stay green even if the effect happened for an
+        # unrelated reason.
+        payload["env_litellm_local_model_cost_map"] = os.environ.get(
+            "LITELLM_LOCAL_MODEL_COST_MAP"
+        )
         tmp = out_path + ".partial"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, indent=2, default=str)
