@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-09-25
+
 ### Added
 
 - **Candidate runs: `optimize(apply=False)`.** Returns the result, with
@@ -30,20 +32,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   finisher silently replaced the first winner. `apply_best_config()` takes the
   same exclusive slot and holds it across its commit, so a promotion and an
   applying run can never interleave.
-
-### Fixed
-
-- **Per-run cost accounting state.** The unpriced-at-runtime model registry and
-  the usage-capture counter are now scoped to each `optimize()` run (a
-  `ContextVar` inherited by the run's asyncio tasks and SDK worker threads)
-  instead of being process-global and reset at every run start. Two agents
-  optimizing concurrently in one process no longer wipe or pick up each other's
-  records. Code outside a run keeps the previous process-level behaviour.
-  `copy_context_to_thread()` / `snapshot.restore()` carry the run's cost state
-  into user-created worker threads.
-- **A `CancelledError` or `KeyboardInterrupt` that escapes an `optimize()` run no
-  longer leaves the wrapper stuck in `OPTIMIZING`** (where `current_config`
-  raises); the lifecycle moves to `ERROR`, as for any other failure.
 
 ### Changed
 
@@ -76,6 +64,46 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   LiteLLM's original, download-capable exact tokenizer selection. See
   `traigent/skills/traigent-quickstart/references/environment-variables.md`.
 
+- **Declaring a reserved metric's direction opposite its default now warns.** An explicit
+  `orientation`/`orientations=` still wins over an SDK-owned default (e.g. declaring
+  `total_cost` as `maximize` instead of its `minimize` default), but it now emits
+  `traigent.utils.exceptions.ObjectiveDirectionOverrideWarning` naming the reserved
+  keyword, its default direction, and the direction you declared. The Traigent Backend
+  certificate for that run will refuse to assert a comparison claim for that objective,
+  because the declared direction contradicts the reserved keyword's preset (see
+  TraigentBackend's `front_claim_producer.check_preset_direction`); this warning surfaces
+  that at declaration time instead of only when the certificate is issued. No warning for
+  a bare name taking its canonical default, or for any custom (non-reserved) name.
+
+### Fixed
+
+
+- **Per-run cost accounting state.** The unpriced-at-runtime model registry and
+  the usage-capture counter are now scoped to each `optimize()` run (a
+  `ContextVar` inherited by the run's asyncio tasks and SDK worker threads)
+  instead of being process-global and reset at every run start. Two agents
+  optimizing concurrently in one process no longer wipe or pick up each other's
+  records. Code outside a run keeps the previous process-level behaviour.
+  `copy_context_to_thread()` / `snapshot.restore()` carry the run's cost state
+  into user-created worker threads.
+- **A `CancelledError` or `KeyboardInterrupt` that escapes an `optimize()` run no
+  longer leaves the wrapper stuck in `OPTIMIZING`** (where `current_config`
+  raises); the lifecycle moves to `ERROR`, as for any other failure.
+
+- **A custom evaluator's failed or unpriced examples no longer lower a trial's cost.**
+  A failed example was recorded with `cost: 0.0`, and an example that omitted `cost`
+  was read as `0.0`, so a trial with half its examples failed reported about half its
+  true cost and could win a cost objective (#2404). Cost keys (`cost`, `input_cost`,
+  `output_cost`, `total_cost`) are now averaged only over examples that measured
+  them, with a warning naming the coverage. A failed example does not fail its
+  trial or the run, including under strict cost accounting. Quality metrics keep
+  their existing behaviour (a failed example still scores 0.0), and a run where no
+  example reports cost is unchanged.
+
+## [0.28.0] - 2026-09-25
+
+### Changed
+
 - **Breaking: bare custom objective names now require an explicit orientation.**
   Traigent previously guessed from spelling and ultimately defaulted every unknown
   name to `maximize`. That made `total_cost` select the most expensive configuration
@@ -90,17 +118,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   call `create_default_objectives(["my_metric"], orientations={"my_metric":
   "maximize"})`. Explicit valid directions always win. Invalid directions now raise;
   target-banded objectives keep their non-directional band semantics.
-
-- **Declaring a reserved metric's direction opposite its default now warns.** An explicit
-  `orientation`/`orientations=` still wins over an SDK-owned default (e.g. declaring
-  `total_cost` as `maximize` instead of its `minimize` default), but it now emits
-  `traigent.utils.exceptions.ObjectiveDirectionOverrideWarning` naming the reserved
-  keyword, its default direction, and the direction you declared. The Traigent Backend
-  certificate for that run will refuse to assert a comparison claim for that objective,
-  because the declared direction contradicts the reserved keyword's preset (see
-  TraigentBackend's `front_claim_producer.check_preset_direction`); this warning surfaces
-  that at declaration time instead of only when the certificate is issued. No warning for
-  a bare name taking its canonical default, or for any custom (non-reserved) name.
 
 - **Unrelated inline datasets no longer share one portal history.** Every inline
   example list was named `inline_dataset`, and that name was sent as the dataset
@@ -167,16 +184,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `TRAIGENT_STRICT_COST_ACCOUNTING=true` explicitly when optimizing through them.
 
 ### Fixed
-
-- **A custom evaluator's failed or unpriced examples no longer lower a trial's cost.**
-  A failed example was recorded with `cost: 0.0`, and an example that omitted `cost`
-  was read as `0.0`, so a trial with half its examples failed reported about half its
-  true cost and could win a cost objective (#2404). Cost keys (`cost`, `input_cost`,
-  `output_cost`, `total_cost`) are now averaged only over examples that measured
-  them, with a warning naming the coverage. A failed example does not fail its
-  trial or the run, including under strict cost accounting. Quality metrics keep
-  their existing behaviour (a failed example still scores 0.0), and a run where no
-  example reports cost is unchanged.
 
 - **Dataset row ids you wrote yourself were sent to the Traigent service.** If your
   dataset rows carried an `example_id` (or `dataset_example_id` / `input_id` / a nested
