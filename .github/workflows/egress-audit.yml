@@ -1,0 +1,67 @@
+name: Egress Audit
+
+# Runs the SDK under the PEP 578 behaviour recorder and fails when it tries to
+# reach a host that is not on the allowlist in
+# tests/security/test_egress_allowlist.py. Scheduled, not a PR lane: the
+# `egress_audit` marker is excluded from the default pytest selection.
+# Nothing leaves the runner: the backend is a loopback stub, LLM calls are
+# mocked, and the recorder refuses every non-loopback lookup after logging it.
+# See docs/security/network-and-behaviour-manifest.md.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "37 4 * * *"
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: egress-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  egress-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          bash scripts/ci/install_sdk_requirements.sh -e ".[test]"
+
+      - name: Egress allowlist audit
+        run: |
+          pytest tests/security/test_egress_allowlist.py -m egress_audit \
+            -n 0 -rxX --tb=short --timeout=900
+
+      - name: Behaviour report (default settings and with network pins)
+        if: always()
+        run: |
+          mkdir -p egress-audit
+          workloads="quickstart optimize_mock optimize_seamless import_litellm_first token_count_llama"
+          python scripts/security/behaviour_audit.py run $workloads \
+            --json egress-audit/default.json --markdown egress-audit/default.md
+          python scripts/security/behaviour_audit.py run $workloads --pins \
+            --json egress-audit/pins.json --markdown egress-audit/pins.md
+          cat egress-audit/default.md egress-audit/pins.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload behaviour report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: egress-audit-report
+          path: egress-audit/
+          retention-days: 30
