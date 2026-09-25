@@ -44,6 +44,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **A `CancelledError` or `KeyboardInterrupt` that escapes an `optimize()` run no
   longer leaves the wrapper stuck in `OPTIMIZING`** (where `current_config`
   raises); the lifecycle moves to `ERROR`, as for any other failure.
+- **`import traigent` no longer imports MLflow.** With MLflow installed, every
+  `import traigent` (and every `@traigent.optimize` run, via
+  `traigent/integrations/__init__.py` and
+  `traigent/integrations/observability/__init__.py`) eagerly imported the real
+  `mlflow` package -- including its `uname` process spawn on some platforms --
+  whether or not MLflow tracking was ever configured. `MLFLOW_AVAILABLE` is now
+  a cheap `importlib.util.find_spec("mlflow")` check, and the real package is
+  imported once, lazily, on first actual use of the MLflow integration. Also
+  drops the unused `mlflow.sklearn` / `mlflow.pytorch` flavor-module imports
+  entirely (this integration only ever called MLflow's tracking surface).
 
 ### Changed
 
