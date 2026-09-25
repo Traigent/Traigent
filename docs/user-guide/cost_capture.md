@@ -1,0 +1,110 @@
+# Token and Cost Capture
+
+Traigent charges each trial for the LLM calls its examples make. It reads the
+provider's reported usage (prompt and completion tokens), prices it, and
+records `input_tokens`, `output_tokens`, `total_tokens`, `input_cost`,
+`output_cost` and `total_cost` on every example and trial.
+
+This page lists which calls are captured, how to price a model Traigent does
+not know, and what a trial reports when nothing was captured.
+
+## What is captured
+
+| Client | Captured when | Notes |
+| --- | --- | --- |
+| LangChain `ChatOpenAI.invoke`, `ChatAnthropic.invoke`, Bedrock chat models | always (patched by the evaluator) | `stream`/`astream` are captured from the last chunk |
+| `litellm.completion` / `litellm.acompletion` | always (patched by the evaluator) | streaming calls are not captured |
+| Traigent's `BedrockChatClient` | always | |
+| Raw OpenAI SDK: `openai.OpenAI` / `openai.AsyncOpenAI` `chat.completions.create` and `completions.create` | the OpenAI override is active (see below) | non-streaming calls that return `usage` |
+
+### Raw OpenAI SDK calls (including OpenAI-compatible gateways)
+
+An agent that calls the OpenAI SDK directly is captured when the OpenAI
+framework override is active. Either turn it on for the whole process:
+
+```python
+from traigent.integrations.llms.openai import enable_openai_optimization
+
+enable_openai_optimization()  # patches openai.OpenAI and openai.AsyncOpenAI
+```
+
+or name the classes on the decorator:
+
+```python
+@traigent.optimize(
+    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+    objectives=["accuracy", "cost"],
+    eval_dataset="data.jsonl",
+    auto_override_frameworks=True,
+    framework_targets=["openai.OpenAI", "openai.AsyncOpenAI"],
+)
+def answer(question: str) -> str:
+    client = openai.OpenAI(base_url=os.environ["LLM_BASE_URL"])
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",  # replaced by the trial's model
+        messages=[{"role": "user", "content": question}],
+    )
+    return response.choices[0].message.content
+```
+
+Every call made while an example runs is charged, so an agent that calls the
+model several times per example is billed for all of them.
+
+Coverage limits:
+
+- **The override must be active.** Without `enable_openai_optimization()` or
+  `framework_targets`, raw OpenAI calls are not captured (issue
+  [#2441](https://github.com/Traigent/Traigent/issues/2441) tracks
+  capture that needs no opt-in).
+- **Streaming calls (`stream=True`) are not captured.** A stream's usage
+  arrives only after your code reads it, and only with
+  `stream_options={"include_usage": True}`. The example is reported as
+  unmeasured, not as `$0`.
+- **Responses without `usage`** (some gateways omit it) are not captured.
+  They are reported as unmeasured.
+- `client.chat.completions.with_raw_response.create(...)` and the Responses
+  API (`client.responses.create`) are not captured.
+- When LangChain's `ChatOpenAI.invoke` or `litellm.completion` makes the
+  OpenAI call for you, that wrapper records the usage and the underlying
+  OpenAI call is not counted a second time.
+
+## Pricing a model Traigent does not know
+
+Traigent prices tokens from LiteLLM's model table. A gateway alias such as
+`acme-gateway/house-model` is not in that table, so its calls are
+**unpriced**: tokens are recorded, cost is not known. With
+`TRAIGENT_STRICT_COST_ACCOUNTING=true` an unpriced model raises; otherwise its
+calls are recorded at `$0` and the run's result carries a warning naming the
+unpriced model.
+
+Give the alias a price with `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` (inline) or
+`TRAIGENT_CUSTOM_MODEL_PRICING_FILE` (path to the same JSON). Prices are USD
+per token:
+
+```bash
+export TRAIGENT_CUSTOM_MODEL_PRICING_JSON='{
+  "acme-gateway/house-model": {
+    "input_cost_per_token": 0.000002,
+    "output_cost_per_token": 0.000005
+  }
+}'
+```
+
+The key must be the model name Traigent prices. In the custom-evaluator lane
+that is the trial's `model` setting when the configuration has one, otherwise
+the model the response reports.
+
+## When nothing was captured
+
+A missing measurement is not a free call. When a custom-evaluator example has
+no captured usage, its result has `metadata["llm_usage_measured"] = False`
+and no token or cost keys. When no example in a trial was measured, the
+trial's token and cost totals are left out of its metrics (or set to `None`
+when `TRAIGENT_STRICT_METRICS_NULLS=true`) instead of being reported as `0`.
+When only some examples were measured, the totals cover those examples and a
+warning names the coverage.
+
+The per-trial `cost` objective keeps its existing behaviour: with no measured
+example it reads `0.0`, and a run with a cost objective that captured no
+usage at all fails under strict cost accounting or carries the
+`COST_OBJECTIVE_NO_USAGE_CAPTURED` warning.

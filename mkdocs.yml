@@ -84,6 +84,7 @@ nav:
           - Execution Modes (local / cloud / hybrid_api): user-guide/execution-modes.md
           - Choosing an Optimization Model: user-guide/choosing_optimization_model.md
           - Evaluation Guide: user-guide/evaluation_guide.md
+          - Token and Cost Capture: user-guide/cost_capture.md
           - Injection Modes: user-guide/injection_modes.md
           - Interactive Optimization: user-guide/interactive_optimization.md
           - Optuna Integration: user-guide/optuna_integration.md
