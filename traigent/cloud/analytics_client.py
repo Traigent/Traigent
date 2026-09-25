@@ -493,6 +493,21 @@ def _unwrap_success_data(payload: Any, *, what: str) -> dict[str, Any]:
     return _require_object(envelope["data"], what=what)
 
 
+def _parse_response(payload: Any, *, what: str, envelope: bool) -> dict[str, Any]:
+    """Unwrap the analytics ``{success, data}`` envelope, or read a bare object.
+
+    The Director endpoints do NOT use the envelope: their frozen contract
+    (``director-*.schema.json``, e.g. ``Response201`` requiring ``session_id``
+    at the top level) defines bare response objects, and the backend returns
+    exactly that. Routing them through the envelope check made every Director
+    call raise ``malformed_response`` against a real backend while the mocked
+    tests -- which wrapped the payload the same wrong way -- passed.
+    """
+    if envelope:
+        return _unwrap_success_data(payload, what=what)
+    return _require_object(payload, what=what)
+
+
 def _require_keys(
     payload: dict[str, Any], required: frozenset[str], *, what: str
 ) -> None:
@@ -2278,13 +2293,14 @@ class BackendAnalyticsClient:
         what: str,
         headers: dict[str, str] | None = None,
         params: dict[str, str] | None = None,
+        envelope: bool = True,
     ) -> dict[str, Any]:
         client = self._get_client()
         response = await client.get(
             path, headers=self._request_headers(headers), params=params
         )
         response.raise_for_status()
-        return _unwrap_success_data(response.json(), what=what)
+        return _parse_response(response.json(), what=what, envelope=envelope)
 
     async def _post_json(
         self,
@@ -2293,13 +2309,14 @@ class BackendAnalyticsClient:
         what: str,
         json_body: dict[str, Any],
         headers: dict[str, str] | None = None,
+        envelope: bool = True,
     ) -> dict[str, Any]:
         client = self._get_client()
         response = await client.post(
             path, headers=self._request_headers(headers), json=json_body
         )
         response.raise_for_status()
-        return _unwrap_success_data(response.json(), what=what)
+        return _parse_response(response.json(), what=what, envelope=envelope)
 
     # === Read methods (the client.analytics surface) ===
 
@@ -3003,6 +3020,7 @@ class BackendAnalyticsClient:
         payload = await self._post_json(
             "/api/v1/director/sessions",
             what="director session",
+            envelope=False,
             json_body=body,
             headers={"Idempotency-Key": key},
         )
@@ -3098,6 +3116,7 @@ class BackendAnalyticsClient:
         payload = await self._post_json(
             f"/api/v1/director/sessions/{sid}/turn",
             what="director turn",
+            envelope=False,
             json_body=body,
             headers={"Idempotency-Key": key},
         )
@@ -3121,6 +3140,7 @@ class BackendAnalyticsClient:
         payload = await self._get_json(
             f"/api/v1/director/sessions/{sid}/state",
             what="director state",
+            envelope=False,
         )
         _require_keys(payload, _DIRECTOR_STATE_REQUIRED_KEYS, what="director state")
         return payload

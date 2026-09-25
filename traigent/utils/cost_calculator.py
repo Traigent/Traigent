@@ -9,6 +9,7 @@ Cost resolution is intentionally fail-fast:
 
 # Traceability: CONC-Layer-Core CONC-Quality-Performance CONC-Quality-Observability FUNC-ANALYTICS REQ-ANLY-011 SYNC-Observability
 
+import contextvars
 import json
 import logging
 import math
@@ -16,10 +17,12 @@ import os
 import re
 import threading
 import warnings
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
+from traigent.utils.env_config import is_truthy
 from traigent.utils.logging import configure_litellm_logging
 
 logger = logging.getLogger(__name__)
@@ -43,6 +46,28 @@ try:
 except (ImportError, KeyError):
     litellm = None  # type: ignore[assignment]
     LITELLM_AVAILABLE = False
+
+# Privacy/network default: counting tokens is not a reason to download a
+# tokenizer. For a handful of models (Llama 2/3, Cohere command-r, older
+# non-claude-3 Anthropic ids) litellm's *exact* tokenizer lives on
+# huggingface.co and litellm.token_counter()/litellm.encode() fetch it lazily
+# on first use per model — 8 blocked-network attempts and ~24s added latency
+# were observed pricing a Llama model with the host unreachable (owner ruling
+# 2026-09-25; evidence: PR #2433, branch feat/egress-and-behaviour-audit,
+# docs/security/network-and-behaviour-manifest.md -- not yet merged to
+# develop as of this change). Setting
+# litellm's own ``disable_hf_tokenizer_download`` flag makes
+# ``_select_tokenizer`` skip straight to its openai/tiktoken fallback for
+# those models instead of reaching the network — an approximate count for
+# them, not an outage. This flag affects ONLY tokenizer selection for
+# counting/encoding; it does not touch model calls, so it does not block a
+# customer's own Hugging Face model downloads elsewhere in the SDK (unlike
+# HF_HUB_OFFLINE, which this SDK must never set globally). Opt back into
+# exact-but-downloading HF tokenizers with TRAIGENT_HF_TOKENIZER_DOWNLOAD=1.
+if LITELLM_AVAILABLE and not is_truthy(
+    os.environ.get("TRAIGENT_HF_TOKENIZER_DOWNLOAD")
+):
+    litellm.disable_hf_tokenizer_download = True
 
 # Backward compatibility alias
 TOKENCOST_AVAILABLE = LITELLM_AVAILABLE
@@ -1372,23 +1397,92 @@ def prompt_cost(
 # pricing map). The count distinguishes "one unlucky call" from a systematic
 # per-trial pattern, and lets callers report how many $0.0 entries are actually
 # *unknown* spend rather than verified-free, instead of only naming the model.
-_unpriced_runtime_models: dict[str, int] = {}
-_unpriced_runtime_lock = threading.Lock()
+#
+# Per-run state (identity/concurrency decision, item 1): this registry and the
+# usage-capture counter below used to be process-global and were reset at each
+# ``optimize()`` start, so two agents optimizing concurrently in one process
+# wiped each other's records. They now live on a :class:`RunCostState` held in
+# a ``ContextVar``. ``optimize()`` opens a fresh one with :func:`cost_run_scope`;
+# asyncio tasks inherit it automatically and the SDK's worker-thread dispatch
+# sites run their callables under ``contextvars.copy_context()``, so every
+# record made on behalf of a run lands on that run's state. Outside any scope
+# (direct callers, legacy tests) the functions fall back to one process-level
+# state, which is exactly the previous behaviour.
+
+
+class RunCostState:
+    """Cost-accounting facts collected during ONE optimization run."""
+
+    __slots__ = ("_lock", "unpriced_runtime_models", "usage_captured_count")
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.unpriced_runtime_models: dict[str, int] = {}
+        self.usage_captured_count = 0
+
+    def record_unpriced(self, key: str) -> None:
+        with self._lock:
+            self.unpriced_runtime_models[key] = (
+                self.unpriced_runtime_models.get(key, 0) + 1
+            )
+
+    def unpriced_snapshot(self) -> dict[str, int]:
+        with self._lock:
+            return dict(sorted(self.unpriced_runtime_models.items()))
+
+    def reset_unpriced(self) -> None:
+        with self._lock:
+            self.unpriced_runtime_models.clear()
+
+    def record_usage(self) -> None:
+        with self._lock:
+            self.usage_captured_count += 1
+
+    def usage_count(self) -> int:
+        with self._lock:
+            return self.usage_captured_count
+
+    def reset_usage(self) -> None:
+        with self._lock:
+            self.usage_captured_count = 0
+
+
+_PROCESS_COST_STATE = RunCostState()
+_RUN_COST_STATE: contextvars.ContextVar[RunCostState | None] = contextvars.ContextVar(
+    "traigent_run_cost_state", default=None
+)
+
+
+def current_run_cost_state() -> RunCostState:
+    """Return the cost state of the run executing in this context.
+
+    Falls back to the process-level state when no run scope is active.
+    """
+    state = _RUN_COST_STATE.get()
+    return state if state is not None else _PROCESS_COST_STATE
+
+
+@contextmanager
+def cost_run_scope() -> Iterator[RunCostState]:
+    """Give the code inside (and the tasks/threads it dispatches) a fresh cost state."""
+    state = RunCostState()
+    token = _RUN_COST_STATE.set(state)
+    try:
+        yield state
+    finally:
+        _RUN_COST_STATE.reset(token)
 
 
 def record_unpriced_runtime_model(model: str) -> None:
     """Record an occurrence of a model id that priced to $0 at runtime despite non-zero tokens."""
     if not model or not str(model).strip():
         return
-    key = str(model).strip()
-    with _unpriced_runtime_lock:
-        _unpriced_runtime_models[key] = _unpriced_runtime_models.get(key, 0) + 1
+    current_run_cost_state().record_unpriced(str(model).strip())
 
 
 def get_unpriced_runtime_models() -> list[str]:
     """Return a snapshot of model ids that priced to $0 at runtime (sorted)."""
-    with _unpriced_runtime_lock:
-        return sorted(_unpriced_runtime_models)
+    return sorted(current_run_cost_state().unpriced_snapshot())
 
 
 def get_unpriced_runtime_occurrences() -> dict[str, int]:
@@ -1399,18 +1493,17 @@ def get_unpriced_runtime_occurrences() -> dict[str, int]:
     call for this model priced to $0" and report the recorded ``total_cost`` as
     a lower bound rather than verified spend.
     """
-    with _unpriced_runtime_lock:
-        return dict(sorted(_unpriced_runtime_models.items()))
+    return current_run_cost_state().unpriced_snapshot()
 
 
 def reset_unpriced_runtime_models() -> None:
-    """Clear the unpriced-at-runtime model registry (call before a fresh run)."""
-    with _unpriced_runtime_lock:
-        _unpriced_runtime_models.clear()
+    """Clear this run's unpriced-at-runtime model registry (call before a fresh run)."""
+    current_run_cost_state().reset_unpriced()
 
 
 # Whether THIS run measured any LLM usage at all. Recorded next to the
-# unpriced-model registry above and reset by the same run-start hook.
+# unpriced-model registry above, on the same per-run state, and reset by the
+# same run-start hook.
 #
 # It cannot be read back off the trials: when an optimized function returns a
 # plain string, ``LocalEvaluator._estimate_string_tokens`` fills the trial's
@@ -1418,29 +1511,23 @@ def reset_unpriced_runtime_models() -> None:
 # (1 token per 4 chars), so a run that made no LLM call at all still reports
 # non-zero token columns. Only the extraction site can tell a measured token
 # count from an estimate, so it records the fact here.
-_usage_captured: dict[str, int] = {"count": 0}
-_usage_captured_lock = threading.Lock()
 
 
 def record_captured_usage() -> None:
     """Record that real LLM usage (tokens or a reported cost) was measured."""
-    with _usage_captured_lock:
-        _usage_captured["count"] += 1
+    current_run_cost_state().record_usage()
 
 
 def any_usage_captured() -> bool:
     """Return True when this run measured LLM usage at least once."""
-    with _usage_captured_lock:
-        return _usage_captured["count"] > 0
+    return current_run_cost_state().usage_count() > 0
 
 
 def captured_usage_count() -> int:
     """Return how many examples contributed measured LLM usage this run."""
-    with _usage_captured_lock:
-        return _usage_captured["count"]
+    return current_run_cost_state().usage_count()
 
 
 def reset_captured_usage() -> None:
-    """Clear the usage-capture counter (call before a fresh run)."""
-    with _usage_captured_lock:
-        _usage_captured["count"] = 0
+    """Clear this run's usage-capture counter (call before a fresh run)."""
+    current_run_cost_state().reset_usage()

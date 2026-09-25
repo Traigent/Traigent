@@ -15,9 +15,10 @@ Complete reference of environment variables recognized by the Traigent SDK.
 | `TRAIGENT_SKIP_PROVIDER_VALIDATION`| `false`        | When `true`, skips API key validation at decoration time. Useful in CI environments.                |
 | `TRAIGENT_VALIDATION_TIMEOUT`     | `5.0`           | Timeout in seconds for provider API key validation checks.                                          |
 | `TRAIGENT_STRICT_COST_ACCOUNTING` | unset (strict at runtime when `cost` is an objective) | Unset: runs whose objectives include `cost` fail on an unpriced call instead of recording `$0`; other runs warn. `true`: also fails before trial 1 on unpriced models. `false`: never strict, unpriced calls are recorded as `$0` with a warning. |
-| `LITELLM_LOCAL_MODEL_COST_MAP`     | set to `True` by Traigent only if Traigent is imported before LiteLLM | `True` makes LiteLLM use its bundled price table instead of downloading one from GitHub on import. Set it yourself for reproducible cost numbers and restricted networks. See below. |
-| `HF_HUB_OFFLINE`                   | (unset)         | `1` stops token counting for Llama-family models from downloading a tokenizer from Hugging Face. Counting still works without the download. |
-| `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS` | (unset)     | `True` stops LiteLLM fetching its Anthropic beta-header config from GitHub. Only matters for Anthropic models. |
+| `LITELLM_LOCAL_MODEL_COST_MAP`     | set to `True` by Traigent, unless `TRAIGENT_LITELLM_LIVE_PRICES` is set | `True` makes LiteLLM use its bundled price table instead of downloading one from GitHub on import. Traigent sets this (via `setdefault`, so your own value always wins) as soon as `traigent` is imported, provided `traigent` is imported before `litellm` — see below. |
+| `TRAIGENT_LITELLM_LIVE_PRICES`     | `false`         | `1`/`true`/`yes`/`on` opts out of Traigent's default LiteLLM local-price-table pin (`LITELLM_LOCAL_MODEL_COST_MAP` / `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS`), restoring LiteLLM's own network fetch on import. Use this to pick up new-model prices before Traigent's next release. |
+| `TRAIGENT_HF_TOKENIZER_DOWNLOAD`   | `false`         | Token counting for models whose exact LiteLLM tokenizer lives on Hugging Face (Llama, Cohere `command-r`, older non-`claude-3` Anthropic ids) never downloads it by default — Traigent sets LiteLLM's own `disable_hf_tokenizer_download` flag, so counting falls back to LiteLLM's tiktoken-based approximate count for those models instead. `1`/`true`/`yes`/`on` opts back into LiteLLM's original download-capable (exact) tokenizer selection. Setting `HF_HUB_OFFLINE=1` yourself also works for this path (and for anything else in your process that honors it) but Traigent never sets it for you, since customers may legitimately download real Hugging Face models through Traigent elsewhere. |
+| `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS` | set to `True` by Traigent, unless `TRAIGENT_LITELLM_LIVE_PRICES` is set | `True` stops LiteLLM fetching its Anthropic beta-header config from GitHub. Only matters for Anthropic models. Same default and opt-out as `LITELLM_LOCAL_MODEL_COST_MAP`. |
 | `TRAIGENT_LOG_LEVEL`              | `INFO`          | Logging verbosity. Options: `DEBUG`, `INFO`, `WARNING`, `ERROR`.                                    |
 | `TRAIGENT_DEBUG`                  | (unset)         | When set to `1`, shows full tracebacks for `ConfigurationError` instead of user-friendly messages.  |
 | `TRAIGENT_STRICT_VALIDATION`      | `true`          | When `true`, DTO schema validation raises exceptions. When `false`, logs warnings only.             |
@@ -110,25 +111,38 @@ python my_optimization.py
 
 LiteLLM, which Traigent uses for pricing, can reach the network on its own:
 
-- **On import** it downloads its model price table from `raw.githubusercontent.com`
-  unless `LITELLM_LOCAL_MODEL_COST_MAP=True`. Traigent sets that variable when it is
-  imported first, but a module that imports `litellm` before `traigent` wins the race,
-  and import sorters such as Ruff put `litellm` first. Blocked networks do not break
-  the import: LiteLLM waits up to 5 seconds, prints a warning, and falls back.
-- **When counting tokens** for Llama-family models it downloads a tokenizer from
-  Hugging Face unless `HF_HUB_OFFLINE=1`.
+- **On import** it downloads its model price table from `raw.githubusercontent.com`,
+  and (for Anthropic models) a separate beta-header config from the same host, unless
+  `LITELLM_LOCAL_MODEL_COST_MAP=True` / `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True` are
+  already set. **Traigent sets both by default** as soon as `traigent` is imported
+  (`os.environ.setdefault`, so an explicit value of yours is never overridden) —
+  `import traigent` no longer makes this outbound call. Set
+  `TRAIGENT_LITELLM_LIVE_PRICES=1` to opt back into LiteLLM's live fetch (e.g. to
+  pick up prices for a model newer than your installed LiteLLM, ahead of Traigent's
+  next release).
+  The pin only works if `traigent` is imported before `litellm` in your process —
+  if something else imports `litellm` first (an import sorter such as Ruff can
+  reorder `import litellm` ahead of `import traigent`, or you may import litellm
+  directly), that import already ran before Traigent's pin could apply, and Traigent
+  logs a debug-level notice rather than silently doing nothing. Either import
+  `traigent` first, or set the two `LITELLM_LOCAL_*` variables yourself before
+  anything imports `litellm`. Blocked networks do not break the unpinned import:
+  LiteLLM waits up to 5 seconds, prints a warning, and falls back.
+- **When counting tokens** for Llama-family models (also Cohere `command-r` and older
+  non-`claude-3` Anthropic ids), LiteLLM's *exact* tokenizer lives on Hugging Face and
+  it used to fetch it lazily, per model, on first use. **Traigent turns this off by
+  default** (LiteLLM's own `disable_hf_tokenizer_download` flag) — `import traigent`
+  plus a token-counting call for one of these models no longer makes this outbound
+  call; counting falls back to LiteLLM's tiktoken-based count instead, which is
+  approximate (not the model's own tokenizer) for exactly these models. Set
+  `TRAIGENT_HF_TOKENIZER_DOWNLOAD=1` to opt back into LiteLLM's original,
+  download-capable exact tokenizer selection. Traigent does **not** set
+  `HF_HUB_OFFLINE` for you — that would also block a customer's own, legitimate
+  Hugging Face model downloads elsewhere in the SDK.
 
 The bundled and live price tables differ, so the same run can report different costs
-depending on which one loaded. Set these before anything imports LiteLLM:
-
-```
-LITELLM_LOCAL_MODEL_COST_MAP=True
-HF_HUB_OFFLINE=1
-# Anthropic models only:
-LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True
-```
-
-A model newer than your installed LiteLLM may then have no price. When `cost` is an
+depending on which one loaded. A model newer than your installed LiteLLM may then have no price — this now applies
+by default, not only when you opted in. When `cost` is an
 objective the run stops at the first such call and names the fix, rather than scoring
 the model as free. Provide a price with `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` or
 `TRAIGENT_CUSTOM_MODEL_PRICING_FILE`. Providers that report cost on each response,

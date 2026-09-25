@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "traigent"
-version = "0.28.0"
+version = "0.29.0"
 authors = [
     {name = "Traigent Team", email = "opensource@traigent.ai"},
 ]
@@ -380,7 +380,7 @@ addopts = [
     "--tb=short",
     "-n", "auto",
     "--dist", "loadgroup",
-    "-m", "not performance",
+    "-m", "not performance and not egress_audit",
     "-v",
     "--ignore=plugins",
     "--ignore=tests/auto_tune",
@@ -423,6 +423,7 @@ markers = [
     "chaos: marks chaos/fault injection tests (slow, may be flaky)",
     "contract: marks contract tests against real APIs (requires credentials)",
     "performance: marks benchmark/performance tests (excluded from default suite)",
+    "egress_audit: runs SDK workloads under the PEP 578 behaviour recorder and checks contacted hosts against an allowlist (excluded from default suite; scheduled lane, run with -m egress_audit)",
     "backend_online: test exercises connected/backend code paths; the autouse offline fixture clears offline mode instead of forcing it. Replaces the tests/unit/cloud/ path carve-out. Does NOT permit real network egress - transports must still be mocked.",
 ]
 

@@ -16,12 +16,16 @@ from typing import TYPE_CHECKING, Any, cast
 from traigent.api.types import ExampleResult
 from traigent.core.utils import safe_get_nested_attr
 from traigent.evaluators.base import (
+    MEASURED_ONLY_METRICS,
     BaseEvaluator,
     Dataset,
     EvaluationExample,
     EvaluationResult,
     _maybe_restore_trial_context,
+    aggregate_measured_metric,
+    failed_row_metrics,
 )
+from traigent.identity.examples import result_identity_fields
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.logging import get_logger
 
@@ -349,11 +353,11 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             ExampleResult with failure information
         """
         return ExampleResult(
-            example_id=f"example_{index}",
+            **result_identity_fields(example, f"example_{index}"),
             input_data=example.input_data,
             expected_output=example.expected_output,
             actual_output=None,
-            metrics=dict.fromkeys(self.metrics, 0.0),
+            metrics=failed_row_metrics(self.metrics),
             execution_time=0.0,
             success=False,
             error_message=str(error),
@@ -373,6 +377,9 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         """
         aggregated = {}
         for metric in self.metrics:
+            if metric in MEASURED_ONLY_METRICS:
+                aggregated[metric] = aggregate_measured_metric(metric, all_metrics)
+                continue
             metric_values = [m.get(metric, 0.0) for m in all_metrics if m]
             if metric_values:
                 aggregated[metric] = sum(metric_values) / len(metric_values)

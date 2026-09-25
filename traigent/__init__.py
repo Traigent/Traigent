@@ -40,10 +40,56 @@ Example:
 from __future__ import annotations
 
 import builtins
+import logging
 import os
 import sys
 import warnings
 from importlib import import_module
+
+_logger = logging.getLogger(__name__)
+
+
+def _is_truthy_env(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+# ---------------------------------------------------------------------------
+# LiteLLM network-download pin (must run before anything below can import
+# litellm, and before the quickstart block).
+# ---------------------------------------------------------------------------
+#
+# LiteLLM fetches its model-cost table (and, for Anthropic, its beta-header
+# config) from raw.githubusercontent.com the first time it is imported,
+# unless LITELLM_LOCAL_MODEL_COST_MAP / LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS
+# are already set. On a slow or blocked network that is a ~5s stall plus a
+# warning on every `import traigent` that transitively reaches litellm
+# (traigent.utils.cost_calculator, most provider integrations). Pin to the
+# bundled tables by default; TRAIGENT_LITELLM_LIVE_PRICES=1 opts back into
+# the live fetch (e.g. to pick up new-model prices before Traigent's next
+# release). ``setdefault`` so an explicit user value always wins.
+if not _is_truthy_env(os.environ.get("TRAIGENT_LITELLM_LIVE_PRICES")):
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+    os.environ.setdefault("LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS", "True")
+    if "litellm" in sys.modules:
+        # Too late for this process: litellm already ran its own
+        # module-level import-time fetch before `import traigent` executed
+        # (the caller imported litellm first), and reloading an
+        # already-imported module here is not safe. The setdefault above
+        # still lands so anything that reads the env var afterward (e.g.
+        # `traigent doctor`) sees the pin; only litellm's own network
+        # fetch already happened. Debug, not warning: this is expected
+        # whenever litellm is a deliberate first import.
+        _logger.debug(
+            "traigent: litellm was already imported before `import "
+            "traigent`, so the LITELLM_LOCAL_MODEL_COST_MAP / "
+            "LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS pin could not prevent "
+            "its import-time network fetch. Import traigent before "
+            "litellm, or set those two env vars yourself, to avoid it. "
+            "See traigent/skills/traigent-quickstart/references/"
+            "environment-variables.md."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +143,11 @@ if _is_quickstart_invocation():
     # across the import boundary.
     os.environ["_TRAIGENT_QUICKSTART_BOOTSTRAP"] = "1"
     os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
+    # Usually a no-op: the LiteLLM pin above already set this unless the
+    # user opted into TRAIGENT_LITELLM_LIVE_PRICES. Kept here so quickstart
+    # stays fully offline-deterministic even when that opt-out is set —
+    # the demo's own "no network" promise outranks the user's live-price
+    # preference for this one invocation.
     os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
     # Only force offline if the user hasn't supplied a portal key — they
     # may want results synced even while LLM calls stay mocked.

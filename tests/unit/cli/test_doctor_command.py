@@ -752,11 +752,26 @@ class TestOfflinePinsTheLiteLLMPriceTable:
 
         assert os.environ.get("LITELLM_LOCAL_MODEL_COST_MAP") == "True"
 
-    def test_without_offline_the_cost_map_is_left_alone(
+    def test_opt_out_leaves_the_cost_map_unset_without_offline(
         self, runner, monkeypatch
     ) -> None:
-        """Control: the pin is scoped to --offline, not applied unconditionally."""
+        """Control, updated for the new default: `import traigent` now pins
+        LITELLM_LOCAL_MODEL_COST_MAP by default (see traigent/__init__.py),
+        so a bare non-offline `doctor` run can no longer be used to prove
+        the var is "left alone" -- it isn't, by design, unless the user
+        opted out with TRAIGENT_LITELLM_LIVE_PRICES. This asserts that,
+        under the opt-out, doctor's own `--offline`-only setdefault still
+        does not fire when --offline is absent.
+
+        (The opt-out's effect on the top-level import pin itself is
+        covered in a fresh subprocess by
+        tests/unit/test_litellm_pin.py::TestLiteLLMPinDefault
+        .test_opt_out_leaves_both_unset -- traigent is already imported
+        once for this whole test process, so that part can't be
+        re-observed here.)
+        """
         monkeypatch.delenv("LITELLM_LOCAL_MODEL_COST_MAP", raising=False)
+        monkeypatch.setenv("TRAIGENT_LITELLM_LIVE_PRICES", "1")
         monkeypatch.setenv("TRAIGENT_SKIP_DOTENV", "true")
 
         runner.invoke(doctor, ["--json", "--model", "gpt-4o"])

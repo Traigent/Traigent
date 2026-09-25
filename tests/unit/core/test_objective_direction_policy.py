@@ -14,6 +14,7 @@ from traigent.core.objectives import (
 from traigent.api.decorators import optimize
 from traigent.core import objective_directions
 from traigent.core.orchestrator_helpers import prepare_objectives
+from traigent.utils.exceptions import ObjectiveDirectionOverrideWarning
 from traigent.utils.results_table import _find_best_per_objective, _get_objective_info
 
 
@@ -85,8 +86,79 @@ def test_custom_name_explicit_orientation_wins() -> None:
 @pytest.mark.parametrize("name", ["accuracy", "total_cost"])
 def test_explicit_orientation_overrides_known_name(name: str) -> None:
     expected = "minimize" if name == "accuracy" else "maximize"
-    schema = create_default_objectives([name], orientations={name: expected})
+    with pytest.warns(ObjectiveDirectionOverrideWarning):
+        schema = create_default_objectives([name], orientations={name: expected})
     assert schema.get_orientation(name) == expected
+
+
+def test_conflicting_reserved_direction_warns_and_names_the_default() -> None:
+    """total_cost declared maximize (default: minimize) warns with specifics."""
+    with pytest.warns(ObjectiveDirectionOverrideWarning) as record:
+        schema = create_default_objectives(
+            ["total_cost"], orientations={"total_cost": "maximize"}
+        )
+
+    # Explicit direction still wins -- the warning does not block it.
+    assert schema.get_orientation("total_cost") == "maximize"
+
+    assert len(record) == 1
+    message = str(record[0].message)
+    assert "total_cost" in message
+    assert "minimize" in message  # the reserved keyword's default direction
+    assert "maximize" in message  # the declared, conflicting direction
+    assert "certificate" in message
+    assert "refuse" in message
+
+
+def test_conflicting_reserved_direction_warns_for_accuracy_minimize() -> None:
+    """accuracy declared minimize (default: maximize) also warns."""
+    with pytest.warns(ObjectiveDirectionOverrideWarning) as record:
+        schema = create_default_objectives(
+            ["accuracy"], orientations={"accuracy": "minimize"}
+        )
+
+    assert schema.get_orientation("accuracy") == "minimize"
+    message = str(record[0].message)
+    assert "accuracy" in message
+    assert "maximize" in message
+    assert "minimize" in message
+
+
+def test_matching_reserved_direction_does_not_warn(
+    recwarn: pytest.WarningsRecorder,
+) -> None:
+    """Declaring the SAME direction as the reserved default emits no warning."""
+    schema = create_default_objectives(
+        ["total_cost"], orientations={"total_cost": "minimize"}
+    )
+    assert schema.get_orientation("total_cost") == "minimize"
+    assert not any(
+        issubclass(w.category, ObjectiveDirectionOverrideWarning) for w in recwarn.list
+    )
+
+
+def test_custom_name_explicit_direction_does_not_warn(
+    recwarn: pytest.WarningsRecorder,
+) -> None:
+    """A custom (non-reserved) name never triggers the conflict warning."""
+    schema = create_default_objectives(
+        ["plugin_quality"], orientations={"plugin_quality": "maximize"}
+    )
+    assert schema.get_orientation("plugin_quality") == "maximize"
+    assert not any(
+        issubclass(w.category, ObjectiveDirectionOverrideWarning) for w in recwarn.list
+    )
+
+
+def test_bare_reserved_name_default_does_not_warn(
+    recwarn: pytest.WarningsRecorder,
+) -> None:
+    """Taking the reserved keyword's own default (no explicit override) warns nothing."""
+    schema = create_default_objectives(["total_cost"])
+    assert schema.get_orientation("total_cost") == "minimize"
+    assert not any(
+        issubclass(w.category, ObjectiveDirectionOverrideWarning) for w in recwarn.list
+    )
 
 
 def test_invalid_explicit_orientation_is_rejected() -> None:

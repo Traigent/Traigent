@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from traigent.api.types import ExampleResult
+from traigent.identity.examples import result_identity_fields
 from traigent.evaluators.dataset_registry import (
     DatasetRegistryEntry,
     resolve_dataset_reference,
@@ -89,6 +90,50 @@ example_evaluation_span = None  # type: ignore
 record_example_result = None  # type: ignore
 
 logger = get_logger(__name__)
+
+# Cost keys are measurements, not scores: a row that failed or did not report
+# one has an UNKNOWN cost. Imputing 0.0 for it makes a trial look cheaper than
+# it was and can let it win a cost objective (issue #2404).
+MEASURED_ONLY_METRICS = frozenset({"cost", "input_cost", "output_cost", "total_cost"})
+
+
+def failed_row_metrics(metric_names: Iterable[str]) -> dict[str, float]:
+    """Metrics for a failed example: 0.0 quality, no fabricated cost."""
+    return {name: 0.0 for name in metric_names if name not in MEASURED_ONLY_METRICS}
+
+
+def _measured_value(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def aggregate_measured_metric(metric: str, all_metrics: list[dict[str, Any]]) -> float:
+    """Mean of a cost metric over the rows that actually measured it.
+
+    With partial coverage the mean of the measured rows is the estimate and a
+    warning names the coverage. It does not raise: a failed trial has no cost,
+    and under strict cost accounting the run-level spend check would then abort
+    the whole run over one failed example. No coverage at all keeps the
+    historical 0.0 and is left to the run-level no-usage handling.
+    """
+    measured = [
+        number
+        for row in all_metrics
+        if row and (number := _measured_value(row.get(metric))) is not None
+    ]
+    if not measured:
+        return 0.0
+    if len(measured) < len(all_metrics):
+        message = (
+            f"'{metric}' was measured for only {len(measured)} of "
+            f"{len(all_metrics)} examples; failed or unpriced examples have an "
+            "unknown cost, so this trial's cost is a partial estimate"
+        )
+        logger.warning("%s.", message)
+    return sum(measured) / len(measured)
+
 
 _T = TypeVar("_T")
 
@@ -2779,7 +2824,7 @@ class BaseEvaluator(ABC):
     ) -> ExampleResult:
         """Create ExampleResult for a failed concurrent evaluation."""
         return ExampleResult(
-            example_id=f"example_{index}",
+            **result_identity_fields(example, f"example_{index}"),
             input_data=example.input_data,
             expected_output=example.expected_output,
             actual_output=None,
@@ -3729,11 +3774,11 @@ class BaseEvaluator(ABC):
     ) -> ExampleResult:
         """Create an ExampleResult for a failed evaluation."""
         return ExampleResult(
-            example_id=example_id,
+            **result_identity_fields(example, example_id),
             input_data=example.input_data,
             expected_output=example.expected_output,
             actual_output=None,
-            metrics=dict.fromkeys(self.metrics, 0.0),
+            metrics=failed_row_metrics(self.metrics),
             execution_time=execution_time,
             success=False,
             error_message=str(error),
@@ -3876,7 +3921,7 @@ class BaseEvaluator(ABC):
             output, user_metrics = self._unpack_user_metrics(raw_output)
 
             result = ExampleResult(
-                example_id=example_id,
+                **result_identity_fields(example, example_id),
                 input_data=example.input_data,
                 expected_output=example.expected_output,
                 actual_output=output,
@@ -4347,6 +4392,9 @@ class SimpleScoringEvaluator(BaseEvaluator):
         """
         aggregated = {}
         for metric in self.metrics:
+            if metric in MEASURED_ONLY_METRICS:
+                aggregated[metric] = aggregate_measured_metric(metric, all_metrics)
+                continue
             metric_values = [m.get(metric, 0.0) for m in all_metrics if m]
             if metric_values:
                 if "p95" in metric.lower():
@@ -4573,7 +4621,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
 
                 # Create ExampleResult
                 example_result = ExampleResult(
-                    example_id=f"example_{i}",
+                    **result_identity_fields(example, f"example_{i}"),
                     input_data=example.input_data,
                     expected_output=example.expected_output,
                     actual_output=output,
@@ -4816,11 +4864,11 @@ class SimpleScoringEvaluator(BaseEvaluator):
             ExampleResult with failure information
         """
         return ExampleResult(
-            example_id=f"example_{index}",
+            **result_identity_fields(example, f"example_{index}"),
             input_data=example.input_data,
             expected_output=example.expected_output,
             actual_output=None,
-            metrics=dict.fromkeys(self.metrics, 0.0),
+            metrics=failed_row_metrics(self.metrics),
             execution_time=0.0,
             success=False,
             error_message=str(error),

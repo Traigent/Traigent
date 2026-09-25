@@ -9,6 +9,7 @@ including parallel optimization, multi-objective batch optimization, and distrib
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import math
 import numbers
 import time
@@ -175,8 +176,11 @@ class ParallelBatchOptimizer(BaseOptimizer):
                 remaining_configs = remaining_configs[current_batch_size:]
 
                 # Submit trials to thread pool
+                # Each trial thread runs under a copy of this run's context
+                # so run-scoped state (e.g. the per-run cost state) follows it.
                 future_to_config = {
                     executor.submit(
+                        contextvars.copy_context().run,
                         self._run_single_trial_sync,
                         config,
                         func,

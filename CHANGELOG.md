@@ -6,6 +6,100 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-09-25
+
+### Added
+
+- **Candidate runs: `optimize(apply=False)`.** Returns the result, with
+  `result.best_config` as the candidate, without applying it to the wrapper. A
+  candidate run executes on an isolated copy of the wrapper taken at rest: it does
+  not change the wrapper's state, results history, current config or runtime
+  overrides. Any number of candidate runs may run in parallel with each other and
+  with an applying run. Promote a candidate later with `apply_best_config(result)`.
+  The default (`apply=True`) is unchanged. The candidate's config and search space
+  are snapshotted at candidate start by a type-preserving structural copy
+  (classified by type identity: exact `dict`/`list`/`tuple` rebuilt, tuples kept
+  as tuples, `None`/`str`/`int`/`float`/`bool` kept, NumPy scalars normalized to
+  Python scalars). Any other value -- including container subclasses (a known
+  restriction), functions, bound methods, classes, `Enum` members, locks and live
+  clients -- makes `optimize(apply=False)` raise
+  `traigent.utils.exceptions.CandidateIsolationError` naming the key path; no
+  user code runs during the copy.
+- **Overlapping applying runs on one wrapper are refused.** A second
+  `optimize()` (`apply=True`) on an `OptimizedFunction` that already has one in
+  flight now raises `traigent.utils.exceptions.OverlappingOptimizationError` (a
+  subclass of `OptimizationStateError`) instead of racing it, where the last
+  finisher silently replaced the first winner. `apply_best_config()` takes the
+  same exclusive slot and holds it across its commit, so a promotion and an
+  applying run can never interleave.
+
+### Changed
+
+- **`import traigent` no longer lets LiteLLM reach the network by default.**
+  LiteLLM downloads its model-cost table (and, for Anthropic, its beta-header
+  config) from `raw.githubusercontent.com` on its own first import unless
+  `LITELLM_LOCAL_MODEL_COST_MAP` / `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS` are
+  already set — a ~5s stall plus a warning on a blocked or restricted network.
+  Traigent now sets both (`os.environ.setdefault`, so an explicit value of
+  yours always wins) as soon as `traigent` is imported, before anything else
+  in the package can import `litellm`. Set `TRAIGENT_LITELLM_LIVE_PRICES=1` to
+  opt back into LiteLLM's live fetch. The pin only works if `traigent` is
+  imported before `litellm` in your process; if `litellm` was already
+  imported first, Traigent logs a debug notice instead of reloading it. See
+  `traigent/skills/traigent-quickstart/references/environment-variables.md`.
+
+- **Counting tokens no longer downloads a Hugging Face tokenizer.** Pricing a
+  Llama-family model (also Cohere `command-r` and older non-`claude-3`
+  Anthropic ids) through `litellm.token_counter()` used to lazily fetch that
+  model's "exact" tokenizer from `huggingface.co` on first use — an egress
+  audit measured 8 blocked-network attempts and ~24s added latency pricing
+  one such model with the host unreachable. Traigent now sets LiteLLM's own
+  `disable_hf_tokenizer_download` flag as soon as `traigent` is imported, so
+  counting for these models falls back to LiteLLM's tiktoken-based count
+  instead — approximate for exactly these models, not an outage. This
+  affects only tokenizer selection for counting/encoding; it does not touch
+  model calls, so it does not block a customer's own Hugging Face model
+  downloads elsewhere in the SDK (Traigent still never sets `HF_HUB_OFFLINE`
+  globally). Set `TRAIGENT_HF_TOKENIZER_DOWNLOAD=1` to opt back into
+  LiteLLM's original, download-capable exact tokenizer selection. See
+  `traigent/skills/traigent-quickstart/references/environment-variables.md`.
+
+- **Declaring a reserved metric's direction opposite its default now warns.** An explicit
+  `orientation`/`orientations=` still wins over an SDK-owned default (e.g. declaring
+  `total_cost` as `maximize` instead of its `minimize` default), but it now emits
+  `traigent.utils.exceptions.ObjectiveDirectionOverrideWarning` naming the reserved
+  keyword, its default direction, and the direction you declared. The Traigent Backend
+  certificate for that run will refuse to assert a comparison claim for that objective,
+  because the declared direction contradicts the reserved keyword's preset (see
+  TraigentBackend's `front_claim_producer.check_preset_direction`); this warning surfaces
+  that at declaration time instead of only when the certificate is issued. No warning for
+  a bare name taking its canonical default, or for any custom (non-reserved) name.
+
+### Fixed
+
+
+- **Per-run cost accounting state.** The unpriced-at-runtime model registry and
+  the usage-capture counter are now scoped to each `optimize()` run (a
+  `ContextVar` inherited by the run's asyncio tasks and SDK worker threads)
+  instead of being process-global and reset at every run start. Two agents
+  optimizing concurrently in one process no longer wipe or pick up each other's
+  records. Code outside a run keeps the previous process-level behaviour.
+  `copy_context_to_thread()` / `snapshot.restore()` carry the run's cost state
+  into user-created worker threads.
+- **A `CancelledError` or `KeyboardInterrupt` that escapes an `optimize()` run no
+  longer leaves the wrapper stuck in `OPTIMIZING`** (where `current_config`
+  raises); the lifecycle moves to `ERROR`, as for any other failure.
+
+- **A custom evaluator's failed or unpriced examples no longer lower a trial's cost.**
+  A failed example was recorded with `cost: 0.0`, and an example that omitted `cost`
+  was read as `0.0`, so a trial with half its examples failed reported about half its
+  true cost and could win a cost objective (#2404). Cost keys (`cost`, `input_cost`,
+  `output_cost`, `total_cost`) are now averaged only over examples that measured
+  them, with a warning naming the coverage. A failed example does not fail its
+  trial or the run, including under strict cost accounting. Quality metrics keep
+  their existing behaviour (a failed example still scores 0.0), and a run where no
+  example reports cost is unchanged.
+
 ## [0.28.0] - 2026-09-25
 
 ### Changed
