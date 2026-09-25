@@ -752,10 +752,23 @@ def to_markdown(reports: list[dict[str, Any]]) -> str:
         lines.append("")
         lines.append("| category | detail | first-seen site | via | count |")
         lines.append("|---|---|---|---|---|")
+        stdlib_codegen = [ev for ev in rep["events"] if "via stdlib" in ev["detail"]]
         for ev in rep["events"]:
+            if ev in stdlib_codegen:
+                continue
             lines.append(
                 f"| {ev['category']} | `{ev['detail']}` | `{ev['first_site']}` | "
                 f"{' ← '.join(ev['via'])} | {ev['count']} |"
+            )
+        if stdlib_codegen:
+            gens = sorted(
+                {ev["detail"].rsplit("via stdlib ", 1)[1] for ev in stdlib_codegen}
+            )
+            lines.append(
+                f"| codegen | {len(stdlib_codegen)} rows / "
+                f"{sum(ev['count'] for ev in stdlib_codegen)} events of stdlib "
+                f"code generation ({', '.join(gens)}) triggered by class "
+                "definitions at import; listed in the JSON report | | | |"
             )
         lines.append("")
     lines.append(
