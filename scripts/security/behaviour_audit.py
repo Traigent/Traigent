@@ -97,12 +97,15 @@ _SCRUBBED_ENV_PREFIXES = (
     "TOGETHER",
     "HF_",
     "HUGGING",
+    "TRANSFORMERS_",
     "LITELLM_",
     "LANGFUSE_",
     "LANGCHAIN_",
     "LANGSMITH_",
     "TRAIGENT_",
     "OTEL_",
+    "PYTEST_",
+    "COV_CORE_",
 )
 
 _NETWORK_EVENTS = {
@@ -227,15 +230,15 @@ class Recorder:
             return "/dev,/proc"
         if "site-packages" in real or "dist-packages" in real:
             return "site-packages"
+        # home before cwd: the driver places HOME inside the working dir.
+        if real.startswith(self.home + os.sep):
+            top = os.path.relpath(real, self.home).split(os.sep)[0]
+            return f"home/{top}"
         if real.startswith(self.cwd + os.sep) or real == self.cwd:
             top = os.path.relpath(real, self.cwd).split(os.sep)[0]
             return f"cwd/{top}" if top != "." else "cwd"
         if real.startswith(self.tmp + os.sep):
             return "temp dir"
-        if real.startswith(self.home + os.sep):
-            rel = os.path.relpath(real, self.home)
-            top = rel.split(os.sep)[0]
-            return "home/.traigent" if top == ".traigent" else f"home/{top}"
         if real.startswith(self.repo_root):
             return "sdk source tree"
         return "other"

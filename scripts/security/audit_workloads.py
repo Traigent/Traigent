@@ -134,10 +134,23 @@ def token_count_llama() -> None:
         print(f"token_count_llama: {type(exc).__name__}: {exc}", file=sys.stderr)
 
 
+def canary_new_host() -> None:
+    """Control: one stdlib request to an unlisted host (recorder sensitivity)."""
+    import urllib.request
+
+    import traigent  # noqa: F401 - same import-time baseline as the real runs
+
+    try:
+        urllib.request.urlopen("https://egress-canary.invalid/", timeout=5)  # noqa: S310
+    except OSError as exc:
+        print(f"canary_new_host: {type(exc).__name__}: {exc}", file=sys.stderr)
+
+
 WORKLOADS: dict[str, Callable[[], None]] = {
     "quickstart": quickstart,
     "optimize_mock": optimize_mock,
     "optimize_seamless": optimize_seamless,
     "import_litellm_first": import_litellm_first,
     "token_count_llama": token_count_llama,
+    "canary_new_host": canary_new_host,
 }
