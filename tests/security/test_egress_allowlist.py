@@ -135,7 +135,6 @@ def test_default_backend_reaches_only_first_party_hosts_when_pinned() -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason=_LITELLM_PIN_FIX)
 def test_default_run_reaches_no_third_party_host() -> None:
     report = _run("optimize_mock", pins=False)
     assert _unexpected(report, frozenset()) == set()
@@ -158,7 +157,6 @@ def test_live_prices_opt_out_reaches_github_only() -> None:
     assert behaviour_audit.external_hosts(report) == {"raw.githubusercontent.com"}
 
 
-@pytest.mark.xfail(strict=True, reason=_HF_PENDING)
 def test_default_llama_token_count_reaches_no_third_party_host() -> None:
     report = _run("token_count_llama", pins=False)
     assert _unexpected(report, frozenset()) == set()

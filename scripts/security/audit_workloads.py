@@ -47,11 +47,15 @@ def quickstart() -> None:
 
 
 def _run_optimize(*, injection_mode: str = "context") -> None:
-    import litellm
+    # traigent BEFORE litellm, on purpose: this is the SDK-default case, where
+    # `import traigent` pins litellm's bundled price table before litellm's
+    # own import-time fetch. The litellm-first order (what an import sorter
+    # produces) is measured separately by import_litellm_first.
+    import traigent  # isort: skip
+    from traigent.api.decorators import EvaluationOptions  # isort: skip
+    from traigent.testing import enable_mock_mode_for_quickstart  # isort: skip
 
-    import traigent
-    from traigent.api.decorators import EvaluationOptions
-    from traigent.testing import enable_mock_mode_for_quickstart
+    import litellm  # isort: skip
 
     enable_mock_mode_for_quickstart()
     globals()["_litellm"] = litellm
