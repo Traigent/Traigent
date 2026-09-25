@@ -22,6 +22,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
+from traigent.utils.env_config import is_truthy
 from traigent.utils.logging import configure_litellm_logging
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,28 @@ try:
 except (ImportError, KeyError):
     litellm = None  # type: ignore[assignment]
     LITELLM_AVAILABLE = False
+
+# Privacy/network default: counting tokens is not a reason to download a
+# tokenizer. For a handful of models (Llama 2/3, Cohere command-r, older
+# non-claude-3 Anthropic ids) litellm's *exact* tokenizer lives on
+# huggingface.co and litellm.token_counter()/litellm.encode() fetch it lazily
+# on first use per model — 8 blocked-network attempts and ~24s added latency
+# were observed pricing a Llama model with the host unreachable (owner ruling
+# 2026-09-25; evidence: PR #2433, branch feat/egress-and-behaviour-audit,
+# docs/security/network-and-behaviour-manifest.md -- not yet merged to
+# develop as of this change). Setting
+# litellm's own ``disable_hf_tokenizer_download`` flag makes
+# ``_select_tokenizer`` skip straight to its openai/tiktoken fallback for
+# those models instead of reaching the network — an approximate count for
+# them, not an outage. This flag affects ONLY tokenizer selection for
+# counting/encoding; it does not touch model calls, so it does not block a
+# customer's own Hugging Face model downloads elsewhere in the SDK (unlike
+# HF_HUB_OFFLINE, which this SDK must never set globally). Opt back into
+# exact-but-downloading HF tokenizers with TRAIGENT_HF_TOKENIZER_DOWNLOAD=1.
+if LITELLM_AVAILABLE and not is_truthy(
+    os.environ.get("TRAIGENT_HF_TOKENIZER_DOWNLOAD")
+):
+    litellm.disable_hf_tokenizer_download = True
 
 # Backward compatibility alias
 TOKENCOST_AVAILABLE = LITELLM_AVAILABLE

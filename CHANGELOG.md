@@ -60,6 +60,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   imported first, Traigent logs a debug notice instead of reloading it. See
   `traigent/skills/traigent-quickstart/references/environment-variables.md`.
 
+- **Counting tokens no longer downloads a Hugging Face tokenizer.** Pricing a
+  Llama-family model (also Cohere `command-r` and older non-`claude-3`
+  Anthropic ids) through `litellm.token_counter()` used to lazily fetch that
+  model's "exact" tokenizer from `huggingface.co` on first use — an egress
+  audit measured 8 blocked-network attempts and ~24s added latency pricing
+  one such model with the host unreachable. Traigent now sets LiteLLM's own
+  `disable_hf_tokenizer_download` flag as soon as `traigent` is imported, so
+  counting for these models falls back to LiteLLM's tiktoken-based count
+  instead — approximate for exactly these models, not an outage. This
+  affects only tokenizer selection for counting/encoding; it does not touch
+  model calls, so it does not block a customer's own Hugging Face model
+  downloads elsewhere in the SDK (Traigent still never sets `HF_HUB_OFFLINE`
+  globally). Set `TRAIGENT_HF_TOKENIZER_DOWNLOAD=1` to opt back into
+  LiteLLM's original, download-capable exact tokenizer selection. See
+  `traigent/skills/traigent-quickstart/references/environment-variables.md`.
+
 - **Breaking: bare custom objective names now require an explicit orientation.**
   Traigent previously guessed from spelling and ultimately defaulted every unknown
   name to `maximize`. That made `total_cost` select the most expensive configuration
