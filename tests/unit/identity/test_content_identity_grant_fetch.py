@@ -159,6 +159,28 @@ def test_unknown_content_identity_value_fails_loud(value: Any) -> None:
         TraigentConfig(content_identity=value)
 
 
+@pytest.mark.parametrize("assign", ["attr", "item", "merge"])
+def test_string_opt_out_after_construction_beats_the_env(
+    monkeypatch: pytest.MonkeyPatch, assign: str
+) -> None:
+    monkeypatch.setenv("TRAIGENT_CONTENT_IDENTITY", "1")
+    config = TraigentConfig()
+    if assign == "attr":
+        config.content_identity = "false"  # type: ignore[assignment]
+    elif assign == "item":
+        config["content_identity"] = "off"
+    else:
+        config = config.merge({"content_identity": "no"})
+    assert config.content_identity is False
+    assert content_identity_enabled(config) is False
+
+
+def test_unknown_value_assigned_after_construction_fails_loud() -> None:
+    config = TraigentConfig()
+    with pytest.raises(ValueError, match="content_identity must be a boolean"):
+        config.content_identity = "maybe"  # type: ignore[assignment]
+
+
 def _gate(config: TraigentConfig, client: Any) -> Any:
     fake_self = SimpleNamespace(traigent_config=config, backend_client=client)
     return OptimizationOrchestrator._content_identity_grant_client(fake_self)  # type: ignore[arg-type]
