@@ -47,6 +47,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **`import traigent` no longer lets LiteLLM reach the network by default.**
+  LiteLLM downloads its model-cost table (and, for Anthropic, its beta-header
+  config) from `raw.githubusercontent.com` on its own first import unless
+  `LITELLM_LOCAL_MODEL_COST_MAP` / `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS` are
+  already set — a ~5s stall plus a warning on a blocked or restricted network.
+  Traigent now sets both (`os.environ.setdefault`, so an explicit value of
+  yours always wins) as soon as `traigent` is imported, before anything else
+  in the package can import `litellm`. Set `TRAIGENT_LITELLM_LIVE_PRICES=1` to
+  opt back into LiteLLM's live fetch. The pin only works if `traigent` is
+  imported before `litellm` in your process; if `litellm` was already
+  imported first, Traigent logs a debug notice instead of reloading it. See
+  `traigent/skills/traigent-quickstart/references/environment-variables.md`.
+
 - **Breaking: bare custom objective names now require an explicit orientation.**
   Traigent previously guessed from spelling and ultimately defaulted every unknown
   name to `maximize`. That made `total_cost` select the most expensive configuration
