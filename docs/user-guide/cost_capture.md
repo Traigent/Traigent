@@ -31,6 +31,9 @@ enable_openai_optimization()  # patches openai.OpenAI and openai.AsyncOpenAI
 or name the classes on the decorator:
 
 ```python
+client = openai.OpenAI(base_url=os.environ["LLM_BASE_URL"])  # build it once
+
+
 @traigent.optimize(
     configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
     objectives=["accuracy", "cost"],
@@ -39,7 +42,6 @@ or name the classes on the decorator:
     framework_targets=["openai.OpenAI", "openai.AsyncOpenAI"],
 )
 def answer(question: str) -> str:
-    client = openai.OpenAI(base_url=os.environ["LLM_BASE_URL"])
     response = client.chat.completions.create(
         model="gpt-4o-mini",  # replaced by the trial's model
         messages=[{"role": "user", "content": question}],
@@ -104,7 +106,36 @@ when `TRAIGENT_STRICT_METRICS_NULLS=true`) instead of being reported as `0`.
 When only some examples were measured, the totals cover those examples and a
 warning names the coverage.
 
-The per-trial `cost` objective keeps its existing behaviour: with no measured
-example it reads `0.0`, and a run with a cost objective that captured no
-usage at all fails under strict cost accounting or carries the
-`COST_OBJECTIVE_NO_USAGE_CAPTURED` warning.
+The same holds for a `cost` objective: a trial with no measured example has
+no `cost` (or `None` under strict nulls), never `0.0`, so an unmeasured
+configuration cannot look free. When configurations are ranked on a weighted
+multi-objective score, a missing cost counts as the worst cost, so an
+unmeasured trial never wins on cost. Two run-level warnings say what happened:
+
+- `COST_OBJECTIVE_NO_USAGE_CAPTURED`: no trial captured usage, so the cost
+  column is unmeasured. Under strict cost accounting the run fails instead.
+- `COST_OBJECTIVE_PARTIAL_USAGE_CAPTURED`: some successful trials captured
+  usage and others did not; the cost comparison covers only the measured ones.
+
+## When a run stops because cost was not measured
+
+The cost limit (`cost_limit=` on `@traigent.optimize` or `.optimize()`, or
+`TRAIGENT_RUN_COST_LIMIT`, default `$2.00`) can only bound spend it can see.
+When trials report no cost, Traigent is conservative: it stops after
+`TRAIGENT_FALLBACK_TRIAL_LIMIT` trials (default `10`) with
+`stop_reason == "cost_limit"`. The result carries the
+`COST_UNMEASURED_TRIAL_LIMIT_REACHED` warning code and a message, which is also
+logged, that says how many trials ran unmeasured.
+
+To continue, either:
+
+1. **Get cost measured.** Call the model through a captured client (the table
+   above). The run is then bounded by its cost budget instead of the trial
+   limit, so raise `cost_limit` if the budget is what stops you.
+2. **Accept untracked spend.** Raise the unmeasured-cost trial limit, for
+   example `export TRAIGENT_FALLBACK_TRIAL_LIMIT=50`. Traigent cannot tell you
+   what those trials cost.
+
+Build the OpenAI client once, outside the optimized function, as in the
+examples above. The override injects the trial's `model` and sampling
+parameters at `chat.completions.create`, not into the client constructor.

@@ -446,3 +446,296 @@ def test_optimize_without_capture_does_not_upload_zero_cost(monkeypatch, tmp_pat
     (trial,) = result.trials
     assert trial.metrics.get("total_cost") is None
     assert trial.metrics.get("total_tokens") is None
+
+
+# --------------------------------------------------------------------------
+# Review F1: an unmeasured trial must not win a cost objective
+# --------------------------------------------------------------------------
+
+
+def _evaluator_cost_objective() -> CustomEvaluatorWrapper:
+    async def custom_evaluator(func, config, example):
+        output = func(**example.input_data)
+        return ExampleResult(
+            example_id=example.input_data["question"],
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output=output,
+            metrics={"accuracy": 1.0},
+            execution_time=0.0,
+            success=True,
+            error_message=None,
+            metadata={},
+        )
+
+    return CustomEvaluatorWrapper(custom_evaluator, metrics=["accuracy", "cost"])
+
+
+@pytest.mark.asyncio
+async def test_unmeasured_cost_objective_is_unknown_not_zero(openai_overrides):
+    client = _sync_client(usage=False)
+    result = await _evaluator_cost_objective().evaluate(
+        _sync_agent(client), {"model": KNOWN_MODEL}, _dataset()
+    )
+    assert "cost" not in result.aggregated_metrics
+
+
+@pytest.mark.asyncio
+async def test_unmeasured_cost_objective_is_none_under_strict_nulls(
+    openai_overrides, monkeypatch
+):
+    monkeypatch.setenv("TRAIGENT_STRICT_METRICS_NULLS", "true")
+    client = _sync_client(usage=False)
+    result = await _evaluator_cost_objective().evaluate(
+        _sync_agent(client), {"model": KNOWN_MODEL}, _dataset()
+    )
+    assert result.aggregated_metrics["cost"] is None
+
+
+@pytest.mark.asyncio
+async def test_measured_cost_objective_is_the_trial_total(openai_overrides):
+    client = _sync_client()
+    result = await _evaluator_cost_objective().evaluate(
+        _sync_agent(client), {"model": KNOWN_MODEL}, _dataset()
+    )
+    in_cost, out_cost = cost_from_tokens(PROMPT_TOKENS, COMPLETION_TOKENS, KNOWN_MODEL)
+    assert result.aggregated_metrics["cost"] == pytest.approx(2 * (in_cost + out_cost))
+
+
+def _optimize_mixed_coverage(monkeypatch, tmp_path, *, measured_models: set[str]):
+    """Two models; only ``measured_models`` get a gateway that returns usage."""
+    from traigent.config.context import get_config
+    from traigent.core.optimized_function import OptimizedFunction
+
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
+    monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
+    measured, unmeasured = _sync_client(), _sync_client(usage=False)
+
+    def agent(question: str) -> str:
+        config = get_config()
+        model = (
+            config.get("model")
+            if isinstance(config, dict)
+            else getattr(config, "model", None)
+        )
+        client = measured if model in measured_models else unmeasured
+        response = client.chat.completions.create(
+            model="placeholder", messages=[{"role": "user", "content": question}]
+        )
+        return response.choices[0].message.content
+
+    def custom_evaluator(func, config, example):
+        return ExampleResult(
+            example_id=example.input_data["question"],
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output=func(**example.input_data),
+            metrics={"accuracy": 1.0},
+            execution_time=0.0,
+            success=True,
+            error_message=None,
+            metadata={},
+        )
+
+    opt_func = OptimizedFunction(
+        func=agent,
+        configuration_space={"model": ["gpt-4o", "gpt-4o-mini"]},
+        objectives=["accuracy", "cost"],
+        eval_dataset=_dataset(),
+        custom_evaluator=custom_evaluator,
+        max_trials=2,
+        auto_override_frameworks=True,
+        framework_targets=["openai.OpenAI"],
+    )
+    return opt_func.optimize_sync(algorithm="grid", max_trials=2, progress_bar=False)
+
+
+def test_unmeasured_trial_cannot_win_a_cost_objective(monkeypatch, tmp_path):
+    # The reviewer's scenario: gpt-4o measured, gpt-4o-mini's gateway omits
+    # usage. The mini trial used to report cost 0.0 and win on cost.
+    result = _optimize_mixed_coverage(monkeypatch, tmp_path, measured_models={"gpt-4o"})
+    by_model = {t.config["model"]: t for t in result.trials}
+    assert by_model["gpt-4o"].metrics["cost"] > 0
+    assert by_model["gpt-4o-mini"].metrics.get("cost") is None
+    assert by_model["gpt-4o-mini"].metrics.get("total_cost") is None
+    assert result.best_config == {"model": "gpt-4o"}
+    assert "COST_OBJECTIVE_PARTIAL_USAGE_CAPTURED" in result.warning_codes
+    assert "COST_OBJECTIVE_NO_USAGE_CAPTURED" not in result.warning_codes
+
+
+def test_no_trial_measured_keeps_the_no_usage_warning(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRAIGENT_STRICT_COST_ACCOUNTING", "false")
+    result = _optimize_mixed_coverage(monkeypatch, tmp_path, measured_models=set())
+    assert all(t.metrics.get("cost") is None for t in result.trials)
+    assert "COST_OBJECTIVE_NO_USAGE_CAPTURED" in result.warning_codes
+    assert "COST_OBJECTIVE_PARTIAL_USAGE_CAPTURED" not in result.warning_codes
+
+
+def test_fully_measured_run_has_no_coverage_warning(monkeypatch, tmp_path):
+    result = _optimize_mixed_coverage(
+        monkeypatch, tmp_path, measured_models={"gpt-4o", "gpt-4o-mini"}
+    )
+    assert result.best_config == {"model": "gpt-4o-mini"}  # cheaper, same accuracy
+    assert "COST_OBJECTIVE_PARTIAL_USAGE_CAPTURED" not in result.warning_codes
+
+
+# --------------------------------------------------------------------------
+# Review F3: a client built inside the optimized function
+# --------------------------------------------------------------------------
+
+
+def test_client_constructed_inside_the_function_is_not_given_model(
+    monkeypatch, tmp_path
+):
+    # The documented pattern builds the client inside the function. The
+    # constructor override used to inject call-time params such as ``model``
+    # into ``openai.OpenAI.__init__``, which raises TypeError.
+    from traigent.core.optimized_function import OptimizedFunction
+
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
+
+    def agent(question: str) -> str:
+        client = _sync_client()
+        response = client.chat.completions.create(
+            model="placeholder", messages=[{"role": "user", "content": question}]
+        )
+        return response.choices[0].message.content
+
+    def custom_evaluator(func, config, example):
+        return ExampleResult(
+            example_id=example.input_data["question"],
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output=func(**example.input_data),
+            metrics={"accuracy": 1.0},
+            execution_time=0.0,
+            success=True,
+            error_message=None,
+            metadata={},
+        )
+
+    opt_func = OptimizedFunction(
+        func=agent,
+        configuration_space={"model": [KNOWN_MODEL]},
+        objectives=["accuracy"],
+        eval_dataset=_dataset(),
+        custom_evaluator=custom_evaluator,
+        max_trials=1,
+        auto_override_frameworks=True,
+        framework_targets=["openai.OpenAI", "openai.AsyncOpenAI"],
+    )
+    result = opt_func.optimize_sync(algorithm="grid", max_trials=1, progress_bar=False)
+    (trial,) = result.trials
+    assert trial.is_successful
+    assert trial.metrics["total_tokens"] == 2 * (PROMPT_TOKENS + COMPLETION_TOKENS)
+
+
+def test_constructor_override_skips_params_the_constructor_rejects():
+    from traigent.integrations.framework_override import _constructor_keyword_names
+
+    class Strict:
+        def __init__(self, api_key=None, *, base_url=None):
+            pass
+
+    class Loose:
+        def __init__(self, **kwargs):
+            pass
+
+    assert _constructor_keyword_names(Strict.__init__) == {
+        "self",
+        "api_key",
+        "base_url",
+    }
+    assert _constructor_keyword_names(Loose.__init__) is None
+    assert "model" not in _constructor_keyword_names(openai.OpenAI.__init__)
+
+
+# --------------------------------------------------------------------------
+# Review F2 (owner decision: conservative stop, with an actionable message)
+# --------------------------------------------------------------------------
+
+
+def _optimize_fifteen(monkeypatch, tmp_path, *, measured: bool, **optimize_kwargs):
+    """15 configurations; the agent's usage is captured only when ``measured``."""
+    from traigent.core.optimized_function import OptimizedFunction
+
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
+    monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
+    client = _sync_client()
+
+    def agent(question: str) -> str:
+        if not measured:
+            return "ok"  # e.g. an HTTP call no interceptor sees
+        return _sync_agent(client)(question)
+
+    def custom_evaluator(func, config, example):
+        return ExampleResult(
+            example_id=example.input_data["question"],
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output=func(**example.input_data),
+            metrics={"accuracy": 1.0},
+            execution_time=0.0,
+            success=True,
+            error_message=None,
+            metadata={},
+        )
+
+    opt_func = OptimizedFunction(
+        func=agent,
+        configuration_space={"temperature": [i / 10 for i in range(15)]},
+        objectives=["accuracy"],
+        eval_dataset=_dataset(),
+        custom_evaluator=custom_evaluator,
+        max_trials=15,
+        auto_override_frameworks=measured,
+        framework_targets=["openai.OpenAI"] if measured else None,
+    )
+    return opt_func.optimize_sync(
+        algorithm="grid", max_trials=15, progress_bar=False, **optimize_kwargs
+    )
+
+
+def test_unmeasured_run_stops_at_fallback_limit_and_says_how_to_continue(
+    monkeypatch, tmp_path, caplog
+):
+    monkeypatch.delenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", raising=False)
+    result = _optimize_fifteen(monkeypatch, tmp_path, measured=False)
+
+    assert len(result.trials) == 10
+    assert result.stop_reason == "cost_limit"
+    assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" in result.warning_codes
+    (message,) = [w for w in result.warnings if "could not be measured" in w]
+    for remedy in (
+        "TRAIGENT_FALLBACK_TRIAL_LIMIT",
+        "cost_limit=",
+        "TRAIGENT_RUN_COST_LIMIT",
+        "docs/user-guide/cost_capture.md",
+        "enable_openai_optimization()",
+    ):
+        assert remedy in message
+    assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" in caplog.text
+
+
+def test_raising_the_fallback_limit_lets_an_unmeasured_run_continue(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", "20")
+    result = _optimize_fifteen(monkeypatch, tmp_path, measured=False)
+
+    assert len(result.trials) == 15
+    assert result.stop_reason != "cost_limit"
+    assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" not in result.warning_codes
+
+
+def test_measured_run_is_bounded_by_its_cost_budget_not_the_trial_fallback(
+    monkeypatch, tmp_path
+):
+    # Once cost is measured the cost budget governs: 15 cheap trials fit a
+    # $1 budget, so the 10-trial fallback does not apply.
+    monkeypatch.delenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", raising=False)
+    result = _optimize_fifteen(monkeypatch, tmp_path, measured=True, cost_limit=1.0)
+
+    assert len(result.trials) == 15
+    assert result.stop_reason != "cost_limit"
+    assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" not in result.warning_codes

@@ -157,6 +157,15 @@ accounting and carries the `COST_OBJECTIVE_NO_USAGE_CAPTURED` warning otherwise.
 Mock-LLM runs (`TRAIGENT_MOCK_LLM=true`) always warn rather than fail here — there is
 no spend to measure in a simulated run.
 
+When trial cost cannot be measured at all, the cost limit cannot bound spend, so
+the run stops after `TRAIGENT_FALLBACK_TRIAL_LIMIT` trials (default `10`) with
+`stop_reason == "cost_limit"` and the `COST_UNMEASURED_TRIAL_LIMIT_REACHED` warning
+code. To go further, capture usage (see `docs/user-guide/cost_capture.md`; the run is
+then bounded by `cost_limit` / `TRAIGENT_RUN_COST_LIMIT`) or raise
+`TRAIGENT_FALLBACK_TRIAL_LIMIT`. A cost-objective run where only some trials captured
+usage carries `COST_OBJECTIVE_PARTIAL_USAGE_CAPTURED`; the unmeasured trials cannot
+win on cost.
+
 The run-scoped default does **not** reach the LangChain and Pydantic AI callback
 handlers. Each reads `TRAIGENT_STRICT_COST_ACCOUNTING` once, when the handler object is
 constructed — usually at import time, before any run starts — so a run that becomes

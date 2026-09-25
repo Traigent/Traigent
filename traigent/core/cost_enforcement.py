@@ -316,6 +316,36 @@ class CostStatus:
     cost_confidence: float = field(default=0.5)
 
 
+#: Result warning code for a run stopped by the unknown-cost trial fallback.
+UNMEASURED_COST_TRIAL_LIMIT_WARNING_CODE = "COST_UNMEASURED_TRIAL_LIMIT_REACHED"
+
+
+def unmeasured_cost_stop_message(
+    trial_count: int, fallback_trial_limit: int, cost_limit: float
+) -> str:
+    """Explain an unknown-cost fallback stop and how to continue (#2441, F2).
+
+    Conservative by default: when trial cost cannot be measured the cost limit
+    cannot bound spend, so the run stops at ``fallback_trial_limit`` trials.
+    """
+    return (
+        f"Optimization stopped after {trial_count} trials because their cost "
+        "could not be measured (no LLM usage was captured), so the cost limit "
+        f"(${cost_limit:.2f}) cannot bound spend and Traigent stops at the "
+        f"unmeasured-cost trial limit of {fallback_trial_limit} "
+        "(TRAIGENT_FALLBACK_TRIAL_LIMIT). To continue: (1) get cost measured "
+        "by calling the model through a captured client -- LangChain "
+        "ChatOpenAI/ChatAnthropic, litellm.completion, or a raw "
+        "openai.OpenAI/AsyncOpenAI client with enable_openai_optimization() "
+        "or framework_targets=['openai.OpenAI', 'openai.AsyncOpenAI'] (see "
+        "docs/user-guide/cost_capture.md); the run is then bounded by its cost "
+        "budget, set with cost_limit= on @traigent.optimize or .optimize(), "
+        "or TRAIGENT_RUN_COST_LIMIT; or (2) accept untracked spend and raise "
+        "the trial limit for unmeasured runs, e.g. "
+        "TRAIGENT_FALLBACK_TRIAL_LIMIT=50."
+    )
+
+
 class CostEnforcer:
     """Thread-safe real-time cost tracking with user handshake.
 
@@ -633,7 +663,12 @@ class CostEnforcer:
                     f"(per-trial cost unknown: fallback trial limit "
                     f"{self.config.fallback_trial_limit} reached at "
                     f"{self._trial_count} trials; cost limit "
-                    f"${self.config.limit:.2f})"
+                    f"${self.config.limit:.2f}). "
+                    + unmeasured_cost_stop_message(
+                        self._trial_count,
+                        self.config.fallback_trial_limit,
+                        self.config.limit,
+                    )
                 )
             estimated = self._accumulated_cost + self._reserved_cost
             return (

@@ -1012,9 +1012,16 @@ class CostLimitStopCondition(StopCondition):
         """
         status = self._cost_enforcer.get_status()
         if status.unknown_cost_mode:
+            from traigent.core.cost_enforcement import unmeasured_cost_stop_message
+
             return (
                 f"Trial limit reached: {status.trial_count} trials "
-                f"(cost unknown, fallback mode)"
+                f"(cost unknown, fallback mode). "
+                + unmeasured_cost_stop_message(
+                    status.trial_count,
+                    self._cost_enforcer.config.fallback_trial_limit,
+                    status.limit_usd,
+                )
             )
         return (
             f"Cost limit reached: ${status.accumulated_cost_usd:.2f} "

@@ -8,6 +8,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Raw OpenAI SDK calls are cost-captured (#2441).** With the OpenAI override
+  active (`enable_openai_optimization()` or
+  `framework_targets=["openai.OpenAI", "openai.AsyncOpenAI"]`), every
+  non-streaming `chat.completions.create` / `completions.create` response that
+  carries `usage` is charged to the running example, sync and async, including
+  every call of a multi-call agent. Streaming calls and responses without
+  `usage` are reported as unmeasured. See `docs/user-guide/cost_capture.md`.
+- **`COST_OBJECTIVE_PARTIAL_USAGE_CAPTURED` and
+  `COST_UNMEASURED_TRIAL_LIMIT_REACHED` warning codes (#2441).** The first
+  marks a cost-objective run where only some trials captured usage. The second
+  marks a run stopped by the unmeasured-cost trial limit and carries a message
+  naming the ways to continue.
+
 - **Candidate runs: `optimize(apply=False)`.** Returns the result, with
   `result.best_config` as the candidate, without applying it to the wrapper. A
   candidate run executes on an isolated copy of the wrapper taken at rest: it does
@@ -56,6 +69,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   entirely (this integration only ever called MLflow's tracking surface).
 
 ### Changed
+
+- **An unmeasured cost is reported as unknown, not $0 (#2441).** In the
+  custom-evaluator lane, a trial with no captured LLM usage no longer carries
+  `input/output/total_tokens`, `input/output/total_cost` or a `cost` objective
+  of `0.0`: the keys are left out (or `None` with
+  `TRAIGENT_STRICT_METRICS_NULLS=true`). An unmeasured configuration therefore
+  cannot win a cost objective; weighted selection scores its missing cost as
+  the worst value. Consumers that read these keys must expect them to be
+  absent.
+- **Unmeasured-cost runs stop at the trial fallback, and now say why (#2441).**
+  When trial cost cannot be measured, the cost limit cannot bound spend, so
+  the run stops after `TRAIGENT_FALLBACK_TRIAL_LIMIT` trials (default 10) with
+  `stop_reason="cost_limit"`. This now also applies to custom-evaluator runs
+  that previously reported `$0` and ran every trial. The result carries
+  `COST_UNMEASURED_TRIAL_LIMIT_REACHED` and a message: capture usage (then
+  `cost_limit=` / `TRAIGENT_RUN_COST_LIMIT` governs the run) or raise
+  `TRAIGENT_FALLBACK_TRIAL_LIMIT`.
+- **The framework override no longer passes call-time parameters to a client
+  constructor that does not accept them (#2441).** Building `openai.OpenAI()`
+  inside an optimized function with `framework_targets=["openai.OpenAI"]` used
+  to raise `TypeError: __init__() got an unexpected keyword argument 'model'`.
 
 - **`import traigent` no longer lets LiteLLM reach the network by default.**
   LiteLLM downloads its model-cost table (and, for Anthropic, its beta-header

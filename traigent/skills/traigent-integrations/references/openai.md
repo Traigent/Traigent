@@ -17,6 +17,9 @@ enable_openai_optimization()  # patches openai.OpenAI and openai.AsyncOpenAI
 or on the decorator:
 
 ```python
+client = openai.OpenAI(base_url=os.environ["LLM_BASE_URL"])  # build it once
+
+
 @traigent.optimize(
     configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
     objectives=["accuracy", "cost"],
@@ -25,7 +28,6 @@ or on the decorator:
     framework_targets=["openai.OpenAI", "openai.AsyncOpenAI"],
 )
 def answer(question: str) -> str:
-    client = openai.OpenAI(base_url=os.environ["LLM_BASE_URL"])
     response = client.chat.completions.create(
         model="gpt-4o-mini",  # replaced by the trial's model
         messages=[{"role": "user", "content": question}],

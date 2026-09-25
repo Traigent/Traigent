@@ -9,6 +9,7 @@ custom evaluation functions to conform to the BaseEvaluator interface.
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import time
 from collections.abc import Callable
@@ -34,6 +35,24 @@ logger = get_logger(__name__)
 
 _LLM_TOKEN_METRICS = ("input_tokens", "output_tokens", "total_tokens")
 _LLM_COST_METRICS = ("input_cost", "output_cost", "total_cost")
+
+
+def _strict_metrics_nulls() -> bool:
+    """TRAIGENT_STRICT_METRICS_NULLS: report a missing metric as None, not 0.0."""
+    return os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+
+
+def _measured_number(value: Any) -> float | None:
+    """A finite, non-bool number, else None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
 
 # Substrings that mark a config key as secret-bearing. Comparison is
 # case-insensitive against the full key, so e.g. "api_key", "API-KEY",
@@ -430,6 +449,39 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 aggregated[metric] = 0.0
         return aggregated
 
+    def _resolve_unmeasured_cost_objectives(
+        self, aggregated: dict[str, Any], all_metrics: list[dict[str, Any]]
+    ) -> None:
+        """Keep a requested cost metric UNKNOWN when nothing measured it.
+
+        ``aggregate_measured_metric`` keeps the historical ``0.0`` for a cost
+        metric no row reported. With LLM capture on, that 0.0 used to reach
+        the trial as its cost objective (and, via the ``cost`` fallback in
+        ``extract_cost_from_results``, as ``total_cost``), so an unmeasured
+        configuration looked free and could win a cost ranking against a
+        measured one (Traigent#2441 review, F1). Here the metric takes the
+        captured usage when there is some (``cost`` is the per-trial total,
+        as on the other lanes) and is otherwise left out -- or ``None`` under
+        TRAIGENT_STRICT_METRICS_NULLS. Weighted selection then scores the
+        missing objective as its worst value (a skipped term adds nothing to
+        the weighted sum), and single-objective ranking treats the trial as
+        ineligible.
+        """
+        for metric in MEASURED_ONLY_METRICS & set(self.metrics):
+            if any(
+                row and _measured_number(row.get(metric)) is not None
+                for row in all_metrics
+            ):
+                continue
+            source = "total_cost" if metric == "cost" else metric
+            captured = _measured_number(aggregated.get(source))
+            if captured is not None:
+                aggregated[metric] = captured
+            elif _strict_metrics_nulls():
+                aggregated[metric] = None
+            else:
+                aggregated.pop(metric, None)
+
     def _aggregate_llm_metrics(
         self, all_metrics: list[dict[str, Any]], example_results: list[ExampleResult]
     ) -> dict[str, float | None]:
@@ -449,11 +501,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         # a paid run as free (Traigent#2441). The keys are then left out, or
         # set to None under TRAIGENT_STRICT_METRICS_NULLS -- both are valid
         # MeasuresDict values -- never a fabricated 0.0.
-        strict_nulls = os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
+        strict_nulls = _strict_metrics_nulls()
         for metric in (*_LLM_TOKEN_METRICS, *_LLM_COST_METRICS):
             metric_values = [
                 value
@@ -711,6 +759,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             # None only appears under TRAIGENT_STRICT_METRICS_NULLS, whose
             # contract is exactly "None instead of 0.0 for a missing metric".
             aggregated_metrics.update(cast(dict[str, float], llm_agg))
+            self._resolve_unmeasured_cost_objectives(aggregated_metrics, all_metrics)
 
         # Log results
         success_count = sum(1 for result in example_results if result.success)

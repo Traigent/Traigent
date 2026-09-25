@@ -141,6 +141,30 @@ def _capture_openai_usage(response: Any, call_kwargs: dict[str, Any]) -> None:
         logger.debug("Could not capture OpenAI response usage", exc_info=True)
 
 
+def _constructor_keyword_names(
+    constructor: Callable[..., Any],
+) -> frozenset[str] | None:
+    """Keyword names a constructor accepts, or None when it takes ``**kwargs``.
+
+    None also covers an unreadable signature: the override then behaves as it
+    always has.
+    """
+    try:
+        parameters = inspect.signature(constructor).parameters.values()
+    except (TypeError, ValueError):
+        return None
+    names = set()
+    for parameter in parameters:
+        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+            return None
+        if parameter.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            names.add(parameter.name)
+    return frozenset(names)
+
+
 async def _capture_openai_usage_when_awaited(
     pending: Any, call_kwargs: dict[str, Any]
 ) -> Any:
@@ -249,6 +273,7 @@ class FrameworkOverrideManager(BaseOverrideManager):
         """
         parameter_mapping = self._parameter_mappings.get(class_name, {})
         override_active = self._override_active  # Capture in closure
+        accepted = _constructor_keyword_names(original_constructor)
 
         @functools.wraps(original_constructor)
         def override_constructor(*args, **kwargs):
@@ -281,6 +306,11 @@ class FrameworkOverrideManager(BaseOverrideManager):
             overrides_applied = []
 
             for traigent_param, framework_param in parameter_mapping.items():
+                if accepted is not None and framework_param not in accepted:
+                    # e.g. ``openai.OpenAI(model=...)``: the mapping lists
+                    # call-time params, which the client constructor rejects
+                    # with a TypeError. They are injected at the method call.
+                    continue
                 if traigent_param in config_dict:
                     # Only override if parameter is in configuration space (being optimized)
                     # or if no configuration space is set (not in optimization)
