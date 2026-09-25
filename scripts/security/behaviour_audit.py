@@ -200,6 +200,7 @@ class Recorder:
         if frame is None:
             return "?", [], False
         innermost = frame.f_code.co_filename
+        self._local.innermost = innermost
         is_import = innermost.startswith("<frozen importlib")
         site = ""
         chain: list[str] = []
@@ -395,6 +396,15 @@ class Recorder:
         site, chain, is_import = self._call_site()
         if is_import:
             return
+        innermost = getattr(self._local, "innermost", "")
+        # Name the stdlib generator (dataclasses, typing, collections, ...)
+        # when the compile/exec comes from one, so a class definition that
+        # triggers stdlib codegen is not mistaken for the SDK generating code.
+        via_stdlib = (
+            f" via stdlib {os.path.basename(innermost)}"
+            if self._frame_label(innermost) is None
+            else ""
+        )
         if event == "compile":
             source, filename = args[0], args[1]
             kind = type(source).__name__
@@ -410,14 +420,21 @@ class Recorder:
             else:
                 origin = f"file-backed source ({self.classify_path(fname) or '?'})"
             owner = chain[0] if chain else "stdlib"
-            self._add("codegen", f"{owner}: compile({kind}) of {origin}", site, chain)
+            self._add(
+                "codegen",
+                f"{owner}: compile({kind}) of {origin}{via_stdlib}",
+                site,
+                chain,
+            )
             return
         if event == "exec":
             code = args[0]
             fname = str(getattr(code, "co_filename", "?"))
             origin = "in-memory code" if fname.startswith("<") else "file-backed code"
             owner = chain[0] if chain else "stdlib"
-            self._add("codegen", f"{owner}: exec/eval of {origin}", site, chain)
+            self._add(
+                "codegen", f"{owner}: exec/eval of {origin}{via_stdlib}", site, chain
+            )
 
     # -- output -----------------------------------------------------------
 
@@ -762,6 +779,13 @@ def main(argv: list[str] | None = None) -> int:
         default="stub",
         help="stub: loopback stub + development env; default: built-in backend",
     )
+    run.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="extra env for the child (e.g. TRAIGENT_LITELLM_LIVE_PRICES=1)",
+    )
     run.add_argument("--json", dest="json_out")
     run.add_argument("--markdown", dest="md_out")
     child = sub.add_parser("_child")
@@ -787,6 +811,7 @@ def main(argv: list[str] | None = None) -> int:
             pins=args.pins,
             block_egress=not args.allow_egress,
             backend=args.backend,
+            extra_env=dict(kv.split("=", 1) for kv in args.env),
         )
         for w in args.workloads
     ]
