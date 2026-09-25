@@ -3047,7 +3047,10 @@ class OptimizedFunction(Generic[_P, _R]):
         )
 
         message = unmeasured_cost_stop_message(
-            status.trial_count, fallback_limit, status.limit_usd
+            status.trial_count,
+            fallback_limit,
+            status.limit_usd,
+            status.unmeasured_trial_count,
         )
         if UNMEASURED_COST_TRIAL_LIMIT_WARNING_CODE not in result.warning_codes:
             result.warning_codes.append(UNMEASURED_COST_TRIAL_LIMIT_WARNING_CODE)

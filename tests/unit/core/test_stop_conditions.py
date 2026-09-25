@@ -183,10 +183,25 @@ def test_metric_limit_stop_condition_respects_include_pruned():
 
 
 def test_metric_limit_stop_condition_requires_mandatory_metric():
+    stop_condition = MetricLimitStopCondition(limit=0.1, metric_name="latency_ms")
+
+    with pytest.raises(ValueError, match="Mandatory metric 'latency_ms' missing"):
+        stop_condition.should_stop([_make_trial("t1", {"accuracy": 0.9})])
+
+
+def test_metric_limit_stop_condition_skips_unmeasured_cost():
+    # A trial with no captured LLM usage has an UNKNOWN cost (Traigent#2441):
+    # it is left out of the running total instead of failing the run. The
+    # cost enforcer's unmeasured-cost trial limit bounds such runs.
     stop_condition = MetricLimitStopCondition(limit=0.1, metric_name="total_cost")
 
-    with pytest.raises(ValueError, match="Mandatory metric 'total_cost' missing"):
-        stop_condition.should_stop([_make_trial("t1", {"accuracy": 0.9})])
+    assert not stop_condition.should_stop([_make_trial("t1", {"accuracy": 0.9})])
+    assert stop_condition.should_stop(
+        [
+            _make_trial("t1", {"accuracy": 0.9}),
+            _make_trial("t2", {"accuracy": 0.9, "total_cost": 0.2}),
+        ]
+    )
 
 
 def test_metric_limit_stop_condition_rejects_non_numeric_metric():

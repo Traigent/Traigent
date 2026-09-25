@@ -705,8 +705,13 @@ def test_unmeasured_run_stops_at_fallback_limit_and_says_how_to_continue(
     assert len(result.trials) == 10
     assert result.stop_reason == "cost_limit"
     assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" in result.warning_codes
-    (message,) = [w for w in result.warnings if "could not be measured" in w]
+    (message,) = [
+        w for w in result.warnings if w.startswith("Optimization stopped after")
+    ]
+    assert "none of their costs could be measured" in message
     for remedy in (
+        "max_trials does not lift it",
+        "async .ainvoke/.abatch are not captured",
         "TRAIGENT_FALLBACK_TRIAL_LIMIT",
         "cost_limit=",
         "TRAIGENT_RUN_COST_LIMIT",
@@ -739,3 +744,138 @@ def test_measured_run_is_bounded_by_its_cost_budget_not_the_trial_fallback(
     assert len(result.trials) == 15
     assert result.stop_reason != "cost_limit"
     assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" not in result.warning_codes
+
+
+def test_mixed_run_stop_message_counts_unmeasured_and_measured_trials(
+    monkeypatch, tmp_path
+):
+    # Review of 078314f5: one unmeasured trial makes the trial limit govern the
+    # whole run; the message must not claim that no usage was captured at all.
+    from traigent.config.context import get_config
+    from traigent.core.optimized_function import OptimizedFunction
+
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
+    monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
+    monkeypatch.delenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", raising=False)
+    measured, unmeasured = _sync_client(), _sync_client(usage=False)
+
+    def agent(question: str) -> str:
+        config = get_config()
+        temperature = (
+            config.get("temperature")
+            if isinstance(config, dict)
+            else getattr(config, "temperature", None)
+        )
+        client = unmeasured if temperature == 0.0 else measured
+        return _sync_agent(client)(question)
+
+    def custom_evaluator(func, config, example):
+        return ExampleResult(
+            example_id=example.input_data["question"],
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output=func(**example.input_data),
+            metrics={"accuracy": 1.0},
+            execution_time=0.0,
+            success=True,
+            error_message=None,
+            metadata={},
+        )
+
+    opt_func = OptimizedFunction(
+        func=agent,
+        configuration_space={"temperature": [i / 10 for i in range(15)]},
+        objectives=["accuracy"],
+        eval_dataset=_dataset(),
+        custom_evaluator=custom_evaluator,
+        max_trials=15,
+        auto_override_frameworks=True,
+        framework_targets=["openai.OpenAI"],
+    )
+    result = opt_func.optimize_sync(algorithm="grid", max_trials=15, progress_bar=False)
+
+    assert len(result.trials) == 10
+    assert result.stop_reason == "cost_limit"
+    (message,) = [
+        w for w in result.warnings if w.startswith("Optimization stopped after")
+    ]
+    assert "1 of them had no measurable cost" in message
+    assert "9 were measured" in message
+    assert "One unmeasured trial is enough" in message
+    assert "none of their costs" not in message
+    assert "for every configuration" in message
+
+
+# --------------------------------------------------------------------------
+# Review of 078314f5: metric_limit on a cost metric, results table
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("metric_name", "objectives"),
+    [("cost", ["accuracy", "cost"]), ("total_cost", ["accuracy"])],
+)
+def test_metric_limit_on_cost_does_not_fail_an_unmeasured_run(
+    monkeypatch, tmp_path, metric_name, objectives
+):
+    from traigent.core.optimized_function import OptimizedFunction
+
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
+    monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
+
+    def custom_evaluator(func, config, example):
+        return ExampleResult(
+            example_id=example.input_data["question"],
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output=func(**example.input_data),
+            metrics={"accuracy": 1.0},
+            execution_time=0.0,
+            success=True,
+            error_message=None,
+            metadata={},
+        )
+
+    opt_func = OptimizedFunction(
+        func=lambda question: "ok",
+        configuration_space={"temperature": [0.1, 0.2, 0.3]},
+        objectives=objectives,
+        eval_dataset=_dataset(),
+        custom_evaluator=custom_evaluator,
+        max_trials=3,
+    )
+    result = opt_func.optimize_sync(
+        algorithm="grid",
+        max_trials=3,
+        progress_bar=False,
+        metric_limit=1.0,
+        metric_name=metric_name,
+    )
+    assert len(result.trials) == 3
+    assert all(t.is_successful for t in result.trials)
+
+
+def test_metric_limit_still_requires_non_cost_metrics():
+    from traigent.api.types import TrialResult, TrialStatus
+    from traigent.core.stop_conditions import MetricLimitStopCondition
+
+    condition = MetricLimitStopCondition(limit=1.0, metric_name="tokens_used")
+    trial = TrialResult(
+        trial_id="t1",
+        config={},
+        metrics={"accuracy": 1.0},
+        status=TrialStatus.COMPLETED,
+        duration=0.0,
+        timestamp=None,
+    )
+    with pytest.raises(ValueError, match="Mandatory metric 'tokens_used' missing"):
+        condition.should_stop([trial])
+
+
+def test_results_table_shows_unmeasured_cost_as_na():
+    from traigent.utils.results_table import _render_metric_cell
+
+    assert _render_metric_cell("cost", None) == "n/a"
+    assert _render_metric_cell("total_cost", None) == "n/a"
+    assert _render_metric_cell("cost", 0.0) != "n/a"
+    assert _render_metric_cell("accuracy", None) == _render_metric_cell("accuracy", 0.0)

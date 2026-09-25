@@ -128,6 +128,19 @@ def _format_percent_metric(val: float) -> str:
     return f"{val:.1%}"
 
 
+def _render_metric_cell(metric: str, raw_value: Any) -> str:
+    """Format one table cell; an unmeasured cost reads "n/a", not "$0.00000".
+
+    A trial with no captured LLM usage has an UNKNOWN cost (Traigent#2441), and
+    printing it as zero makes it look like the cheapest configuration. Other
+    metrics keep the historical 0.0 rendering for a missing value.
+    """
+    value = _coerce_float(raw_value)
+    if value is None and "cost" in metric.lower():
+        return "n/a"
+    return _format_metric_value(metric, value or 0.0)
+
+
 def _format_metric_value(metric: str, val: float) -> str:
     if metric == "cost":
         return f"${val:.5f}"
@@ -537,10 +550,8 @@ def print_results_table(
     for metric in metric_names:
         max_len = max(
             len(
-                _format_metric_value(
-                    metric,
-                    _coerce_float(_get_metric_value(t, metric, i, metric_overrides))
-                    or 0.0,
+                _render_metric_cell(
+                    metric, _get_metric_value(t, metric, i, metric_overrides)
                 )
             )
             for i, t in enumerate(trials)
@@ -607,8 +618,7 @@ def print_results_table(
 
         for metric in metric_names:
             raw_metric_val = _get_metric_value(trial, metric, i, metric_overrides)
-            metric_val = _coerce_float(raw_metric_val) or 0.0
-            formatted = _format_metric_value(metric, metric_val)
+            formatted = _render_metric_cell(metric, raw_metric_val)
             if not all_failed and i in best_per_objective.get(metric, set()):
                 cell = f"{C.GREEN}{C.BOLD}{formatted:^{col_widths[metric]}}{C.RESET}"
             else:

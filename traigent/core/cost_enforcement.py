@@ -314,6 +314,8 @@ class CostStatus:
     reserved_cost_usd: float = field(default=0.0)
     estimated_cost_per_trial: float = field(default=0.05)
     cost_confidence: float = field(default=0.5)
+    #: Trials whose cost could not be measured (Traigent#2441).
+    unmeasured_trial_count: int = field(default=0)
 
 
 #: Result warning code for a run stopped by the unknown-cost trial fallback.
@@ -321,27 +323,51 @@ UNMEASURED_COST_TRIAL_LIMIT_WARNING_CODE = "COST_UNMEASURED_TRIAL_LIMIT_REACHED"
 
 
 def unmeasured_cost_stop_message(
-    trial_count: int, fallback_trial_limit: int, cost_limit: float
+    trial_count: int,
+    fallback_trial_limit: int,
+    cost_limit: float,
+    unmeasured_trials: int | None = None,
 ) -> str:
     """Explain an unknown-cost fallback stop and how to continue (#2441, F2).
 
-    Conservative by default: when trial cost cannot be measured the cost limit
-    cannot bound spend, so the run stops at ``fallback_trial_limit`` trials.
+    Conservative by default: once any trial's cost cannot be measured the cost
+    limit cannot bound spend, so the whole run stops at
+    ``fallback_trial_limit`` trials. ``unmeasured_trials`` (when known) lets
+    the message tell an all-unmeasured run from a mixed one.
     """
+    unmeasured = trial_count if unmeasured_trials is None else unmeasured_trials
+    measured = max(trial_count - unmeasured, 0)
+    if measured == 0:
+        cause = (
+            f"Optimization stopped after {trial_count} trials because none of "
+            "their costs could be measured (no LLM usage was captured)."
+        )
+        capture = "get cost measured by calling the model through a captured client"
+    else:
+        cause = (
+            f"Optimization stopped after {trial_count} trials: {unmeasured} of "
+            f"them had no measurable cost (no LLM usage was captured) and "
+            f"{measured} were measured. One unmeasured trial is enough to "
+            "switch the whole run to the trial limit."
+        )
+        capture = (
+            "find why those configurations report no usage (a gateway that "
+            "omits `usage`, a streaming call, an uncaptured client) and call "
+            "the model through a captured client for every configuration"
+        )
     return (
-        f"Optimization stopped after {trial_count} trials because their cost "
-        "could not be measured (no LLM usage was captured), so the cost limit "
-        f"(${cost_limit:.2f}) cannot bound spend and Traigent stops at the "
-        f"unmeasured-cost trial limit of {fallback_trial_limit} "
-        "(TRAIGENT_FALLBACK_TRIAL_LIMIT). To continue: (1) get cost measured "
-        "by calling the model through a captured client -- LangChain "
-        "ChatOpenAI/ChatAnthropic, litellm.completion, or a raw "
-        "openai.OpenAI/AsyncOpenAI client with enable_openai_optimization() "
+        f"{cause} The cost limit (${cost_limit:.2f}) cannot bound spend it "
+        "cannot see, so Traigent stops at the unmeasured-cost trial limit of "
+        f"{fallback_trial_limit} (TRAIGENT_FALLBACK_TRIAL_LIMIT); max_trials "
+        f"does not lift it. To continue: (1) {capture} -- synchronous LangChain "
+        "ChatOpenAI/ChatAnthropic .invoke (async .ainvoke/.abatch are not "
+        "captured yet), non-streaming litellm.completion/acompletion, or a "
+        "raw openai.OpenAI/AsyncOpenAI client with enable_openai_optimization() "
         "or framework_targets=['openai.OpenAI', 'openai.AsyncOpenAI'] (see "
-        "docs/user-guide/cost_capture.md); the run is then bounded by its cost "
-        "budget, set with cost_limit= on @traigent.optimize or .optimize(), "
-        "or TRAIGENT_RUN_COST_LIMIT; or (2) accept untracked spend and raise "
-        "the trial limit for unmeasured runs, e.g. "
+        "docs/user-guide/cost_capture.md); a fully measured run is bounded by "
+        "its cost budget, set with cost_limit= on @traigent.optimize or "
+        ".optimize(), or TRAIGENT_RUN_COST_LIMIT; or (2) accept untracked "
+        "spend and raise the trial limit for unmeasured runs, e.g. "
         "TRAIGENT_FALLBACK_TRIAL_LIMIT=50."
     )
 
@@ -404,6 +430,7 @@ class CostEnforcer:
         # without yielding to the event loop.
         self._lock = RLock()
         self._unknown_cost_mode: bool = False
+        self._unmeasured_trial_count: int = 0
         self._warning_emitted: bool = False
         self._approval_token_path = self._get_approval_token_path()
         # In-flight reservation tracking for parallel execution
@@ -668,6 +695,7 @@ class CostEnforcer:
                         self._trial_count,
                         self.config.fallback_trial_limit,
                         self.config.limit,
+                        self._unmeasured_trial_count,
                     )
                 )
             estimated = self._accumulated_cost + self._reserved_cost
@@ -1359,6 +1387,7 @@ Options:
 
         # Handle unknown cost with optional strict mode
         if cost is None:
+            self._unmeasured_trial_count += 1
             self._handle_unknown_cost_locked(
                 trial_desc,
                 require_cost_tracking=require_cost_tracking,
@@ -1415,6 +1444,7 @@ Options:
                 reserved_cost_usd=self._reserved_cost,
                 estimated_cost_per_trial=self._estimated_cost,
                 cost_confidence=self.get_cost_confidence(),
+                unmeasured_trial_count=self._unmeasured_trial_count,
             )
 
     def reset(self) -> None:
@@ -1426,6 +1456,7 @@ Options:
             self._accumulated_cost = 0.0
             self._trial_count = 0
             self._unknown_cost_mode = False
+            self._unmeasured_trial_count = 0
             self._warning_emitted = False
             self._in_flight_count = 0
             self._reserved_cost = 0.0

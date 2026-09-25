@@ -12,7 +12,7 @@ not know, and what a trial reports when nothing was captured.
 
 | Client | Captured when | Notes |
 | --- | --- | --- |
-| LangChain `ChatOpenAI.invoke`, `ChatAnthropic.invoke`, Bedrock chat models | always (patched by the evaluator) | `stream`/`astream` are captured from the last chunk |
+| LangChain `ChatOpenAI.invoke`, `ChatAnthropic.invoke`, Bedrock chat models | always (patched by the evaluator) | synchronous `invoke` only: `ainvoke`/`abatch` are not captured yet ([#2445](https://github.com/Traigent/Traigent/issues/2445)); `stream`/`astream` capture the last chunk, which carries usage only with `stream_usage=True` |
 | `litellm.completion` / `litellm.acompletion` | always (patched by the evaluator) | streaming calls are not captured |
 | Traigent's `BedrockChatClient` | always | |
 | Raw OpenAI SDK: `openai.OpenAI` / `openai.AsyncOpenAI` `chat.completions.create` and `completions.create` | the OpenAI override is active (see below) | non-streaming calls that return `usage` |
@@ -107,10 +107,15 @@ When only some examples were measured, the totals cover those examples and a
 warning names the coverage.
 
 The same holds for a `cost` objective: a trial with no measured example has
-no `cost` (or `None` under strict nulls), never `0.0`, so an unmeasured
-configuration cannot look free. When configurations are ranked on a weighted
-multi-objective score, a missing cost counts as the worst cost, so an
-unmeasured trial never wins on cost. Two run-level warnings say what happened:
+no `cost` (or `None` under strict nulls), never `0.0`. The results table shows
+it as `n/a`. Weighted `best_config` selection counts a missing cost as the
+worst cost, so there an unmeasured trial does not win on cost. Other surfaces
+do not handle it yet: the Pareto front keeps unmeasured trials, the batch
+composite score ignores the missing cost, a constraint written as
+`metrics.get("cost", 0) <= limit` accepts them, and workflow spans upload
+`cost_usd: 0.0` ([#2446](https://github.com/Traigent/Traigent/issues/2446)).
+A `metric_limit` on a cost metric leaves unmeasured trials out of its running
+total rather than failing the run. Two run-level warnings say what happened:
 
 - `COST_OBJECTIVE_NO_USAGE_CAPTURED`: no trial captured usage, so the cost
   column is unmeasured. Under strict cost accounting the run fails instead.
@@ -121,17 +126,22 @@ unmeasured trial never wins on cost. Two run-level warnings say what happened:
 
 The cost limit (`cost_limit=` on `@traigent.optimize` or `.optimize()`, or
 `TRAIGENT_RUN_COST_LIMIT`, default `$2.00`) can only bound spend it can see.
-When trials report no cost, Traigent is conservative: it stops after
-`TRAIGENT_FALLBACK_TRIAL_LIMIT` trials (default `10`) with
-`stop_reason == "cost_limit"`. The result carries the
-`COST_UNMEASURED_TRIAL_LIMIT_REACHED` warning code and a message, which is also
-logged, that says how many trials ran unmeasured.
+When any trial reports no cost, Traigent is conservative: the whole run
+switches to a trial limit and stops after `TRAIGENT_FALLBACK_TRIAL_LIMIT` trials
+(default `10`) with `stop_reason == "cost_limit"`. One unmeasured trial is
+enough, even if every other trial was measured. `max_trials` does not lift this
+limit. The result carries the `COST_UNMEASURED_TRIAL_LIMIT_REACHED` warning code
+and a message, which is also logged, that says how many trials were unmeasured
+and how many were measured.
 
 To continue, either:
 
-1. **Get cost measured.** Call the model through a captured client (the table
-   above). The run is then bounded by its cost budget instead of the trial
-   limit, so raise `cost_limit` if the budget is what stops you.
+1. **Get cost measured for every configuration.** Call the model through a
+   captured client (the table above; for LangChain, the synchronous `invoke`).
+   In a mixed run, find why the unmeasured configurations report no usage: a
+   gateway that omits `usage`, a streaming call, or an uncaptured client. A
+   fully measured run is bounded by its cost budget instead of the trial limit,
+   so raise `cost_limit` if the budget is what stops you.
 2. **Accept untracked spend.** Raise the unmeasured-cost trial limit, for
    example `export TRAIGENT_FALLBACK_TRIAL_LIMIT=50`. Traigent cannot tell you
    what those trials cost.

@@ -30,6 +30,12 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+#: Cost metrics a trial may legitimately lack: no LLM usage was captured, so its
+#: cost is unknown (Traigent#2441). ``metric_limit`` skips such trials.
+_UNMEASURABLE_COST_METRICS = frozenset(
+    {"cost", "total_cost", "input_cost", "output_cost"}
+)
+
 
 _AUTO_SELECTOR = "auto"
 _SEMANTIC_SATURATION_ALLOWED_KEYS = frozenset(
@@ -422,10 +428,12 @@ class MetricLimitStopCondition(StopCondition):
         self._include_pruned = include_pruned
         self._running_total = 0.0
         self._last_index = 0
+        self._unmeasured_trials = 0
 
     def reset(self) -> None:  # noqa: D401 - interface requirement
         self._running_total = 0.0
         self._last_index = 0
+        self._unmeasured_trials = 0
 
     def should_stop(self, trials: Iterable[TrialResult]) -> bool:
         if isinstance(trials, Sequence):
@@ -450,6 +458,24 @@ class MetricLimitStopCondition(StopCondition):
                 value = metrics.get("cost")
                 if value is None:
                     value = (trial.metadata or {}).get("total_example_cost")
+
+            if value is None and self._metric in _UNMEASURABLE_COST_METRICS:
+                # A trial with no captured LLM usage has an UNKNOWN cost, not a
+                # missing mandatory metric (Traigent#2441). Failing the run
+                # over it would be worse than the old $0; adding 0 would repeat
+                # it. It is left out of the running total, and the cost
+                # enforcer's unknown-cost trial limit governs such a run.
+                self._unmeasured_trials += 1
+                if self._unmeasured_trials == 1:
+                    logger.warning(
+                        "metric_limit on '%s': trial %s has no measured cost; "
+                        "unmeasured trials are left out of the running total "
+                        "(the unmeasured-cost trial limit, "
+                        "TRAIGENT_FALLBACK_TRIAL_LIMIT, bounds them instead).",
+                        self._metric,
+                        trial.trial_id,
+                    )
+                continue
 
             if value is None:
                 raise ValueError(
@@ -1021,6 +1047,7 @@ class CostLimitStopCondition(StopCondition):
                     status.trial_count,
                     self._cost_enforcer.config.fallback_trial_limit,
                     status.limit_usd,
+                    status.unmeasured_trial_count,
                 )
             )
         return (
