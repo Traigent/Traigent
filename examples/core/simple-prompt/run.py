@@ -153,8 +153,8 @@ def _print_results_summary(result) -> None:
         "temperature": [0.0, 0.7],
         "prompt_style": ["concise", "detailed"],
     },
-    # 4. How parameters are injected (seamless = auto-injected into traigent.get_config())
-    injection_mode="seamless",
+    # 4. How parameters are injected (context = read explicitly via traigent.get_config())
+    injection_mode="context",
     # 5. Offline mode keeps this tutorial local.
     offline=True,
 )
