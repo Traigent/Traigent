@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-09-25
+
 ### Changed
 
 - **Breaking: bare custom objective names now require an explicit orientation.**
