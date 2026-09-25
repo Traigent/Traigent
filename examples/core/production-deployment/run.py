@@ -127,7 +127,7 @@ def _mock_answer(query: str) -> str:
         "temperature": [0.0, 0.3, 0.7],
         "max_tokens": [256, 512, 1024],
     },
-    injection_mode="seamless",
+    injection_mode="context",
     offline=True,
 )
 def answer_query(query: str) -> str:
