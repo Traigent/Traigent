@@ -4,9 +4,14 @@
 
 from __future__ import annotations
 
-# MLflow integration
+# MLflow integration. The submodule itself always imports cleanly -- it never
+# eagerly imports the real `mlflow` package -- so MLFLOW_AVAILABLE must come
+# FROM it (computed there via importlib.util.find_spec) rather than from
+# whether this import statement succeeded, or this flag would always read
+# True even when the mlflow package is not installed.
 try:
     from traigent.integrations.observability.mlflow import (
+        MLFLOW_AVAILABLE,
         MLflowOptimizationCallback,
         TraigentMLflowTracker,
         compare_traigent_runs,
@@ -15,8 +20,6 @@ try:
         get_best_traigent_run,
         log_traigent_optimization,
     )
-
-    MLFLOW_AVAILABLE = True
 except ImportError:
     MLFLOW_AVAILABLE = False
 
