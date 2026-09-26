@@ -2036,6 +2036,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../user-guide/cost_capture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Token and Cost Capture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user-guide/injection_modes/" class="md-nav__link">
         
   
@@ -3856,22 +3884,22 @@ python<span class="w"> </span>scripts/security/behaviour_audit.py<span class="w"
 <td><code>raw.githubusercontent.com</code></td>
 <td>443</td>
 <td>No</td>
-<td>Every <code>import litellm</code> (the SDK imports it), to refresh litellm's model price table; falls back to the bundled copy if unreachable [R]</td>
-<td><code>LITELLM_LOCAL_MODEL_COST_MAP=True</code> (the keyless quickstart sets it itself, <code>traigent/__init__.py:90-100</code>). Owner ruling 2026-09-25: the SDK will set it by default, opt-out <code>TRAIGENT_LITELLM_LIVE_PRICES=1</code> (branch <code>fix/litellm-local-cost-map-by-default</code>, not on this commit)</td>
+<td><strong>Not contacted by default</strong> as of <code>traigent/__init__.py:72-77</code> / <code>traigent/utils/cost_calculator.py:30-46</code>: <code>import traigent</code> pins <code>LITELLM_LOCAL_MODEL_COST_MAP=True</code> before litellm's own import-time fetch runs, for every code path (including <code>from traigent.api.decorators import EvaluationOptions</code>, which used to re-set the pin unconditionally and mask a broken opt-out — fixed). Opt back in with <code>TRAIGENT_LITELLM_LIVE_PRICES=1</code> [R]. Residual: if the <em>application</em> imports <code>litellm</code> before <code>traigent</code>, the pin cannot retroactively apply — see "Residual risk — import order" below</td>
+<td></td>
 </tr>
 <tr>
 <td><code>raw.githubusercontent.com</code> (Anthropic beta-header config)</td>
 <td>443</td>
 <td>No</td>
-<td>Not observed in any workload on litellm 1.98.0 [R]; litellm has the fetch (<code>litellm/__init__.py:416-419</code>, <code>anthropic_beta_headers_manager.py</code>)</td>
-<td><code>LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True</code></td>
+<td>Not observed in any workload on litellm 1.98.0 [R]; litellm has the fetch (<code>litellm/__init__.py:416-419</code>, <code>anthropic_beta_headers_manager.py</code>); pinned the same way and by the same default as the price table above</td>
+<td><code>LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True</code> (also on by default)</td>
 </tr>
 <tr>
 <td><code>huggingface.co</code></td>
 <td>443</td>
 <td>No</td>
-<td>Pricing/counting tokens for a Llama-family model (<code>traigent/utils/cost_calculator.py:397</code> → <code>litellm.token_counter</code> → <code>huggingface_hub</code>) downloads a tokenizer [R]</td>
-<td><code>HF_HUB_OFFLINE=1</code></td>
+<td><strong>Not contacted by default</strong>: pricing/counting tokens for a Llama-family model (<code>traigent/utils/cost_calculator.py:397</code> → <code>litellm.token_counter</code> → <code>huggingface_hub</code>) no longer downloads a tokenizer just to count tokens (fixed) [R]</td>
+<td><code>HF_HUB_OFFLINE=1</code> (redundant with the fix, kept as defense in depth)</td>
 </tr>
 <tr>
 <td>LLM provider endpoints (OpenAI, Anthropic, …)</td>
@@ -3901,8 +3929,10 @@ third-party contact in every workload [R]):</p>
 <p><strong>Residual risk — import order.</strong> If the application imports <code>litellm</code> <em>before</em>
 <code>traigent</code>, litellm fetches its price table at its own import, before the SDK
 can set any default [R: workload <code>import_litellm_first</code>]. Only the environment
-variable set before the process starts prevents that; the SDK default in the
-pending branch cannot. The egress test keeps this as a strict xfail.</p>
+variable set before the process starts prevents that; the SDK's own default
+pin cannot, because it only runs when <code>traigent/__init__.py</code> first executes,
+which is already too late. The egress test keeps this as a strict xfail
+(<code>test_litellm_imported_first_reaches_no_third_party_host</code>).</p>
 <p><strong>What happens when the network is blocked.</strong> In <code>docker run --network none</code>
 every workload completed [R, evidence §5]. A refused DNS lookup costs litellm
 well under a second (default vs pinned <code>optimize_mock</code>: 11.9 s vs 11.3/11.7 s),
@@ -3928,7 +3958,7 @@ different: 8 attempts and about 22 s added (32.5 s vs 10.3 s with
 </tr>
 <tr>
 <td><code>@traigent.optimize</code>, mock LLM, dummy key, loopback stub backend</td>
-<td><code>raw.githubusercontent.com:443</code>; <code>127.0.0.1</code> stub (<code>POST /api/v1/keys/validate</code> → 503 → local fallback)</td>
+<td>no external host (default pin, <code>--pins</code> not needed) [R]; <code>raw.githubusercontent.com:443</code> only if <code>TRAIGENT_LITELLM_LIVE_PRICES=1</code></td>
 <td>stub only</td>
 </tr>
 <tr>
@@ -3938,17 +3968,17 @@ different: 8 attempts and about 22 s added (32.5 s vs 10.3 s with
 </tr>
 <tr>
 <td><code>import litellm</code> before <code>import traigent</code></td>
-<td><code>raw.githubusercontent.com:443</code></td>
+<td><code>raw.githubusercontent.com:443</code> (residual — see above; pins/opt-out cannot help here)</td>
 <td>stub only</td>
 </tr>
 <tr>
 <td>Llama token count (<code>calculate_prompt_cost</code>)</td>
-<td><code>huggingface.co:443</code> ×8</td>
+<td>no external host (fixed: no longer downloads a tokenizer to count tokens) [R]</td>
 <td>none</td>
 </tr>
 <tr>
 <td>Mock run with built-in backend, production policy</td>
-<td><code>portal.traigent.ai</code>, <code>raw.githubusercontent.com</code></td>
+<td><code>portal.traigent.ai</code> only (the <code>raw.githubusercontent.com</code> contact this row used to show is gone with the default pin) [R]</td>
 <td><code>portal.traigent.ai</code> only</td>
 </tr>
 </tbody>
@@ -3958,7 +3988,17 @@ test IPv6 support (first seen via <code>traigent/integrations/observability/work
 importing <code>requests</code>) [R]. No UDP sends and no listening sockets were recorded; idle-time traffic
 was not measured.</p>
 <h2 id="child-processes">Child processes<a class="headerlink" href="#child-processes" title="Permanent link">&para;</a></h2>
-<p>No workload launched any process [R]. The SDK source can launch these [S]:</p>
+<p><strong>Known finding, fix in flight:</strong> a pinned <code>optimize_mock</code> / <code>optimize_seamless</code>
+/ <code>import_litellm_first</code> run spawns one <code>subprocess.Popen: uname</code> [R,
+<code>test_pinned_run_spawns_no_process_and_loads_no_foreign_library</code>, currently
+failing on this branch]. Root cause: <code>import mlflow</code>
+(<code>traigent/integrations/observability/mlflow.py:13</code>), eagerly imported via
+<code>traigent/integrations/__init__.py:77</code> — mlflow's own import shells out to
+<code>uname</code> on Linux/macOS. No other workload launched a process [R]. Being fixed
+on a separate branch, <code>fix/lazy-mlflow-import</code> (make the mlflow integration a
+lazy import so it is not paid by every <code>import traigent</code>); this document
+should drop this paragraph once that lands and the test above passes again.</p>
+<p>The SDK source can also launch these [S]:</p>
 <table>
 <thead>
 <tr>
@@ -4077,9 +4117,17 @@ source is unavailable (frozen, obfuscated, or zipped apps) it fails with a
 </ul>
 <h2 id="findings-that-could-matter-to-avedr">Findings that could matter to AV/EDR<a class="headerlink" href="#findings-that-could-matter-to-avedr" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Unpinned third-party fetches on import (<code>raw.githubusercontent.com</code>) and on Llama
-   token counting (<code>huggingface.co</code>, with retries). Most likely to trip egress
-   rules. Fix pending for the first; none yet for the second.</li>
+<li>Third-party fetches on import (<code>raw.githubusercontent.com</code> for litellm's price
+   table and Anthropic beta-header config; <code>huggingface.co</code> for Llama tokenizer
+   downloads): both now pinned off by default, fixed. Two residuals remain:
+   (a) the application importing <code>litellm</code> before <code>traigent</code> (import order —
+   the SDK's own pin cannot help, see "Residual risk — import order"), and
+   (b) the documented opt-out <code>TRAIGENT_LITELLM_LIVE_PRICES=1</code>, which
+   deliberately restores the <code>raw.githubusercontent.com</code> fetch on request.</li>
+<li>A pinned run spawns <code>subprocess.Popen: uname</code> via mlflow's own import
+   (<code>traigent/integrations/observability/mlflow.py:13</code>, eagerly imported
+   through <code>traigent/integrations/__init__.py:77</code>). Fix in flight on
+   <code>fix/lazy-mlflow-import</code> (lazy-import the mlflow integration).</li>
 <li>Seamless mode's in-memory AST rewrite + <code>compile</code> of user source: benign, but
    behaviour monitors that flag runtime code generation may notice it. The
    <code>context</code> injection mode avoids it.</li>
