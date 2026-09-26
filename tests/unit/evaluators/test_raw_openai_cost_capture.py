@@ -651,112 +651,27 @@ def test_constructor_override_skips_params_the_constructor_rejects():
 
 
 # --------------------------------------------------------------------------
-# Review F2 (owner decision: conservative stop, with an actionable message)
+# F2, owner decision: the unknown-cost safety cap applies only to runs the
+# user did not size explicitly (max_trials / max_total_examples).
 # --------------------------------------------------------------------------
 
 
-def _optimize_fifteen(monkeypatch, tmp_path, *, measured: bool, **optimize_kwargs):
-    """15 configurations; the agent's usage is captured only when ``measured``."""
-    from traigent.core.optimized_function import OptimizedFunction
-
-    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
-    monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
-    client = _sync_client()
-
-    def agent(question: str) -> str:
-        if not measured:
-            return "ok"  # e.g. an HTTP call no interceptor sees
-        return _sync_agent(client)(question)
-
-    def custom_evaluator(func, config, example):
-        return ExampleResult(
-            example_id=example.input_data["question"],
-            input_data=example.input_data,
-            expected_output=example.expected_output,
-            actual_output=func(**example.input_data),
-            metrics={"accuracy": 1.0},
-            execution_time=0.0,
-            success=True,
-            error_message=None,
-            metadata={},
-        )
-
-    opt_func = OptimizedFunction(
-        func=agent,
-        configuration_space={"temperature": [i / 10 for i in range(15)]},
-        objectives=["accuracy"],
-        eval_dataset=_dataset(),
-        custom_evaluator=custom_evaluator,
-        max_trials=15,
-        auto_override_frameworks=measured,
-        framework_targets=["openai.OpenAI"] if measured else None,
-    )
-    return opt_func.optimize_sync(
-        algorithm="grid", max_trials=15, progress_bar=False, **optimize_kwargs
-    )
-
-
-def test_unmeasured_run_stops_at_fallback_limit_and_says_how_to_continue(
-    monkeypatch, tmp_path, caplog
+def _run(
+    monkeypatch,
+    tmp_path,
+    *,
+    unmeasured_when=lambda temperature: True,
+    configs: int = 15,
+    construct_kwargs: dict | None = None,
+    **optimize_kwargs,
 ):
-    monkeypatch.delenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", raising=False)
-    result = _optimize_fifteen(monkeypatch, tmp_path, measured=False)
-
-    assert len(result.trials) == 10
-    assert result.stop_reason == "cost_limit"
-    assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" in result.warning_codes
-    (message,) = [
-        w for w in result.warnings if w.startswith("Optimization stopped after")
-    ]
-    assert "none of their costs could be measured" in message
-    for remedy in (
-        "max_trials does not lift it",
-        "async .ainvoke/.abatch are not captured",
-        "TRAIGENT_FALLBACK_TRIAL_LIMIT",
-        "cost_limit=",
-        "TRAIGENT_RUN_COST_LIMIT",
-        "docs/user-guide/cost_capture.md",
-        "enable_openai_optimization()",
-    ):
-        assert remedy in message
-    assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" in caplog.text
-
-
-def test_raising_the_fallback_limit_lets_an_unmeasured_run_continue(
-    monkeypatch, tmp_path
-):
-    monkeypatch.setenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", "20")
-    result = _optimize_fifteen(monkeypatch, tmp_path, measured=False)
-
-    assert len(result.trials) == 15
-    assert result.stop_reason != "cost_limit"
-    assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" not in result.warning_codes
-
-
-def test_measured_run_is_bounded_by_its_cost_budget_not_the_trial_fallback(
-    monkeypatch, tmp_path
-):
-    # Once cost is measured the cost budget governs: 15 cheap trials fit a
-    # $1 budget, so the 10-trial fallback does not apply.
-    monkeypatch.delenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", raising=False)
-    result = _optimize_fifteen(monkeypatch, tmp_path, measured=True, cost_limit=1.0)
-
-    assert len(result.trials) == 15
-    assert result.stop_reason != "cost_limit"
-    assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" not in result.warning_codes
-
-
-def test_mixed_run_stop_message_counts_unmeasured_and_measured_trials(
-    monkeypatch, tmp_path
-):
-    # Review of 078314f5: one unmeasured trial makes the trial limit govern the
-    # whole run; the message must not claim that no usage was captured at all.
+    """``configs`` temperatures; the agent's usage is captured unless
+    ``unmeasured_when(temperature)``. No run size is set unless passed."""
     from traigent.config.context import get_config
     from traigent.core.optimized_function import OptimizedFunction
 
     monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
     monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
-    monkeypatch.delenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", raising=False)
     measured, unmeasured = _sync_client(), _sync_client(usage=False)
 
     def agent(question: str) -> str:
@@ -766,7 +681,7 @@ def test_mixed_run_stop_message_counts_unmeasured_and_measured_trials(
             if isinstance(config, dict)
             else getattr(config, "temperature", None)
         )
-        client = unmeasured if temperature == 0.0 else measured
+        client = unmeasured if unmeasured_when(temperature) else measured
         return _sync_agent(client)(question)
 
     def custom_evaluator(func, config, example):
@@ -784,26 +699,171 @@ def test_mixed_run_stop_message_counts_unmeasured_and_measured_trials(
 
     opt_func = OptimizedFunction(
         func=agent,
-        configuration_space={"temperature": [i / 10 for i in range(15)]},
+        configuration_space={"temperature": [i / 10 for i in range(configs)]},
         objectives=["accuracy"],
         eval_dataset=_dataset(),
         custom_evaluator=custom_evaluator,
-        max_trials=15,
         auto_override_frameworks=True,
         framework_targets=["openai.OpenAI"],
+        **(construct_kwargs or {}),
     )
-    result = opt_func.optimize_sync(algorithm="grid", max_trials=15, progress_bar=False)
+    return opt_func.optimize_sync(
+        algorithm="grid", progress_bar=False, **optimize_kwargs
+    )
+
+
+def _stop_message(result) -> str:
+    (message,) = [w for w in result.warnings if w.startswith("Cost could not be")]
+    return message
+
+
+def test_default_sized_unmeasured_run_stops_at_the_safety_limit(
+    monkeypatch, tmp_path, caplog
+):
+    monkeypatch.delenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", raising=False)
+    result = _run(monkeypatch, tmp_path)
 
     assert len(result.trials) == 10
     assert result.stop_reason == "cost_limit"
-    (message,) = [
-        w for w in result.warnings if w.startswith("Optimization stopped after")
-    ]
-    assert "1 of them had no measurable cost" in message
-    assert "9 were measured" in message
-    assert "One unmeasured trial is enough" in message
-    assert "none of their costs" not in message
+    assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" in result.warning_codes
+    message = _stop_message(result)
+    assert "none of the 10 trials' cost could be measured" in message
+    for text in (
+        "stopped at the default safety limit of 10 trials",
+        "Set max_trials explicitly on @traigent.optimize or .optimize() to run "
+        "more trials",
+        "max_total_examples caps the total examples and also counts as your "
+        "explicit consent, but does not raise max_trials",
+        "async .ainvoke/.abatch are not captured",
+        "docs/user-guide/cost_capture.md",
+        "enable_openai_optimization()",
+        "TRAIGENT_FALLBACK_TRIAL_LIMIT",
+    ):
+        assert text in message
+    assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" in caplog.text
+
+
+def test_env_var_overrides_the_default_safety_limit(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", "4")
+    result = _run(monkeypatch, tmp_path)
+    assert len(result.trials) == 4
+    assert "default safety limit of 4 trials" in _stop_message(result)
+
+
+def test_env_var_applies_when_cost_limit_is_set(monkeypatch, tmp_path):
+    # cost_limit builds the enforcer config directly; that path used to ignore
+    # TRAIGENT_FALLBACK_TRIAL_LIMIT and use 10.
+    monkeypatch.setenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", "4")
+    result = _run(monkeypatch, tmp_path, cost_limit=5.0)
+    assert len(result.trials) == 4
+
+
+@pytest.mark.parametrize("where", ["call", "constructor"])
+def test_explicit_max_trials_runs_to_that_size_with_a_warning(
+    monkeypatch, tmp_path, where
+):
+    monkeypatch.delenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", raising=False)
+    if where == "call":
+        result = _run(monkeypatch, tmp_path, max_trials=15)
+    else:
+        result = _run(monkeypatch, tmp_path, construct_kwargs={"max_trials": 15})
+
+    assert len(result.trials) == 15
+    assert result.stop_reason != "cost_limit"
+    assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" not in result.warning_codes
+    assert "COST_UNMEASURED_TRIALS_RAN" in result.warning_codes
+    (message,) = [w for w in result.warnings if "ran with a cost that" in w]
+    assert message.startswith("15 of 15 trials ran with a cost")
+
+
+def test_constructor_max_trials_none_is_not_explicit(monkeypatch, tmp_path):
+    # Review of #2447, F1: OptimizedFunction(max_trials=None) used to count as
+    # an explicit size, so an unsized, unbounded run ignored the safety limit.
+    monkeypatch.delenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", raising=False)
+    result = _run(monkeypatch, tmp_path, construct_kwargs={"max_trials": None})
+    assert len(result.trials) == 10
+    assert result.stop_reason == "cost_limit"
+    assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" in result.warning_codes
+    assert "COST_UNMEASURED_TRIALS_RAN" not in result.warning_codes
+
+
+def test_decorator_max_trials_counts_as_explicit(monkeypatch, tmp_path):
+    import traigent
+
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
+    monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
+    monkeypatch.delenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", raising=False)
+
+    def custom_evaluator(func, config, example):
+        return ExampleResult(
+            example_id=example.input_data["question"],
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output=func(**example.input_data),
+            metrics={"accuracy": 1.0},
+            execution_time=0.0,
+            success=True,
+            error_message=None,
+            metadata={},
+        )
+
+    @traigent.optimize(
+        configuration_space={"temperature": [i / 10 for i in range(12)]},
+        objectives=["accuracy"],
+        eval_dataset=_dataset(),
+        custom_evaluator=custom_evaluator,
+        max_trials=12,
+    )
+    def agent(question: str) -> str:
+        return "ok"  # no captured LLM call
+
+    result = agent.optimize_sync(algorithm="grid", progress_bar=False)
+    assert len(result.trials) == 12
+    assert "COST_UNMEASURED_TRIALS_RAN" in result.warning_codes
+
+
+def test_explicit_max_total_examples_counts_as_explicit(monkeypatch, tmp_path):
+    # With the default safety limit lowered to 4, a run that sets only
+    # max_total_examples runs past it: 2 examples per trial, 40 examples,
+    # bounded by the default max_trials of 10.
+    monkeypatch.setenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", "4")
+    result = _run(monkeypatch, tmp_path, max_total_examples=40)
+    assert len(result.trials) == 10
+    assert result.stop_reason != "cost_limit"
+    assert "COST_UNMEASURED_TRIALS_RAN" in result.warning_codes
+
+
+def test_measured_run_is_unchanged(monkeypatch, tmp_path):
+    monkeypatch.delenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", raising=False)
+    result = _run(
+        monkeypatch,
+        tmp_path,
+        unmeasured_when=lambda temperature: False,
+        max_trials=15,
+        cost_limit=1.0,
+    )
+    assert len(result.trials) == 15
+    assert result.stop_reason != "cost_limit"
+    assert not {
+        "COST_UNMEASURED_TRIAL_LIMIT_REACHED",
+        "COST_UNMEASURED_TRIALS_RAN",
+    } & set(result.warning_codes)
+
+
+def test_mixed_run_stop_message_counts_unmeasured_and_measured_trials(
+    monkeypatch, tmp_path
+):
+    monkeypatch.delenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", raising=False)
+    result = _run(
+        monkeypatch, tmp_path, unmeasured_when=lambda temperature: temperature == 0.0
+    )
+    assert len(result.trials) == 10
+    assert result.stop_reason == "cost_limit"
+    message = _stop_message(result)
+    assert "1 of 10 trials had no measurable cost" in message
+    assert "9 were measured; one unmeasured trial is enough" in message
     assert "for every configuration" in message
+    assert "none of the" not in message
 
 
 # --------------------------------------------------------------------------

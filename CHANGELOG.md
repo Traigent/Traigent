@@ -72,19 +72,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   it as unknown yet (#2446). The results table prints `n/a` for it. A
   `metric_limit` on a cost metric skips unmeasured trials instead of failing
   the run. Consumers that read these keys must expect them to be absent.
-- **Unmeasured-cost runs stop at the trial fallback, and now say why (#2441).**
-  When trial cost cannot be measured, the cost limit cannot bound spend, so
-  the run stops after `TRAIGENT_FALLBACK_TRIAL_LIMIT` trials (default 10) with
-  `stop_reason="cost_limit"`. **A single unmeasured trial switches the whole
-  run to this trial limit**, even when every other trial was measured, and
-  `max_trials` does not lift it. This now also applies to custom-evaluator
-  runs that previously reported `$0` and ran every trial, including async
-  LangChain agents, whose `ainvoke`/`abatch` calls are not captured yet
-  (#2445). The result carries `COST_UNMEASURED_TRIAL_LIMIT_REACHED` and a
-  message that counts the unmeasured and measured trials and names the ways to
-  continue: capture usage for every configuration (then `cost_limit=` /
-  `TRAIGENT_RUN_COST_LIMIT` governs the run) or raise
-  `TRAIGENT_FALLBACK_TRIAL_LIMIT`.
+- **Unmeasured-cost runs stop at a default safety limit unless you size them
+  (#2441).** When trial cost cannot be measured, the cost limit cannot bound
+  spend. A run that did not set `max_trials` or `max_total_examples`
+  explicitly stops after the default safety limit of 10 trials
+  (`TRAIGENT_FALLBACK_TRIAL_LIMIT` changes it) with `stop_reason="cost_limit"`.
+  **A single unmeasured trial is enough**, even when every other trial was
+  measured. This now also applies to custom-evaluator runs that previously
+  reported `$0`, including async LangChain agents, whose `ainvoke`/`abatch`
+  calls are not captured yet (#2445). The result carries
+  `COST_UNMEASURED_TRIAL_LIMIT_REACHED` and a message that counts the
+  unmeasured and measured trials and says to set `max_trials` explicitly to
+  run more trials, or to capture usage. A run that sets `max_trials` or
+  `max_total_examples` explicitly runs up to that size and carries
+  `COST_UNMEASURED_TRIALS_RAN` instead. `max_total_examples` caps total
+  examples and counts as explicit consent, but does not raise the default
+  `max_trials` of 10. A `max_total_examples` passed to `.optimize()` stays on
+  the function object for later calls.
+  `TRAIGENT_FALLBACK_TRIAL_LIMIT` is now also honoured when `cost_limit` or
+  `cost_approved` is set; those paths used to fall back to 10.
+  `OptimizedFunction(max_trials=None)` and an MCP `run_optimization` call
+  without `max_trials` do not count as explicitly sized.
 - **The framework override no longer passes call-time parameters to a client
   constructor that does not accept them (#2441).** Building `openai.OpenAI()`
   inside an optimized function with `framework_targets=["openai.OpenAI"]` used
