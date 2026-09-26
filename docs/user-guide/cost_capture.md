@@ -127,10 +127,10 @@ total rather than failing the run. Two run-level warnings say what happened:
 The cost limit (`cost_limit=` on `@traigent.optimize` or `.optimize()`, or
 `TRAIGENT_RUN_COST_LIMIT`, default `$2.00`) can only bound spend it can see.
 When any trial reports no cost, Traigent is conservative: the whole run
-switches to a trial limit and stops after `max_unmeasured_trials` trials
+switches to a trial limit and stops after `TRAIGENT_FALLBACK_TRIAL_LIMIT` trials
 (default `10`) with `stop_reason == "cost_limit"`. One unmeasured trial is
-enough, even if every other trial was measured. `max_trials` alone does not
-lift this limit. The result carries the `COST_UNMEASURED_TRIAL_LIMIT_REACHED` warning code
+enough, even if every other trial was measured. `max_trials` does not lift this
+limit. The result carries the `COST_UNMEASURED_TRIAL_LIMIT_REACHED` warning code
 and a message, which is also logged, that says how many trials were unmeasured
 and how many were measured.
 
@@ -142,20 +142,9 @@ To continue, either:
    gateway that omits `usage`, a streaming call, or an uncaptured client. A
    fully measured run is bounded by its cost budget instead of the trial limit,
    so raise `cost_limit` if the budget is what stops you.
-2. **Accept untracked spend.** Raise the unmeasured-cost trial limit with the
-   `max_unmeasured_trials` parameter, on the decorator or on the run:
-
-   ```python
-   @traigent.optimize(..., max_unmeasured_trials=50)
-   def answer(question: str) -> str: ...
-
-   answer.optimize_sync(max_trials=50, max_unmeasured_trials=50)
-   ```
-
-   It must be an int of at least 1. Without it, the
-   `TRAIGENT_FALLBACK_TRIAL_LIMIT` environment variable applies, then the
-   default of `10`; the parameter wins over the environment variable. Traigent
-   cannot tell you what those trials cost.
+2. **Accept untracked spend.** Raise the unmeasured-cost trial limit, for
+   example `export TRAIGENT_FALLBACK_TRIAL_LIMIT=50`. Traigent cannot tell you
+   what those trials cost.
 
 Build the OpenAI client once, outside the optimized function, as in the
 examples above. The override injects the trial's `model` and sampling

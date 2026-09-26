@@ -62,7 +62,6 @@ from traigent.core.cost_enforcement import (
     Permit,
     normalize_cost_approved,
     normalize_estimated_calls_per_example,
-    resolve_fallback_trial_limit,
     validate_cost_limit,
 )
 from traigent.core.cost_estimator import CostEstimator
@@ -847,13 +846,6 @@ class OptimizationOrchestrator:
                 approved=cost_approved,
             )
         self.cost_enforcer = CostEnforcer(config=cost_config)
-        # Unmeasured-cost trial limit (Traigent#2441): the max_unmeasured_trials
-        # parameter wins over TRAIGENT_FALLBACK_TRIAL_LIMIT, which wins over
-        # the default. Resolved here so it also applies when cost_limit or
-        # cost_approved built the config above (that path ignored the env).
-        self.cost_enforcer.config.fallback_trial_limit = resolve_fallback_trial_limit(
-            self.config.get("max_unmeasured_trials")
-        )
         # Declared calls-per-example lever (issue #1750): scales the EMA seed
         # so a multi-call agent's early trials don't read as guaranteed
         # divergence against a single-call warm-start. Resolved once here
@@ -3663,9 +3655,7 @@ class OptimizationOrchestrator:
         if execution_budget_stop is not None:
             return remaining, 0, execution_budget_stop
 
-        if self._is_cost_limit_reached() and not self._unmeasured_cap_blocked_nothing(
-            trial_count
-        ):
+        if self._is_cost_limit_reached():
             # Loud, explicit block: log the exact scope of what the budget
             # gate is cutting off (issue #1684 item 3). The WARNING log is the
             # user-visible surface today; ``_budget_gate_detail`` stages the
@@ -5149,24 +5139,6 @@ class OptimizationOrchestrator:
         elif status == TrialStatus.FAILED:
             self._notify_failed_trial(trial_result, optuna_trial_id)
 
-    def _unmeasured_cap_blocked_nothing(self, trial_count: int) -> bool:
-        """True when the unmeasured-cost trial cap coincides with max_trials.
-
-        The cap is a trial count (Traigent#2441). When it is reached on the
-        run's last planned trial it cut nothing off, so the stop is the trial
-        limit, not a cost stop -- reporting ``cost_limit`` there would claim
-        the run was cut short.
-        """
-        if self.max_trials is None or trial_count < self.max_trials:
-            return False
-        cost_enforcer = getattr(self, "cost_enforcer", None)
-        if cost_enforcer is None:
-            return False
-        try:
-            return bool(cost_enforcer.get_status().unknown_cost_mode)
-        except Exception:  # pragma: no cover - defensive
-            return False
-
     def _should_stop(self, trial_count: int) -> bool:
         """Check if optimization should stop.
 
@@ -5193,10 +5165,6 @@ class OptimizationOrchestrator:
                 "safety_constraint": "safety_constraint",
             }
             mapped_reason = reason_mapping.get(reason, "condition")
-            if mapped_reason == "cost_limit" and self._unmeasured_cap_blocked_nothing(
-                trial_count
-            ):
-                mapped_reason = "max_trials_reached"
             if (
                 mapped_reason in ("cost_limit", "execution_budget")
                 or not self._stop_reason

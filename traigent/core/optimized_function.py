@@ -1703,7 +1703,6 @@ class OptimizedFunction(Generic[_P, _R]):
             "cost_limit",
             "cost_approved",
             "estimated_calls_per_example",
-            "max_unmeasured_trials",
             "tie_breakers",
             "tvl_parameter_agents",
             # Decorator defaults that are ALSO legitimately re-applied at
