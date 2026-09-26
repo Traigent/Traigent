@@ -2689,6 +2689,10 @@ def optimize(  # NOSONAR(S107)
             parallel_config: Consolidated parallel configuration (ParallelConfig
                 or dict). Preferred path for controlling concurrency.
             max_total_examples: Global sample budget across all trials.
+                Setting it explicitly also counts as consent to run trials
+                whose cost cannot be measured (see "Cost safeguards"), but it
+                does not raise ``max_trials``. When passed to ``.optimize()``
+                it is kept on the function object for later calls.
             samples_include_pruned: Whether pruned trials count toward the sample budget.
             smart_pruning: Optional cloud smart-pruning profile. Accepts a dict or
                 ``SmartPruningOptions`` matching
@@ -2711,7 +2715,17 @@ def optimize(  # NOSONAR(S107)
 
         Cost safeguards:
             cost_limit: Maximum USD spending per optimization run. Defaults to
-                TRAIGENT_RUN_COST_LIMIT env var or $2.00.
+                TRAIGENT_RUN_COST_LIMIT env var or $2.00. It cannot bound
+                spend it cannot see: when a trial's cost cannot be measured
+                (no LLM usage captured) and the run was not sized explicitly,
+                the run stops at a default safety limit of 10 trials
+                (TRAIGENT_FALLBACK_TRIAL_LIMIT) with warning
+                ``COST_UNMEASURED_TRIAL_LIMIT_REACHED``. Passing
+                ``max_trials`` explicitly (here or to ``.optimize()``) runs up
+                to that many trials instead, with warning
+                ``COST_UNMEASURED_TRIALS_RAN``; ``max_total_examples`` also
+                counts as consent but does not raise ``max_trials``.
+                ``max_trials=None`` does not count.
             cost_approved: Skip cost approval prompt. Use with caution in production.
             estimated_calls_per_example: Expected LLM calls per evaluated
                 example (self-consistency voting, repair passes, model

@@ -4,31 +4,27 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import time
 from pathlib import Path
 from typing import Any, cast
 
+# Availability is a spec lookup, never an import. `traigent/integrations/__init__.py`
+# and `traigent/integrations/observability/__init__.py` import this module
+# unconditionally on every `import traigent`, so an eager `import mlflow` here paid
+# for MLflow's own (heavy, and on some platforms process-spawning -- an egress audit
+# via scripts/security/behaviour_audit.py caught a `uname` spawn on every
+# @traigent.optimize run) import machinery whether or not MLflow tracking was ever
+# configured. The real package is now imported lazily by `_import_mlflow()`, only
+# when the integration is actually used. This integration also uses only MLflow's
+# tracking surface (start_run, log_param/metric/dict/artifact, set_tag, search_runs,
+# MlflowClient) -- never a model-flavor module (mlflow.sklearn / mlflow.pytorch, which
+# pull in numpy/pandas or torch) -- so those are not imported at all, guarded or
+# otherwise. See #2183.
 try:
-    import mlflow
-
-    # Model-flavor modules are optional. This integration uses only MLflow's
-    # tracking surface (start_run, log_param/metric/dict/artifact, set_tag,
-    # search_runs, MlflowClient), none of which lives in a flavor module, so a
-    # missing flavor must not disable the whole integration. sklearn was
-    # previously imported unguarded here and never used, which meant any
-    # install without it -- mlflow-skinny, notably -- silently set
-    # MLFLOW_AVAILABLE = False instead of working. See #2183.
-    try:
-        import mlflow.sklearn  # noqa: F401
-    except (ImportError, RuntimeError):
-        pass  # sklearn autologging not available
-
-    try:
-        import mlflow.pytorch  # noqa: F401
-    except (ImportError, RuntimeError):
-        pass  # pytorch autologging not available
-
+    if importlib.util.find_spec("mlflow") is None:
+        raise ImportError("mlflow not installed")
     MLFLOW_AVAILABLE = True
 except ImportError:
     MLFLOW_AVAILABLE = False
@@ -99,6 +95,29 @@ except ImportError:
         @staticmethod
         def set_tag(*args, **kwargs) -> None:
             pass
+
+else:
+    _mlflow_module: Any = None
+
+    def _import_mlflow() -> Any:
+        """Import the real ``mlflow`` package, once, on first actual use."""
+        global _mlflow_module
+        if _mlflow_module is None:
+            import mlflow as _real_mlflow
+
+            _mlflow_module = _real_mlflow
+        return _mlflow_module
+
+    class _LazyMlflowProxy:
+        """Delegates every attribute access to the real, lazily-imported
+        ``mlflow`` package, so referencing ``mlflow.<anything>`` anywhere below
+        triggers the real import on first use instead of at module import
+        time."""
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(_import_mlflow(), name)
+
+    mlflow: Any = _LazyMlflowProxy()  # type: ignore[no-redef]
 
 
 from traigent.api.types import OptimizationResult, TrialResult

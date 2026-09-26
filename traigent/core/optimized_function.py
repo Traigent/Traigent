@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import inspect
+import math
 import os
 import sys
 import threading
@@ -624,6 +625,64 @@ def _run_captured_usage(result: Any) -> bool:
     return _any_trial_reported_cost(result)
 
 
+COST_OBJECTIVE_PARTIAL_USAGE_WARNING_CODE = "COST_OBJECTIVE_PARTIAL_USAGE_CAPTURED"
+
+
+def _trial_cost_measured(trial: Any) -> bool:
+    """True when a trial carries a finite ``cost`` or ``total_cost``."""
+    metrics = getattr(trial, "metrics", None)
+    if not isinstance(metrics, dict):
+        return False
+    for key in _TRIAL_COST_METRIC_KEYS:
+        value = metrics.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if math.isfinite(float(value)):
+            return True
+    return False
+
+
+def _warn_cost_objective_partial_coverage(
+    result: Any, objective_names: Sequence[str] | None
+) -> None:
+    """Warn when a cost objective ranked measured and unmeasured trials together.
+
+    ``_guard_cost_objective_without_usage`` only speaks when NO trial measured
+    usage. When some successful trials carry a cost and others do not, the
+    unmeasured ones have an UNKNOWN cost: selection scores that objective as
+    their worst value, so they cannot win on cost, but the comparison is
+    still incomplete and the caller should know which trials it covers
+    (Traigent#2441 review, F1).
+    """
+    if not _objectives_include_cost(objective_names):
+        return
+    successful = [
+        trial
+        for trial in getattr(result, "trials", None) or []
+        if getattr(trial, "is_successful", False)
+    ]
+    unmeasured = [trial for trial in successful if not _trial_cost_measured(trial)]
+    if not unmeasured or len(unmeasured) == len(successful):
+        return
+
+    message = (
+        f"A cost objective was declared but {len(unmeasured)} of "
+        f"{len(successful)} successful trials captured no LLM usage, so their "
+        "cost is UNKNOWN, not $0. They are ranked with their cost objective "
+        "at its worst value. Capture usage for every configuration (for a raw "
+        "OpenAI client, enable the openai.OpenAI override and make sure the "
+        "gateway returns `usage`) to compare them on cost."
+    )
+    warning_codes = getattr(result, "warning_codes", None)
+    if isinstance(warning_codes, list):
+        if COST_OBJECTIVE_PARTIAL_USAGE_WARNING_CODE not in warning_codes:
+            warning_codes.append(COST_OBJECTIVE_PARTIAL_USAGE_WARNING_CODE)
+    result_warnings = getattr(result, "warnings", None)
+    if isinstance(result_warnings, list) and message not in result_warnings:
+        result_warnings.append(message)
+    logger.warning("%s (%s)", message, COST_OBJECTIVE_PARTIAL_USAGE_WARNING_CODE)
+
+
 def _guard_cost_objective_without_usage(
     result: Any, objective_names: Sequence[str] | None
 ) -> None:
@@ -884,8 +943,10 @@ class OptimizedFunction(Generic[_P, _R]):
 
         # Extract decorator-provided metadata before core storage
         max_trials_explicit = kwargs.pop("_max_trials_explicit", None)
+        # ``max_trials=None`` means "not set", on every path: it is not consent
+        # to an unbounded run (Traigent#2441 review of #2447, F1).
         self._max_trials_uses_sdk_default = (
-            "max_trials" not in kwargs
+            kwargs.get("max_trials") is None
             if max_trials_explicit is None
             else not bool(max_trials_explicit)
         )
@@ -2348,6 +2409,7 @@ class OptimizedFunction(Generic[_P, _R]):
                 # usage at all recorded $0 everywhere, which is an absent
                 # measurement, not a cheap run.
                 _guard_cost_objective_without_usage(result, self.objectives)
+                _warn_cost_objective_partial_coverage(result, self.objectives)
             _record_pricing_provenance(
                 result, strict_effective=strict_effective, strict_origin=strict_origin
             )
@@ -2816,6 +2878,10 @@ class OptimizedFunction(Generic[_P, _R]):
             # attached -> result shape unchanged.
             self._attach_execution_budget_snapshot(result, orchestrator)
 
+            # A run stopped by the unknown-cost trial fallback says why, and
+            # how to continue (Traigent#2441 review, F2).
+            self._attach_unmeasured_cost_stop_warning(result, orchestrator)
+
             # Save results if requested
             if save_to:
                 self.save_optimization_results(save_to)
@@ -2948,6 +3014,64 @@ class OptimizedFunction(Generic[_P, _R]):
             ", ".join(unpriced),
             message,
         )
+
+    def _attach_unmeasured_cost_stop_warning(
+        self,
+        result: OptimizationResult,
+        orchestrator: OptimizationOrchestrator,
+    ) -> None:
+        """Explain unmeasured trial cost on the result (Traigent#2441).
+
+        A run the user did not size explicitly stops at the default safety
+        limit once any trial's cost is unknown; that stop used to read only
+        ``stop_reason == "cost_limit"``, which looks like a spent budget.
+        It now carries ``COST_UNMEASURED_TRIAL_LIMIT_REACHED`` and says how to
+        continue. An explicitly sized run is not stopped, but when it ran
+        unmeasured trials it carries ``COST_UNMEASURED_TRIALS_RAN``.
+        """
+        cost_enforcer = getattr(orchestrator, "cost_enforcer", None)
+        if cost_enforcer is None:
+            return
+        try:
+            status = cost_enforcer.get_status()
+            fallback_limit = int(cost_enforcer.config.fallback_trial_limit)
+            waived = bool(cost_enforcer.unknown_cost_cap_waived)
+        except Exception:  # pragma: no cover - defensive; never break finalize
+            logger.debug("Cost enforcer status unreadable", exc_info=True)
+            return
+        if not status.unknown_cost_mode:
+            return
+
+        from traigent.core.cost_enforcement import (
+            UNMEASURED_COST_TRIAL_LIMIT_WARNING_CODE,
+            UNMEASURED_COST_TRIALS_RAN_WARNING_CODE,
+            unmeasured_cost_ran_message,
+            unmeasured_cost_stop_message,
+        )
+
+        if waived:
+            code = UNMEASURED_COST_TRIALS_RAN_WARNING_CODE
+            message = unmeasured_cost_ran_message(
+                status.trial_count, status.unmeasured_trial_count
+            )
+        elif (
+            getattr(result, "stop_reason", None) == "cost_limit"
+            and status.limit_reached
+        ):
+            code = UNMEASURED_COST_TRIAL_LIMIT_WARNING_CODE
+            message = unmeasured_cost_stop_message(
+                status.trial_count,
+                fallback_limit,
+                status.limit_usd,
+                status.unmeasured_trial_count,
+            )
+        else:
+            return
+        if code not in result.warning_codes:
+            result.warning_codes.append(code)
+        if message not in result.warnings:
+            result.warnings.append(message)
+        logger.warning("%s (%s)", message, code)
 
     def _attach_execution_budget_snapshot(
         self,
@@ -3664,6 +3788,22 @@ Remediation:
             requested_algorithm=algorithm,
             execution_budget=execution_budget,
         )
+
+        # An explicitly sized run (max_trials or max_total_examples set by the
+        # user, not the SDK default) is consent to run that many trials even
+        # when their cost cannot be measured, so the default unknown-cost
+        # safety cap is waived (Traigent#2441). Explicitness comes from
+        # sentinels, never from comparing values with the default: call-time
+        # max_trials is None unless passed; ``_max_trials_uses_sdk_default``
+        # records whether the decorator/constructor received max_trials
+        # (``_max_trials_explicit``, api/decorators.py); max_total_examples is
+        # None unless set (prepare_optimization_dataset).
+        if (
+            requested_max_trials is not None
+            or not getattr(self, "_max_trials_uses_sdk_default", True)
+            or max_total_examples_value is not None
+        ):
+            orchestrator.waive_unknown_cost_trial_cap()
 
         # Phase 9: Run optimization and finalize
         from traigent.cloud.client import SessionContractError

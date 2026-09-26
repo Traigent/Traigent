@@ -330,4 +330,5 @@ The exception is when using `auto_override_frameworks=True`, which intercepts cl
 
 - [LangChain Integration Details](references/langchain.md)
 - [LiteLLM Multi-Provider Guide](references/litellm.md)
+- [Raw OpenAI SDK and Cost Capture](references/openai.md)
 - [DSPy Adapter Reference](references/dspy.md)

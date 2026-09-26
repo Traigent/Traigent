@@ -90,6 +90,30 @@ def validate_cost_limit(limit: object) -> float:
     return value
 
 
+#: Default number of trials a run may make while any trial's cost is unknown,
+#: unless the user sized the run explicitly (Traigent#2441).
+DEFAULT_FALLBACK_TRIAL_LIMIT = 10
+
+
+def resolve_fallback_trial_limit() -> int:
+    """The default unknown-cost trial cap: TRAIGENT_FALLBACK_TRIAL_LIMIT, else 10."""
+    raw = os.getenv("TRAIGENT_FALLBACK_TRIAL_LIMIT")
+    if raw is None:
+        return DEFAULT_FALLBACK_TRIAL_LIMIT
+    try:
+        parsed = int(raw)
+    except ValueError:
+        parsed = 0
+    if parsed < 1:
+        logger.warning(
+            "Invalid TRAIGENT_FALLBACK_TRIAL_LIMIT=%r, using default %d",
+            raw,
+            DEFAULT_FALLBACK_TRIAL_LIMIT,
+        )
+        return DEFAULT_FALLBACK_TRIAL_LIMIT
+    return parsed
+
+
 def normalize_cost_approved(value: object) -> bool:
     """Return True only for the runtime parameter value ``True``."""
     if value is True:
@@ -202,7 +226,7 @@ class CostEnforcerConfig:
     limit: float = DEFAULT_COST_LIMIT_USD
     approved: bool = False
     warning_threshold: float = 0.5
-    fallback_trial_limit: int = 10
+    fallback_trial_limit: int = DEFAULT_FALLBACK_TRIAL_LIMIT
     estimated_cost_per_trial: float = 0.05  # $0.05 default estimate
 
     def __post_init__(self) -> None:
@@ -314,6 +338,78 @@ class CostStatus:
     reserved_cost_usd: float = field(default=0.0)
     estimated_cost_per_trial: float = field(default=0.05)
     cost_confidence: float = field(default=0.5)
+    #: Trials whose cost could not be measured (Traigent#2441).
+    unmeasured_trial_count: int = field(default=0)
+
+
+#: Result warning code for a run stopped by the unknown-cost trial fallback.
+UNMEASURED_COST_TRIAL_LIMIT_WARNING_CODE = "COST_UNMEASURED_TRIAL_LIMIT_REACHED"
+
+
+def unmeasured_cost_stop_message(
+    trial_count: int,
+    fallback_trial_limit: int,
+    cost_limit: float,
+    unmeasured_trials: int | None = None,
+) -> str:
+    """Explain the default unknown-cost safety stop and how to continue (#2441).
+
+    Conservative by default: once any trial's cost cannot be measured the cost
+    limit cannot bound spend, so a run the user did not size explicitly stops
+    at ``fallback_trial_limit`` trials. Setting ``max_trials`` (or
+    ``max_total_examples``, which caps examples and also counts as consent)
+    explicitly lifts it.
+    """
+    unmeasured = trial_count if unmeasured_trials is None else unmeasured_trials
+    measured = max(trial_count - unmeasured, 0)
+    if measured == 0:
+        counts = f"none of the {trial_count} trials' cost could be measured"
+        capture = "call the model through a captured client"
+    else:
+        counts = (
+            f"{unmeasured} of {trial_count} trials had no measurable cost "
+            f"({measured} were measured; one unmeasured trial is enough)"
+        )
+        capture = (
+            "find why those configurations report no usage (a gateway that "
+            "omits `usage`, a streaming call, an uncaptured client) and call "
+            "the model through a captured client for every configuration"
+        )
+    return (
+        f"Cost could not be measured ({counts}; no LLM usage was captured), "
+        f"so the run stopped at the default safety limit of "
+        f"{fallback_trial_limit} trials: the cost limit (${cost_limit:.2f}) "
+        "cannot bound spend it cannot see. Set max_trials explicitly on "
+        "@traigent.optimize or .optimize() to run more trials; the run then "
+        "goes up to that many and still reports the unmeasured cost. "
+        "(max_total_examples caps the total examples and also counts as your "
+        "explicit consent, but does not raise max_trials, which defaults to "
+        "10.) To get cost measured instead, "
+        f"{capture} -- synchronous LangChain ChatOpenAI/ChatAnthropic "
+        ".invoke (async .ainvoke/.abatch are not captured yet), "
+        "non-streaming litellm.completion/acompletion, or a raw "
+        "openai.OpenAI/AsyncOpenAI client with enable_openai_optimization() "
+        "or framework_targets=['openai.OpenAI', 'openai.AsyncOpenAI'] (see "
+        "docs/user-guide/cost_capture.md); a fully measured run is bounded by "
+        "cost_limit= / TRAIGENT_RUN_COST_LIMIT. TRAIGENT_FALLBACK_TRIAL_LIMIT "
+        "changes the default safety limit."
+    )
+
+
+#: Result warning code when an explicitly sized run ran trials whose cost
+#: could not be measured (the default safety limit did not apply).
+UNMEASURED_COST_TRIALS_RAN_WARNING_CODE = "COST_UNMEASURED_TRIALS_RAN"
+
+
+def unmeasured_cost_ran_message(trial_count: int, unmeasured_trials: int) -> str:
+    """Warn that an explicitly sized run ran unmeasured-cost trials (#2441)."""
+    return (
+        f"{unmeasured_trials} of {trial_count} trials ran with a cost that could "
+        "not be measured (no LLM usage was captured), so the cost limit did not "
+        "bound their spend. The default safety limit on unmeasured trials did "
+        "not apply because max_trials or max_total_examples was set "
+        "explicitly. See docs/user-guide/cost_capture.md to get cost measured."
+    )
 
 
 class CostEnforcer:
@@ -374,6 +470,13 @@ class CostEnforcer:
         # without yielding to the event loop.
         self._lock = RLock()
         self._unknown_cost_mode: bool = False
+        self._unmeasured_trial_count: int = 0
+        # Set when the user sized the run explicitly (max_trials or
+        # max_total_examples): that is consent to run that many trials even
+        # when their cost cannot be measured, so the default unknown-cost
+        # trial cap does not apply (Traigent#2441). Configuration, not run
+        # state: reset() keeps it.
+        self._unknown_cost_cap_waived: bool = False
         self._warning_emitted: bool = False
         self._approval_token_path = self._get_approval_token_path()
         # In-flight reservation tracking for parallel execution
@@ -534,24 +637,6 @@ class CostEnforcer:
                 )
                 return default
 
-        def safe_int(key: str, default: int) -> int:
-            val = os.getenv(key)
-            if val is None:
-                return default
-            try:
-                parsed = int(val)
-                if parsed < 1:
-                    logger.warning(
-                        f"Value too low for {key}='{val}', using default {default}",
-                    )
-                    return default
-                return parsed
-            except ValueError:
-                logger.warning(
-                    f"Invalid {key}='{val}', using default {default}",
-                )
-                return default
-
         def limit_from_env() -> float:
             raw = os.getenv("TRAIGENT_RUN_COST_LIMIT")
             if raw is None:
@@ -583,7 +668,7 @@ class CostEnforcer:
             limit=limit_from_env(),
             approved=os.getenv("TRAIGENT_COST_APPROVED", "false").lower() == "true",
             warning_threshold=safe_float("TRAIGENT_COST_WARNING_THRESHOLD", 0.5),
-            fallback_trial_limit=safe_int("TRAIGENT_FALLBACK_TRIAL_LIMIT", 10),
+            fallback_trial_limit=resolve_fallback_trial_limit(),
         )
 
     def _get_approval_token_path(self) -> Path:
@@ -606,9 +691,24 @@ class CostEnforcer:
     def is_limit_reached(self) -> bool:
         """Check if the cost or trial limit has been reached (thread-safe)."""
         with self._lock:
-            if self._unknown_cost_mode:
+            if self._unknown_cost_mode and not self._unknown_cost_cap_waived:
                 return self._trial_count >= self.config.fallback_trial_limit
             return self._accumulated_cost >= self.config.limit
+
+    def waive_unknown_cost_trial_cap(self) -> None:
+        """Let an explicitly sized run continue while its cost is unmeasured.
+
+        The measured part of the spend is still bounded by the cost limit;
+        unmeasured trials are bounded only by the run size the user set.
+        """
+        with self._lock:
+            self._unknown_cost_cap_waived = True
+
+    @property
+    def unknown_cost_cap_waived(self) -> bool:
+        """True when the default unknown-cost trial cap does not apply."""
+        with self._lock:
+            return self._unknown_cost_cap_waived
 
     def budget_block_message(self, planned_trials: int | None) -> str:
         """Explicit message for a budget-gate block of planned trials.
@@ -627,13 +727,19 @@ class CostEnforcer:
                 if planned_trials is None
                 else str(max(planned_trials, 0))
             )
-            if self._unknown_cost_mode:
+            if self._unknown_cost_mode and not self._unknown_cost_cap_waived:
                 return (
                     f"budget gate blocked {blocked} planned trials "
                     f"(per-trial cost unknown: fallback trial limit "
                     f"{self.config.fallback_trial_limit} reached at "
                     f"{self._trial_count} trials; cost limit "
-                    f"${self.config.limit:.2f})"
+                    f"${self.config.limit:.2f}). "
+                    + unmeasured_cost_stop_message(
+                        self._trial_count,
+                        self.config.fallback_trial_limit,
+                        self.config.limit,
+                        self._unmeasured_trial_count,
+                    )
                 )
             estimated = self._accumulated_cost + self._reserved_cost
             return (
@@ -1135,7 +1241,7 @@ Options:
             )
 
     def _acquire_permit_locked(self) -> Permit:
-        if self._unknown_cost_mode:
+        if self._unknown_cost_mode and not self._unknown_cost_cap_waived:
             # In unknown cost mode, use trial count including in-flight
             total_trials = self._trial_count + self._in_flight_count
             if total_trials >= self.config.fallback_trial_limit:
@@ -1324,6 +1430,7 @@ Options:
 
         # Handle unknown cost with optional strict mode
         if cost is None:
+            self._unmeasured_trial_count += 1
             self._handle_unknown_cost_locked(
                 trial_desc,
                 require_cost_tracking=require_cost_tracking,
@@ -1380,6 +1487,7 @@ Options:
                 reserved_cost_usd=self._reserved_cost,
                 estimated_cost_per_trial=self._estimated_cost,
                 cost_confidence=self.get_cost_confidence(),
+                unmeasured_trial_count=self._unmeasured_trial_count,
             )
 
     def reset(self) -> None:
@@ -1391,6 +1499,7 @@ Options:
             self._accumulated_cost = 0.0
             self._trial_count = 0
             self._unknown_cost_mode = False
+            self._unmeasured_trial_count = 0
             self._warning_emitted = False
             self._in_flight_count = 0
             self._reserved_cost = 0.0

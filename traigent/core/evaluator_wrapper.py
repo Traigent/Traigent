@@ -9,6 +9,8 @@ custom evaluation functions to conform to the BaseEvaluator interface.
 from __future__ import annotations
 
 import asyncio
+import math
+import os
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
@@ -30,6 +32,27 @@ from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+_LLM_TOKEN_METRICS = ("input_tokens", "output_tokens", "total_tokens")
+_LLM_COST_METRICS = ("input_cost", "output_cost", "total_cost")
+
+
+def _strict_metrics_nulls() -> bool:
+    """TRAIGENT_STRICT_METRICS_NULLS: report a missing metric as None, not 0.0."""
+    return os.environ.get("TRAIGENT_STRICT_METRICS_NULLS", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+
+
+def _measured_number(value: Any) -> float | None:
+    """A finite, non-bool number, else None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
 
 # Substrings that mark a config key as secret-bearing. Comparison is
 # case-insensitive against the full key, so e.g. "api_key", "API-KEY",
@@ -231,33 +254,67 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         if not (self.capture_llm_metrics and self._metrics_available):
             return None
 
-        captured_responses = self._get_all_captured_responses()
+        captured_responses = [r for r in self._get_all_captured_responses() if r]
         if not captured_responses:
             return None
 
-        response = captured_responses[0]
-        if not response:
-            return None
-
-        model_name = self._extract_model_from_response(response, config)
+        # Every call made while this example ran is charged, not only the
+        # first: a plan-then-answer agent makes several (Traigent#2441).
+        # Responses are cleared before each example, so these are all ours.
         original_prompt = self._reconstruct_original_prompt(example)
         response_text = self._extract_response_text(example_result.actual_output)
+        llm_metrics = None
+        for position, response in enumerate(captured_responses):
+            metrics = self._extract_llm_metrics(
+                response=response,
+                model_name=self._extract_model_from_response(response, config),
+                # The prompt/answer text only describes the first call; it is
+                # the legacy estimator's input when that call had no usage.
+                original_prompt=original_prompt if position == 0 else None,
+                response_text=response_text if position == 0 else None,
+            )
+            if not self._has_llm_measurement(metrics):
+                continue
+            if llm_metrics is None:
+                llm_metrics = metrics
+            else:
+                self._add_llm_metrics(llm_metrics, metrics)
 
-        llm_metrics = self._extract_llm_metrics(
-            response=response,
-            model_name=model_name,
-            original_prompt=original_prompt,
-            response_text=response_text,
+        if llm_metrics is None:
+            # Captured responses without usage are not a measured $0.
+            return None
+
+        logger.debug(
+            f"Captured LLM metrics for example {example_index}: "
+            f"tokens={llm_metrics.tokens.total_tokens}, "
+            f"cost=${llm_metrics.cost.total_cost:.8f}"
         )
 
-        if llm_metrics:
-            logger.debug(
-                f"Captured LLM metrics for example {example_index}: "
-                f"tokens={llm_metrics.tokens.total_tokens}, "
-                f"cost=${llm_metrics.cost.total_cost:.8f}"
-            )
-
         return llm_metrics
+
+    @staticmethod
+    def _has_llm_measurement(metrics: Any) -> bool:
+        """True when extraction found real usage or a real charge."""
+        if metrics is None or getattr(metrics, "measured", True) is False:
+            return False
+        return bool(
+            safe_get_nested_attr(metrics, "tokens.input_tokens", 0)
+            or safe_get_nested_attr(metrics, "tokens.output_tokens", 0)
+            or safe_get_nested_attr(metrics, "cost.total_cost", 0.0)
+            or safe_get_nested_attr(metrics, "cost.cost_explicit", False)
+        )
+
+    @staticmethod
+    def _add_llm_metrics(total: Any, extra: Any) -> None:
+        """Fold one call's tokens, cost and latency into ``total`` in place."""
+        total.tokens.input_tokens += extra.tokens.input_tokens
+        total.tokens.output_tokens += extra.tokens.output_tokens
+        total.tokens.total_tokens += extra.tokens.total_tokens
+        total.cost.input_cost += extra.cost.input_cost
+        total.cost.output_cost += extra.cost.output_cost
+        total.cost.total_cost += extra.cost.total_cost
+        total.cost.unpriced = total.cost.unpriced or extra.cost.unpriced
+        total.response.response_time_ms += extra.response.response_time_ms
 
     def _enhance_result_with_llm_metrics(
         self,
@@ -275,6 +332,11 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         # Ensure metadata container exists
         if getattr(example_result, "metadata", None) is None:
             example_result.metadata = {}
+
+        # Whether this example's tokens/cost are a measurement. Absent keys on
+        # an unmeasured example mean "unknown", never "free" (Traigent#2441).
+        if self.capture_llm_metrics and self._metrics_available:
+            example_result.metadata["llm_usage_measured"] = bool(llm_metrics)
 
         if llm_metrics:
             if example_result.metrics is None:
@@ -387,9 +449,42 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 aggregated[metric] = 0.0
         return aggregated
 
+    def _resolve_unmeasured_cost_objectives(
+        self, aggregated: dict[str, Any], all_metrics: list[dict[str, Any]]
+    ) -> None:
+        """Keep a requested cost metric UNKNOWN when nothing measured it.
+
+        ``aggregate_measured_metric`` keeps the historical ``0.0`` for a cost
+        metric no row reported. With LLM capture on, that 0.0 used to reach
+        the trial as its cost objective (and, via the ``cost`` fallback in
+        ``extract_cost_from_results``, as ``total_cost``), so an unmeasured
+        configuration looked free and could win a cost ranking against a
+        measured one (Traigent#2441 review, F1). Here the metric takes the
+        captured usage when there is some (``cost`` is the per-trial total,
+        as on the other lanes) and is otherwise left out -- or ``None`` under
+        TRAIGENT_STRICT_METRICS_NULLS. Weighted selection then scores the
+        missing objective as its worst value (a skipped term adds nothing to
+        the weighted sum), and single-objective ranking treats the trial as
+        ineligible.
+        """
+        for metric in MEASURED_ONLY_METRICS & set(self.metrics):
+            if any(
+                row and _measured_number(row.get(metric)) is not None
+                for row in all_metrics
+            ):
+                continue
+            source = "total_cost" if metric == "cost" else metric
+            captured = _measured_number(aggregated.get(source))
+            if captured is not None:
+                aggregated[metric] = captured
+            elif _strict_metrics_nulls():
+                aggregated[metric] = None
+            else:
+                aggregated.pop(metric, None)
+
     def _aggregate_llm_metrics(
         self, all_metrics: list[dict[str, Any]], example_results: list[ExampleResult]
-    ) -> dict[str, float]:
+    ) -> dict[str, float | None]:
         """Aggregate LLM metrics across all examples.
 
         Args:
@@ -399,23 +494,39 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         Returns:
             Dictionary of aggregated LLM metrics
         """
-        aggregated = {}
+        aggregated: dict[str, float | None] = {}
 
-        # Aggregate token metrics (total, not average)
-        token_metrics = ["input_tokens", "output_tokens", "total_tokens"]
-        for metric in token_metrics:
+        # Token and cost totals are sums over the examples that MEASURED them.
+        # When none did, the trial's usage is unknown: writing 0.0 would upload
+        # a paid run as free (Traigent#2441). The keys are then left out, or
+        # set to None under TRAIGENT_STRICT_METRICS_NULLS -- both are valid
+        # MeasuresDict values -- never a fabricated 0.0.
+        strict_nulls = _strict_metrics_nulls()
+        for metric in (*_LLM_TOKEN_METRICS, *_LLM_COST_METRICS):
             metric_values = [
-                m.get(metric, 0.0) for m in all_metrics if m and metric in m
+                value
+                for row in all_metrics
+                if row
+                and isinstance(value := row.get(metric), (int, float))
+                and not isinstance(value, bool)
             ]
-            aggregated[metric] = sum(metric_values) if metric_values else 0.0
+            if metric_values:
+                aggregated[metric] = sum(metric_values)
+            elif strict_nulls:
+                aggregated[metric] = None
 
-        # Aggregate cost metrics (total, not average)
-        cost_metrics = ["input_cost", "output_cost", "total_cost"]
-        for metric in cost_metrics:
-            metric_values = [
-                m.get(metric, 0.0) for m in all_metrics if m and metric in m
-            ]
-            aggregated[metric] = sum(metric_values) if metric_values else 0.0
+        measured_rows = sum(
+            1
+            for r in example_results
+            if (getattr(r, "metadata", None) or {}).get("llm_usage_measured")
+        )
+        if 0 < measured_rows < len(example_results):
+            logger.warning(
+                "LLM usage was captured for only %d of %d examples; the "
+                "trial's token and cost totals cover those examples only.",
+                measured_rows,
+                len(example_results),
+            )
 
         # Calculate average response time
         response_times = [
@@ -645,7 +756,10 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         # Add LLM metrics aggregation if captured
         if self.capture_llm_metrics and self._metrics_available:
             llm_agg = self._aggregate_llm_metrics(all_metrics, example_results)
-            aggregated_metrics.update(llm_agg)
+            # None only appears under TRAIGENT_STRICT_METRICS_NULLS, whose
+            # contract is exactly "None instead of 0.0 for a missing metric".
+            aggregated_metrics.update(cast(dict[str, float], llm_agg))
+            self._resolve_unmeasured_cost_objectives(aggregated_metrics, all_metrics)
 
         # Log results
         success_count = sum(1 for result in example_results if result.success)

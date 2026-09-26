@@ -630,7 +630,7 @@ def _run_loaded_optimizations(
     *,
     mode: Literal["mock", "real"],
     cost_limit: float | None,
-    max_trials: int,
+    max_trials: int | None,
     algorithm: str,
 ) -> tuple[list[dict[str, Any]], str, str]:
     module = _load_user_module(script_path)
@@ -650,13 +650,19 @@ def _run_loaded_optimizations(
         for function_name, function in optimizable_functions:
             kwargs: dict[str, Any] = {
                 "algorithm": algorithm,
-                "max_trials": max_trials,
                 "progress_bar": False,
             }
+            if max_trials is not None:
+                # An explicit max_trials is the user's consent to run that many
+                # trials even when their cost cannot be measured (#2441). Pass
+                # it only when there is one, so an unsized MCP run keeps the
+                # default safety limit.
+                kwargs["max_trials"] = max_trials
             if mode == "real":
                 kwargs["cost_limit"] = cost_limit
             result = function.optimize_sync(**kwargs)
-            result_name = f"{sanitize_identifier(function_name)}_{algorithm}_{max_trials}_{timestamp}"
+            trials_label = "default" if max_trials is None else max_trials
+            result_name = f"{sanitize_identifier(function_name)}_{algorithm}_{trials_label}_{timestamp}"
             persistence.save_result(result, result_name)
             summaries.append(
                 _serialize_optimization_result_summary(
@@ -792,7 +798,14 @@ def run_optimization_tool(
                 ),
             }
 
-    effective_trials = max_trials or (4 if mode == "mock" else 10)
+    # Mock runs keep their small default (no real spend to protect). A real
+    # run without a caller-supplied max_trials uses the function's own
+    # configured max_trials (the SDK default is 10, the previous MCP default)
+    # and is not treated as explicitly sized, so the unmeasured-cost safety
+    # limit still applies (#2441).
+    effective_trials: int | None = (
+        max_trials if max_trials is not None else (4 if mode == "mock" else None)
+    )
     effective_algorithm = algorithm or "random"
 
     # v1 single-agent limitation: optimization runs synchronously below and

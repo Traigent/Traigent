@@ -6,6 +6,76 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-09-26
+
+### Added
+
+- **Raw OpenAI SDK calls are cost-captured (#2441, #2442).** With the OpenAI
+  override active (`enable_openai_optimization()` or
+  `framework_targets=["openai.OpenAI", "openai.AsyncOpenAI"]`), every
+  non-streaming `chat.completions.create` / `completions.create` response that
+  carries `usage` is charged to the running example, sync and async, including
+  every call of a multi-call agent. Streaming calls and responses without
+  `usage` are reported as unmeasured. See `docs/user-guide/cost_capture.md`.
+- **`COST_OBJECTIVE_PARTIAL_USAGE_CAPTURED` and
+  `COST_UNMEASURED_TRIAL_LIMIT_REACHED` warning codes (#2441, #2442).** The
+  first marks a cost-objective run where only some trials captured usage. The
+  second marks a run stopped by the unmeasured-cost trial limit and carries a
+  message naming the ways to continue.
+
+### Changed
+
+- **An unmeasured cost is reported as unknown, not $0 (#2441, #2442).** In the
+  custom-evaluator lane, a trial with no captured LLM usage no longer carries
+  `input/output/total_tokens`, `input/output/total_cost` or a `cost` objective
+  of `0.0`: the keys are left out (or `None` with
+  `TRAIGENT_STRICT_METRICS_NULLS=true`). Weighted `best_config` selection
+  scores the missing cost as the worst value, so an unmeasured configuration
+  no longer wins a cost objective there. The Pareto front, the batch composite
+  score, `metrics.get("cost", 0)` constraints and workflow spans do not treat
+  it as unknown yet (#2446). The results table prints `n/a` for it. A
+  `metric_limit` on a cost metric skips unmeasured trials instead of failing
+  the run. Consumers that read these keys must expect them to be absent.
+- **Unmeasured-cost runs stop at a default safety limit unless you size them
+  (#2441, #2442, #2447).** When trial cost cannot be measured, the cost limit
+  cannot bound spend. A run that did not set `max_trials` or
+  `max_total_examples` explicitly stops after the default safety limit of 10
+  trials (`TRAIGENT_FALLBACK_TRIAL_LIMIT` changes it) with
+  `stop_reason="cost_limit"`. **A single unmeasured trial is enough**, even
+  when every other trial was measured. This now also applies to
+  custom-evaluator runs that previously reported `$0`, including async
+  LangChain agents, whose `ainvoke`/`abatch` calls are not captured yet
+  (#2445). The result carries `COST_UNMEASURED_TRIAL_LIMIT_REACHED` and a
+  message that counts the unmeasured and measured trials and says to set
+  `max_trials` explicitly to run more trials, or to capture usage. A run that
+  sets `max_trials` or `max_total_examples` explicitly runs up to that size
+  and carries `COST_UNMEASURED_TRIALS_RAN` instead. `max_total_examples` caps
+  total examples and counts as explicit consent, but does not raise the
+  default `max_trials` of 10. A `max_total_examples` passed to `.optimize()`
+  stays on the function object for later calls.
+  `TRAIGENT_FALLBACK_TRIAL_LIMIT` is now also honoured when `cost_limit` or
+  `cost_approved` is set; those paths used to fall back to 10.
+  `OptimizedFunction(max_trials=None)` and an MCP `run_optimization` call
+  without `max_trials` do not count as explicitly sized.
+- **The framework override no longer passes call-time parameters to a client
+  constructor that does not accept them (#2441, #2442).** Building
+  `openai.OpenAI()` inside an optimized function with
+  `framework_targets=["openai.OpenAI"]` used to raise `TypeError: __init__()
+  got an unexpected keyword argument 'model'`.
+
+### Fixed
+
+- **`import traigent` no longer imports MLflow (#2436).** With MLflow installed, every
+  `import traigent` (and every `@traigent.optimize` run, via
+  `traigent/integrations/__init__.py` and
+  `traigent/integrations/observability/__init__.py`) eagerly imported the real
+  `mlflow` package -- including its `uname` process spawn on some platforms --
+  whether or not MLflow tracking was ever configured. `MLFLOW_AVAILABLE` is now
+  a cheap `importlib.util.find_spec("mlflow")` check, and the real package is
+  imported once, lazily, on first actual use of the MLflow integration. Also
+  drops the unused `mlflow.sklearn` / `mlflow.pytorch` flavor-module imports
+  entirely (this integration only ever called MLflow's tracking surface).
+
 ## [0.29.0] - 2026-09-25
 
 ### Added

@@ -680,3 +680,82 @@ async def test_run_optimization_real_refused_when_mock_mode_forced(
     assert result["refused"] is True
     assert "mock mode" in result["message"]
     assert "results" not in result
+
+
+# Traigent#2441 (review of #2447, F3): an explicit max_trials is consent to
+# run that many trials when their cost cannot be measured, so the MCP tool
+# must pass one only when the caller supplied it.
+
+
+@pytest.mark.parametrize(
+    ("mode", "supplied", "expected"),
+    [("real", None, None), ("real", 7, 7), ("mock", None, 4), ("mock", 3, 3)],
+)
+def test_run_optimization_passes_max_trials_only_when_supplied(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    supplied: int | None,
+    expected: int | None,
+) -> None:
+    from traigent.mcp import tools
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "agent.py").write_text("x = 1\n", encoding="utf-8")
+    seen: dict[str, Any] = {}
+
+    def fake_run(script_path, *, mode, cost_limit, max_trials, algorithm):
+        seen["max_trials"] = max_trials
+        return [], "", ""
+
+    monkeypatch.setattr("traigent.utils.env_config.is_mock_llm", lambda: False)
+    monkeypatch.setattr(tools, "_run_loaded_optimizations", fake_run)
+    result = tools.run_optimization_tool(
+        script_path="agent.py",
+        mode=mode,
+        confirm=True,
+        cost_limit=5.0,
+        max_trials=supplied,
+    )
+    assert result["ok"] is True
+    assert seen["max_trials"] == expected
+    assert result["max_trials"] == expected
+
+
+@pytest.mark.parametrize("max_trials", [None, 6])
+def test_loaded_optimizations_omit_max_trials_when_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, max_trials: int | None
+) -> None:
+    from traigent.mcp import tools
+
+    monkeypatch.chdir(tmp_path)
+    calls: list[dict[str, Any]] = []
+
+    class FakeFunction:
+        def optimize_sync(self, **kwargs: Any) -> object:
+            calls.append(kwargs)
+            return object()
+
+    monkeypatch.setattr(tools, "_load_user_module", lambda path: object())
+    monkeypatch.setattr(
+        tools,
+        "_find_optimizable_functions",
+        lambda module: [("answer", FakeFunction())],
+    )
+    monkeypatch.setattr(tools.PersistenceManager, "save_result", lambda *a, **k: None)
+    monkeypatch.setattr(
+        tools, "_serialize_optimization_result_summary", lambda *a, **k: {}
+    )
+
+    tools._run_loaded_optimizations(
+        tmp_path / "agent.py",
+        mode="real",
+        cost_limit=5.0,
+        max_trials=max_trials,
+        algorithm="random",
+    )
+    (kwargs,) = calls
+    if max_trials is None:
+        assert "max_trials" not in kwargs
+    else:
+        assert kwargs["max_trials"] == max_trials
