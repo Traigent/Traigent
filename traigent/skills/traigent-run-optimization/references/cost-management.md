@@ -128,6 +128,15 @@ strict-fatal — the `$0` column is unmeasured, not cheap — and warns with
 `COST_OBJECTIVE_NO_USAGE_CAPTURED` when not strict or when the run is a mock-LLM
 run, which has no spend to measure.
 
+When any trial's cost cannot be measured, the cost limit cannot bound spend, so
+the whole run stops after `TRAIGENT_FALLBACK_TRIAL_LIMIT` trials (default `10`) with
+`stop_reason == "cost_limit"` and the `COST_UNMEASURED_TRIAL_LIMIT_REACHED` warning
+code. One unmeasured trial is enough, and `max_trials` does not lift the limit. To go further, capture usage (see `docs/user-guide/cost_capture.md`; the run is
+then bounded by `cost_limit` / `TRAIGENT_RUN_COST_LIMIT`) or raise
+`TRAIGENT_FALLBACK_TRIAL_LIMIT`. A cost-objective run where only some trials captured
+usage carries `COST_OBJECTIVE_PARTIAL_USAGE_CAPTURED`; the unmeasured trials cannot
+win on cost.
+
 The run-scoped default does not reach the LangChain and Pydantic AI callback
 handlers: each reads `TRAIGENT_STRICT_COST_ACCOUNTING` once, when the handler is
 constructed, which is normally at import time before any run starts. If you

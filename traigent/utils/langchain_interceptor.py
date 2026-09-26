@@ -8,6 +8,7 @@ that would otherwise be lost when functions return only strings.
 
 import threading
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -59,6 +60,30 @@ class _CaptureBucket:
 _capture_scope: ContextVar[_CaptureBucket | None] = ContextVar(
     "traigent_capture_scope", default=None
 )
+
+
+#: True while an instrumented wrapper (LangChain ``ChatOpenAI.invoke``,
+#: ``litellm.completion``/``acompletion``) is running and will capture its own
+#: response.  The ``openai`` SDK call such a wrapper makes underneath must not
+#: be captured a second time, or the example is charged twice (Traigent#2441).
+_instrumented_call: ContextVar[bool] = ContextVar(
+    "traigent_instrumented_provider_call", default=False
+)
+
+
+@contextmanager
+def instrumented_provider_call() -> Iterator[None]:
+    """Mark the enclosed provider call as captured by an outer wrapper."""
+    token = _instrumented_call.set(True)
+    try:
+        yield
+    finally:
+        _instrumented_call.reset(token)
+
+
+def inside_instrumented_provider_call() -> bool:
+    """True when an outer wrapper will capture the current provider call."""
+    return _instrumented_call.get()
 
 
 class capture_scope:
@@ -562,7 +587,8 @@ def patch_langchain_for_metadata_capture() -> bool:
                     return response
 
                 start_time = time.perf_counter()
-                response = original_invoke_openai(self, *args, **kwargs)
+                with instrumented_provider_call():
+                    response = original_invoke_openai(self, *args, **kwargs)
                 response_time_ms = (time.perf_counter() - start_time) * 1000
 
                 # Inject timing into response metadata

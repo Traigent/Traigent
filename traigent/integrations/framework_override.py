@@ -102,6 +102,78 @@ except ImportError:
     ENHANCED_FEATURES_AVAILABLE = False
 
 
+#: Framework targets whose patched methods return OpenAI SDK objects that
+#: carry ``usage`` (Traigent#2441).
+_OPENAI_USAGE_TARGETS = frozenset({"openai.OpenAI", "openai.AsyncOpenAI"})
+
+
+def _capture_openai_usage(response: Any, call_kwargs: dict[str, Any]) -> None:
+    """Record a raw OpenAI SDK response so the trial is charged for it.
+
+    Only a response that carries ``usage`` is recorded: without it there is
+    nothing to measure, and recording it would let the legacy text-length
+    estimator invent a cost. A streaming call returns a ``Stream`` whose
+    usage arrives (if at all, only with ``stream_options={"include_usage":
+    True}``) after the caller consumes it, so it is not recorded and the
+    example stays unmeasured. A call made underneath an instrumented wrapper
+    (LangChain ``ChatOpenAI.invoke``, ``litellm.completion``) is skipped
+    because that wrapper records the same usage itself. Never raises into
+    the caller's LLM call.
+    """
+    if call_kwargs.get("stream"):
+        return
+    if getattr(response, "usage", None) is None:
+        return
+    try:
+        from traigent.utils.langchain_interceptor import (
+            capture_observed_response,
+            inside_instrumented_provider_call,
+        )
+
+        if inside_instrumented_provider_call():
+            return
+        capture_observed_response(
+            response,
+            provider="openai",
+            requested_model=call_kwargs.get("model"),
+        )
+    except Exception:  # noqa: BLE001 - capture is best-effort metadata
+        logger.debug("Could not capture OpenAI response usage", exc_info=True)
+
+
+def _constructor_keyword_names(
+    constructor: Callable[..., Any],
+) -> frozenset[str] | None:
+    """Keyword names a constructor accepts, or None when it takes ``**kwargs``.
+
+    None also covers an unreadable signature: the override then behaves as it
+    always has.
+    """
+    try:
+        parameters = inspect.signature(constructor).parameters.values()
+    except (TypeError, ValueError):
+        return None
+    names = set()
+    for parameter in parameters:
+        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+            return None
+        if parameter.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            names.add(parameter.name)
+    return frozenset(names)
+
+
+async def _capture_openai_usage_when_awaited(
+    pending: Any, call_kwargs: dict[str, Any]
+) -> Any:
+    """Await an async OpenAI call, then record its usage like the sync path."""
+    response = await pending
+    _capture_openai_usage(response, call_kwargs)
+    return response
+
+
 class FrameworkOverrideManager(BaseOverrideManager):
     """Manages automatic framework parameter overrides during optimization."""
 
@@ -201,6 +273,7 @@ class FrameworkOverrideManager(BaseOverrideManager):
         """
         parameter_mapping = self._parameter_mappings.get(class_name, {})
         override_active = self._override_active  # Capture in closure
+        accepted = _constructor_keyword_names(original_constructor)
 
         @functools.wraps(original_constructor)
         def override_constructor(*args, **kwargs):
@@ -233,6 +306,11 @@ class FrameworkOverrideManager(BaseOverrideManager):
             overrides_applied = []
 
             for traigent_param, framework_param in parameter_mapping.items():
+                if accepted is not None and framework_param not in accepted:
+                    # e.g. ``openai.OpenAI(model=...)``: the mapping lists
+                    # call-time params, which the client constructor rejects
+                    # with a TypeError. They are injected at the method call.
+                    continue
                 if traigent_param in config_dict:
                     # Only override if parameter is in configuration space (being optimized)
                     # or if no configuration space is set (not in optimization)
@@ -292,6 +370,21 @@ class FrameworkOverrideManager(BaseOverrideManager):
                 effective_mapping[sp] = sp  # identity fallback
 
         override_active = self._override_active  # Capture in closure
+        # Raw OpenAI SDK responses carry ``usage``; record it for the trial's
+        # cost/token metrics (Traigent#2441). Other frameworks are captured
+        # by their own interceptors, or not at all.
+        capture_usage = class_name in _OPENAI_USAGE_TARGETS
+
+        def finish(response: Any, call_kwargs: dict[str, Any]) -> Any:
+            if not capture_usage:
+                return response
+            if inspect.isawaitable(response):
+                # ``AsyncCompletions.create`` is a plain function (wrapped by
+                # the SDK's ``required_args``) that returns a coroutine, so
+                # the sync wrapper sees the coroutine, not the completion.
+                return _capture_openai_usage_when_awaited(response, call_kwargs)
+            _capture_openai_usage(response, call_kwargs)
+            return response
 
         @functools.wraps(original_method)
         def override_method(instance, *args, **kwargs):
@@ -302,7 +395,7 @@ class FrameworkOverrideManager(BaseOverrideManager):
             # Get current Traigent configuration
             config = get_config()
             if not config:
-                return original_method(instance, *args, **kwargs)
+                return finish(original_method(instance, *args, **kwargs), kwargs)
 
             # Extract configuration values
             config_dict = {}
@@ -312,7 +405,7 @@ class FrameworkOverrideManager(BaseOverrideManager):
             elif isinstance(config, dict):
                 config_dict = config
             else:
-                return original_method(instance, *args, **kwargs)
+                return finish(original_method(instance, *args, **kwargs), kwargs)
 
             # Get current configuration space from context to determine what to override
             from traigent.config.context import get_config_space
@@ -347,7 +440,10 @@ class FrameworkOverrideManager(BaseOverrideManager):
             # (logging handled separately if needed)
 
             # Call original method with overridden parameters
-            return original_method(instance, *args, **overridden_kwargs)
+            return finish(
+                original_method(instance, *args, **overridden_kwargs),
+                overridden_kwargs,
+            )
 
         @functools.wraps(original_method)
         async def async_override_method(instance, *args, **kwargs):
@@ -358,7 +454,7 @@ class FrameworkOverrideManager(BaseOverrideManager):
             # Get current Traigent configuration
             config = get_config()
             if not config:
-                return await original_method(instance, *args, **kwargs)
+                return finish(await original_method(instance, *args, **kwargs), kwargs)
 
             # Extract configuration values
             config_dict = {}
@@ -368,7 +464,7 @@ class FrameworkOverrideManager(BaseOverrideManager):
             elif isinstance(config, dict):
                 config_dict = config
             else:
-                return await original_method(instance, *args, **kwargs)
+                return finish(await original_method(instance, *args, **kwargs), kwargs)
 
             # Get current configuration space from context to determine what to override
             from traigent.config.context import get_config_space
@@ -400,11 +496,12 @@ class FrameworkOverrideManager(BaseOverrideManager):
             # (logging handled separately if needed)
 
             # Call original method with overridden parameters
-            return await original_method(instance, *args, **overridden_kwargs)
+            return finish(
+                await original_method(instance, *args, **overridden_kwargs),
+                overridden_kwargs,
+            )
 
         # Return async version if original is async
-        import inspect
-
         if inspect.iscoroutinefunction(original_method):
             return async_override_method
         else:

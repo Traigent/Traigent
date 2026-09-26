@@ -16,6 +16,7 @@ from typing import Any
 from traigent.utils.langchain_interceptor import (
     capture_langchain_response,
     capture_observed_response,
+    instrumented_provider_call,
 )
 from traigent.utils.logging import configure_litellm_logging, get_logger
 
@@ -74,7 +75,8 @@ def patch_litellm_for_metadata_capture() -> bool:
                     return mock_data
 
                 start_time = time.perf_counter()
-                response = original_completion(*args, **kwargs)
+                with instrumented_provider_call():
+                    response = original_completion(*args, **kwargs)
                 response_time_ms = (time.perf_counter() - start_time) * 1000
 
                 # Skip capture for streaming responses — usage is not populated
@@ -127,7 +129,8 @@ def patch_litellm_for_metadata_capture() -> bool:
                     return mock_data
 
                 start_time = time.perf_counter()
-                response = await original_acompletion(*args, **kwargs)
+                with instrumented_provider_call():
+                    response = await original_acompletion(*args, **kwargs)
                 response_time_ms = (time.perf_counter() - start_time) * 1000
 
                 # Skip capture for streaming responses — usage is not populated
