@@ -1037,7 +1037,7 @@ class CostLimitStopCondition(StopCondition):
             Human-readable description of why optimization stopped.
         """
         status = self._cost_enforcer.get_status()
-        if status.unknown_cost_mode:
+        if status.unknown_cost_mode and not self._cost_enforcer.unknown_cost_cap_waived:
             from traigent.core.cost_enforcement import unmeasured_cost_stop_message
 
             return (

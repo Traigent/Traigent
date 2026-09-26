@@ -3018,45 +3018,58 @@ class OptimizedFunction(Generic[_P, _R]):
         result: OptimizationResult,
         orchestrator: OptimizationOrchestrator,
     ) -> None:
-        """Explain a stop caused by the unknown-cost trial fallback.
+        """Explain unmeasured trial cost on the result (Traigent#2441).
 
-        When no trial cost can be measured the cost limit cannot bound spend,
-        so the enforcer stops at ``TRAIGENT_FALLBACK_TRIAL_LIMIT`` trials (the
-        conservative default the owner chose for #2441). The stop used to
-        read only ``stop_reason == "cost_limit"``, which looks like a spent
-        budget; this names the cause and the ways to continue, on the result
-        (``COST_UNMEASURED_TRIAL_LIMIT_REACHED``) and in the log.
+        A run the user did not size explicitly stops at the default safety
+        limit once any trial's cost is unknown; that stop used to read only
+        ``stop_reason == "cost_limit"``, which looks like a spent budget.
+        It now carries ``COST_UNMEASURED_TRIAL_LIMIT_REACHED`` and says how to
+        continue. An explicitly sized run is not stopped, but when it ran
+        unmeasured trials it carries ``COST_UNMEASURED_TRIALS_RAN``.
         """
-        if getattr(result, "stop_reason", None) != "cost_limit":
-            return
         cost_enforcer = getattr(orchestrator, "cost_enforcer", None)
         if cost_enforcer is None:
             return
         try:
             status = cost_enforcer.get_status()
             fallback_limit = int(cost_enforcer.config.fallback_trial_limit)
+            waived = bool(cost_enforcer.unknown_cost_cap_waived)
         except Exception:  # pragma: no cover - defensive; never break finalize
             logger.debug("Cost enforcer status unreadable", exc_info=True)
             return
-        if not (status.unknown_cost_mode and status.limit_reached):
+        if not status.unknown_cost_mode:
             return
 
         from traigent.core.cost_enforcement import (
             UNMEASURED_COST_TRIAL_LIMIT_WARNING_CODE,
+            UNMEASURED_COST_TRIALS_RAN_WARNING_CODE,
+            unmeasured_cost_ran_message,
             unmeasured_cost_stop_message,
         )
 
-        message = unmeasured_cost_stop_message(
-            status.trial_count,
-            fallback_limit,
-            status.limit_usd,
-            status.unmeasured_trial_count,
-        )
-        if UNMEASURED_COST_TRIAL_LIMIT_WARNING_CODE not in result.warning_codes:
-            result.warning_codes.append(UNMEASURED_COST_TRIAL_LIMIT_WARNING_CODE)
+        if waived:
+            code = UNMEASURED_COST_TRIALS_RAN_WARNING_CODE
+            message = unmeasured_cost_ran_message(
+                status.trial_count, status.unmeasured_trial_count
+            )
+        elif (
+            getattr(result, "stop_reason", None) == "cost_limit"
+            and status.limit_reached
+        ):
+            code = UNMEASURED_COST_TRIAL_LIMIT_WARNING_CODE
+            message = unmeasured_cost_stop_message(
+                status.trial_count,
+                fallback_limit,
+                status.limit_usd,
+                status.unmeasured_trial_count,
+            )
+        else:
+            return
+        if code not in result.warning_codes:
+            result.warning_codes.append(code)
         if message not in result.warnings:
             result.warnings.append(message)
-        logger.warning("%s (%s)", message, UNMEASURED_COST_TRIAL_LIMIT_WARNING_CODE)
+        logger.warning("%s (%s)", message, code)
 
     def _attach_execution_budget_snapshot(
         self,
@@ -3773,6 +3786,22 @@ Remediation:
             requested_algorithm=algorithm,
             execution_budget=execution_budget,
         )
+
+        # An explicitly sized run (max_trials or max_total_examples set by the
+        # user, not the SDK default) is consent to run that many trials even
+        # when their cost cannot be measured, so the default unknown-cost
+        # safety cap is waived (Traigent#2441). Explicitness comes from
+        # sentinels, never from comparing values with the default: call-time
+        # max_trials is None unless passed; ``_max_trials_uses_sdk_default``
+        # records whether the decorator/constructor received max_trials
+        # (``_max_trials_explicit``, api/decorators.py); max_total_examples is
+        # None unless set (prepare_optimization_dataset).
+        if (
+            requested_max_trials is not None
+            or not getattr(self, "_max_trials_uses_sdk_default", True)
+            or max_total_examples_value is not None
+        ):
+            orchestrator.waive_unknown_cost_trial_cap()
 
         # Phase 9: Run optimization and finalize
         from traigent.cloud.client import SessionContractError

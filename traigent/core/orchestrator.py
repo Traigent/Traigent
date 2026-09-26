@@ -62,6 +62,7 @@ from traigent.core.cost_enforcement import (
     Permit,
     normalize_cost_approved,
     normalize_estimated_calls_per_example,
+    resolve_fallback_trial_limit,
     validate_cost_limit,
 )
 from traigent.core.cost_estimator import CostEstimator
@@ -844,6 +845,9 @@ class OptimizationOrchestrator:
                     else float(validate_cost_limit(cost_limit))
                 ),
                 approved=cost_approved,
+                # The default unknown-cost trial cap honours its env override
+                # on this path too; it used to fall back to 10 here.
+                fallback_trial_limit=resolve_fallback_trial_limit(),
             )
         self.cost_enforcer = CostEnforcer(config=cost_config)
         # Declared calls-per-example lever (issue #1750): scales the EMA seed
@@ -5138,6 +5142,12 @@ class OptimizationOrchestrator:
             self._notify_completed_trial(trial_result, optuna_trial_id)
         elif status == TrialStatus.FAILED:
             self._notify_failed_trial(trial_result, optuna_trial_id)
+
+    def waive_unknown_cost_trial_cap(self) -> None:
+        """The user sized this run explicitly; see CostEnforcer (#2441)."""
+        cost_enforcer = getattr(self, "cost_enforcer", None)
+        if cost_enforcer is not None:
+            cost_enforcer.waive_unknown_cost_trial_cap()
 
     def _should_stop(self, trial_count: int) -> bool:
         """Check if optimization should stop.

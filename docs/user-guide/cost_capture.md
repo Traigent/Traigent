@@ -126,15 +126,27 @@ total rather than failing the run. Two run-level warnings say what happened:
 
 The cost limit (`cost_limit=` on `@traigent.optimize` or `.optimize()`, or
 `TRAIGENT_RUN_COST_LIMIT`, default `$2.00`) can only bound spend it can see.
-When any trial reports no cost, Traigent is conservative: the whole run
-switches to a trial limit and stops after `TRAIGENT_FALLBACK_TRIAL_LIMIT` trials
-(default `10`) with `stop_reason == "cost_limit"`. One unmeasured trial is
-enough, even if every other trial was measured. `max_trials` does not lift this
-limit. The result carries the `COST_UNMEASURED_TRIAL_LIMIT_REACHED` warning code
-and a message, which is also logged, that says how many trials were unmeasured
-and how many were measured.
+When any trial reports no cost, what happens depends on whether you sized the
+run yourself.
 
-To continue, either:
+**You did not set `max_trials` or `max_total_examples`.** Traigent is
+conservative: the run stops at a default safety limit of 10 trials
+(`TRAIGENT_FALLBACK_TRIAL_LIMIT` changes it) with
+`stop_reason == "cost_limit"`. One unmeasured trial is enough, even if every
+other trial was measured. The result carries the
+`COST_UNMEASURED_TRIAL_LIMIT_REACHED` warning code and a message, which is also
+logged, that says how many trials were unmeasured and how many were measured.
+
+**You set `max_trials` or `max_total_examples` explicitly**, on the decorator,
+on `OptimizedFunction(...)`, or on `.optimize()`/`.optimize_sync()`. That is
+taken as consent to run that many trials: the safety limit does not apply, and
+the run goes up to the size you set. The measured part of the spend is still
+bounded by `cost_limit`. The result carries `COST_UNMEASURED_TRIALS_RAN`, and a
+cost-objective run also carries `COST_OBJECTIVE_NO_USAGE_CAPTURED` or
+`COST_OBJECTIVE_PARTIAL_USAGE_CAPTURED`. "Explicitly" means you passed the
+argument; passing the same value as the default counts.
+
+To continue after the safety stop, either:
 
 1. **Get cost measured for every configuration.** Call the model through a
    captured client (the table above; for LangChain, the synchronous `invoke`).
@@ -142,9 +154,9 @@ To continue, either:
    gateway that omits `usage`, a streaming call, or an uncaptured client. A
    fully measured run is bounded by its cost budget instead of the trial limit,
    so raise `cost_limit` if the budget is what stops you.
-2. **Accept untracked spend.** Raise the unmeasured-cost trial limit, for
-   example `export TRAIGENT_FALLBACK_TRIAL_LIMIT=50`. Traigent cannot tell you
-   what those trials cost.
+2. **Size the run yourself.** Set `max_trials` (or `max_total_examples`), for
+   example `func.optimize_sync(max_trials=50)`. Traigent cannot tell you what
+   the unmeasured trials cost.
 
 Build the OpenAI client once, outside the optimized function, as in the
 examples above. The override injects the trial's `model` and sampling
