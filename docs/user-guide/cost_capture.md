@@ -139,8 +139,11 @@ logged, that says how many trials were unmeasured and how many were measured.
 
 **You set `max_trials` or `max_total_examples` explicitly**, on the decorator,
 on `OptimizedFunction(...)`, or on `.optimize()`/`.optimize_sync()`. That is
-taken as consent to run that many trials: the safety limit does not apply, and
-the run goes up to the size you set. The measured part of the spend is still
+taken as consent: the safety limit does not apply, and the run goes up to the
+size you set. Set `max_trials` to run more trials. `max_total_examples` caps the
+total number of examples across trials and also counts as your explicit
+consent, but it does not raise `max_trials`, which defaults to 10, so on its
+own it never yields more than 10 trials. The measured part of the spend is still
 bounded by `cost_limit`. The result carries `COST_UNMEASURED_TRIALS_RAN`, and a
 cost-objective run also carries `COST_OBJECTIVE_NO_USAGE_CAPTURED` or
 `COST_OBJECTIVE_PARTIAL_USAGE_CAPTURED`. "Explicitly" means you passed the
@@ -154,9 +157,15 @@ To continue after the safety stop, either:
    gateway that omits `usage`, a streaming call, or an uncaptured client. A
    fully measured run is bounded by its cost budget instead of the trial limit,
    so raise `cost_limit` if the budget is what stops you.
-2. **Size the run yourself.** Set `max_trials` (or `max_total_examples`), for
-   example `func.optimize_sync(max_trials=50)`. Traigent cannot tell you what
-   the unmeasured trials cost.
+2. **Size the run yourself.** Set `max_trials` explicitly to run more trials,
+   for example `func.optimize_sync(max_trials=50)`. `max_total_examples` caps
+   total examples and also counts as your explicit consent, but does not raise
+   the default `max_trials` of 10. Traigent cannot tell you what the unmeasured
+   trials cost.
+
+A `max_total_examples` passed to `.optimize()` or `.optimize_sync()` is kept on
+the function object, so later calls on the same object keep that sample budget
+(and keep counting as explicitly sized) until you change it.
 
 Build the OpenAI client once, outside the optimized function, as in the
 examples above. The override injects the trial's `model` and sampling

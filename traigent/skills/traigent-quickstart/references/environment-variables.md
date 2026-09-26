@@ -161,9 +161,11 @@ When any trial's cost cannot be measured, the cost limit cannot bound spend. A r
 did not set `max_trials` or `max_total_examples` explicitly then stops at a default
 safety limit of `10` trials (`TRAIGENT_FALLBACK_TRIAL_LIMIT` changes it) with
 `stop_reason == "cost_limit"` and the `COST_UNMEASURED_TRIAL_LIMIT_REACHED` warning
-code; one unmeasured trial is enough. Setting `max_trials` (or `max_total_examples`)
-explicitly lifts it: the run goes up to that size and carries
-`COST_UNMEASURED_TRIALS_RAN`. Capturing usage (see `docs/user-guide/cost_capture.md`)
+code; one unmeasured trial is enough. Set `max_trials` explicitly to run more trials:
+the run goes up to that size and carries `COST_UNMEASURED_TRIALS_RAN`.
+`max_total_examples` caps total examples and also counts as explicit consent, but does
+not raise the default `max_trials` of 10; set via `.optimize()`, it stays on the
+function object for later calls. Capturing usage (see `docs/user-guide/cost_capture.md`)
 lets `cost_limit` / `TRAIGENT_RUN_COST_LIMIT` bound the run instead. A cost-objective run where only some trials captured
 usage carries `COST_OBJECTIVE_PARTIAL_USAGE_CAPTURED`; the unmeasured trials cannot
 win on cost.

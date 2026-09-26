@@ -730,7 +730,10 @@ def test_default_sized_unmeasured_run_stops_at_the_safety_limit(
     assert "none of the 10 trials' cost could be measured" in message
     for text in (
         "stopped at the default safety limit of 10 trials",
-        "Set max_trials (or max_total_examples) explicitly",
+        "Set max_trials explicitly on @traigent.optimize or .optimize() to run "
+        "more trials",
+        "max_total_examples caps the total examples and also counts as your "
+        "explicit consent, but does not raise max_trials",
         "async .ainvoke/.abatch are not captured",
         "docs/user-guide/cost_capture.md",
         "enable_openai_optimization()",
@@ -771,6 +774,17 @@ def test_explicit_max_trials_runs_to_that_size_with_a_warning(
     assert "COST_UNMEASURED_TRIALS_RAN" in result.warning_codes
     (message,) = [w for w in result.warnings if "ran with a cost that" in w]
     assert message.startswith("15 of 15 trials ran with a cost")
+
+
+def test_constructor_max_trials_none_is_not_explicit(monkeypatch, tmp_path):
+    # Review of #2447, F1: OptimizedFunction(max_trials=None) used to count as
+    # an explicit size, so an unsized, unbounded run ignored the safety limit.
+    monkeypatch.delenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", raising=False)
+    result = _run(monkeypatch, tmp_path, construct_kwargs={"max_trials": None})
+    assert len(result.trials) == 10
+    assert result.stop_reason == "cost_limit"
+    assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" in result.warning_codes
+    assert "COST_UNMEASURED_TRIALS_RAN" not in result.warning_codes
 
 
 def test_decorator_max_trials_counts_as_explicit(monkeypatch, tmp_path):

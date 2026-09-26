@@ -357,7 +357,8 @@ def unmeasured_cost_stop_message(
     Conservative by default: once any trial's cost cannot be measured the cost
     limit cannot bound spend, so a run the user did not size explicitly stops
     at ``fallback_trial_limit`` trials. Setting ``max_trials`` (or
-    ``max_total_examples``) explicitly lifts it.
+    ``max_total_examples``, which caps examples and also counts as consent)
+    explicitly lifts it.
     """
     unmeasured = trial_count if unmeasured_trials is None else unmeasured_trials
     measured = max(trial_count - unmeasured, 0)
@@ -378,10 +379,12 @@ def unmeasured_cost_stop_message(
         f"Cost could not be measured ({counts}; no LLM usage was captured), "
         f"so the run stopped at the default safety limit of "
         f"{fallback_trial_limit} trials: the cost limit (${cost_limit:.2f}) "
-        "cannot bound spend it cannot see. Set max_trials (or "
-        "max_total_examples) explicitly on @traigent.optimize or .optimize() "
-        "to run more; the run then goes up to that size and still reports "
-        "the unmeasured cost. To get cost measured instead, "
+        "cannot bound spend it cannot see. Set max_trials explicitly on "
+        "@traigent.optimize or .optimize() to run more trials; the run then "
+        "goes up to that many and still reports the unmeasured cost. "
+        "(max_total_examples caps the total examples and also counts as your "
+        "explicit consent, but does not raise max_trials, which defaults to "
+        "10.) To get cost measured instead, "
         f"{capture} -- synchronous LangChain ChatOpenAI/ChatAnthropic "
         ".invoke (async .ainvoke/.abatch are not captured yet), "
         "non-streaming litellm.completion/acompletion, or a raw "

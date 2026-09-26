@@ -82,12 +82,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reported `$0`, including async LangChain agents, whose `ainvoke`/`abatch`
   calls are not captured yet (#2445). The result carries
   `COST_UNMEASURED_TRIAL_LIMIT_REACHED` and a message that counts the
-  unmeasured and measured trials and says to set `max_trials` (or
-  `max_total_examples`) explicitly to run more, or to capture usage.
-  A run that sets `max_trials` or `max_total_examples` explicitly runs up to
-  that size and carries `COST_UNMEASURED_TRIALS_RAN` instead.
+  unmeasured and measured trials and says to set `max_trials` explicitly to
+  run more trials, or to capture usage. A run that sets `max_trials` or
+  `max_total_examples` explicitly runs up to that size and carries
+  `COST_UNMEASURED_TRIALS_RAN` instead. `max_total_examples` caps total
+  examples and counts as explicit consent, but does not raise the default
+  `max_trials` of 10. A `max_total_examples` passed to `.optimize()` stays on
+  the function object for later calls.
   `TRAIGENT_FALLBACK_TRIAL_LIMIT` is now also honoured when `cost_limit` or
   `cost_approved` is set; those paths used to fall back to 10.
+  `OptimizedFunction(max_trials=None)` and an MCP `run_optimization` call
+  without `max_trials` do not count as explicitly sized.
 - **The framework override no longer passes call-time parameters to a client
   constructor that does not accept them (#2441).** Building `openai.OpenAI()`
   inside an optimized function with `framework_targets=["openai.OpenAI"]` used

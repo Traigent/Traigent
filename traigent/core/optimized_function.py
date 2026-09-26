@@ -943,8 +943,10 @@ class OptimizedFunction(Generic[_P, _R]):
 
         # Extract decorator-provided metadata before core storage
         max_trials_explicit = kwargs.pop("_max_trials_explicit", None)
+        # ``max_trials=None`` means "not set", on every path: it is not consent
+        # to an unbounded run (Traigent#2441 review of #2447, F1).
         self._max_trials_uses_sdk_default = (
-            "max_trials" not in kwargs
+            kwargs.get("max_trials") is None
             if max_trials_explicit is None
             else not bool(max_trials_explicit)
         )
