@@ -128,12 +128,14 @@ strict-fatal — the `$0` column is unmeasured, not cheap — and warns with
 `COST_OBJECTIVE_NO_USAGE_CAPTURED` when not strict or when the run is a mock-LLM
 run, which has no spend to measure.
 
-When any trial's cost cannot be measured, the cost limit cannot bound spend, so
-the whole run stops after `TRAIGENT_FALLBACK_TRIAL_LIMIT` trials (default `10`) with
+When any trial's cost cannot be measured, the cost limit cannot bound spend. A run that
+did not set `max_trials` or `max_total_examples` explicitly then stops at a default
+safety limit of `10` trials (`TRAIGENT_FALLBACK_TRIAL_LIMIT` changes it) with
 `stop_reason == "cost_limit"` and the `COST_UNMEASURED_TRIAL_LIMIT_REACHED` warning
-code. One unmeasured trial is enough, and `max_trials` does not lift the limit. To go further, capture usage (see `docs/user-guide/cost_capture.md`; the run is
-then bounded by `cost_limit` / `TRAIGENT_RUN_COST_LIMIT`) or raise
-`TRAIGENT_FALLBACK_TRIAL_LIMIT`. A cost-objective run where only some trials captured
+code; one unmeasured trial is enough. Setting `max_trials` (or `max_total_examples`)
+explicitly lifts it: the run goes up to that size and carries
+`COST_UNMEASURED_TRIALS_RAN`. Capturing usage (see `docs/user-guide/cost_capture.md`)
+lets `cost_limit` / `TRAIGENT_RUN_COST_LIMIT` bound the run instead. A cost-objective run where only some trials captured
 usage carries `COST_OBJECTIVE_PARTIAL_USAGE_CAPTURED`; the unmeasured trials cannot
 win on cost.
 
