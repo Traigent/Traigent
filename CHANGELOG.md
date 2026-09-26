@@ -8,6 +8,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`max_unmeasured_trials` parameter (#2441).** On `@traigent.optimize` and
+  `.optimize()`, it sets how many trials a run may make while trial cost cannot
+  be measured (default 10). It takes precedence over the
+  `TRAIGENT_FALLBACK_TRIAL_LIMIT` environment variable, and a value that is not
+  an int of at least 1 (including `0`, negatives and booleans) raises
+  `ConfigurationError`. `TRAIGENT_FALLBACK_TRIAL_LIMIT` is now also honoured
+  when `cost_limit` or `cost_approved` is set; before, those paths used the
+  default of 10. When the cap is reached on the run's last planned trial, the
+  stop is reported as `max_trials_reached`, since nothing was cut short.
 - **Raw OpenAI SDK calls are cost-captured (#2441).** With the OpenAI override
   active (`enable_openai_optimization()` or
   `framework_targets=["openai.OpenAI", "openai.AsyncOpenAI"]`), every
@@ -83,17 +92,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the run. Consumers that read these keys must expect them to be absent.
 - **Unmeasured-cost runs stop at the trial fallback, and now say why (#2441).**
   When trial cost cannot be measured, the cost limit cannot bound spend, so
-  the run stops after `TRAIGENT_FALLBACK_TRIAL_LIMIT` trials (default 10) with
+  the run stops after `max_unmeasured_trials` trials (default 10) with
   `stop_reason="cost_limit"`. **A single unmeasured trial switches the whole
   run to this trial limit**, even when every other trial was measured, and
-  `max_trials` does not lift it. This now also applies to custom-evaluator
+  `max_trials` alone does not lift it. This now also applies to custom-evaluator
   runs that previously reported `$0` and ran every trial, including async
   LangChain agents, whose `ainvoke`/`abatch` calls are not captured yet
   (#2445). The result carries `COST_UNMEASURED_TRIAL_LIMIT_REACHED` and a
   message that counts the unmeasured and measured trials and names the ways to
   continue: capture usage for every configuration (then `cost_limit=` /
   `TRAIGENT_RUN_COST_LIMIT` governs the run) or raise
-  `TRAIGENT_FALLBACK_TRIAL_LIMIT`.
+  `max_unmeasured_trials`.
 - **The framework override no longer passes call-time parameters to a client
   constructor that does not accept them (#2441).** Building `openai.OpenAI()`
   inside an optimized function with `framework_targets=["openai.OpenAI"]` used

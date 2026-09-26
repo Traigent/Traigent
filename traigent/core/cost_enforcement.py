@@ -90,6 +90,57 @@ def validate_cost_limit(limit: object) -> float:
     return value
 
 
+#: Default number of trials a run may make while any trial's cost is unknown.
+DEFAULT_FALLBACK_TRIAL_LIMIT = 10
+
+
+def validate_max_unmeasured_trials(value: object) -> int:
+    """Validate ``max_unmeasured_trials`` (Traigent#2441).
+
+    Raises:
+        ConfigurationError: If the value is not an int >= 1 (bool rejected).
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigurationError(
+            "max_unmeasured_trials must be a positive int (the number of trials "
+            f"a run may make while trial cost cannot be measured), got {value!r} "
+            f"({type(value).__name__})."
+        )
+    if value < 1:
+        raise ConfigurationError(
+            f"max_unmeasured_trials must be >= 1, got {value}. Leave it unset "
+            "to use TRAIGENT_FALLBACK_TRIAL_LIMIT or the default of "
+            f"{DEFAULT_FALLBACK_TRIAL_LIMIT}."
+        )
+    return value
+
+
+def resolve_fallback_trial_limit(max_unmeasured_trials: object = None) -> int:
+    """The unmeasured-cost trial limit for a run.
+
+    Precedence: the ``max_unmeasured_trials`` parameter, then
+    ``TRAIGENT_FALLBACK_TRIAL_LIMIT``, then ``DEFAULT_FALLBACK_TRIAL_LIMIT``.
+    An invalid parameter raises; an invalid env value is logged and ignored.
+    """
+    if max_unmeasured_trials is not None:
+        return validate_max_unmeasured_trials(max_unmeasured_trials)
+    raw = os.getenv("TRAIGENT_FALLBACK_TRIAL_LIMIT")
+    if raw is None:
+        return DEFAULT_FALLBACK_TRIAL_LIMIT
+    try:
+        parsed = int(raw)
+    except ValueError:
+        parsed = 0
+    if parsed < 1:
+        logger.warning(
+            "Invalid TRAIGENT_FALLBACK_TRIAL_LIMIT=%r, using default %d",
+            raw,
+            DEFAULT_FALLBACK_TRIAL_LIMIT,
+        )
+        return DEFAULT_FALLBACK_TRIAL_LIMIT
+    return parsed
+
+
 def normalize_cost_approved(value: object) -> bool:
     """Return True only for the runtime parameter value ``True``."""
     if value is True:
@@ -202,7 +253,7 @@ class CostEnforcerConfig:
     limit: float = DEFAULT_COST_LIMIT_USD
     approved: bool = False
     warning_threshold: float = 0.5
-    fallback_trial_limit: int = 10
+    fallback_trial_limit: int = DEFAULT_FALLBACK_TRIAL_LIMIT
     estimated_cost_per_trial: float = 0.05  # $0.05 default estimate
 
     def __post_init__(self) -> None:
@@ -358,8 +409,9 @@ def unmeasured_cost_stop_message(
     return (
         f"{cause} The cost limit (${cost_limit:.2f}) cannot bound spend it "
         "cannot see, so Traigent stops at the unmeasured-cost trial limit of "
-        f"{fallback_trial_limit} (TRAIGENT_FALLBACK_TRIAL_LIMIT); max_trials "
-        f"does not lift it. To continue: (1) {capture} -- synchronous LangChain "
+        f"{fallback_trial_limit} (max_unmeasured_trials, or "
+        "TRAIGENT_FALLBACK_TRIAL_LIMIT); max_trials alone does not lift it. "
+        f"To continue: (1) {capture} -- synchronous LangChain "
         "ChatOpenAI/ChatAnthropic .invoke (async .ainvoke/.abatch are not "
         "captured yet), non-streaming litellm.completion/acompletion, or a "
         "raw openai.OpenAI/AsyncOpenAI client with enable_openai_optimization() "
@@ -367,8 +419,10 @@ def unmeasured_cost_stop_message(
         "docs/user-guide/cost_capture.md); a fully measured run is bounded by "
         "its cost budget, set with cost_limit= on @traigent.optimize or "
         ".optimize(), or TRAIGENT_RUN_COST_LIMIT; or (2) accept untracked "
-        "spend and raise the trial limit for unmeasured runs, e.g. "
-        "TRAIGENT_FALLBACK_TRIAL_LIMIT=50."
+        "spend and raise the trial limit for unmeasured runs with "
+        "max_unmeasured_trials= on @traigent.optimize or .optimize() (e.g. "
+        "max_unmeasured_trials=50), or the TRAIGENT_FALLBACK_TRIAL_LIMIT "
+        "environment variable."
     )
 
 
@@ -591,24 +645,6 @@ class CostEnforcer:
                 )
                 return default
 
-        def safe_int(key: str, default: int) -> int:
-            val = os.getenv(key)
-            if val is None:
-                return default
-            try:
-                parsed = int(val)
-                if parsed < 1:
-                    logger.warning(
-                        f"Value too low for {key}='{val}', using default {default}",
-                    )
-                    return default
-                return parsed
-            except ValueError:
-                logger.warning(
-                    f"Invalid {key}='{val}', using default {default}",
-                )
-                return default
-
         def limit_from_env() -> float:
             raw = os.getenv("TRAIGENT_RUN_COST_LIMIT")
             if raw is None:
@@ -640,7 +676,7 @@ class CostEnforcer:
             limit=limit_from_env(),
             approved=os.getenv("TRAIGENT_COST_APPROVED", "false").lower() == "true",
             warning_threshold=safe_float("TRAIGENT_COST_WARNING_THRESHOLD", 0.5),
-            fallback_trial_limit=safe_int("TRAIGENT_FALLBACK_TRIAL_LIMIT", 10),
+            fallback_trial_limit=resolve_fallback_trial_limit(),
         )
 
     def _get_approval_token_path(self) -> Path:

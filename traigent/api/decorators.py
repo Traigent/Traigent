@@ -54,22 +54,20 @@ if TYPE_CHECKING:
     from traigent.api.constraints import BoolExpr, Constraint
     from traigent.api.safety import CompoundSafetyConstraint, SafetyConstraint
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    PrivateAttr,
-    field_validator,
-    model_validator,
-)
-
 # Aliased on purpose. This module imports Traigent's own ``ValidationError`` from
 # ``traigent.utils.exceptions`` below, which binds that name for the rest of the
 # file, so a bare ``except ValidationError`` here would never catch a pydantic
 # failure. There are currently zero ``except ValidationError`` sites in this
 # module, so the shadowing is a latent trap for future code rather than a live
 # bug; the alias keeps the pydantic class reachable under an unambiguous name.
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+)
 from pydantic import ValidationError as PydanticValidationError
+from pydantic import field_validator, model_validator
 
 from traigent.api.functions import _GLOBAL_CONFIG
 from traigent.api.parameter_ranges import (
@@ -79,7 +77,9 @@ from traigent.api.parameter_ranges import (
     normalize_configuration_space,
 )
 from traigent.api.types import AgentDefinition
-from traigent.cloud.smart_pruning import SmartPruningOptions
+from traigent.cloud.smart_pruning import (
+    SmartPruningOptions,
+)
 from traigent.cloud.smart_pruning import (
     normalize_smart_pruning_options as _normalize_smart_pruning_options,
 )
@@ -1110,6 +1110,7 @@ _ALLOWED_RUNTIME_OVERRIDE_KEYS = frozenset(
         "cost_limit",
         "cost_approved",
         "estimated_calls_per_example",
+        "max_unmeasured_trials",
         "tie_breakers",
         "tvl_parameter_agents",
     )
@@ -2181,6 +2182,14 @@ def _process_runtime_overrides(
         else:
             combined_runtime_overrides[key] = value
 
+    if combined_runtime_overrides.get("max_unmeasured_trials") is not None:
+        # Fail at decoration time, not at the first run (Traigent#2441).
+        from traigent.core.cost_enforcement import validate_max_unmeasured_trials
+
+        validate_max_unmeasured_trials(
+            combined_runtime_overrides["max_unmeasured_trials"]
+        )
+
     removed_in_runtime = set(combined_runtime_overrides) & _REMOVED_PARAMETERS
     if removed_in_runtime:
         if removed_in_runtime & _JS_BRIDGE_REMOVED_PARAMETERS:
@@ -2720,6 +2729,15 @@ def optimize(  # NOSONAR(S107)
                 seed by the same factor, so per-trial actuals for a
                 multi-call agent are compared against a calibrated baseline
                 instead of a single-call default. Defaults to 1.
+            max_unmeasured_trials: How many trials a run may make while any
+                trial's cost cannot be measured (no LLM usage captured). The
+                cost limit cannot bound spend it cannot see, so once one trial
+                is unmeasured the run stops at this many trials with
+                ``stop_reason="cost_limit"`` and the
+                ``COST_UNMEASURED_TRIAL_LIMIT_REACHED`` warning. ``max_trials``
+                alone does not lift it. An int >= 1; overrides the
+                TRAIGENT_FALLBACK_TRIAL_LIMIT env var; defaults to 10. Also
+                accepted by ``.optimize()``.
             metric_limit: Soft cumulative stop for a named completed-trial metric.
                 Requires metric_name. Use for counters such as total tokens or
                 cumulative latency, not hard money-spend control.

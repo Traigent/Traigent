@@ -985,6 +985,7 @@ def collect_orchestrator_kwargs(
         "cost_limit",
         "cost_approved",
         "estimated_calls_per_example",
+        "max_unmeasured_trials",
         "tie_breakers",
         "tvl_parameter_agents",
     ]

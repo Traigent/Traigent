@@ -710,7 +710,8 @@ def test_unmeasured_run_stops_at_fallback_limit_and_says_how_to_continue(
     ]
     assert "none of their costs could be measured" in message
     for remedy in (
-        "max_trials does not lift it",
+        "max_trials alone does not lift it",
+        "max_unmeasured_trials=",
         "async .ainvoke/.abatch are not captured",
         "TRAIGENT_FALLBACK_TRIAL_LIMIT",
         "cost_limit=",
@@ -719,6 +720,10 @@ def test_unmeasured_run_stops_at_fallback_limit_and_says_how_to_continue(
         "enable_openai_optimization()",
     ):
         assert remedy in message
+    # The parameter is named before the env var.
+    assert message.index("max_unmeasured_trials=") < message.rindex(
+        "TRAIGENT_FALLBACK_TRIAL_LIMIT"
+    )
     assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" in caplog.text
 
 
@@ -879,3 +884,107 @@ def test_results_table_shows_unmeasured_cost_as_na():
     assert _render_metric_cell("total_cost", None) == "n/a"
     assert _render_metric_cell("cost", 0.0) != "n/a"
     assert _render_metric_cell("accuracy", None) == _render_metric_cell("accuracy", 0.0)
+
+
+# --------------------------------------------------------------------------
+# Owner decision (a): a per-run max_unmeasured_trials parameter
+# --------------------------------------------------------------------------
+
+
+def test_max_unmeasured_trials_lifts_the_stop(monkeypatch, tmp_path):
+    monkeypatch.delenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", raising=False)
+    result = _optimize_fifteen(
+        monkeypatch, tmp_path, measured=False, max_unmeasured_trials=15
+    )
+    assert len(result.trials) == 15
+    assert result.stop_reason != "cost_limit"
+    assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" not in result.warning_codes
+
+
+def test_max_unmeasured_trials_beats_the_env_var(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", "20")
+    result = _optimize_fifteen(
+        monkeypatch, tmp_path, measured=False, max_unmeasured_trials=5
+    )
+    assert len(result.trials) == 5
+    assert result.stop_reason == "cost_limit"
+    (message,) = [
+        w for w in result.warnings if w.startswith("Optimization stopped after")
+    ]
+    assert "unmeasured-cost trial limit of 5" in message
+
+
+def test_env_var_applies_when_cost_limit_is_set(monkeypatch, tmp_path):
+    # A cost_limit used to build the enforcer config without reading
+    # TRAIGENT_FALLBACK_TRIAL_LIMIT, so the env override was ignored.
+    monkeypatch.setenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", "12")
+    result = _optimize_fifteen(monkeypatch, tmp_path, measured=False, cost_limit=5.0)
+    assert len(result.trials) == 12
+
+
+def test_default_unmeasured_limit_is_unchanged(monkeypatch, tmp_path):
+    monkeypatch.delenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", raising=False)
+    result = _optimize_fifteen(monkeypatch, tmp_path, measured=False)
+    assert len(result.trials) == 10
+
+
+def test_decorator_accepts_max_unmeasured_trials(monkeypatch, tmp_path):
+    import traigent
+
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
+    monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
+    monkeypatch.delenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", raising=False)
+
+    def custom_evaluator(func, config, example):
+        return ExampleResult(
+            example_id=example.input_data["question"],
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output=func(**example.input_data),
+            metrics={"accuracy": 1.0},
+            execution_time=0.0,
+            success=True,
+            error_message=None,
+            metadata={},
+        )
+
+    @traigent.optimize(
+        configuration_space={"temperature": [i / 10 for i in range(12)]},
+        objectives=["accuracy"],
+        eval_dataset=_dataset(),
+        custom_evaluator=custom_evaluator,
+        max_unmeasured_trials=12,
+    )
+    def agent(question: str) -> str:
+        return "ok"
+
+    result = agent.optimize_sync(algorithm="grid", max_trials=12, progress_bar=False)
+    assert len(result.trials) == 12
+
+
+@pytest.mark.parametrize("bad", [0, -3, True, False, 2.5, "10"])
+def test_invalid_max_unmeasured_trials_is_rejected(bad):
+    import traigent
+    from traigent.utils.exceptions import ConfigurationError
+
+    with pytest.raises(ConfigurationError, match="max_unmeasured_trials"):
+
+        @traigent.optimize(
+            configuration_space={"temperature": [0.1, 0.2]},
+            objectives=["accuracy"],
+            max_unmeasured_trials=bad,
+        )
+        def agent(question: str) -> str:
+            return "ok"
+
+
+@pytest.mark.parametrize("bad", [0, True])
+def test_invalid_max_unmeasured_trials_is_rejected_at_call_time(
+    monkeypatch, tmp_path, bad
+):
+    from traigent.utils.exceptions import ConfigurationError
+
+    with pytest.raises(ConfigurationError, match="max_unmeasured_trials"):
+        _optimize_fifteen(
+            monkeypatch, tmp_path, measured=False, max_unmeasured_trials=bad
+        )
