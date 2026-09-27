@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import importlib
 import io
 import json
@@ -25,6 +26,7 @@ from traigent.observability import (
     observe,
 )
 from traigent.observability.client import _SyncBatchTransport
+from traigent.observability.config import OBSERVABILITY_CONTENT_MODES
 from traigent.observability.decorators import set_default_observability_client
 from traigent.observability.dtos import ObservationDTO, TraceDTO
 from traigent.utils.exceptions import AuthenticationError, ClientError
@@ -571,7 +573,15 @@ def test_observability_client_logs_trace_snapshot_submit_failure(caplog):
 
 
 def test_observability_client_redacts_trace_payloads_before_submit():
-    """Trace payloads must be scrubbed before they reach the transport."""
+    """Trace payloads must be scrubbed before they reach the transport.
+
+    Uses `content_mode="record"` throughout: this test is about the separate,
+    pattern-based credential/PII scrubber (`redact_sensitive_data`) that runs
+    on whatever content_mode lets through, not about content_mode gating
+    itself (covered by `TestDirectClientCallsHonorContentMode`). Content_mode
+    defaults to "metadata" (withhold), which would omit `input_data`/
+    `output_data` entirely and give the pattern scrubber nothing to redact.
+    """
     sent_batches: list[list[dict]] = []
 
     def sender(traces):
@@ -594,6 +604,7 @@ def test_observability_client_redacts_trace_payloads_before_submit():
         user_id="alice@example.com",
         metadata={"token": FAKE_TRACE_API_KEY},
         input_data={"ssn": "123-45-6789"},
+        content_mode="record",
     )
     client.record_observation(
         trace_id,
@@ -602,10 +613,12 @@ def test_observability_client_redacts_trace_payloads_before_submit():
         input_data={"prompt": "card 4111111111111111"},
         output_data={"answer": "Bearer canary.jwt.header.payload.signature"},
         metadata={"email": "alice@example.com"},
+        content_mode="record",
     )
     client.end_trace(
         trace_id,
         output_data={"answer": FAKE_TRACE_API_KEY},
+        content_mode="record",
     )
 
     client.flush()
@@ -2628,6 +2641,389 @@ def test_observe_error_message_honors_content_mode(
         assert metadata["error_message"] == expected_error_message
     # The sensitive free-form content only ever ships in "record" mode.
     assert (sensitive in json.dumps(sent_batches)) is content_should_ship
+
+
+def _make_recording_client(sender):
+    return ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=sender,
+    )
+
+
+class TestDirectClientCallsHonorContentMode:
+    """D3 regression: `content_mode` was enforced only inside the `observe`
+    decorator/context manager. `ObservabilityClient.start_trace` /
+    `record_observation` / `end_trace` did not gate their `input_data` /
+    `output_data` arguments at all, so any caller instrumenting Traigent
+    directly (without `observe`) shipped raw content regardless of the
+    configured `content_mode`. These tests call the client methods directly,
+    with no decorator anywhere in the call stack.
+    """
+
+    @pytest.mark.parametrize("mode", sorted(OBSERVABILITY_CONTENT_MODES))
+    def test_direct_start_trace_and_end_trace_honor_content_mode(self, mode):
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        sensitive_input = {"prompt": "PATIENT diagnosis cancer stage 3"}
+        sensitive_output = {"answer": "confirmed cancer stage 3, prescribe X"}
+
+        trace_id = client.start_trace(
+            "direct-trace-start",
+            input_data=dict(sensitive_input),
+            content_mode=mode,
+        )
+        client.end_trace(
+            trace_id, output_data=dict(sensitive_output), content_mode=mode
+        )
+
+        result = client.flush()
+        client.close()
+
+        assert result.success is True
+        trace_payload = next(
+            t for batch in sent_batches for t in batch if t["id"] == trace_id
+        )
+        blob = json.dumps(sent_batches)
+        if mode == "record":
+            assert trace_payload["input_data"] == sensitive_input
+            assert trace_payload["output_data"] == sensitive_output
+            assert "PATIENT diagnosis cancer stage 3" in blob
+        elif mode == "redacted":
+            assert trace_payload["input_data"] == {"redacted": True}
+            assert trace_payload["output_data"] == {"redacted": True}
+            assert "PATIENT diagnosis cancer stage 3" not in blob
+        else:
+            assert mode == "metadata"
+            assert "input_data" not in trace_payload
+            assert "output_data" not in trace_payload
+            assert "PATIENT diagnosis cancer stage 3" not in blob
+
+    @pytest.mark.parametrize("mode", sorted(OBSERVABILITY_CONTENT_MODES))
+    def test_direct_record_observation_start_and_update_honor_content_mode(self, mode):
+        """Covers both the initial (status=running) and the update/end call."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        sensitive_input = {"prompt": "PATIENT diagnosis cancer stage 3"}
+        sensitive_output = {"answer": "confirmed cancer stage 3, prescribe X"}
+
+        trace_id = client.start_trace("direct-observation-trace")
+        observation_id = client.record_observation(
+            trace_id,
+            name="direct-op",
+            observation_type=ObservationType.SPAN,
+            status="running",
+            input_data=dict(sensitive_input),
+            content_mode=mode,
+        )
+        # Update/end call: a distinct entry point from the initial record.
+        client.record_observation(
+            trace_id,
+            observation_id=observation_id,
+            name="direct-op",
+            status="completed",
+            output_data=dict(sensitive_output),
+            content_mode=mode,
+        )
+
+        result = client.flush()
+        client.close()
+
+        assert result.success is True
+        trace_payload = next(
+            t for batch in sent_batches for t in batch if t["id"] == trace_id
+        )
+        observation = trace_payload["observations"][0]
+        blob = json.dumps(sent_batches)
+        if mode == "record":
+            assert observation["input_data"] == sensitive_input
+            assert observation["output_data"] == sensitive_output
+            assert "PATIENT diagnosis cancer stage 3" in blob
+        elif mode == "redacted":
+            assert observation["input_data"] == {"redacted": True}
+            assert observation["output_data"] == {"redacted": True}
+            assert "PATIENT diagnosis cancer stage 3" not in blob
+        else:
+            assert mode == "metadata"
+            assert "input_data" not in observation
+            assert "output_data" not in observation
+            assert "PATIENT diagnosis cancer stage 3" not in blob
+
+    @pytest.mark.parametrize("mode", sorted(OBSERVABILITY_CONTENT_MODES))
+    def test_decorated_and_direct_paths_agree_on_content_mode(self, mode):
+        """The `observe` decorator and a hand-written direct call must reach
+        the exact same wire shape for the same `content_mode` -- proving the
+        gate is one shared enforcement point, not two independent ones."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        secret = "top-secret-value"
+
+        @observe("decorated-call", client=client, content_mode=mode)
+        def decorated(value):
+            return {"answer": f"derived from {value}"}
+
+        decorated(secret)
+
+        direct_trace_id = client.start_trace(
+            "direct-call",
+            input_data={"args": [secret], "kwargs": {}},
+            content_mode=mode,
+        )
+        client.record_observation(
+            direct_trace_id,
+            name="direct-call",
+            observation_type=ObservationType.SPAN,
+            status="completed",
+            input_data={"args": [secret], "kwargs": {}},
+            output_data={"answer": f"derived from {secret}"},
+            content_mode=mode,
+        )
+        client.end_trace(
+            direct_trace_id,
+            output_data={"answer": f"derived from {secret}"},
+            content_mode=mode,
+        )
+
+        result = client.flush()
+        client.close()
+        assert result.success is True
+
+        all_traces = [t for batch in sent_batches for t in batch]
+        decorated_trace = next(t for t in all_traces if t["name"] == "decorated-call")
+        direct_trace = next(t for t in all_traces if t["name"] == "direct-call")
+
+        def _content_shape(trace: dict) -> tuple:
+            observation = trace["observations"][0]
+            return (
+                trace.get("input_data"),
+                trace.get("output_data"),
+                observation.get("input_data"),
+                observation.get("output_data"),
+            )
+
+        assert _content_shape(decorated_trace) == _content_shape(direct_trace)
+
+    @pytest.mark.parametrize(
+        ("content_mode", "expected_error_message", "content_should_ship"),
+        [
+            (None, None, False),
+            ("redacted", "[REDACTED]", False),
+            ("record", "parse failed on: PATIENT diagnosis cancer stage 3", True),
+        ],
+    )
+    def test_direct_record_observation_error_honors_content_mode(
+        self, content_mode, expected_error_message, content_should_ship
+    ):
+        """A direct `record_observation(..., error=...)` call -- no decorator
+        anywhere -- must gate the exception message exactly like `observe`."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        sensitive = "PATIENT diagnosis cancer stage 3"
+
+        trace_id = client.start_trace("direct-error-trace")
+        client.record_observation(
+            trace_id,
+            name="direct-op",
+            status="failed",
+            error=ValueError(f"parse failed on: {sensitive}"),
+            content_mode=content_mode,
+        )
+        client.end_trace(trace_id, status="failed")
+
+        result = client.flush()
+        client.close()
+
+        assert result.success is True
+        trace_payload = next(
+            t for batch in sent_batches for t in batch if t["id"] == trace_id
+        )
+        observation = trace_payload["observations"][0]
+        metadata = observation["metadata"]
+        assert observation["status"] == "failed"
+        assert metadata["error_type"] == "ValueError"
+        if expected_error_message is None:
+            assert "error_message" not in metadata
+        else:
+            assert metadata["error_message"] == expected_error_message
+        assert (sensitive in json.dumps(sent_batches)) is content_should_ship
+
+    def test_retries_resend_the_same_already_gated_payload(self, monkeypatch):
+        """Content is gated once, at record time, into the stored DTO
+        snapshot. A retry re-sends that exact snapshot rather than
+        re-deriving a payload from raw caller data, so a retry cannot
+        reintroduce content the first attempt withheld."""
+        monkeypatch.setattr(retry_module.time, "sleep", lambda _delay: None)
+
+        attempts: list[list[dict]] = []
+        call_count = 0
+
+        def flaky_sender(traces):
+            nonlocal call_count
+            call_count += 1
+            attempts.append(copy.deepcopy(traces))
+            if call_count < 3:
+                raise ClientError("transient failure", status_code=503)
+
+        client = ObservabilityClient(
+            ObservabilityConfig(
+                backend_origin="http://localhost:5000",
+                api_key="test-key",  # pragma: allowlist secret
+                batch_size=10,
+                max_buffer_age=3600.0,
+                max_queue_size=10,
+            ),
+            sender=flaky_sender,
+        )
+        client._transport._retry_handler = retry_module.RetryHandler(
+            retry_module.RetryConfig(
+                max_attempts=5,
+                initial_delay=0.0,
+                max_delay=0.0,
+                jitter=False,
+                retry_on_status={503},
+            )
+        )
+
+        sensitive = "PATIENT diagnosis cancer stage 3"
+        # Default content_mode ("metadata") withholds content at record time,
+        # before the transport (and therefore before any retry) ever sees it.
+        trace_id = client.start_trace("retry-trace", input_data={"prompt": sensitive})
+        client.end_trace(trace_id, output_data={"answer": sensitive})
+
+        with client._lock:
+            payload = client._trace_states[trace_id].to_payload()
+
+        # `_send_batch` returns queued health events, which are empty on a
+        # plain success with no warnings; the retry itself is evidenced by
+        # `call_count` and the retry-attempt log records above.
+        client._transport._send_batch([(trace_id, payload)])
+
+        # Drain (without sending) the snapshot `start_trace`/`end_trace`
+        # already queued on the buffer, so close() below does not trigger
+        # a second, uncounted send of the same already-gated payload.
+        with client._transport._lock:
+            client._transport._buffer.clear()
+        client.close()
+
+        assert call_count >= 3, "sender was not actually retried"
+        combined = json.dumps(attempts)
+        assert sensitive not in combined
+        for attempt_traces in attempts:
+            sent_trace = next(t for t in attempt_traces if t["id"] == trace_id)
+            assert "input_data" not in sent_trace
+            assert "output_data" not in sent_trace
+
+    def test_direct_calls_do_not_mutate_caller_supplied_payloads(self):
+        """The content gate must never mutate the caller's own objects."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        input_payload = {"prompt": "secret prompt", "nested": {"a": 1}}
+        output_payload = {"answer": "secret answer"}
+        input_snapshot = copy.deepcopy(input_payload)
+        output_snapshot = copy.deepcopy(output_payload)
+
+        trace_id = client.start_trace(
+            "no-mutation-trace", input_data=input_payload, content_mode="redacted"
+        )
+        client.record_observation(
+            trace_id,
+            name="op",
+            status="completed",
+            input_data=input_payload,
+            output_data=output_payload,
+            content_mode="redacted",
+        )
+        client.end_trace(trace_id, output_data=output_payload, content_mode="redacted")
+
+        result = client.flush()
+        client.close()
+
+        assert result.success is True
+        assert input_payload == input_snapshot
+        assert output_payload == output_snapshot
+
+    @pytest.mark.parametrize("mode", sorted(OBSERVABILITY_CONTENT_MODES))
+    def test_content_mode_withholds_content_but_preserves_structural_fields(self, mode):
+        """Gating content must never touch IDs, nesting, timestamps, token
+        counts, or cost."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        sensitive_input = {"prompt": "sensitive"}
+        sensitive_output = {"answer": "sensitive answer"}
+
+        trace_id = client.start_trace(
+            "structural-trace",
+            session_id="session-xyz",
+            user_id="user-1",
+            custom_trace_id="custom-42",
+            input_data=dict(sensitive_input),
+            content_mode=mode,
+        )
+        parent_id = client.record_observation(
+            trace_id,
+            name="parent-span",
+            observation_type=ObservationType.SPAN,
+            status="running",
+            input_data=dict(sensitive_input),
+            content_mode=mode,
+        )
+        child_id = client.record_observation(
+            trace_id,
+            name="child-generation",
+            observation_type=ObservationType.GENERATION,
+            parent_observation_id=parent_id,
+            status="completed",
+            ended_at=datetime.now(UTC),
+            input_tokens=12,
+            output_tokens=34,
+            cost_usd=0.0042,
+            input_data=dict(sensitive_input),
+            output_data=dict(sensitive_output),
+            content_mode=mode,
+        )
+        client.record_observation(
+            trace_id,
+            observation_id=parent_id,
+            name="parent-span",
+            status="completed",
+            output_data=dict(sensitive_output),
+            content_mode=mode,
+        )
+        client.end_trace(
+            trace_id, output_data=dict(sensitive_output), content_mode=mode
+        )
+
+        result = client.flush()
+        client.close()
+        assert result.success is True
+
+        trace_payload = next(
+            t for batch in sent_batches for t in batch if t["id"] == trace_id
+        )
+        assert trace_payload["id"] == trace_id
+        assert trace_payload["session_id"] == "session-xyz"
+        assert trace_payload["user_id"] == "user-1"
+        assert trace_payload["custom_trace_id"] == "custom-42"
+
+        [root_obs] = trace_payload["observations"]
+        assert root_obs["id"] == parent_id
+        [child_obs] = root_obs["children"]
+        assert child_obs["id"] == child_id
+        assert child_obs["parent_observation_id"] == parent_id
+        assert child_obs["input_tokens"] == 12
+        assert child_obs["output_tokens"] == 34
+        assert child_obs["total_tokens"] == 46
+        assert child_obs["cost_usd"] == 0.0042
+        assert isinstance(child_obs["started_at"], str)
+        assert isinstance(child_obs["ended_at"], str)
+
+        assert ("sensitive" in json.dumps(sent_batches)) == (mode == "record")
 
 
 def test_observability_client_disables_egress_when_no_credential_resolves(

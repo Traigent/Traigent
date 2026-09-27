@@ -19,7 +19,13 @@ from urllib import error, request
 from urllib.parse import urlencode
 
 from traigent.cloud.async_batch_transport import BatchFlushResult
-from traigent.observability.config import ObservabilityConfig, nonblank_credential
+from traigent.observability.config import (
+    OBSERVABILITY_CONTENT_MODES,
+    ObservabilityConfig,
+    apply_content_mode,
+    apply_content_mode_to_text,
+    nonblank_credential,
+)
 from traigent.observability.dtos import (
     OBSERVABILITY_STATUSES,
     CorrelationIds,
@@ -963,6 +969,25 @@ class ObservabilityClient:
         if self.config.enable_atexit_flush:
             atexit.register(self._atexit_close)
 
+    def _resolve_content_mode(self, content_mode: str | None) -> str:
+        """Resolve a per-call `content_mode` override against the client default.
+
+        This is the enforcement point: `start_trace`, `record_observation`,
+        and `end_trace` all call it (via `apply_content_mode`) so the
+        `content_mode` policy applies whether a caller goes through the
+        `observe` decorator/context manager or calls these client methods
+        directly. `None` means "use this client's configured default"
+        (`self.config.content_mode`); an explicit value overrides it for
+        just this call, exactly like `observe(..., content_mode=...)`.
+        """
+        if content_mode is None:
+            return self.config.content_mode
+        normalized = content_mode.strip().lower()
+        if normalized not in OBSERVABILITY_CONTENT_MODES:
+            allowed = ", ".join(sorted(OBSERVABILITY_CONTENT_MODES))
+            raise ValueError(f"content_mode must be one of: {allowed}")
+        return normalized
+
     def start_trace(
         self,
         name: str,
@@ -983,11 +1008,22 @@ class ObservabilityClient:
         prompt_reference: PromptReferenceDTO | dict[str, Any] | None = None,
         execution_context: ExecutionContextDTO | dict[str, Any] | None = None,
         status: str = "running",
+        content_mode: str | None = None,
+        redact_input: bool = False,
+        redact_output: bool = False,
     ) -> str:
         trace_id = trace_id or _new_trace_id()
         session_dto = self._coerce_session(session)
         if session_dto is not None and session_id is None:
             session_id = session_dto.id
+
+        effective_content_mode = self._resolve_content_mode(content_mode)
+        gated_input_data = apply_content_mode(
+            input_data, effective_content_mode, force_redact=redact_input
+        )
+        gated_output_data = apply_content_mode(
+            output_data, effective_content_mode, force_redact=redact_output
+        )
 
         trace = TraceDTO(
             id=trace_id,
@@ -1000,8 +1036,8 @@ class ObservabilityClient:
             custom_trace_id=custom_trace_id,
             tags=list(tags or []),
             metadata=dict(metadata or {}),
-            input_data=input_data,
-            output_data=output_data,
+            input_data=gated_input_data,
+            output_data=gated_output_data,
             started_at=started_at or utc_now(),
             session=session_dto,
             correlation_ids=self._coerce_correlation_ids(correlation_ids),
@@ -1038,12 +1074,37 @@ class ObservabilityClient:
         metadata: dict[str, Any] | None = None,
         correlation_ids: CorrelationIds | dict[str, str] | None = None,
         prompt_reference: PromptReferenceDTO | dict[str, Any] | None = None,
+        content_mode: str | None = None,
+        redact_input: bool = False,
+        redact_output: bool = False,
+        error: BaseException | None = None,
     ) -> str:
         requested_type = (
             ObservationType(observation_type)
             if isinstance(observation_type, str)
             else observation_type
         )
+
+        effective_content_mode = self._resolve_content_mode(content_mode)
+        input_data = apply_content_mode(
+            input_data, effective_content_mode, force_redact=redact_input
+        )
+        output_data = apply_content_mode(
+            output_data, effective_content_mode, force_redact=redact_output
+        )
+        metadata = dict(metadata or {})
+        if error is not None:
+            # error_message is free-form content: exception strings routinely
+            # interpolate the very inputs the content gate withholds (prompts,
+            # records, PII), so it must honor `content_mode` exactly like
+            # input_data/output_data. error_type is only a class name, so it
+            # is safe to keep in every mode.
+            metadata["error_type"] = type(error).__name__
+            error_message = apply_content_mode_to_text(
+                str(error), effective_content_mode
+            )
+            if error_message is not None:
+                metadata["error_message"] = error_message
 
         observation_id = observation_id or _new_observation_id()
         with self._lock:
@@ -1175,10 +1236,16 @@ class ObservabilityClient:
         ended_at: datetime | None = None,
         started_at: datetime | None = None,
         metadata: dict[str, Any] | None = None,
+        content_mode: str | None = None,
+        redact_output: bool = False,
     ) -> None:
         if status not in OBSERVABILITY_STATUSES:
             allowed = ", ".join(sorted(OBSERVABILITY_STATUSES))
             raise ValueError(f"status must be one of: {allowed}")
+        effective_content_mode = self._resolve_content_mode(content_mode)
+        output_data = apply_content_mode(
+            output_data, effective_content_mode, force_redact=redact_output
+        )
         with self._lock:
             state = self._trace_states.get(trace_id)
             if state is None:
