@@ -77,6 +77,60 @@ def _read_observability_content_mode() -> str:
     return mode
 
 
+def redacted_content_marker() -> dict[str, bool]:
+    """Placeholder emitted in place of withheld content."""
+    return {"redacted": True}
+
+
+def apply_content_mode(payload: Any, mode: str, *, force_redact: bool = False) -> Any:
+    """Apply the observability `content_mode` policy to a captured content payload.
+
+    This is the single point every entry point funnels through: direct calls
+    to `ObservabilityClient.start_trace` / `record_observation` / `end_trace`,
+    the `observe` decorator/context manager, buffered flush, and retry. Buffered
+    flush and retry re-send the payload already gated at intake (the DTO
+    snapshot stored on the trace/observation), so they never see raw content
+    and cannot bypass this gate. Direct callers of the client methods are
+    gated here exactly like the decorator path, closing the "decorator-only
+    enforcement" gap.
+
+    `force_redact` lets a caller (e.g. `redact_input=True` on `observe`)
+    always emit the redaction placeholder regardless of the active mode.
+
+    `payload is None` is treated as "nothing was supplied" rather than
+    content to gate: `ObservabilityClient.record_observation` / `end_trace`
+    use a `None` input/output value as a sentinel meaning "leave this field
+    unchanged on this call" (see their merge logic), so a status-only update
+    call that never touched content must not have a redaction placeholder
+    manufactured for it. `content_mode` still governs every payload that is
+    actually present.
+    """
+    if payload is None:
+        return None
+    if force_redact or mode == "redacted":
+        return redacted_content_marker()
+    if mode == "record":
+        return payload
+    return None
+
+
+def apply_content_mode_to_text(
+    text: str | None, mode: str, *, force_redact: bool = False
+) -> str | None:
+    """Apply the same policy to a free-form text field (e.g. an exception message).
+
+    Returns `None` in metadata mode so the caller omits the field entirely
+    rather than shipping a null placeholder.
+    """
+    if text is None:
+        return None
+    if force_redact or mode == "redacted":
+        return "[REDACTED]"
+    if mode == "record":
+        return text
+    return None
+
+
 def _read_default_execution_context() -> dict[str, str | None]:
     """Read only explicit Traigent lineage identifiers from the environment."""
     context: dict[str, str | None] = {}

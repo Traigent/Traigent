@@ -16,7 +16,6 @@ from traigent.config.context import (
     get_trial_context,
 )
 from traigent.observability.client import ObservabilityClient
-from traigent.observability.config import OBSERVABILITY_CONTENT_MODES
 from traigent.observability.dtos import (
     ExecutionContextDTO,
     ObservationType,
@@ -49,10 +48,6 @@ _current_observation_stack: contextvars.ContextVar[tuple[str, ...]] = (
 )
 _default_client: ObservabilityClient | None = None
 _default_client_lock = threading.Lock()
-
-
-def _redacted_input_payload() -> dict[str, bool]:
-    return {"redacted": True}
 
 
 def _is_sensitive_key(key: str) -> bool:
@@ -214,29 +209,19 @@ class ObserveContext:
         self._finished = False
         self._result: Any = None
         self._enriched_metadata = _build_observe_enrichment_metadata()
-        self._effective_content_mode = "metadata"
-
-    def _captured_input(self) -> Any:
-        return self._captured_payload(self.input_data, redact=self.redact_input)
-
-    def _captured_output(self, result: Any) -> Any:
-        return self._captured_payload(result, redact=self.redact_output)
-
-    def _captured_payload(self, payload: Any, *, redact: bool) -> Any:
-        if redact or self._effective_content_mode == "redacted":
-            return _redacted_input_payload()
-        if self._effective_content_mode == "record":
-            return payload
-        return None
 
     def __enter__(self) -> ObserveContext:
         client = (
             self.client or _current_client.get() or get_default_observability_client()
         )
-        self._effective_content_mode = self.content_mode or client.config.content_mode
-        if self._effective_content_mode not in OBSERVABILITY_CONTENT_MODES:
-            allowed = ", ".join(sorted(OBSERVABILITY_CONTENT_MODES))
-            raise ValueError(f"content_mode must be one of: {allowed}")
+        # Content-mode gating (including the `redact_input`/`redact_output`
+        # force flags) is applied by `client.start_trace`/`record_observation`/
+        # `end_trace` themselves, not here -- this is the single enforcement
+        # point shared with direct client callers who never go through
+        # `observe`. Passing `self.content_mode` (possibly None) lets the
+        # client validate and resolve it against its own configured default;
+        # an invalid override still raises here, on first use, exactly as
+        # before.
         self._client_token = _current_client.set(client)
         setup_started_at = utc_now()
 
@@ -255,8 +240,10 @@ class ObserveContext:
                 tags=self.tags,
                 metadata=trace_metadata,
                 started_at=setup_started_at,
-                input_data=self._captured_input(),
+                input_data=self.input_data,
                 custom_trace_id=self.custom_trace_id,
+                content_mode=self.content_mode,
+                redact_input=self.redact_input,
             )
             self._created_trace = True
             self._trace_token = _current_trace_id.set(trace_id)
@@ -274,8 +261,10 @@ class ObserveContext:
             status="running",
             tool_name=self.tool_name,
             started_at=setup_started_at,
-            input_data=self._captured_input(),
+            input_data=self.input_data,
             metadata=observation_metadata,
+            content_mode=self.content_mode,
+            redact_input=self.redact_input,
         )
         self._trace_id = trace_id
         self._stack_token = _current_observation_stack.set(
@@ -308,20 +297,14 @@ class ObserveContext:
         status = "failed" if error is not None else "completed"
         metadata = dict(self.metadata)
         metadata.update(self._enriched_metadata)
-        if error is not None:
-            metadata["error_type"] = type(error).__name__
-            # error_message is free-form content: exception strings routinely
-            # interpolate the very inputs the content gate withholds (prompts,
-            # records, PII), so it must honor `_effective_content_mode` exactly
-            # like input_data/output_data. error_type is only a class name, so
-            # it is safe to keep in every mode.
-            if self._effective_content_mode == "record":
-                metadata["error_message"] = str(error)
-            elif self._effective_content_mode == "redacted":
-                metadata["error_message"] = "[REDACTED]"
+        # error_message is free-form content: exception strings routinely
+        # interpolate the very inputs the content gate withholds (prompts,
+        # records, PII), so it must honor `content_mode` exactly like
+        # input_data/output_data. `client.record_observation` derives
+        # error_type/error_message from `error` itself (the same gate direct
+        # callers get), so it is passed through rather than built here.
 
         if self._trace_id and self._observation_id:
-            output_data = self._captured_output(result)
             client.record_observation(
                 self._trace_id,
                 observation_id=self._observation_id,
@@ -332,17 +315,23 @@ class ObserveContext:
                 started_at=started_at,
                 ended_at=ended_at,
                 latency_ms=latency_ms,
-                input_data=self._captured_input(),
-                output_data=output_data,
+                input_data=self.input_data,
+                output_data=result,
                 metadata=metadata,
+                content_mode=self.content_mode,
+                redact_input=self.redact_input,
+                redact_output=self.redact_output,
+                error=error,
             )
             if self._created_trace:
                 client.end_trace(
                     self._trace_id,
                     status=status,
-                    output_data=output_data,
+                    output_data=result,
                     started_at=started_at,
                     ended_at=ended_at,
+                    content_mode=self.content_mode,
+                    redact_output=self.redact_output,
                 )
 
         if self._stack_token is not None:
@@ -406,11 +395,11 @@ class _ObserveFactory:
 
             @functools.wraps(func)
             async def async_wrapper(*args, **kwargs):
-                input_data = (
-                    _redacted_input_payload()
-                    if self.redact_input
-                    else {"args": args, "kwargs": kwargs}
-                )
+                # Force-redaction (`redact_input`) and content_mode gating are
+                # applied downstream by ObserveContext/the client, the single
+                # shared enforcement point -- pass the raw call arguments
+                # through unconditionally.
+                input_data = {"args": args, "kwargs": kwargs}
                 async with ObserveContext(
                     name=observation_name,
                     client=self.client,
@@ -437,11 +426,11 @@ class _ObserveFactory:
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            input_data = (
-                _redacted_input_payload()
-                if self.redact_input
-                else {"args": args, "kwargs": kwargs}
-            )
+            # Force-redaction (`redact_input`) and content_mode gating are
+            # applied downstream by ObserveContext/the client, the single
+            # shared enforcement point -- pass the raw call arguments through
+            # unconditionally.
+            input_data = {"args": args, "kwargs": kwargs}
             with ObserveContext(
                 name=observation_name,
                 client=self.client,
