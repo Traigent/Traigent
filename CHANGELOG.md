@@ -10,12 +10,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Candidate runs (`optimize(apply=False)`) are temporarily withdrawn.** Their
   config isolation was not provably consistent under concurrent config
-  changes. Calling `optimize(apply=False)` (or `optimize_sync(apply=False)`)
-  now raises `ConfigurationError` immediately, before any work starts: "
-  optimize(apply=False) (candidate runs) is temporarily unavailable; it will
-  return in a future release. Use apply=True (the default)." The `apply`
-  parameter remains in the signature and `apply=True` (the default) is
-  unaffected.
+  changes. `apply=False` now raises `ConfigurationError` immediately in every
+  entry point that accepts it -- `optimize()`, `optimize_sync()` (checked
+  before creating any event loop, coroutine or thread, not deferred to the
+  underlying `optimize()` call), and `optimize_with_guidance()` (checked
+  before resolving `rewrite_llm`, loading the dataset, or touching any
+  dataset override) -- with: "optimize(apply=False) (candidate runs) is
+  temporarily unavailable; it will return in a future release. Use
+  apply=True (the default)." The `apply` parameter remains in the signature
+  and `apply=True` (the default) is unaffected.
 
 ## [0.30.0] - 2026-09-26
 

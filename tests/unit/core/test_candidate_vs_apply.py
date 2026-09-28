@@ -169,27 +169,112 @@ def test_apply_false_is_refused_loudly_by_optimize_sync():
 
 @pytest.mark.asyncio
 async def test_apply_false_never_invokes_the_agent_or_the_evaluator():
-    calls: list[str] = []
+    agent_calls: list[str] = []
+    scorer_calls: list[tuple[str, str]] = []
+
+    def scorer(prediction: str, expected: str) -> float:
+        scorer_calls.append((prediction, expected))
+        return _scorer(prediction, expected)
 
     @traigent.optimize(
         eval_dataset=_dataset(),
         objectives=["accuracy"],
         configuration_space={"temperature": [0.1, 0.9]},
         default_config={"temperature": 0.1},
-        scoring_function=_scorer,
+        scoring_function=scorer,
         algorithm="grid",
     )
     async def agent(text: str) -> str:
-        calls.append(text)
+        agent_calls.append(text)
         return "HOT"
 
     with pytest.raises(ConfigurationError):
         await agent.optimize(max_trials=3, apply=False)
-    assert calls == []
+    assert agent_calls == []
+    assert scorer_calls == []
 
-    # A normal apply=True run afterwards does invoke it.
+    # A normal apply=True run afterwards does invoke both the agent and the
+    # evaluator.
     await agent.optimize(max_trials=3)
-    assert calls
+    assert agent_calls
+    assert scorer_calls
+
+
+def test_optimize_sync_apply_false_is_refused_before_any_loop_or_thread():
+    """No running loop: the guard must fire before asyncio.run() is ever
+    reached, so no coroutine is driven and no thread pool is created."""
+    import concurrent.futures
+
+    created: list[bool] = []
+
+    def _boom(*args, **kwargs):
+        created.append(True)
+        raise AssertionError(
+            "ThreadPoolExecutor must not be created for a refused apply=False call"
+        )
+
+    agent = _make_agent()
+    with pytest.MonkeyPatch.context() as patch:
+        # Scoped to the refused call only: a real apply=True run below may
+        # legitimately use a ThreadPoolExecutor elsewhere in the pipeline,
+        # and that is not what this test is about.
+        patch.setattr(concurrent.futures, "ThreadPoolExecutor", _boom)
+        with pytest.raises(ConfigurationError, match="apply=False"):
+            agent.optimize_sync(max_trials=3, apply=False)
+    assert created == []
+
+    result = agent.optimize_sync(max_trials=3)
+    assert result.best_config == {"temperature": 0.9}
+
+
+@pytest.mark.asyncio
+async def test_optimize_sync_apply_false_is_refused_before_any_thread_inside_a_running_loop(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Inside a running loop, optimize_sync used to create a ThreadPoolExecutor
+    and submit asyncio.run(coro) to it before the coroutine ever ran far
+    enough to hit the guard. The guard must now fire first, so no pool is
+    ever created."""
+    import concurrent.futures
+
+    created: list[bool] = []
+
+    def _boom(*args, **kwargs):
+        created.append(True)
+        raise AssertionError(
+            "ThreadPoolExecutor must not be created for a refused apply=False call"
+        )
+
+    monkeypatch.setattr(concurrent.futures, "ThreadPoolExecutor", _boom)
+
+    agent = _make_agent()
+    # This test body runs inside pytest-asyncio's event loop, so
+    # asyncio.get_running_loop() inside optimize_sync succeeds here --
+    # exactly the branch that used to spin up a thread pool.
+    assert asyncio.get_running_loop() is not None
+    with pytest.raises(ConfigurationError, match="apply=False"):
+        agent.optimize_sync(max_trials=3, apply=False)
+    assert created == []
+
+
+def test_optimize_with_guidance_apply_false_is_refused_before_touching_any_override():
+    """optimize_with_guidance forwards **optimize_kwargs (including `apply`)
+    to optimize_sync only deep inside a generation round, after resolving
+    rewrite_llm, loading the dataset, and setting a dataset override whose
+    `finally` unconditionally clears it back to None. That finally must not
+    run at all: the guard has to fire before any of that setup, so an
+    existing override survives untouched and no rewrite_llm is required."""
+    agent = _make_agent()
+    existing = _dataset()
+    agent.set_eval_dataset_override(existing)
+
+    with pytest.raises(ConfigurationError, match="apply=False"):
+        # No rewrite_llm passed: reaching resolve_rewrite_llm(None) would
+        # raise GenerationProviderError instead, which is exactly the bug
+        # this guards against -- the withdrawal error must win.
+        agent.optimize_with_guidance(provider=object(), apply=False)
+
+    assert agent._dataset_override is existing
 
 
 @pytest.mark.asyncio

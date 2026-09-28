@@ -871,6 +871,18 @@ def _decorator_only_optimize_params() -> frozenset[str]:
     )
 
 
+# Candidate runs (optimize(apply=False)) are withdrawn pending a redesign of
+# their config isolation under concurrent config changes (see optimize()'s
+# docstring). Every entry point that can carry an `apply` value through to a
+# run -- optimize(), optimize_sync(), and optimize_with_guidance() -- must
+# raise this before doing any work, so the message and wording never drift
+# between them.
+_APPLY_FALSE_WITHDRAWN_MESSAGE = (
+    "optimize(apply=False) (candidate runs) is temporarily unavailable; it "
+    "will return in a future release. Use apply=True (the default)."
+)
+
+
 class OptimizedFunction(Generic[_P, _R]):
     """Wrapper for functions decorated with @traigent.optimize.
 
@@ -2236,11 +2248,7 @@ class OptimizedFunction(Generic[_P, _R]):
                 (the default).
         """
         if not apply:
-            raise ConfigurationError(
-                "optimize(apply=False) (candidate runs) is temporarily "
-                "unavailable; it will return in a future release. Use "
-                "apply=True (the default)."
-            )
+            raise ConfigurationError(_APPLY_FALSE_WITHDRAWN_MESSAGE)
         run_kwargs: dict[str, Any] = {
             "algorithm": algorithm,
             "max_trials": max_trials,
@@ -2459,6 +2467,11 @@ class OptimizedFunction(Generic[_P, _R]):
         Returns:
             OptimizationResult with trial results and best configuration
 
+        Raises:
+            ConfigurationError: If ``apply=False``. Checked here, before any
+                event loop, coroutine or thread is created -- not deferred to
+                the underlying :meth:`optimize` call.
+
         Example:
             # Simple synchronous usage (no asyncio.run needed)
             result = my_function.optimize_sync(max_trials=10)
@@ -2467,6 +2480,9 @@ class OptimizedFunction(Generic[_P, _R]):
             # Equivalent async usage
             result = asyncio.run(my_function.optimize(max_trials=10))
         """
+        if not apply:
+            raise ConfigurationError(_APPLY_FALSE_WITHDRAWN_MESSAGE)
+
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -4082,7 +4098,17 @@ Remediation:
         generation runs on ``rewrite_llm`` (a callable ``fn(prompt) -> str`` or an
         already-constructed client). Content never leaves the client. Returns the
         best ``OptimizationResult`` across rounds.
+
+        Raises:
+            ConfigurationError: If ``apply=False`` is forwarded through
+                ``**optimize_kwargs``. Checked here, first, before resolving
+                ``rewrite_llm``, loading the dataset, or touching any dataset
+                override -- not deferred to the ``optimize_sync`` call each
+                round makes internally.
         """
+        if not optimize_kwargs.get("apply", True):
+            raise ConfigurationError(_APPLY_FALSE_WITHDRAWN_MESSAGE)
+
         from traigent.generation import (
             DatasetGrowthOptions,
             ExampleSynthesizer,
