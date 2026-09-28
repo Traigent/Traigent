@@ -26,6 +26,7 @@ from traigent.observability.config import (
     apply_content_mode_to_text,
     most_restrictive_content_mode,
     nonblank_credential,
+    redacted_content_marker,
     validate_content_mode_override,
     wire_value_for_tightened_update,
 )
@@ -273,6 +274,16 @@ _SAFE_SNAPSHOT_NUMERIC_FIELDS = (
     "cost_usd",
 )
 _SAFE_SNAPSHOT_ID_FIELDS = ("session_id", "custom_trace_id")
+# B3 (addendum R3, A2 completion): content fields covered by
+# `_TraceState.content_history` -- see `_TraceState` for why "did this field
+# carry content before" must be tracked independently of the value
+# currently held (which may itself be the pathological one that made
+# serialization/redaction fail).
+_SAFE_SNAPSHOT_CONTENT_FIELDS = ("input_data", "output_data")
+# Key `_TraceState.content_history` uses for the trace's OWN content
+# fields, distinct from any observation id (observation ids are generated
+# by `_new_observation_id`, always prefixed `obs_`, so this never collides).
+_TRACE_CONTENT_KEY = "__trace__"
 
 
 def _safe_scalar(value: Any) -> Any:
@@ -289,7 +300,58 @@ def _safe_scalar(value: Any) -> Any:
     return None
 
 
-def _safe_allowlisted_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
+def _safe_allowlisted_observation_snapshot(
+    observation: ObservationDTO, state: _TraceState
+) -> dict[str, Any]:
+    """Minimal, explicitly allowlisted snapshot for ONE observation, used
+    when the trace-level M8/A5 fallback fires (`_safe_allowlisted_snapshot`).
+
+    B3 (addendum R3, finding 1's confirmed probe): the OLD fallback dropped
+    every observation outright, so a failed serialization/redaction pass
+    over an update to observation X sent a trace snapshot that never
+    mentioned X at all -- under the backend's skip-omitted-fields contract,
+    X's PRIOR content (from an earlier successful send) stayed stored,
+    exactly the "never omit the clearing field" defect B3 forbids. This
+    function always keeps the observation (by id) in the outbound update.
+
+    `id`/`status`/`type`/`parent_observation_id` are read directly off the
+    DTO -- these are SDK-controlled, schema-validated fields
+    (`ObservationDTO.__post_init__` requires `id`/`name` to be validated
+    strings and `status`/`type` to be validated enums/statuses), never
+    arbitrary caller content, so they carry the same trust level
+    `_safe_allowlisted_snapshot` already gives the trace's own `id`/
+    `status`. `name` is still replaced with the redaction placeholder (a
+    caller-chosen string, exactly like the trace-level `name`).
+
+    Content fields (`input_data`/`output_data`) are included -- as the
+    clearing placeholder, NEVER the real value -- only when
+    `state.content_history` shows this observation's field carried content
+    BEFORE the value currently held (which may itself be the pathological
+    value that made serialization/redaction fail). A genuine first write
+    (nothing ever recorded for this field) is still safe to omit -- there is
+    nothing stored server-side yet to leak (M1/A2/B3 test 4).
+    """
+    safe: dict[str, Any] = {
+        "id": observation.id,
+        "name": "[REDACTED]",
+        "status": observation.status,
+    }
+    observation_type = getattr(observation.type, "value", None)
+    if isinstance(observation_type, str) and observation_type:
+        safe["type"] = observation_type
+    if isinstance(observation.parent_observation_id, str) and (
+        observation.parent_observation_id
+    ):
+        safe["parent_observation_id"] = observation.parent_observation_id
+    for field_name in _SAFE_SNAPSHOT_CONTENT_FIELDS:
+        if state.had_prior_content(observation.id, field_name):
+            safe[field_name] = redacted_content_marker()
+    return safe
+
+
+def _safe_allowlisted_snapshot(
+    payload: dict[str, Any], *, state: _TraceState | None = None
+) -> dict[str, Any]:
     """M8/A5 last-resort fallback: when a trace snapshot cannot be safely
     redacted (redaction, or the DTO serialization that built `payload`
     itself, raised on a malformed/cyclic caller-supplied structure), never
@@ -300,11 +362,34 @@ def _safe_allowlisted_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
     numeric DTO counters pass through (only when they are already plain
     scalars -- see `_safe_scalar`); `name`/`user_id` are replaced with the
     redaction placeholder rather than dropped (the backend requires a
-    non-empty `name`). Every arbitrary bag (`metadata`, `input_data`,
-    `output_data`, `session`, `prompt_reference`, `correlation_ids`, `tags`)
-    and the nested `observations`/`children` tree are dropped outright --
+    non-empty `name`). Every arbitrary bag (`metadata`, `session`,
+    `prompt_reference`, `correlation_ids`, `tags`) is dropped outright --
     recursing into them is exactly the operation that already failed once
     for this payload, and cyclic structures make recursion itself unsafe.
+
+    B3 (addendum R3, A2 completion): `input_data`/`output_data` and the
+    nested `observations` are handled differently from the other bags --
+    dropping them unconditionally is exactly finding 1's confirmed defect
+    (a failed update over PRIOR content silently left the old content
+    stored, because the backend's `apply_updates` skips fields/observations
+    the update never mentions). When `state` is supplied (the trace/
+    observation snapshot path -- never the generic comment/feedback/
+    transport-level redaction fallback, which has no `_TraceState` to
+    consult), this instead:
+      * includes `input_data`/`output_data` as the clearing placeholder
+        (never the real value, and never read off `payload` -- see
+        `_TraceState.content_history`) whenever `state` shows the trace
+        carried that content BEFORE the value now failing to
+        serialize/redact; a genuine first write still omits (B3 test 4).
+      * always includes every known observation (by id, via
+        `_safe_allowlisted_observation_snapshot`), so a failure never
+        drops an observation from the update entirely.
+    `payload` itself is deliberately NOT consulted for content-field
+    presence: at redaction-failure time `payload` is the fully-serialized
+    but UNREDACTED dict, so its content fields are present for every write
+    (including a genuine first write) -- reading presence off `payload`
+    cannot tell "first write" apart from "update over prior content" the
+    way `state.content_history` can.
 
     This never raises and never returns `None`: a missing/unsafe `id` gets a
     freshly generated one rather than causing the whole snapshot to be
@@ -331,19 +416,34 @@ def _safe_allowlisted_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
         value = _safe_scalar(payload.get(field_name))
         if value is not None:
             safe[field_name] = value
+    if state is not None:
+        for field_name in _SAFE_SNAPSHOT_CONTENT_FIELDS:
+            if state.had_prior_content(_TRACE_CONTENT_KEY, field_name):
+                safe[field_name] = redacted_content_marker()
+        safe["observations"] = [
+            _safe_allowlisted_observation_snapshot(
+                state.observations[observation_id], state
+            )
+            for observation_id in state.observation_order
+            if observation_id in state.observations
+        ]
     return safe
 
 
-def _safe_allowlisted_snapshot_or_static_fallback(payload: Any) -> dict[str, Any]:
+def _safe_allowlisted_snapshot_or_static_fallback(
+    payload: Any, *, state: _TraceState | None = None
+) -> dict[str, Any]:
     """Belt-and-suspenders wrapper around `_safe_allowlisted_snapshot`: even
     reading allowlisted fields off a sufficiently pathological `payload`
     (e.g. a `dict` subclass whose `.get` raises) must never itself raise out
     of the caller's application (M8/A5). Falls back to a fully static,
-    payload-independent minimal snapshot as the absolute last resort.
+    payload-independent minimal snapshot as the absolute last resort -- at
+    that point `state` is no longer consulted either, since building even
+    the allowlisted view already failed.
     """
     if isinstance(payload, dict):
         try:
-            return _safe_allowlisted_snapshot(payload)
+            return _safe_allowlisted_snapshot(payload, state=state)
         except Exception:
             logger.error(
                 "Observability safe-snapshot fallback itself failed; sending "
@@ -358,7 +458,9 @@ def _safe_allowlisted_snapshot_or_static_fallback(payload: Any) -> dict[str, Any
     }
 
 
-def _redact_trace_payload(payload: dict[str, Any]) -> dict[str, Any]:
+def _redact_trace_payload(
+    payload: dict[str, Any], *, state: _TraceState | None = None
+) -> dict[str, Any]:
     """Full redaction pass for an outbound trace/observation snapshot.
 
     Hardens `metadata`/`input_data`/`output_data` (M5's credential-key-name
@@ -377,6 +479,20 @@ def _redact_trace_payload(payload: dict[str, Any]) -> dict[str, Any]:
     since a redaction failure means those bags could not be trusted at all,
     and other fields (e.g. `name`, `user_id`) are arbitrary caller content
     too.
+
+    `state` (optional): the `_TraceState` this `payload` was built from, so
+    the M8 fallback can consult `state.content_history` (B3) rather than
+    `payload` itself -- `payload` here is the fully-serialized but
+    UNREDACTED dict, so it cannot distinguish a genuine first write from an
+    update over prior content the way `state.content_history` can. Threaded
+    through from `ObservabilityClient._submit_trace_snapshot` into the
+    transport's own defensive second redaction pass
+    (`_SyncBatchTransport._prepare_payload`) as well, so a scrubbing failure
+    THERE (re-redacting the already-safe payload this function just
+    produced) still reaches the same content-history-aware fallback rather
+    than a state-blind one. Left as `None` for callers with no associated
+    trace state (e.g. a test that submits directly to `_SyncBatchTransport`
+    without going through `ObservabilityClient`).
     """
     try:
         return cast(
@@ -392,7 +508,7 @@ def _redact_trace_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "rather than sending it unredacted.",
             exc_info=True,
         )
-        return _safe_allowlisted_snapshot_or_static_fallback(payload)
+        return _safe_allowlisted_snapshot_or_static_fallback(payload, state=state)
 
 
 def _parse_retry_after(headers: Any) -> float | None:
@@ -436,6 +552,31 @@ class _TraceState:
     # (`ObservabilityConfig.content_mode_explicit`). See
     # `ObservabilityClient._resolve_trace_scoped_content_mode`.
     content_mode_locked: bool = False
+    # B3 (addendum R3, A2 completion): per-entity record of which content
+    # fields (`_SAFE_SNAPSHOT_CONTENT_FIELDS`) have carried real content (or
+    # an earlier clearing placeholder) BEFORE the value now held on
+    # `trace`/`observations` -- keyed by `_TRACE_CONTENT_KEY` for the trace
+    # itself, or by observation id. Deliberately NOT derived from the
+    # CURRENT `trace`/`observations` field values: a serialization/
+    # redaction failure is caused by the value CURRENTLY held (this call's
+    # own, possibly cyclic/hostile write), so reading presence off that same
+    # value cannot tell a genuine first write (nothing stored server-side
+    # yet -- safe to omit, M1/A2) apart from an update over content a PRIOR
+    # call already delivered (must be cleared with the placeholder, never
+    # silently left stored -- B3's confirmed defect). Populated by
+    # `ObservabilityClient.record_observation`/`end_trace` from each
+    # merge's own PRE-overwrite `existing` value -- mirroring exactly the
+    # `existing_value is not None` check `wire_value_for_tightened_update`
+    # already performs for the normal (non-failure) tightening path --
+    # never from the freshly-gated value that might be the one about to
+    # fail. Monotonic: once a field is marked, it is never unmarked.
+    content_history: dict[str, set[str]] = field(default_factory=dict)
+
+    def mark_content_history(self, entity_key: str, field_name: str) -> None:
+        self.content_history.setdefault(entity_key, set()).add(field_name)
+
+    def had_prior_content(self, entity_key: str, field_name: str) -> bool:
+        return field_name in self.content_history.get(entity_key, ())
 
     def to_payload(self) -> dict[str, Any]:
         ordered: dict[str, ObservationDTO] = {}
@@ -484,9 +625,10 @@ def _safe_trace_snapshot(state: _TraceState) -> dict[str, Any]:
                 "id": state.trace.id,
                 "name": state.trace.name,
                 "status": state.trace.status,
-            }
+            },
+            state=state,
         )
-    return _redact_trace_payload(payload)
+    return _redact_trace_payload(payload, state=state)
 
 
 @dataclass(frozen=True)
@@ -570,9 +712,10 @@ class _SyncBatchTransport:
         payload: dict[str, Any],
         *,
         deadline: float | None = None,
+        state: _TraceState | None = None,
     ) -> bool:
         try:
-            buffered_payload = self._prepare_payload(payload)
+            buffered_payload = self._prepare_payload(payload, state=state)
         except TypeError as exc:
             message = (
                 "observability payload for item "
@@ -971,7 +1114,9 @@ class _SyncBatchTransport:
         logger.warning(message)
         return event
 
-    def _prepare_payload(self, payload: dict[str, Any]) -> _BufferedPayload:
+    def _prepare_payload(
+        self, payload: dict[str, Any], *, state: _TraceState | None = None
+    ) -> _BufferedPayload:
         # Direct transport callers bypass ObservabilityClient's trace redaction.
         # Preserve credential-key-name redaction (c4d874c3): this is a confirmed
         # egress path carrying arbitrary user keys, so opt in as the other two
@@ -979,7 +1124,11 @@ class _SyncBatchTransport:
         # sweep to the content bags so a directly-submitted trace/observation
         # payload's own `input_tokens`/`output_tokens`/`total_tokens` fields
         # are never mistaken for a `token`-rooted credential key (M5).
-        redacted_payload = _redact_trace_payload(payload)
+        # B3: `state`, when the caller has it (see `submit`), lets a
+        # redaction failure on THIS (already-once-redacted) pass still reach
+        # the content-history-aware fallback instead of a state-blind one --
+        # see `ObservabilityClient._submit_trace_snapshot`.
+        redacted_payload = _redact_trace_payload(payload, state=state)
         copied_payload = copy.deepcopy(redacted_payload)
         return _BufferedPayload(
             payload=copied_payload,
@@ -1559,6 +1708,16 @@ class ObservabilityClient:
             if state is None:
                 raise ValueError(f"Unknown trace_id '{trace_id}'")
             existing = state.observations.get(observation_id)
+            if existing is not None:
+                # B3: record, BEFORE this call's own (possibly gated-to-None
+                # or freshly-hostile) write lands, whether this observation
+                # already carried content -- see `_TraceState.
+                # content_history`. Read directly off `existing`, never off
+                # the value this call is about to write.
+                if existing.input_data is not None:
+                    state.mark_content_history(observation_id, "input_data")
+                if existing.output_data is not None:
+                    state.mark_content_history(observation_id, "output_data")
             effective_type = requested_type or (
                 existing.type if existing is not None else ObservationType.SPAN
             )
@@ -1759,6 +1918,14 @@ class ObservabilityClient:
                 state.trace.started_at = started_at
             state.trace.ended_at = ended_at or utc_now()
             if output_supplied:
+                # B3: record, BEFORE this call's own write lands, whether
+                # the trace already carried `output_data` content -- see
+                # `_TraceState.content_history`. Read directly off the
+                # PRE-overwrite value on the line below, never off
+                # `gated_output_data` (this call's own, possibly
+                # freshly-hostile write).
+                if state.trace.output_data is not None:
+                    state.mark_content_history(_TRACE_CONTENT_KEY, "output_data")
                 # Ingest-contract fix: force the explicit placeholder (not
                 # `None`) when this tightens over prior content -- see
                 # `wire_value_for_tightened_update`.
@@ -1793,14 +1960,16 @@ class ObservabilityClient:
             return self._flush_lock_timeout_result(deadline)
         try:
             trace_payloads = [
-                (trace_id, _safe_trace_snapshot(state))
+                (trace_id, state, _safe_trace_snapshot(state))
                 for trace_id, state in self._trace_states.items()
             ]
         finally:
             self._lock.release()
 
-        for trace_id, payload in trace_payloads:
-            self._submit_trace_snapshot(trace_id, payload, deadline=deadline)
+        for trace_id, state, payload in trace_payloads:
+            self._submit_trace_snapshot(
+                trace_id, payload, deadline=deadline, state=state
+            )
         return self._flush_transport_until(deadline)
 
     def get_stats(self) -> dict[str, Any]:
@@ -1838,7 +2007,7 @@ class ObservabilityClient:
             if self._closing:
                 close_in_progress = True
                 already_closed = False
-                trace_payloads: list[tuple[str, dict[str, Any]]] = []
+                trace_payloads: list[tuple[str, _TraceState, dict[str, Any]]] = []
                 inflight_snapshot_submissions = 0
                 offline_close = False
             elif self._closed:
@@ -1867,7 +2036,7 @@ class ObservabilityClient:
                     inflight_snapshot_submissions = 0
                 else:
                     trace_payloads = [
-                        (trace_id, _safe_trace_snapshot(state))
+                        (trace_id, state, _safe_trace_snapshot(state))
                         for trace_id, state in self._trace_states.items()
                     ]
                     inflight_snapshot_submissions = self._inflight_snapshot_submissions
@@ -1904,8 +2073,10 @@ class ObservabilityClient:
                             inflight_snapshot_submissions,
                         )
 
-                for trace_id, payload in trace_payloads:
-                    self._submit_trace_snapshot(trace_id, payload, deadline=deadline)
+                for trace_id, state, payload in trace_payloads:
+                    self._submit_trace_snapshot(
+                        trace_id, payload, deadline=deadline, state=state
+                    )
                 transport_result = self._transport.close(
                     timeout=self._remaining_flush_time(deadline)
                 )
@@ -2638,7 +2809,7 @@ class ObservabilityClient:
             self._inflight_snapshot_submissions += 1
             self._snapshot_submission_complete.clear()
         try:
-            self._submit_trace_snapshot(trace_id, payload)
+            self._submit_trace_snapshot(trace_id, payload, state=state)
         finally:
             with self._lock:
                 self._inflight_snapshot_submissions -= 1
@@ -2651,11 +2822,22 @@ class ObservabilityClient:
         payload: dict[str, Any],
         *,
         deadline: float | None = None,
+        state: _TraceState | None = None,
     ) -> None:
+        # B3: thread `state` through to the transport's own defensive
+        # redaction pass (`_SyncBatchTransport._prepare_payload`) too -- that
+        # pass re-runs `_redact_trace_payload` on the ALREADY-safe payload
+        # `_safe_trace_snapshot` just built. It is normally a no-op (the
+        # payload is already redacted/fallback-built), but if it were ever
+        # to fail too (e.g. the same scrubbing outage), it must reach the
+        # SAME `state.content_history`-aware fallback, not a state-blind one
+        # that would drop the placeholder this call just carefully built.
         submitted = (
-            self._transport.submit(trace_id, payload)
+            self._transport.submit(trace_id, payload, state=state)
             if deadline is None
-            else self._transport.submit(trace_id, payload, deadline=deadline)
+            else self._transport.submit(
+                trace_id, payload, deadline=deadline, state=state
+            )
         )
         if not submitted:
             stats = (

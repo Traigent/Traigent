@@ -539,7 +539,8 @@ def test_observability_client_logs_trace_snapshot_submit_failure(caplog):
     """Transport rejections must be visible instead of silently dropping traces."""
 
     class RejectingTransport:
-        def submit(self, trace_id, payload):
+        def submit(self, trace_id, payload, *, deadline=None, state=None):
+            del deadline, state
             assert trace_id == "trace_rejected"
             assert payload["id"] == "trace_rejected"
             return False
@@ -1270,7 +1271,11 @@ def test_observability_client_close_waits_for_inflight_snapshot_submission(monke
     delayed_submission_thread: list[int] = []
 
     def delayed_submit(
-        trace_id: str, payload: dict, *, deadline: float | None = None
+        trace_id: str,
+        payload: dict,
+        *,
+        deadline: float | None = None,
+        state: Any = None,
     ) -> None:
         if not delayed_submission_thread:
             delayed_submission_thread.append(threading.get_ident())
@@ -1278,7 +1283,7 @@ def test_observability_client_close_waits_for_inflight_snapshot_submission(monke
             assert release_submit.wait(timeout=2.0)
         else:
             assert threading.get_ident() != delayed_submission_thread[0]
-        original_submit(trace_id, payload, deadline=deadline)
+        original_submit(trace_id, payload, deadline=deadline, state=state)
 
     monkeypatch.setattr(client, "_submit_trace_snapshot", delayed_submit)
 
@@ -1372,7 +1377,11 @@ def test_observability_client_concurrent_close_has_single_initial_closer(monkeyp
     original_transport_close = client._transport.close
 
     def delayed_first_submit(
-        trace_id: str, payload: dict, *, deadline: float | None = None
+        trace_id: str,
+        payload: dict,
+        *,
+        deadline: float | None = None,
+        state: Any = None,
     ) -> None:
         nonlocal submission_claimed
         with submission_claim_lock:
@@ -1381,7 +1390,7 @@ def test_observability_client_concurrent_close_has_single_initial_closer(monkeyp
         if is_first_submission:
             first_submit_entered.set()
             assert release_first_submit.wait(timeout=2.0)
-        original_submit(trace_id, payload, deadline=deadline)
+        original_submit(trace_id, payload, deadline=deadline, state=state)
 
     def observed_transport_close(*args, **kwargs):
         if not release_first_submit.is_set():
@@ -5342,6 +5351,183 @@ class TestM8FailClosed:
         # request the backend rejects. A scrub failure must fall back to the
         # `"[REDACTED]"` placeholder, never null/omitted.
         assert captured["payload"] == {"content": "[REDACTED]"}
+
+
+class TestB3SerializationAndScrubbingFailureSendsPlaceholder:
+    """ADDENDUM R3 B3 (A2 completion), astra REJECT #2 finding 1 (CONFIRMED,
+    out-astra-privacy-r3.md). Distinct from
+    `TestB3FailedUpdateOverPriorContentSendsPlaceholder` below (a COPY
+    failure inside `apply_content_mode`, already fixed): this class covers
+    the two failure modes finding 1 found still broken -- trace/observation
+    SERIALIZATION (`state.to_payload()`/`to_jsonable`, a cyclic structure)
+    and SCRUBBING (`redact_sensitive_data` itself raising) -- both of which
+    happen at snapshot-BUILD time (flush/close), decoupled from the
+    record_observation/end_trace call that supplied the value, so they
+    cannot rely on `apply_content_mode`'s own try/except at all.
+
+    When gating/serialization/scrubbing FAILS on an UPDATE and the field
+    previously carried content, the SDK must send the clearing placeholder
+    (`{"redacted": true}`) for that field -- never omit it, because the
+    backend's `apply_updates` skips omitted fields and keeps the OLD
+    content. Deep-copy failures already did this; serialization
+    (`state.to_payload()` / `to_jsonable`, client.py `_safe_trace_snapshot`)
+    and scrubbing (`redact_sensitive_data`, `_redact_trace_payload`) failures
+    did not: replacing previously-sent output with a cyclic value produced a
+    minimal snapshot WITHOUT `output_data`; a cyclic OBSERVATION update
+    omitted the entire observation; an injected scrubber exception on an
+    update over prior content likewise omitted the clearing field.
+
+    Fix: `_TraceState.content_history` tracks, independently of the
+    (possibly hostile) value currently held, whether a trace/observation
+    content field carried content BEFORE the update that is now failing to
+    build. `_safe_allowlisted_snapshot`/`_safe_allowlisted_observation_
+    snapshot` consult it to emit the placeholder instead of dropping the
+    field, and never drop the observation itself.
+
+    Negative control (each test below): reverting `_safe_allowlisted_
+    snapshot` to the pre-fix version (drop `input_data`/`output_data`/
+    `observations` unconditionally, ignoring `state`) makes tests 1-3 below
+    fail -- verified by hand for this report; see the worker report's
+    control-lines table. Test 4 (first write, no prior content) continues to
+    pass either way -- omission is still correct there (M1/A2): nothing is
+    stored server-side yet to leak.
+    """
+
+    def test_1_cyclic_trace_output_update_over_prior_content_sends_placeholder(self):
+        """(1) record-mode output sent, then an update with a cyclic output
+        -> the payload carries `output_data == {"redacted": true}`."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        trace_id = client.start_trace(
+            "b3-cyclic-trace-output",
+            output_data={"answer": "42"},
+            content_mode="record",
+        )
+        client.flush()
+        # Confirm the real content was actually delivered first, so the
+        # later placeholder is a genuine CLEAR, not a first-write omission.
+        assert sent_batches[-1][-1]["output_data"] == {"answer": "42"}
+
+        cyclic: dict[str, Any] = {"answer": "hello"}
+        cyclic["self"] = cyclic
+        client.end_trace(trace_id, output_data=cyclic)
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        assert trace_payload["id"] == trace_id
+        assert trace_payload["output_data"] == {"redacted": True}
+
+    def test_2_cyclic_observation_output_update_never_omits_the_observation(self):
+        """(2) same for an observation update with a cyclic value -> the
+        observation is present with a placeholder, never dropped from the
+        update entirely."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        trace_id = client.start_trace(
+            "b3-cyclic-observation-output", content_mode="record"
+        )
+        observation_id = client.record_observation(
+            trace_id,
+            name="step-1",
+            output_data={"answer": "42"},
+            content_mode="record",
+        )
+        client.flush()
+        first_observations = sent_batches[-1][-1]["observations"]
+        assert any(
+            obs["id"] == observation_id and obs["output_data"] == {"answer": "42"}
+            for obs in first_observations
+        ), first_observations
+
+        cyclic: dict[str, Any] = {"answer": "hello"}
+        cyclic["self"] = cyclic
+        client.record_observation(
+            trace_id,
+            name="step-1",
+            observation_id=observation_id,
+            output_data=cyclic,
+        )
+        client.flush()
+        client.close()
+
+        observations = sent_batches[-1][-1].get("observations", [])
+        matching = [obs for obs in observations if obs.get("id") == observation_id]
+        assert matching, (
+            "the observation must never be dropped from the update entirely "
+            f"-- got observations={observations!r}"
+        )
+        assert matching[0]["output_data"] == {"redacted": True}
+
+    def test_3_scrubber_exception_on_update_over_prior_content_sends_placeholder(
+        self, monkeypatch
+    ):
+        """(3) an injected scrubber exception on an update over prior
+        content -> placeholder (no cyclic value involved at all -- this
+        exercises the REDACTION failure path, `_redact_trace_payload`,
+        distinctly from test 1's SERIALIZATION failure path,
+        `_safe_trace_snapshot`'s own `state.to_payload()` call)."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        trace_id = client.start_trace(
+            "b3-scrubber-exception-trace",
+            output_data={"answer": "42"},
+            content_mode="record",
+        )
+        client.flush()
+        assert sent_batches[-1][-1]["output_data"] == {"answer": "42"}
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("scrub exploded")
+
+        monkeypatch.setattr(
+            "traigent.observability.client.redact_sensitive_data", _boom
+        )
+
+        client.end_trace(trace_id, output_data={"answer": "a brand new answer"})
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        assert trace_payload["output_data"] == {"redacted": True}
+        assert "a brand new answer" not in json.dumps(sent_batches)
+
+    def test_4_first_write_failure_with_no_prior_content_may_omit(self):
+        """(4) first write with a failure and no prior content -> the field
+        may be omitted (regression guard for the two existing M8 tests
+        covering this: `TestM8FailClosed.
+        test_redaction_failure_withholds_content_and_never_raises` and
+        `test_cyclic_input_data_does_not_raise_and_is_withheld`). Exercised
+        here for `output_data` specifically, at both the trace and
+        observation level, in one test."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        cyclic: dict[str, Any] = {"answer": "hello"}
+        cyclic["self"] = cyclic
+
+        trace_id = client.start_trace(
+            "b3-first-write-trace", output_data=cyclic, content_mode="record"
+        )
+        observation_id = client.record_observation(
+            trace_id, name="step-1", output_data=cyclic, content_mode="record"
+        )
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        assert (
+            "output_data" not in trace_payload or trace_payload["output_data"] is None
+        )
+        observations = trace_payload.get("observations", [])
+        matching = [obs for obs in observations if obs.get("id") == observation_id]
+        if matching:
+            assert (
+                "output_data" not in matching[0] or matching[0]["output_data"] is None
+            )
 
 
 class TestB1OutboundCounterexamples:
