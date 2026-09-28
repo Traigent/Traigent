@@ -130,6 +130,61 @@ corresponding side even when `content_mode="record"`. The transport still applie
 pattern-based secret scrubbing before send, but that scrubber is a final safety
 net, not the content-egress policy.
 
+**Default vs. explicit, and what a later un-annotated call on the same trace
+does.** The `content_mode` a trace resolves to at `start_trace()` (or the first
+`@observe`/`ObserveContext` call that creates it) becomes that trace's own base
+mode for its whole lifetime. A later `record_observation()`/`end_trace()`/
+`add_comment()`/`submit_feedback()` call that passes no `content_mode` of its
+own continues that base — it does **not** fall back to the client's
+configured default. For example, `client.start_trace("t", content_mode="redacted")`
+followed by a plain `client.record_observation(...)` (no override) still emits
+the `redacted` placeholder, even if the client itself is unconfigured
+(client-default `metadata`). A per-call override may only **tighten** that
+base — never loosen it — and only when either the client's own policy was set
+explicitly (constructor option, `TRAIGENT_OBSERVABILITY_CONTENT`, or the
+legacy capture-content env var) or the trace's own mode was itself set
+explicitly at `start_trace()`. When neither is explicit, a per-call override
+is used as-is — the normal, documented way to opt one call into
+`record`/`redacted` capture. A trace_id this client process never locally
+tracked (created elsewhere, or already closed) resolves purely against the
+client-level policy, same as a bare `start_trace()`.
+
+**Bound the promise:** `metadata` mode withholds content fields (function
+arguments, return values, explicit `input_data`/`output_data`); arbitrary
+metadata you attach is sent after secret scrubbing and is NOT content-free.
+Anything you pass in `metadata=` — including a `traigent_active_config`/trial
+snapshot the SDK enriches your call with — is free-form data the caller
+controls, so it ships regardless of `content_mode`, minus pattern-based
+secret scrubbing and credential-shaped key redaction. Treat `metadata` as
+"no *captured* content", not "nothing leaves this process": if you need a
+value to never leave the process, do not put it in `metadata`.
+
+`client.add_comment()` and `client.submit_feedback()` (trace comments and
+correction output) both accept an optional `content_mode=` keyword and
+otherwise obey the same resolution as `@observe`/`record_observation`
+(including the trace's own base mode described above): `metadata` mode
+refuses `add_comment` locally (there is no non-content payload for a
+comment to fall back to) and `submit_feedback` sends the rating/label
+fields while omitting `comment`/`correction_output`; `redacted` sends
+placeholders for both; `record` sends the text after the same mandatory
+secret scrubbing.
+
+Dataset-conversion and content-upload endpoints (`traigent.datasets.*`) are
+a separate content-egress surface with their own contract; they are not
+gated by observability's `content_mode` and are out of scope here — see
+[traigent-js#387](https://github.com/Traigent/traigent-js/issues/387).
+
+**`user_id` is not anonymized.** The SDK never generates, hashes, or maps
+`user_id` for you — whatever string you pass on `start_trace(user_id=...)`
+(or `@observe(user_id=...)`) is exactly what is attributed to that trace.
+Pattern-based scrubbing still redacts a `user_id` value that happens to look
+like an email address or another recognized secret/PII pattern in every
+`content_mode`, as a safety net — but that is a byproduct of the generic
+value scan, not identity protection. Pass an opaque identifier you control
+(an internal user/session ID, not an email address, name, or other
+directly-identifying value) if you need per-user attribution without
+exposing PII to telemetry.
+
 `@observe(observation_type=GENERATION)` does not estimate LangChain or provider
 token usage from prompts. Pass measured `input_tokens`, `output_tokens`,
 `total_tokens`, or `cost_usd` from the provider response when recording

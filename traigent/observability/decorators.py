@@ -16,6 +16,7 @@ from traigent.config.context import (
     get_trial_context,
 )
 from traigent.observability.client import ObservabilityClient
+from traigent.observability.config import validate_content_mode_override
 from traigent.observability.dtos import (
     ExecutionContextDTO,
     ObservationType,
@@ -197,7 +198,18 @@ class ObserveContext:
         self.tags = list(tags or [])
         self.redact_input = redact_input
         self.redact_output = redact_output
-        self.content_mode = content_mode.strip().lower() if content_mode else None
+        # M2/M3 fix: validate (and normalize) BEFORE any context variable or
+        # other state is mutated -- `__enter__` used to set `_current_client`
+        # first and only discover an invalid override later, deep inside
+        # `client.start_trace`, leaving that context var stuck on a failed
+        # attempt (the `with` statement never calls `__exit__` when
+        # `__enter__` itself raises). Doing it here, in `__init__`, also
+        # means a raw `ObserveContext(...)` construction raises immediately,
+        # before `__enter__` is ever called. `content_mode=""` must raise
+        # like any other invalid value -- the previous `if content_mode else
+        # None` used Python truthiness, which silently turned `""` into
+        # `None` (falling back to the client's default) instead of raising.
+        self.content_mode = validate_content_mode_override(content_mode)
 
         self._started_at: datetime | None = None
         self._trace_id: str | None = None
@@ -218,60 +230,85 @@ class ObserveContext:
         # force flags) is applied by `client.start_trace`/`record_observation`/
         # `end_trace` themselves, not here -- this is the single enforcement
         # point shared with direct client callers who never go through
-        # `observe`. Passing `self.content_mode` (possibly None) lets the
-        # client validate and resolve it against its own configured default;
-        # an invalid override still raises here, on first use, exactly as
-        # before.
+        # `observe`. `self.content_mode` was already validated (and
+        # normalized, or left `None`) in `__init__`, before this method ever
+        # ran, so an invalid override never reaches this point at all.
         self._client_token = _current_client.set(client)
-        setup_started_at = utc_now()
+        try:
+            setup_started_at = utc_now()
 
-        trace_id = _current_trace_id.get()
-        if trace_id is None:
-            trace_metadata = {"source": "observe"}
-            trace_metadata.update(self.metadata)
-            trace_metadata.update(self._enriched_metadata)
-            trace_id = client.start_trace(
-                self.name,
-                session_id=self.session_id,
-                user_id=self.user_id,
-                environment=self.environment,
-                release=self.release,
-                execution_context=self.execution_context,
-                tags=self.tags,
-                metadata=trace_metadata,
+            trace_id = _current_trace_id.get()
+            if trace_id is None:
+                trace_metadata = {"source": "observe"}
+                trace_metadata.update(self.metadata)
+                trace_metadata.update(self._enriched_metadata)
+                trace_id = client.start_trace(
+                    self.name,
+                    session_id=self.session_id,
+                    user_id=self.user_id,
+                    environment=self.environment,
+                    release=self.release,
+                    execution_context=self.execution_context,
+                    tags=self.tags,
+                    metadata=trace_metadata,
+                    started_at=setup_started_at,
+                    input_data=self.input_data,
+                    custom_trace_id=self.custom_trace_id,
+                    content_mode=self.content_mode,
+                    redact_input=self.redact_input,
+                )
+                self._created_trace = True
+                self._trace_token = _current_trace_id.set(trace_id)
+
+            observation_metadata = dict(self.metadata)
+            observation_metadata.update(self._enriched_metadata)
+            stack = _current_observation_stack.get()
+            parent_observation_id = stack[-1] if stack else None
+            self._observation_id = client.record_observation(
+                trace_id,
+                observation_id=self._observation_id,
+                name=self.name,
+                observation_type=self.observation_type,
+                parent_observation_id=parent_observation_id,
+                status="running",
+                tool_name=self.tool_name,
                 started_at=setup_started_at,
                 input_data=self.input_data,
-                custom_trace_id=self.custom_trace_id,
+                metadata=observation_metadata,
                 content_mode=self.content_mode,
                 redact_input=self.redact_input,
             )
-            self._created_trace = True
-            self._trace_token = _current_trace_id.set(trace_id)
+            self._trace_id = trace_id
+            self._stack_token = _current_observation_stack.set(
+                stack + (self._observation_id,)
+            )
+            self._started_at = utc_now()
+            return self
+        except BaseException:
+            # M4: a setup failure (e.g. an unknown trace_id, a malformed
+            # session) must restore every context variable this `__enter__`
+            # attempt managed to mutate -- exactly like the `content_mode`
+            # validation in `__init__` prevents in the first place. Without
+            # this, a failed `__enter__` leaves `_current_client` (and
+            # possibly `_current_trace_id`) pointing at a client/trace this
+            # attempt never actually completed, corrupting subsequent
+            # `observe()` calls in the same thread/task -- `__exit__` is
+            # never invoked when `__enter__` raises, so nothing else resets
+            # it.
+            self._restore_context_after_setup_failure()
+            raise
 
-        observation_metadata = dict(self.metadata)
-        observation_metadata.update(self._enriched_metadata)
-        stack = _current_observation_stack.get()
-        parent_observation_id = stack[-1] if stack else None
-        self._observation_id = client.record_observation(
-            trace_id,
-            observation_id=self._observation_id,
-            name=self.name,
-            observation_type=self.observation_type,
-            parent_observation_id=parent_observation_id,
-            status="running",
-            tool_name=self.tool_name,
-            started_at=setup_started_at,
-            input_data=self.input_data,
-            metadata=observation_metadata,
-            content_mode=self.content_mode,
-            redact_input=self.redact_input,
-        )
-        self._trace_id = trace_id
-        self._stack_token = _current_observation_stack.set(
-            stack + (self._observation_id,)
-        )
-        self._started_at = utc_now()
-        return self
+    def _restore_context_after_setup_failure(self) -> None:
+        if self._stack_token is not None:
+            _current_observation_stack.reset(self._stack_token)
+            self._stack_token = None
+        if self._trace_token is not None:
+            _current_trace_id.reset(self._trace_token)
+            self._trace_token = None
+            self._created_trace = False
+        if self._client_token is not None:
+            _current_client.reset(self._client_token)
+            self._client_token = None
 
     def __exit__(self, exc_type, exc, exc_tb) -> Literal[False]:
         self._finish(result=self._result, error=exc)
@@ -303,43 +340,69 @@ class ObserveContext:
         # input_data/output_data. `client.record_observation` derives
         # error_type/error_message from `error` itself (the same gate direct
         # callers get), so it is passed through rather than built here.
-
-        if self._trace_id and self._observation_id:
-            client.record_observation(
-                self._trace_id,
-                observation_id=self._observation_id,
-                name=self.name,
-                observation_type=self.observation_type,
-                status=status,
-                tool_name=self.tool_name,
-                started_at=started_at,
-                ended_at=ended_at,
-                latency_ms=latency_ms,
-                input_data=self.input_data,
-                output_data=result,
-                metadata=metadata,
-                content_mode=self.content_mode,
-                redact_input=self.redact_input,
-                redact_output=self.redact_output,
-                error=error,
-            )
-            if self._created_trace:
-                client.end_trace(
-                    self._trace_id,
-                    status=status,
-                    output_data=result,
-                    started_at=started_at,
-                    ended_at=ended_at,
-                    content_mode=self.content_mode,
-                    redact_output=self.redact_output,
-                )
-
-        if self._stack_token is not None:
-            _current_observation_stack.reset(self._stack_token)
-        if self._trace_token is not None:
-            _current_trace_id.reset(self._trace_token)
-        if self._client_token is not None:
-            _current_client.reset(self._client_token)
+        try:
+            if self._trace_id and self._observation_id:
+                # M8/A5: a failure HERE (recording/ending) must never
+                # replace the traced call's own result/exception -- log and
+                # continue rather than letting a NEW exception propagate out
+                # of `_finish`/`__exit__`/`__aexit__`, which would otherwise
+                # mask a successful call's return value (or a different
+                # exception the caller's own code raised) with an unrelated
+                # observability-internal failure. `__enter__`'s own setup
+                # failures are a different case (see
+                # `_restore_context_after_setup_failure`) and still
+                # propagate -- there `__exit__` is never invoked at all, so
+                # nothing else would ever surface that failure.
+                try:
+                    client.record_observation(
+                        self._trace_id,
+                        observation_id=self._observation_id,
+                        name=self.name,
+                        observation_type=self.observation_type,
+                        status=status,
+                        tool_name=self.tool_name,
+                        started_at=started_at,
+                        ended_at=ended_at,
+                        latency_ms=latency_ms,
+                        input_data=self.input_data,
+                        output_data=result,
+                        metadata=metadata,
+                        content_mode=self.content_mode,
+                        redact_input=self.redact_input,
+                        redact_output=self.redact_output,
+                        error=error,
+                    )
+                    if self._created_trace:
+                        client.end_trace(
+                            self._trace_id,
+                            status=status,
+                            output_data=result,
+                            started_at=started_at,
+                            ended_at=ended_at,
+                            content_mode=self.content_mode,
+                            redact_output=self.redact_output,
+                        )
+                except Exception:
+                    logger.error(
+                        "Observability decorator finish failed for trace "
+                        "'%s'; the traced call's own result/exception is "
+                        "unaffected.",
+                        self._trace_id,
+                        exc_info=True,
+                    )
+        finally:
+            # M4: restore context on finish failure too -- without this
+            # `finally`, a `record_observation`/`end_trace` call raising here
+            # would propagate straight out of `_finish` and skip every reset
+            # below, leaving `_current_client`/`_current_trace_id`/
+            # `_current_observation_stack` stuck on this (finished) context
+            # for whatever code runs next in this thread/task.
+            if self._stack_token is not None:
+                _current_observation_stack.reset(self._stack_token)
+            if self._trace_token is not None:
+                _current_trace_id.reset(self._trace_token)
+            if self._client_token is not None:
+                _current_client.reset(self._client_token)
 
 
 class _ObserveFactory:
@@ -378,6 +441,14 @@ class _ObserveFactory:
         self.tags = tags
         self.redact_input = redact_input
         self.redact_output = redact_output
+        # M2: raise at decorator CREATION -- i.e. right here, when `observe(
+        # content_mode=...)` is called -- rather than waiting for the
+        # decorated function to actually run (or the context manager to be
+        # entered). `observe()` itself only builds this factory; the
+        # `ObserveContext` that re-validates this value is not constructed
+        # until the decorated function is called (or `__enter__`/
+        # `__aenter__` below), which could be long after `observe(...)` ran.
+        validate_content_mode_override(content_mode)
         self.content_mode = content_mode
         self._context: ObserveContext | None = None
 

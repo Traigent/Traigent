@@ -131,6 +131,17 @@ class StandardizedClientError(ClientError):
     """Standardized client error with consistent format."""
 
 
+class ContentDisabledError(ClientError):
+    """Raised when a caller asks to send content the active `content_mode` forbids.
+
+    Reserved for entry points that have no non-content way to express "no
+    content" (e.g. `ObservabilityClient.add_comment`, whose entire payload
+    *is* content) -- unlike `record_observation`/`end_trace`, which simply
+    withhold the content field and still send the call. Raised locally,
+    before anything is sent.
+    """
+
+
 class AuthenticationError(TraigentError):
     """Error in authentication or authorization."""
 

@@ -20,11 +20,15 @@ from urllib.parse import urlencode
 
 from traigent.cloud.async_batch_transport import BatchFlushResult
 from traigent.observability.config import (
-    OBSERVABILITY_CONTENT_MODES,
+    NOT_SUPPLIED,
     ObservabilityConfig,
     apply_content_mode,
     apply_content_mode_to_text,
+    most_restrictive_content_mode,
     nonblank_credential,
+    redacted_content_marker,
+    validate_content_mode_override,
+    wire_value_for_tightened_update,
 )
 from traigent.observability.dtos import (
     OBSERVABILITY_STATUSES,
@@ -52,6 +56,7 @@ from traigent.security.redaction import redact_sensitive_data, redact_sensitive_
 from traigent.utils.exceptions import (
     AuthenticationError,
     ClientError,
+    ContentDisabledError,
     TraigentConnectionError,
 )
 from traigent.utils.logging import get_logger
@@ -112,6 +117,436 @@ def _new_observation_id() -> str:
     return f"obs_{uuid.uuid4().hex}"
 
 
+_CONTENT_BAG_FIELDS = ("metadata", "input_data", "output_data")
+
+
+def _safe_deepcopy_or_default(value: Any, default: Any, *, context: str) -> Any:
+    """B2 (addendum R3, A5 completion): `copy.deepcopy` can raise on a
+    caller-supplied structure that is uncopyable (`threading.Lock()`, an
+    open socket/file handle, ...) or that holds a throwing `__deepcopy__`/
+    property. Every INTAKE copy that detaches from caller-owned state
+    (`_detach_metadata`, `_coerce_session`, `_coerce_correlation_ids`,
+    `_coerce_prompt_reference`) must go through this helper rather than
+    calling `copy.deepcopy` directly: a failure here must withhold the field
+    (fall back to `default`) and continue, never raise out of the public
+    `start_trace`/`record_observation`/`end_trace`/`submit_feedback` call
+    that was only trying to detach from the caller's own object (M8's
+    "drop the content field, never break the caller's application").
+    """
+    try:
+        return copy.deepcopy(value)
+    except Exception:
+        logger.error(
+            "Observability intake deep-copy failed for %s; withholding it "
+            "rather than raising into the caller's application.",
+            context,
+            exc_info=True,
+        )
+        return default
+
+
+def _safe_str(value: Any) -> str:
+    """B2: `str(value)` can raise for a hostile object with a broken
+    `__str__`/`__repr__` (a throwing "getter") -- e.g. building
+    `error_message` from a caller-raised exception whose subclass overrides
+    `__str__` to raise. Must never raise out of a public observability
+    call; falls back to a fixed placeholder instead.
+    """
+    try:
+        return str(value)
+    except Exception:
+        logger.error(
+            "Observability failed to stringify a value (broken __str__); "
+            "using a placeholder instead of raising into the caller's "
+            "application.",
+            exc_info=True,
+        )
+        return "<unstringifiable value>"
+
+
+def _detach_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """M4/A8: never retain a caller-owned reference for a metadata bag.
+
+    `dict(metadata or {})` (the previous behavior) only copies the TOP-LEVEL
+    dict -- every nested dict/list/set the caller passed in is still the
+    SAME object, so a caller mutating their own nested structure AFTER the
+    call returns (but before a later `flush()`/`close()`/update
+    re-serializes this trace/observation from the stored DTO) can still
+    change what eventually gets sent (finding 7's confirmed probe: mutating
+    nested trace metadata after `start_trace` changed the delivered
+    payload). A deep copy at intake detaches from every caller-owned nested
+    structure in one step.
+
+    B2: the deep copy itself can raise on a hostile value (`threading.
+    Lock()` nested in metadata, a cyclic structure, ...) -- `_safe_deepcopy_
+    or_default` catches that and withholds the whole bag (`{}`) rather than
+    raising out of `start_trace`/`record_observation`/`end_trace`.
+    """
+    if not metadata:
+        return {}
+    copied = _safe_deepcopy_or_default(metadata, None, context="metadata")
+    return copied if isinstance(copied, dict) else {}
+
+
+def _harden_content_bags(payload: Any) -> Any:
+    """Apply credential-key-name hardening to every arbitrary, caller-supplied
+    data bag on a trace/observation payload dict -- `metadata` / `input_data`
+    / `output_data` directly on the payload, `session.metadata` (A4: session
+    metadata is its own arbitrary bag, distinct from the trace/observation
+    metadata `_CONTENT_BAG_FIELDS` already covered -- finding 3's confirmed
+    probe: `session.metadata.password` reached the sender unredacted because
+    this function never looked inside `session` at all), and
+    `prompt_reference.variables` (also an arbitrary caller-chosen
+    `dict[str, Any]`, per `PromptReferenceDTO.variables`) -- recursing into
+    `observations` and `children` so nested observations get the same
+    treatment -- rather than to the whole structural payload.
+
+    `redact_sensitive_data(..., redact_credential_keys=True)` treats any key
+    whose NAME looks credential-like as a secret subtree: necessary for
+    catching a secret hiding inside a caller-supplied bag under a plausible
+    key name (M5), but wrong for the DTO's OWN structural field names --
+    `input_tokens` / `output_tokens` / `total_tokens` all substring-match the
+    `token` credential root. Those are typed, schema-fixed numeric telemetry
+    at a FIXED position in every payload, never an arbitrary caller-chosen
+    key, so the credential-key check must never even consider them. Scoping
+    *where* that check applies (here) -- rather than special-casing these
+    field names inside the generic redactor -- is what keeps a genuinely
+    arbitrary `total_tokens` key placed inside a caller-supplied bag still
+    non-exempt (see `redact_sensitive_data`'s `usage.*`/`max_tokens`
+    exemption, which stays narrow because it never has to reach these
+    fields in the first place).
+
+    B4 (addendum R3, A4 completion): the common key-based scrubber now also
+    covers `correlation_ids`, `tags`, and the COMPLETE `prompt_reference`
+    structure (previously only its `.variables` sub-dict) -- astra's ruling
+    (a) on the prior review: fixed correlation fields and string-only tags
+    mean key scanning is a no-op for well-typed values TODAY, but binding
+    A4 requires every arbitrary-data bag to flow through the SAME scrubber
+    regardless, so a future extension of any of these shapes is covered
+    from day one rather than needing another fix. The fixed numeric DTO
+    fields (`latency_ms`, `*_tokens`, `cost_usd`, timestamps, ids, ...) are
+    never routed through this function at all.
+
+    The caller still runs the result through `redact_sensitive_data(...,
+    redact_credential_keys=False)` for value-pattern hygiene (PII-looking
+    strings anywhere) without a second key-name pass.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    hardened = dict(payload)
+    for field_name in _CONTENT_BAG_FIELDS:
+        if field_name in hardened:
+            hardened[field_name] = redact_sensitive_data(
+                hardened[field_name], redact_credential_keys=True
+            )
+    session = hardened.get("session")
+    if isinstance(session, dict) and "metadata" in session:
+        hardened_session = dict(session)
+        hardened_session["metadata"] = redact_sensitive_data(
+            session["metadata"], redact_credential_keys=True
+        )
+        hardened["session"] = hardened_session
+    if isinstance(hardened.get("prompt_reference"), dict):
+        hardened["prompt_reference"] = redact_sensitive_data(
+            hardened["prompt_reference"], redact_credential_keys=True
+        )
+    if isinstance(hardened.get("correlation_ids"), dict):
+        hardened["correlation_ids"] = redact_sensitive_data(
+            hardened["correlation_ids"], redact_credential_keys=True
+        )
+    if isinstance(hardened.get("tags"), list):
+        hardened["tags"] = redact_sensitive_data(
+            hardened["tags"], redact_credential_keys=True
+        )
+    for list_field in ("observations", "children"):
+        items = hardened.get(list_field)
+        if isinstance(items, list):
+            hardened[list_field] = [_harden_content_bags(item) for item in items]
+    return hardened
+
+
+_SAFE_SNAPSHOT_TIMESTAMP_FIELDS = ("started_at", "ended_at")
+_SAFE_SNAPSHOT_NUMERIC_FIELDS = (
+    "latency_ms",
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+    "cost_usd",
+)
+_SAFE_SNAPSHOT_ID_FIELDS = ("session_id", "custom_trace_id")
+# B3 (addendum R3, A2 completion): content fields covered by
+# `_TraceState.content_history` -- see `_TraceState` for why "did this field
+# carry content before" must be tracked independently of the value
+# currently held (which may itself be the pathological one that made
+# serialization/redaction fail).
+_SAFE_SNAPSHOT_CONTENT_FIELDS = ("input_data", "output_data")
+# Key `_TraceState.content_history` uses for the trace's OWN content
+# fields, distinct from any observation id (observation ids are generated
+# by `_new_observation_id`, always prefixed `obs_`, so this never collides).
+_TRACE_CONTENT_KEY = "__trace__"
+
+
+def _safe_scalar(value: Any) -> Any:
+    """Only trust an already-plain JSON scalar; anything else becomes `None`.
+
+    The M8/A5 fallback runs precisely because the payload may hold
+    pathological or cyclic caller-supplied objects, so even an "allowlisted"
+    field name is only passed through if its value is already a plain
+    `str`/`int`/`float`/`bool` -- never serialized, recursed into, or
+    trusted to have a safe `__repr__`/`__str__`.
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return None
+
+
+def _safe_allowlisted_observation_snapshot(
+    descriptor: _ObservationFallbackDescriptor,
+) -> dict[str, Any]:
+    """Minimal, explicitly allowlisted snapshot for ONE observation, used
+    when the trace-level M8/A5 fallback fires (`_safe_allowlisted_snapshot`).
+
+    B3 (addendum R3, finding 1's confirmed probe): the OLD fallback dropped
+    every observation outright, so a failed serialization/redaction pass
+    over an update to observation X sent a trace snapshot that never
+    mentioned X at all -- under the backend's skip-omitted-fields contract,
+    X's PRIOR content (from an earlier successful send) stayed stored,
+    exactly the "never omit the clearing field" defect B3 forbids. This
+    function always keeps the observation (by id) in the outbound update.
+
+    Finding 2 (astra out-astra-privacy-r4.md): takes an already-detached
+    `_ObservationFallbackDescriptor` -- frozen at snapshot-enqueue time,
+    while the client lock was held -- rather than the live `ObservationDTO`
+    plus a live, mutable `_TraceState`. Reading `id`/`status`/`type`/
+    `parent_observation_id`/`had_prior_*` off a fresh `ObservationDTO`/
+    `_TraceState` here would let a fallback that fires later (e.g. in the
+    transport's own defensive redaction pass, well after this call's lock
+    was released) reflect whatever those mutate into by then, rather than
+    this snapshot's own state -- see `_TraceFallbackDescriptor`.
+
+    `id`/`status`/`type`/`parent_observation_id` were themselves read off
+    the DTO when the descriptor was built -- SDK-controlled, schema-
+    validated fields (`ObservationDTO.__post_init__` requires `id`/`name`
+    to be validated strings and `status`/`type` to be validated
+    enums/statuses), never arbitrary caller content, so they carry the same
+    trust level `_safe_allowlisted_snapshot` already gives the trace's own
+    `id`/`status`. `name` is still replaced with the redaction placeholder
+    (a caller-chosen string, exactly like the trace-level `name`).
+
+    Content fields (`input_data`/`output_data`) are included -- as the
+    clearing placeholder, NEVER the real value -- only when the descriptor
+    shows this observation's field carried content BEFORE the value
+    currently held (which may itself be the pathological value that made
+    serialization/redaction fail). A genuine first write (nothing ever
+    recorded for this field) is still safe to omit -- there is nothing
+    stored server-side yet to leak (M1/A2/B3 test 4).
+
+    Finding 1 (astra out-astra-privacy-r4.md, CONFIRMED P1): `error_message`
+    gets the SAME clearing treatment, inside `metadata` (where the normal,
+    non-fallback update path -- `record_observation`'s
+    `merged_metadata["error_message"] = "[REDACTED]"` branch -- already
+    writes it). The old fallback omitted `metadata` (indeed the whole
+    observation) entirely, so an observation that previously carried real
+    `error_message` text, then hit this fallback on a later update, sent no
+    `metadata` at all -- under the backend's skip-omitted-fields contract,
+    the PRIOR error text stayed stored server-side even though local state
+    (`existing.metadata["error_message"]`) already held "[REDACTED]".
+    """
+    safe: dict[str, Any] = {
+        "id": descriptor.id,
+        "name": "[REDACTED]",
+        "status": descriptor.status,
+    }
+    if descriptor.type:
+        safe["type"] = descriptor.type
+    if descriptor.parent_observation_id:
+        safe["parent_observation_id"] = descriptor.parent_observation_id
+    if descriptor.had_prior_input_data:
+        safe["input_data"] = redacted_content_marker()
+    if descriptor.had_prior_output_data:
+        safe["output_data"] = redacted_content_marker()
+    if descriptor.had_prior_error_message:
+        safe["metadata"] = {"error_message": "[REDACTED]"}
+    return safe
+
+
+def _safe_allowlisted_snapshot(
+    payload: dict[str, Any], *, state: _TraceFallbackDescriptor | None = None
+) -> dict[str, Any]:
+    """M8/A5 last-resort fallback: when a trace snapshot cannot be safely
+    redacted (redaction, or the DTO serialization that built `payload`
+    itself, raised on a malformed/cyclic caller-supplied structure), never
+    send the raw payload -- and never send the full structural payload
+    either, since fields like `metadata`/`input_data`/`output_data` are
+    exactly what failed to redact. Construct a MINIMAL, explicitly
+    allowlisted snapshot instead: identifiers, timestamps, status, and
+    numeric DTO counters pass through (only when they are already plain
+    scalars -- see `_safe_scalar`); `name`/`user_id` are replaced with the
+    redaction placeholder rather than dropped (the backend requires a
+    non-empty `name`). Every arbitrary bag (`metadata`, `session`,
+    `prompt_reference`, `correlation_ids`, `tags`) is dropped outright --
+    recursing into them is exactly the operation that already failed once
+    for this payload, and cyclic structures make recursion itself unsafe.
+
+    B3 (addendum R3, A2 completion): `input_data`/`output_data` and the
+    nested `observations` are handled differently from the other bags --
+    dropping them unconditionally is exactly finding 1's confirmed defect
+    (a failed update over PRIOR content silently left the old content
+    stored, because the backend's `apply_updates` skips fields/observations
+    the update never mentions). When `state` is supplied (the trace/
+    observation snapshot path -- never the generic comment/feedback/
+    transport-level redaction fallback, which has no descriptor to
+    consult), this instead:
+      * includes `input_data`/`output_data` as the clearing placeholder
+        (never the real value, and never read off `payload`) whenever
+        `state` shows the trace carried that content BEFORE the value now
+        failing to serialize/redact; a genuine first write still omits (B3
+        test 4).
+      * always includes every known observation (by id, via
+        `_safe_allowlisted_observation_snapshot`), so a failure never
+        drops an observation from the update entirely -- and, per that
+        function, never drops a prior `error_message` either (finding 1).
+    `payload` itself is deliberately NOT consulted for content-field
+    presence: at redaction-failure time `payload` is the fully-serialized
+    but UNREDACTED dict, so its content fields are present for every write
+    (including a genuine first write) -- reading presence off `payload`
+    cannot tell "first write" apart from "update over prior content" the
+    way the descriptor can.
+
+    Finding 2 (astra out-astra-privacy-r4.md, CONFIRMED P2): `state` is a
+    `_TraceFallbackDescriptor` -- an immutable, detached snapshot of exactly
+    what this function needs, frozen at snapshot-enqueue time while the
+    client lock was held -- never the live, mutable `_TraceState` itself.
+    The live object is shared with every later call on the same trace, so
+    consulting it here (which can run much later, e.g. from the transport's
+    own defensive redaction pass, well after the enqueueing call released
+    the lock) risked reflecting whatever the trace mutated into by then --
+    a completed status, a newly added observation -- rather than THIS
+    snapshot's own state. See `_TraceFallbackDescriptor`/
+    `_build_fallback_descriptor`.
+
+    This never raises and never returns `None`: a missing/unsafe `id` gets a
+    freshly generated one rather than causing the whole snapshot to be
+    dropped, so callers never have to thread a "no snapshot to send" case
+    through the transport/flush/close paths.
+    """
+    safe_id = _safe_scalar(payload.get("id"))
+    safe: dict[str, Any] = {
+        "id": safe_id if isinstance(safe_id, str) and safe_id else _new_trace_id(),
+        "name": "[REDACTED]",
+        "status": _safe_scalar(payload.get("status")) or "failed",
+        "metadata": {},
+    }
+    if payload.get("user_id") is not None:
+        safe["user_id"] = "[REDACTED]"
+    for field_name in _SAFE_SNAPSHOT_ID_FIELDS:
+        value = _safe_scalar(payload.get(field_name))
+        if isinstance(value, str) and value:
+            safe[field_name] = value
+    for field_name in (
+        *_SAFE_SNAPSHOT_TIMESTAMP_FIELDS,
+        *_SAFE_SNAPSHOT_NUMERIC_FIELDS,
+    ):
+        value = _safe_scalar(payload.get(field_name))
+        if value is not None:
+            safe[field_name] = value
+    if state is not None:
+        if state.had_prior_input_data:
+            safe["input_data"] = redacted_content_marker()
+        if state.had_prior_output_data:
+            safe["output_data"] = redacted_content_marker()
+        safe["observations"] = [
+            _safe_allowlisted_observation_snapshot(observation_descriptor)
+            for observation_descriptor in state.observations
+        ]
+    return safe
+
+
+def _safe_allowlisted_snapshot_or_static_fallback(
+    payload: Any, *, state: _TraceFallbackDescriptor | None = None
+) -> dict[str, Any]:
+    """Belt-and-suspenders wrapper around `_safe_allowlisted_snapshot`: even
+    reading allowlisted fields off a sufficiently pathological `payload`
+    (e.g. a `dict` subclass whose `.get` raises) must never itself raise out
+    of the caller's application (M8/A5). Falls back to a fully static,
+    payload-independent minimal snapshot as the absolute last resort -- at
+    that point `state` is no longer consulted either, since building even
+    the allowlisted view already failed.
+    """
+    if isinstance(payload, dict):
+        try:
+            return _safe_allowlisted_snapshot(payload, state=state)
+        except Exception:
+            logger.error(
+                "Observability safe-snapshot fallback itself failed; sending "
+                "a static minimal snapshot instead of the caller's payload.",
+                exc_info=True,
+            )
+    return {
+        "id": _new_trace_id(),
+        "name": "[REDACTED]",
+        "status": "failed",
+        "metadata": {},
+    }
+
+
+def _redact_trace_payload(
+    payload: dict[str, Any], *, state: _TraceFallbackDescriptor | None = None
+) -> dict[str, Any]:
+    """Full redaction pass for an outbound trace/observation snapshot.
+
+    Hardens `metadata`/`input_data`/`output_data` (M5's credential-key-name
+    sweep, scoped to just those bags -- see `_harden_content_bags`), then
+    value-scans the ENTIRE payload (`redact_credential_keys=False`) for
+    PII-shaped text without a second key-name pass -- preserving structural
+    fields (ids, timestamps, token counts, cost) everywhere else.
+
+    M8/A5 (fail closed): if redaction itself raises -- a caller-supplied
+    payload can hold arbitrary, even pathological, objects -- this never
+    propagates the exception (which would break the caller's application
+    inside their own `start_trace`/`record_observation`/`end_trace` call)
+    and never returns the unredacted payload (which would leak content). It
+    logs and falls back to a minimal, explicitly allowlisted snapshot
+    instead (`_safe_allowlisted_snapshot`) -- not just the previous bags,
+    since a redaction failure means those bags could not be trusted at all,
+    and other fields (e.g. `name`, `user_id`) are arbitrary caller content
+    too.
+
+    `state` (optional): a `_TraceFallbackDescriptor` -- an immutable,
+    detached snapshot of the trace's content-history/observation data,
+    frozen (under the client lock) at the moment THIS `payload` was built
+    -- so the M8 fallback can consult it (B3) rather than `payload` itself
+    -- `payload` here is the fully-serialized but UNREDACTED dict, so it
+    cannot distinguish a genuine first write from an update over prior
+    content the way the descriptor can. Threaded through from
+    `ObservabilityClient._submit_trace_snapshot` into the transport's own
+    defensive second redaction pass (`_SyncBatchTransport._prepare_payload`)
+    as well, so a scrubbing failure THERE (re-redacting the already-safe
+    payload this function just produced) -- which can run well after the
+    enqueueing call released the client lock -- still reaches the SAME
+    frozen descriptor, never a live `_TraceState` that may have mutated in
+    the meantime (finding 2/A8/M4 snapshot immutability) and never a
+    state-blind fallback. Left as `None` for callers with no associated
+    trace state (e.g. a test that submits directly to `_SyncBatchTransport`
+    without going through `ObservabilityClient`).
+    """
+    try:
+        return cast(
+            dict[str, Any],
+            redact_sensitive_data(
+                _harden_content_bags(payload), redact_credential_keys=False
+            ),
+        )
+    except Exception:
+        logger.error(
+            "Observability content redaction failed; sending a minimal "
+            "safe-allowlisted snapshot for this trace/observation payload "
+            "rather than sending it unredacted.",
+            exc_info=True,
+        )
+        return _safe_allowlisted_snapshot_or_static_fallback(payload, state=state)
+
+
 def _parse_retry_after(headers: Any) -> float | None:
     if not headers:
         return None
@@ -141,6 +576,52 @@ class _TraceState:
     trace: TraceDTO
     observations: dict[str, ObservationDTO] = field(default_factory=dict)
     observation_order: list[str] = field(default_factory=list)
+    # A1 (addendum R2): the content_mode this TRACE resolved to at
+    # `start_trace` time -- the BASE that `record_observation`/`end_trace`/
+    # `add_comment`/`submit_feedback` calls on this trace resolve against
+    # when they supply no per-call override, and the value a per-call
+    # override may only TIGHTEN (never loosen) when `content_mode_locked`.
+    resolved_content_mode: str = "metadata"
+    # True iff `resolved_content_mode` came from an explicit source: either
+    # `start_trace`'s own `content_mode` argument was supplied, or (that
+    # argument being absent) the CLIENT-level policy was itself explicit
+    # (`ObservabilityConfig.content_mode_explicit`). See
+    # `ObservabilityClient._resolve_trace_scoped_content_mode`.
+    content_mode_locked: bool = False
+    # B3 (addendum R3, A2 completion): per-entity record of which content
+    # fields (`_SAFE_SNAPSHOT_CONTENT_FIELDS`, plus -- finding 1,
+    # observations only -- `"error_message"`) have carried real content (or
+    # an earlier clearing placeholder) BEFORE the value now held on
+    # `trace`/`observations` -- keyed by `_TRACE_CONTENT_KEY` for the trace
+    # itself, or by observation id. Deliberately NOT derived from the
+    # CURRENT `trace`/`observations` field values: a serialization/
+    # redaction failure is caused by the value CURRENTLY held (this call's
+    # own, possibly cyclic/hostile write), so reading presence off that same
+    # value cannot tell a genuine first write (nothing stored server-side
+    # yet -- safe to omit, M1/A2) apart from an update over content a PRIOR
+    # call already delivered (must be cleared with the placeholder, never
+    # silently left stored -- B3's confirmed defect). Populated by
+    # `ObservabilityClient.record_observation`/`end_trace` from each
+    # merge's own PRE-overwrite `existing` value -- mirroring exactly the
+    # `existing_value is not None` check `wire_value_for_tightened_update`
+    # already performs for the normal (non-failure) tightening path --
+    # never from the freshly-gated value that might be the one about to
+    # fail. Monotonic: once a field is marked, it is never unmarked.
+    #
+    # This dict/set structure is itself mutable and lives on the shared,
+    # lock-guarded `_TraceState` -- never read directly by the M8/A5
+    # fallback machinery below. `_build_fallback_descriptor` snapshots it
+    # (as plain booleans, on a frozen `_TraceFallbackDescriptor`/
+    # `_ObservationFallbackDescriptor`) while the client lock is held, and
+    # that frozen snapshot -- never this dict -- is what threads through to
+    # the transport (finding 2/A8/M4 snapshot immutability).
+    content_history: dict[str, set[str]] = field(default_factory=dict)
+
+    def mark_content_history(self, entity_key: str, field_name: str) -> None:
+        self.content_history.setdefault(entity_key, set()).add(field_name)
+
+    def had_prior_content(self, entity_key: str, field_name: str) -> bool:
+        return field_name in self.content_history.get(entity_key, ())
 
     def to_payload(self) -> dict[str, Any]:
         ordered: dict[str, ObservationDTO] = {}
@@ -159,6 +640,165 @@ class _TraceState:
 
         payload_trace = replace(self.trace, observations=roots)
         return cast(dict[str, Any], payload_trace.to_dict())
+
+
+@dataclass(frozen=True)
+class _ObservationFallbackDescriptor:
+    """Detached, per-observation data the M8/A5 fallback needs, frozen off
+    a live `ObservationDTO`/`_TraceState` at snapshot-enqueue time (see
+    `_build_fallback_descriptor`) -- part of the fix for finding 2 (astra
+    out-astra-privacy-r4.md, CONFIRMED P2): a fallback consulting the live,
+    mutable `_TraceState` after the client lock that guards it was
+    released could observe a LATER call's mutation (a completed status, a
+    newly added observation) instead of the state as of the snapshot this
+    fallback is standing in for.
+
+    `id`/`status`/`type`/`parent_observation_id` are read once, off the
+    schema-validated DTO, at build time -- SDK-controlled fields, never
+    arbitrary caller content (see `_safe_allowlisted_observation_snapshot`).
+    """
+
+    id: str
+    status: str
+    type: str | None
+    parent_observation_id: str | None
+    had_prior_input_data: bool
+    had_prior_output_data: bool
+    # Finding 1 (astra out-astra-privacy-r4.md, CONFIRMED P1): whether this
+    # observation previously carried real `error_message` text, so the
+    # fallback can clear it (inside `metadata`, matching the normal
+    # non-fallback update path) instead of omitting `metadata` -- and thus
+    # the prior error text -- entirely.
+    had_prior_error_message: bool
+
+
+@dataclass(frozen=True)
+class _TraceFallbackDescriptor:
+    """Detached, snapshot-specific data the M8/A5 trace-level fallback
+    needs (`_safe_allowlisted_snapshot`), frozen off a live `_TraceState` at
+    snapshot-enqueue time, under the client lock (see
+    `_build_fallback_descriptor`). Passed through
+    `ObservabilityClient._submit_trace_snapshot` and
+    `_SyncBatchTransport.submit`/`_prepare_payload` in place of the live
+    `_TraceState` itself -- fix for finding 2 (astra out-astra-privacy-r4.md,
+    CONFIRMED P2): those calls can run well after the enqueueing call
+    released the lock, so consulting the live, shared `_TraceState` there
+    risked reflecting a LATER call's mutation of the SAME trace rather than
+    the state as of this particular snapshot. Everything on this dataclass
+    is a plain, already-copied scalar/tuple -- no reference back into
+    `_TraceState` survives past `_build_fallback_descriptor`.
+    """
+
+    had_prior_input_data: bool
+    had_prior_output_data: bool
+    observations: tuple[_ObservationFallbackDescriptor, ...]
+
+
+def _build_fallback_descriptor(state: _TraceState) -> _TraceFallbackDescriptor:
+    """Freeze everything `_safe_allowlisted_snapshot`/
+    `_safe_allowlisted_observation_snapshot` might later need from `state`
+    into a `_TraceFallbackDescriptor` (finding 2/A8/M4 snapshot
+    immutability).
+
+    MUST be called while holding the lock that guards `state` (every call
+    site does -- `_safe_trace_snapshot` is only ever invoked under
+    `ObservabilityClient._lock`). Reads happen exactly once, at this
+    instant; nothing returned here holds a reference back into `state` --
+    every field is a plain `str`/`bool`/`None`, or a `tuple` of the same --
+    so no caller downstream (in particular the transport, which runs
+    OUTSIDE this lock and potentially long after it was released) can ever
+    observe a subsequent mutation of the live, shared `_TraceState`.
+    """
+    observation_descriptors: list[_ObservationFallbackDescriptor] = []
+    for observation_id in state.observation_order:
+        observation = state.observations.get(observation_id)
+        if observation is None:
+            continue
+        observation_type = getattr(observation.type, "value", None)
+        parent_observation_id = observation.parent_observation_id
+        observation_descriptors.append(
+            _ObservationFallbackDescriptor(
+                id=observation.id,
+                status=observation.status,
+                type=(
+                    observation_type
+                    if isinstance(observation_type, str) and observation_type
+                    else None
+                ),
+                parent_observation_id=(
+                    parent_observation_id
+                    if isinstance(parent_observation_id, str) and parent_observation_id
+                    else None
+                ),
+                had_prior_input_data=state.had_prior_content(
+                    observation.id, "input_data"
+                ),
+                had_prior_output_data=state.had_prior_content(
+                    observation.id, "output_data"
+                ),
+                had_prior_error_message=state.had_prior_content(
+                    observation.id, "error_message"
+                ),
+            )
+        )
+    return _TraceFallbackDescriptor(
+        had_prior_input_data=state.had_prior_content(_TRACE_CONTENT_KEY, "input_data"),
+        had_prior_output_data=state.had_prior_content(
+            _TRACE_CONTENT_KEY, "output_data"
+        ),
+        observations=tuple(observation_descriptors),
+    )
+
+
+def _safe_trace_snapshot(
+    state: _TraceState,
+) -> tuple[dict[str, Any], _TraceFallbackDescriptor]:
+    """Build and redact an outbound trace snapshot from `state`, catching
+    failures from EITHER step: `state.to_payload()` (DTO serialization --
+    e.g. `to_jsonable`'s unbounded recursion on a cyclic caller-supplied
+    `metadata`/`input_data`/`output_data` structure, which raises
+    `RecursionError`) or `_redact_trace_payload` itself (M8/A5). Without this,
+    `state.to_payload()` used to run OUTSIDE `_redact_trace_payload`'s own
+    try/except at every call site, so a cyclic structure raised straight out
+    of `start_trace`/`record_observation`/`end_trace`/`flush`/`close` and
+    into the caller's application -- exactly what M8 forbids (finding 4's
+    confirmed probe: a cyclic `input_data` raised `RecursionError` through
+    this path).
+
+    Finding 2 (astra out-astra-privacy-r4.md, CONFIRMED P2): also builds and
+    returns the `_TraceFallbackDescriptor` for this snapshot
+    (`_build_fallback_descriptor`), frozen from `state` at THIS instant --
+    every one of this function's three call sites holds
+    `ObservabilityClient._lock` while calling it. Callers must thread the
+    returned descriptor (never `state` itself) into
+    `ObservabilityClient._submit_trace_snapshot`, so any later fallback --
+    including one firing in the transport, outside this lock and possibly
+    long after it was released -- reflects this snapshot, never whatever
+    `state` mutates into by then.
+    """
+    descriptor = _build_fallback_descriptor(state)
+    try:
+        payload = state.to_payload()
+    except Exception:
+        logger.error(
+            "Observability trace/observation serialization failed for "
+            "trace '%s'; sending a minimal safe-allowlisted snapshot rather "
+            "than raising into the caller's code path.",
+            state.trace.id,
+            exc_info=True,
+        )
+        return (
+            _safe_allowlisted_snapshot_or_static_fallback(
+                {
+                    "id": state.trace.id,
+                    "name": state.trace.name,
+                    "status": state.trace.status,
+                },
+                state=descriptor,
+            ),
+            descriptor,
+        )
+    return _redact_trace_payload(payload, state=descriptor), descriptor
 
 
 @dataclass(frozen=True)
@@ -242,9 +882,10 @@ class _SyncBatchTransport:
         payload: dict[str, Any],
         *,
         deadline: float | None = None,
+        state: _TraceFallbackDescriptor | None = None,
     ) -> bool:
         try:
-            buffered_payload = self._prepare_payload(payload)
+            buffered_payload = self._prepare_payload(payload, state=state)
         except TypeError as exc:
             message = (
                 "observability payload for item "
@@ -643,15 +1284,23 @@ class _SyncBatchTransport:
         logger.warning(message)
         return event
 
-    def _prepare_payload(self, payload: dict[str, Any]) -> _BufferedPayload:
+    def _prepare_payload(
+        self, payload: dict[str, Any], *, state: _TraceFallbackDescriptor | None = None
+    ) -> _BufferedPayload:
         # Direct transport callers bypass ObservabilityClient's trace redaction.
         # Preserve credential-key-name redaction (c4d874c3): this is a confirmed
         # egress path carrying arbitrary user keys, so opt in as the other two
-        # egress call sites do.
-        redacted_payload = cast(
-            dict[str, Any],
-            redact_sensitive_data(payload, redact_credential_keys=True),
-        )
+        # egress call sites do. `_redact_trace_payload` scopes the key-name
+        # sweep to the content bags so a directly-submitted trace/observation
+        # payload's own `input_tokens`/`output_tokens`/`total_tokens` fields
+        # are never mistaken for a `token`-rooted credential key (M5).
+        # B3: `state` (a `_TraceFallbackDescriptor`, never the live
+        # `_TraceState` -- finding 2), when the caller has it (see
+        # `submit`), lets a redaction failure on THIS (already-once-
+        # redacted) pass still reach the content-history-aware fallback
+        # instead of a state-blind one -- see
+        # `ObservabilityClient._submit_trace_snapshot`.
+        redacted_payload = _redact_trace_payload(payload, state=state)
         copied_payload = copy.deepcopy(redacted_payload)
         return _BufferedPayload(
             payload=copied_payload,
@@ -970,22 +1619,83 @@ class ObservabilityClient:
             atexit.register(self._atexit_close)
 
     def _resolve_content_mode(self, content_mode: str | None) -> str:
-        """Resolve a per-call `content_mode` override against the client default.
+        """Resolve a `content_mode` override against the CLIENT-level default.
 
-        This is the enforcement point: `start_trace`, `record_observation`,
-        and `end_trace` all call it (via `apply_content_mode`) so the
-        `content_mode` policy applies whether a caller goes through the
-        `observe` decorator/context manager or calls these client methods
-        directly. `None` means "use this client's configured default"
-        (`self.config.content_mode`); an explicit value overrides it for
-        just this call, exactly like `observe(..., content_mode=...)`.
+        Used by `start_trace`, which is always establishing a NEW trace's own
+        base mode and so has no prior trace state to inherit from -- see
+        `_resolve_trace_scoped_content_mode` (A1) for `record_observation`/
+        `end_trace`/`add_comment`/`submit_feedback`, which resolve against
+        that TRACE's own already-fixed base instead. `None` means "use this
+        client's configured default" (`self.config.content_mode`).
+
+        M2: an explicit override may only TIGHTEN an explicitly-set
+        client-level result, never loosen it -- an explicit privacy-on
+        setting anywhere (constructor option, env, or legacy env) must never
+        lose to a looser `content_mode=`. When the client-level result is
+        just the bare "nothing configured" default
+        (`self.config.content_mode_explicit` is `False`), there is no
+        explicit policy to protect, so the override is used as-is for just
+        this call -- this is the normal, documented way a caller opts a
+        single trace into `record`/`redacted` capture.
         """
-        if content_mode is None:
+        normalized = validate_content_mode_override(content_mode)
+        return self._resolve_against_client_default(normalized)
+
+    def _resolve_against_client_default(self, normalized: str | None) -> str:
+        """Shared M2 client-level resolution; `normalized` must already have
+        passed `validate_content_mode_override` (or be `None`)."""
+        if normalized is None:
             return self.config.content_mode
-        normalized = content_mode.strip().lower()
-        if normalized not in OBSERVABILITY_CONTENT_MODES:
-            allowed = ", ".join(sorted(OBSERVABILITY_CONTENT_MODES))
-            raise ValueError(f"content_mode must be one of: {allowed}")
+        if self.config.content_mode_explicit:
+            return most_restrictive_content_mode(normalized, self.config.content_mode)
+        return normalized
+
+    def _resolve_trace_scoped_content_mode(
+        self, trace_id: str, content_mode: str | None
+    ) -> str:
+        """ADDENDUM R2 A1: resolve a per-call `content_mode` override for a
+        call SCOPED TO AN EXISTING TRACE (`record_observation`, `end_trace`,
+        `add_comment`, `submit_feedback`) against that trace's own resolved
+        mode -- fixed once, at `start_trace` -- rather than straight against
+        the client config the way `start_trace` itself does.
+
+        `None` (no override on this call) resolves to the trace's own
+        `resolved_content_mode` -- the base a later un-annotated call on the
+        same trace continues. This is the fix for finding 8's confirmed
+        parity probe: starting a trace with `content_mode="redacted"` and
+        then calling `record_observation` with no override must emit the
+        `redacted` placeholder (inheriting the TRACE's mode), not silently
+        fall back to the CLIENT's own default/config the way the pre-fix
+        implementation did (which, for an unconfigured client, is `metadata`
+        and so OMITTED the field instead -- the exact TS/Python divergence
+        astra found).
+
+        A supplied override may TIGHTEN that base only when the trace's own
+        mode was itself set from an explicit source (`state.content_mode_
+        locked` -- either `start_trace`'s own `content_mode` argument was
+        given, or the client-level policy was explicit); with neither, the
+        override is used as-is for this call -- the same "no explicit policy
+        to protect" rule `_resolve_against_client_default` applies at the
+        client level, just against the trace's base instead.
+
+        A `trace_id` this client holds no local `_TraceState` for (created by
+        another process or SDK instance, or a bare `add_comment`/
+        `submit_feedback` call that never went through `start_trace` here)
+        falls back to client-level resolution, exactly like a bare
+        `start_trace` -- A1: "Top-level startTrace/addComment/submitFeedback
+        without a trace use the client-level result."
+        """
+        normalized = validate_content_mode_override(content_mode)
+        with self._lock:
+            state = self._trace_states.get(trace_id)
+        if state is None:
+            return self._resolve_against_client_default(normalized)
+        if normalized is None:
+            return state.resolved_content_mode
+        if state.content_mode_locked:
+            return most_restrictive_content_mode(
+                normalized, state.resolved_content_mode
+            )
         return normalized
 
     def start_trace(
@@ -999,8 +1709,8 @@ class ObservabilityClient:
         release: str | None = None,
         tags: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
-        input_data: Any = None,
-        output_data: Any = None,
+        input_data: Any = NOT_SUPPLIED,
+        output_data: Any = NOT_SUPPLIED,
         custom_trace_id: str | None = None,
         started_at: datetime | None = None,
         session: SessionDTO | dict[str, Any] | None = None,
@@ -1018,11 +1728,19 @@ class ObservabilityClient:
             session_id = session_dto.id
 
         effective_content_mode = self._resolve_content_mode(content_mode)
-        gated_input_data = apply_content_mode(
-            input_data, effective_content_mode, force_redact=redact_input
+        gated_input_data = (
+            None
+            if input_data is NOT_SUPPLIED
+            else apply_content_mode(
+                input_data, effective_content_mode, force_redact=redact_input
+            )
         )
-        gated_output_data = apply_content_mode(
-            output_data, effective_content_mode, force_redact=redact_output
+        gated_output_data = (
+            None
+            if output_data is NOT_SUPPLIED
+            else apply_content_mode(
+                output_data, effective_content_mode, force_redact=redact_output
+            )
         )
 
         trace = TraceDTO(
@@ -1035,7 +1753,7 @@ class ObservabilityClient:
             release=release or self.config.default_release,
             custom_trace_id=custom_trace_id,
             tags=list(tags or []),
-            metadata=dict(metadata or {}),
+            metadata=_detach_metadata(metadata),
             input_data=gated_input_data,
             output_data=gated_output_data,
             started_at=started_at or utc_now(),
@@ -1045,8 +1763,18 @@ class ObservabilityClient:
             execution_context=self._coerce_execution_context(execution_context),
         )
 
+        # A1: fix this trace's own base content_mode and whether a later
+        # per-call override on this trace may only tighten it (see
+        # `_resolve_trace_scoped_content_mode`).
+        content_mode_locked = (
+            content_mode is not None or self.config.content_mode_explicit
+        )
         with self._lock:
-            self._trace_states[trace_id] = _TraceState(trace=trace)
+            self._trace_states[trace_id] = _TraceState(
+                trace=trace,
+                resolved_content_mode=effective_content_mode,
+                content_mode_locked=content_mode_locked,
+            )
 
         self._queue_trace_snapshot(trace_id)
         return trace_id
@@ -1069,8 +1797,8 @@ class ObservabilityClient:
         cost_usd: float | None = None,
         model_name: str | None = None,
         tool_name: str | None = None,
-        input_data: Any = None,
-        output_data: Any = None,
+        input_data: Any = NOT_SUPPLIED,
+        output_data: Any = NOT_SUPPLIED,
         metadata: dict[str, Any] | None = None,
         correlation_ids: CorrelationIds | dict[str, str] | None = None,
         prompt_reference: PromptReferenceDTO | dict[str, Any] | None = None,
@@ -1085,26 +1813,66 @@ class ObservabilityClient:
             else observation_type
         )
 
-        effective_content_mode = self._resolve_content_mode(content_mode)
-        input_data = apply_content_mode(
-            input_data, effective_content_mode, force_redact=redact_input
+        # A1: resolve against the TRACE's own base mode (fixed at
+        # `start_trace`), not straight against the client config -- see
+        # `_resolve_trace_scoped_content_mode`.
+        effective_content_mode = self._resolve_trace_scoped_content_mode(
+            trace_id, content_mode
         )
-        output_data = apply_content_mode(
-            output_data, effective_content_mode, force_redact=redact_output
+        # M4: NOT_SUPPLIED (the default) means "this call never touched the
+        # field" -- skip gating entirely and, on an update, keep whatever was
+        # previously recorded. A SUPPLIED value (including an explicit
+        # `None`, e.g. a decorated function that legitimately returned
+        # `None`) is real content subject to `content_mode` gating, and on
+        # an update OVERWRITES the existing field with the freshly gated
+        # result -- this is the fix for the historical bug where a
+        # metadata-mode update could not tell "I have nothing new" apart
+        # from "I have new content this mode forbids", so it silently kept
+        # content an earlier, less restrictive call had recorded.
+        input_supplied = input_data is not NOT_SUPPLIED
+        output_supplied = output_data is not NOT_SUPPLIED
+        gated_input_data = (
+            apply_content_mode(
+                input_data, effective_content_mode, force_redact=redact_input
+            )
+            if input_supplied
+            else None
         )
-        metadata = dict(metadata or {})
-        if error is not None:
+        gated_output_data = (
+            apply_content_mode(
+                output_data, effective_content_mode, force_redact=redact_output
+            )
+            if output_supplied
+            else None
+        )
+        # A8: detach from the caller's own metadata dict/nested structures
+        # (deep copy) rather than a shallow `dict(metadata or {})`.
+        metadata = _detach_metadata(metadata)
+        error_supplied = error is not None
+        gated_error_message: str | None = None
+        if error_supplied:
             # error_message is free-form content: exception strings routinely
             # interpolate the very inputs the content gate withholds (prompts,
             # records, PII), so it must honor `content_mode` exactly like
             # input_data/output_data. error_type is only a class name, so it
-            # is safe to keep in every mode.
+            # is safe to keep in every mode. B2: `str(error)` is a property/
+            # getter access on caller-supplied state -- a hostile exception
+            # subclass can override `__str__` to raise -- so it must go
+            # through `_safe_str` rather than raising straight out of this
+            # call.
             metadata["error_type"] = type(error).__name__
-            error_message = apply_content_mode_to_text(
-                str(error), effective_content_mode
+            gated_error_message = apply_content_mode_to_text(
+                _safe_str(error), effective_content_mode
             )
-            if error_message is not None:
-                metadata["error_message"] = error_message
+            if gated_error_message is not None:
+                metadata["error_message"] = gated_error_message
+            # A2/finding 2: if this mode withholds the error text
+            # (`gated_error_message is None`), do NOT set "error_message" in
+            # `metadata` here -- whether an existing "error_message" must be
+            # force-cleared to "[REDACTED]" (tightening over prior content)
+            # or left absent (first write, nothing stored yet) depends on
+            # `existing`, only known once the trace lock below is held; see
+            # the merge branch.
 
         observation_id = observation_id or _new_observation_id()
         with self._lock:
@@ -1112,6 +1880,27 @@ class ObservabilityClient:
             if state is None:
                 raise ValueError(f"Unknown trace_id '{trace_id}'")
             existing = state.observations.get(observation_id)
+            if existing is not None:
+                # B3: record, BEFORE this call's own (possibly gated-to-None
+                # or freshly-hostile) write lands, whether this observation
+                # already carried content -- see `_TraceState.
+                # content_history`. Read directly off `existing`, never off
+                # the value this call is about to write.
+                if existing.input_data is not None:
+                    state.mark_content_history(observation_id, "input_data")
+                if existing.output_data is not None:
+                    state.mark_content_history(observation_id, "output_data")
+                # Finding 1 (astra out-astra-privacy-r4.md, CONFIRMED P1):
+                # same tracking for `error_message` -- it is free-form
+                # content (an exception string) subject to the exact same
+                # "never omit the clearing field on a later failure" rule as
+                # `input_data`/`output_data`, but it lives inside `metadata`
+                # rather than as its own top-level field, so it needs its
+                # own history entry (consulted by
+                # `_safe_allowlisted_observation_snapshot` via
+                # `_build_fallback_descriptor`).
+                if existing.metadata.get("error_message") is not None:
+                    state.mark_content_history(observation_id, "error_message")
             effective_type = requested_type or (
                 existing.type if existing is not None else ObservationType.SPAN
             )
@@ -1143,8 +1932,8 @@ class ObservabilityClient:
                     cost_usd=cost_usd,
                     model_name=model_name,
                     tool_name=tool_name,
-                    input_data=input_data,
-                    output_data=output_data,
+                    input_data=gated_input_data,
+                    output_data=gated_output_data,
                     metadata=dict(metadata or {}),
                     correlation_ids=self._coerce_correlation_ids(correlation_ids),
                     prompt_reference=self._coerce_prompt_reference(prompt_reference),
@@ -1154,6 +1943,25 @@ class ObservabilityClient:
                 merged_metadata = dict(existing.metadata)
                 if metadata:
                     merged_metadata.update(metadata)
+                # A2/finding 2: a tightening update over an error this SAME
+                # observation already recorded must never let the stale
+                # `error_message` survive the merge. `metadata` only carries
+                # an "error_message" key when this call's gating actually
+                # produced text (see above) -- when it didn't (this mode
+                # withholds it) but `existing.metadata` still has one from
+                # an earlier, less restrictive call, `merged_metadata.
+                # update(metadata)` alone would silently keep it (the
+                # original bug: nothing in `metadata` ever overwrote it).
+                # Force the explicit placeholder instead, never merge old
+                # error text back. A genuine first write (no prior
+                # "error_message" at all) still omits cleanly -- there is
+                # nothing stored to leak.
+                if (
+                    error_supplied
+                    and gated_error_message is None
+                    and "error_message" in existing.metadata
+                ):
+                    merged_metadata["error_message"] = "[REDACTED]"
                 observation = ObservationDTO(
                     id=observation_id,
                     type=effective_type,
@@ -1187,11 +1995,34 @@ class ObservabilityClient:
                     cost_usd=cost_usd if cost_usd is not None else existing.cost_usd,
                     model_name=model_name or existing.model_name,
                     tool_name=tool_name or existing.tool_name,
+                    # M4 fix: fall back to `existing` only when this call
+                    # never supplied the field (NOT_SUPPLIED) -- a supplied
+                    # value, gated, always overwrites, even when gating
+                    # withheld it to `None` (tightening wins; see the
+                    # `apply_content_mode` docstring). `wire_value_for_
+                    # tightened_update` additionally forces the explicit
+                    # placeholder (not `None`) when this is a tightening
+                    # update over PRIOR content -- the ingest contract's
+                    # `apply_updates` keeps stored content on an
+                    # omitted/`None` field, so merely omitting would not
+                    # clear it server-side.
                     input_data=(
-                        input_data if input_data is not None else existing.input_data
+                        wire_value_for_tightened_update(
+                            gated_input_data,
+                            effective_content_mode=effective_content_mode,
+                            existing_value=existing.input_data,
+                        )
+                        if input_supplied
+                        else existing.input_data
                     ),
                     output_data=(
-                        output_data if output_data is not None else existing.output_data
+                        wire_value_for_tightened_update(
+                            gated_output_data,
+                            effective_content_mode=effective_content_mode,
+                            existing_value=existing.output_data,
+                        )
+                        if output_supplied
+                        else existing.output_data
                     ),
                     metadata=merged_metadata,
                     correlation_ids=(
@@ -1232,7 +2063,7 @@ class ObservabilityClient:
         trace_id: str,
         *,
         status: str = "completed",
-        output_data: Any = None,
+        output_data: Any = NOT_SUPPLIED,
         ended_at: datetime | None = None,
         started_at: datetime | None = None,
         metadata: dict[str, Any] | None = None,
@@ -1242,9 +2073,24 @@ class ObservabilityClient:
         if status not in OBSERVABILITY_STATUSES:
             allowed = ", ".join(sorted(OBSERVABILITY_STATUSES))
             raise ValueError(f"status must be one of: {allowed}")
-        effective_content_mode = self._resolve_content_mode(content_mode)
-        output_data = apply_content_mode(
-            output_data, effective_content_mode, force_redact=redact_output
+        # A1: resolve against the trace's own base mode, not the client
+        # config directly -- see `_resolve_trace_scoped_content_mode`.
+        effective_content_mode = self._resolve_trace_scoped_content_mode(
+            trace_id, content_mode
+        )
+        # M4: same NOT_SUPPLIED-vs-supplied fix as `record_observation` --
+        # `end_trace` is itself "a later update" of the trace's output_data,
+        # so it is subject to the same tightening-must-win requirement. A
+        # status-only `end_trace(trace_id)` call must not disturb
+        # `output_data`; a call that supplies output_data (even under a mode
+        # that withholds it) must overwrite whatever was recorded before.
+        output_supplied = output_data is not NOT_SUPPLIED
+        gated_output_data = (
+            apply_content_mode(
+                output_data, effective_content_mode, force_redact=redact_output
+            )
+            if output_supplied
+            else None
         )
         with self._lock:
             state = self._trace_states.get(trace_id)
@@ -1254,11 +2100,28 @@ class ObservabilityClient:
             if started_at is not None:
                 state.trace.started_at = started_at
             state.trace.ended_at = ended_at or utc_now()
-            if output_data is not None:
-                state.trace.output_data = output_data
+            if output_supplied:
+                # B3: record, BEFORE this call's own write lands, whether
+                # the trace already carried `output_data` content -- see
+                # `_TraceState.content_history`. Read directly off the
+                # PRE-overwrite value on the line below, never off
+                # `gated_output_data` (this call's own, possibly
+                # freshly-hostile write).
+                if state.trace.output_data is not None:
+                    state.mark_content_history(_TRACE_CONTENT_KEY, "output_data")
+                # Ingest-contract fix: force the explicit placeholder (not
+                # `None`) when this tightens over prior content -- see
+                # `wire_value_for_tightened_update`.
+                state.trace.output_data = wire_value_for_tightened_update(
+                    gated_output_data,
+                    effective_content_mode=effective_content_mode,
+                    existing_value=state.trace.output_data,
+                )
             if metadata:
+                # A8: detach (deep copy) the caller's metadata before merging
+                # -- see `_detach_metadata`.
                 merged = dict(state.trace.metadata)
-                merged.update(metadata)
+                merged.update(_detach_metadata(metadata))
                 state.trace.metadata = merged
 
         self._queue_trace_snapshot(trace_id)
@@ -1279,23 +2142,23 @@ class ObservabilityClient:
         if not self._acquire_client_lock_until(deadline):
             return self._flush_lock_timeout_result(deadline)
         try:
+            # Finding 2 (A8/M4 snapshot immutability): `_safe_trace_snapshot`
+            # returns `(payload, descriptor)` -- the descriptor is a frozen
+            # `_TraceFallbackDescriptor` built from `state` while THIS lock is
+            # still held. Thread the descriptor, never `state` itself, into
+            # `_submit_trace_snapshot` below (which runs after the lock is
+            # released).
             trace_payloads = [
-                (
-                    trace_id,
-                    cast(
-                        dict[str, Any],
-                        redact_sensitive_data(
-                            state.to_payload(), redact_credential_keys=True
-                        ),
-                    ),
-                )
+                (trace_id, *_safe_trace_snapshot(state))
                 for trace_id, state in self._trace_states.items()
             ]
         finally:
             self._lock.release()
 
-        for trace_id, payload in trace_payloads:
-            self._submit_trace_snapshot(trace_id, payload, deadline=deadline)
+        for trace_id, payload, descriptor in trace_payloads:
+            self._submit_trace_snapshot(
+                trace_id, payload, deadline=deadline, state=descriptor
+            )
         return self._flush_transport_until(deadline)
 
     def get_stats(self) -> dict[str, Any]:
@@ -1333,7 +2196,9 @@ class ObservabilityClient:
             if self._closing:
                 close_in_progress = True
                 already_closed = False
-                trace_payloads: list[tuple[str, dict[str, Any]]] = []
+                trace_payloads: list[
+                    tuple[str, dict[str, Any], _TraceFallbackDescriptor]
+                ] = []
                 inflight_snapshot_submissions = 0
                 offline_close = False
             elif self._closed:
@@ -1361,16 +2226,12 @@ class ObservabilityClient:
                     trace_payloads = []
                     inflight_snapshot_submissions = 0
                 else:
+                    # Finding 2 (A8/M4 snapshot immutability): thread the
+                    # frozen descriptor (built from `state` under THIS lock),
+                    # never `state` itself -- see the matching comment in
+                    # `flush`.
                     trace_payloads = [
-                        (
-                            trace_id,
-                            cast(
-                                dict[str, Any],
-                                redact_sensitive_data(
-                                    state.to_payload(), redact_credential_keys=True
-                                ),
-                            ),
-                        )
+                        (trace_id, *_safe_trace_snapshot(state))
                         for trace_id, state in self._trace_states.items()
                     ]
                     inflight_snapshot_submissions = self._inflight_snapshot_submissions
@@ -1407,8 +2268,10 @@ class ObservabilityClient:
                             inflight_snapshot_submissions,
                         )
 
-                for trace_id, payload in trace_payloads:
-                    self._submit_trace_snapshot(trace_id, payload, deadline=deadline)
+                for trace_id, payload, descriptor in trace_payloads:
+                    self._submit_trace_snapshot(
+                        trace_id, payload, deadline=deadline, state=descriptor
+                    )
                 transport_result = self._transport.close(
                     timeout=self._remaining_flush_time(deadline)
                 )
@@ -1587,11 +2450,59 @@ class ObservabilityClient:
             self._unwrap_data(payload, "trace comments")
         )
 
-    def add_comment(self, trace_id: str, content: str) -> TraceCommentRecord:
+    def add_comment(
+        self,
+        trace_id: str,
+        content: str,
+        *,
+        content_mode: str | None = None,
+    ) -> TraceCommentRecord:
+        """Post a free-text comment on a trace (M3).
+
+        A comment IS content -- there is no non-content way to post one --
+        so, unlike `record_observation`/`end_trace`, `metadata` mode cannot
+        just withhold a field and still send the call: it refuses locally,
+        before anything is sent. `redacted` sends the placeholder; `record`
+        sends the text after mandatory secret scrubbing.
+
+        `content_mode` (A1/finding 8, Python/TS parity): a per-call override,
+        resolved against this TRACE's own base mode (if `trace_id` is
+        locally tracked) or the client config otherwise -- see
+        `_resolve_trace_scoped_content_mode`.
+        """
+        effective_content_mode = self._resolve_trace_scoped_content_mode(
+            trace_id, content_mode
+        )
+        if effective_content_mode == "metadata":
+            raise ContentDisabledError(
+                "add_comment content is disabled because content_mode="
+                "'metadata'; use content_mode='redacted' or 'record' on this "
+                "client, or attach non-content metadata instead."
+            )
+        gated_content = apply_content_mode_to_text(content, effective_content_mode)
+        if effective_content_mode == "record" and gated_content is not None:
+            # M8/A6 fail closed: a scrub failure must withhold, never send
+            # the unscrubbed comment or raise out of this call. Unlike
+            # `record_observation`'s content fields, the backend's
+            # `TraceCommentCreateRequest.content` REQUIRES a non-empty
+            # string -- sending `None` here does not withhold, it sends an
+            # invalid request the backend rejects. Fall back to the
+            # `"[REDACTED]"` text placeholder instead (finding 9's confirmed
+            # test gap: the old fallback of `None` was never actually
+            # exercised against that requirement).
+            try:
+                gated_content = redact_sensitive_text(gated_content)
+            except Exception:
+                logger.error(
+                    "Comment secret scrubbing failed; sending the redaction "
+                    "placeholder rather than the unscrubbed comment.",
+                    exc_info=True,
+                )
+                gated_content = "[REDACTED]"
         payload = self._request_json(
             "POST",
             f"/traces/{trace_id}/comments",
-            {"content": content},
+            {"content": gated_content},
         )
         return TraceCommentRecord.from_dict(self._unwrap_data(payload, "trace comment"))
 
@@ -1601,22 +2512,92 @@ class ObservabilityClient:
         rating: ThumbRating | str,
         *,
         comment: str | None = None,
-        correction_output: Any = None,
+        correction_output: Any = NOT_SUPPLIED,
+        content_mode: str | None = None,
     ) -> TraceFeedbackResponse:
+        """Submit thumbs up/down feedback, an optional comment and correction (M3).
+
+        Unlike `add_comment`, this call always has a non-content payload
+        (`rating`) it can send, so `metadata` mode never raises here: it
+        sends `rating` and silently omits `comment`/`correction_output`.
+        `redacted` sends placeholders for both; `record` sends them after
+        mandatory secret scrubbing. `correction_output` is validated as
+        JSON-serializable regardless of mode (fail fast on malformed input
+        even when the mode would go on to withhold it).
+
+        `content_mode` (A1/finding 8, Python/TS parity): same per-call
+        override as `add_comment`.
+        """
         if isinstance(rating, str):
             rating = ThumbRating(rating)
-        correction_output = self._ensure_json_serializable(
-            correction_output,
-            field_name="correction_output",
+
+        effective_content_mode = self._resolve_trace_scoped_content_mode(
+            trace_id, content_mode
         )
+
+        gated_comment = apply_content_mode_to_text(comment, effective_content_mode)
+        if effective_content_mode == "record" and gated_comment is not None:
+            # M8 fail closed: see `add_comment`.
+            try:
+                gated_comment = redact_sensitive_text(gated_comment)
+            except Exception:
+                logger.error(
+                    "Feedback comment secret scrubbing failed; withholding "
+                    "comment content rather than sending it unscrubbed.",
+                    exc_info=True,
+                )
+                gated_comment = None
+
+        gated_correction_output: Any = None
+        if correction_output is not NOT_SUPPLIED:
+            # B2 (addendum R3, A5 completion): a hostile `correction_output`
+            # (uncopyable, cyclic, not JSON serializable) must never raise
+            # out of this public call -- `_ensure_json_serializable` used to
+            # raise `ClientError` straight into the caller's application
+            # (astra's confirmed finding at client.py:2121). Withhold the
+            # field instead, same as a `record`-mode scrub failure below.
+            try:
+                correction_output = self._ensure_json_serializable(
+                    correction_output,
+                    field_name="correction_output",
+                )
+                gated_correction_output = apply_content_mode(
+                    correction_output, effective_content_mode
+                )
+            except Exception:
+                logger.error(
+                    "Feedback correction_output failed JSON-serializability "
+                    "validation; withholding it rather than raising into "
+                    "the caller's application.",
+                    exc_info=True,
+                )
+                gated_correction_output = None
+            if (
+                effective_content_mode == "record"
+                and gated_correction_output is not None
+            ):
+                try:
+                    gated_correction_output = redact_sensitive_data(
+                        gated_correction_output, redact_credential_keys=True
+                    )
+                except Exception:
+                    logger.error(
+                        "Feedback correction_output secret scrubbing failed; "
+                        "withholding it rather than sending it unscrubbed.",
+                        exc_info=True,
+                    )
+                    gated_correction_output = None
+
+        feedback_payload: dict[str, Any] = {"rating": rating.value}
+        if gated_comment is not None:
+            feedback_payload["comment"] = gated_comment
+        if gated_correction_output is not None:
+            feedback_payload["correction_output"] = gated_correction_output
+
         payload = self._request_json(
             "PUT",
             f"/traces/{trace_id}/feedback",
-            {
-                "rating": rating.value,
-                "comment": comment,
-                "correction_output": correction_output,
-            },
+            feedback_payload,
         )
         return TraceFeedbackResponse.from_dict(
             self._unwrap_data(payload, "trace feedback")
@@ -2019,14 +3000,23 @@ class ObservabilityClient:
             state = self._trace_states.get(trace_id)
             if state is None or self._closed or self._close_pending:
                 return
-            payload = cast(
-                dict[str, Any],
-                redact_sensitive_data(state.to_payload(), redact_credential_keys=True),
-            )
+            # Finding 2 (astra out-astra-privacy-r4.md, CONFIRMED P2, A8/M4
+            # snapshot immutability): `_safe_trace_snapshot` freezes a
+            # `_TraceFallbackDescriptor` from `state` right here, while this
+            # lock is still held. `_submit_trace_snapshot` below runs AFTER
+            # the lock is released -- possibly well after, and on a
+            # different thread -- so it must receive that frozen
+            # `descriptor`, never a reference to the live, shared `state`,
+            # which a concurrent `record_observation`/`end_trace` call on
+            # this same trace could keep mutating in the meantime (the
+            # confirmed probe: completing a running observation and adding a
+            # new one leaked into what should have been a stale snapshot's
+            # fallback).
+            payload, descriptor = _safe_trace_snapshot(state)
             self._inflight_snapshot_submissions += 1
             self._snapshot_submission_complete.clear()
         try:
-            self._submit_trace_snapshot(trace_id, payload)
+            self._submit_trace_snapshot(trace_id, payload, state=descriptor)
         finally:
             with self._lock:
                 self._inflight_snapshot_submissions -= 1
@@ -2039,11 +3029,24 @@ class ObservabilityClient:
         payload: dict[str, Any],
         *,
         deadline: float | None = None,
+        state: _TraceFallbackDescriptor | None = None,
     ) -> None:
+        # B3: thread `state` (a `_TraceFallbackDescriptor`, frozen at
+        # enqueue time under the client lock -- never the live `_TraceState`
+        # -- finding 2) through to the transport's own defensive redaction
+        # pass (`_SyncBatchTransport._prepare_payload`) too -- that pass
+        # re-runs `_redact_trace_payload` on the ALREADY-safe payload
+        # `_safe_trace_snapshot` just built. It is normally a no-op (the
+        # payload is already redacted/fallback-built), but if it were ever
+        # to fail too (e.g. the same scrubbing outage), it must reach the
+        # SAME `state.content_history`-aware fallback, not a state-blind one
+        # that would drop the placeholder this call just carefully built.
         submitted = (
-            self._transport.submit(trace_id, payload)
+            self._transport.submit(trace_id, payload, state=state)
             if deadline is None
-            else self._transport.submit(trace_id, payload, deadline=deadline)
+            else self._transport.submit(
+                trace_id, payload, deadline=deadline, state=state
+            )
         )
         if not submitted:
             stats = (
@@ -2193,31 +3196,96 @@ class ObservabilityClient:
     def _coerce_session(
         self, session: SessionDTO | dict[str, Any] | None
     ) -> SessionDTO | None:
+        # A8: detach from the caller's own object/dict (deep copy) -- a
+        # `SessionDTO` instance is mutable, and its `metadata` field is a
+        # caller-owned dict either way, so a caller mutating it after this
+        # call returns must never change a later re-serialized snapshot
+        # (finding 7). B2: the deep copy (and, for a dict input, the
+        # `SessionDTO(**...)` construction) must never raise out of
+        # `start_trace` on a hostile value -- a failure drops `session`
+        # entirely (withheld) rather than propagating.
         if session is None:
             return None
-        if isinstance(session, SessionDTO):
-            return session
-        return SessionDTO(**session)
+        try:
+            if isinstance(session, SessionDTO):
+                copied = _safe_deepcopy_or_default(session, None, context="session")
+                return copied if isinstance(copied, SessionDTO) else None
+            copied_dict = _safe_deepcopy_or_default(session, None, context="session")
+            if not isinstance(copied_dict, dict):
+                return None
+            return SessionDTO(**copied_dict)
+        except Exception:
+            logger.error(
+                "Observability session coercion failed; withholding the "
+                "session rather than raising into the caller's application.",
+                exc_info=True,
+            )
+            return None
 
     def _coerce_correlation_ids(
         self,
         correlation_ids: CorrelationIds | dict[str, str] | None,
     ) -> CorrelationIds | None:
+        # B5 (addendum R3, A8 completion): an already-`CorrelationIds`
+        # caller value was previously returned BY REFERENCE -- the confirmed
+        # bug where mutating the caller's own `CorrelationIds` instance
+        # after this call changed a later re-serialized snapshot. Always
+        # detach (deep copy), same as `_coerce_session`/`_coerce_prompt_
+        # reference`. B2: the copy/construction must never raise out of
+        # `start_trace`/`record_observation` on a hostile value.
         if correlation_ids is None:
             return None
-        if isinstance(correlation_ids, CorrelationIds):
-            return correlation_ids
-        return CorrelationIds(**correlation_ids)
+        try:
+            if isinstance(correlation_ids, CorrelationIds):
+                copied = _safe_deepcopy_or_default(
+                    correlation_ids, None, context="correlation_ids"
+                )
+                return copied if isinstance(copied, CorrelationIds) else None
+            copied_dict = _safe_deepcopy_or_default(
+                correlation_ids, None, context="correlation_ids"
+            )
+            if not isinstance(copied_dict, dict):
+                return None
+            return CorrelationIds(**copied_dict)
+        except Exception:
+            logger.error(
+                "Observability correlation_ids coercion failed; withholding "
+                "it rather than raising into the caller's application.",
+                exc_info=True,
+            )
+            return None
 
     def _coerce_prompt_reference(
         self,
         prompt_reference: PromptReferenceDTO | dict[str, Any] | None,
     ) -> PromptReferenceDTO | None:
+        # A8: `variables` is an arbitrary caller-chosen `dict[str, Any]` --
+        # detach it the same way `_coerce_session` detaches session metadata
+        # (finding 7). B2: the copy/construction must never raise out of
+        # `start_trace`/`record_observation` on a hostile value -- a
+        # failure drops `prompt_reference` entirely (withheld).
         if prompt_reference is None:
             return None
-        if isinstance(prompt_reference, PromptReferenceDTO):
-            return prompt_reference
-        return PromptReferenceDTO(**prompt_reference)
+        try:
+            if isinstance(prompt_reference, PromptReferenceDTO):
+                copied = _safe_deepcopy_or_default(
+                    prompt_reference, None, context="prompt_reference"
+                )
+                return copied if isinstance(copied, PromptReferenceDTO) else None
+            copied_dict = _safe_deepcopy_or_default(
+                prompt_reference, None, context="prompt_reference"
+            )
+            if not isinstance(copied_dict, dict):
+                return None
+            return PromptReferenceDTO(**copied_dict)
+        except Exception:
+            logger.error(
+                "Observability prompt_reference coercion failed; "
+                "withholding it rather than raising into the caller's "
+                "application.",
+                exc_info=True,
+            )
+            return None
 
     def _coerce_execution_context(
         self,
