@@ -119,6 +119,50 @@ def _new_observation_id() -> str:
 _CONTENT_BAG_FIELDS = ("metadata", "input_data", "output_data")
 
 
+def _safe_deepcopy_or_default(value: Any, default: Any, *, context: str) -> Any:
+    """B2 (addendum R3, A5 completion): `copy.deepcopy` can raise on a
+    caller-supplied structure that is uncopyable (`threading.Lock()`, an
+    open socket/file handle, ...) or that holds a throwing `__deepcopy__`/
+    property. Every INTAKE copy that detaches from caller-owned state
+    (`_detach_metadata`, `_coerce_session`, `_coerce_correlation_ids`,
+    `_coerce_prompt_reference`) must go through this helper rather than
+    calling `copy.deepcopy` directly: a failure here must withhold the field
+    (fall back to `default`) and continue, never raise out of the public
+    `start_trace`/`record_observation`/`end_trace`/`submit_feedback` call
+    that was only trying to detach from the caller's own object (M8's
+    "drop the content field, never break the caller's application").
+    """
+    try:
+        return copy.deepcopy(value)
+    except Exception:
+        logger.error(
+            "Observability intake deep-copy failed for %s; withholding it "
+            "rather than raising into the caller's application.",
+            context,
+            exc_info=True,
+        )
+        return default
+
+
+def _safe_str(value: Any) -> str:
+    """B2: `str(value)` can raise for a hostile object with a broken
+    `__str__`/`__repr__` (a throwing "getter") -- e.g. building
+    `error_message` from a caller-raised exception whose subclass overrides
+    `__str__` to raise. Must never raise out of a public observability
+    call; falls back to a fixed placeholder instead.
+    """
+    try:
+        return str(value)
+    except Exception:
+        logger.error(
+            "Observability failed to stringify a value (broken __str__); "
+            "using a placeholder instead of raising into the caller's "
+            "application.",
+            exc_info=True,
+        )
+        return "<unstringifiable value>"
+
+
 def _detach_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
     """M4/A8: never retain a caller-owned reference for a metadata bag.
 
@@ -131,10 +175,16 @@ def _detach_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
     nested trace metadata after `start_trace` changed the delivered
     payload). A deep copy at intake detaches from every caller-owned nested
     structure in one step.
+
+    B2: the deep copy itself can raise on a hostile value (`threading.
+    Lock()` nested in metadata, a cyclic structure, ...) -- `_safe_deepcopy_
+    or_default` catches that and withholds the whole bag (`{}`) rather than
+    raising out of `start_trace`/`record_observation`/`end_trace`.
     """
     if not metadata:
         return {}
-    return copy.deepcopy(metadata)
+    copied = _safe_deepcopy_or_default(metadata, None, context="metadata")
+    return copied if isinstance(copied, dict) else {}
 
 
 def _harden_content_bags(payload: Any) -> Any:
@@ -163,11 +213,18 @@ def _harden_content_bags(payload: Any) -> Any:
     arbitrary `total_tokens` key placed inside a caller-supplied bag still
     non-exempt (see `redact_sensitive_data`'s `usage.*`/`max_tokens`
     exemption, which stays narrow because it never has to reach these
-    fields in the first place). `correlation_ids` and `tags` are NOT
-    key-based-hardened here: `correlation_ids` is a fixed, typed 3-field OTEL
-    identifier bag (never an arbitrary caller-chosen key), and `tags` is a
-    list of plain strings with no keys at all -- both still get the
-    value-pattern scan below like every other field.
+    fields in the first place).
+
+    B4 (addendum R3, A4 completion): the common key-based scrubber now also
+    covers `correlation_ids`, `tags`, and the COMPLETE `prompt_reference`
+    structure (previously only its `.variables` sub-dict) -- astra's ruling
+    (a) on the prior review: fixed correlation fields and string-only tags
+    mean key scanning is a no-op for well-typed values TODAY, but binding
+    A4 requires every arbitrary-data bag to flow through the SAME scrubber
+    regardless, so a future extension of any of these shapes is covered
+    from day one rather than needing another fix. The fixed numeric DTO
+    fields (`latency_ms`, `*_tokens`, `cost_usd`, timestamps, ids, ...) are
+    never routed through this function at all.
 
     The caller still runs the result through `redact_sensitive_data(...,
     redact_credential_keys=False)` for value-pattern hygiene (PII-looking
@@ -188,13 +245,18 @@ def _harden_content_bags(payload: Any) -> Any:
             session["metadata"], redact_credential_keys=True
         )
         hardened["session"] = hardened_session
-    prompt_reference = hardened.get("prompt_reference")
-    if isinstance(prompt_reference, dict) and "variables" in prompt_reference:
-        hardened_prompt_reference = dict(prompt_reference)
-        hardened_prompt_reference["variables"] = redact_sensitive_data(
-            prompt_reference["variables"], redact_credential_keys=True
+    if isinstance(hardened.get("prompt_reference"), dict):
+        hardened["prompt_reference"] = redact_sensitive_data(
+            hardened["prompt_reference"], redact_credential_keys=True
         )
-        hardened["prompt_reference"] = hardened_prompt_reference
+    if isinstance(hardened.get("correlation_ids"), dict):
+        hardened["correlation_ids"] = redact_sensitive_data(
+            hardened["correlation_ids"], redact_credential_keys=True
+        )
+    if isinstance(hardened.get("tags"), list):
+        hardened["tags"] = redact_sensitive_data(
+            hardened["tags"], redact_credential_keys=True
+        )
     for list_field in ("observations", "children"):
         items = hardened.get(list_field)
         if isinstance(items, list):
@@ -1472,10 +1534,14 @@ class ObservabilityClient:
             # interpolate the very inputs the content gate withholds (prompts,
             # records, PII), so it must honor `content_mode` exactly like
             # input_data/output_data. error_type is only a class name, so it
-            # is safe to keep in every mode.
+            # is safe to keep in every mode. B2: `str(error)` is a property/
+            # getter access on caller-supplied state -- a hostile exception
+            # subclass can override `__str__` to raise -- so it must go
+            # through `_safe_str` rather than raising straight out of this
+            # call.
             metadata["error_type"] = type(error).__name__
             gated_error_message = apply_content_mode_to_text(
-                str(error), effective_content_mode
+                _safe_str(error), effective_content_mode
             )
             if gated_error_message is not None:
                 metadata["error_message"] = gated_error_message
@@ -2118,13 +2184,28 @@ class ObservabilityClient:
 
         gated_correction_output: Any = None
         if correction_output is not NOT_SUPPLIED:
-            correction_output = self._ensure_json_serializable(
-                correction_output,
-                field_name="correction_output",
-            )
-            gated_correction_output = apply_content_mode(
-                correction_output, effective_content_mode
-            )
+            # B2 (addendum R3, A5 completion): a hostile `correction_output`
+            # (uncopyable, cyclic, not JSON serializable) must never raise
+            # out of this public call -- `_ensure_json_serializable` used to
+            # raise `ClientError` straight into the caller's application
+            # (astra's confirmed finding at client.py:2121). Withhold the
+            # field instead, same as a `record`-mode scrub failure below.
+            try:
+                correction_output = self._ensure_json_serializable(
+                    correction_output,
+                    field_name="correction_output",
+                )
+                gated_correction_output = apply_content_mode(
+                    correction_output, effective_content_mode
+                )
+            except Exception:
+                logger.error(
+                    "Feedback correction_output failed JSON-serializability "
+                    "validation; withholding it rather than raising into "
+                    "the caller's application.",
+                    exc_info=True,
+                )
+                gated_correction_output = None
             if (
                 effective_content_mode == "record"
                 and gated_correction_output is not None
@@ -2728,22 +2809,60 @@ class ObservabilityClient:
         # `SessionDTO` instance is mutable, and its `metadata` field is a
         # caller-owned dict either way, so a caller mutating it after this
         # call returns must never change a later re-serialized snapshot
-        # (finding 7).
+        # (finding 7). B2: the deep copy (and, for a dict input, the
+        # `SessionDTO(**...)` construction) must never raise out of
+        # `start_trace` on a hostile value -- a failure drops `session`
+        # entirely (withheld) rather than propagating.
         if session is None:
             return None
-        if isinstance(session, SessionDTO):
-            return copy.deepcopy(session)
-        return SessionDTO(**copy.deepcopy(session))
+        try:
+            if isinstance(session, SessionDTO):
+                copied = _safe_deepcopy_or_default(session, None, context="session")
+                return copied if isinstance(copied, SessionDTO) else None
+            copied_dict = _safe_deepcopy_or_default(session, None, context="session")
+            if not isinstance(copied_dict, dict):
+                return None
+            return SessionDTO(**copied_dict)
+        except Exception:
+            logger.error(
+                "Observability session coercion failed; withholding the "
+                "session rather than raising into the caller's application.",
+                exc_info=True,
+            )
+            return None
 
     def _coerce_correlation_ids(
         self,
         correlation_ids: CorrelationIds | dict[str, str] | None,
     ) -> CorrelationIds | None:
+        # B5 (addendum R3, A8 completion): an already-`CorrelationIds`
+        # caller value was previously returned BY REFERENCE -- the confirmed
+        # bug where mutating the caller's own `CorrelationIds` instance
+        # after this call changed a later re-serialized snapshot. Always
+        # detach (deep copy), same as `_coerce_session`/`_coerce_prompt_
+        # reference`. B2: the copy/construction must never raise out of
+        # `start_trace`/`record_observation` on a hostile value.
         if correlation_ids is None:
             return None
-        if isinstance(correlation_ids, CorrelationIds):
-            return correlation_ids
-        return CorrelationIds(**correlation_ids)
+        try:
+            if isinstance(correlation_ids, CorrelationIds):
+                copied = _safe_deepcopy_or_default(
+                    correlation_ids, None, context="correlation_ids"
+                )
+                return copied if isinstance(copied, CorrelationIds) else None
+            copied_dict = _safe_deepcopy_or_default(
+                correlation_ids, None, context="correlation_ids"
+            )
+            if not isinstance(copied_dict, dict):
+                return None
+            return CorrelationIds(**copied_dict)
+        except Exception:
+            logger.error(
+                "Observability correlation_ids coercion failed; withholding "
+                "it rather than raising into the caller's application.",
+                exc_info=True,
+            )
+            return None
 
     def _coerce_prompt_reference(
         self,
@@ -2751,12 +2870,31 @@ class ObservabilityClient:
     ) -> PromptReferenceDTO | None:
         # A8: `variables` is an arbitrary caller-chosen `dict[str, Any]` --
         # detach it the same way `_coerce_session` detaches session metadata
-        # (finding 7).
+        # (finding 7). B2: the copy/construction must never raise out of
+        # `start_trace`/`record_observation` on a hostile value -- a
+        # failure drops `prompt_reference` entirely (withheld).
         if prompt_reference is None:
             return None
-        if isinstance(prompt_reference, PromptReferenceDTO):
-            return copy.deepcopy(prompt_reference)
-        return PromptReferenceDTO(**copy.deepcopy(prompt_reference))
+        try:
+            if isinstance(prompt_reference, PromptReferenceDTO):
+                copied = _safe_deepcopy_or_default(
+                    prompt_reference, None, context="prompt_reference"
+                )
+                return copied if isinstance(copied, PromptReferenceDTO) else None
+            copied_dict = _safe_deepcopy_or_default(
+                prompt_reference, None, context="prompt_reference"
+            )
+            if not isinstance(copied_dict, dict):
+                return None
+            return PromptReferenceDTO(**copied_dict)
+        except Exception:
+            logger.error(
+                "Observability prompt_reference coercion failed; "
+                "withholding it rather than raising into the caller's "
+                "application.",
+                exc_info=True,
+            )
+            return None
 
     def _coerce_execution_context(
         self,

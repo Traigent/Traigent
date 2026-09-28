@@ -16,6 +16,7 @@ import pytest
 from traigent.cloud.async_batch_transport import BatchFlushResult
 from traigent.config.context import ConfigurationContext, TrialContext
 from traigent.observability import (
+    CorrelationIds,
     ExecutionContextDTO,
     FlushResult,
     ObservabilityClient,
@@ -3768,7 +3769,35 @@ def test_observability_client_rejects_collaboration_requests_after_close():
     assert request_calls == []
 
 
-def test_observability_client_validates_feedback_correction_output():
+def test_observability_client_withholds_non_serializable_feedback_correction_output():
+    """B2 (addendum R3, A5 completion) supersedes the pre-fix behavior this
+    test used to assert (`pytest.raises(ClientError, match="correction_
+    output")`): astra's second REJECT confirmed that raising here broke the
+    "no direct client call may raise from a hostile value" contract
+    (client.py:2121). A non-JSON-serializable `correction_output` must now
+    be withheld (omitted from the wire payload) and the call must succeed,
+    exactly like any other scrub/gating failure -- see
+    `TestB2FailureBoundaryCoversIntakeAndSerialization`."""
+    captured: dict[str, Any] = {}
+
+    def request_sender(method, path, payload):
+        captured["payload"] = payload
+        return {
+            "data": {
+                "feedback": {
+                    "id": "feedback_1",
+                    "trace_id": "trace_sdk",
+                    "author_user_id": "sdk-user",
+                    "rating": payload["rating"],
+                    "comment": payload.get("comment"),
+                    "correction_output": payload.get("correction_output"),
+                    "created_at": "2026-03-10T14:12:00+00:00",
+                    "updated_at": "2026-03-10T14:12:00+00:00",
+                },
+                "summary": {"up_count": 1, "down_count": 0},
+            }
+        }
+
     client = ObservabilityClient(
         ObservabilityConfig(
             backend_origin="http://localhost:5000",
@@ -3778,14 +3807,15 @@ def test_observability_client_validates_feedback_correction_output():
             max_queue_size=10,
         ),
         sender=lambda traces: None,
-        request_sender=lambda method, path, payload: {"data": {}},
+        request_sender=request_sender,
     )
 
-    with pytest.raises(ClientError, match="correction_output"):
-        client.submit_feedback(
-            "trace_sdk", ThumbRating.UP, correction_output={"bad": {1, 2, 3}}
-        )
+    # Must not raise.
+    client.submit_feedback(
+        "trace_sdk", ThumbRating.UP, correction_output={"bad": {1, 2, 3}}
+    )
 
+    assert "correction_output" not in captured["payload"]
     client.close()
 
 
@@ -5312,3 +5342,428 @@ class TestM8FailClosed:
         # request the backend rejects. A scrub failure must fall back to the
         # `"[REDACTED]"` placeholder, never null/omitted.
         assert captured["payload"] == {"content": "[REDACTED]"}
+
+
+class TestB1OutboundCounterexamples:
+    """ADDENDUM R3 B1: the exact named counterexamples, through the full
+    end-to-end outbound pipeline (unit-level normalization/prefix-rule
+    cases are in tests/unit/security/test_text_redaction.py)."""
+
+    def test_b1_named_counterexamples_end_to_end(self):
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        client.start_trace(
+            "b1-counterexamples-trace",
+            metadata={
+                "nested_pwd": 123,
+                "nested_access_key": 456,
+                "oauthClient": "x",
+                "auth_header": "should be masked",
+                "AUTH-STUFF": "should be masked",
+                "usage": {"total-tokens": 42},
+            },
+            content_mode="record",
+        )
+        client.flush()
+        client.close()
+
+        metadata = sent_batches[-1][-1]["metadata"]
+        assert metadata["nested_pwd"] == "[REDACTED]"
+        assert metadata["nested_access_key"] == "[REDACTED]"
+        # Not masked by the auth rule: "oauthClient" normalizes to
+        # "oauthclient", which does not START with "auth" (B1: `auth` is a
+        # PREFIX match only).
+        assert metadata["oauthClient"] == "x"
+        assert metadata["auth_header"] == "[REDACTED]"
+        assert metadata["AUTH-STUFF"] == "[REDACTED]"
+        # Counter exemption still applies with punctuation in the key:
+        # normalized "totaltokens" (hyphen stripped) with immediate parent
+        # normalized "usage".
+        assert metadata["usage"]["total-tokens"] == 42
+
+
+class TestB2FailureBoundaryCoversIntakeAndSerialization:
+    """ADDENDUM R3 B2 (A5 completion): intake copying (deep copy), property
+    traversal (a throwing getter/`__deepcopy__`), and serialization (incl.
+    feedback) must all happen INSIDE the failure guard that produces the
+    safe/withheld result -- no direct client call may raise from a hostile
+    value. astra's second REJECT confirmed Python raised straight out of
+    `start_trace`/`record_observation`/`submit_feedback` before any
+    safe-snapshot guard ran: unguarded `copy.deepcopy` in
+    `_detach_metadata`/`_coerce_session`/`_coerce_correlation_ids`/
+    `_coerce_prompt_reference`, and feedback `correction_output`
+    JSON-serializability validation raising `ClientError` (was
+    client.py:137/2735/2744/2758/2121, pre-fix).
+
+    Negative control (each case): reverting the corresponding `_coerce_*`/
+    `_detach_metadata` helper to call `copy.deepcopy` directly (bypassing
+    `_safe_deepcopy_or_default`), or reverting `submit_feedback`'s
+    correction_output validation to call `_ensure_json_serializable`
+    outside a try/except, makes the matching test below raise instead of
+    pass -- verified by hand for this report (see the worker report's
+    control-lines table).
+    """
+
+    def test_metadata_with_uncopyable_value_does_not_raise(self):
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        # Must not raise.
+        trace_id = client.start_trace(
+            "hostile-metadata-trace",
+            metadata={"lock": threading.Lock(), "safe": "kept"},
+        )
+        client.flush()
+        client.close()
+
+        trace_payload = next(
+            t for batch in sent_batches for t in batch if t["id"] == trace_id
+        )
+        # The whole metadata bag is withheld rather than raising or
+        # partially leaking a sibling of the hostile value.
+        assert trace_payload.get("metadata", {}) == {}
+
+    def test_session_with_throwing_getter_does_not_raise(self):
+        class _Hostile:
+            def __deepcopy__(self, memo):
+                raise RuntimeError("hostile getter exploded")
+
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        # Must not raise.
+        trace_id = client.start_trace(
+            "hostile-session-trace",
+            session={"id": "sess_1", "metadata": {"note": _Hostile()}},
+        )
+        client.flush()
+        client.close()
+
+        trace_payload = next(
+            t for batch in sent_batches for t in batch if t["id"] == trace_id
+        )
+        assert trace_payload.get("session") is None
+
+    def test_input_output_with_uncopyable_value_does_not_raise(self):
+        """Regression guard: `apply_content_mode`'s own try/except already
+        covered this before B2, but it belongs in the same probe set B2
+        names explicitly."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        # Must not raise.
+        trace_id = client.start_trace(
+            "hostile-input-output-trace",
+            input_data={"lock": threading.Lock()},
+            output_data={"lock": threading.Lock()},
+            content_mode="record",
+        )
+        client.flush()
+        client.close()
+
+        trace_payload = next(
+            t for batch in sent_batches for t in batch if t["id"] == trace_id
+        )
+        assert trace_payload.get("input_data") is None
+        assert trace_payload.get("output_data") is None
+
+    def test_feedback_correction_output_json_serialization_failure_does_not_raise(
+        self,
+    ):
+        captured: dict[str, Any] = {}
+
+        def request_sender(method, path, payload):
+            captured["payload"] = payload
+            return {
+                "data": {
+                    "feedback": {
+                        "id": "feedback_1",
+                        "trace_id": "trace_1",
+                        "author_user_id": "sdk-user",
+                        "rating": payload["rating"],
+                        "comment": payload.get("comment"),
+                        "correction_output": payload.get("correction_output"),
+                        "created_at": "2026-03-10T14:12:00+00:00",
+                        "updated_at": "2026-03-10T14:12:00+00:00",
+                    },
+                    "summary": {"up_count": 1, "down_count": 0},
+                }
+            }
+
+        client = ObservabilityClient(
+            ObservabilityConfig(
+                backend_origin="http://localhost:5000",
+                api_key="test-key",  # pragma: allowlist secret
+                batch_size=10,
+                max_buffer_age=0.1,
+                max_queue_size=10,
+                content_mode="record",
+            ),
+            sender=lambda traces: None,
+            request_sender=request_sender,
+        )
+
+        # Must not raise -- previously raised `ClientError` straight out of
+        # this call (astra's confirmed finding at client.py:2121).
+        client.submit_feedback(
+            "trace_1",
+            ThumbRating.UP,
+            correction_output={"lock": threading.Lock()},
+        )
+        client.close()
+
+        assert "correction_output" not in captured["payload"]
+        assert captured["payload"]["rating"] == "up"
+
+
+class TestB3FailedUpdateOverPriorContentSendsPlaceholder:
+    """ADDENDUM R3 B3 (A2 completion): when gating/copying FAILS for a
+    per-field content value on an UPDATE and the field previously carried
+    real content, the wire value must be the clearing placeholder -- never
+    omitted -- or the backend's `apply_updates` (which skips an omitted/
+    `None` field) silently keeps the stale content. This is the same
+    `wire_value_for_tightened_update` mechanism the M4/A2 explicit-null
+    tests exercise (see `test_explicit_null_clear_in_record_mode_...`
+    above), here triggered by a COPY failure (an uncopyable value) rather
+    than an explicit `None`.
+
+    Negative control: reverting `apply_content_mode`'s `record`-branch
+    `except Exception: return None` to instead re-raise, or reverting
+    `wire_value_for_tightened_update` to force the placeholder only when
+    the mode is exactly `"metadata"`, makes this fail -- the second call's
+    uncopyable `input_data` would either raise out of `record_observation`
+    or omit the field, letting the first call's real content survive
+    server-side.
+    """
+
+    def test_uncopyable_input_data_on_update_over_prior_content_sends_placeholder(
+        self,
+    ):
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        sensitive = "PATIENT diagnosis cancer stage 3"
+
+        trace_id = client.start_trace("b3-failed-update-trace", content_mode="record")
+        observation_id = client.record_observation(
+            trace_id,
+            name="op",
+            input_data={"prompt": sensitive},
+            content_mode="record",
+        )
+        # Update: copying FAILS for this call's input_data (an uncopyable
+        # value), but there IS prior content for this field. Must not raise.
+        client.record_observation(
+            trace_id,
+            observation_id=observation_id,
+            name="op",
+            input_data={"lock": threading.Lock()},
+            content_mode="record",
+        )
+
+        client.flush()
+        client.close()
+
+        trace_payload = next(
+            t for batch in sent_batches for t in batch if t["id"] == trace_id
+        )
+        observation = trace_payload["observations"][0]
+        assert observation["input_data"] == {"redacted": True}
+        assert sensitive not in json.dumps(sent_batches)
+
+
+class TestB4KeyBasedScrubberCoverage:
+    """ADDENDUM R3 B4 (A4 completion): the common key-based scrubber
+    (`redact_sensitive_data(..., redact_credential_keys=True)`) now runs on
+    `correlation_ids`, `tags`, and the COMPLETE `prompt_reference`
+    structure (previously only `.variables`) -- never on the fixed numeric
+    DTO fields. astra's ruling (a): these three bags are fixed/typed shapes
+    today, so there is no way to smuggle a credential-shaped KEY into a
+    typed `CorrelationIds`/`PromptReferenceDTO` through the public
+    constructor to observe a VALUE difference outbound; this test verifies
+    the coverage contract directly (the scrubber is actually invoked on
+    these bags), matching how astra's own ruling frames the requirement --
+    architecture coverage, not a value-level regression today.
+
+    Negative control: reverting `_harden_content_bags` to the pre-fix
+    version (which only hardened `metadata`/`input_data`/`output_data`/
+    `session.metadata`/`prompt_reference.variables`) makes the spy
+    assertions below fail -- `redact_sensitive_data` would never be called
+    with `redact_credential_keys=True` for `correlation_ids`/`tags`/the
+    full `prompt_reference` dict.
+    """
+
+    def test_correlation_ids_tags_and_prompt_reference_reach_the_key_based_scrubber(
+        self, monkeypatch
+    ):
+        from traigent.observability import client as client_module
+
+        seen_credential_calls: list[Any] = []
+        original = client_module.redact_sensitive_data
+
+        def _spy(value, *, redact_credential_keys=False):
+            if redact_credential_keys:
+                seen_credential_calls.append(copy.deepcopy(value))
+            return original(value, redact_credential_keys=redact_credential_keys)
+
+        monkeypatch.setattr(client_module, "redact_sensitive_data", _spy)
+
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        client.start_trace(
+            "b4-coverage-trace",
+            tags=["prod", "release-1"],
+            correlation_ids=CorrelationIds(otel_trace_id="trace-abc"),
+            prompt_reference=PromptReferenceDTO(name="greeting", variables={}),
+            content_mode="record",
+        )
+        client.flush()
+        client.close()
+
+        assert any(call == ["prod", "release-1"] for call in seen_credential_calls)
+        assert any(
+            isinstance(call, dict) and call.get("otel_trace_id") == "trace-abc"
+            for call in seen_credential_calls
+        )
+        assert any(
+            isinstance(call, dict) and call.get("name") == "greeting"
+            for call in seen_credential_calls
+        )
+
+        # Fixed numeric/id DTO fields are never routed through the
+        # key-based scrubber and survive untouched.
+        trace_payload = sent_batches[-1][-1]
+        assert trace_payload["correlation_ids"] == {"otel_trace_id": "trace-abc"}
+        assert trace_payload["tags"] == ["prod", "release-1"]
+
+
+class TestB5CorrelationIdsDetachedAtIntake:
+    """ADDENDUM R3 B5 (A8 completion): `CorrelationIds` (a caller-supplied,
+    mutable DTO) must be detached (deep copied) at intake exactly like
+    session/metadata/prompt_reference -- astra's confirmed probe: Python
+    returned the caller's own `CorrelationIds` instance BY REFERENCE
+    (client.py:2744, pre-fix), so mutating it after `start_trace` returned
+    changed a later `flush()`.
+
+    Negative control: reverting `_coerce_correlation_ids` to `return
+    correlation_ids` (no copy) for the `isinstance(correlation_ids,
+    CorrelationIds)` branch makes every test below fail -- the mutation
+    would reach the flushed payload.
+    """
+
+    def test_mutating_correlation_ids_after_start_trace_does_not_leak(self):
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        correlation_ids = CorrelationIds(otel_trace_id="BEFORE")
+        trace_id = client.start_trace(
+            "b5-correlation-ids-trace", correlation_ids=correlation_ids
+        )
+        correlation_ids.otel_trace_id = "AFTER"
+
+        client.flush()
+        client.close()
+
+        trace_payload = next(
+            t for batch in sent_batches for t in batch if t["id"] == trace_id
+        )
+        assert trace_payload["correlation_ids"]["otel_trace_id"] == "BEFORE"
+
+    def test_mutating_correlation_ids_after_update_does_not_leak(self):
+        """The update path too: `record_observation`'s
+        `_coerce_correlation_ids(correlation_ids) or existing.correlation_ids`
+        must also detach."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        trace_id = client.start_trace("b5-update-trace")
+        correlation_ids = CorrelationIds(otel_span_id="BEFORE")
+        client.record_observation(
+            trace_id,
+            name="op",
+            correlation_ids=correlation_ids,
+        )
+        correlation_ids.otel_span_id = "AFTER"
+
+        client.flush()
+        client.close()
+
+        trace_payload = next(
+            t for batch in sent_batches for t in batch if t["id"] == trace_id
+        )
+        observation = trace_payload["observations"][0]
+        assert observation["correlation_ids"]["otel_span_id"] == "BEFORE"
+
+    def test_mutating_correlation_ids_after_close_does_not_leak(self):
+        """Same guarantee across `close()`."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        correlation_ids = CorrelationIds(otel_parent_span_id="BEFORE")
+        client.start_trace("b5-close-trace", correlation_ids=correlation_ids)
+        correlation_ids.otel_parent_span_id = "AFTER"
+
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        assert trace_payload["correlation_ids"]["otel_parent_span_id"] == "BEFORE"
+
+
+class TestB6LegacyBooleanEnvValidation:
+    """ADDENDUM R3 B6 (A1 completion): the legacy
+    `TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT` env var accepts ONLY
+    "true"/"false"/"1"/"0" (case-insensitive) -- never `is_truthy`'s wider
+    vocabulary ("yes"/"on") and never a silent default on garbage/empty.
+    astra's confirmed probe: both an empty and an invalid legacy value were
+    previously accepted silently (config.py:115, pre-fix).
+
+    Negative control: reverting `_legacy_capture_content_mode` to `"record"
+    if is_truthy(raw) else "metadata"` makes the raising tests below fail --
+    `""`, `"banana"`, and `"yes"` would all silently resolve to a content
+    mode instead of raising.
+    """
+
+    def test_empty_legacy_env_raises_before_construction_succeeds(self, monkeypatch):
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT", "")
+        _mock_public_backend_dns(monkeypatch)
+
+        with pytest.raises(ValueError, match="TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT"):
+            ObservabilityConfig(backend_origin="https://auth.example.com")
+
+    def test_invalid_legacy_env_value_raises(self, monkeypatch):
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT", "banana")
+        _mock_public_backend_dns(monkeypatch)
+
+        with pytest.raises(ValueError, match="TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT"):
+            ObservabilityConfig(backend_origin="https://auth.example.com")
+
+    def test_legacy_env_broader_is_truthy_vocabulary_now_rejected(self, monkeypatch):
+        """`is_truthy` accepts "yes"/"on" -- the legacy var must NOT (B6
+        narrows it to the exact true/false/1/0 spellings)."""
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT", "yes")
+        _mock_public_backend_dns(monkeypatch)
+
+        with pytest.raises(ValueError, match="TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT"):
+            ObservabilityConfig(backend_origin="https://auth.example.com")
+
+    @pytest.mark.parametrize(
+        ("raw", "expected_mode"),
+        [
+            ("true", "record"),
+            ("TRUE", "record"),
+            ("1", "record"),
+            ("false", "metadata"),
+            ("FALSE", "metadata"),
+            ("0", "metadata"),
+        ],
+    )
+    def test_accepted_boolean_spellings_resolve_case_insensitively(
+        self, monkeypatch, raw, expected_mode
+    ):
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT", raw)
+        _mock_public_backend_dns(monkeypatch)
+
+        config = ObservabilityConfig(backend_origin="https://auth.example.com")
+
+        assert config.content_mode == expected_mode

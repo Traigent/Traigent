@@ -112,17 +112,57 @@ def validate_content_mode_override(content_mode: str | None) -> str | None:
     return _validate_content_mode_value(content_mode, source="content_mode")
 
 
+# B6 (addendum R3, A1 completion): the legacy boolean env var accepts ONLY
+# these exact (case-insensitive) spellings -- never the broader `is_truthy`
+# vocabulary ("yes"/"on"/anything-unrecognised-silently-means-false). Same
+# accepted spellings as the TS SDK's legacy env/runtime-option validation.
+_LEGACY_BOOLEAN_SPELLINGS: dict[str, bool] = {
+    "true": True,
+    "false": False,
+    "1": True,
+    "0": False,
+}
+
+
+def _parse_legacy_boolean_env(raw: str, *, source: str) -> bool:
+    """Strictly parse a legacy boolean env var (B6).
+
+    Accepts only "true"/"false"/"1"/"0", case-insensitive. Empty string or
+    any other spelling ("yes", "TRUE ", "banana", ...) raises a clear
+    configuration error immediately -- before `resolve_client_content_mode`
+    returns and before `ObservabilityConfig.__post_init__` assigns
+    `content_mode`/`content_mode_explicit`, so an invalid legacy value never
+    silently resolves to a default and never leaves partial config state
+    behind (M2: "never silently default").
+    """
+    normalized = raw.strip().lower()
+    if normalized not in _LEGACY_BOOLEAN_SPELLINGS:
+        raise ValueError(
+            f"{source} must be one of: true, false, 1, 0 (case-insensitive); "
+            f"got {raw!r}"
+        )
+    return _LEGACY_BOOLEAN_SPELLINGS[normalized]
+
+
 def _legacy_capture_content_mode() -> str | None:
     """Legacy `TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT` boolean env var.
 
-    `true` -> `record`, `false`/unset -> `metadata`. Returns `None` when the
-    env var is not set at all (as opposed to set-but-falsy), so an unset
-    legacy var never counts as an explicitly-set source.
+    `true` -> `record`, `false` -> `metadata`. Returns `None` when the env
+    var is not set at all (as opposed to set-but-falsy), so an unset legacy
+    var never counts as an explicitly-set source. An explicitly-set but
+    unrecognised value (including `""`) raises -- see
+    `_parse_legacy_boolean_env` (B6).
     """
     raw = os.getenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT")
     if raw is None:
         return None
-    return "record" if is_truthy(raw) else "metadata"
+    return (
+        "record"
+        if _parse_legacy_boolean_env(
+            raw, source="TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT"
+        )
+        else "metadata"
+    )
 
 
 def resolve_client_content_mode(constructor_value: str | None) -> tuple[str, bool]:

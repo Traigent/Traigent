@@ -7,6 +7,7 @@ import pytest
 from traigent.security.redaction import (
     CONTENT_KEY_FRAGMENTS,
     CREDENTIAL_KEY_FRAGMENTS,
+    _normalize_key_name,
     is_content_key_name,
     is_credential_key_name,
     redact_sensitive_data,
@@ -277,6 +278,84 @@ class TestNestedRedaction:
             {"cookie": "sessionid=abc123"}, redact_credential_keys=True
         )
         assert out["cookie"] == "[REDACTED]"
+
+
+class TestB1NormalizationAndAuthPrefix:
+    """ADDENDUM R3 B1: normalization strips EVERY character outside
+    [a-z0-9] (not just "_"/"-"/"."), canonical roots match as SUBSTRINGS,
+    and `auth` is the one exception -- it matches as a PREFIX of the
+    normalized key only. astra's second REJECT (out-astra-privacy-r2.md
+    finding 5) confirmed Python previously matched `auth` anywhere
+    (over-redacting a plausible non-secret key like `oauthClient`) and
+    normalized only "_-." (under-normalizing a key like `private.key`
+    spelled with a different punctuation mix than the roots covered)."""
+
+    @pytest.mark.parametrize(
+        ("raw", "normalized"),
+        [
+            ("private_key", "privatekey"),
+            ("privateKey", "privatekey"),
+            ("private-key", "privatekey"),
+            ("private.key", "privatekey"),
+            ("private key", "privatekey"),
+            ("PRIVATE__KEY!!", "privatekey"),
+            ("api-Key_1", "apikey1"),
+        ],
+    )
+    def test_normalize_strips_every_non_alphanumeric_character(
+        self, raw: str, normalized: str
+    ) -> None:
+        assert _normalize_key_name(raw) == normalized
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "auth",
+            "authorization",
+            "authStuff",
+            "auth_header",
+            "AUTH-STUFF",
+            "auth.header",
+        ],
+    )
+    def test_auth_prefix_matches_are_flagged(self, key: str) -> None:
+        assert is_credential_key_name(key) is True
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "oauthClient",
+            "oauth_client",
+            "coauthor",
+            "unauthorized_count",  # starts with "un", not "auth"
+        ],
+    )
+    def test_auth_substring_not_at_prefix_is_not_flagged_by_auth_rule(
+        self, key: str
+    ) -> None:
+        """None of these normalized keys START with "auth", so the auth
+        PREFIX rule does not flag them. `unauthorized_count` also does not
+        substring-match any other canonical root (it is not "authorized"
+        with an auth-prefix; the normalized form is "unauthorizedcount",
+        which starts with "un", not "auth")."""
+        assert is_credential_key_name(key) is False
+
+    @pytest.mark.parametrize(
+        "key",
+        ["nested_pwd", "top.nested_pwd", "nested-pwd-value"],
+    )
+    def test_pwd_root_matches_as_substring_anywhere(self, key: str) -> None:
+        assert is_credential_key_name(key) is True
+
+    @pytest.mark.parametrize(
+        "key",
+        ["nested_access_key", "the_access_key_here"],
+    )
+    def test_accesskey_root_matches_as_substring_anywhere(self, key: str) -> None:
+        assert is_credential_key_name(key) is True
+
+    def test_auth_root_is_not_in_the_substring_set(self) -> None:
+        assert "auth" not in CREDENTIAL_KEY_FRAGMENTS
 
 
 class TestApprovedNumericCounterExemption:

@@ -40,22 +40,29 @@ _CREDENTIAL_KEY_REDACTION = "[REDACTED]"
 #   tuned-configuration surfaces: config spaces routinely tune a variable
 #   literally named "prompt" (a variant label, not content), and redacting
 #   it would blank legitimate portal/trace display of the chosen config.
-# M5/A3 (addendum R2): a SINGLE canonical sensitive-root list, identical in
-# both SDKs, matched against keys normalized by `_normalize_key_name`
-# (lowercased, with "_"/"-"/"." stripped entirely -- not just collapsed to a
-# single separator) so `privateKey`, `private_key`, and `private-key` are all
-# the same normalized fragment ("privatekey"). Every entry below is ALREADY
-# in that stripped form. Some entries (`session_token` -> "sessiontoken",
-# `client_secret` -> "clientsecret") are substring-redundant with a shorter
-# root already in the set (`token`, `secret`) -- kept anyway because the
-# addendum names them explicitly as canonical roots, and an explicit entry
-# survives a future removal of the shorter root that would otherwise
-# silently drop coverage.
+# M5/A3/B1 (addendum R3): a SINGLE canonical sensitive-root list, identical
+# in both SDKs, matched against keys normalized by `_normalize_key_name`
+# (lowercased, with EVERY character outside [a-z0-9] stripped entirely -- not
+# just "_"/"-"/"." -- so `privateKey`, `private_key`, `private-key`, and
+# `private.key` are all the same normalized fragment ("privatekey")). Every
+# entry below is ALREADY in that stripped form. Some entries
+# (`session_token` -> "sessiontoken", `client_secret` -> "clientsecret") are
+# substring-redundant with a shorter root already in the set (`token`,
+# `secret`) -- kept anyway because the addendum names them explicitly as
+# canonical roots, and an explicit entry survives a future removal of the
+# shorter root that would otherwise silently drop coverage.
+#
+# `auth` is DELIBERATELY NOT in this set: B1 requires it to match as a
+# PREFIX of the normalized key only (`authorization`, `authstuff`,
+# `authheader`), never as a substring anywhere in the key -- a substring
+# match would incorrectly redact a legitimate key like `oauthClient`
+# (normalized "oauthclient" contains "auth" but does not start with it).
+# See `_AUTH_PREFIX_ROOT` and `is_credential_key_name` below. oauth-shaped
+# tokens are still caught by the `token` root.
 CREDENTIAL_KEY_FRAGMENTS: frozenset[str] = frozenset(
     {
         "accesskey",
         "apikey",
-        "auth",  # also matches "authorization"
         "bearer",
         "clientsecret",
         "cookie",
@@ -71,6 +78,10 @@ CREDENTIAL_KEY_FRAGMENTS: frozenset[str] = frozenset(
         "token",
     }
 )
+
+# B1: `auth` matches as a PREFIX of the normalized key only -- see the
+# comment above `CREDENTIAL_KEY_FRAGMENTS`.
+_AUTH_PREFIX_ROOT = "auth"
 
 # M5/A3: the ONLY numeric leaves exempt from credential-key-subtree masking.
 # `usage.{prompttokens,completiontokens,totaltokens}` (NORMALIZED keys -- see
@@ -101,14 +112,15 @@ CONTENT_KEY_FRAGMENTS: frozenset[str] = frozenset(
 )
 
 
+_NON_ALPHANUMERIC_PATTERN = re.compile(r"[^a-z0-9]")
+
+
 def _normalize_key_name(key: str) -> str:
-    """A3: lowercase and STRIP (not just collapse) "_", "-", "." entirely, so
-    `privateKey`, `private_key`, and `private-key` all normalize to the same
-    string (`privatekey`) and match the same canonical root."""
-    normalized = key.strip().lower()
-    for separator in ("_", "-", "."):
-        normalized = normalized.replace(separator, "")
-    return normalized
+    """B1 (addendum R3): lowercase, then remove EVERY character outside
+    [a-z0-9] -- not just "_"/"-"/"." -- so `privateKey`, `private_key`,
+    `private-key`, `private.key`, and even `private key` all normalize to
+    the same string (`privatekey`) and match the same canonical root."""
+    return _NON_ALPHANUMERIC_PATTERN.sub("", key.strip().lower())
 
 
 def _is_approved_numeric_counter_key(*, parent_key: str | None, key: str) -> bool:
@@ -139,9 +151,14 @@ def is_credential_key_name(key: str) -> bool:
     """Return True when a key name looks credential/secret-like.
 
     Canonical check backing ALL SDK sanitizers that redact-by-key-name;
-    see `CREDENTIAL_KEY_FRAGMENTS`.
+    see `CREDENTIAL_KEY_FRAGMENTS`. B1: every root in that set matches as a
+    SUBSTRING of the normalized key; `auth` is the one exception and matches
+    only as a PREFIX (see `_AUTH_PREFIX_ROOT`), so `oauthClient` is not
+    flagged while `authStuff`/`AUTH-STUFF`/`authorization` are.
     """
     normalized = _normalize_key_name(key)
+    if normalized.startswith(_AUTH_PREFIX_ROOT):
+        return True
     return any(fragment in normalized for fragment in CREDENTIAL_KEY_FRAGMENTS)
 
 
