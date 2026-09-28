@@ -201,27 +201,61 @@ async def test_apply_false_never_invokes_the_agent_or_the_evaluator():
 
 
 def test_optimize_sync_apply_false_is_refused_before_any_loop_or_thread():
-    """No running loop: the guard must fire before asyncio.run() is ever
-    reached, so no coroutine is driven and no thread pool is created."""
+    """No running loop: the guard must be optimize_sync's first statement --
+    before it even checks for a running loop, before it calls optimize() to
+    produce a coroutine, before asyncio.run(), and before any thread pool.
+
+    Patching only ThreadPoolExecutor is not enough to prove this: the
+    no-running-loop branch never creates one anyway (that only happens when
+    optimize_sync is called from inside a running loop), so a version of the
+    guard placed AFTER asyncio.get_running_loop()/self.optimize()/asyncio.run()
+    -- i.e. inside optimize()'s own body, reached only once the coroutine is
+    actually driven -- would still pass a ThreadPoolExecutor-only check here.
+    Patch every step in between instead, so any of them firing fails the
+    test with something other than ConfigurationError.
+    """
     import concurrent.futures
 
-    created: list[bool] = []
+    from traigent.core import optimized_function as of_module
 
-    def _boom(*args, **kwargs):
-        created.append(True)
-        raise AssertionError(
-            "ThreadPoolExecutor must not be created for a refused apply=False call"
-        )
+    pool_created: list[bool] = []
+    loop_checked: list[bool] = []
+    run_called: list[bool] = []
+    optimize_called: list[bool] = []
+
+    def _boom(tag: str, sink: list[bool]):
+        def _raise(*args, **kwargs):
+            sink.append(True)
+            raise AssertionError(
+                f"{tag} must not be reached for a refused apply=False call"
+            )
+
+        return _raise
 
     agent = _make_agent()
     with pytest.MonkeyPatch.context() as patch:
-        # Scoped to the refused call only: a real apply=True run below may
-        # legitimately use a ThreadPoolExecutor elsewhere in the pipeline,
-        # and that is not what this test is about.
-        patch.setattr(concurrent.futures, "ThreadPoolExecutor", _boom)
+        # Scoped to the refused call only: a real apply=True run below
+        # legitimately reaches every one of these.
+        patch.setattr(
+            concurrent.futures,
+            "ThreadPoolExecutor",
+            _boom("ThreadPoolExecutor", pool_created),
+        )
+        patch.setattr(
+            of_module.asyncio,
+            "get_running_loop",
+            _boom("asyncio.get_running_loop()", loop_checked),
+        )
+        patch.setattr(of_module.asyncio, "run", _boom("asyncio.run()", run_called))
+        patch.setattr(
+            agent, "optimize", _boom("optimize() (coroutine creation)", optimize_called)
+        )
         with pytest.raises(ConfigurationError, match="apply=False"):
             agent.optimize_sync(max_trials=3, apply=False)
-    assert created == []
+    assert pool_created == []
+    assert loop_checked == []
+    assert run_called == []
+    assert optimize_called == []
 
     result = agent.optimize_sync(max_trials=3)
     assert result.best_config == {"temperature": 0.9}
