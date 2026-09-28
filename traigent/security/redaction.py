@@ -83,6 +83,16 @@ CREDENTIAL_KEY_FRAGMENTS: frozenset[str] = frozenset(
 # comment above `CREDENTIAL_KEY_FRAGMENTS`.
 _AUTH_PREFIX_ROOT = "auth"
 
+# ADDENDUM R3.1 (captain ruling, TS parity -- TS already masks this): a
+# common password field name, but -- unlike every root in
+# `CREDENTIAL_KEY_FRAGMENTS` -- NOT a substring root: "pass" is an ordinary
+# English word/prefix that appears inside plenty of legitimate, non-secret
+# keys (`passenger`, `bypass`, `passthrough`), so substring-matching it the
+# way `CREDENTIAL_KEY_FRAGMENTS` matches its own roots would over-redact
+# them. Matched by EXACT normalized-key equality only. `passwd`/`password`
+# stay covered by their own (substring) roots above.
+_EXACT_CREDENTIAL_KEY_NAMES: frozenset[str] = frozenset({"pass"})
+
 # M5/A3: the ONLY numeric leaves exempt from credential-key-subtree masking.
 # `usage.{prompttokens,completiontokens,totaltokens}` (NORMALIZED keys -- see
 # `_normalize_key_name`) -- the immediate parent's normalized key must be
@@ -152,11 +162,18 @@ def is_credential_key_name(key: str) -> bool:
 
     Canonical check backing ALL SDK sanitizers that redact-by-key-name;
     see `CREDENTIAL_KEY_FRAGMENTS`. B1: every root in that set matches as a
-    SUBSTRING of the normalized key; `auth` is the one exception and matches
-    only as a PREFIX (see `_AUTH_PREFIX_ROOT`), so `oauthClient` is not
-    flagged while `authStuff`/`AUTH-STUFF`/`authorization` are.
+    SUBSTRING of the normalized key; `auth` is one exception and matches
+    only as a PREFIX (see `_AUTH_PREFIX_ROOT`), so `oauthClient`/
+    `oauthAuthorization`/`pre_authorization` are not flagged while
+    `authStuff`/`AUTH-STUFF`/`authorization` are. `pass`
+    (ADDENDUM R3.1) is the other exception and matches only by EXACT
+    normalized-key equality (see `_EXACT_CREDENTIAL_KEY_NAMES`), so
+    `passenger`/`bypass` are not flagged while a bare `pass`/`Pass`/`PASS`
+    field is.
     """
     normalized = _normalize_key_name(key)
+    if normalized in _EXACT_CREDENTIAL_KEY_NAMES:
+        return True
     if normalized.startswith(_AUTH_PREFIX_ROOT):
         return True
     return any(fragment in normalized for fragment in CREDENTIAL_KEY_FRAGMENTS)

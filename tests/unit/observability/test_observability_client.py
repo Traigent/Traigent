@@ -5531,9 +5531,17 @@ class TestB3SerializationAndScrubbingFailureSendsPlaceholder:
 
 
 class TestB1OutboundCounterexamples:
-    """ADDENDUM R3 B1: the exact named counterexamples, through the full
-    end-to-end outbound pipeline (unit-level normalization/prefix-rule
-    cases are in tests/unit/security/test_text_redaction.py)."""
+    """ADDENDUM R3 B1 (+ R3.1, captain ruling): the exact named
+    counterexamples, through the full end-to-end outbound pipeline
+    (unit-level normalization/prefix-rule cases are in
+    tests/unit/security/test_text_redaction.py).
+
+    R3.1 negative control: removing `_EXACT_CREDENTIAL_KEY_NAMES`'s `pass`
+    entry (or the `if normalized in _EXACT_CREDENTIAL_KEY_NAMES:` branch in
+    `is_credential_key_name`, traigent/security/redaction.py) makes
+    `metadata["pass"] == "[REDACTED]"` below fail -- `pass` would pass
+    through unmasked (see the worker report's control-lines table).
+    """
 
     def test_b1_named_counterexamples_end_to_end(self):
         sent_batches: list[list[dict]] = []
@@ -5548,6 +5556,18 @@ class TestB1OutboundCounterexamples:
                 "auth_header": "should be masked",
                 "AUTH-STUFF": "should be masked",
                 "usage": {"total-tokens": 42},
+                # R3.1: `pass` is an EXACT-match credential key name, not a
+                # substring root -- `passenger`/`bypass` must NOT match.
+                "pass": 13,
+                "passenger": "x",
+                "bypass": 1,
+                # R3.1 (parity confirmation): `authorization` is not a
+                # substring root in Python either -- only the `auth` PREFIX
+                # rule applies, and neither of these normalized keys starts
+                # with "auth" ("oauthauthorization" starts with "oauth";
+                # "preauthorization" starts with "pre").
+                "oauthAuthorization": "y",
+                "pre_authorization": 12,
             },
             content_mode="record",
         )
@@ -5567,6 +5587,13 @@ class TestB1OutboundCounterexamples:
         # normalized "totaltokens" (hyphen stripped) with immediate parent
         # normalized "usage".
         assert metadata["usage"]["total-tokens"] == 42
+        # R3.1: exact match only.
+        assert metadata["pass"] == "[REDACTED]"
+        assert metadata["passenger"] == "x"
+        assert metadata["bypass"] == 1
+        # R3.1: `authorization` is not a substring root in Python.
+        assert metadata["oauthAuthorization"] == "y"
+        assert metadata["pre_authorization"] == 12
 
 
 class TestB2FailureBoundaryCoversIntakeAndSerialization:

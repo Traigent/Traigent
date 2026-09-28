@@ -357,6 +357,29 @@ class TestB1NormalizationAndAuthPrefix:
     def test_auth_root_is_not_in_the_substring_set(self) -> None:
         assert "auth" not in CREDENTIAL_KEY_FRAGMENTS
 
+    @pytest.mark.parametrize("key", ["pass", "Pass", "PASS", "  pass  "])
+    def test_pass_exact_match_is_flagged(self, key: str) -> None:
+        """ADDENDUM R3.1 (captain ruling, TS parity): `pass` is a common
+        password field name and must be masked -- but as an EXACT match of
+        the normalized key, never a substring root (see
+        `test_pass_substring_is_not_flagged` below)."""
+        assert is_credential_key_name(key) is True
+
+    @pytest.mark.parametrize("key", ["passenger", "bypass", "passthrough", "compass"])
+    def test_pass_substring_is_not_flagged(self, key: str) -> None:
+        """`pass` (ADDENDUM R3.1) matches by EXACT normalized-key equality
+        only, unlike every root in `CREDENTIAL_KEY_FRAGMENTS` (substring
+        roots) -- a substring match would over-redact ordinary,
+        non-secret keys that merely contain the word "pass"."""
+        assert is_credential_key_name(key) is False
+
+    @pytest.mark.parametrize("key", ["oauthAuthorization", "pre_authorization"])
+    def test_authorization_is_not_a_substring_root(self, key: str) -> None:
+        """ADDENDUM R3.1 (parity confirmation): `authorization` is not a
+        substring root in Python either -- only the `auth` PREFIX rule
+        applies, and neither normalized key here starts with "auth"."""
+        assert is_credential_key_name(key) is False
+
 
 class TestApprovedNumericCounterExemption:
     """M5: the exemption is scoped to exact (parent, key) shapes -- never to
