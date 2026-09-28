@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import importlib
 import io
+import itertools
 import json
 import logging
 import threading
@@ -6281,3 +6282,237 @@ class TestFinding2SnapshotFallbackDescriptorIsImmutableAfterLaterMutations:
             if obs["id"] == observation_id
         )
         assert matching["status"] == "running"
+
+
+class TestFinding2RealTransportInterleavingRegression:
+    """out-astra-2455-r5.md review item 3: the test above proves the
+    descriptor object itself stays frozen, but it does so by replacing
+    `_SyncBatchTransport.submit` outright with a capturing stub -- it never
+    drives a real interleaving through the ACTUAL transport, and its own
+    negative control (reverting `state=descriptor` back to `state=state`)
+    fails with an `AttributeError` (`_TraceState` has no `had_prior_input_
+    data`/`had_prior_output_data` attribute -- only `_TraceFallbackDescriptor`
+    does), not with a wrong payload. A type mismatch is not evidence that
+    finding 2's actual guarantee -- "the fallback reflects the snapshot as
+    of enqueue time, never whatever the trace mutated into by then" -- holds.
+
+    This test drives the REAL `_SyncBatchTransport`: a fake `sender` records
+    outbound payloads, and nothing between `ObservabilityClient` and the
+    transport's own buffering/redaction is mocked. It reproduces finding 2's
+    confirmed probe end to end:
+
+      1. `client.record_observation` for a trace's first (RUNNING)
+         observation runs on a background thread and is paused right
+         before the transport's OWN defensive redaction pass
+         (`_SyncBatchTransport._prepare_payload` ->
+         `_redact_trace_payload`) -- i.e. after `_queue_trace_snapshot` has
+         already frozen this submission's `_TraceFallbackDescriptor` under
+         the client lock, but before the transport does anything with it.
+      2. While paused, the main thread completes that same observation and
+         adds a second, brand-new one, through the public client API --
+         mutating the SAME live `_TraceState` the paused submission's
+         descriptor was frozen from.
+      3. Resuming injects a scrub failure ONLY into the transport-level
+         redaction call (patches `redact_sensitive_data` to raise once,
+         and only for the whole-payload value-scan pass -- never the
+         key-name-hardening pass `_harden_content_bags` runs first), so
+         `_redact_trace_payload`'s own except-branch fires and the REAL
+         M8/A5 fallback (`_safe_allowlisted_snapshot`) actually runs.
+      4. The transport is drained directly -- never
+         `ObservabilityClient.flush`/`.close`, which rebuild a FRESH
+         snapshot from the (by-then-mutated) live state and would defeat
+         the whole point -- and the delivered payload for this trace must
+         show only the frozen, pre-mutation observation (RUNNING), never
+         the completed status or the second observation.
+
+    Parametrized over the two ways the real transport ever delivers a
+    buffered payload without an intervening rebuild: `queue_path` (delivery
+    is a side effect of the enqueue itself -- `batch_size=1`, so
+    `_SyncBatchTransport.submit`'s own `_ensure_flush_thread_locked` does
+    it, with a short `max_buffer_age` as the documented is-alive() race
+    backstop) and `flush_path` (nothing auto-delivers -- a high
+    `batch_size`/`max_buffer_age` -- and the test drains with an explicit
+    `_SyncBatchTransport.flush()` call). Both must observe the same frozen
+    snapshot.
+
+    Negative control (see the implementation report for the full
+    transcript): swapping the descriptor `_prepare_payload` forwards into
+    `_redact_trace_payload` for one rebuilt from the LIVE `_TraceState` at
+    that (post-mutation, post-pause) moment -- the actual regression
+    semantics finding 2 fixed, staying type-correct (a real
+    `_TraceFallbackDescriptor`, just built too late) rather than reverting
+    to the raw pre-fix `_TraceState` type (which only fails on the
+    unrelated `had_prior_input_data` `AttributeError` the existing test
+    above already flags) -- makes this test fail on the WRONG payload: the
+    surviving observation is `completed`, and the newly added observation
+    is present too.
+    """
+
+    @pytest.mark.parametrize("drain_via", ["queue_path", "flush_path"])
+    def test_paused_submission_delivers_frozen_snapshot_not_mutated_state(
+        self, monkeypatch, drain_via
+    ):
+        from traigent.observability import client as observability_client_module
+
+        sent_batches: list[list[dict[str, Any]]] = []
+        send_lock = threading.Lock()
+
+        def fake_sender(payloads: list[dict[str, Any]]) -> None:
+            with send_lock:
+                sent_batches.append(payloads)
+
+        if drain_via == "queue_path":
+            batch_size = 1
+            max_buffer_age = 0.3
+        else:
+            batch_size = 100
+            max_buffer_age = 999.0
+
+        client = ObservabilityClient(
+            ObservabilityConfig(
+                backend_origin="http://localhost:5000",
+                api_key="test-key",  # pragma: allowlist secret
+                batch_size=batch_size,
+                max_buffer_age=max_buffer_age,
+                max_queue_size=10,
+                enable_atexit_flush=False,
+            ),
+            sender=fake_sender,
+        )
+        transport = client._transport
+
+        entered_pause = threading.Event()
+        proceed = threading.Event()
+        scrub_armed = {"on": False}
+        call_index = itertools.count()
+        # `client.start_trace` below fires the trace's own FIRST real
+        # transport submission (call index 0, an empty-observations
+        # snapshot). The paused call under test is the SECOND submission
+        # (index 1) -- the one carrying the trace's first, running
+        # observation.
+        paused_call_index = 1
+
+        real_prepare_payload = _SyncBatchTransport._prepare_payload
+        real_redact_sensitive_data = observability_client_module.redact_sensitive_data
+
+        def scrubbing_redact_sensitive_data(value, *, redact_credential_keys=False):
+            # Only the transport's whole-payload value-scan pass calls this
+            # with `redact_credential_keys=False` (`_harden_content_bags`
+            # always passes `True` -- see client.py); gate on that so the
+            # key-name-hardening pass this same call still runs first is
+            # never touched, and disarm immediately so it raises exactly
+            # once.
+            if not redact_credential_keys and scrub_armed["on"]:
+                scrub_armed["on"] = False
+                raise RuntimeError("test-injected transport-level scrub failure")
+            return real_redact_sensitive_data(
+                value, redact_credential_keys=redact_credential_keys
+            )
+
+        def pausing_prepare_payload(self, payload, *, state=None):
+            index = next(call_index)
+            if index == paused_call_index:
+                entered_pause.set()
+                assert proceed.wait(timeout=5.0), (
+                    "test never released the paused transport submission"
+                )
+                scrub_armed["on"] = True
+            return real_prepare_payload(self, payload, state=state)
+
+        monkeypatch.setattr(
+            observability_client_module,
+            "redact_sensitive_data",
+            scrubbing_redact_sensitive_data,
+        )
+        monkeypatch.setattr(
+            _SyncBatchTransport, "_prepare_payload", pausing_prepare_payload
+        )
+
+        trace_id = client.start_trace("finding2-real-transport-interleaving")
+        first_observation_id = "obs-first-running"
+        second_observation_id = "obs-second-running"
+
+        thread_errors: list[BaseException] = []
+
+        def submit_first_observation() -> None:
+            try:
+                client.record_observation(
+                    trace_id,
+                    observation_id=first_observation_id,
+                    name="step-1",
+                    status="running",
+                )
+            except BaseException as exc:  # noqa: BLE001 - surfaced below
+                thread_errors.append(exc)
+
+        paused_thread = threading.Thread(
+            target=submit_first_observation, name="paused-snapshot-submit"
+        )
+        paused_thread.start()
+
+        assert entered_pause.wait(timeout=5.0), (
+            "paused submission never reached the transport prepare step"
+        )
+
+        # Mutate the SAME trace from this (the main) thread while the
+        # first observation's snapshot submission is paused: complete it,
+        # then add a second, brand-new observation -- exactly finding 2's
+        # confirmed probe.
+        client.record_observation(
+            trace_id,
+            observation_id=first_observation_id,
+            name="step-1",
+            status="completed",
+        )
+        client.record_observation(
+            trace_id,
+            observation_id=second_observation_id,
+            name="step-2",
+            status="running",
+        )
+        assert (
+            client._trace_states[trace_id].observations[first_observation_id].status
+            == "completed"
+        )
+        assert second_observation_id in client._trace_states[trace_id].observations
+
+        proceed.set()
+        paused_thread.join(timeout=5.0)
+        assert not paused_thread.is_alive(), "paused submission thread never finished"
+        assert thread_errors == []
+
+        if drain_via == "queue_path":
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                stats = transport.get_stats()
+                if stats["queue_depth"] == 0 and stats["inflight_items"] == 0:
+                    break
+                time.sleep(0.01)
+            else:
+                pytest.fail("queue-path auto-delivery never drained the buffer")
+        else:
+            result = transport.flush(timeout=5.0)
+            assert result.success is True
+
+        transport.close(timeout=5.0)
+
+        delivered_for_trace = [
+            payload
+            for batch in sent_batches
+            for payload in batch
+            if payload.get("id") == trace_id
+        ]
+        assert delivered_for_trace, "no payload for this trace was ever sent"
+        final_payload = delivered_for_trace[-1]
+
+        observations = final_payload.get("observations", [])
+        observation_ids = {obs["id"] for obs in observations}
+        assert observation_ids == {first_observation_id}, (
+            f"expected only the frozen observation, got {observation_ids}"
+        )
+        matching = next(
+            obs for obs in observations if obs["id"] == first_observation_id
+        )
+        assert matching["status"] == "running", (
+            f"expected the FROZEN pre-mutation status, got {matching['status']!r}"
+        )
