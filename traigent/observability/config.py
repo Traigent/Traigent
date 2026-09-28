@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -61,20 +62,108 @@ def _read_observability_offline_mode() -> bool:
     return is_backend_offline() or is_truthy(os.getenv("TRAIGENT_DISABLE_TELEMETRY"))
 
 
-def _read_observability_content_mode() -> str:
-    raw_mode = os.getenv("TRAIGENT_OBSERVABILITY_CONTENT")
-    if raw_mode is None:
-        return (
-            "record"
-            if is_truthy(os.getenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT"))
-            else "metadata"
-        )
+_CONTENT_MODE_RANK: dict[str, int] = {"metadata": 0, "redacted": 1, "record": 2}
 
-    mode = raw_mode.strip().lower()
-    if mode not in OBSERVABILITY_CONTENT_MODES:
+# Dataclass field sentinel: distinguishes "the constructor's `content_mode`
+# argument was not passed" (fall back to env/legacy-env resolution) from an
+# explicit value, including an explicit "" (which must raise -- see
+# `_validate_content_mode_value`). Kept as a real member of the field's `str`
+# type (rather than `None`) so the field stays typed `str` for every
+# downstream reader of `ObservabilityConfig.content_mode`.
+_CONTENT_MODE_UNSET = "__unset__"
+
+
+def most_restrictive_content_mode(*modes: str) -> str:
+    """Return the most restrictive of one or more ALREADY-VALID content modes.
+
+    Restrictiveness order (most to least): `metadata` > `redacted` > `record`
+    (see `_CONTENT_MODE_RANK`). Callers must validate each mode first --
+    this raises `KeyError` on anything outside `OBSERVABILITY_CONTENT_MODES`.
+    """
+    return min(modes, key=lambda mode: _CONTENT_MODE_RANK[mode])
+
+
+def _validate_content_mode_value(value: str, *, source: str) -> str:
+    """Normalize and validate a single candidate content-mode value.
+
+    Raises `ValueError` for anything outside `OBSERVABILITY_CONTENT_MODES`,
+    including the empty string -- an invalid/blank value must never be
+    silently treated as "not set".
+    """
+    normalized = value.strip().lower()
+    if normalized not in OBSERVABILITY_CONTENT_MODES:
         allowed = ", ".join(sorted(OBSERVABILITY_CONTENT_MODES))
-        raise ValueError(f"TRAIGENT_OBSERVABILITY_CONTENT must be one of: {allowed}")
-    return mode
+        raise ValueError(f"{source} must be one of: {allowed}")
+    return normalized
+
+
+def validate_content_mode_override(content_mode: str | None) -> str | None:
+    """Validate (without resolving against any default) a per-call/decorator override.
+
+    Returns the normalized mode, or `None` when `content_mode` is `None`
+    ("no override supplied"). Raises `ValueError` for an invalid value,
+    including `""`. Callers that mutate other state on entry (e.g.
+    `ObserveContext` setting context variables) MUST call this first, before
+    any such mutation, so an invalid override never leaves partial state
+    behind (M2).
+    """
+    if content_mode is None:
+        return None
+    return _validate_content_mode_value(content_mode, source="content_mode")
+
+
+def _legacy_capture_content_mode() -> str | None:
+    """Legacy `TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT` boolean env var.
+
+    `true` -> `record`, `false`/unset -> `metadata`. Returns `None` when the
+    env var is not set at all (as opposed to set-but-falsy), so an unset
+    legacy var never counts as an explicitly-set source.
+    """
+    raw = os.getenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT")
+    if raw is None:
+        return None
+    return "record" if is_truthy(raw) else "metadata"
+
+
+def resolve_client_content_mode(constructor_value: str | None) -> tuple[str, bool]:
+    """Most-restrictive resolution of the CLIENT-LEVEL `content_mode` (M2).
+
+    Sources, all optional: the constructor's explicit `content_mode` value,
+    env `TRAIGENT_OBSERVABILITY_CONTENT`, and the legacy
+    `TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT` boolean env var. Each
+    explicitly-set source is validated independently -- an invalid/empty
+    value raises immediately, before any other source is even consulted --
+    and the MOST RESTRICTIVE of all explicitly-set values wins (`metadata` >
+    `redacted` > `record`), so an explicit privacy-on setting anywhere never
+    loses to a `record` setting from another source. `metadata` is the
+    result when nothing is explicitly set.
+
+    Returns `(resolved_mode, explicitly_set)`; `explicitly_set` is `False`
+    only when every source was absent, letting the caller distinguish "the
+    client has no configured privacy policy" (a per-call override may pick
+    any mode -- the normal opt-in path) from "the client explicitly resolved
+    to metadata" (a per-call override may only tighten it further, never
+    loosen it -- see `ObservabilityClient._resolve_content_mode`).
+    """
+    candidates: list[str] = []
+    if constructor_value is not None:
+        candidates.append(
+            _validate_content_mode_value(constructor_value, source="content_mode")
+        )
+    raw_env = os.getenv("TRAIGENT_OBSERVABILITY_CONTENT")
+    if raw_env is not None:
+        candidates.append(
+            _validate_content_mode_value(
+                raw_env, source="TRAIGENT_OBSERVABILITY_CONTENT"
+            )
+        )
+    legacy = _legacy_capture_content_mode()
+    if legacy is not None:
+        candidates.append(legacy)
+
+    if not candidates:
+        return "metadata", False
+    return most_restrictive_content_mode(*candidates), True
 
 
 def redacted_content_marker() -> dict[str, bool]:
@@ -83,7 +172,7 @@ def redacted_content_marker() -> dict[str, bool]:
 
 
 def apply_content_mode(payload: Any, mode: str, *, force_redact: bool = False) -> Any:
-    """Apply the observability `content_mode` policy to a captured content payload.
+    """Apply the observability `content_mode` policy to a SUPPLIED content payload.
 
     This is the single point every entry point funnels through: direct calls
     to `ObservabilityClient.start_trace` / `record_observation` / `end_trace`,
@@ -97,20 +186,40 @@ def apply_content_mode(payload: Any, mode: str, *, force_redact: bool = False) -
     `force_redact` lets a caller (e.g. `redact_input=True` on `observe`)
     always emit the redaction placeholder regardless of the active mode.
 
-    `payload is None` is treated as "nothing was supplied" rather than
-    content to gate: `ObservabilityClient.record_observation` / `end_trace`
-    use a `None` input/output value as a sentinel meaning "leave this field
-    unchanged on this call" (see their merge logic), so a status-only update
-    call that never touched content must not have a redaction placeholder
-    manufactured for it. `content_mode` still governs every payload that is
-    actually present.
+    Callers must only invoke this when a field was actually SUPPLIED (see the
+    `NOT_SUPPLIED` sentinel below) -- unlike an earlier version of this
+    function, `payload is None` is no longer special-cased here. A genuinely
+    supplied `None` (e.g. a decorated function that legitimately returns
+    `None`) is content like any other value: `metadata` omits it, `record`
+    sends it (as `null`), and `redacted` still emits the placeholder so the
+    field's presence stays structurally meaningful. Treating "not supplied"
+    and "supplied `None`" as identical here (as the previous implementation
+    did) is exactly the bug this fixes: `record_observation`'s merge could
+    not distinguish "this call didn't touch the field" from "this call
+    supplied content the active mode forbids", so a later metadata-mode
+    update silently kept content an earlier record-mode call had recorded.
+
+    `record` mode returns a DEEP COPY of `payload`, never the caller's own
+    object by reference. Gating runs synchronously inside
+    `start_trace`/`record_observation`/`end_trace`, but the gated value is
+    then stored on a long-lived DTO (`ObservabilityClient._trace_states`)
+    that a LATER `flush()`/`close()`/update re-serializes from scratch --
+    returning the same reference would let the caller mutate their own dict
+    after the call returns and have that mutation silently reach a snapshot
+    built afterward (M4's "mutation after enqueue must not leak", which
+    covers not just the transport's retry buffer but any later
+    re-derivation of the stored DTO). M8 (fail closed): if the deep copy
+    itself raises (a caller-supplied payload can hold an uncopyable object,
+    e.g. a lock or open file handle), withhold rather than raise or fall
+    back to the live reference.
     """
-    if payload is None:
-        return None
     if force_redact or mode == "redacted":
         return redacted_content_marker()
     if mode == "record":
-        return payload
+        try:
+            return copy.deepcopy(payload)
+        except Exception:
+            return None
     return None
 
 
@@ -120,7 +229,12 @@ def apply_content_mode_to_text(
     """Apply the same policy to a free-form text field (e.g. an exception message).
 
     Returns `None` in metadata mode so the caller omits the field entirely
-    rather than shipping a null placeholder.
+    rather than shipping a null placeholder. Unlike `apply_content_mode`,
+    `text is None` IS still special-cased here: every call site passes a
+    real, already-supplied string or `None` meaning "there is no such text
+    at all" (e.g. no exception was raised, no comment was given) in a single
+    one-shot call with no update/merge semantics, so there is no
+    NOT_SUPPLIED-vs-supplied distinction to preserve.
     """
     if text is None:
         return None
@@ -129,6 +243,65 @@ def apply_content_mode_to_text(
     if mode == "record":
         return text
     return None
+
+
+def wire_value_for_tightened_update(
+    gated_value: Any, *, effective_content_mode: str, existing_value: Any
+) -> Any:
+    """M4 ingest-contract fix (parity note from the TS worker, traigent-js
+    commit cf2b700da): the backend's `apply_updates` SKIPS an omitted/`None`
+    field on an update and KEEPS whatever content it already has stored --
+    so a `metadata`-mode-withheld field that merely OMITS (`None`) does not
+    clear content a PRIOR, less restrictive call already shipped to the
+    backend for this same field; the backend just keeps its stored value.
+
+    On an UPDATE where gating produced `None` (metadata mode withheld it)
+    AND there IS a prior value (`existing_value is not None` -- either real
+    content from an earlier `record`/`redacted` call, or an earlier
+    placeholder), send the explicit `{"redacted": true}` placeholder instead
+    of `None`, so the backend actually overwrites its stored value. A
+    genuine FIRST WRITE (no prior value at all) still omits cleanly -- `M1`
+    says metadata omits, and there is nothing stored server-side yet to
+    leak.
+
+    `redacted` mode never reaches the `None` branch (it always produces the
+    placeholder already); `record` mode never reaches it either (it returns
+    the payload, deep-copied, never `None` unless the caller's own value was
+    `None`). So this only ever changes behavior for `metadata`.
+    """
+    if gated_value is not None:
+        return gated_value
+    if effective_content_mode == "metadata" and existing_value is not None:
+        return redacted_content_marker()
+    return gated_value
+
+
+class _NotSupplied:
+    """Sentinel type for `NOT_SUPPLIED` (see below)."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid only
+        return "NOT_SUPPLIED"
+
+
+NOT_SUPPLIED: Any = _NotSupplied()
+"""Default value for content-bearing keyword arguments that also support partial
+updates (`ObservabilityClient.record_observation` / `end_trace`).
+
+Distinguishes three states (M4): the argument was not passed at all (this
+sentinel; the field is left exactly as previously recorded), the argument was
+passed as an explicit `None` (real content that happens to be `None`, or an
+explicit "clear this field" -- both are content states subject to
+`content_mode` gating, not "leave unchanged"), and, after gating, the
+`content_mode`-forbidden ("withheld") result. Using plain `None` as the
+default (as this SDK originally did) conflated the first two states: a
+caller that never touched a field and a caller supplying content the active
+mode forbids both produced `None`, so an update could not tell "leave
+existing content alone" apart from "the current mode just withheld the
+content I actually sent" -- silently letting an earlier, less restrictive
+call's content survive a later, more restrictive one.
+"""
 
 
 def _read_default_execution_context() -> dict[str, str | None]:
@@ -172,7 +345,13 @@ class ObservabilityConfig:
     request_timeout: float = 10.0
     enable_atexit_flush: bool = True
     offline_mode: bool = field(default_factory=_read_observability_offline_mode)
-    content_mode: str = field(default_factory=_read_observability_content_mode)
+    content_mode: str = _CONTENT_MODE_UNSET
+    # Set in `__post_init__`; not a constructor argument. True iff the
+    # resolved `content_mode` came from an explicitly-set source (constructor
+    # value, env, or legacy env) rather than the bare "nothing set" default --
+    # see `resolve_client_content_mode` and
+    # `ObservabilityClient._resolve_content_mode`.
+    content_mode_explicit: bool = field(default=False, init=False, repr=False)
     health_callback: Callable[[str, dict[str, Any]], None] | None = None
     default_environment: str | None = field(
         default_factory=lambda: resolve_environment_label(default=None)
@@ -233,10 +412,12 @@ class ObservabilityConfig:
             raise ValueError(
                 f"request_timeout must be less than or equal to {MAX_TIMEOUT_SECONDS}"
             )
-        self.content_mode = self.content_mode.strip().lower()
-        if self.content_mode not in OBSERVABILITY_CONTENT_MODES:
-            allowed = ", ".join(sorted(OBSERVABILITY_CONTENT_MODES))
-            raise ValueError(f"content_mode must be one of: {allowed}")
+        constructor_content_mode = (
+            None if self.content_mode == _CONTENT_MODE_UNSET else self.content_mode
+        )
+        self.content_mode, self.content_mode_explicit = resolve_client_content_mode(
+            constructor_content_mode
+        )
 
     @property
     def ingest_url(self) -> str:

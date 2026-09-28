@@ -130,6 +130,29 @@ corresponding side even when `content_mode="record"`. The transport still applie
 pattern-based secret scrubbing before send, but that scrubber is a final safety
 net, not the content-egress policy.
 
+**Bound the promise:** `metadata` mode withholds content fields (function
+arguments, return values, explicit `input_data`/`output_data`); arbitrary
+metadata you attach is sent after secret scrubbing and is NOT content-free.
+Anything you pass in `metadata=` — including a `traigent_active_config`/trial
+snapshot the SDK enriches your call with — is free-form data the caller
+controls, so it ships regardless of `content_mode`, minus pattern-based
+secret scrubbing and credential-shaped key redaction. Treat `metadata` as
+"no *captured* content", not "nothing leaves this process": if you need a
+value to never leave the process, do not put it in `metadata`.
+
+`client.add_comment()` and `client.submit_feedback()` (trace comments and
+correction output) obey the same `content_mode` as `@observe`: `metadata`
+mode refuses `add_comment` locally (there is no non-content payload for a
+comment to fall back to) and `submit_feedback` sends the rating/label
+fields while omitting `comment`/`correction_output`; `redacted` sends
+placeholders for both; `record` sends the text after the same mandatory
+secret scrubbing.
+
+Dataset-conversion and content-upload endpoints (`traigent.datasets.*`) are
+a separate content-egress surface with their own contract; they are not
+gated by observability's `content_mode` and are out of scope here — see
+[traigent-js#387](https://github.com/Traigent/traigent-js/issues/387).
+
 `@observe(observation_type=GENERATION)` does not estimate LangChain or provider
 token usage from prompts. Pass measured `input_tokens`, `output_tokens`,
 `total_tokens`, or `cost_usd` from the provider response when recording

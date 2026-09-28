@@ -45,6 +45,7 @@ CREDENTIAL_KEY_FRAGMENTS: frozenset[str] = frozenset(
         "api_key",
         "apikey",
         "auth",  # also matches "authorization"
+        "cookie",
         "credential",
         "credit_card",
         "creditcard",
@@ -54,6 +55,20 @@ CREDENTIAL_KEY_FRAGMENTS: frozenset[str] = frozenset(
         "token",
     }
 )
+
+# M5: the ONLY numeric leaves exempt from credential-key-subtree masking.
+# `usage.{prompt_tokens,completion_tokens,total_tokens}` -- the immediate
+# parent key must be exactly "usage" -- and a bare `max_tokens` model
+# parameter at any depth/parent. A `total_tokens`-shaped key that is NOT
+# nested directly under `usage` (including one with no parent at all, or one
+# nested inside an already credential-flagged subtree such as `api_key`) is
+# NOT exempt: it is masked like any other numeric secret. See
+# `_is_approved_numeric_counter_key` and `redact_sensitive_data`.
+_APPROVED_USAGE_COUNTER_PARENT = "usage"
+_APPROVED_USAGE_COUNTER_KEYS: frozenset[str] = frozenset(
+    {"prompt_tokens", "completion_tokens", "total_tokens"}
+)
+_APPROVED_MODEL_PARAMETER_KEYS: frozenset[str] = frozenset({"max_tokens"})
 
 CONTENT_KEY_FRAGMENTS: frozenset[str] = frozenset(
     {
@@ -69,6 +84,30 @@ CONTENT_KEY_FRAGMENTS: frozenset[str] = frozenset(
 
 def _normalize_key_name(key: str) -> str:
     return key.strip().lower().replace("-", "_").replace(".", "_")
+
+
+def _is_approved_numeric_counter_key(*, parent_key: str | None, key: str) -> bool:
+    """True iff `key` (under `parent_key`) is one of M5's approved exemptions.
+
+    Only a numeric LEAF at one of these exact (parent, key) shapes is exempt
+    from credential-key numeric masking -- the caller must additionally check
+    the value is a non-bool `int`/`float` before treating it as exempt (a
+    stray string at one of these paths is still masked, safe-side).
+    """
+    normalized_key = _normalize_key_name(key)
+    if normalized_key in _APPROVED_MODEL_PARAMETER_KEYS:
+        return True
+    if normalized_key not in _APPROVED_USAGE_COUNTER_KEYS:
+        return False
+    if parent_key is None:
+        return False
+    return _normalize_key_name(parent_key) == _APPROVED_USAGE_COUNTER_PARENT
+
+
+def _is_exempt_numeric_counter(value: Any, *, parent_key: str | None, key: str) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return _is_approved_numeric_counter_key(parent_key=parent_key, key=key)
 
 
 def is_credential_key_name(key: str) -> bool:
@@ -148,29 +187,29 @@ def _redact_credential_key_value(value: Any) -> Any:
     """Redact a value that sits under a credential-like key name.
 
     Once a key is credential-like, the ENTIRE subtree beneath it is treated as
-    credential material: every string is masked fully (not value-scanned --
+    credential material and sensitivity is INHERITED by every descendant
+    (M5): every string AND number leaf is masked fully (not value-scanned --
     partial regex masking would leak adjacent unmatched secret material, and a
     ``[REDACTED``-prefixed value must not be trusted as already-safe), while
-    non-string leaves are preserved. Containers recurse through THIS function
-    (not the value-only scanner) so a secret nested one level down --
-    ``{"api_key": {"value": "sk-..."}}`` -- cannot slip through under an
-    innocuous inner key.
+    booleans and ``None`` pass through unchanged. Containers recurse through
+    THIS function (not the value-only scanner) so a secret nested one level
+    down -- ``{"api_key": {"value": "sk-..."}}`` -- cannot slip through under
+    an innocuous inner key. This function never applies the M5 usage-counter
+    exemption: a numeric counter nested inside an already credential-flagged
+    subtree (e.g. under ``api_key``) is adversarial-shaped, not legitimate
+    telemetry, so it stays masked; the exemption is applied one level up, in
+    `redact_sensitive_data`, before a key is ever routed here.
 
-    Numeric telemetry survives: ``is_credential_key_name`` matches the substring
-    ``token``, so ``total_tokens`` / ``max_tokens`` trip the credential check,
-    but their integer values pass through unmasked (redacting token counts would
-    corrupt usage/cost telemetry). Note the conservative tradeoff of the shared
-    substring-matching helper: STRING values under substring-matching keys such
-    as ``author`` (matches ``auth``) or ``tokenizer`` (matches ``token``) are
-    masked -- a safe-side telemetry loss, not a leak.
-
-    Known limitation: because numeric values are preserved (for token counts), a
-    numeric-valued secret -- e.g. ``{"password": 123456}`` -- is NOT masked. This
-    is accepted: real credentials (API keys, tokens, passwords, JWTs) are
-    strings and are masked; a numeric can't be distinguished from token-count
-    telemetry by type without corrupting the latter.
+    Note the conservative tradeoff of the shared substring-matching helper:
+    values under substring-matching keys such as ``author`` (matches
+    ``auth``) or ``tokenizer`` (matches ``token``) are masked too -- a
+    safe-side telemetry loss, not a leak.
     """
     if isinstance(value, str):
+        return _CREDENTIAL_KEY_REDACTION
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
         return _CREDENTIAL_KEY_REDACTION
     if isinstance(value, Mapping):
         return {key: _redact_credential_key_value(item) for key, item in value.items()}
@@ -197,36 +236,71 @@ def redact_sensitive_data(value: Any, *, redact_credential_keys: bool = False) -
     non-secret fields there -- e.g. ``auth_source``, ``tokenizer`` -- which do
     not carry arbitrary user keys.
     """
+    return _redact_sensitive_data(
+        value, redact_credential_keys=redact_credential_keys, parent_key=None
+    )
+
+
+def _redact_sensitive_data(
+    value: Any, *, redact_credential_keys: bool, parent_key: str | None
+) -> Any:
     if isinstance(value, str):
         return redact_sensitive_text(value)
 
     if isinstance(value, Mapping):
-        return {
-            key: (
-                _redact_credential_key_value(item)
-                if redact_credential_keys and is_credential_key_name(str(key))
-                else redact_sensitive_data(
-                    item, redact_credential_keys=redact_credential_keys
+        result: dict[Any, Any] = {}
+        for key, item in value.items():
+            key_str = str(key)
+            if redact_credential_keys and _is_exempt_numeric_counter(
+                item, parent_key=parent_key, key=key_str
+            ):
+                # M5 exemption: an approved usage-counter/model-parameter
+                # numeric leaf is never routed through the credential-subtree
+                # collapse below, even though its key name (e.g.
+                # "total_tokens") substring-matches the "token" credential
+                # root.
+                result[key] = _redact_sensitive_data(
+                    item,
+                    redact_credential_keys=redact_credential_keys,
+                    parent_key=key_str,
                 )
-            )
-            for key, item in value.items()
-        }
+            elif redact_credential_keys and is_credential_key_name(key_str):
+                result[key] = _redact_credential_key_value(item)
+            else:
+                result[key] = _redact_sensitive_data(
+                    item,
+                    redact_credential_keys=redact_credential_keys,
+                    parent_key=key_str,
+                )
+        return result
 
     if isinstance(value, list):
         return [
-            redact_sensitive_data(item, redact_credential_keys=redact_credential_keys)
+            _redact_sensitive_data(
+                item,
+                redact_credential_keys=redact_credential_keys,
+                parent_key=parent_key,
+            )
             for item in value
         ]
 
     if isinstance(value, tuple):
         return tuple(
-            redact_sensitive_data(item, redact_credential_keys=redact_credential_keys)
+            _redact_sensitive_data(
+                item,
+                redact_credential_keys=redact_credential_keys,
+                parent_key=parent_key,
+            )
             for item in value
         )
 
     if isinstance(value, set):
         return {
-            redact_sensitive_data(item, redact_credential_keys=redact_credential_keys)
+            _redact_sensitive_data(
+                item,
+                redact_credential_keys=redact_credential_keys,
+                parent_key=parent_key,
+            )
             for item in value
         }
 

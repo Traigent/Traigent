@@ -8,6 +8,7 @@ import logging
 import threading
 import time
 from datetime import UTC, datetime
+from typing import Any
 from urllib import error
 
 import pytest
@@ -27,9 +28,16 @@ from traigent.observability import (
 )
 from traigent.observability.client import _SyncBatchTransport
 from traigent.observability.config import OBSERVABILITY_CONTENT_MODES
-from traigent.observability.decorators import set_default_observability_client
+from traigent.observability.decorators import (
+    _current_client,
+    set_default_observability_client,
+)
 from traigent.observability.dtos import ObservationDTO, TraceDTO
-from traigent.utils.exceptions import AuthenticationError, ClientError
+from traigent.utils.exceptions import (
+    AuthenticationError,
+    ClientError,
+    ContentDisabledError,
+)
 
 retry_module = importlib.import_module("traigent.utils.retry")
 
@@ -3505,6 +3513,13 @@ def test_observability_client_collaboration_helpers_follow_backend_contract():
             batch_size=10,
             max_buffer_age=0.1,
             max_queue_size=10,
+            # M3: `add_comment` raises in the default `metadata` mode (it has
+            # no non-content payload to fall back to), so this happy-path
+            # wire-shape test needs `record` to exercise the full
+            # comment/feedback flow. Metadata-mode raising and
+            # redacted/record placeholder behavior are covered by dedicated
+            # tests in `TestContentModeGatesCommentsAndFeedback`.
+            content_mode="record",
         ),
         sender=lambda traces: None,
         request_sender=request_sender,
@@ -3789,6 +3804,11 @@ def test_observability_client_surfaces_collaboration_error_paths():
             batch_size=10,
             max_buffer_age=0.1,
             max_queue_size=10,
+            # M3: `add_comment` raises locally in the default `metadata`
+            # mode, before any request is sent -- this test is about the
+            # request-layer 404, so it needs `record` to actually reach
+            # `missing_trace_request_sender`.
+            content_mode="record",
         ),
         sender=lambda traces: None,
         request_sender=missing_trace_request_sender,
@@ -3994,3 +4014,694 @@ def test_observability_retry_exhaustion_runs_real_retry_handler(monkeypatch):
     assert stats["dropped_items"] == 1
     assert stats["errors"]
     assert events
+
+
+# --------------------------------------------------------------------------
+# SDK privacy parity stage 1 (spec-sdk-privacy-stage1.md, Traigent#2452)
+# --------------------------------------------------------------------------
+
+
+class TestM2ContentModePrecedence:
+    """M2: most-restrictive resolution across client-level sources, and the
+    per-call-may-only-tighten rule."""
+
+    def test_env_beats_legacy_env_when_more_restrictive(self, monkeypatch):
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_CONTENT", "metadata")
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT", "true")
+        _mock_public_backend_dns(monkeypatch)
+
+        config = ObservabilityConfig(backend_origin="https://auth.example.com")
+
+        assert config.content_mode == "metadata"
+        assert config.content_mode_explicit is True
+
+    def test_legacy_env_beats_env_when_more_restrictive(self, monkeypatch):
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_CONTENT", "record")
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT", "false")
+        _mock_public_backend_dns(monkeypatch)
+
+        config = ObservabilityConfig(backend_origin="https://auth.example.com")
+
+        # Legacy false -> metadata, more restrictive than env's "record".
+        assert config.content_mode == "metadata"
+
+    def test_legacy_capture_content_true_maps_to_record(self, monkeypatch):
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT", "true")
+        _mock_public_backend_dns(monkeypatch)
+
+        config = ObservabilityConfig(backend_origin="https://auth.example.com")
+
+        assert config.content_mode == "record"
+        assert config.content_mode_explicit is True
+
+    def test_constructor_value_is_tightened_by_more_restrictive_env(self, monkeypatch):
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_CONTENT", "metadata")
+        _mock_public_backend_dns(monkeypatch)
+
+        config = ObservabilityConfig(
+            backend_origin="https://auth.example.com", content_mode="record"
+        )
+
+        # An explicit constructor "record" must not silently ignore a more
+        # restrictive env source (the historical bug: a default_factory only
+        # ran when content_mode was omitted, so an explicit value bypassed
+        # env resolution entirely).
+        assert config.content_mode == "metadata"
+
+    def test_empty_string_env_raises(self, monkeypatch):
+        monkeypatch.setenv("TRAIGENT_OBSERVABILITY_CONTENT", "")
+        _mock_public_backend_dns(monkeypatch)
+
+        with pytest.raises(ValueError, match="TRAIGENT_OBSERVABILITY_CONTENT"):
+            ObservabilityConfig(backend_origin="https://auth.example.com")
+
+    def test_empty_string_constructor_value_raises(self, monkeypatch):
+        _mock_public_backend_dns(monkeypatch)
+
+        with pytest.raises(ValueError, match="content_mode"):
+            ObservabilityConfig(
+                backend_origin="https://auth.example.com", content_mode=""
+            )
+
+    def test_per_call_cannot_loosen_an_explicit_client_policy(self):
+        """An explicit client-level `metadata` policy must never lose to a
+        looser per-call `content_mode='record'` -- negative control: revert
+        the `_resolve_content_mode` tightening branch and this fails."""
+        sent_batches: list[list[dict]] = []
+        client = ObservabilityClient(
+            ObservabilityConfig(
+                backend_origin="http://localhost:5000",
+                api_key="test-key",  # pragma: allowlist secret
+                batch_size=10,
+                max_buffer_age=0.1,
+                max_queue_size=10,
+                content_mode="metadata",
+            ),
+            sender=lambda traces: sent_batches.append(traces),
+        )
+        sensitive = "PATIENT diagnosis cancer stage 3"
+
+        client.start_trace(
+            "explicit-policy-trace",
+            input_data={"prompt": sensitive},
+            content_mode="record",
+        )
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        assert "input_data" not in trace_payload
+        assert sensitive not in json.dumps(sent_batches)
+
+    def test_per_call_may_pick_any_mode_when_client_has_no_explicit_policy(self):
+        """When nothing was explicitly configured at the client level (the
+        bare 'metadata' default), a per-call `content_mode=` is the
+        documented, normal way to opt a single call into looser capture --
+        this is NOT the "loosening an explicit policy" case M2 forbids, it
+        is the opt-in mechanism the whole feature exists for. Ambiguity
+        resolution: see the report for why this reading was chosen over a
+        literal "never loosen the bare default either" reading."""
+        sent_batches: list[list[dict]] = []
+        client = ObservabilityClient(
+            ObservabilityConfig(
+                backend_origin="http://localhost:5000",
+                api_key="test-key",  # pragma: allowlist secret
+                batch_size=10,
+                max_buffer_age=0.1,
+                max_queue_size=10,
+            ),
+            sender=lambda traces: sent_batches.append(traces),
+        )
+        assert client.config.content_mode_explicit is False
+        sensitive = "PATIENT diagnosis cancer stage 3"
+
+        client.start_trace(
+            "opt-in-trace", input_data={"prompt": sensitive}, content_mode="record"
+        )
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        assert trace_payload["input_data"] == {"prompt": sensitive}
+
+    def test_invalid_content_mode_raises_before_any_context_mutation(self):
+        """M2: an invalid `observe(content_mode=...)` must raise at
+        decorator creation, before `_current_client` is ever touched --
+        negative control: reverting the `__init__`-time validation in
+        `_ObserveFactory`/`ObserveContext` (restoring the old
+        `__enter__`-time check) makes this fail because
+        `_current_client.get()` would then be corrupted."""
+        baseline = _current_client.get()
+
+        with pytest.raises(ValueError, match="content_mode"):
+            observe("bad-mode", content_mode="not-a-real-mode")
+
+        assert _current_client.get() is baseline
+
+    def test_empty_string_content_mode_raises_on_observe_context(self):
+        """The historical bug: `ObserveContext` used `if content_mode else
+        None` (Python truthiness), which silently turned `""` into `None`
+        (falling back to the client default) instead of raising."""
+        baseline = _current_client.get()
+
+        with pytest.raises(ValueError, match="content_mode"):
+            ObserveContext(name="empty-mode", content_mode="")
+
+        assert _current_client.get() is baseline
+
+    def test_setup_failure_restores_context_variables(self, monkeypatch):
+        """M4: a setup-time failure (here: `record_observation` raising for
+        an unrelated reason) must restore every context variable `__enter__`
+        touched -- `__exit__` is never invoked when `__enter__` raises, so
+        nothing else would reset `_current_client`."""
+        client = ObservabilityClient(
+            ObservabilityConfig(
+                backend_origin="http://localhost:5000",
+                api_key="test-key",  # pragma: allowlist secret
+                batch_size=10,
+                max_buffer_age=0.1,
+                max_queue_size=10,
+            ),
+            sender=lambda traces: None,
+        )
+        baseline = _current_client.get()
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("setup failed")
+
+        monkeypatch.setattr(client, "record_observation", _boom)
+
+        with pytest.raises(RuntimeError, match="setup failed"):
+            with observe("will-fail-setup", client=client):
+                pass  # pragma: no cover - never reached
+
+        assert _current_client.get() is baseline
+        client.close()
+
+
+class TestM3CommentsAndFeedback:
+    """M3: `add_comment` / `submit_feedback` honor `content_mode`."""
+
+    def _client(self, *, content_mode: str, request_sender):
+        return ObservabilityClient(
+            ObservabilityConfig(
+                backend_origin="http://localhost:5000",
+                api_key="test-key",  # pragma: allowlist secret
+                batch_size=10,
+                max_buffer_age=0.1,
+                max_queue_size=10,
+                content_mode=content_mode,
+            ),
+            sender=lambda traces: None,
+            request_sender=request_sender,
+        )
+
+    def test_add_comment_raises_content_disabled_in_metadata_mode(self):
+        calls: list[tuple[str, str, dict | None]] = []
+        client = self._client(
+            content_mode="metadata",
+            request_sender=lambda m, p, payload: (
+                calls.append((m, p, payload)) or {"data": {}}
+            ),
+        )
+
+        with pytest.raises(ContentDisabledError, match="metadata"):
+            client.add_comment("trace_1", "some review comment")
+
+        assert calls == []
+        client.close()
+
+    def test_add_comment_sends_placeholder_in_redacted_mode(self):
+        captured: dict[str, Any] = {}
+
+        def request_sender(method, path, payload):
+            captured["payload"] = payload
+            return {
+                "data": {
+                    "id": "c1",
+                    "trace_id": "trace_1",
+                    "author_user_id": "sdk-user",
+                    "content": payload["content"],
+                    "created_at": "2026-03-10T14:11:00+00:00",
+                    "updated_at": "2026-03-10T14:11:00+00:00",
+                }
+            }
+
+        client = self._client(content_mode="redacted", request_sender=request_sender)
+        client.add_comment("trace_1", "Ship this after QA review.")
+        client.close()
+
+        assert captured["payload"] == {"content": "[REDACTED]"}
+
+    def test_add_comment_sends_scrubbed_text_in_record_mode(self):
+        captured: dict[str, Any] = {}
+
+        def request_sender(method, path, payload):
+            captured["payload"] = payload
+            return {
+                "data": {
+                    "id": "c1",
+                    "trace_id": "trace_1",
+                    "author_user_id": "sdk-user",
+                    "content": payload["content"],
+                    "created_at": "2026-03-10T14:11:00+00:00",
+                    "updated_at": "2026-03-10T14:11:00+00:00",
+                }
+            }
+
+        client = self._client(content_mode="record", request_sender=request_sender)
+        client.add_comment("trace_1", "Contact alice@example.com for details.")
+        client.close()
+
+        assert captured["payload"] == {
+            "content": "Contact [REDACTED:email] for details."
+        }
+
+    def test_submit_feedback_omits_comment_and_correction_in_metadata_mode(self):
+        captured: dict[str, Any] = {}
+
+        def request_sender(method, path, payload):
+            captured["payload"] = payload
+            return {
+                "data": {
+                    "feedback": {
+                        "id": "feedback_1",
+                        "trace_id": "trace_1",
+                        "author_user_id": "sdk-user",
+                        "rating": payload["rating"],
+                        "comment": payload.get("comment"),
+                        "correction_output": payload.get("correction_output"),
+                        "created_at": "2026-03-10T14:12:00+00:00",
+                        "updated_at": "2026-03-10T14:12:00+00:00",
+                    },
+                    "summary": {"up_count": 1, "down_count": 0},
+                }
+            }
+
+        client = self._client(content_mode="metadata", request_sender=request_sender)
+        client.submit_feedback(
+            "trace_1",
+            ThumbRating.UP,
+            comment="Approved",
+            correction_output={"answer": "corrected"},
+        )
+        client.close()
+
+        assert captured["payload"] == {"rating": "up"}
+
+    def test_submit_feedback_sends_placeholders_in_redacted_mode(self):
+        captured: dict[str, Any] = {}
+
+        def request_sender(method, path, payload):
+            captured["payload"] = payload
+            return {
+                "data": {
+                    "feedback": {
+                        "id": "feedback_1",
+                        "trace_id": "trace_1",
+                        "author_user_id": "sdk-user",
+                        "rating": payload["rating"],
+                        "comment": payload.get("comment"),
+                        "correction_output": payload.get("correction_output"),
+                        "created_at": "2026-03-10T14:12:00+00:00",
+                        "updated_at": "2026-03-10T14:12:00+00:00",
+                    },
+                    "summary": {"up_count": 1, "down_count": 0},
+                }
+            }
+
+        client = self._client(content_mode="redacted", request_sender=request_sender)
+        client.submit_feedback(
+            "trace_1",
+            ThumbRating.UP,
+            comment="Approved",
+            correction_output={"answer": "corrected"},
+        )
+        client.close()
+
+        assert captured["payload"] == {
+            "rating": "up",
+            "comment": "[REDACTED]",
+            "correction_output": {"redacted": True},
+        }
+
+    def test_submit_feedback_scrubs_secrets_in_record_mode(self):
+        captured: dict[str, Any] = {}
+
+        def request_sender(method, path, payload):
+            captured["payload"] = payload
+            return {
+                "data": {
+                    "feedback": {
+                        "id": "feedback_1",
+                        "trace_id": "trace_1",
+                        "author_user_id": "sdk-user",
+                        "rating": payload["rating"],
+                        "comment": payload.get("comment"),
+                        "correction_output": payload.get("correction_output"),
+                        "created_at": "2026-03-10T14:12:00+00:00",
+                        "updated_at": "2026-03-10T14:12:00+00:00",
+                    },
+                    "summary": {"up_count": 1, "down_count": 0},
+                }
+            }
+
+        client = self._client(content_mode="record", request_sender=request_sender)
+        client.submit_feedback(
+            "trace_1",
+            ThumbRating.UP,
+            comment="Reviewer email: bob@example.com",
+            correction_output={
+                "answer": "corrected",
+                "api_key": "sk-shouldnotship",  # pragma: allowlist secret
+            },
+        )
+        client.close()
+
+        assert captured["payload"]["comment"] == "Reviewer email: [REDACTED:email]"
+        assert captured["payload"]["correction_output"] == {
+            "answer": "corrected",
+            "api_key": "[REDACTED]",
+        }
+
+
+class TestM4UpdateTightening:
+    """M4: NOT_SUPPLIED vs. explicit-null vs. withheld; tightening on update
+    always wins; mutation after enqueue never leaks; retries resend the same
+    gated snapshot (covered separately by
+    `test_retries_resend_the_same_already_gated_payload`)."""
+
+    def test_metadata_update_clears_earlier_record_mode_content(self):
+        """Negative control: reverting `record_observation`'s NOT_SUPPLIED
+        fix (restoring `input_data if input_data is not None else
+        existing.input_data`) makes this fail -- the update would silently
+        keep the record-mode content.
+
+        The wire value is the explicit `{"redacted": true}` placeholder, not
+        an omitted key: the backend's `apply_updates` skips an omitted/`None`
+        field on update and keeps whatever it already has stored, so merely
+        omitting would not clear the record-mode content this SAME
+        observation already shipped it (ingest-contract parity fix,
+        `wire_value_for_tightened_update`; see traigent-js cf2b700da)."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        sensitive = "PATIENT diagnosis cancer stage 3"
+
+        trace_id = client.start_trace("tighten-trace")
+        observation_id = client.record_observation(
+            trace_id,
+            name="op",
+            status="running",
+            input_data={"prompt": sensitive},
+            output_data={"answer": sensitive},
+            content_mode="record",
+        )
+        # A later call, in the (default) metadata mode, supplies NEW content
+        # for the same fields -- tightening must win, not retain the
+        # earlier record-mode content.
+        client.record_observation(
+            trace_id,
+            observation_id=observation_id,
+            name="op",
+            status="completed",
+            input_data={"prompt": sensitive},
+            output_data={"answer": sensitive},
+        )
+
+        client.flush()
+        client.close()
+
+        trace_payload = next(
+            t for batch in sent_batches for t in batch if t["id"] == trace_id
+        )
+        observation = trace_payload["observations"][0]
+        assert observation["input_data"] == {"redacted": True}
+        assert observation["output_data"] == {"redacted": True}
+        assert sensitive not in json.dumps(sent_batches)
+
+    def test_end_trace_output_update_tightens_after_earlier_record_mode_content(self):
+        """Same bug, at the trace level: `end_trace`'s own output_data merge
+        had the identical `if output_data is not None` conflation. Same wire
+        contract fix applies: the placeholder, not an omitted key -- see the
+        sibling test above."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        sensitive = "PATIENT diagnosis cancer stage 3"
+
+        trace_id = client.start_trace(
+            "tighten-end-trace",
+            output_data={"answer": sensitive},
+            content_mode="record",
+        )
+        # Status-only-ish update in the default metadata mode, but DOES
+        # supply new output content -- must overwrite, not retain.
+        client.end_trace(trace_id, output_data={"answer": sensitive})
+
+        client.flush()
+        client.close()
+
+        trace_payload = next(
+            t for batch in sent_batches for t in batch if t["id"] == trace_id
+        )
+        assert trace_payload["output_data"] == {"redacted": True}
+        assert sensitive not in json.dumps(sent_batches)
+
+    def test_status_only_update_does_not_touch_existing_content(self):
+        """NOT_SUPPLIED (the default): a call that never mentions
+        input_data/output_data must leave previously recorded content alone."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        trace_id = client.start_trace("status-only-trace", content_mode="record")
+        observation_id = client.record_observation(
+            trace_id,
+            name="op",
+            status="running",
+            input_data={"prompt": "hello"},
+            content_mode="record",
+        )
+        # Status-only update: input_data/output_data are not mentioned at all.
+        client.record_observation(
+            trace_id,
+            observation_id=observation_id,
+            name="op",
+            status="completed",
+            content_mode="record",
+        )
+
+        client.flush()
+        client.close()
+
+        trace_payload = next(
+            t for batch in sent_batches for t in batch if t["id"] == trace_id
+        )
+        observation = trace_payload["observations"][0]
+        assert observation["input_data"] == {"prompt": "hello"}
+        assert observation["status"] == "completed"
+
+    def test_mutation_after_enqueue_does_not_leak(self):
+        """M4: gating/redaction happen at enqueue time on an immutable
+        snapshot -- mutating the caller's own dict AFTER the call returns
+        (but before flush actually sends it) must never change what gets
+        sent."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        payload = {"prompt": "original"}
+        trace_id = client.start_trace(
+            "mutate-after-enqueue", input_data=payload, content_mode="record"
+        )
+        payload["prompt"] = "mutated-after-the-call-returned"
+        payload["injected"] = "should never appear"
+
+        client.flush()
+        client.close()
+
+        trace_payload = next(
+            t for batch in sent_batches for t in batch if t["id"] == trace_id
+        )
+        assert trace_payload["input_data"] == {"prompt": "original"}
+
+    def test_observe_decorator_none_return_in_redacted_mode_emits_placeholder(self):
+        """M4 fix: a decorated function that legitimately returns `None`
+        under `content_mode='redacted'` must still emit the `{"redacted":
+        true}` structural placeholder, not silently omit the field --
+        `apply_content_mode` no longer special-cases a supplied `None`."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        @observe("returns-none", client=client, content_mode="redacted")
+        def side_effect_only(value: str) -> None:
+            return None
+
+        assert side_effect_only("secret") is None
+
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        observation = trace_payload["observations"][0]
+        assert trace_payload["output_data"] == {"redacted": True}
+        assert observation["output_data"] == {"redacted": True}
+
+
+class TestM5FullPipelineNumericExemption:
+    """M5 through the full record/redact pipeline (not just the
+    `traigent.security.redaction` unit -- see `test_text_redaction.py` for
+    the exhaustive unit-level cases)."""
+
+    def test_numeric_secret_under_metadata_key_is_masked_end_to_end(self):
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        client.start_trace(
+            "numeric-secret-trace",
+            metadata={"password": 123456, "credit_card": "4111111111111111"},
+            content_mode="record",
+        )
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        assert trace_payload["metadata"]["password"] == "[REDACTED]"
+        assert trace_payload["metadata"]["credit_card"] == "[REDACTED]"
+
+    def test_usage_counter_and_dto_token_fields_survive_end_to_end(self):
+        """Both the approved `usage.*` exemption (for a caller-supplied
+        provider-response blob embedded in metadata) and Traigent's own
+        structural `input_tokens`/`output_tokens`/`total_tokens` DTO fields
+        must survive the full pipeline -- negative control: reverting
+        `_harden_content_bags`'s bag-scoping (applying
+        `redact_credential_keys=True` to the whole payload again, as the
+        original single-call-site code did) makes the DTO field assertions
+        below fail with `'[REDACTED]' == 12`."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        trace_id = client.start_trace(
+            "usage-trace",
+            metadata={
+                "provider_response": {
+                    "usage": {
+                        "prompt_tokens": 50,
+                        "completion_tokens": 20,
+                        "total_tokens": 70,
+                    }
+                }
+            },
+            content_mode="record",
+        )
+        client.record_observation(
+            trace_id,
+            name="generation",
+            observation_type=ObservationType.GENERATION,
+            status="completed",
+            input_tokens=12,
+            output_tokens=34,
+            total_tokens=46,
+            cost_usd=0.0042,
+            content_mode="record",
+        )
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        usage = trace_payload["metadata"]["provider_response"]["usage"]
+        assert usage == {
+            "prompt_tokens": 50,
+            "completion_tokens": 20,
+            "total_tokens": 70,
+        }
+        observation = trace_payload["observations"][0]
+        assert observation["input_tokens"] == 12
+        assert observation["output_tokens"] == 34
+        assert observation["total_tokens"] == 46
+        assert observation["cost_usd"] == 0.0042
+
+
+class TestM6UserId:
+    def test_trace_user_id_email_is_redacted(self):
+        """M6: Python already scans the whole trace payload by value, so an
+        email-shaped `user_id` is redacted like any other PII-shaped text --
+        this is a regression guard, not a behavior change (TS is the SDK
+        that needed the code fix; see the spec)."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        client.start_trace("user-id-trace", user_id="alice@example.com")
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        assert trace_payload["user_id"] == "[REDACTED:email]"
+
+
+class TestM8FailClosed:
+    def test_redaction_failure_withholds_content_and_never_raises(self, monkeypatch):
+        """M8: if redaction/gating throws, withhold content and continue --
+        never break the caller's application, never send unredacted."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        sensitive = "PATIENT diagnosis cancer stage 3"
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("redactor exploded")
+
+        monkeypatch.setattr(
+            "traigent.observability.client.redact_sensitive_data", _boom
+        )
+
+        # Must not raise out of the caller's own call.
+        client.start_trace(
+            "fail-closed-trace",
+            input_data={"prompt": sensitive},
+            metadata={"note": sensitive},
+            content_mode="record",
+        )
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        assert "input_data" not in trace_payload or trace_payload["input_data"] is None
+        assert sensitive not in json.dumps(sent_batches)
+
+    def test_add_comment_scrub_failure_withholds_and_does_not_raise(self, monkeypatch):
+        captured: dict[str, Any] = {}
+
+        def request_sender(method, path, payload):
+            captured["payload"] = payload
+            return {
+                "data": {
+                    "id": "c1",
+                    "trace_id": "trace_1",
+                    "author_user_id": "sdk-user",
+                    "content": payload["content"],
+                    "created_at": "2026-03-10T14:11:00+00:00",
+                    "updated_at": "2026-03-10T14:11:00+00:00",
+                }
+            }
+
+        client = ObservabilityClient(
+            ObservabilityConfig(
+                backend_origin="http://localhost:5000",
+                api_key="test-key",  # pragma: allowlist secret
+                batch_size=10,
+                max_buffer_age=0.1,
+                max_queue_size=10,
+                content_mode="record",
+            ),
+            sender=lambda traces: None,
+            request_sender=request_sender,
+        )
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("scrub exploded")
+
+        monkeypatch.setattr(
+            "traigent.observability.client.redact_sensitive_text", _boom
+        )
+
+        client.add_comment("trace_1", "a comment that would have been scrubbed")
+        client.close()
+
+        assert captured["payload"] == {"content": None}

@@ -145,10 +145,12 @@ class TestNestedRedaction:
 
     def test_numeric_token_counts_survive_credential_key_match(self) -> None:
         """`is_credential_key_name` matches the substring ``token``, so
-        ``*_tokens`` telemetry keys trip the credential check. Numeric values
-        under such keys MUST survive (redacting token counts would corrupt
-        usage/cost telemetry) -- only string values under credential keys are
-        masked."""
+        ``*_tokens`` telemetry keys trip the credential check. M5: numeric
+        values under such keys survive ONLY at the approved exemption paths
+        -- ``usage.{prompt_tokens,completion_tokens,total_tokens}`` and a
+        bare ``max_tokens`` -- not merely by being numeric (see
+        `test_numeric_secret_under_credential_key_is_masked` and
+        `TestApprovedNumericCounterExemption` for the negative cases)."""
         out = redact_sensitive_data(
             {
                 "usage": {
@@ -184,8 +186,10 @@ class TestNestedRedaction:
             redact_credential_keys=True,
         )
         assert out["api_key"]["value"] == "[REDACTED]"
-        # Non-string leaf under the credential subtree is preserved.
-        assert out["authorization"] == ["[REDACTED]", 5]
+        # M5: sensitivity is inherited by every descendant under a credential
+        # key -- both string and numeric leaves are masked; only booleans and
+        # None pass through unchanged (see the sibling class below).
+        assert out["authorization"] == ["[REDACTED]", "[REDACTED]"]
 
     def test_redacted_prefixed_value_is_not_trusted(self) -> None:
         """A value crafted to start with ``[REDACTED`` must NOT be passed
@@ -225,13 +229,15 @@ class TestNestedRedaction:
         )
         assert hardened["auth_source"] == "[REDACTED]"
 
-    def test_numeric_secret_under_credential_key_survives_known_limitation(
+    def test_numeric_secret_under_credential_key_is_masked(
         self,
     ) -> None:
-        """Documented limitation: numeric values are preserved (to keep
-        token-count telemetry), so a numeric-valued secret survives. Real
-        credentials are strings and ARE masked; a numeric can't be told apart
-        from a token count by type."""
+        """M5 fix (was a documented limitation): a numeric-valued secret
+        under a credential-shaped key (e.g. a PIN-like password, or a PAN
+        stored as an int) is masked just like a string secret. Real usage
+        counters survive only at the approved M5 exemption paths -- see
+        `TestApprovedNumericCounterExemption` below -- never merely by
+        being numeric."""
         out = redact_sensitive_data(
             {
                 "password": 123456,
@@ -239,9 +245,8 @@ class TestNestedRedaction:
             },  # pragma: allowlist secret
             redact_credential_keys=True,
         )
-        # String secret masked; numeric "secret" preserved (accepted tradeoff).
         assert out["api_key"] == "[REDACTED]"
-        assert out["password"] == 123456
+        assert out["password"] == "[REDACTED]"
 
     def test_list_recursive(self) -> None:
         out = redact_sensitive_data(["alice@example.com", "plain"])
@@ -250,3 +255,83 @@ class TestNestedRedaction:
 
     def test_none_passthrough(self) -> None:
         assert redact_sensitive_text(None) is None
+
+    def test_bool_and_none_under_credential_key_are_unchanged(self) -> None:
+        """M5: only strings and numbers are masked under a credential-like
+        key; booleans and ``None`` pass through unchanged."""
+        out = redact_sensitive_data(
+            {"api_key": {"is_active": True, "rotated": False, "backup": None}},
+            redact_credential_keys=True,
+        )
+        assert out["api_key"] == {
+            "is_active": True,
+            "rotated": False,
+            "backup": None,
+        }
+
+    def test_cookie_key_is_credential_like(self) -> None:
+        """M5: the union of both SDKs' key-root lists includes ``cookie``."""
+        assert is_credential_key_name("cookie")
+        assert is_credential_key_name("session_cookie")
+        out = redact_sensitive_data(
+            {"cookie": "sessionid=abc123"}, redact_credential_keys=True
+        )
+        assert out["cookie"] == "[REDACTED]"
+
+
+class TestApprovedNumericCounterExemption:
+    """M5: the exemption is scoped to exact (parent, key) shapes -- never to
+    "any number under a credential-like key" -- so a numeric secret cannot
+    hide behind a plausible-looking counter key name."""
+
+    def test_usage_counters_survive_only_directly_under_usage(self) -> None:
+        out = redact_sensitive_data(
+            {
+                "usage": {
+                    "prompt_tokens": 50,
+                    "completion_tokens": 20,
+                    "total_tokens": 70,
+                },
+                # Same key name, wrong parent: NOT exempt.
+                "total_tokens": 999,
+                "billing": {"total_tokens": 111},
+            },
+            redact_credential_keys=True,
+        )
+        assert out["usage"] == {
+            "prompt_tokens": 50,
+            "completion_tokens": 20,
+            "total_tokens": 70,
+        }
+        assert out["total_tokens"] == "[REDACTED]"
+        assert out["billing"]["total_tokens"] == "[REDACTED]"
+
+    def test_max_tokens_survives_at_any_parent(self) -> None:
+        out = redact_sensitive_data(
+            {
+                "max_tokens": 4096,
+                "model_parameters": {"max_tokens": 2048},
+            },
+            redact_credential_keys=True,
+        )
+        assert out["max_tokens"] == 4096
+        assert out["model_parameters"]["max_tokens"] == 2048
+
+    def test_exemption_nested_inside_credential_subtree_is_not_honored(self) -> None:
+        """A `usage.total_tokens`-shaped value nested inside an already
+        credential-flagged subtree (e.g. under ``api_key``) is adversarial
+        shaped, not legitimate telemetry -- it stays masked."""
+        out = redact_sensitive_data(
+            {"api_key": {"usage": {"total_tokens": 5}}},
+            redact_credential_keys=True,
+        )
+        assert out["api_key"]["usage"]["total_tokens"] == "[REDACTED]"
+
+    def test_non_numeric_value_at_approved_path_is_still_masked(self) -> None:
+        """A stray string at an approved path is masked, safe-side -- the
+        exemption is for numeric telemetry, not for the key name alone."""
+        out = redact_sensitive_data(
+            {"usage": {"total_tokens": "not-a-number"}},
+            redact_credential_keys=True,
+        )
+        assert out["usage"]["total_tokens"] == "[REDACTED]"

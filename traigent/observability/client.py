@@ -20,11 +20,14 @@ from urllib.parse import urlencode
 
 from traigent.cloud.async_batch_transport import BatchFlushResult
 from traigent.observability.config import (
-    OBSERVABILITY_CONTENT_MODES,
+    NOT_SUPPLIED,
     ObservabilityConfig,
     apply_content_mode,
     apply_content_mode_to_text,
+    most_restrictive_content_mode,
     nonblank_credential,
+    validate_content_mode_override,
+    wire_value_for_tightened_update,
 )
 from traigent.observability.dtos import (
     OBSERVABILITY_STATUSES,
@@ -52,6 +55,7 @@ from traigent.security.redaction import redact_sensitive_data, redact_sensitive_
 from traigent.utils.exceptions import (
     AuthenticationError,
     ClientError,
+    ContentDisabledError,
     TraigentConnectionError,
 )
 from traigent.utils.logging import get_logger
@@ -110,6 +114,102 @@ def _new_trace_id() -> str:
 
 def _new_observation_id() -> str:
     return f"obs_{uuid.uuid4().hex}"
+
+
+_CONTENT_BAG_FIELDS = ("metadata", "input_data", "output_data")
+
+
+def _harden_content_bags(payload: Any) -> Any:
+    """Apply credential-key-name hardening ONLY to the arbitrary,
+    caller-supplied content bags (`metadata` / `input_data` / `output_data`)
+    on a trace/observation payload dict -- recursing into `observations` and
+    `children` -- rather than to the whole structural payload.
+
+    `redact_sensitive_data(..., redact_credential_keys=True)` treats any key
+    whose NAME looks credential-like as a secret subtree: necessary for
+    catching a secret hiding inside a caller-supplied bag under a plausible
+    key name (M5), but wrong for the DTO's OWN structural field names --
+    `input_tokens` / `output_tokens` / `total_tokens` all substring-match the
+    `token` credential root. Those are typed, schema-fixed numeric telemetry
+    at a FIXED position in every payload, never an arbitrary caller-chosen
+    key, so the credential-key check must never even consider them. Scoping
+    *where* that check applies (here) -- rather than special-casing these
+    field names inside the generic redactor -- is what keeps a genuinely
+    arbitrary `total_tokens` key placed inside a caller-supplied bag still
+    non-exempt (see `redact_sensitive_data`'s `usage.*`/`max_tokens`
+    exemption, which stays narrow because it never has to reach these
+    fields in the first place).
+
+    The caller still runs the result through `redact_sensitive_data(...,
+    redact_credential_keys=False)` for value-pattern hygiene (PII-looking
+    strings anywhere) without a second key-name pass.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    hardened = dict(payload)
+    for field_name in _CONTENT_BAG_FIELDS:
+        if field_name in hardened:
+            hardened[field_name] = redact_sensitive_data(
+                hardened[field_name], redact_credential_keys=True
+            )
+    for list_field in ("observations", "children"):
+        items = hardened.get(list_field)
+        if isinstance(items, list):
+            hardened[list_field] = [_harden_content_bags(item) for item in items]
+    return hardened
+
+
+def _withhold_all_content_bags(payload: Any) -> Any:
+    """M8 fail-closed fallback: strip every content bag from a trace/
+    observation payload rather than send it unredacted or propagate an
+    exception out of the caller's `start_trace`/`record_observation`/
+    `end_trace` call. Used only when redaction/gating itself raised.
+    Structural fields (ids, timestamps, token counts, cost) are untouched.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    stripped = dict(payload)
+    for field_name in _CONTENT_BAG_FIELDS:
+        if field_name in stripped:
+            stripped[field_name] = {} if field_name == "metadata" else None
+    for list_field in ("observations", "children"):
+        items = stripped.get(list_field)
+        if isinstance(items, list):
+            stripped[list_field] = [_withhold_all_content_bags(item) for item in items]
+    return stripped
+
+
+def _redact_trace_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Full redaction pass for an outbound trace/observation snapshot.
+
+    Hardens `metadata`/`input_data`/`output_data` (M5's credential-key-name
+    sweep, scoped to just those bags -- see `_harden_content_bags`), then
+    value-scans the ENTIRE payload (`redact_credential_keys=False`) for
+    PII-shaped text without a second key-name pass -- preserving structural
+    fields (ids, timestamps, token counts, cost) everywhere else.
+
+    M8 (fail closed): if redaction itself raises -- a caller-supplied
+    payload can hold arbitrary, even pathological, objects -- this never
+    propagates the exception (which would break the caller's application
+    inside their own `start_trace`/`record_observation`/`end_trace` call)
+    and never returns the unredacted payload (which would leak content). It
+    logs and withholds every content bag for this payload instead.
+    """
+    try:
+        return cast(
+            dict[str, Any],
+            redact_sensitive_data(
+                _harden_content_bags(payload), redact_credential_keys=False
+            ),
+        )
+    except Exception:
+        logger.error(
+            "Observability content redaction failed; withholding all "
+            "content fields for this trace/observation payload rather than "
+            "sending them unredacted.",
+            exc_info=True,
+        )
+        return cast(dict[str, Any], _withhold_all_content_bags(payload))
 
 
 def _parse_retry_after(headers: Any) -> float | None:
@@ -647,11 +747,11 @@ class _SyncBatchTransport:
         # Direct transport callers bypass ObservabilityClient's trace redaction.
         # Preserve credential-key-name redaction (c4d874c3): this is a confirmed
         # egress path carrying arbitrary user keys, so opt in as the other two
-        # egress call sites do.
-        redacted_payload = cast(
-            dict[str, Any],
-            redact_sensitive_data(payload, redact_credential_keys=True),
-        )
+        # egress call sites do. `_redact_trace_payload` scopes the key-name
+        # sweep to the content bags so a directly-submitted trace/observation
+        # payload's own `input_tokens`/`output_tokens`/`total_tokens` fields
+        # are never mistaken for a `token`-rooted credential key (M5).
+        redacted_payload = _redact_trace_payload(payload)
         copied_payload = copy.deepcopy(redacted_payload)
         return _BufferedPayload(
             payload=copied_payload,
@@ -973,19 +1073,27 @@ class ObservabilityClient:
         """Resolve a per-call `content_mode` override against the client default.
 
         This is the enforcement point: `start_trace`, `record_observation`,
-        and `end_trace` all call it (via `apply_content_mode`) so the
+        `end_trace`, `add_comment`, and `submit_feedback` all call it so the
         `content_mode` policy applies whether a caller goes through the
         `observe` decorator/context manager or calls these client methods
         directly. `None` means "use this client's configured default"
-        (`self.config.content_mode`); an explicit value overrides it for
-        just this call, exactly like `observe(..., content_mode=...)`.
+        (`self.config.content_mode`).
+
+        M2: an explicit per-call override may only TIGHTEN an explicitly-set
+        client-level result, never loosen it -- an explicit privacy-on
+        setting anywhere (constructor option, env, or legacy env) must never
+        lose to a looser per-call `content_mode=`. When the client-level
+        result is just the bare "nothing configured" default
+        (`self.config.content_mode_explicit` is `False`), there is no
+        explicit policy to protect, so the per-call override is used as-is
+        for just this call -- this is the normal, documented way a caller
+        opts a single call into `record`/`redacted` capture.
         """
-        if content_mode is None:
+        normalized = validate_content_mode_override(content_mode)
+        if normalized is None:
             return self.config.content_mode
-        normalized = content_mode.strip().lower()
-        if normalized not in OBSERVABILITY_CONTENT_MODES:
-            allowed = ", ".join(sorted(OBSERVABILITY_CONTENT_MODES))
-            raise ValueError(f"content_mode must be one of: {allowed}")
+        if self.config.content_mode_explicit:
+            return most_restrictive_content_mode(normalized, self.config.content_mode)
         return normalized
 
     def start_trace(
@@ -999,8 +1107,8 @@ class ObservabilityClient:
         release: str | None = None,
         tags: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
-        input_data: Any = None,
-        output_data: Any = None,
+        input_data: Any = NOT_SUPPLIED,
+        output_data: Any = NOT_SUPPLIED,
         custom_trace_id: str | None = None,
         started_at: datetime | None = None,
         session: SessionDTO | dict[str, Any] | None = None,
@@ -1018,11 +1126,19 @@ class ObservabilityClient:
             session_id = session_dto.id
 
         effective_content_mode = self._resolve_content_mode(content_mode)
-        gated_input_data = apply_content_mode(
-            input_data, effective_content_mode, force_redact=redact_input
+        gated_input_data = (
+            None
+            if input_data is NOT_SUPPLIED
+            else apply_content_mode(
+                input_data, effective_content_mode, force_redact=redact_input
+            )
         )
-        gated_output_data = apply_content_mode(
-            output_data, effective_content_mode, force_redact=redact_output
+        gated_output_data = (
+            None
+            if output_data is NOT_SUPPLIED
+            else apply_content_mode(
+                output_data, effective_content_mode, force_redact=redact_output
+            )
         )
 
         trace = TraceDTO(
@@ -1069,8 +1185,8 @@ class ObservabilityClient:
         cost_usd: float | None = None,
         model_name: str | None = None,
         tool_name: str | None = None,
-        input_data: Any = None,
-        output_data: Any = None,
+        input_data: Any = NOT_SUPPLIED,
+        output_data: Any = NOT_SUPPLIED,
         metadata: dict[str, Any] | None = None,
         correlation_ids: CorrelationIds | dict[str, str] | None = None,
         prompt_reference: PromptReferenceDTO | dict[str, Any] | None = None,
@@ -1086,11 +1202,31 @@ class ObservabilityClient:
         )
 
         effective_content_mode = self._resolve_content_mode(content_mode)
-        input_data = apply_content_mode(
-            input_data, effective_content_mode, force_redact=redact_input
+        # M4: NOT_SUPPLIED (the default) means "this call never touched the
+        # field" -- skip gating entirely and, on an update, keep whatever was
+        # previously recorded. A SUPPLIED value (including an explicit
+        # `None`, e.g. a decorated function that legitimately returned
+        # `None`) is real content subject to `content_mode` gating, and on
+        # an update OVERWRITES the existing field with the freshly gated
+        # result -- this is the fix for the historical bug where a
+        # metadata-mode update could not tell "I have nothing new" apart
+        # from "I have new content this mode forbids", so it silently kept
+        # content an earlier, less restrictive call had recorded.
+        input_supplied = input_data is not NOT_SUPPLIED
+        output_supplied = output_data is not NOT_SUPPLIED
+        gated_input_data = (
+            apply_content_mode(
+                input_data, effective_content_mode, force_redact=redact_input
+            )
+            if input_supplied
+            else None
         )
-        output_data = apply_content_mode(
-            output_data, effective_content_mode, force_redact=redact_output
+        gated_output_data = (
+            apply_content_mode(
+                output_data, effective_content_mode, force_redact=redact_output
+            )
+            if output_supplied
+            else None
         )
         metadata = dict(metadata or {})
         if error is not None:
@@ -1143,8 +1279,8 @@ class ObservabilityClient:
                     cost_usd=cost_usd,
                     model_name=model_name,
                     tool_name=tool_name,
-                    input_data=input_data,
-                    output_data=output_data,
+                    input_data=gated_input_data,
+                    output_data=gated_output_data,
                     metadata=dict(metadata or {}),
                     correlation_ids=self._coerce_correlation_ids(correlation_ids),
                     prompt_reference=self._coerce_prompt_reference(prompt_reference),
@@ -1187,11 +1323,34 @@ class ObservabilityClient:
                     cost_usd=cost_usd if cost_usd is not None else existing.cost_usd,
                     model_name=model_name or existing.model_name,
                     tool_name=tool_name or existing.tool_name,
+                    # M4 fix: fall back to `existing` only when this call
+                    # never supplied the field (NOT_SUPPLIED) -- a supplied
+                    # value, gated, always overwrites, even when gating
+                    # withheld it to `None` (tightening wins; see the
+                    # `apply_content_mode` docstring). `wire_value_for_
+                    # tightened_update` additionally forces the explicit
+                    # placeholder (not `None`) when this is a tightening
+                    # update over PRIOR content -- the ingest contract's
+                    # `apply_updates` keeps stored content on an
+                    # omitted/`None` field, so merely omitting would not
+                    # clear it server-side.
                     input_data=(
-                        input_data if input_data is not None else existing.input_data
+                        wire_value_for_tightened_update(
+                            gated_input_data,
+                            effective_content_mode=effective_content_mode,
+                            existing_value=existing.input_data,
+                        )
+                        if input_supplied
+                        else existing.input_data
                     ),
                     output_data=(
-                        output_data if output_data is not None else existing.output_data
+                        wire_value_for_tightened_update(
+                            gated_output_data,
+                            effective_content_mode=effective_content_mode,
+                            existing_value=existing.output_data,
+                        )
+                        if output_supplied
+                        else existing.output_data
                     ),
                     metadata=merged_metadata,
                     correlation_ids=(
@@ -1232,7 +1391,7 @@ class ObservabilityClient:
         trace_id: str,
         *,
         status: str = "completed",
-        output_data: Any = None,
+        output_data: Any = NOT_SUPPLIED,
         ended_at: datetime | None = None,
         started_at: datetime | None = None,
         metadata: dict[str, Any] | None = None,
@@ -1243,8 +1402,19 @@ class ObservabilityClient:
             allowed = ", ".join(sorted(OBSERVABILITY_STATUSES))
             raise ValueError(f"status must be one of: {allowed}")
         effective_content_mode = self._resolve_content_mode(content_mode)
-        output_data = apply_content_mode(
-            output_data, effective_content_mode, force_redact=redact_output
+        # M4: same NOT_SUPPLIED-vs-supplied fix as `record_observation` --
+        # `end_trace` is itself "a later update" of the trace's output_data,
+        # so it is subject to the same tightening-must-win requirement. A
+        # status-only `end_trace(trace_id)` call must not disturb
+        # `output_data`; a call that supplies output_data (even under a mode
+        # that withholds it) must overwrite whatever was recorded before.
+        output_supplied = output_data is not NOT_SUPPLIED
+        gated_output_data = (
+            apply_content_mode(
+                output_data, effective_content_mode, force_redact=redact_output
+            )
+            if output_supplied
+            else None
         )
         with self._lock:
             state = self._trace_states.get(trace_id)
@@ -1254,8 +1424,15 @@ class ObservabilityClient:
             if started_at is not None:
                 state.trace.started_at = started_at
             state.trace.ended_at = ended_at or utc_now()
-            if output_data is not None:
-                state.trace.output_data = output_data
+            if output_supplied:
+                # Ingest-contract fix: force the explicit placeholder (not
+                # `None`) when this tightens over prior content -- see
+                # `wire_value_for_tightened_update`.
+                state.trace.output_data = wire_value_for_tightened_update(
+                    gated_output_data,
+                    effective_content_mode=effective_content_mode,
+                    existing_value=state.trace.output_data,
+                )
             if metadata:
                 merged = dict(state.trace.metadata)
                 merged.update(metadata)
@@ -1282,12 +1459,7 @@ class ObservabilityClient:
             trace_payloads = [
                 (
                     trace_id,
-                    cast(
-                        dict[str, Any],
-                        redact_sensitive_data(
-                            state.to_payload(), redact_credential_keys=True
-                        ),
-                    ),
+                    _redact_trace_payload(state.to_payload()),
                 )
                 for trace_id, state in self._trace_states.items()
             ]
@@ -1364,12 +1536,7 @@ class ObservabilityClient:
                     trace_payloads = [
                         (
                             trace_id,
-                            cast(
-                                dict[str, Any],
-                                redact_sensitive_data(
-                                    state.to_payload(), redact_credential_keys=True
-                                ),
-                            ),
+                            _redact_trace_payload(state.to_payload()),
                         )
                         for trace_id, state in self._trace_states.items()
                     ]
@@ -1588,10 +1755,38 @@ class ObservabilityClient:
         )
 
     def add_comment(self, trace_id: str, content: str) -> TraceCommentRecord:
+        """Post a free-text comment on a trace (M3).
+
+        A comment IS content -- there is no non-content way to post one --
+        so, unlike `record_observation`/`end_trace`, `metadata` mode cannot
+        just withhold a field and still send the call: it refuses locally,
+        before anything is sent. `redacted` sends the placeholder; `record`
+        sends the text after mandatory secret scrubbing.
+        """
+        effective_content_mode = self._resolve_content_mode(None)
+        if effective_content_mode == "metadata":
+            raise ContentDisabledError(
+                "add_comment content is disabled because content_mode="
+                "'metadata'; use content_mode='redacted' or 'record' on this "
+                "client, or attach non-content metadata instead."
+            )
+        gated_content = apply_content_mode_to_text(content, effective_content_mode)
+        if effective_content_mode == "record" and gated_content is not None:
+            # M8 fail closed: a scrub failure must withhold, never send the
+            # unscrubbed comment or raise out of this call.
+            try:
+                gated_content = redact_sensitive_text(gated_content)
+            except Exception:
+                logger.error(
+                    "Comment secret scrubbing failed; withholding comment "
+                    "content rather than sending it unscrubbed.",
+                    exc_info=True,
+                )
+                gated_content = None
         payload = self._request_json(
             "POST",
             f"/traces/{trace_id}/comments",
-            {"content": content},
+            {"content": gated_content},
         )
         return TraceCommentRecord.from_dict(self._unwrap_data(payload, "trace comment"))
 
@@ -1601,22 +1796,71 @@ class ObservabilityClient:
         rating: ThumbRating | str,
         *,
         comment: str | None = None,
-        correction_output: Any = None,
+        correction_output: Any = NOT_SUPPLIED,
     ) -> TraceFeedbackResponse:
+        """Submit thumbs up/down feedback, an optional comment and correction (M3).
+
+        Unlike `add_comment`, this call always has a non-content payload
+        (`rating`) it can send, so `metadata` mode never raises here: it
+        sends `rating` and silently omits `comment`/`correction_output`.
+        `redacted` sends placeholders for both; `record` sends them after
+        mandatory secret scrubbing. `correction_output` is validated as
+        JSON-serializable regardless of mode (fail fast on malformed input
+        even when the mode would go on to withhold it).
+        """
         if isinstance(rating, str):
             rating = ThumbRating(rating)
-        correction_output = self._ensure_json_serializable(
-            correction_output,
-            field_name="correction_output",
-        )
+
+        effective_content_mode = self._resolve_content_mode(None)
+
+        gated_comment = apply_content_mode_to_text(comment, effective_content_mode)
+        if effective_content_mode == "record" and gated_comment is not None:
+            # M8 fail closed: see `add_comment`.
+            try:
+                gated_comment = redact_sensitive_text(gated_comment)
+            except Exception:
+                logger.error(
+                    "Feedback comment secret scrubbing failed; withholding "
+                    "comment content rather than sending it unscrubbed.",
+                    exc_info=True,
+                )
+                gated_comment = None
+
+        gated_correction_output: Any = None
+        if correction_output is not NOT_SUPPLIED:
+            correction_output = self._ensure_json_serializable(
+                correction_output,
+                field_name="correction_output",
+            )
+            gated_correction_output = apply_content_mode(
+                correction_output, effective_content_mode
+            )
+            if (
+                effective_content_mode == "record"
+                and gated_correction_output is not None
+            ):
+                try:
+                    gated_correction_output = redact_sensitive_data(
+                        gated_correction_output, redact_credential_keys=True
+                    )
+                except Exception:
+                    logger.error(
+                        "Feedback correction_output secret scrubbing failed; "
+                        "withholding it rather than sending it unscrubbed.",
+                        exc_info=True,
+                    )
+                    gated_correction_output = None
+
+        feedback_payload: dict[str, Any] = {"rating": rating.value}
+        if gated_comment is not None:
+            feedback_payload["comment"] = gated_comment
+        if gated_correction_output is not None:
+            feedback_payload["correction_output"] = gated_correction_output
+
         payload = self._request_json(
             "PUT",
             f"/traces/{trace_id}/feedback",
-            {
-                "rating": rating.value,
-                "comment": comment,
-                "correction_output": correction_output,
-            },
+            feedback_payload,
         )
         return TraceFeedbackResponse.from_dict(
             self._unwrap_data(payload, "trace feedback")
@@ -2019,10 +2263,7 @@ class ObservabilityClient:
             state = self._trace_states.get(trace_id)
             if state is None or self._closed or self._close_pending:
                 return
-            payload = cast(
-                dict[str, Any],
-                redact_sensitive_data(state.to_payload(), redact_credential_keys=True),
-            )
+            payload = _redact_trace_payload(state.to_payload())
             self._inflight_snapshot_submissions += 1
             self._snapshot_submission_complete.clear()
         try:
