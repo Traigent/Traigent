@@ -5530,6 +5530,183 @@ class TestB3SerializationAndScrubbingFailureSendsPlaceholder:
             )
 
 
+class TestFinding1ErrorMessagePlaceholderSurvivesFallback:
+    """astra out-astra-privacy-r4.md finding 1 (CONFIRMED, P1). The B3
+    fallback (`_safe_allowlisted_observation_snapshot`) tracked prior
+    content for `input_data`/`output_data` (via `_TraceState.
+    content_history`) but not `error_message` -- also free-form content
+    (an interpolated exception string), and subject to the exact same
+    "tightening must never leave stale content stored" rule the normal,
+    non-fallback update path already enforces
+    (`test_error_message_tightening_never_merges_stale_text` above): a
+    later call whose mode withholds error text force-clears
+    `existing.metadata["error_message"]` to `"[REDACTED]"` in LOCAL state.
+
+    The old fallback dropped the observation's `metadata` (and, pre-B3,
+    the observation itself) unconditionally, so when snapshot BUILD
+    (serialization or redaction) failed for an update that tightened away
+    prior error text, the outbound payload carried no `metadata` at all
+    for that observation. Under the backend's skip-omitted-fields
+    contract, the earlier call's REAL exception text -- already delivered
+    once, successfully -- stayed stored server-side, even though local
+    state had already moved on to the placeholder.
+
+    Fix: `_TraceState.content_history` also tracks, per observation,
+    whether `error_message` carried real text before the value now held
+    (`record_observation`'s new `existing.metadata.get("error_message")
+    is not None` branch); `_safe_allowlisted_observation_snapshot` emits
+    `{"metadata": {"error_message": "[REDACTED]"}}` when that history says
+    so, instead of omitting `metadata` entirely.
+
+    Both triggers finding 1 named are exercised here, on the REAL outbound
+    payload: a cyclic `metadata` value on the update (a SERIALIZATION
+    failure in `state.to_payload()`/`to_jsonable`) and an injected
+    scrubber exception (a REDACTION failure in `redact_sensitive_data`).
+
+    Negative control (each test): reverting
+    `_safe_allowlisted_observation_snapshot` to drop the
+    `had_prior_error_message`/`metadata` branch (the pre-fix version)
+    makes both tests below fail -- the observation's `metadata` key would
+    then be entirely absent from the fallback snapshot, so
+    `observation["metadata"]["error_message"]` would raise `KeyError`
+    rather than read `"[REDACTED]"`.
+    """
+
+    def test_1_cyclic_metadata_update_over_prior_error_sends_placeholder(self):
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        sensitive = "PRIOR_ERROR patient diagnosis cancer stage 3"
+
+        trace_id = client.start_trace("finding1-cyclic-metadata-trace")
+        observation_id = client.record_observation(
+            trace_id,
+            name="op",
+            status="failed",
+            content_mode="record",
+            error=ValueError(sensitive),
+        )
+        client.flush()
+        # Confirm the real error text was actually delivered first, so the
+        # later placeholder is a genuine CLEAR, not a first-write omission.
+        first_observation = sent_batches[-1][-1]["observations"][0]
+        assert first_observation["metadata"]["error_message"] == sensitive
+
+        cyclic: dict[str, Any] = {"note": "hello"}
+        cyclic["self"] = cyclic
+        # Tightening update over the SAME observation: metadata mode
+        # withholds the new error text (forcing the placeholder in local
+        # state), AND this call's own `metadata` argument is cyclic, so
+        # `state.to_payload()` (`to_jsonable`) fails to serialize the
+        # snapshot and the M8/A5 fallback fires.
+        client.record_observation(
+            trace_id,
+            observation_id=observation_id,
+            name="op",
+            status="failed",
+            content_mode="metadata",
+            error=ValueError("brand new error text"),
+            metadata=cyclic,
+        )
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        observation = next(
+            obs for obs in trace_payload["observations"] if obs["id"] == observation_id
+        )
+        assert observation["metadata"]["error_message"] == "[REDACTED]"
+        # The FIRST batch legitimately carried `sensitive` (that send was
+        # correct, real content under `content_mode="record"`); it is the
+        # LAST batch -- built AFTER the tightening update -- that must
+        # never carry either the old real text or the new withheld text.
+        assert sensitive not in json.dumps(trace_payload)
+        assert "brand new error text" not in json.dumps(sent_batches)
+
+    def test_2_scrubber_exception_update_over_prior_error_sends_placeholder(
+        self, monkeypatch
+    ):
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        sensitive = "PRIOR_ERROR patient diagnosis cancer stage 3"
+
+        trace_id = client.start_trace("finding1-scrubber-exception-trace")
+        observation_id = client.record_observation(
+            trace_id,
+            name="op",
+            status="failed",
+            content_mode="record",
+            error=ValueError(sensitive),
+        )
+        client.flush()
+        first_observation = sent_batches[-1][-1]["observations"][0]
+        assert first_observation["metadata"]["error_message"] == sensitive
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("scrub exploded")
+
+        monkeypatch.setattr(
+            "traigent.observability.client.redact_sensitive_data", _boom
+        )
+
+        # Tightening update over the SAME observation: metadata mode
+        # withholds the new error text, and this time the REDACTION pass
+        # itself (not serialization) fails.
+        client.record_observation(
+            trace_id,
+            observation_id=observation_id,
+            name="op",
+            status="failed",
+            content_mode="metadata",
+            error=ValueError("brand new error text"),
+        )
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        observation = next(
+            obs for obs in trace_payload["observations"] if obs["id"] == observation_id
+        )
+        assert observation["metadata"]["error_message"] == "[REDACTED]"
+        # As above: only the LAST batch (post-tightening) must be clean --
+        # the FIRST batch legitimately carried `sensitive`.
+        assert sensitive not in json.dumps(trace_payload)
+        assert "brand new error text" not in json.dumps(sent_batches)
+
+    def test_3_first_write_failure_with_no_prior_error_may_omit_metadata(
+        self, monkeypatch
+    ):
+        """Regression guard mirroring B3 test 4: a genuine first write (no
+        prior `error_message` stored at all) that then hits the M8/A5
+        fallback may still omit `metadata` entirely -- there is nothing
+        stored server-side yet to leak."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        trace_id = client.start_trace("finding1-first-write-trace")
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("scrub exploded")
+
+        monkeypatch.setattr(
+            "traigent.observability.client.redact_sensitive_data", _boom
+        )
+        observation_id = client.record_observation(
+            trace_id,
+            name="op",
+            status="failed",
+            content_mode="metadata",
+            error=ValueError("first failure"),
+        )
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        observation = next(
+            obs for obs in trace_payload["observations"] if obs["id"] == observation_id
+        )
+        assert "error_message" not in observation.get("metadata", {})
+
+
 class TestB1OutboundCounterexamples:
     """ADDENDUM R3 B1 (+ R3.1, captain ruling): the exact named
     counterexamples, through the full end-to-end outbound pipeline
@@ -5980,3 +6157,127 @@ class TestB6LegacyBooleanEnvValidation:
         config = ObservabilityConfig(backend_origin="https://auth.example.com")
 
         assert config.content_mode == expected_mode
+
+
+class TestFinding2SnapshotFallbackDescriptorIsImmutableAfterLaterMutations:
+    """astra out-astra-privacy-r4.md finding 2 (CONFIRMED, P2): a
+    regression the PREVIOUS fix round introduced. `_queue_trace_snapshot`
+    built the outbound payload under the client lock, but then released
+    the lock and called `_submit_trace_snapshot`/the transport with the
+    LIVE, shared `_TraceState` still attached as `state=`. Any later call
+    on the SAME trace -- running on another thread, or simply a later
+    call that mutates `state` before the transport gets around to using
+    it -- is visible through that same reference. If the transport's own
+    defensive redaction pass (`_prepare_payload` -> `_redact_trace_payload`
+    -> `_safe_allowlisted_snapshot`) fires for THAT (now-stale) submission,
+    it would read the MUTATED live state instead of the state as of when
+    the submission was actually enqueued -- the confirmed probe: freezing
+    a snapshot with one running observation, then completing it and
+    adding a new one, leaked the completed status and the new observation
+    into what should have been the frozen, stale submission's own
+    fallback.
+
+    Fix: `_queue_trace_snapshot`/`flush`/`close` freeze a
+    `_TraceFallbackDescriptor` (`_build_fallback_descriptor`) from `state`
+    while STILL holding the lock, and thread THAT immutable, detached
+    descriptor -- never `state` itself -- through
+    `_submit_trace_snapshot` into the transport.
+
+    This test intercepts `_SyncBatchTransport.submit` (bypassing real
+    network/threading timing, which the buffered transport's own
+    latest-write-wins semantics would otherwise make nondeterministic to
+    assert on) to capture the exact `state=` value `_queue_trace_snapshot`
+    hands it for ONE specific call, then drives further
+    `record_observation` calls that mutate the SAME trace, and confirms
+    the captured value is unchanged -- and that rebuilding the real
+    outbound fallback payload from it (`_safe_allowlisted_snapshot`,
+    exactly what the transport's own redaction-failure path calls) still
+    reflects only the original, frozen snapshot.
+
+    Negative control: reverting `_queue_trace_snapshot`'s
+    `self._submit_trace_snapshot(trace_id, payload, state=descriptor)`
+    back to `state=state` (the live `_TraceState`) makes this fail -- the
+    captured value is then the SAME shared, mutable object every later
+    call also mutates, so it reflects the completed status and the new
+    observation, and the rebuilt fallback payload gains the new
+    observation too.
+    """
+
+    def test_captured_descriptor_does_not_change_after_later_record_observation_calls(
+        self, monkeypatch
+    ):
+        from traigent.observability.client import _safe_allowlisted_snapshot
+
+        captured_states: list[Any] = []
+
+        client = ObservabilityClient(
+            ObservabilityConfig(
+                backend_origin="http://localhost:5000",
+                api_key="test-key",  # pragma: allowlist secret
+                batch_size=100,
+                max_buffer_age=999.0,
+                max_queue_size=10,
+            ),
+            sender=lambda traces: None,
+        )
+
+        def capturing_submit(item_id, payload, *, deadline=None, state=None):
+            captured_states.append(state)
+            return True
+
+        monkeypatch.setattr(client._transport, "submit", capturing_submit)
+
+        trace_id = client.start_trace("finding2-descriptor-immutability-trace")
+        observation_id = client.record_observation(
+            trace_id, name="step-1", status="running"
+        )
+
+        # The `state=` value captured for THIS specific submission must
+        # show exactly the one, running observation that existed when it
+        # was enqueued.
+        descriptor_after_first_call = captured_states[-1]
+        assert [obs.id for obs in descriptor_after_first_call.observations] == [
+            observation_id
+        ]
+        assert descriptor_after_first_call.observations[0].status == "running"
+
+        # Mutate the SAME live `_TraceState` on this trace: complete the
+        # observation captured above, then add a brand new one.
+        client.record_observation(
+            trace_id,
+            observation_id=observation_id,
+            name="step-1",
+            status="completed",
+        )
+        new_observation_id = client.record_observation(
+            trace_id, name="step-2", status="running"
+        )
+
+        # The EARLIER call's captured value must be completely unaffected
+        # by these later mutations -- finding 2's confirmed defect was
+        # exactly this reference staying live.
+        assert [obs.id for obs in descriptor_after_first_call.observations] == [
+            observation_id
+        ]
+        assert descriptor_after_first_call.observations[0].status == "running"
+        assert not any(
+            obs.id == new_observation_id
+            for obs in descriptor_after_first_call.observations
+        )
+
+        # And rebuilding the REAL outbound fallback payload from it --
+        # exactly what the transport's own defensive redaction pass calls
+        # on a scrubbing failure -- reflects only the frozen snapshot too.
+        fallback_payload = _safe_allowlisted_snapshot(
+            {}, state=descriptor_after_first_call
+        )
+        fallback_observation_ids = {
+            obs["id"] for obs in fallback_payload["observations"]
+        }
+        assert fallback_observation_ids == {observation_id}
+        matching = next(
+            obs
+            for obs in fallback_payload["observations"]
+            if obs["id"] == observation_id
+        )
+        assert matching["status"] == "running"

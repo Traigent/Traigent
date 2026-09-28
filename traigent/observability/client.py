@@ -301,7 +301,7 @@ def _safe_scalar(value: Any) -> Any:
 
 
 def _safe_allowlisted_observation_snapshot(
-    observation: ObservationDTO, state: _TraceState
+    descriptor: _ObservationFallbackDescriptor,
 ) -> dict[str, Any]:
     """Minimal, explicitly allowlisted snapshot for ONE observation, used
     when the trace-level M8/A5 fallback fires (`_safe_allowlisted_snapshot`).
@@ -314,43 +314,64 @@ def _safe_allowlisted_observation_snapshot(
     exactly the "never omit the clearing field" defect B3 forbids. This
     function always keeps the observation (by id) in the outbound update.
 
-    `id`/`status`/`type`/`parent_observation_id` are read directly off the
-    DTO -- these are SDK-controlled, schema-validated fields
-    (`ObservationDTO.__post_init__` requires `id`/`name` to be validated
-    strings and `status`/`type` to be validated enums/statuses), never
-    arbitrary caller content, so they carry the same trust level
-    `_safe_allowlisted_snapshot` already gives the trace's own `id`/
-    `status`. `name` is still replaced with the redaction placeholder (a
-    caller-chosen string, exactly like the trace-level `name`).
+    Finding 2 (astra out-astra-privacy-r4.md): takes an already-detached
+    `_ObservationFallbackDescriptor` -- frozen at snapshot-enqueue time,
+    while the client lock was held -- rather than the live `ObservationDTO`
+    plus a live, mutable `_TraceState`. Reading `id`/`status`/`type`/
+    `parent_observation_id`/`had_prior_*` off a fresh `ObservationDTO`/
+    `_TraceState` here would let a fallback that fires later (e.g. in the
+    transport's own defensive redaction pass, well after this call's lock
+    was released) reflect whatever those mutate into by then, rather than
+    this snapshot's own state -- see `_TraceFallbackDescriptor`.
+
+    `id`/`status`/`type`/`parent_observation_id` were themselves read off
+    the DTO when the descriptor was built -- SDK-controlled, schema-
+    validated fields (`ObservationDTO.__post_init__` requires `id`/`name`
+    to be validated strings and `status`/`type` to be validated
+    enums/statuses), never arbitrary caller content, so they carry the same
+    trust level `_safe_allowlisted_snapshot` already gives the trace's own
+    `id`/`status`. `name` is still replaced with the redaction placeholder
+    (a caller-chosen string, exactly like the trace-level `name`).
 
     Content fields (`input_data`/`output_data`) are included -- as the
-    clearing placeholder, NEVER the real value -- only when
-    `state.content_history` shows this observation's field carried content
-    BEFORE the value currently held (which may itself be the pathological
-    value that made serialization/redaction fail). A genuine first write
-    (nothing ever recorded for this field) is still safe to omit -- there is
-    nothing stored server-side yet to leak (M1/A2/B3 test 4).
+    clearing placeholder, NEVER the real value -- only when the descriptor
+    shows this observation's field carried content BEFORE the value
+    currently held (which may itself be the pathological value that made
+    serialization/redaction fail). A genuine first write (nothing ever
+    recorded for this field) is still safe to omit -- there is nothing
+    stored server-side yet to leak (M1/A2/B3 test 4).
+
+    Finding 1 (astra out-astra-privacy-r4.md, CONFIRMED P1): `error_message`
+    gets the SAME clearing treatment, inside `metadata` (where the normal,
+    non-fallback update path -- `record_observation`'s
+    `merged_metadata["error_message"] = "[REDACTED]"` branch -- already
+    writes it). The old fallback omitted `metadata` (indeed the whole
+    observation) entirely, so an observation that previously carried real
+    `error_message` text, then hit this fallback on a later update, sent no
+    `metadata` at all -- under the backend's skip-omitted-fields contract,
+    the PRIOR error text stayed stored server-side even though local state
+    (`existing.metadata["error_message"]`) already held "[REDACTED]".
     """
     safe: dict[str, Any] = {
-        "id": observation.id,
+        "id": descriptor.id,
         "name": "[REDACTED]",
-        "status": observation.status,
+        "status": descriptor.status,
     }
-    observation_type = getattr(observation.type, "value", None)
-    if isinstance(observation_type, str) and observation_type:
-        safe["type"] = observation_type
-    if isinstance(observation.parent_observation_id, str) and (
-        observation.parent_observation_id
-    ):
-        safe["parent_observation_id"] = observation.parent_observation_id
-    for field_name in _SAFE_SNAPSHOT_CONTENT_FIELDS:
-        if state.had_prior_content(observation.id, field_name):
-            safe[field_name] = redacted_content_marker()
+    if descriptor.type:
+        safe["type"] = descriptor.type
+    if descriptor.parent_observation_id:
+        safe["parent_observation_id"] = descriptor.parent_observation_id
+    if descriptor.had_prior_input_data:
+        safe["input_data"] = redacted_content_marker()
+    if descriptor.had_prior_output_data:
+        safe["output_data"] = redacted_content_marker()
+    if descriptor.had_prior_error_message:
+        safe["metadata"] = {"error_message": "[REDACTED]"}
     return safe
 
 
 def _safe_allowlisted_snapshot(
-    payload: dict[str, Any], *, state: _TraceState | None = None
+    payload: dict[str, Any], *, state: _TraceFallbackDescriptor | None = None
 ) -> dict[str, Any]:
     """M8/A5 last-resort fallback: when a trace snapshot cannot be safely
     redacted (redaction, or the DTO serialization that built `payload`
@@ -374,22 +395,35 @@ def _safe_allowlisted_snapshot(
     stored, because the backend's `apply_updates` skips fields/observations
     the update never mentions). When `state` is supplied (the trace/
     observation snapshot path -- never the generic comment/feedback/
-    transport-level redaction fallback, which has no `_TraceState` to
+    transport-level redaction fallback, which has no descriptor to
     consult), this instead:
       * includes `input_data`/`output_data` as the clearing placeholder
-        (never the real value, and never read off `payload` -- see
-        `_TraceState.content_history`) whenever `state` shows the trace
-        carried that content BEFORE the value now failing to
-        serialize/redact; a genuine first write still omits (B3 test 4).
+        (never the real value, and never read off `payload`) whenever
+        `state` shows the trace carried that content BEFORE the value now
+        failing to serialize/redact; a genuine first write still omits (B3
+        test 4).
       * always includes every known observation (by id, via
         `_safe_allowlisted_observation_snapshot`), so a failure never
-        drops an observation from the update entirely.
+        drops an observation from the update entirely -- and, per that
+        function, never drops a prior `error_message` either (finding 1).
     `payload` itself is deliberately NOT consulted for content-field
     presence: at redaction-failure time `payload` is the fully-serialized
     but UNREDACTED dict, so its content fields are present for every write
     (including a genuine first write) -- reading presence off `payload`
     cannot tell "first write" apart from "update over prior content" the
-    way `state.content_history` can.
+    way the descriptor can.
+
+    Finding 2 (astra out-astra-privacy-r4.md, CONFIRMED P2): `state` is a
+    `_TraceFallbackDescriptor` -- an immutable, detached snapshot of exactly
+    what this function needs, frozen at snapshot-enqueue time while the
+    client lock was held -- never the live, mutable `_TraceState` itself.
+    The live object is shared with every later call on the same trace, so
+    consulting it here (which can run much later, e.g. from the transport's
+    own defensive redaction pass, well after the enqueueing call released
+    the lock) risked reflecting whatever the trace mutated into by then --
+    a completed status, a newly added observation -- rather than THIS
+    snapshot's own state. See `_TraceFallbackDescriptor`/
+    `_build_fallback_descriptor`.
 
     This never raises and never returns `None`: a missing/unsafe `id` gets a
     freshly generated one rather than causing the whole snapshot to be
@@ -417,21 +451,19 @@ def _safe_allowlisted_snapshot(
         if value is not None:
             safe[field_name] = value
     if state is not None:
-        for field_name in _SAFE_SNAPSHOT_CONTENT_FIELDS:
-            if state.had_prior_content(_TRACE_CONTENT_KEY, field_name):
-                safe[field_name] = redacted_content_marker()
+        if state.had_prior_input_data:
+            safe["input_data"] = redacted_content_marker()
+        if state.had_prior_output_data:
+            safe["output_data"] = redacted_content_marker()
         safe["observations"] = [
-            _safe_allowlisted_observation_snapshot(
-                state.observations[observation_id], state
-            )
-            for observation_id in state.observation_order
-            if observation_id in state.observations
+            _safe_allowlisted_observation_snapshot(observation_descriptor)
+            for observation_descriptor in state.observations
         ]
     return safe
 
 
 def _safe_allowlisted_snapshot_or_static_fallback(
-    payload: Any, *, state: _TraceState | None = None
+    payload: Any, *, state: _TraceFallbackDescriptor | None = None
 ) -> dict[str, Any]:
     """Belt-and-suspenders wrapper around `_safe_allowlisted_snapshot`: even
     reading allowlisted fields off a sufficiently pathological `payload`
@@ -459,7 +491,7 @@ def _safe_allowlisted_snapshot_or_static_fallback(
 
 
 def _redact_trace_payload(
-    payload: dict[str, Any], *, state: _TraceState | None = None
+    payload: dict[str, Any], *, state: _TraceFallbackDescriptor | None = None
 ) -> dict[str, Any]:
     """Full redaction pass for an outbound trace/observation snapshot.
 
@@ -480,17 +512,21 @@ def _redact_trace_payload(
     and other fields (e.g. `name`, `user_id`) are arbitrary caller content
     too.
 
-    `state` (optional): the `_TraceState` this `payload` was built from, so
-    the M8 fallback can consult `state.content_history` (B3) rather than
-    `payload` itself -- `payload` here is the fully-serialized but
-    UNREDACTED dict, so it cannot distinguish a genuine first write from an
-    update over prior content the way `state.content_history` can. Threaded
-    through from `ObservabilityClient._submit_trace_snapshot` into the
-    transport's own defensive second redaction pass
-    (`_SyncBatchTransport._prepare_payload`) as well, so a scrubbing failure
-    THERE (re-redacting the already-safe payload this function just
-    produced) still reaches the same content-history-aware fallback rather
-    than a state-blind one. Left as `None` for callers with no associated
+    `state` (optional): a `_TraceFallbackDescriptor` -- an immutable,
+    detached snapshot of the trace's content-history/observation data,
+    frozen (under the client lock) at the moment THIS `payload` was built
+    -- so the M8 fallback can consult it (B3) rather than `payload` itself
+    -- `payload` here is the fully-serialized but UNREDACTED dict, so it
+    cannot distinguish a genuine first write from an update over prior
+    content the way the descriptor can. Threaded through from
+    `ObservabilityClient._submit_trace_snapshot` into the transport's own
+    defensive second redaction pass (`_SyncBatchTransport._prepare_payload`)
+    as well, so a scrubbing failure THERE (re-redacting the already-safe
+    payload this function just produced) -- which can run well after the
+    enqueueing call released the client lock -- still reaches the SAME
+    frozen descriptor, never a live `_TraceState` that may have mutated in
+    the meantime (finding 2/A8/M4 snapshot immutability) and never a
+    state-blind fallback. Left as `None` for callers with no associated
     trace state (e.g. a test that submits directly to `_SyncBatchTransport`
     without going through `ObservabilityClient`).
     """
@@ -553,7 +589,8 @@ class _TraceState:
     # `ObservabilityClient._resolve_trace_scoped_content_mode`.
     content_mode_locked: bool = False
     # B3 (addendum R3, A2 completion): per-entity record of which content
-    # fields (`_SAFE_SNAPSHOT_CONTENT_FIELDS`) have carried real content (or
+    # fields (`_SAFE_SNAPSHOT_CONTENT_FIELDS`, plus -- finding 1,
+    # observations only -- `"error_message"`) have carried real content (or
     # an earlier clearing placeholder) BEFORE the value now held on
     # `trace`/`observations` -- keyed by `_TRACE_CONTENT_KEY` for the trace
     # itself, or by observation id. Deliberately NOT derived from the
@@ -570,6 +607,14 @@ class _TraceState:
     # already performs for the normal (non-failure) tightening path --
     # never from the freshly-gated value that might be the one about to
     # fail. Monotonic: once a field is marked, it is never unmarked.
+    #
+    # This dict/set structure is itself mutable and lives on the shared,
+    # lock-guarded `_TraceState` -- never read directly by the M8/A5
+    # fallback machinery below. `_build_fallback_descriptor` snapshots it
+    # (as plain booleans, on a frozen `_TraceFallbackDescriptor`/
+    # `_ObservationFallbackDescriptor`) while the client lock is held, and
+    # that frozen snapshot -- never this dict -- is what threads through to
+    # the transport (finding 2/A8/M4 snapshot immutability).
     content_history: dict[str, set[str]] = field(default_factory=dict)
 
     def mark_content_history(self, entity_key: str, field_name: str) -> None:
@@ -597,7 +642,117 @@ class _TraceState:
         return cast(dict[str, Any], payload_trace.to_dict())
 
 
-def _safe_trace_snapshot(state: _TraceState) -> dict[str, Any]:
+@dataclass(frozen=True)
+class _ObservationFallbackDescriptor:
+    """Detached, per-observation data the M8/A5 fallback needs, frozen off
+    a live `ObservationDTO`/`_TraceState` at snapshot-enqueue time (see
+    `_build_fallback_descriptor`) -- part of the fix for finding 2 (astra
+    out-astra-privacy-r4.md, CONFIRMED P2): a fallback consulting the live,
+    mutable `_TraceState` after the client lock that guards it was
+    released could observe a LATER call's mutation (a completed status, a
+    newly added observation) instead of the state as of the snapshot this
+    fallback is standing in for.
+
+    `id`/`status`/`type`/`parent_observation_id` are read once, off the
+    schema-validated DTO, at build time -- SDK-controlled fields, never
+    arbitrary caller content (see `_safe_allowlisted_observation_snapshot`).
+    """
+
+    id: str
+    status: str
+    type: str | None
+    parent_observation_id: str | None
+    had_prior_input_data: bool
+    had_prior_output_data: bool
+    # Finding 1 (astra out-astra-privacy-r4.md, CONFIRMED P1): whether this
+    # observation previously carried real `error_message` text, so the
+    # fallback can clear it (inside `metadata`, matching the normal
+    # non-fallback update path) instead of omitting `metadata` -- and thus
+    # the prior error text -- entirely.
+    had_prior_error_message: bool
+
+
+@dataclass(frozen=True)
+class _TraceFallbackDescriptor:
+    """Detached, snapshot-specific data the M8/A5 trace-level fallback
+    needs (`_safe_allowlisted_snapshot`), frozen off a live `_TraceState` at
+    snapshot-enqueue time, under the client lock (see
+    `_build_fallback_descriptor`). Passed through
+    `ObservabilityClient._submit_trace_snapshot` and
+    `_SyncBatchTransport.submit`/`_prepare_payload` in place of the live
+    `_TraceState` itself -- fix for finding 2 (astra out-astra-privacy-r4.md,
+    CONFIRMED P2): those calls can run well after the enqueueing call
+    released the lock, so consulting the live, shared `_TraceState` there
+    risked reflecting a LATER call's mutation of the SAME trace rather than
+    the state as of this particular snapshot. Everything on this dataclass
+    is a plain, already-copied scalar/tuple -- no reference back into
+    `_TraceState` survives past `_build_fallback_descriptor`.
+    """
+
+    had_prior_input_data: bool
+    had_prior_output_data: bool
+    observations: tuple[_ObservationFallbackDescriptor, ...]
+
+
+def _build_fallback_descriptor(state: _TraceState) -> _TraceFallbackDescriptor:
+    """Freeze everything `_safe_allowlisted_snapshot`/
+    `_safe_allowlisted_observation_snapshot` might later need from `state`
+    into a `_TraceFallbackDescriptor` (finding 2/A8/M4 snapshot
+    immutability).
+
+    MUST be called while holding the lock that guards `state` (every call
+    site does -- `_safe_trace_snapshot` is only ever invoked under
+    `ObservabilityClient._lock`). Reads happen exactly once, at this
+    instant; nothing returned here holds a reference back into `state` --
+    every field is a plain `str`/`bool`/`None`, or a `tuple` of the same --
+    so no caller downstream (in particular the transport, which runs
+    OUTSIDE this lock and potentially long after it was released) can ever
+    observe a subsequent mutation of the live, shared `_TraceState`.
+    """
+    observation_descriptors: list[_ObservationFallbackDescriptor] = []
+    for observation_id in state.observation_order:
+        observation = state.observations.get(observation_id)
+        if observation is None:
+            continue
+        observation_type = getattr(observation.type, "value", None)
+        parent_observation_id = observation.parent_observation_id
+        observation_descriptors.append(
+            _ObservationFallbackDescriptor(
+                id=observation.id,
+                status=observation.status,
+                type=(
+                    observation_type
+                    if isinstance(observation_type, str) and observation_type
+                    else None
+                ),
+                parent_observation_id=(
+                    parent_observation_id
+                    if isinstance(parent_observation_id, str) and parent_observation_id
+                    else None
+                ),
+                had_prior_input_data=state.had_prior_content(
+                    observation.id, "input_data"
+                ),
+                had_prior_output_data=state.had_prior_content(
+                    observation.id, "output_data"
+                ),
+                had_prior_error_message=state.had_prior_content(
+                    observation.id, "error_message"
+                ),
+            )
+        )
+    return _TraceFallbackDescriptor(
+        had_prior_input_data=state.had_prior_content(_TRACE_CONTENT_KEY, "input_data"),
+        had_prior_output_data=state.had_prior_content(
+            _TRACE_CONTENT_KEY, "output_data"
+        ),
+        observations=tuple(observation_descriptors),
+    )
+
+
+def _safe_trace_snapshot(
+    state: _TraceState,
+) -> tuple[dict[str, Any], _TraceFallbackDescriptor]:
     """Build and redact an outbound trace snapshot from `state`, catching
     failures from EITHER step: `state.to_payload()` (DTO serialization --
     e.g. `to_jsonable`'s unbounded recursion on a cyclic caller-supplied
@@ -609,7 +764,19 @@ def _safe_trace_snapshot(state: _TraceState) -> dict[str, Any]:
     into the caller's application -- exactly what M8 forbids (finding 4's
     confirmed probe: a cyclic `input_data` raised `RecursionError` through
     this path).
+
+    Finding 2 (astra out-astra-privacy-r4.md, CONFIRMED P2): also builds and
+    returns the `_TraceFallbackDescriptor` for this snapshot
+    (`_build_fallback_descriptor`), frozen from `state` at THIS instant --
+    every one of this function's three call sites holds
+    `ObservabilityClient._lock` while calling it. Callers must thread the
+    returned descriptor (never `state` itself) into
+    `ObservabilityClient._submit_trace_snapshot`, so any later fallback --
+    including one firing in the transport, outside this lock and possibly
+    long after it was released -- reflects this snapshot, never whatever
+    `state` mutates into by then.
     """
+    descriptor = _build_fallback_descriptor(state)
     try:
         payload = state.to_payload()
     except Exception:
@@ -620,15 +787,18 @@ def _safe_trace_snapshot(state: _TraceState) -> dict[str, Any]:
             state.trace.id,
             exc_info=True,
         )
-        return _safe_allowlisted_snapshot_or_static_fallback(
-            {
-                "id": state.trace.id,
-                "name": state.trace.name,
-                "status": state.trace.status,
-            },
-            state=state,
+        return (
+            _safe_allowlisted_snapshot_or_static_fallback(
+                {
+                    "id": state.trace.id,
+                    "name": state.trace.name,
+                    "status": state.trace.status,
+                },
+                state=descriptor,
+            ),
+            descriptor,
         )
-    return _redact_trace_payload(payload, state=state)
+    return _redact_trace_payload(payload, state=descriptor), descriptor
 
 
 @dataclass(frozen=True)
@@ -712,7 +882,7 @@ class _SyncBatchTransport:
         payload: dict[str, Any],
         *,
         deadline: float | None = None,
-        state: _TraceState | None = None,
+        state: _TraceFallbackDescriptor | None = None,
     ) -> bool:
         try:
             buffered_payload = self._prepare_payload(payload, state=state)
@@ -1115,7 +1285,7 @@ class _SyncBatchTransport:
         return event
 
     def _prepare_payload(
-        self, payload: dict[str, Any], *, state: _TraceState | None = None
+        self, payload: dict[str, Any], *, state: _TraceFallbackDescriptor | None = None
     ) -> _BufferedPayload:
         # Direct transport callers bypass ObservabilityClient's trace redaction.
         # Preserve credential-key-name redaction (c4d874c3): this is a confirmed
@@ -1124,10 +1294,12 @@ class _SyncBatchTransport:
         # sweep to the content bags so a directly-submitted trace/observation
         # payload's own `input_tokens`/`output_tokens`/`total_tokens` fields
         # are never mistaken for a `token`-rooted credential key (M5).
-        # B3: `state`, when the caller has it (see `submit`), lets a
-        # redaction failure on THIS (already-once-redacted) pass still reach
-        # the content-history-aware fallback instead of a state-blind one --
-        # see `ObservabilityClient._submit_trace_snapshot`.
+        # B3: `state` (a `_TraceFallbackDescriptor`, never the live
+        # `_TraceState` -- finding 2), when the caller has it (see
+        # `submit`), lets a redaction failure on THIS (already-once-
+        # redacted) pass still reach the content-history-aware fallback
+        # instead of a state-blind one -- see
+        # `ObservabilityClient._submit_trace_snapshot`.
         redacted_payload = _redact_trace_payload(payload, state=state)
         copied_payload = copy.deepcopy(redacted_payload)
         return _BufferedPayload(
@@ -1718,6 +1890,17 @@ class ObservabilityClient:
                     state.mark_content_history(observation_id, "input_data")
                 if existing.output_data is not None:
                     state.mark_content_history(observation_id, "output_data")
+                # Finding 1 (astra out-astra-privacy-r4.md, CONFIRMED P1):
+                # same tracking for `error_message` -- it is free-form
+                # content (an exception string) subject to the exact same
+                # "never omit the clearing field on a later failure" rule as
+                # `input_data`/`output_data`, but it lives inside `metadata`
+                # rather than as its own top-level field, so it needs its
+                # own history entry (consulted by
+                # `_safe_allowlisted_observation_snapshot` via
+                # `_build_fallback_descriptor`).
+                if existing.metadata.get("error_message") is not None:
+                    state.mark_content_history(observation_id, "error_message")
             effective_type = requested_type or (
                 existing.type if existing is not None else ObservationType.SPAN
             )
@@ -1959,16 +2142,22 @@ class ObservabilityClient:
         if not self._acquire_client_lock_until(deadline):
             return self._flush_lock_timeout_result(deadline)
         try:
+            # Finding 2 (A8/M4 snapshot immutability): `_safe_trace_snapshot`
+            # returns `(payload, descriptor)` -- the descriptor is a frozen
+            # `_TraceFallbackDescriptor` built from `state` while THIS lock is
+            # still held. Thread the descriptor, never `state` itself, into
+            # `_submit_trace_snapshot` below (which runs after the lock is
+            # released).
             trace_payloads = [
-                (trace_id, state, _safe_trace_snapshot(state))
+                (trace_id, *_safe_trace_snapshot(state))
                 for trace_id, state in self._trace_states.items()
             ]
         finally:
             self._lock.release()
 
-        for trace_id, state, payload in trace_payloads:
+        for trace_id, payload, descriptor in trace_payloads:
             self._submit_trace_snapshot(
-                trace_id, payload, deadline=deadline, state=state
+                trace_id, payload, deadline=deadline, state=descriptor
             )
         return self._flush_transport_until(deadline)
 
@@ -2007,7 +2196,9 @@ class ObservabilityClient:
             if self._closing:
                 close_in_progress = True
                 already_closed = False
-                trace_payloads: list[tuple[str, _TraceState, dict[str, Any]]] = []
+                trace_payloads: list[
+                    tuple[str, dict[str, Any], _TraceFallbackDescriptor]
+                ] = []
                 inflight_snapshot_submissions = 0
                 offline_close = False
             elif self._closed:
@@ -2035,8 +2226,12 @@ class ObservabilityClient:
                     trace_payloads = []
                     inflight_snapshot_submissions = 0
                 else:
+                    # Finding 2 (A8/M4 snapshot immutability): thread the
+                    # frozen descriptor (built from `state` under THIS lock),
+                    # never `state` itself -- see the matching comment in
+                    # `flush`.
                     trace_payloads = [
-                        (trace_id, state, _safe_trace_snapshot(state))
+                        (trace_id, *_safe_trace_snapshot(state))
                         for trace_id, state in self._trace_states.items()
                     ]
                     inflight_snapshot_submissions = self._inflight_snapshot_submissions
@@ -2073,9 +2268,9 @@ class ObservabilityClient:
                             inflight_snapshot_submissions,
                         )
 
-                for trace_id, state, payload in trace_payloads:
+                for trace_id, payload, descriptor in trace_payloads:
                     self._submit_trace_snapshot(
-                        trace_id, payload, deadline=deadline, state=state
+                        trace_id, payload, deadline=deadline, state=descriptor
                     )
                 transport_result = self._transport.close(
                     timeout=self._remaining_flush_time(deadline)
@@ -2805,11 +3000,23 @@ class ObservabilityClient:
             state = self._trace_states.get(trace_id)
             if state is None or self._closed or self._close_pending:
                 return
-            payload = _safe_trace_snapshot(state)
+            # Finding 2 (astra out-astra-privacy-r4.md, CONFIRMED P2, A8/M4
+            # snapshot immutability): `_safe_trace_snapshot` freezes a
+            # `_TraceFallbackDescriptor` from `state` right here, while this
+            # lock is still held. `_submit_trace_snapshot` below runs AFTER
+            # the lock is released -- possibly well after, and on a
+            # different thread -- so it must receive that frozen
+            # `descriptor`, never a reference to the live, shared `state`,
+            # which a concurrent `record_observation`/`end_trace` call on
+            # this same trace could keep mutating in the meantime (the
+            # confirmed probe: completing a running observation and adding a
+            # new one leaked into what should have been a stale snapshot's
+            # fallback).
+            payload, descriptor = _safe_trace_snapshot(state)
             self._inflight_snapshot_submissions += 1
             self._snapshot_submission_complete.clear()
         try:
-            self._submit_trace_snapshot(trace_id, payload, state=state)
+            self._submit_trace_snapshot(trace_id, payload, state=descriptor)
         finally:
             with self._lock:
                 self._inflight_snapshot_submissions -= 1
@@ -2822,11 +3029,13 @@ class ObservabilityClient:
         payload: dict[str, Any],
         *,
         deadline: float | None = None,
-        state: _TraceState | None = None,
+        state: _TraceFallbackDescriptor | None = None,
     ) -> None:
-        # B3: thread `state` through to the transport's own defensive
-        # redaction pass (`_SyncBatchTransport._prepare_payload`) too -- that
-        # pass re-runs `_redact_trace_payload` on the ALREADY-safe payload
+        # B3: thread `state` (a `_TraceFallbackDescriptor`, frozen at
+        # enqueue time under the client lock -- never the live `_TraceState`
+        # -- finding 2) through to the transport's own defensive redaction
+        # pass (`_SyncBatchTransport._prepare_payload`) too -- that pass
+        # re-runs `_redact_trace_payload` on the ALREADY-safe payload
         # `_safe_trace_snapshot` just built. It is normally a no-op (the
         # payload is already redacted/fallback-built), but if it were ever
         # to fail too (e.g. the same scrubbing outage), it must reach the
