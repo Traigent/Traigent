@@ -103,9 +103,9 @@ def get_security_flags() -> SecurityFlags:
 
 
 def reset_security_cache() -> NoReturn:
-    """Compatibility shim. Previously a silent `return None`, which the
-    validation spine flagged as a `public_stub_runtime` (Batch 1 of the
-    public-surface gate). Either a real cache-reset implementation lands
+    """Compatibility shim. Previously a silent `return None`, which an
+    internal audit flagged as a public function that looks like it does
+    something but doesn't. Either a real cache-reset implementation lands
     here, or the symbol gets removed from `__all__`. Until then, fail loud
     so callers don't silently get a no-op."""
     raise NotImplementedError("reset_security_cache is not implemented")

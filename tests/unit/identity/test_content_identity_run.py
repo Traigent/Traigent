@@ -279,7 +279,7 @@ async def test_optimize_sends_the_session_object_only_with_a_grant(
 async def test_build_evidence_is_refreshed_between_runs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The second optimize() sees the agent's new declared assets (astra M2 P1)."""
+    """The second optimize() sees the agent's new declared assets."""
     from traigent.identity.agent_build import declare_agent_assets
 
     set_content_identity_keys(_grant())

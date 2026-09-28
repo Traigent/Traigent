@@ -143,7 +143,7 @@ async def test_get_interaction_policy_returns_backend_payload(monkeypatch) -> No
         "question_budget": 1,
         "options_max": 3,
         "jargon_level": "compact",
-        "next_skill_hint": "spine:feature",
+        "next_skill_hint": "docs:learn-more",
         "fallback_policy": "backend_v1",
     }
     response = _FakeResponse(
@@ -282,7 +282,7 @@ async def test_get_interaction_policy_legacy_mock_llm_returns_static_without_net
                     "question_budget": 1,
                     "options_max": 3,
                     "jargon_level": "compact",
-                    "next_skill_hint": "spine:feature",
+                    "next_skill_hint": "docs:learn-more",
                     "fallback_policy": "backend_v1",
                 },
             ),
