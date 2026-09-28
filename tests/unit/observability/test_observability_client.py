@@ -5006,7 +5006,7 @@ class TestM5FullPipelineNumericExemption:
                 "passwd": "hunter2",
                 "jwt": "eyJhbGciOiJIUzI1NiJ9.secret.sig",
                 "bearer": "some-bearer-value",
-                "privateKey": "-----BEGIN PRIVATE KEY-----",
+                "privateKey": "not-a-real-key-placeholder",
                 "authStuff": "should also be masked",
             },
             content_mode="record",
