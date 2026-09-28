@@ -266,7 +266,7 @@ async def test_promotion_is_refused_while_an_advancing_run_is_in_flight():
 
 
 # ---------------------------------------------------------------------------
-# 4. Review fixes (Astra, PR #2406 @ 22604bb2)
+# 4. Review fixes (PR #2406 @ 22604bb2)
 # ---------------------------------------------------------------------------
 
 
@@ -523,8 +523,8 @@ async def test_failed_in_flight_apply_run_releases_the_slot(
 
 
 # ---------------------------------------------------------------------------
-# 5. Candidate isolation by a type-preserving structural detacher (Astra
-#    delta review @ db91ce0c). Exact dict/list/tuple are rebuilt (tuples stay
+# 5. Candidate isolation by a type-preserving structural detacher (review
+#    @ db91ce0c). Exact dict/list/tuple are rebuilt (tuples stay
 #    tuples), JSON scalars are copied by value, functions/builtins/classes/Enum
 #    members pass by reference; anything else fails closed with
 #    CandidateIsolationError. No user hook ever runs, and detaching happens
@@ -540,7 +540,7 @@ def _isolation_error():
 
 @pytest.mark.asyncio
 async def test_live_config_holding_a_lock_is_refused_and_served_config_untouched():
-    """Astra's reproduction: a lock nested in live config used to make the
+    """Regression reproduction: a lock nested in live config used to make the
     fallback share the surrounding dict, so a candidate appended to the
     served list. Now the candidate is refused and nothing is shared."""
     import threading
@@ -789,7 +789,7 @@ def test_function_builtin_class_and_enum_choices_are_refused_never_invoked(kind)
 
 # ---------------------------------------------------------------------------
 # 6. Identity-only classification, real snapshot inside the lock, retry on
-#    concurrent served mutation (Astra review @ cfc8f4b6; owner contract).
+#    concurrent served mutation (review @ cfc8f4b6; owner contract).
 # ---------------------------------------------------------------------------
 
 
@@ -800,7 +800,7 @@ def _fork_with_served(**served_config):
 
 
 def test_intenum_with_mutable_attribute_is_refused():
-    """Astra: an IntEnum member carrying a mutable attribute leaked mutation."""
+    """Regression: an IntEnum member carrying a mutable attribute leaked mutation."""
     import enum
 
     class Level(enum.IntEnum):

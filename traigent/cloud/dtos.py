@@ -1543,7 +1543,7 @@ class MeasureDTO:
 
 @dataclass
 class PlannerDraftDTO:
-    """Planner draft DTO for the planner spine."""
+    """Planner draft DTO for the agent-build planning pipeline."""
 
     description: str
     agent: dict[str, Any] | None = None

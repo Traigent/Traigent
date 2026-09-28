@@ -554,7 +554,7 @@ def collect_agent_build_base(
     elif project_root is not None:
         # The SDK's own enumeration sees only modules already loaded from
         # inside the project, as .py files; it cannot prove it saw every
-        # helper, so it never supports a complete claim (M2 review, astra P1).
+        # helper, so it never supports a complete claim (M2 review).
         helper_modules, covered, helper_gaps = _enumerate_helper_modules(project_root)
         gaps.extend(helper_gaps)
         gaps.append("helper_modules_not_declared")
