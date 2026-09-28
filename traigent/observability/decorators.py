@@ -342,33 +342,53 @@ class ObserveContext:
         # callers get), so it is passed through rather than built here.
         try:
             if self._trace_id and self._observation_id:
-                client.record_observation(
-                    self._trace_id,
-                    observation_id=self._observation_id,
-                    name=self.name,
-                    observation_type=self.observation_type,
-                    status=status,
-                    tool_name=self.tool_name,
-                    started_at=started_at,
-                    ended_at=ended_at,
-                    latency_ms=latency_ms,
-                    input_data=self.input_data,
-                    output_data=result,
-                    metadata=metadata,
-                    content_mode=self.content_mode,
-                    redact_input=self.redact_input,
-                    redact_output=self.redact_output,
-                    error=error,
-                )
-                if self._created_trace:
-                    client.end_trace(
+                # M8/A5: a failure HERE (recording/ending) must never
+                # replace the traced call's own result/exception -- log and
+                # continue rather than letting a NEW exception propagate out
+                # of `_finish`/`__exit__`/`__aexit__`, which would otherwise
+                # mask a successful call's return value (or a different
+                # exception the caller's own code raised) with an unrelated
+                # observability-internal failure. `__enter__`'s own setup
+                # failures are a different case (see
+                # `_restore_context_after_setup_failure`) and still
+                # propagate -- there `__exit__` is never invoked at all, so
+                # nothing else would ever surface that failure.
+                try:
+                    client.record_observation(
                         self._trace_id,
+                        observation_id=self._observation_id,
+                        name=self.name,
+                        observation_type=self.observation_type,
                         status=status,
-                        output_data=result,
+                        tool_name=self.tool_name,
                         started_at=started_at,
                         ended_at=ended_at,
+                        latency_ms=latency_ms,
+                        input_data=self.input_data,
+                        output_data=result,
+                        metadata=metadata,
                         content_mode=self.content_mode,
+                        redact_input=self.redact_input,
                         redact_output=self.redact_output,
+                        error=error,
+                    )
+                    if self._created_trace:
+                        client.end_trace(
+                            self._trace_id,
+                            status=status,
+                            output_data=result,
+                            started_at=started_at,
+                            ended_at=ended_at,
+                            content_mode=self.content_mode,
+                            redact_output=self.redact_output,
+                        )
+                except Exception:
+                    logger.error(
+                        "Observability decorator finish failed for trace "
+                        "'%s'; the traced call's own result/exception is "
+                        "unaffected.",
+                        self._trace_id,
+                        exc_info=True,
                     )
         finally:
             # M4: restore context on finish failure too -- without this

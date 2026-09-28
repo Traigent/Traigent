@@ -248,30 +248,43 @@ def apply_content_mode_to_text(
 def wire_value_for_tightened_update(
     gated_value: Any, *, effective_content_mode: str, existing_value: Any
 ) -> Any:
-    """M4 ingest-contract fix (parity note from the TS worker, traigent-js
+    """M4/A2 ingest-contract fix (parity note from the TS worker, traigent-js
     commit cf2b700da): the backend's `apply_updates` SKIPS an omitted/`None`
     field on an update and KEEPS whatever content it already has stored --
-    so a `metadata`-mode-withheld field that merely OMITS (`None`) does not
-    clear content a PRIOR, less restrictive call already shipped to the
-    backend for this same field; the backend just keeps its stored value.
+    so a field that merely OMITS (`None`) on this call does not clear
+    content a PRIOR call already shipped to the backend for this same field;
+    the backend just keeps its stored value.
 
-    On an UPDATE where gating produced `None` (metadata mode withheld it)
-    AND there IS a prior value (`existing_value is not None` -- either real
-    content from an earlier `record`/`redacted` call, or an earlier
-    placeholder), send the explicit `{"redacted": true}` placeholder instead
-    of `None`, so the backend actually overwrites its stored value. A
-    genuine FIRST WRITE (no prior value at all) still omits cleanly -- `M1`
-    says metadata omits, and there is nothing stored server-side yet to
-    leak.
+    On an UPDATE where gating produced `None` AND there IS a prior value
+    (`existing_value is not None` -- either real content from an earlier
+    `record`/`redacted` call, or an earlier placeholder), send the explicit
+    `{"redacted": true}` placeholder instead of `None`, so the backend
+    actually overwrites its stored value. A genuine FIRST WRITE (no prior
+    value at all) still omits cleanly -- `M1` says metadata omits, and there
+    is nothing stored server-side yet to leak; A2 confirms this is
+    acceptable for Python ("EXPLICIT_NULL with no prior content -> omit").
 
-    `redacted` mode never reaches the `None` branch (it always produces the
-    placeholder already); `record` mode never reaches it either (it returns
-    the payload, deep-copied, never `None` unless the caller's own value was
-    `None`). So this only ever changes behavior for `metadata`.
+    ADDENDUM R2 A2 widens this beyond `metadata`-mode withholding:
+    `gated_value is None` also happens in `record` mode when the CALLER's
+    own supplied value was an explicit `None` (a genuine "clear this field"
+    request, not a mode withholding it) -- the ingest contract cannot tell
+    those two `None`s apart either, so an explicit-null clear over prior
+    content must ALSO force the placeholder, in every mode, or the clear
+    request silently no-ops server-side. `effective_content_mode` is kept as
+    a parameter for caller-side logging/documentation clarity even though
+    this function itself no longer branches on it -- every mode that can
+    reach `gated_value is None` (`metadata` withholding, or `record`/
+    `redacted` with a supplied-`None` payload) is handled identically by the
+    `existing_value is not None` check alone. `redacted` mode itself never
+    reaches this function with a `None` `gated_value` for a SUPPLIED
+    payload (it always returns the marker already), but a `redacted`-mode
+    caller supplying `None` still lands here with the marker from
+    `apply_content_mode` -- never `None` -- so it is unaffected.
     """
+    del effective_content_mode
     if gated_value is not None:
         return gated_value
-    if effective_content_mode == "metadata" and existing_value is not None:
+    if existing_value is not None:
         return redacted_content_marker()
     return gated_value
 

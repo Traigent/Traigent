@@ -40,35 +40,54 @@ _CREDENTIAL_KEY_REDACTION = "[REDACTED]"
 #   tuned-configuration surfaces: config spaces routinely tune a variable
 #   literally named "prompt" (a variant label, not content), and redacting
 #   it would blank legitimate portal/trace display of the chosen config.
+# M5/A3 (addendum R2): a SINGLE canonical sensitive-root list, identical in
+# both SDKs, matched against keys normalized by `_normalize_key_name`
+# (lowercased, with "_"/"-"/"." stripped entirely -- not just collapsed to a
+# single separator) so `privateKey`, `private_key`, and `private-key` are all
+# the same normalized fragment ("privatekey"). Every entry below is ALREADY
+# in that stripped form. Some entries (`session_token` -> "sessiontoken",
+# `client_secret` -> "clientsecret") are substring-redundant with a shorter
+# root already in the set (`token`, `secret`) -- kept anyway because the
+# addendum names them explicitly as canonical roots, and an explicit entry
+# survives a future removal of the shorter root that would otherwise
+# silently drop coverage.
 CREDENTIAL_KEY_FRAGMENTS: frozenset[str] = frozenset(
     {
-        "api_key",
+        "accesskey",
         "apikey",
         "auth",  # also matches "authorization"
+        "bearer",
+        "clientsecret",
         "cookie",
         "credential",
-        "credit_card",
         "creditcard",
+        "jwt",
         "password",
-        "private_key",
+        "passwd",
+        "privatekey",
+        "pwd",
         "secret",
+        "sessiontoken",
         "token",
     }
 )
 
-# M5: the ONLY numeric leaves exempt from credential-key-subtree masking.
-# `usage.{prompt_tokens,completion_tokens,total_tokens}` -- the immediate
-# parent key must be exactly "usage" -- and a bare `max_tokens` model
-# parameter at any depth/parent. A `total_tokens`-shaped key that is NOT
-# nested directly under `usage` (including one with no parent at all, or one
-# nested inside an already credential-flagged subtree such as `api_key`) is
-# NOT exempt: it is masked like any other numeric secret. See
-# `_is_approved_numeric_counter_key` and `redact_sensitive_data`.
+# M5/A3: the ONLY numeric leaves exempt from credential-key-subtree masking.
+# `usage.{prompttokens,completiontokens,totaltokens}` (NORMALIZED keys -- see
+# `_normalize_key_name`) -- the immediate parent's normalized key must be
+# exactly "usage" -- and a bare `maxtokens` model parameter at any
+# depth/parent. A `total_tokens`-shaped key that is NOT nested directly under
+# `usage` (including one with no parent at all, or one nested inside an
+# already credential-flagged subtree such as `api_key`) is NOT exempt: it is
+# masked like any other numeric secret. See `_is_approved_numeric_counter_key`
+# and `redact_sensitive_data`. These sets hold already-normalized (separator-
+# stripped) forms because `_is_approved_numeric_counter_key` compares against
+# `_normalize_key_name(key)`, never the raw key.
 _APPROVED_USAGE_COUNTER_PARENT = "usage"
 _APPROVED_USAGE_COUNTER_KEYS: frozenset[str] = frozenset(
-    {"prompt_tokens", "completion_tokens", "total_tokens"}
+    {"prompttokens", "completiontokens", "totaltokens"}
 )
-_APPROVED_MODEL_PARAMETER_KEYS: frozenset[str] = frozenset({"max_tokens"})
+_APPROVED_MODEL_PARAMETER_KEYS: frozenset[str] = frozenset({"maxtokens"})
 
 CONTENT_KEY_FRAGMENTS: frozenset[str] = frozenset(
     {
@@ -83,7 +102,13 @@ CONTENT_KEY_FRAGMENTS: frozenset[str] = frozenset(
 
 
 def _normalize_key_name(key: str) -> str:
-    return key.strip().lower().replace("-", "_").replace(".", "_")
+    """A3: lowercase and STRIP (not just collapse) "_", "-", "." entirely, so
+    `privateKey`, `private_key`, and `private-key` all normalize to the same
+    string (`privatekey`) and match the same canonical root."""
+    normalized = key.strip().lower()
+    for separator in ("_", "-", "."):
+        normalized = normalized.replace(separator, "")
+    return normalized
 
 
 def _is_approved_numeric_counter_key(*, parent_key: str | None, key: str) -> bool:

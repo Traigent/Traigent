@@ -4385,6 +4385,168 @@ class TestM3CommentsAndFeedback:
         }
 
 
+class TestA1TraceScopedContentMode:
+    """ADDENDUM R2 A1: an observation/end_trace/comment/feedback call
+    resolves its `content_mode` against the TRACE's own resolved mode (fixed
+    at `start_trace`), not straight against the client config. Finding 8's
+    confirmed probe: starting a `redacted` trace and recording an
+    observation with no per-call override produced a placeholder in TS and
+    an omission in Python -- these tests pin the now-matching behavior."""
+
+    def test_unannotated_observation_inherits_the_explicit_trace_mode(self):
+        """Negative control: reverting `record_observation` to call
+        `_resolve_content_mode` (client-level only) instead of
+        `_resolve_trace_scoped_content_mode` makes this fail -- the
+        unconfigured client's default (`metadata`) would omit `input_data`
+        instead of emitting the trace's own `redacted` placeholder."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        trace_id = client.start_trace("redacted-trace", content_mode="redacted")
+        client.record_observation(trace_id, name="op", input_data={"prompt": "secret"})
+
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        observation = trace_payload["observations"][0]
+        assert observation["input_data"] == {"redacted": True}
+
+    def test_per_call_override_may_tighten_the_explicit_trace_mode(self):
+        """An explicit trace mode (`content_mode_locked`) may be tightened
+        by a stricter per-call override, exactly like the client-level
+        rule."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        sensitive = "PATIENT diagnosis cancer stage 3"
+
+        trace_id = client.start_trace("record-trace", content_mode="record")
+        client.record_observation(
+            trace_id,
+            name="op",
+            input_data={"prompt": sensitive},
+            content_mode="metadata",
+        )
+
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        observation = trace_payload["observations"][0]
+        assert "input_data" not in observation
+        assert sensitive not in json.dumps(sent_batches)
+
+    def test_per_call_override_cannot_loosen_the_explicit_trace_mode(self):
+        """The trace's own explicit mode is a floor a per-call override may
+        not loosen -- the same M2 rule, applied at the trace level."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        sensitive = "PATIENT diagnosis cancer stage 3"
+
+        trace_id = client.start_trace("metadata-trace", content_mode="metadata")
+        client.record_observation(
+            trace_id,
+            name="op",
+            input_data={"prompt": sensitive},
+            content_mode="record",
+        )
+
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        observation = trace_payload["observations"][0]
+        assert "input_data" not in observation
+        assert sensitive not in json.dumps(sent_batches)
+
+    def test_per_call_override_used_as_is_when_neither_side_is_explicit(self):
+        """When neither the client nor the trace's own mode was set
+        explicitly, a per-call override is the normal opt-in path and is
+        used as-is -- identical to the client-level bare-default case."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        sensitive = "PATIENT diagnosis cancer stage 3"
+
+        trace_id = client.start_trace("unconfigured-trace")
+        client.record_observation(
+            trace_id,
+            name="op",
+            input_data={"prompt": sensitive},
+            content_mode="record",
+        )
+
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        observation = trace_payload["observations"][0]
+        assert observation["input_data"] == {"prompt": sensitive}
+
+    def test_untracked_trace_id_falls_back_to_client_level_resolution(self):
+        """A1: "Top-level ... addComment/submitFeedback without a trace use
+        the client-level result" -- a trace_id this client never locally
+        tracked (e.g. created by another process) must resolve exactly like
+        a bare client-level call, not raise or silently pick `metadata`."""
+        captured: dict[str, Any] = {}
+
+        def request_sender(method, path, payload):
+            captured["payload"] = payload
+            return {
+                "data": {
+                    "id": "c1",
+                    "trace_id": "untracked-trace",
+                    "author_user_id": "sdk-user",
+                    "content": payload["content"],
+                    "created_at": "2026-03-10T14:11:00+00:00",
+                    "updated_at": "2026-03-10T14:11:00+00:00",
+                }
+            }
+
+        client = ObservabilityClient(
+            ObservabilityConfig(
+                backend_origin="http://localhost:5000",
+                api_key="test-key",  # pragma: allowlist secret
+                batch_size=10,
+                max_buffer_age=0.1,
+                max_queue_size=10,
+                content_mode="record",
+            ),
+            sender=lambda traces: None,
+            request_sender=request_sender,
+        )
+
+        client.add_comment("untracked-trace", "Contact alice@example.com for details.")
+        client.close()
+
+        assert captured["payload"] == {
+            "content": "Contact [REDACTED:email] for details."
+        }
+
+    def test_add_comment_content_mode_parameter_tightens_per_call(self):
+        """Python/TS parity (A1, finding 8): `add_comment` now accepts a
+        per-call `content_mode`, resolved the same way as
+        `record_observation` -- a `record`-mode trace can still be
+        tightened to `metadata` (which refuses locally, M3) for one
+        specific comment call."""
+        client = ObservabilityClient(
+            ObservabilityConfig(
+                backend_origin="http://localhost:5000",
+                api_key="test-key",  # pragma: allowlist secret
+                batch_size=10,
+                max_buffer_age=0.1,
+                max_queue_size=10,
+            ),
+            sender=lambda traces: None,
+            request_sender=lambda m, p, payload: {"data": {}},
+        )
+
+        trace_id = client.start_trace("record-trace-for-comment", content_mode="record")
+        with pytest.raises(ContentDisabledError):
+            client.add_comment(trace_id, "some review comment", content_mode="metadata")
+
+        client.close()
+
+
 class TestM4UpdateTightening:
     """M4: NOT_SUPPLIED vs. explicit-null vs. withheld; tightening on update
     always wins; mutation after enqueue never leaks; retries resend the same
@@ -4443,7 +4605,21 @@ class TestM4UpdateTightening:
         """Same bug, at the trace level: `end_trace`'s own output_data merge
         had the identical `if output_data is not None` conflation. Same wire
         contract fix applies: the placeholder, not an omitted key -- see the
-        sibling test above."""
+        sibling test above.
+
+        ADDENDUM R2 A1 changed WHAT a plain, un-annotated `end_trace(...)`
+        call resolves to: it now continues the TRACE's own base mode (fixed
+        at `start_trace`, here explicitly `"record"`), not the CLIENT's
+        config default -- so an `end_trace` call that supplies no
+        `content_mode` of its own no longer tightens anything (there is
+        nothing to tighten against; see
+        `test_untightened_end_trace_continues_the_explicit_trace_mode`
+        directly below for that case). Tightening now requires the SAME
+        thing it always required at the observation level: an explicit,
+        stricter per-call override -- which `content_mode_locked` (the
+        trace's own mode was itself set explicitly) then permits to win over
+        the trace's `"record"` base.
+        """
         sent_batches: list[list[dict]] = []
         client = _make_recording_client(lambda traces: sent_batches.append(traces))
         sensitive = "PATIENT diagnosis cancer stage 3"
@@ -4453,9 +4629,12 @@ class TestM4UpdateTightening:
             output_data={"answer": sensitive},
             content_mode="record",
         )
-        # Status-only-ish update in the default metadata mode, but DOES
-        # supply new output content -- must overwrite, not retain.
-        client.end_trace(trace_id, output_data={"answer": sensitive})
+        # Explicit per-call tightening: the trace's own mode was itself set
+        # explicitly (`content_mode="record"` at `start_trace`), so this
+        # stricter override is allowed to win.
+        client.end_trace(
+            trace_id, output_data={"answer": sensitive}, content_mode="metadata"
+        )
 
         client.flush()
         client.close()
@@ -4465,6 +4644,31 @@ class TestM4UpdateTightening:
         )
         assert trace_payload["output_data"] == {"redacted": True}
         assert sensitive not in json.dumps(sent_batches)
+
+    def test_untightened_end_trace_continues_the_explicit_trace_mode(self):
+        """A1 regression guard: a plain `end_trace(...)` call with NO
+        `content_mode` of its own must continue the trace's own explicitly-
+        set base mode, not silently fall back to the client's config
+        default -- negative control: reverting
+        `_resolve_trace_scoped_content_mode` to the pre-fix
+        `_resolve_content_mode` (which resolves straight against
+        `self.config.content_mode`) makes this fail, because the
+        unconfigured client's default is `"metadata"` and would withhold
+        `output_data` here instead of sending it."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        sensitive = "PATIENT diagnosis cancer stage 3"
+
+        trace_id = client.start_trace("continue-trace-mode", content_mode="record")
+        client.end_trace(trace_id, output_data={"answer": sensitive})
+
+        client.flush()
+        client.close()
+
+        trace_payload = next(
+            t for batch in sent_batches for t in batch if t["id"] == trace_id
+        )
+        assert trace_payload["output_data"] == {"answer": sensitive}
 
     def test_status_only_update_does_not_touch_existing_content(self):
         """NOT_SUPPLIED (the default): a call that never mentions
@@ -4522,6 +4726,195 @@ class TestM4UpdateTightening:
         )
         assert trace_payload["input_data"] == {"prompt": "original"}
 
+    def test_error_message_tightening_never_merges_stale_text(self):
+        """Finding 2/A2: a record-mode error, followed by a metadata-mode
+        update to the SAME observation, must force `error_message` to
+        `"[REDACTED]"` -- never let the merge (`merged_metadata.update(...)`)
+        silently keep the earlier call's real exception text because the
+        later call's `metadata` dict never mentioned the key at all.
+
+        Negative control: reverting the merge-branch fix (deleting the
+        `if error_supplied and gated_error_message is None and
+        "error_message" in existing.metadata:` block in
+        `record_observation`) makes this fail -- the sensitive exception
+        text from the first call would still be present after the second.
+        """
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        sensitive = "PATIENT diagnosis cancer stage 3"
+
+        trace_id = client.start_trace("error-tighten-trace")
+        observation_id = client.record_observation(
+            trace_id,
+            name="op",
+            status="failed",
+            content_mode="record",
+            error=ValueError(sensitive),
+        )
+        # Same observation, metadata mode (tighter): must overwrite, not
+        # merge the stale record-mode error text back in.
+        client.record_observation(
+            trace_id,
+            observation_id=observation_id,
+            name="op",
+            status="failed",
+            content_mode="metadata",
+            error=ValueError(sensitive),
+        )
+
+        client.flush()
+        client.close()
+
+        trace_payload = next(
+            t for batch in sent_batches for t in batch if t["id"] == trace_id
+        )
+        observation = trace_payload["observations"][0]
+        assert observation["metadata"]["error_message"] == "[REDACTED]"
+        assert observation["metadata"]["error_type"] == "ValueError"
+        assert sensitive not in json.dumps(sent_batches)
+
+    def test_first_write_metadata_mode_error_omits_error_message(self):
+        """A2: a genuine FIRST write (no prior `error_message` stored at
+        all) still omits cleanly in metadata mode -- there is nothing
+        stored server-side yet to leak, so no placeholder is needed."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        trace_id = client.start_trace("error-first-write-trace")
+        client.record_observation(
+            trace_id,
+            name="op",
+            status="failed",
+            content_mode="metadata",
+            error=ValueError("first failure"),
+        )
+
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        observation = trace_payload["observations"][0]
+        assert "error_message" not in observation["metadata"]
+        assert observation["metadata"]["error_type"] == "ValueError"
+
+    def test_nested_metadata_mutation_after_start_trace_does_not_leak(self):
+        """Finding 7/A8: a shallow `dict(metadata or {})` only detaches the
+        top-level dict -- a caller mutating a NESTED dict/list inside their
+        own metadata after `start_trace` returns must never change what a
+        later `flush()`/`close()` sends.
+
+        Negative control: reverting `_detach_metadata` to `dict(metadata or
+        {})` (a shallow copy) makes this fail -- the nested mutation below
+        would still reach the sent payload.
+        """
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        nested = {"level": "before"}
+        client.start_trace("nested-metadata-trace", metadata={"nested": nested})
+        nested["level"] = "after-the-call-returned"
+        nested["injected"] = "should never appear"
+
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        assert trace_payload["metadata"]["nested"] == {"level": "before"}
+
+    def test_session_metadata_mutation_after_start_trace_does_not_leak(self):
+        """Finding 7/A8: `session.metadata` is a caller-owned bag too --
+        mutating it after `start_trace` returns must never leak into a later
+        snapshot, exactly like trace/observation metadata."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        session_metadata = {"plan": "before"}
+        client.start_trace(
+            "session-metadata-trace",
+            session={"id": "sess_1", "metadata": session_metadata},
+        )
+        session_metadata["plan"] = "after-the-call-returned"
+
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        assert trace_payload["session"]["metadata"] == {"plan": "before"}
+
+    def test_explicit_null_clear_in_record_mode_sends_placeholder_over_prior_content(
+        self,
+    ):
+        """Finding 6/A2: the backend's `apply_updates` skips an
+        omitted/`None` field and keeps whatever it already has stored, so a
+        `record`-mode caller supplying an explicit `None` to CLEAR a field
+        that previously carried real content must also force the
+        placeholder -- not just a `metadata`-mode withhold. This is NOT
+        privacy gating (the mode never changes); it is the same ingest-
+        contract fix widened beyond `metadata`.
+
+        Negative control: reverting `wire_value_for_tightened_update` to
+        only force the placeholder when `effective_content_mode ==
+        "metadata"` makes this fail -- the explicit-null clear in `record`
+        mode would omit the field instead, and the backend would keep the
+        stale content.
+        """
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        sensitive = "PATIENT diagnosis cancer stage 3"
+
+        trace_id = client.start_trace(
+            "explicit-null-clear-trace", content_mode="record"
+        )
+        observation_id = client.record_observation(
+            trace_id,
+            name="op",
+            input_data={"prompt": sensitive},
+            content_mode="record",
+        )
+        # Explicit clear: the caller supplies `None` itself (not
+        # NOT_SUPPLIED), still in `record` mode -- a real "clear this field"
+        # request, not a mode withholding content.
+        client.record_observation(
+            trace_id,
+            observation_id=observation_id,
+            name="op",
+            input_data=None,
+            content_mode="record",
+        )
+
+        client.flush()
+        client.close()
+
+        trace_payload = next(
+            t for batch in sent_batches for t in batch if t["id"] == trace_id
+        )
+        observation = trace_payload["observations"][0]
+        assert observation["input_data"] == {"redacted": True}
+        assert sensitive not in json.dumps(sent_batches)
+
+    def test_explicit_null_with_no_prior_content_is_omitted(self):
+        """A2: "EXPLICIT_NULL with no prior content -> omit" (Python) -- a
+        first write that supplies `None` has nothing stored server-side yet
+        to leak, so it is fine to omit the field entirely rather than send a
+        placeholder."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        trace_id = client.start_trace("explicit-null-first-write-trace")
+        client.record_observation(
+            trace_id,
+            name="op",
+            input_data=None,
+            content_mode="record",
+        )
+
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        observation = trace_payload["observations"][0]
+        assert "input_data" not in observation
+
     def test_observe_decorator_none_return_in_redacted_mode_emits_placeholder(self):
         """M4 fix: a decorated function that legitimately returns `None`
         under `content_mode='redacted'` must still emit the `{"redacted":
@@ -4565,6 +4958,95 @@ class TestM5FullPipelineNumericExemption:
         trace_payload = sent_batches[-1][-1]
         assert trace_payload["metadata"]["password"] == "[REDACTED]"
         assert trace_payload["metadata"]["credit_card"] == "[REDACTED]"
+
+    def test_m5_canonical_root_counterexamples_end_to_end(self):
+        """A3: the exact M5 counterexamples the addendum names (finding 5) --
+        `passwd`, `jwt`, `bearer`, camelCase `privateKey`, and `authStuff`
+        (a plausible non-secret-looking key that still substring-matches the
+        `auth` root, by design -- see `redaction.py`'s
+        `_redact_credential_key_value` docstring on the safe-side
+        trade-off) -- through the full end-to-end pipeline, not just the
+        `traigent.security.redaction` unit."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        client.start_trace(
+            "m5-root-counterexamples-trace",
+            metadata={
+                "passwd": "hunter2",
+                "jwt": "eyJhbGciOiJIUzI1NiJ9.secret.sig",
+                "bearer": "some-bearer-value",
+                "privateKey": "-----BEGIN PRIVATE KEY-----",
+                "authStuff": "should also be masked",
+            },
+            content_mode="record",
+        )
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        metadata = trace_payload["metadata"]
+        assert metadata["passwd"] == "[REDACTED]"
+        assert metadata["jwt"] == "[REDACTED]"
+        assert metadata["bearer"] == "[REDACTED]"
+        assert metadata["privateKey"] == "[REDACTED]"
+        assert metadata["authStuff"] == "[REDACTED]"
+
+    def test_usage_totaltokens_camelcase_is_exempt_like_snake_case(self):
+        """A3: the counter exemption is keyed on NORMALIZED (separator-
+        stripped) names, so `usage.totalTokens` (camelCase, as a caller-
+        embedded provider-response blob might spell it) is exempt exactly
+        like `usage.total_tokens` -- this is the specific mismatch finding 5
+        called out (Python previously masked `usage.totalTokens` because
+        `token` substring-matched it before the parent-scoped exemption
+        applied)."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        client.start_trace(
+            "usage-camelcase-trace",
+            metadata={"usage": {"totalTokens": 70}},
+            content_mode="record",
+        )
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        assert trace_payload["metadata"]["usage"]["totalTokens"] == 70
+
+    def test_sensitive_ancestor_dominates_counter_exemptions_end_to_end(self):
+        """A3-dominance: `api_key.max_tokens` and
+        `api_key.usage.total_tokens` are masked -- an ancestor key being
+        credential-like (`api_key`) DOMINATES the usage-counter/model-
+        parameter exemptions, which only apply "when no ancestor is
+        sensitive".
+
+        Negative control: reverting `_redact_credential_key_value` to check
+        `_is_exempt_numeric_counter` before collapsing a credential subtree
+        (i.e. re-applying the exemption INSIDE an already-flagged secret
+        subtree) makes this fail -- both counters below would survive as
+        plain numbers instead of "[REDACTED]".
+        """
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        client.start_trace(
+            "api-key-dominance-trace",
+            metadata={
+                "api_key": {
+                    "max_tokens": 4096,
+                    "usage": {"total_tokens": 12},
+                }
+            },
+            content_mode="record",
+        )
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        api_key_bag = trace_payload["metadata"]["api_key"]
+        assert api_key_bag["max_tokens"] == "[REDACTED]"
+        assert api_key_bag["usage"]["total_tokens"] == "[REDACTED]"
 
     def test_usage_counter_and_dto_token_fields_survive_end_to_end(self):
         """Both the approved `usage.*` exemption (for a caller-supplied
@@ -4636,6 +5118,55 @@ class TestM6UserId:
         assert trace_payload["user_id"] == "[REDACTED:email]"
 
 
+class TestA4KeyBasedScrubbingCoverage:
+    """ADDENDUM R2 A4/finding 3: key-based scrubbing covers every arbitrary-
+    data bag, not just trace/observation `metadata`/`input_data`/
+    `output_data` -- session metadata and `prompt_reference.variables` are
+    arbitrary caller-chosen bags too.
+
+    Negative control: reverting `_harden_content_bags` to not inspect
+    `session`/`prompt_reference` at all (the pre-fix version) makes both
+    tests below fail -- a plain numeric secret like `password: 123456`
+    reaches the sender unredacted because it never matches any VALUE
+    pattern, only the key-name check catches it, and that check never ran
+    on these bags."""
+
+    def test_session_metadata_password_is_masked_end_to_end(self):
+        """Finding 3's confirmed probe: `session.metadata.password` reached
+        the custom sender unredacted."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        client.start_trace(
+            "session-secret-trace",
+            session={"id": "sess_1", "metadata": {"password": 123456}},
+        )
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        assert trace_payload["session"]["metadata"]["password"] == "[REDACTED]"
+
+    def test_prompt_reference_variables_secret_is_masked_end_to_end(self):
+        """`prompt_reference.variables` is an arbitrary `dict[str, Any]`
+        (`PromptReferenceDTO.variables`), same category of bag as
+        `metadata`."""
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        client.start_trace(
+            "prompt-reference-secret-trace",
+            prompt_reference=PromptReferenceDTO(
+                name="greeting", variables={"api_key": "sk-shouldnotship"}
+            ),
+        )
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        assert trace_payload["prompt_reference"]["variables"]["api_key"] == "[REDACTED]"
+
+
 class TestM8FailClosed:
     def test_redaction_failure_withholds_content_and_never_raises(self, monkeypatch):
         """M8: if redaction/gating throws, withhold content and continue --
@@ -4664,6 +5195,78 @@ class TestM8FailClosed:
         trace_payload = sent_batches[-1][-1]
         assert "input_data" not in trace_payload or trace_payload["input_data"] is None
         assert sensitive not in json.dumps(sent_batches)
+
+    def test_redaction_failure_also_masks_name_and_user_id(self, monkeypatch):
+        """A5: the safe-allowlisted fallback (not just the previous
+        `input_data`/`output_data`/`metadata` bags) also masks `name` and
+        `user_id` -- finding 4's confirmed probe: an injected-redactor
+        failure still emitted raw email-shaped `name`/`user_id` because the
+        old fallback (`_withhold_all_content_bags`) only stripped the three
+        content bags and left every other field, including `name`/
+        `user_id`, untouched.
+
+        Negative control: reverting `_redact_trace_payload`'s except branch
+        to call the old `_withhold_all_content_bags(payload)` instead of
+        `_safe_allowlisted_snapshot_or_static_fallback(payload)` makes this
+        fail -- `trace_payload["name"]` and `["user_id"]` would still be the
+        raw email-shaped strings below.
+        """
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("redactor exploded")
+
+        monkeypatch.setattr(
+            "traigent.observability.client.redact_sensitive_data", _boom
+        )
+
+        client.start_trace(
+            "alice@example.com's session",
+            user_id="alice@example.com",
+            content_mode="record",
+        )
+        client.flush()
+        client.close()
+
+        trace_payload = sent_batches[-1][-1]
+        assert trace_payload["name"] == "[REDACTED]"
+        assert trace_payload["user_id"] == "[REDACTED]"
+        assert "alice@example.com" not in json.dumps(sent_batches)
+
+    def test_cyclic_input_data_does_not_raise_and_is_withheld(self):
+        """Finding 4's confirmed probe: a cyclic caller-supplied `input_data`
+        structure raised `RecursionError` straight out of `start_trace`,
+        because `state.to_payload()` (DTO serialization, via `to_jsonable`'s
+        unbounded recursion) ran OUTSIDE `_redact_trace_payload`'s own
+        try/except at every call site. Must not raise into the caller's
+        application, and must not send the cyclic structure.
+
+        Negative control: reverting `_queue_trace_snapshot`'s call from
+        `_safe_trace_snapshot(state)` back to
+        `_redact_trace_payload(state.to_payload())` makes this fail --
+        `state.to_payload()` evaluates before `_redact_trace_payload`'s own
+        try/except can ever run, so the `RecursionError` propagates straight
+        out of `start_trace`.
+        """
+        sent_batches: list[list[dict]] = []
+        client = _make_recording_client(lambda traces: sent_batches.append(traces))
+
+        cyclic: dict[str, Any] = {"prompt": "hello"}
+        cyclic["self"] = cyclic
+
+        # Must not raise.
+        trace_id = client.start_trace(
+            "cyclic-input-trace", input_data=cyclic, content_mode="record"
+        )
+
+        client.flush()
+        client.close()
+
+        trace_payload = next(
+            t for batch in sent_batches for t in batch if t["id"] == trace_id
+        )
+        assert "input_data" not in trace_payload or trace_payload["input_data"] is None
 
     def test_add_comment_scrub_failure_withholds_and_does_not_raise(self, monkeypatch):
         captured: dict[str, Any] = {}
@@ -4704,4 +5307,8 @@ class TestM8FailClosed:
         client.add_comment("trace_1", "a comment that would have been scrubbed")
         client.close()
 
-        assert captured["payload"] == {"content": None}
+        # A6: the backend's `TraceCommentCreateRequest.content` requires a
+        # non-empty string -- `None` is not a withhold, it is an invalid
+        # request the backend rejects. A scrub failure must fall back to the
+        # `"[REDACTED]"` placeholder, never null/omitted.
+        assert captured["payload"] == {"content": "[REDACTED]"}
