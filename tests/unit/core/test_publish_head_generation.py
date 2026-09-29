@@ -135,7 +135,7 @@ def online(monkeypatch, tmp_path):
     monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path / "results"))
 
 
-async def _run(fake: _FakeBackend):
+def _make_wrapper():
     @traigent.optimize(
         eval_dataset=_dataset(),
         objectives=["accuracy"],
@@ -145,6 +145,10 @@ async def _run(fake: _FakeBackend):
     def answer(text: str, config) -> str:
         return "ok"
 
+    return answer
+
+
+async def _optimize(answer, fake: _FakeBackend):
     with (
         patch.object(
             BackendSessionManager,
@@ -156,7 +160,12 @@ async def _run(fake: _FakeBackend):
     ):
         result = await answer.optimize(algorithm="grid")
     assert isinstance(result, OptimizationResult) and result.best_config
-    return answer, result
+    return result
+
+
+async def _run(fake: _FakeBackend):
+    answer = _make_wrapper()
+    return answer, await _optimize(answer, fake)
 
 
 def _publish(answer, fake):
@@ -252,6 +261,86 @@ async def test_generation_captured_for_another_environment_is_not_sent(online):
     _publish(answer, fake)
 
     assert fake.publishes == [{"agent_id": None, "expected": None}]
+
+
+# --- the precondition belongs to the config's producing result -----------------
+
+
+@pytest.mark.asyncio
+async def test_applying_an_older_result_publishes_with_its_own_generation(online):
+    """Run A captures 3; the head moves to 4; run B captures 4. Publishing A's
+    config must send 3 (and be refused), not B's 4 (and wrongly succeed)."""
+    fake = _FakeBackend(head=3)
+    answer = _make_wrapper()
+    result_a = await _optimize(answer, fake)
+    fake.head = 4
+    result_b = await _optimize(answer, fake)
+    assert result_a.metadata["promotion_precondition"]["generation"] == 3
+    assert result_b.metadata["promotion_precondition"]["generation"] == 4
+
+    answer.apply_best_config(result_a)
+    with pytest.raises(CloudBestConfigStaleHeadError) as excinfo:
+        _publish(answer, fake)
+
+    assert fake.publishes == [{"agent_id": _AGENT, "expected": 3}]
+    assert fake.head == 4
+    assert excinfo.value.best_config == result_a.best_config
+
+
+@pytest.mark.asyncio
+async def test_applying_the_newer_result_publishes_with_its_generation(online):
+    fake = _FakeBackend(head=3)
+    answer = _make_wrapper()
+    result_a = await _optimize(answer, fake)
+    fake.head = 4
+    result_b = await _optimize(answer, fake)
+
+    answer.apply_best_config(result_a)
+    answer.apply_best_config(result_b)
+    _publish(answer, fake)
+
+    assert fake.publishes == [{"agent_id": _AGENT, "expected": 4}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["set_config", "best_config_setter"])
+async def test_manual_or_replaced_config_inherits_no_generation(online, how):
+    fake = _FakeBackend(head=3)
+    answer, _ = await _run(fake)
+    fake.head = 4  # a run's generation would now be stale
+
+    if how == "set_config":
+        answer.set_config({"temperature": 0.5})
+    else:
+        answer._csm.best_config = {"temperature": 0.5}
+    _publish(answer, fake)
+
+    assert fake.publishes == [{"agent_id": None, "expected": None}]
+
+
+@pytest.mark.asyncio
+async def test_result_swapped_after_snapshot_does_not_change_what_is_sent(online):
+    fake = _FakeBackend(head=3)
+    answer = _make_wrapper()
+    result_a = await _optimize(answer, fake)
+    config_a = dict(result_a.best_config)
+    fake.head = 4
+    result_b = await _optimize(answer, fake)
+    other = 0.5 if config_a["temperature"] == 0.0 else 0.0
+    result_b.best_config = {**result_b.best_config, "temperature": other}
+    answer.apply_best_config(result_a)
+
+    def swap_during_network_io(config_id, **kwargs):
+        answer.apply_best_config(result_b)
+        return None
+
+    fake.fetch_best_config_sync = swap_during_network_io
+
+    with pytest.raises(CloudBestConfigStaleHeadError) as excinfo:
+        _publish(answer, fake)
+
+    assert fake.publishes == [{"agent_id": _AGENT, "expected": 3}]
+    assert excinfo.value.best_config == config_a
 
 
 # --- backend client wire mapping -------------------------------------------------

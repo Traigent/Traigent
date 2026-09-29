@@ -1503,7 +1503,7 @@ class OptimizedFunction(Generic[_P, _R]):
 
     @_best_config.setter
     def _best_config(self, value: dict[str, Any] | None) -> None:
-        self._csm._best_config = value
+        self._csm.best_config = value
 
     def _representative_seamless_config(
         self, configuration_space: dict[str, Any] | None = None
