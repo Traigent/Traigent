@@ -7,12 +7,15 @@ the backend answer 409; the SDK raises a typed error and publishes nothing.
 
 from __future__ import annotations
 
+import copy
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 import traigent
+import traigent.core.config_state_manager as config_state_manager
 from traigent.api.types import OptimizationResult
 from traigent.cloud.backend_client import BackendIntegratedClient
 from traigent.cloud.client import CloudServiceError
@@ -60,6 +63,7 @@ class _FakeBackend:
         self.report_head = report_head
         self.head_reads = 0
         self.publishes: list[dict] = []
+        self.sent_configs: list[dict] = []
         self.no_egress = False
         self.cloud_egress_intent = False
         self.enable_fallback = False
@@ -108,6 +112,7 @@ class _FakeBackend:
         self.publishes.append(
             {"agent_id": agent_id, "expected": expected_head_generation}
         )
+        self.sent_configs.append(copy.deepcopy(spec["config"]))
         if expected_head_generation is not None:
             if expected_head_generation != self.head:
                 raise CloudBestConfigStaleHeadError(
@@ -341,6 +346,71 @@ async def test_result_swapped_after_snapshot_does_not_change_what_is_sent(online
 
     assert fake.publishes == [{"agent_id": _AGENT, "expected": 3}]
     assert excinfo.value.best_config == config_a
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("writer", ["setter", "reset"])
+async def test_replacing_the_config_mid_publish_cannot_drop_its_precondition(
+    online, writer
+):
+    """A writer that runs between reading the config and reading its precondition
+    must wait for the publish's critical section, so the stale config is never
+    sent without its generation check."""
+    fake = _FakeBackend(head=3)
+    answer, _ = await _run(fake)
+    csm = answer._csm
+    real_ref = config_state_manager.function_ref_for
+    done = threading.Event()
+    calls = []
+
+    def replace() -> None:
+        if writer == "setter":
+            csm.best_config = {"temperature": 0.5}
+        else:
+            csm.reset_optimization()
+        done.set()
+
+    def hook(func):
+        if not calls:  # first call is inside the publish's snapshot block
+            calls.append(1)
+            threading.Thread(target=replace, daemon=True).start()
+            assert not done.wait(0.3), "writer ran inside the publish critical section"
+        return real_ref(func)
+
+    with patch.object(config_state_manager, "function_ref_for", hook):
+        _publish(answer, fake)
+
+    assert fake.publishes == [{"agent_id": _AGENT, "expected": 3}]
+    assert done.wait(5)
+
+
+@pytest.mark.asyncio
+async def test_mutating_the_config_after_snapshot_changes_neither_payload_nor_error(
+    online,
+):
+    fake = _FakeBackend(head=4)
+    answer, _ = await _run(fake)
+    csm = answer._csm
+    live = {"temperature": 0.5, "nested": {"k": 1}}
+    csm.best_config = live
+    csm._best_config_precondition = {
+        "agent_id": _AGENT,
+        "environment": csm.best_config_environment,
+        "generation": 3,
+    }
+
+    def mutate_during_fetch(config_id, **kwargs):
+        live["nested"]["k"] = 2
+        return None
+
+    fake.fetch_best_config_sync = mutate_during_fetch
+
+    with pytest.raises(CloudBestConfigStaleHeadError) as excinfo:
+        _publish(answer, fake)
+
+    live["nested"]["k"] = 3  # mutation after the refusal
+    assert fake.sent_configs[0]["nested"]["k"] == 1
+    assert excinfo.value.best_config["nested"]["k"] == 1
 
 
 # --- backend client wire mapping -------------------------------------------------

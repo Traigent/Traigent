@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import copy
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -273,8 +274,9 @@ class ConfigStateManager:
 
     @best_config.setter
     def best_config(self, value: dict[str, Any] | None) -> None:
-        self._best_config = value
-        self._best_config_precondition = None
+        with self._state_lock:
+            self._best_config = value
+            self._best_config_precondition = None
 
     @property
     def best_config_snapshot(self) -> BestConfigSnapshot:
@@ -316,12 +318,16 @@ class ConfigStateManager:
         best_config: dict[str, Any] | None,
         promotion_precondition: dict[str, Any] | None = None,
     ) -> None:
-        self._best_config_precondition = (
-            dict(promotion_precondition) if promotion_precondition else None
-        )
-        self._best_config_snapshot = snapshot
-        self._current_config = thaw_config(snapshot.config)
-        self._best_config = best_config.copy() if best_config else None
+        # The config and its precondition are one pair: write both under the
+        # state lock (re-entrant, so callers that already hold it are fine) so
+        # a concurrent publish never reads one half of a replaced pair.
+        with self._state_lock:
+            self._best_config_precondition = (
+                dict(promotion_precondition) if promotion_precondition else None
+            )
+            self._best_config_snapshot = snapshot
+            self._current_config = thaw_config(snapshot.config)
+            self._best_config = best_config.copy() if best_config else None
 
     def _reset_to_default_snapshot(self) -> None:
         snapshot = BestConfigSnapshot.from_config(
@@ -1057,9 +1063,12 @@ class ConfigStateManager:
                 "config_id": effective_config_id,
                 "function_ref": function_ref_for(self.func),
                 "environment": environment,
-                "config": thaw_config(self._best_config),
+                "config": copy.deepcopy(thaw_config(self._best_config)),
                 "provenance": provenance,
             }
+            # Detached from the live state and from the run's result, so later
+            # mutation of either cannot change what is reported on refusal.
+            refused_config = copy.deepcopy(spec["config"])
             precondition_kwargs = self._promotion_precondition_kwargs(
                 self._best_config_precondition, environment
             )
@@ -1086,7 +1095,7 @@ class ConfigStateManager:
         except CloudBestConfigStaleHeadError as exc:
             # The backend refused and wrote nothing. Keep the refused config on
             # the error so the caller can re-publish it deliberately.
-            exc.best_config = thaw_config(spec["config"])
+            exc.best_config = copy.deepcopy(refused_config)
             raise
         except CloudPublishUnavailable:
             raise
