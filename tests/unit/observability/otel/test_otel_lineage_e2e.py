@@ -87,13 +87,13 @@ def test_real_optimizer_trials_stamp_matching_ids_on_every_span(collector, optim
     assert len(llm) >= len(results.trials) * len(DATASET)  # every call exported
     assert seen <= reported and seen  # every span maps to a trial the optimizer reports
     for attrs in llm + spans["inner-tool"]:  # children stamped too
-        assert attrs[C.ATTR_TRIAL_ID] == attrs[C.ATTR_CONFIGURATION_RUN_ID]
-        assert attrs[C.ATTR_OPTIMIZATION_RUN_ID]
+        assert attrs[C.ATTR_TRIAL_ID] in reported
+        assert attrs[C.ATTR_OPTIMIZATION_SESSION_ID]
     # one optimization run id across the whole run
-    assert len({a[C.ATTR_OPTIMIZATION_RUN_ID] for a in llm}) == 1
+    assert len({a[C.ATTR_OPTIMIZATION_SESSION_ID] for a in llm}) == 1
     # context cleanup: nothing leaks to spans created after the run
     after = spans["after-optimization"][0]
-    assert not {C.ATTR_TRIAL_ID, C.ATTR_CONFIGURATION_RUN_ID, C.ATTR_OPTIMIZATION_RUN_ID} & set(after)
+    assert not {C.ATTR_TRIAL_ID, C.ATTR_OPTIMIZATION_SESSION_ID} & set(after)
     # ids only: no optimizer configs/metrics/payloads ever ride on spans
     for _rs, _ss, span in collector.spans():
         assert set(collector.attrs(span)) <= set(C.ATTRIBUTE_ALLOWLIST)
@@ -131,7 +131,7 @@ def test_concurrent_asyncio_trials_do_not_bleed(collector):
     for i in range(5):
         for name in (f"span-{i}", f"child-{i}"):
             assert spans[name][0][C.ATTR_TRIAL_ID] == f"t{i}"
-            assert spans[name][0][C.ATTR_OPTIMIZATION_RUN_ID] == "run-1"
+            assert spans[name][0][C.ATTR_OPTIMIZATION_SESSION_ID] == "run-1"
     assert C.ATTR_TRIAL_ID not in spans["outside"][0]
 
 

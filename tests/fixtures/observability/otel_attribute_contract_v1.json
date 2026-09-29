@@ -1,0 +1,153 @@
+{
+  "contract_id": "traigent.observability.otel_attribute_contract",
+  "contract_version": 1,
+  "description": "Shared contract between Traigent SDK exporters and the Backend OTLP receiver: which OpenTelemetry span attribute names are read, in what precedence, which are content-bearing (dropped by the receiver this round), which bounded metadata keys may be preserved, how spans map to Traigent observation types, and how token usage classes are named. Consumers vendor this file and pin its sha256 in a lock test.",
+  "sources": [
+    {"name": "OpenTelemetry GenAI semantic conventions", "url": "https://github.com/open-telemetry/semantic-conventions-genai", "version": "commit bcc7f9c2 (status: Development; old and new attribute names both accepted)", "purpose": "interoperability: attribute names only", "fetched": "2026-09-30", "covered_by": ["tests/test_observability_otel_attribute_contract.py"]},
+    {"name": "OpenInference semantic conventions", "url": "https://github.com/Arize-ai/openinference/blob/main/spec/semantic_conventions.md", "version": "main as of 2026-09-30", "purpose": "interoperability: attribute names and span-kind names only", "fetched": "2026-09-30", "covered_by": ["tests/test_observability_otel_attribute_contract.py"]},
+    {"name": "OpenTelemetry Protocol (OTLP) specification", "url": "https://opentelemetry.io/docs/specs/otlp/", "version": "1.x", "purpose": "wire format for the receiver (not encoded in this file)", "fetched": "2026-09-30", "covered_by": []}
+  ],
+  "content_mode": {
+    "resource_attribute": "traigent.content_mode.v1",
+    "values": ["metadata", "redacted", "record"],
+    "restrictiveness_order_most_to_least": ["metadata", "redacted", "record"],
+    "default_when_missing_invalid_or_conflicting": "metadata",
+    "mixed_mode_batches": "per-span most restrictive",
+    "declaration_grants_permission": false,
+    "receiver_stores_content": false,
+    "receiver_note": "This round the receiver always drops every content key regardless of the declared mode. Storing content will require an authenticated project policy (future owner decision). The declaration is recorded as metadata only.",
+    "sdk_egress_by_mode": {
+      "metadata": "content keys removed, only metadata_allowlist keys sent",
+      "redacted": "content keys kept with the value \"[REDACTED]\"",
+      "record": "content keys sent after secret scrubbing and size cap"
+    }
+  },
+  "content_keys": {
+    "exact": [
+      "gen_ai.input.messages", "gen_ai.output.messages", "gen_ai.system_instructions",
+      "gen_ai.tool.call.arguments", "gen_ai.tool.call.result", "gen_ai.tool.definitions",
+      "gen_ai.prompt", "gen_ai.completion",
+      "input.value", "output.value", "input.mime_type", "output.mime_type",
+      "llm.input_messages", "llm.output_messages", "llm.prompts", "llm.invocation_parameters",
+      "llm.tools", "tool.parameters", "tool.description",
+      "embedding.text", "embedding.vector", "embedding.embeddings", "retrieval.documents",
+      "metadata", "tag.tags",
+      "traigent.input", "traigent.output",
+      "exception.message", "exception.stacktrace"
+    ],
+    "prefixes": [
+      "gen_ai.prompt.", "gen_ai.completion.",
+      "llm.input_messages.", "llm.output_messages.", "llm.prompts.", "llm.tools.",
+      "retrieval.documents.", "embedding.embeddings.", "reranker.input_documents.", "reranker.output_documents."
+    ],
+    "prefix_exceptions": ["gen_ai.prompt.name", "gen_ai.prompt.version"],
+    "event_names": ["gen_ai.client.inference.operation.details", "gen_ai.content.prompt", "gen_ai.content.completion"],
+    "event_attribute_allowlist": ["exception.type"],
+    "unknown_keys_in_metadata_mode": "dropped (allowlist model)"
+  },
+  "metadata_allowlist": {
+    "description": "Typed, bounded keys the receiver may preserve under metadata.otel.*. No wildcards. Anything else is counted in metadata.otel.dropped_attribute_count and dropped.",
+    "attributes": {
+      "gen_ai.operation.name": {"type": "string", "max_length": 64},
+      "gen_ai.provider.name": {"type": "string", "max_length": 64},
+      "gen_ai.system": {"type": "string", "max_length": 64},
+      "gen_ai.request.model": {"type": "string", "max_length": 255},
+      "gen_ai.response.model": {"type": "string", "max_length": 255},
+      "gen_ai.response.id": {"type": "string", "max_length": 255},
+      "gen_ai.response.finish_reasons": {"type": "string_array", "max_items": 16, "max_length": 64},
+      "gen_ai.request.temperature": {"type": "number"},
+      "gen_ai.request.top_p": {"type": "number"},
+      "gen_ai.request.max_tokens": {"type": "integer"},
+      "gen_ai.agent.id": {"type": "string", "max_length": 255},
+      "gen_ai.agent.name": {"type": "string", "max_length": 255},
+      "gen_ai.tool.name": {"type": "string", "max_length": 255},
+      "gen_ai.tool.call.id": {"type": "string", "max_length": 255},
+      "gen_ai.tool.type": {"type": "string", "max_length": 64},
+      "gen_ai.conversation.id": {"type": "string", "max_length": 255},
+      "gen_ai.prompt.name": {"type": "string", "max_length": 255},
+      "gen_ai.prompt.version": {"type": "integer"},
+      "openinference.span.kind": {"type": "string", "max_length": 32},
+      "llm.model_name": {"type": "string", "max_length": 255},
+      "llm.provider": {"type": "string", "max_length": 64},
+      "llm.system": {"type": "string", "max_length": 64},
+      "embedding.model_name": {"type": "string", "max_length": 255},
+      "tool.name": {"type": "string", "max_length": 255},
+      "session.id": {"type": "string", "max_length": 255},
+      "user.id": {"type": "string", "max_length": 255},
+      "enduser.id": {"type": "string", "max_length": 255},
+      "error.type": {"type": "string", "max_length": 255},
+      "exception.type": {"type": "string", "max_length": 255},
+      "deployment.environment.name": {"type": "string", "max_length": 64},
+      "deployment.environment": {"type": "string", "max_length": 64},
+      "service.name": {"type": "string", "max_length": 255},
+      "service.version": {"type": "string", "max_length": 128},
+      "traigent.trial_id": {"type": "string", "max_length": 128},
+      "traigent.experiment_run_id": {"type": "string", "max_length": 128},
+      "traigent.config_hash": {"type": "string", "max_length": 128},
+      "traigent.optimization_session_id": {"type": "string", "max_length": 128},
+      "traigent.content_mode.v1": {"type": "string", "max_length": 16},
+      "traigent.content.dropped_attrs": {"type": "integer"}
+    },
+    "limits": {"max_attributes_per_span": 128, "max_key_length": 256, "max_string_length": 4096, "max_array_items": 64, "max_depth": 8, "max_span_metadata_bytes": 16384}
+  },
+  "usage_classes": {
+    "classes": ["input", "cache_read", "cache_write", "reasoning", "output"],
+    "input_convention": "input EXCLUDES cache_read and cache_write (disjoint), matching common_types CacheReadTokens. When a source reports input inclusive of cache reads, the consumer must subtract only if the source is documented inclusive; otherwise it records the value as reported and flags usage as not normalised.",
+    "attributes": {
+      "input": ["gen_ai.usage.input_tokens", "gen_ai.usage.prompt_tokens", "llm.token_count.prompt"],
+      "output": ["gen_ai.usage.output_tokens", "gen_ai.usage.completion_tokens", "llm.token_count.completion"],
+      "cache_read": ["gen_ai.usage.cache_read.input_tokens", "llm.token_count.prompt_details.cache_read"],
+      "cache_write": ["gen_ai.usage.cache_creation.input_tokens", "llm.token_count.prompt_details.cache_write"],
+      "reasoning": ["gen_ai.usage.reasoning.output_tokens", "llm.token_count.completion_details.reasoning"]
+    },
+    "total_tokens": ["llm.token_count.total"],
+    "cost_attributes_trusted": false,
+    "cost_note": "Client-reported cost attributes (llm.cost.*) are not trusted or stored as cost; cost is unknown (null) unless priced server-side."
+  },
+  "observation_type_mapping": {
+    "evaluation_order": ["gen_ai.operation.name", "openinference.span.kind", "fallback_attributes", "default"],
+    "gen_ai_operation_name": {
+      "chat": "generation", "text_completion": "generation", "generate_content": "generation",
+      "embeddings": "embedding", "execute_tool": "tool_call",
+      "invoke_agent": "agent", "create_agent": "agent", "invoke_workflow": "chain",
+      "retrieval": "retriever", "search_memory": "retriever"
+    },
+    "openinference_span_kind": {
+      "LLM": "generation", "EMBEDDING": "embedding", "CHAIN": "chain", "RETRIEVER": "retriever",
+      "RERANKER": "retriever", "TOOL": "tool", "AGENT": "agent", "GUARDRAIL": "guardrail",
+      "EVALUATOR": "evaluator", "PROMPT": "span"
+    },
+    "fallback_attributes": [
+      {"if_present": "gen_ai.request.model", "type": "generation"},
+      {"if_present": "llm.model_name", "type": "generation"},
+      {"if_present": "gen_ai.tool.name", "type": "tool_call"}
+    ],
+    "default": "span",
+    "note": "The Traigent observation type enum is fixed by observability/observation_ingest_schema.json (_ObservationType); every mapped value must be a member."
+  },
+  "precedence": {
+    "rule": "For each canonical field the first attribute in the list that is present with a valid value wins. Lower entries are ignored (not merged), and the winning source name is recorded. GenAI semantic conventions win over OpenInference on ties because they are the standard; OpenInference names are accepted for instrumentors that emit only them.",
+    "fields": {
+      "operation_type_source": ["gen_ai.operation.name", "openinference.span.kind"],
+      "model_name": ["gen_ai.response.model", "gen_ai.request.model", "llm.model_name", "embedding.model_name"],
+      "provider": ["gen_ai.provider.name", "gen_ai.system", "llm.provider", "llm.system"],
+      "session_id": ["session.id", "resource:session.id", "gen_ai.conversation.id"],
+      "user_id": ["user.id", "enduser.id"],
+      "environment": ["deployment.environment.name", "deployment.environment"],
+      "release": ["service.version"],
+      "tool_name": ["gen_ai.tool.name", "tool.name"],
+      "usage_input": ["gen_ai.usage.input_tokens", "gen_ai.usage.prompt_tokens", "llm.token_count.prompt"],
+      "usage_output": ["gen_ai.usage.output_tokens", "gen_ai.usage.completion_tokens", "llm.token_count.completion"]
+    },
+    "vectors": [
+      {"id": "genai_beats_openinference_model", "field": "model_name", "attributes": {"llm.model_name": "oi-model", "gen_ai.request.model": "req-model"}, "expected": "req-model"},
+      {"id": "response_model_beats_request", "field": "model_name", "attributes": {"gen_ai.request.model": "req-model", "gen_ai.response.model": "resp-model"}, "expected": "resp-model"},
+      {"id": "openinference_only_model", "field": "model_name", "attributes": {"llm.model_name": "oi-model"}, "expected": "oi-model"},
+      {"id": "span_attr_session_beats_resource", "field": "session_id", "attributes": {"session.id": "span-s", "resource:session.id": "res-s", "gen_ai.conversation.id": "conv"}, "expected": "span-s"},
+      {"id": "conversation_last_resort", "field": "session_id", "attributes": {"gen_ai.conversation.id": "conv"}, "expected": "conv"},
+      {"id": "invalid_top_falls_through", "field": "usage_input", "attributes": {"gen_ai.usage.input_tokens": -5, "llm.token_count.prompt": 7}, "expected": 7},
+      {"id": "provider_semconv_first", "field": "provider", "attributes": {"llm.provider": "oi-p", "gen_ai.provider.name": "std-p"}, "expected": "std-p"},
+      {"id": "nothing_present", "field": "environment", "attributes": {}, "expected": null}
+    ]
+  }
+}

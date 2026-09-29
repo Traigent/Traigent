@@ -27,7 +27,6 @@ class _CallerAttributes:
     metadata: tuple[tuple[str, Any], ...] = ()
     prompt_name: str | None = None
     prompt_version: int | None = None
-    prompt_label: str | None = None
     content_mode: str | None = None
 
 
@@ -64,7 +63,6 @@ def attributes(
         ),
         prompt_name=ref.get("name", base.prompt_name),
         prompt_version=version if isinstance(version, int) else base.prompt_version,
-        prompt_label=ref.get("label", base.prompt_label),
         content_mode=base.content_mode,
     )
     token = _caller.set(merged)
@@ -91,12 +89,9 @@ def current_lineage() -> dict[str, str]:
             out[C.ATTR_TRIAL_ID] = trial_id
     workflow = get_workflow_trace_context()
     if isinstance(workflow, dict):
-        config_run = _str_id(workflow.get("configuration_run_id"))
-        if config_run:
-            out[C.ATTR_CONFIGURATION_RUN_ID] = config_run
         opt_run = _str_id(workflow.get("workflow_trace_id"))
         if opt_run:
-            out[C.ATTR_OPTIMIZATION_RUN_ID] = opt_run
+            out[C.ATTR_OPTIMIZATION_SESSION_ID] = opt_run
     return out
 
 
@@ -113,16 +108,17 @@ def stamp_span(span: Span, *, metadata_mode: str = "metadata") -> None:
         span.set_attribute(C.ATTR_SESSION_ID, caller.session_id)
     if caller.user_id:
         span.set_attribute(C.ATTR_USER_ID, caller.user_id)
-    if caller.tags:
-        span.set_attribute(C.ATTR_TAGS, list(caller.tags))
     if caller.prompt_name:
         span.set_attribute(C.ATTR_PROMPT_NAME, str(caller.prompt_name))
     if caller.prompt_version is not None:
         span.set_attribute(C.ATTR_PROMPT_VERSION, caller.prompt_version)
-    if caller.prompt_label:
-        span.set_attribute(C.ATTR_PROMPT_LABEL, str(caller.prompt_label))
     if metadata_mode == "metadata":
         return  # content: never placed on the span in metadata mode
+    if caller.tags:
+        span.set_attribute(
+            C.ATTR_TAGS,
+            list(caller.tags) if metadata_mode == "record" else [C.REDACTED_PLACEHOLDER],
+        )
     for key, value in caller.metadata:
         if isinstance(value, (str, bool, int, float)):
             span.set_attribute(

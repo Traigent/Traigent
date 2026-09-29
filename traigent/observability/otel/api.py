@@ -377,6 +377,11 @@ class _Observe:
     def _begin(self, name: str, args: tuple, kwargs: dict) -> tuple[Span, Any]:
         mode = self._mode()
         handle = _handle
+        # Enter the caller-attribute scope first so this span itself is stamped
+        # by the processor's on_start, not only its children.
+        scope = contextlib.ExitStack()
+        if any(v is not None for v in self._ctx_attrs.values()):
+            scope.enter_context(attributes(**self._ctx_attrs))
         span = _tracer().start_span(name, kind=SpanKind.INTERNAL)
         span.set_attribute(C.ATTR_OBSERVATION_TYPE, self._as_type)
         if self._tool_name:
@@ -399,9 +404,6 @@ class _Observe:
                         f"{C.CONTENT_METADATA_PREFIX}{key}",
                         value if mode == "record" else C.REDACTED_PLACEHOLDER,
                     )
-        scope = contextlib.ExitStack()
-        if any(v is not None for v in self._ctx_attrs.values()):
-            scope.enter_context(attributes(**self._ctx_attrs))
         return span, scope
 
     def _finish(

@@ -166,7 +166,7 @@ def test_async_function_and_concurrent_attribute_isolation(h):
             i = s.name[-1]
             assert s.attributes[C.ATTR_SESSION_ID] == f"s{i}"
             assert s.attributes[C.ATTR_USER_ID] == f"u{i}"
-            assert tuple(s.attributes[C.ATTR_TAGS]) == (f"t{i}",)
+            assert C.ATTR_TAGS not in s.attributes  # tags are content
     # nothing leaked into the ambient context afterwards
     with otel.observe("after"):
         pass
@@ -298,3 +298,25 @@ def test_end_to_end_metadata_only_on_the_wire(h, canary):
     assert otel.flush(5).flushed
     assert h.collector.spans()
     assert canary.encode() not in b"".join(h.collector.raw_bodies)
+
+
+def test_observe_arguments_stamp_the_span_itself_and_tags_follow_mode(collector):
+    mem = InMemorySpanExporter()
+    provider = TracerProvider(shutdown_on_exit=False)
+    provider.add_span_processor(SimpleSpanProcessor(mem))
+    otel.init(api_key="k", endpoint=collector.base_url, tracer_provider=provider,
+              content_mode="record", exit_flush=False)
+    with otel.observe("root", session_id="s1", user_id="u1", tags=["a", "b"]):
+        with otel.observe("kid"):
+            pass
+    spans = {s.name: s for s in mem.get_finished_spans()}
+    for name in ("root", "kid"):
+        assert spans[name].attributes[C.ATTR_SESSION_ID] == "s1"
+        assert tuple(spans[name].attributes[C.ATTR_TAGS]) == ("a", "b")
+    otel.shutdown()
+    otel.init(api_key="k", endpoint=collector.base_url, tracer_provider=provider,
+              content_mode="redacted", exit_flush=False)
+    with otel.observe("red", tags=["secret-tag"]):
+        pass
+    red = {s.name: s for s in mem.get_finished_spans()}["red"]
+    assert tuple(red.attributes[C.ATTR_TAGS]) == (C.REDACTED_PLACEHOLDER,)

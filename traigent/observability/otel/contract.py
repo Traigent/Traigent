@@ -34,14 +34,17 @@ TRAIGENT_SCOPE_NAME: Final = "traigent.observability"
 # Attributes stamped by the SDK.
 ATTR_OBSERVATION_TYPE: Final = "traigent.observation_type"
 ATTR_TRIAL_ID: Final = "traigent.trial_id"
-ATTR_CONFIGURATION_RUN_ID: Final = "traigent.configuration_run_id"
-ATTR_OPTIMIZATION_RUN_ID: Final = "traigent.optimization_run_id"
+ATTR_OPTIMIZATION_SESSION_ID: Final = "traigent.optimization_session_id"
+ATTR_EXPERIMENT_RUN_ID: Final = "traigent.experiment_run_id"
+ATTR_CONFIG_HASH: Final = "traigent.config_hash"
 ATTR_SESSION_ID: Final = "session.id"
 ATTR_USER_ID: Final = "user.id"
-ATTR_TAGS: Final = "traigent.tags"
-ATTR_PROMPT_NAME: Final = "traigent.prompt.name"
-ATTR_PROMPT_VERSION: Final = "traigent.prompt.version"
-ATTR_PROMPT_LABEL: Final = "traigent.prompt.label"
+# Tags are user labels: content class (the receiver contract lists tag.tags
+# among its content keys), never allowlisted.
+ATTR_TAGS: Final = "tag.tags"
+# Prompt reference uses the GenAI names the receiver contract reads.
+ATTR_PROMPT_NAME: Final = "gen_ai.prompt.name"
+ATTR_PROMPT_VERSION: Final = "gen_ai.prompt.version"
 ATTR_INPUT: Final = "traigent.input"
 ATTR_OUTPUT: Final = "traigent.output"
 ATTR_DROPPED_ATTRS: Final = "traigent.content.dropped_attrs"
@@ -85,6 +88,11 @@ def _i(lo: int = 0, hi: int = 2**53) -> AttrSpec:
     return AttrSpec("int", lo=lo, hi=hi)
 
 
+def _e(choices) -> AttrSpec:
+    values = frozenset(choices)
+    return AttrSpec("enum", max_len=max(len(v) for v in values), choices=values)
+
+
 def _f(lo: float = -1e12, hi: float = 1e12) -> AttrSpec:
     return AttrSpec("float", lo=lo, hi=hi)
 
@@ -114,7 +122,6 @@ ATTRIBUTE_ALLOWLIST: Final[dict[str, AttrSpec]] = {
     "gen_ai.request.model": _s(128),
     "gen_ai.request.temperature": _f(0, 100),
     "gen_ai.request.top_p": _f(0, 1),
-    "gen_ai.request.top_k": _i(0, 10_000_000),
     "gen_ai.request.max_tokens": _i(),
     "gen_ai.response.model": _s(128),
     "gen_ai.response.id": _s(128),
@@ -131,11 +138,12 @@ ATTRIBUTE_ALLOWLIST: Final[dict[str, AttrSpec]] = {
     "gen_ai.tool.type": _s(32),
     "gen_ai.conversation.id": _s(128),
     "error.type": _s(128),
-    "server.address": _s(255),
-    "server.port": _i(0, 65535),
     # OpenInference-style names (public spec)
-    "openinference.span.kind": AttrSpec("enum", choices=_OI_KINDS),
+    "openinference.span.kind": _e(_OI_KINDS),
     "llm.model_name": _s(128),
+    "embedding.model_name": _s(128),
+    "tool.name": _s(128),
+    "enduser.id": _s(128),
     "llm.provider": _s(64),
     "llm.system": _s(64),
     "llm.token_count.prompt": _i(),
@@ -145,16 +153,15 @@ ATTRIBUTE_ALLOWLIST: Final[dict[str, AttrSpec]] = {
     ATTR_SESSION_ID: _s(128),
     ATTR_USER_ID: _s(128),
     # Traigent
-    ATTR_OBSERVATION_TYPE: AttrSpec("enum", choices=OBSERVATION_TYPES),
+    ATTR_OBSERVATION_TYPE: _e(OBSERVATION_TYPES),
     ATTR_TRIAL_ID: _s(128),
-    ATTR_CONFIGURATION_RUN_ID: _s(128),
-    ATTR_OPTIMIZATION_RUN_ID: _s(128),
-    ATTR_TAGS: AttrSpec("str_seq", max_len=64, max_items=10),
+    ATTR_OPTIMIZATION_SESSION_ID: _s(128),
+    ATTR_EXPERIMENT_RUN_ID: _s(128),
+    ATTR_CONFIG_HASH: _s(128),
     ATTR_PROMPT_NAME: _s(128),
     ATTR_PROMPT_VERSION: _i(0, 1_000_000),
-    ATTR_PROMPT_LABEL: _s(64),
     ATTR_DROPPED_ATTRS: _i(0, 1_000_000),
-    CONTENT_MODE_ATTRIBUTE: AttrSpec("enum", choices=frozenset(CONTENT_MODES)),
+    CONTENT_MODE_ATTRIBUTE: _e(CONTENT_MODES),
 }
 
 # Keys known to carry user content: dropped in metadata mode (they are not
@@ -185,6 +192,7 @@ CONTENT_ATTRIBUTE_KEYS: Final = frozenset(
         "embedding.embeddings",
         ATTR_INPUT,
         ATTR_OUTPUT,
+        ATTR_TAGS,
     }
 )
 
@@ -198,7 +206,7 @@ RESOURCE_ALLOWLIST: Final[dict[str, AttrSpec]] = {
     "telemetry.sdk.name": _s(64),
     "telemetry.sdk.language": _s(32),
     "telemetry.sdk.version": _s(32),
-    CONTENT_MODE_ATTRIBUTE: AttrSpec("enum", choices=frozenset(CONTENT_MODES)),
+    CONTENT_MODE_ATTRIBUTE: _e(CONTENT_MODES),
 }
 
 # Event names that survive metadata/redacted mode and the only attribute on them.
