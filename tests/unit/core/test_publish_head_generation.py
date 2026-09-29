@@ -527,3 +527,17 @@ async def test_session_create_response_agent_id_is_read_from_metadata(
     parsed = await ApiOperations(Mock())._parse_session_response(response)
 
     assert parsed.agent_id == expected
+
+
+@patch("requests.post")
+def test_unreadable_409_body_is_logged_and_rejected_generically(mock_post, caplog):
+    response = Mock(status_code=409, text="<html>conflict</html>", headers={})
+    response.json.side_effect = ValueError("not json")
+    mock_post.return_value = response
+    with caplog.at_level("WARNING"):
+        with pytest.raises(CloudServiceError) as excinfo:
+            _client().publish_best_config_sync(
+                _SPEC, agent_id="a1", expected_head_generation=3
+            )
+    assert not isinstance(excinfo.value, CloudBestConfigStaleHeadError)
+    assert "not readable JSON" in caplog.text

@@ -2006,10 +2006,13 @@ class BackendIntegratedClient:
         """
         from traigent.core.best_config_runtime import CloudBestConfigStaleHeadError
 
+        body: Any = None
         try:
             body = response.json()
-        except Exception:  # noqa: BLE001
-            return None
+        except Exception as exc:  # noqa: BLE001
+            # Not a readable stale-head body: the caller raises the generic
+            # rejection for this 409, so the failure is still surfaced.
+            logger.warning("Best-config 409 body was not readable JSON: %s", exc)
         if not isinstance(body, dict):
             return None
         if (body.get("code") or body.get("error_code")) != _STALE_HEAD_ERROR_CODE:
