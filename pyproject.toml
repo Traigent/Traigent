@@ -175,6 +175,46 @@ tracing = [
     "opentelemetry-exporter-otlp>=1.20.0,<2.0.0",
 ]
 
+# OpenTelemetry-based observability (traigent.observability.otel).  Tested
+# against opentelemetry 1.44.0; licences verified from package metadata on
+# 2026-09-30 (see docs/observability/otel-provenance.md and NOTICE).
+observability = [
+    "opentelemetry-api>=1.44.0,<2.0.0",
+    "opentelemetry-sdk>=1.44.0,<2.0.0",
+    "opentelemetry-exporter-otlp-proto-common>=1.44.0,<2.0.0",
+    "opentelemetry-proto>=1.44.0,<2.0.0",
+]
+# Optional third-party instrumentors (Apache-2.0).  Exact pins: metadata was
+# verified for these versions only; NOT exercised by this repo's tests.
+observability-openai = [
+    "opentelemetry-api>=1.44.0,<2.0.0",
+    "opentelemetry-sdk>=1.44.0,<2.0.0",
+    "opentelemetry-exporter-otlp-proto-common>=1.44.0,<2.0.0",
+    "opentelemetry-proto>=1.44.0,<2.0.0",
+    "openinference-instrumentation-openai==0.1.61",
+]
+observability-anthropic = [
+    "opentelemetry-api>=1.44.0,<2.0.0",
+    "opentelemetry-sdk>=1.44.0,<2.0.0",
+    "opentelemetry-exporter-otlp-proto-common>=1.44.0,<2.0.0",
+    "opentelemetry-proto>=1.44.0,<2.0.0",
+    "openinference-instrumentation-anthropic==2.1.7",
+]
+observability-langchain = [
+    "opentelemetry-api>=1.44.0,<2.0.0",
+    "opentelemetry-sdk>=1.44.0,<2.0.0",
+    "opentelemetry-exporter-otlp-proto-common>=1.44.0,<2.0.0",
+    "opentelemetry-proto>=1.44.0,<2.0.0",
+    "openinference-instrumentation-langchain==0.1.76",
+]
+observability-bedrock = [
+    "opentelemetry-api>=1.44.0,<2.0.0",
+    "opentelemetry-sdk>=1.44.0,<2.0.0",
+    "opentelemetry-exporter-otlp-proto-common>=1.44.0,<2.0.0",
+    "opentelemetry-proto>=1.44.0,<2.0.0",
+    "openinference-instrumentation-bedrock==0.1.54",
+]
+
 # Development dependencies
 dev = [
     "pytest>=9.0.3",

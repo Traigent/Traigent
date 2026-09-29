@@ -8,6 +8,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`traigent.observability.otel`: OpenTelemetry-based observability (extra `observability`).**
+  `init` / `instrument` / `observe` / `attributes` / `flush` / `shutdown` /
+  `stats`, a bounded best-effort span processor, an OTLP/HTTP exporter (official
+  protobuf encoders, retry only on 429/502/503/504 and network errors), an
+  egress-authoritative content policy built on a typed allowlist, parent-based
+  head sampling with shared vectors, an exposure gate for third-party
+  instrumentors, and automatic stamping of active optimization-trial ids on
+  every span. The legacy client API is unchanged. See
+  `docs/observability/otel.md`.
 - **`publish_best_config()` refuses to overwrite an agent head that moved during the run.**
   When the backend discloses the agent a session is bound to, the SDK reads that
   agent's head generation once, when the optimization step starts, and sends it
