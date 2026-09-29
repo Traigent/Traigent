@@ -124,6 +124,7 @@ class CloudPublishUnavailableReason(StrEnum):
     BACKEND_NOT_IMPLEMENTED = "backend_not_implemented"
     REQUEST_FAILED = "request_failed"
     INTEGRITY_FAILED = "integrity_failed"
+    STALE_HEAD_GENERATION = "stale_head_generation"
 
 
 class CloudPublishUnavailable(ConfigurationError):
@@ -132,6 +133,41 @@ class CloudPublishUnavailable(ConfigurationError):
     def __init__(self, reason: CloudPublishUnavailableReason, message: str) -> None:
         super().__init__(message, details={"reason": reason.value})
         self.reason = reason
+
+
+class CloudBestConfigStaleHeadError(CloudPublishUnavailable):
+    """Raised when the agent head moved after the run that produced the winner began.
+
+    The backend refused the promotion and wrote nothing: the published head is
+    exactly as the other writer left it. ``best_config`` is the configuration
+    this call tried to publish, so it can be re-published deliberately (for
+    example after reviewing the newer head) instead of being lost.
+    """
+
+    def __init__(
+        self,
+        *,
+        current_generation: int,
+        expected_generation: int,
+        message: str | None = None,
+        agent_id: str | None = None,
+        environment: str | None = None,
+        best_config: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            CloudPublishUnavailableReason.STALE_HEAD_GENERATION,
+            message
+            or (
+                f"Agent head is at generation {current_generation}, not the "
+                f"generation {expected_generation} captured when the run started; "
+                "the published head was left unchanged."
+            ),
+        )
+        self.current_generation = current_generation
+        self.expected_generation = expected_generation
+        self.agent_id = agent_id
+        self.environment = environment
+        self.best_config = best_config
 
 
 class SafetySensitiveBestConfigError(ConfigurationError):
@@ -819,6 +855,7 @@ __all__ = [
     "BestConfigSnapshot",
     "BestConfigSource",
     "BestConfigSourceMode",
+    "CloudBestConfigStaleHeadError",
     "CloudPublishUnavailable",
     "CloudPublishUnavailableReason",
     "SafetySensitiveBestConfigError",

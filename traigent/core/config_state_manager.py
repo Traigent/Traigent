@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import copy
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -24,6 +25,7 @@ from traigent.core.best_config_runtime import (
     BestConfigSnapshot,
     BestConfigSource,
     BestConfigSourceMode,
+    CloudBestConfigStaleHeadError,
     CloudPublishUnavailable,
     CloudPublishUnavailableReason,
     SafetySensitiveBestConfigError,
@@ -196,6 +198,9 @@ class ConfigStateManager:
         # Core state
         self._state = OptimizationState.UNOPTIMIZED
         self._state_lock = threading.RLock()
+        # Head-generation precondition of the run whose result produced
+        # ``_best_config``; None for loaded, manual and default configs.
+        self._best_config_precondition: dict[str, Any] | None = None
         self._optimization_results: OptimizationResult | None = None
         self._optimization_history: list[OptimizationResult] = []
         self._current_config: dict[str, Any] = default_config.copy()
@@ -269,7 +274,9 @@ class ConfigStateManager:
 
     @best_config.setter
     def best_config(self, value: dict[str, Any] | None) -> None:
-        self._best_config = value
+        with self._state_lock:
+            self._best_config = value
+            self._best_config_precondition = None
 
     @property
     def best_config_snapshot(self) -> BestConfigSnapshot:
@@ -309,10 +316,18 @@ class ConfigStateManager:
         snapshot: BestConfigSnapshot,
         *,
         best_config: dict[str, Any] | None,
+        promotion_precondition: dict[str, Any] | None = None,
     ) -> None:
-        self._best_config_snapshot = snapshot
-        self._current_config = thaw_config(snapshot.config)
-        self._best_config = best_config.copy() if best_config else None
+        # The config and its precondition are one pair: write both under the
+        # state lock (re-entrant, so callers that already hold it are fine) so
+        # a concurrent publish never reads one half of a replaced pair.
+        with self._state_lock:
+            self._best_config_precondition = (
+                dict(promotion_precondition) if promotion_precondition else None
+            )
+            self._best_config_snapshot = snapshot
+            self._current_config = thaw_config(snapshot.config)
+            self._best_config = best_config.copy() if best_config else None
 
     def _reset_to_default_snapshot(self) -> None:
         snapshot = BestConfigSnapshot.from_config(
@@ -633,18 +648,32 @@ class ConfigStateManager:
             old_wrapped_func = get_wrapped_func() if get_wrapped_func else None
             old_snapshot = self._best_config_snapshot
             old_override_sticky = self._override_sticky
+            old_precondition = self._best_config_precondition
             try:
                 snapshot = self._snapshot_from_plain_config(
                     results.best_config,
                     source=BestConfigSource.APPLY_BEST_CONFIG.value,
                 )
-                self._set_snapshot(snapshot, best_config=results.best_config)
+                result_metadata = getattr(results, "metadata", None)
+                precondition = (
+                    result_metadata.get("promotion_precondition")
+                    if isinstance(result_metadata, dict)
+                    else None
+                )
+                self._set_snapshot(
+                    snapshot,
+                    best_config=results.best_config,
+                    promotion_precondition=(
+                        precondition if isinstance(precondition, dict) else None
+                    ),
+                )
                 self._override_sticky = True
                 self._setup_wrapper_callback()
             except Exception:
                 self._current_config = old_config
                 self._best_config = old_best
                 self._best_config_snapshot = old_snapshot
+                self._best_config_precondition = old_precondition
                 self._override_sticky = old_override_sticky
                 if set_wrapped_func and old_wrapped_func is not None:
                     set_wrapped_func(old_wrapped_func)
@@ -1008,34 +1037,46 @@ class ConfigStateManager:
                 "Only target='cloud' is reserved for best-config publishing. "
                 "Use export_best_config() for local repo artifacts.",
             )
-        if not self._best_config:
-            raise ConfigurationError(
-                "No best configuration available to publish. "
-                "Please run optimization first using .optimize() or load a config."
-            )
-
         from traigent.cloud.backend_client import get_backend_client
 
-        effective_config_id = self.config_id or self.func.__name__
-        provenance: dict[str, Any] = {
-            "source": self._best_config_snapshot.source,
-            "published_at": datetime.now(UTC).isoformat(),
-        }
-        if self._optimization_results:
-            provenance["optimization_id"] = self._optimization_results.optimization_id
-        spec = {
-            "schema_version": BEST_CONFIG_SCHEMA_VERSION,
-            "config_id": effective_config_id,
-            "function_ref": function_ref_for(self.func),
-            "environment": self.best_config_environment,
-            "config": thaw_config(self._best_config),
-            "provenance": provenance,
-        }
+        # Snapshot the config together with the precondition of the run that
+        # produced it, before any network I/O, so a concurrent run or apply
+        # cannot pair this config with another run's head generation.
+        with self._state_lock:
+            if not self._best_config:
+                raise ConfigurationError(
+                    "No best configuration available to publish. "
+                    "Please run optimization first using .optimize() or load a config."
+                )
+            effective_config_id = self.config_id or self.func.__name__
+            environment = self.best_config_environment
+            provenance: dict[str, Any] = {
+                "source": self._best_config_snapshot.source,
+                "published_at": datetime.now(UTC).isoformat(),
+            }
+            if self._optimization_results:
+                provenance["optimization_id"] = (
+                    self._optimization_results.optimization_id
+                )
+            spec = {
+                "schema_version": BEST_CONFIG_SCHEMA_VERSION,
+                "config_id": effective_config_id,
+                "function_ref": function_ref_for(self.func),
+                "environment": environment,
+                "config": copy.deepcopy(thaw_config(self._best_config)),
+                "provenance": provenance,
+            }
+            # Detached from the live state and from the run's result, so later
+            # mutation of either cannot change what is reported on refusal.
+            refused_config = copy.deepcopy(spec["config"])
+            precondition_kwargs = self._promotion_precondition_kwargs(
+                self._best_config_precondition, environment
+            )
         try:
             client = get_backend_client(enable_fallback=False)
             current = client.fetch_best_config_sync(
                 effective_config_id,
-                environment=self.best_config_environment,
+                environment=environment,
                 function_ref=function_ref_for(self.func),
             )
             if_match = (
@@ -1045,11 +1086,17 @@ class ConfigStateManager:
             )
             result = client.publish_best_config_sync(
                 spec,
-                environment=self.best_config_environment,
+                environment=environment,
                 if_match=if_match,
+                **precondition_kwargs,
             )
             self._verify_cloud_response_hashes(result, spec)
             return result
+        except CloudBestConfigStaleHeadError as exc:
+            # The backend refused and wrote nothing. Keep the refused config on
+            # the error so the caller can re-publish it deliberately.
+            exc.best_config = copy.deepcopy(refused_config)
+            raise
         except CloudPublishUnavailable:
             raise
         except CloudBestConfigIntegrityError as exc:
@@ -1062,6 +1109,41 @@ class ConfigStateManager:
                 CloudPublishUnavailableReason.REQUEST_FAILED,
                 f"Cloud best-config publish failed: {exc}",
             ) from exc
+
+    @staticmethod
+    def _promotion_precondition_kwargs(
+        captured: dict[str, Any] | None, environment: str
+    ) -> dict[str, Any]:
+        """Head precondition captured at the start of the run that made the config.
+
+        Empty (the publish then behaves exactly as before) when the config has no
+        producing run (loaded or manual), the run reported no head generation
+        (older backend, offline run, no agent), or the head was captured for a
+        different environment than the one being published.
+        """
+        if not isinstance(captured, dict):
+            logger.debug("No agent head generation captured; publishing without one")
+            return {}
+        agent_id = captured.get("agent_id")
+        generation = captured.get("generation")
+        if (
+            not isinstance(agent_id, str)
+            or not agent_id
+            or isinstance(generation, bool)
+            or not isinstance(generation, int)
+            or generation < 0
+        ):
+            logger.debug("Captured agent head generation is malformed; ignoring it")
+            return {}
+        if captured.get("environment") != environment:
+            logger.debug(
+                "Agent head generation was captured for environment %r, not %r; "
+                "publishing without one",
+                captured.get("environment"),
+                environment,
+            )
+            return {}
+        return {"agent_id": agent_id, "expected_head_generation": generation}
 
     def _create_slim_export(self, include_metadata: bool) -> dict[str, Any]:
         """Create a slim export suitable for git and deployment."""

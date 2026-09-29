@@ -135,6 +135,9 @@ logger = get_logger(__name__)
 _ALLOWED_EXAMPLE_FEATURE_KINDS = frozenset({"simhash_v1"})
 _JSON_CONTENT_TYPE = "application/json"
 _SDK_USER_AGENT = get_sdk_user_agent()
+_AGENT_ID_HEADER = "X-Traigent-Agent-Id"
+_EXPECTED_HEAD_GENERATION_HEADER = "X-Traigent-Expected-Head-Generation"
+_STALE_HEAD_ERROR_CODE = "STALE_HEAD_GENERATION"
 _SYNC_BACKEND_TRANSIENT_STATUSES = frozenset({408, 429, *range(500, 600)})
 _INTERACTION_POLICY_REQUIRED_KEYS = frozenset(
     {
@@ -1987,14 +1990,120 @@ class BackendIntegratedClient:
             raise CloudServiceError("Backend response data was not an object")
         return data
 
+    @staticmethod
+    def _stale_head_error_from_response(
+        response: Any,
+        *,
+        expected_head_generation: int,
+        agent_id: str | None,
+        environment: str | None,
+    ) -> Exception | None:
+        """Map a stale-head 409 body to the typed error, or None if it is not one.
+
+        A 409 for any other reason (or a body that cannot be read) falls through
+        to the generic rejection path, so an ambiguous response is never treated
+        as a clean outcome.
+        """
+        from traigent.core.best_config_runtime import CloudBestConfigStaleHeadError
+
+        body: Any = None
+        try:
+            body = response.json()
+        except Exception as exc:  # noqa: BLE001
+            # Not a readable stale-head body: the caller raises the generic
+            # rejection for this 409, so the failure is still surfaced.
+            logger.warning("Best-config 409 body was not readable JSON: %s", exc)
+        if not isinstance(body, dict):
+            return None
+        if (body.get("code") or body.get("error_code")) != _STALE_HEAD_ERROR_CODE:
+            return None
+        current = body.get("current_generation")
+        if isinstance(current, bool) or not isinstance(current, int):
+            return None
+        expected = body.get("expected_generation")
+        if isinstance(expected, bool) or not isinstance(expected, int):
+            expected = expected_head_generation
+        message = body.get("message")
+        return CloudBestConfigStaleHeadError(
+            current_generation=current,
+            expected_generation=expected,
+            message=message if isinstance(message, str) and message else None,
+            agent_id=agent_id,
+            environment=environment,
+        )
+
+    def fetch_agent_head_generation_sync(
+        self, agent_id: str, *, environment: str | None = None
+    ) -> int:
+        """Read an agent's current head generation (0 if never promoted)."""
+        self._raise_if_backend_egress_disabled("fetch agent head")
+        try:
+            import requests
+        except ImportError as exc:  # pragma: no cover - requests is required
+            raise CloudServiceError("requests is unavailable") from exc
+
+        base = self._build_best_config_url()
+        if not base:
+            raise CloudServiceError("Backend agent-head URL is invalid")
+        url = f"{base}/agent-heads/{quote(agent_id, safe='')}"
+
+        headers = self._get_sync_auth_headers(target="backend")
+        params = {"environment": environment} if environment else None
+
+        def _get_head() -> Any:
+            try:
+                response = requests.get(  # nosec B113 - timeout is provided
+                    url,
+                    params=params,
+                    headers=headers,
+                    timeout=min(self.timeout, 30.0),
+                )
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                ConnectionError,
+                TimeoutError,
+            ) as exc:
+                raise _SyncBackendTransientError(
+                    f"Agent-head fetch transport failed: {exc}"
+                ) from exc
+            _raise_for_transient_backend_response(response, "Agent-head fetch")
+            return response
+
+        response = _run_sync_backend_request_with_retry("Agent-head fetch", _get_head)
+        if response.status_code >= 400:
+            raise CloudServiceError(
+                f"Agent-head fetch rejected with HTTP {response.status_code}: "
+                f"{response.text[:200]}"
+            )
+        generation = self._extract_backend_data(response).get("generation")
+        if isinstance(generation, bool) or not isinstance(generation, int):
+            raise CloudServiceError("Agent-head response carried no integer generation")
+        if generation < 0:
+            raise CloudServiceError("Agent-head response carried a negative generation")
+        return generation
+
     def publish_best_config_sync(
         self,
         spec: dict[str, Any],
         *,
         environment: str | None = None,
         if_match: str | None = None,
+        agent_id: str | None = None,
+        expected_head_generation: int | None = None,
     ) -> dict[str, Any]:
-        """Publish a canonical best-config spec to the backend."""
+        """Publish a canonical best-config spec to the backend.
+
+        When both ``agent_id`` and ``expected_head_generation`` are given the
+        publish is also a promotion to that agent's head, conditional on the
+        head still being at the expected generation. A stale generation raises
+        ``CloudBestConfigStaleHeadError`` and nothing is written. Supplying only
+        one of the two is a caller bug and is rejected before any request.
+        """
+        if (agent_id is None) != (expected_head_generation is None):
+            raise CloudServiceError(
+                "agent_id and expected_head_generation must be provided together"
+            )
         self._raise_if_backend_egress_disabled("publish best config")
         try:
             import requests
@@ -2008,6 +2117,11 @@ class BackendIntegratedClient:
         headers = self._get_sync_auth_headers(target="backend")
         if if_match:
             headers["If-Match"] = if_match
+        if agent_id is not None and expected_head_generation is not None:
+            headers[_AGENT_ID_HEADER] = agent_id
+            headers[_EXPECTED_HEAD_GENERATION_HEADER] = str(
+                int(expected_head_generation)
+            )
         payload: dict[str, Any] = {"spec": spec}
         if environment:
             payload["environment"] = environment
@@ -2037,6 +2151,15 @@ class BackendIntegratedClient:
             _post_best_config,
         )
 
+        if response.status_code == 409 and expected_head_generation is not None:
+            stale = self._stale_head_error_from_response(
+                response,
+                expected_head_generation=expected_head_generation,
+                agent_id=agent_id,
+                environment=environment,
+            )
+            if stale is not None:
+                raise stale
         if response.status_code >= 400:
             raise CloudServiceError(
                 f"Best-config publish rejected with HTTP {response.status_code}: "

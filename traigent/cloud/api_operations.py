@@ -121,6 +121,7 @@ class TraigentSessionApiResult(tuple):
     project_id: str | None
     tenant_id: str | None
     warm_start_transfer: dict[str, Any] | None
+    agent_id: str | None
 
     def __new__(
         cls,
@@ -131,8 +132,10 @@ class TraigentSessionApiResult(tuple):
         project_id: str | None = None,
         tenant_id: str | None = None,
         warm_start_transfer: dict[str, Any] | None = None,
+        agent_id: str | None = None,
     ):
         obj = super().__new__(cls, (session_id, experiment_id, experiment_run_id))
+        obj.agent_id = agent_id
         obj.project_id = project_id
         obj.tenant_id = tenant_id
         obj.warm_start_transfer = warm_start_transfer
@@ -951,6 +954,8 @@ class ApiOperations:
             project_id=project_id,
             tenant_id=tenant_id,
             warm_start_transfer=warm_start_transfer,
+            # Disclosed by the backend for API-key callers; null/absent otherwise.
+            agent_id=self._optional_context_id(metadata.get("agent_id")),
         )
 
     @staticmethod

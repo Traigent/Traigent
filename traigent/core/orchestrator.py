@@ -450,6 +450,10 @@ class OptimizationOrchestrator:
         self._run_title: str | None = kwargs.pop("run_title", None)
         self._run_description: str | None = kwargs.pop("run_description", None)
         self._agent_key: str | None = kwargs.pop("agent_key", None)
+        # Best-config environment whose agent head is captured at step start,
+        # and the promotion precondition captured for the current run.
+        self.head_environment: str | None = None
+        self._promotion_precondition: dict[str, Any] | None = None
         self._smart_pruning: dict[str, Any] | None = kwargs.pop("smart_pruning", None)
         self._config_metrics_history: dict[str, dict[str, list[float]]] = {}
         self._incumbent_config_hash: str | None = None
@@ -3059,6 +3063,10 @@ class OptimizationOrchestrator:
         objectives_payload = self._build_session_objectives_payload()
         default_config_payload = self._build_session_default_config_payload()
         optimization_strategy_payload = self._backend_optimization_strategy_for_run()
+        self._promotion_precondition = None
+        head_environment_kwargs: dict[str, Any] = (
+            {"head_environment": self.head_environment} if self.head_environment else {}
+        )
         session_context = self.backend_session_manager.create_session(
             func=func,
             dataset=dataset,
@@ -3088,9 +3096,13 @@ class OptimizationOrchestrator:
             optimization_strategy=optimization_strategy_payload,
             task_type=getattr(self, "task_type", None),
             dataset_id=getattr(self, "dataset_id", None),
+            **head_environment_kwargs,
         )
         session_id: str | None = session_context.session_id
         self._active_session_id = session_id
+        self._promotion_precondition = self._promotion_precondition_from(
+            session_context
+        )
         self._bind_interactive_optimizer_session(
             session_id=session_id,
             function_name=experiment_display_name or descriptor.identifier,
@@ -5267,6 +5279,27 @@ class OptimizationOrchestrator:
             trial_count=trial_count,
         )
 
+    @staticmethod
+    def _promotion_precondition_from(session_context: Any) -> dict[str, Any] | None:
+        """The agent head generation captured at step start, or None."""
+        agent_id = getattr(session_context, "agent_id", None)
+        generation = getattr(session_context, "head_generation", None)
+        environment = getattr(session_context, "head_environment", None)
+        if (
+            not isinstance(agent_id, str)
+            or not agent_id
+            or isinstance(generation, bool)
+            or not isinstance(generation, int)
+            or not isinstance(environment, str)
+            or not environment
+        ):
+            return None
+        return {
+            "agent_id": agent_id,
+            "environment": environment,
+            "generation": generation,
+        }
+
     def _build_result_metadata(
         self,
         session_summary: dict[str, Any] | None,
@@ -5298,6 +5331,13 @@ class OptimizationOrchestrator:
         # Only present for warm-started runs; absent otherwise.
         if self._warm_start_from:
             metadata["warm_start_from"] = self._warm_start_from
+
+        # Agent head generation read when this run's step started. A later
+        # publish sends this value, not a fresh read, so a head that moved in
+        # the meantime is refused instead of overwritten.
+        precondition = getattr(self, "_promotion_precondition", None)
+        if precondition:
+            metadata["promotion_precondition"] = dict(precondition)
 
         return metadata
 

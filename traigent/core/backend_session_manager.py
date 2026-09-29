@@ -1466,6 +1466,7 @@ class BackendSessionManager:
         task_type: str | None = None,
         dataset_id: str | None = None,
         content_identity: dict[str, Any] | None = None,
+        head_environment: str | None = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -1481,6 +1482,9 @@ class BackendSessionManager:
                 (``@optimize(default_config=...)``), projected onto the
                 session-create wire so backend warm-start seed projection
                 sees it. Omitted from the request entirely when None/empty.
+            head_environment: Best-config environment whose agent-head
+                generation is captured (once, here, at the start of the step)
+                for a later promoting publish.
 
         Returns:
             SessionContext with session_id (or None if backend disabled)
@@ -1524,6 +1528,8 @@ class BackendSessionManager:
                 start_time=start_time,
             )
 
+        bound_agent_id: str | None = None
+        head_generation: int | None = None
         if self._backend_client:
             evaluation_set_name = getattr(dataset, "name", None) or "default_evaluation"
             self._warn_if_dataset_unlinked(dataset, dataset_id)
@@ -1697,6 +1703,10 @@ class BackendSessionManager:
                 }
                 if owning_context:
                     self._session_owning_context[session_id] = owning_context
+                bound_agent_id = result.agent_id
+                head_generation = self._capture_agent_head_generation(
+                    bound_agent_id, head_environment
+                )
 
             # On success, upload dataset features via the session mapping
             if result.backend_connected:
@@ -1740,7 +1750,36 @@ class BackendSessionManager:
             function_name=function_identifier,
             optimization_id=self._optimization_id,
             start_time=start_time,
+            agent_id=bound_agent_id,
+            head_generation=head_generation,
+            head_environment=head_environment if head_generation is not None else None,
         )
+
+    def _capture_agent_head_generation(
+        self, agent_id: str | None, environment: str | None
+    ) -> int | None:
+        """Read the agent's head generation once, at the start of the step.
+
+        Returns None (and the run behaves exactly as it did before promotion
+        preconditions existed) when the backend disclosed no agent, the client
+        cannot read heads, or the read fails for any reason.
+        """
+        if not agent_id:
+            logger.debug("Backend disclosed no agent for this session; no head capture")
+            return None
+        fetch = getattr(self._backend_client, "fetch_agent_head_generation_sync", None)
+        if not callable(fetch):
+            logger.debug("Backend client cannot read agent heads; no head capture")
+            return None
+        try:
+            generation = fetch(agent_id, environment=environment)
+        except Exception as exc:  # noqa: BLE001 - never fail a run over this
+            logger.debug("Agent head generation unavailable (%s); no head capture", exc)
+            return None
+        if isinstance(generation, bool) or not isinstance(generation, int):
+            logger.debug("Agent head generation was not an integer; no head capture")
+            return None
+        return generation
 
     def _create_offline_local_session(
         self,
