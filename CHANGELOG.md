@@ -6,6 +6,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`publish_best_config()` refuses to overwrite an agent head that moved during the run.**
+  When the backend discloses the agent a session is bound to, the SDK reads that
+  agent's head generation once, when the optimization step starts, and sends it
+  with the promoting publish. If another writer advanced the head in the
+  meantime the backend answers 409 and the SDK raises the new
+  `CloudBestConfigStaleHeadError` (a `CloudPublishUnavailable` subclass, reason
+  `stale_head_generation`) carrying `expected_generation`, `current_generation`,
+  `agent_id`, `environment` and the refused `best_config`. The published head is
+  left untouched and the run's `OptimizationResult` stays available to publish
+  again deliberately. Runs against a backend that reports no generation (older
+  backend, offline run, no bound agent) publish exactly as before.
+
 ### Removed
 
 - **Candidate runs (`optimize(apply=False)`) are temporarily withdrawn.** Their

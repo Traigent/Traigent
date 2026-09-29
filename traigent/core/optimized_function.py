@@ -2777,6 +2777,7 @@ class OptimizedFunction(Generic[_P, _R]):
         orchestrator.evaluator_definition_id = self.evaluator_definition_id
         orchestrator.task_type = self.task_type
         orchestrator.dataset_id = self.dataset_id
+        orchestrator.head_environment = self._csm.best_config_environment
         # RFC 0001 §3.4: forward the user-attached knob resolver so the
         # public optimize() path resolves Fixed/CVAR bindings in-trial.
         # Attribute seam (like promotion_gate): set

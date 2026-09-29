@@ -24,6 +24,7 @@ from traigent.core.best_config_runtime import (
     BestConfigSnapshot,
     BestConfigSource,
     BestConfigSourceMode,
+    CloudBestConfigStaleHeadError,
     CloudPublishUnavailable,
     CloudPublishUnavailableReason,
     SafetySensitiveBestConfigError,
@@ -1043,13 +1044,20 @@ class ConfigStateManager:
                 if isinstance(current, dict) and isinstance(current.get("etag"), str)
                 else None
             )
+            precondition_kwargs = self._promotion_precondition_kwargs()
             result = client.publish_best_config_sync(
                 spec,
                 environment=self.best_config_environment,
                 if_match=if_match,
+                **precondition_kwargs,
             )
             self._verify_cloud_response_hashes(result, spec)
             return result
+        except CloudBestConfigStaleHeadError as exc:
+            # The backend refused and wrote nothing. Keep the refused config on
+            # the error so the caller can re-publish it deliberately.
+            exc.best_config = thaw_config(self._best_config)
+            raise
         except CloudPublishUnavailable:
             raise
         except CloudBestConfigIntegrityError as exc:
@@ -1062,6 +1070,39 @@ class ConfigStateManager:
                 CloudPublishUnavailableReason.REQUEST_FAILED,
                 f"Cloud best-config publish failed: {exc}",
             ) from exc
+
+    def _promotion_precondition_kwargs(self) -> dict[str, Any]:
+        """Head precondition captured at the start of the run that made the winner.
+
+        Empty (the publish then behaves exactly as before) when the run
+        reported no head generation: older backend, offline run, no agent, or a
+        head captured for a different environment than the one being published.
+        """
+        metadata = getattr(self._optimization_results, "metadata", None)
+        captured = metadata.get("promotion_precondition") if metadata else None
+        if not isinstance(captured, dict):
+            logger.debug("No agent head generation captured; publishing without one")
+            return {}
+        agent_id = captured.get("agent_id")
+        generation = captured.get("generation")
+        if (
+            not isinstance(agent_id, str)
+            or not agent_id
+            or isinstance(generation, bool)
+            or not isinstance(generation, int)
+            or generation < 0
+        ):
+            logger.debug("Captured agent head generation is malformed; ignoring it")
+            return {}
+        if captured.get("environment") != self.best_config_environment:
+            logger.debug(
+                "Agent head generation was captured for environment %r, not %r; "
+                "publishing without one",
+                captured.get("environment"),
+                self.best_config_environment,
+            )
+            return {}
+        return {"agent_id": agent_id, "expected_head_generation": generation}
 
     def _create_slim_export(self, include_metadata: bool) -> dict[str, Any]:
         """Create a slim export suitable for git and deployment."""

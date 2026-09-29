@@ -125,6 +125,9 @@ class SessionCreationResult:
     project_id: str | None = None
     tenant_id: str | None = None
     typed_legacy_session_create_400: bool = False
+    # The agent the backend bound this session to (API-key callers only; None
+    # for other principals and for backends that do not disclose it).
+    agent_id: str | None = None
     # Execution-path transparency (so a caller never mistakes a local run for a
     # managed/cloud one). ``execution_path`` is "connected" for a real backend
     # session and "local_fallback" for any local result. ``backend_fallback`` is
@@ -158,6 +161,7 @@ class SessionCreationResult:
         *,
         project_id: str | None = None,
         tenant_id: str | None = None,
+        agent_id: str | None = None,
     ) -> SessionCreationResult:
         """Factory for a successful backend session."""
         return cls(
@@ -165,6 +169,7 @@ class SessionCreationResult:
             backend_connected=True,
             project_id=project_id,
             tenant_id=tenant_id,
+            agent_id=agent_id,
             execution_path="connected",
             backend_fallback=False,
             degraded=False,
