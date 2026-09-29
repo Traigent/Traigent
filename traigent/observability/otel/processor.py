@@ -131,7 +131,7 @@ class TraigentSpanProcessor(SpanProcessor):
     # -- SpanProcessor API ---------------------------------------------
     def on_start(self, span: Span, parent_context: Context | None = None) -> None:
         try:
-            stamp_span(span, include_metadata=self._exporter.content_mode != "metadata")
+            stamp_span(span, metadata_mode=self._exporter.content_mode)
         except Exception:  # never let stamping break the application
             logger.debug("lineage stamping failed", exc_info=True)
 
@@ -185,6 +185,7 @@ class TraigentSpanProcessor(SpanProcessor):
         with self._cond:
             if self._pid != os.getpid():  # pragma: no cover - fork hook covers it
                 self._after_fork_child()
+            before = self._stats["dropped_deadline"]
             if self._queue or self._in_flight:
                 self._flush_deadline = max(deadline, self._flush_deadline or 0.0)
                 self._ensure_worker_locked()
@@ -194,6 +195,9 @@ class TraigentSpanProcessor(SpanProcessor):
                 if remaining <= 0:
                     return FlushOutcome(False, True, len(self._queue))
                 self._cond.wait(min(remaining, 0.05))
+            if self._stats["dropped_deadline"] > before:
+                # the export was abandoned at the deadline: nothing was flushed
+                return FlushOutcome(False, True, 0)
             return FlushOutcome(True, False, 0)
 
     def stats(self) -> dict[str, Any]:

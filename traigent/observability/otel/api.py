@@ -395,7 +395,10 @@ class _Observe:
         if self._metadata and mode != "metadata":
             for key, value in self._metadata.items():
                 if isinstance(value, (str, bool, int, float)):
-                    span.set_attribute(f"{C.CONTENT_METADATA_PREFIX}{key}", value)
+                    span.set_attribute(
+                        f"{C.CONTENT_METADATA_PREFIX}{key}",
+                        value if mode == "record" else C.REDACTED_PLACEHOLDER,
+                    )
         scope = contextlib.ExitStack()
         if any(v is not None for v in self._ctx_attrs.values()):
             scope.enter_context(attributes(**self._ctx_attrs))

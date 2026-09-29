@@ -121,6 +121,9 @@ class CollectorStub:
 def collector():
     stub = CollectorStub()
     yield stub
+    from traigent.observability.otel import api
+
+    api.shutdown()  # flush while the stub is still listening
     stub.close()
 
 

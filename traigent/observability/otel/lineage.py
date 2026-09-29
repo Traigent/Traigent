@@ -100,7 +100,7 @@ def current_lineage() -> dict[str, str]:
     return out
 
 
-def stamp_span(span: Span, *, include_metadata: bool = False) -> None:
+def stamp_span(span: Span, *, metadata_mode: str = "metadata") -> None:
     """Called from ``on_start`` for EVERY span, including third-party ones."""
     if not span.is_recording():
         return
@@ -121,6 +121,11 @@ def stamp_span(span: Span, *, include_metadata: bool = False) -> None:
         span.set_attribute(C.ATTR_PROMPT_VERSION, caller.prompt_version)
     if caller.prompt_label:
         span.set_attribute(C.ATTR_PROMPT_LABEL, str(caller.prompt_label))
-    for key, value in caller.metadata if include_metadata else ():
+    if metadata_mode == "metadata":
+        return  # content: never placed on the span in metadata mode
+    for key, value in caller.metadata:
         if isinstance(value, (str, bool, int, float)):
-            span.set_attribute(f"{C.CONTENT_METADATA_PREFIX}{key}", value)
+            span.set_attribute(
+                f"{C.CONTENT_METADATA_PREFIX}{key}",
+                value if metadata_mode == "record" else C.REDACTED_PLACEHOLDER,
+            )

@@ -15,7 +15,7 @@ from opentelemetry.sdk.trace.sampling import Decision, Sampler, SamplingResult
 
 from traigent.observability.otel.exporter import TraigentOTLPExporter
 from traigent.observability.otel.processor import TraigentSpanProcessor
-from traigent.observability.otel.transport import TransportResponse
+from traigent.observability.otel.transport import TransportError, TransportResponse
 
 
 def _count(body: bytes) -> int:
@@ -42,10 +42,13 @@ class GateTransport:
             self.calls += 1
             self.active += 1
             self.max_active = max(self.max_active, self.active)
-        self.gate.wait(timeout)
+        released = self.gate.wait(timeout)
         with self._lock:
             self.active -= 1
-            self.spans += _count(body)
+            if released:
+                self.spans += _count(body)
+        if not released:  # a real socket would time out here
+            raise TransportError("timeout")
         return TransportResponse(200)
 
 
