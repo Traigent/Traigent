@@ -15,7 +15,9 @@ from pathlib import Path
 
 from traigent.observability.otel import contract as C
 
-PATH = Path(__file__).parents[3] / "fixtures/observability/otel_attribute_contract_v1.json"
+PATH = (
+    Path(__file__).parents[3] / "fixtures/observability/otel_attribute_contract_v1.json"
+)
 LOCKED_SHA256 = "d4b260cabc3b45b00e0369ca2a70a7139981746d0c26670b04bcda8a2aa5aad0"
 CONTRACT = json.loads(PATH.read_text())
 
@@ -56,7 +58,9 @@ def test_sdk_never_allowlists_a_receiver_content_key():
 def test_sdk_content_keys_are_content_to_the_receiver_too():
     content = set(CONTRACT["content_keys"]["exact"])
     sdk_only = {"llm.prompt_template.template", "llm.prompt_template.variables"}
-    assert set(C.CONTENT_ATTRIBUTE_KEYS) - content == sdk_only  # dropped by allowlist model
+    assert (
+        set(C.CONTENT_ATTRIBUTE_KEYS) - content == sdk_only
+    )  # dropped by allowlist model
 
 
 def test_sdk_lengths_never_exceed_receiver_bounds():
@@ -73,4 +77,7 @@ def test_lineage_attributes_are_the_ones_the_receiver_reads():
 
 
 def test_negative_control_a_renamed_lineage_key_would_be_caught():
-    assert "traigent.optimization_run_id" not in CONTRACT["metadata_allowlist"]["attributes"]
+    assert (
+        "traigent.optimization_run_id"
+        not in CONTRACT["metadata_allowlist"]["attributes"]
+    )

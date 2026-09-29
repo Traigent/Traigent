@@ -24,9 +24,14 @@ VECTORS = json.loads(
 )["vectors"]
 
 
-@pytest.mark.parametrize("vec", VECTORS, ids=lambda v: f"{v['rate']}-{v['trace_id'][-16:]}")
+@pytest.mark.parametrize(
+    "vec", VECTORS, ids=lambda v: f"{v['rate']}-{v['trace_id'][-16:]}"
+)
 def test_shared_vectors(vec):
-    assert S.trace_id_sampled(int(vec["trace_id"], 16), float(vec["rate"])) is vec["sampled"]
+    assert (
+        S.trace_id_sampled(int(vec["trace_id"], 16), float(vec["rate"]))
+        is vec["sampled"]
+    )
 
 
 def test_vectors_cover_boundaries():
@@ -58,7 +63,9 @@ def test_negative_control_mutant_rules_fail_the_vectors():
         )
 
 
-@pytest.mark.parametrize("bad", [-0.1, 1.1, float("nan"), float("inf"), True, "0.5", None])
+@pytest.mark.parametrize(
+    "bad", [-0.1, 1.1, float("nan"), float("inf"), True, "0.5", None]
+)
 def test_invalid_rates_rejected(bad):
     with pytest.raises(ValueError):
         S.validate_rate(bad)
@@ -100,7 +107,9 @@ def test_children_follow_the_root_decision_never_split():
     assert len(by_trace) < 200  # and some dropped
 
 
-@pytest.mark.parametrize("flag,expected", [(TraceFlags.SAMPLED, 1), (TraceFlags.DEFAULT, 0)])
+@pytest.mark.parametrize(
+    "flag,expected", [(TraceFlags.SAMPLED, 1), (TraceFlags.DEFAULT, 0)]
+)
 def test_inherited_remote_parent_decision_wins_over_ratio(flag, expected):
     """Inherited-unsampled stays unsampled even at rate 1.0; sampled stays sampled at 0.0."""
     rate = 1.0 if expected == 0 else 0.0

@@ -123,9 +123,7 @@ class TraigentSpanProcessor(SpanProcessor):
     def _after_fork_child(self) -> None:
         # The parent's lock may have been held by another thread at fork time
         # and its worker thread does not exist here: rebuild both.
-        stats = dict(self._stats)
         self._init_state()
-        self._stats.update({k: 0 for k in stats})
         self._pid = os.getpid()
 
     # -- SpanProcessor API ---------------------------------------------
@@ -302,7 +300,9 @@ class TraigentSpanProcessor(SpanProcessor):
             logger.debug("on_drop callback raised", exc_info=True)
 
 
-def _make_exit_hook(ref: weakref.ReferenceType[TraigentSpanProcessor]) -> Callable[[], None]:
+def _make_exit_hook(
+    ref: weakref.ReferenceType[TraigentSpanProcessor],
+) -> Callable[[], None]:
     def _hook() -> None:
         proc = ref()
         if proc is not None and not proc._shutdown:

@@ -41,12 +41,17 @@ class FakeInstrumentor:
 
 def _init(collector, **kw):
     return otel.init(
-        api_key="k", endpoint=collector.base_url, exit_flush=False,
-        schedule_delay_s=0.05, **kw
+        api_key="k",
+        endpoint=collector.base_url,
+        exit_flush=False,
+        schedule_delay_s=0.05,
+        **kw,
     )
 
 
-def test_created_provider_is_verified_and_instrumentors_get_it_explicitly(collector, canary):
+def test_created_provider_is_verified_and_instrumentors_get_it_explicitly(
+    collector, canary
+):
     h = _init(collector)
     fake = FakeInstrumentor()
     h.instrument(fake)
@@ -68,7 +73,9 @@ def test_unknown_exporter_blocks_instrumentation_without_consent(collector, cana
     assert fake.provider is None  # nothing was installed
 
 
-def test_mixed_provider_canary_consent_exposes_only_the_foreign_exporter(collector, canary):
+def test_mixed_provider_canary_consent_exposes_only_the_foreign_exporter(
+    collector, canary
+):
     """With explicit consent the OTHER exporter sees content; ours never does."""
     mem = InMemorySpanExporter()
     provider = TracerProvider(shutdown_on_exit=False)

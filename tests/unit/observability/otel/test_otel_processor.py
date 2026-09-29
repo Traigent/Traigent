@@ -53,7 +53,9 @@ class GateTransport:
 
 
 def _make(transport, **kw):
-    exporter = TraigentOTLPExporter(transport, export_timeout=kw.pop("export_timeout", 2.0))
+    exporter = TraigentOTLPExporter(
+        transport, export_timeout=kw.pop("export_timeout", 2.0)
+    )
     proc = TraigentSpanProcessor(exporter, exit_flush=False, **kw)
     provider = TracerProvider(shutdown_on_exit=False)
     provider.add_span_processor(proc)

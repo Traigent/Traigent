@@ -95,8 +95,13 @@ def test_redacted_and_record_modes_at_source(collector, canary, mode):
     mem = InMemorySpanExporter()
     provider = TracerProvider(shutdown_on_exit=False)
     provider.add_span_processor(SimpleSpanProcessor(mem))
-    otel.init(api_key="k", endpoint=collector.base_url, tracer_provider=provider,
-              content_mode=mode, exit_flush=False)
+    otel.init(
+        api_key="k",
+        endpoint=collector.base_url,
+        tracer_provider=provider,
+        content_mode=mode,
+        exit_flush=False,
+    )
 
     @otel.observe("f", metadata={"k": canary})
     def f(secret):
@@ -118,8 +123,13 @@ def test_per_call_override_only_tightens(collector, canary):
     mem = InMemorySpanExporter()
     provider = TracerProvider(shutdown_on_exit=False)
     provider.add_span_processor(SimpleSpanProcessor(mem))
-    otel.init(api_key="k", endpoint=collector.base_url, tracer_provider=provider,
-              content_mode="record", exit_flush=False)
+    otel.init(
+        api_key="k",
+        endpoint=collector.base_url,
+        tracer_provider=provider,
+        content_mode="record",
+        exit_flush=False,
+    )
     otel.observe("tight", content_mode="metadata")(lambda x: x)(canary)
     otel.observe("loose", redact_input=True)(lambda x: x)(canary)
     spans = {s.name: s for s in mem.get_finished_spans()}
@@ -128,18 +138,28 @@ def test_per_call_override_only_tightens(collector, canary):
     assert spans["loose"].attributes[C.ATTR_INPUT] == C.REDACTED_PLACEHOLDER
     otel.shutdown()
     # loosening beyond the client's mode is ignored
-    otel.init(api_key="k", endpoint=collector.base_url, tracer_provider=provider,
-              content_mode="metadata", exit_flush=False)
+    otel.init(
+        api_key="k",
+        endpoint=collector.base_url,
+        tracer_provider=provider,
+        content_mode="metadata",
+        exit_flush=False,
+    )
     otel.observe("loosen", content_mode="record")(lambda x: x)(canary)
-    assert C.ATTR_INPUT not in {s.name: s for s in mem.get_finished_spans()}["loosen"].attributes
+    assert (
+        C.ATTR_INPUT
+        not in {s.name: s for s in mem.get_finished_spans()}["loosen"].attributes
+    )
 
 
 def test_context_manager_and_async_context_manager(h):
     with otel.observe("cm", as_type="chain") as span:
         assert span.is_recording()
+
     async def go():
         async with otel.observe("acm"):
             pass
+
     asyncio.run(go())
     assert {"cm", "acm"} <= set(_finished(h))
     assert _finished(h)["cm"].attributes[C.ATTR_OBSERVATION_TYPE] == "chain"
@@ -304,8 +324,13 @@ def test_observe_arguments_stamp_the_span_itself_and_tags_follow_mode(collector)
     mem = InMemorySpanExporter()
     provider = TracerProvider(shutdown_on_exit=False)
     provider.add_span_processor(SimpleSpanProcessor(mem))
-    otel.init(api_key="k", endpoint=collector.base_url, tracer_provider=provider,
-              content_mode="record", exit_flush=False)
+    otel.init(
+        api_key="k",
+        endpoint=collector.base_url,
+        tracer_provider=provider,
+        content_mode="record",
+        exit_flush=False,
+    )
     with otel.observe("root", session_id="s1", user_id="u1", tags=["a", "b"]):
         with otel.observe("kid"):
             pass
@@ -314,8 +339,13 @@ def test_observe_arguments_stamp_the_span_itself_and_tags_follow_mode(collector)
         assert spans[name].attributes[C.ATTR_SESSION_ID] == "s1"
         assert tuple(spans[name].attributes[C.ATTR_TAGS]) == ("a", "b")
     otel.shutdown()
-    otel.init(api_key="k", endpoint=collector.base_url, tracer_provider=provider,
-              content_mode="redacted", exit_flush=False)
+    otel.init(
+        api_key="k",
+        endpoint=collector.base_url,
+        tracer_provider=provider,
+        content_mode="redacted",
+        exit_flush=False,
+    )
     with otel.observe("red", tags=["secret-tag"]):
         pass
     red = {s.name: s for s in mem.get_finished_spans()}["red"]

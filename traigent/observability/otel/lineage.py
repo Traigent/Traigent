@@ -117,7 +117,9 @@ def stamp_span(span: Span, *, metadata_mode: str = "metadata") -> None:
     if caller.tags:
         span.set_attribute(
             C.ATTR_TAGS,
-            list(caller.tags) if metadata_mode == "record" else [C.REDACTED_PLACEHOLDER],
+            list(caller.tags)
+            if metadata_mode == "record"
+            else [C.REDACTED_PLACEHOLDER],
         )
     for key, value in caller.metadata:
         if isinstance(value, (str, bool, int, float)):

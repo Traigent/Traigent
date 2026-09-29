@@ -122,7 +122,9 @@ def test_413_splits_once_and_delivers_both_halves(memory_provider):
     for body in tr.calls[1:]:
         req = ExportTraceServiceRequest()
         req.ParseFromString(body)
-        sizes.append(sum(len(ss.spans) for rs in req.resource_spans for ss in rs.scope_spans))
+        sizes.append(
+            sum(len(ss.spans) for rs in req.resource_spans for ss in rs.scope_spans)
+        )
     assert sizes == [2, 2]
 
 
@@ -175,5 +177,9 @@ def test_wire_body_is_metadata_only(memory_provider, canary):
     with provider.get_tracer("t").start_as_current_span("x") as s:
         s.set_attribute("gen_ai.input.messages", canary)
     exp, tr, _ = _exp([R(200)])
-    exp.export_batch(provider._active_span_processor._span_processors[0].span_exporter.get_finished_spans())
+    exp.export_batch(
+        provider._active_span_processor._span_processors[
+            0
+        ].span_exporter.get_finished_spans()
+    )
     assert canary.encode() not in b"".join(tr.calls)

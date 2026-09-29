@@ -67,7 +67,6 @@ OBSERVATION_TYPES: Final = frozenset(
 )
 
 
-
 @dataclass(frozen=True)
 class AttrSpec:
     """Type and bound for one allowlisted attribute."""

@@ -74,12 +74,16 @@ def audit_exporters(provider: Any) -> ExporterAudit:
         exporter = getattr(proc, "span_exporter", None)
         if isinstance(exporter, TraigentOTLPExporter):
             continue
-        detail = type(exporter).__name__ if exporter is not None else type(proc).__name__
+        detail = (
+            type(exporter).__name__ if exporter is not None else type(proc).__name__
+        )
         unknown.append(detail)
     return ExporterAudit(not unknown, tuple(unknown))
 
 
-def check_exporters(provider: Any, *, allow_unverified_exporters: bool) -> ExporterAudit:
+def check_exporters(
+    provider: Any, *, allow_unverified_exporters: bool
+) -> ExporterAudit:
     audit = audit_exporters(provider)
     if not audit.verified and not allow_unverified_exporters:
         raise UnverifiedExporterError(

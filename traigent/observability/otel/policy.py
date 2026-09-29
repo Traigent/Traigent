@@ -152,7 +152,11 @@ class ContentPolicy:
             if mode == "redacted" and is_content:
                 out[key] = C.REDACTED_PLACEHOLDER
                 continue
-            if mode == "record" and C.is_safe_key(key) and not is_credential_key_name(key):
+            if (
+                mode == "record"
+                and C.is_safe_key(key)
+                and not is_credential_key_name(key)
+            ):
                 recorded = _record_value(value)
                 if recorded is not None:
                     out[key] = recorded
@@ -207,7 +211,9 @@ class ContentPolicy:
         return "span"
 
     # -- events / links / status ----------------------------------------
-    def _events(self, events: Sequence[Event], mode: str) -> tuple[tuple[Event, ...], int]:
+    def _events(
+        self, events: Sequence[Event], mode: str
+    ) -> tuple[tuple[Event, ...], int]:
         out: list[Event] = []
         dropped = 0
         for event in events or ():
@@ -224,7 +230,12 @@ class ContentPolicy:
             attrs = {}
             for key in allowed:
                 raw = (event.attributes or {}).get(key)
-                if isinstance(raw, str) and raw and len(raw) <= 128 and not _has_control(raw):
+                if (
+                    isinstance(raw, str)
+                    and raw
+                    and len(raw) <= 128
+                    and not _has_control(raw)
+                ):
                     attrs[key] = raw
             out.append(Event(event.name, attrs, event.timestamp))
         return tuple(out), dropped

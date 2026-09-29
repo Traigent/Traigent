@@ -33,7 +33,14 @@ def _run(endpoint: str, exit_flush: bool, timeout_s: float = 5.0):
         env.pop(key, None)
     start = time.time()
     proc = subprocess.run(  # noqa: S603
-        [sys.executable, "-c", SCRIPT, endpoint, "1" if exit_flush else "0", str(timeout_s)],
+        [
+            sys.executable,
+            "-c",
+            SCRIPT,
+            endpoint,
+            "1" if exit_flush else "0",
+            str(timeout_s),
+        ],
         env=env,
         capture_output=True,
         text=True,

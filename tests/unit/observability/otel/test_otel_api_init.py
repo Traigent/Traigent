@@ -22,7 +22,13 @@ def _init(collector, **kw):
 
 
 def test_init_exports_over_http_with_headers_and_mode_declaration(collector):
-    h = _init(collector, service_name="svc-a", environment="prod", release="1.2.3", project="proj-1")
+    h = _init(
+        collector,
+        service_name="svc-a",
+        environment="prod",
+        release="1.2.3",
+        project="proj-1",
+    )
     with h.tracer.start_as_current_span("x") as span:
         span.set_attribute("gen_ai.request.model", "m1")
     assert otel.flush(5).flushed
@@ -86,7 +92,8 @@ def test_redirect_is_not_followed_and_key_not_replayed(collector):
 def test_missing_api_key_is_an_error_unless_offline(collector, monkeypatch):
     monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
     monkeypatch.setattr(
-        "traigent.observability.otel.api.BackendConfig.get_api_key", staticmethod(lambda: None)
+        "traigent.observability.otel.api.BackendConfig.get_api_key",
+        staticmethod(lambda: None),
     )
     with pytest.raises(ValueError, match="api_key"):
         otel.init(endpoint=collector.base_url, exit_flush=False)
@@ -101,7 +108,9 @@ def test_missing_api_key_is_an_error_unless_offline(collector, monkeypatch):
 def test_unsafe_endpoint_is_rejected(monkeypatch):
     monkeypatch.setenv("TRAIGENT_ENV", "production")
     with pytest.raises(ValueError):
-        otel.init(api_key="k", endpoint="http://169.254.169.254/latest", exit_flush=False)
+        otel.init(
+            api_key="k", endpoint="http://169.254.169.254/latest", exit_flush=False
+        )
     with pytest.raises(ValueError):
         otel.init(api_key="k", endpoint="http://example.com", exit_flush=False)
 

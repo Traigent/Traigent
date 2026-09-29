@@ -11,11 +11,6 @@ import asyncio
 import threading
 
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
-    InMemorySpanExporter,
-)
 
 import traigent
 import traigent.observability.otel as otel
@@ -30,8 +25,11 @@ DATASET = [
 
 def _init(collector, **kw):
     return otel.init(
-        api_key="k", endpoint=collector.base_url, exit_flush=False,
-        schedule_delay_s=0.05, **kw,
+        api_key="k",
+        endpoint=collector.base_url,
+        exit_flush=False,
+        schedule_delay_s=0.05,
+        **kw,
     )
 
 
@@ -52,7 +50,11 @@ def _real_optimizer_run(collector, *, max_trials=4, concurrency=1):
         injection_mode="context",
         offline=True,
         mock_mode_config={"base_accuracy": 0.9, "variance": 0.0, "random_seed": 1},
-        **({"parallel_config": {"trial_concurrency": concurrency}} if concurrency > 1 else {}),
+        **(
+            {"parallel_config": {"trial_concurrency": concurrency}}
+            if concurrency > 1
+            else {}
+        ),
     )
     def agent(q: str) -> str:
         traigent.get_config()  # CONTEXT injection: read the per-trial config
@@ -61,7 +63,9 @@ def _real_optimizer_run(collector, *, max_trials=4, concurrency=1):
                 pass
         return q
 
-    results = asyncio.run(agent.optimize(algorithm="random", max_trials=max_trials, random_seed=1))
+    results = asyncio.run(
+        agent.optimize(algorithm="random", max_trials=max_trials, random_seed=1)
+    )
     # a run OUTSIDE any trial, on the same process, must carry no lineage
     with otel.observe("after-optimization"):
         pass
@@ -76,7 +80,9 @@ def _by_name(collector):
     return out
 
 
-def test_real_optimizer_trials_stamp_matching_ids_on_every_span(collector, optimizer_env):
+def test_real_optimizer_trials_stamp_matching_ids_on_every_span(
+    collector, optimizer_env
+):
     _h, results = _real_optimizer_run(collector)
     reported = {str(t.trial_id) for t in results.trials}
     assert reported, "optimizer produced no trials"
@@ -111,8 +117,11 @@ def test_concurrent_asyncio_trials_do_not_bleed(collector):
     _init(collector)
 
     async def trial(i: int):
-        async with TrialContext(trial_id=f"t{i}"), WorkflowTraceContext(
-            {"configuration_run_id": f"t{i}", "workflow_trace_id": "run-1"}
+        async with (
+            TrialContext(trial_id=f"t{i}"),
+            WorkflowTraceContext(
+                {"configuration_run_id": f"t{i}", "workflow_trace_id": "run-1"}
+            ),
         ):
             await asyncio.sleep(0.01 * (5 - i))
             with otel.observe(f"span-{i}"):
@@ -161,7 +170,9 @@ def test_third_party_spans_are_stamped_too(collector):
     """Instrumentor-created spans (foreign scope) get lineage without our code on the path."""
     h = _init(collector)
     with TrialContext(trial_id="t9"):
-        with h.provider.get_tracer("some.vendor.lib").start_as_current_span("vendor-span"):
+        with h.provider.get_tracer("some.vendor.lib").start_as_current_span(
+            "vendor-span"
+        ):
             pass
     assert otel.flush(5).flushed
     assert _by_name(collector)["vendor-span"][0][C.ATTR_TRIAL_ID] == "t9"
@@ -169,7 +180,9 @@ def test_third_party_spans_are_stamped_too(collector):
 
 def test_negative_control_without_stamping_the_ids_disappear(collector, monkeypatch):
     """Mutation: disabling stamping makes the e2e assertion fail."""
-    monkeypatch.setattr("traigent.observability.otel.processor.stamp_span", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "traigent.observability.otel.processor.stamp_span", lambda *a, **k: None
+    )
     _init(collector)
     with TrialContext(trial_id="t1"):
         with otel.observe("s"):

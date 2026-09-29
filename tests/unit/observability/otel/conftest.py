@@ -69,7 +69,11 @@ class CollectorStub:
             def do_POST(self):  # noqa: N802
                 length = int(self.headers.get("Content-Length", 0))
                 raw = self.rfile.read(length)
-                body = gzip.decompress(raw) if self.headers.get("Content-Encoding") == "gzip" else raw
+                body = (
+                    gzip.decompress(raw)
+                    if self.headers.get("Content-Encoding") == "gzip"
+                    else raw
+                )
                 with stub._lock:
                     if stub.redirect_to:
                         self.send_response(307)
@@ -80,7 +84,11 @@ class CollectorStub:
                     req.ParseFromString(body)
                     stub.raw_bodies.append(body)
                     stub.requests.append(
-                        {"path": self.path, "headers": {k.lower(): v for k, v in self.headers.items()}, "req": req}
+                        {
+                            "path": self.path,
+                            "headers": {k.lower(): v for k, v in self.headers.items()},
+                            "req": req,
+                        }
                     )
                     status = stub.statuses.pop(0) if stub.statuses else 200
                 self.send_response(status)

@@ -66,5 +66,3 @@ class UrllibTransport:
             raise TransportError(type(exc).__name__) from None
         except Exception as exc:  # http.client errors etc.
             raise TransportError(type(exc).__name__) from None
-
-

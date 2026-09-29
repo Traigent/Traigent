@@ -33,7 +33,7 @@ from traigent.observability.config import (
 )
 from traigent.observability.otel import contract as C
 from traigent.observability.otel.exporter import TraigentOTLPExporter
-from traigent.observability.otel.instrument import audit_exporters, install
+from traigent.observability.otel.instrument import install
 from traigent.observability.otel.lineage import attributes as attributes  # re-export
 from traigent.observability.otel.processor import FlushOutcome, TraigentSpanProcessor
 from traigent.observability.otel.sampling import (
@@ -139,7 +139,9 @@ def _resolve_rate(sample_rate: float | None) -> float:
     try:
         return validate_rate(float(raw))
     except ValueError:
-        raise ValueError(f"{SAMPLE_RATE_ENV} must be a number between 0 and 1") from None
+        raise ValueError(
+            f"{SAMPLE_RATE_ENV} must be a number between 0 and 1"
+        ) from None
 
 
 def init(
@@ -217,7 +219,9 @@ def init(
                     "api_key is required (argument or TRAIGENT_API_KEY); set "
                     "TRAIGENT_OFFLINE_MODE=true to run without exporting"
                 )
-            base = (endpoint or f"{BackendConfig.get_backend_url()}{OTLP_PATH}").rstrip("/")
+            base = (endpoint or f"{BackendConfig.get_backend_url()}{OTLP_PATH}").rstrip(
+                "/"
+            )
             url = validate_cloud_base_url(base, purpose="observability OTLP endpoint")
             headers = {"X-API-Key": key.strip(), "User-Agent": "traigent-otel/1"}
             if project:
@@ -251,7 +255,11 @@ def init(
         )
         _handle = handle
     if instrument:
-        names = ("openai", "anthropic", "langchain", "bedrock") if instrument == "auto" else instrument
+        names = (
+            ("openai", "anthropic", "langchain", "bedrock")
+            if instrument == "auto"
+            else instrument
+        )
         specs = (names,) if isinstance(names, str) else tuple(names)
         if instrument == "auto":
             specs = tuple(_installed_auto_names())
@@ -407,7 +415,13 @@ class _Observe:
         return span, scope
 
     def _finish(
-        self, span: Span, scope: Any, *, result: Any = None, error: BaseException | None = None, has_result: bool = False
+        self,
+        span: Span,
+        scope: Any,
+        *,
+        result: Any = None,
+        error: BaseException | None = None,
+        has_result: bool = False,
     ) -> None:
         try:
             mode = self._mode()
@@ -433,7 +447,12 @@ class _Observe:
     # -- context manager --------------------------------------------------
     def __enter__(self) -> Span:
         span, scope = self._begin(self._name or "observe", (), {})
-        cm = use_span(span, end_on_exit=False, record_exception=False, set_status_on_exception=False)
+        cm = use_span(
+            span,
+            end_on_exit=False,
+            record_exception=False,
+            set_status_on_exception=False,
+        )
         cm.__enter__()
         self._stack.append((span, scope, cm))
         return span
@@ -465,7 +484,12 @@ class _Observe:
                 to_throw: BaseException | None = None
                 try:
                     while True:
-                        with use_span(span, end_on_exit=False, record_exception=False, set_status_on_exception=False):
+                        with use_span(
+                            span,
+                            end_on_exit=False,
+                            record_exception=False,
+                            set_status_on_exception=False,
+                        ):
                             try:
                                 if to_throw is not None:
                                     exc, to_throw = to_throw, None
@@ -506,7 +530,12 @@ class _Observe:
                 to_throw: BaseException | None = None
                 try:
                     while True:
-                        with use_span(span, end_on_exit=False, record_exception=False, set_status_on_exception=False):
+                        with use_span(
+                            span,
+                            end_on_exit=False,
+                            record_exception=False,
+                            set_status_on_exception=False,
+                        ):
                             try:
                                 if to_throw is not None:
                                     exc, to_throw = to_throw, None
@@ -514,7 +543,9 @@ class _Observe:
                                 else:
                                     item = gen.send(to_send)
                             except StopIteration as stop:
-                                run._finish(span, scope, result=stop.value, has_result=True)
+                                run._finish(
+                                    span, scope, result=stop.value, has_result=True
+                                )
                                 span = None
                                 return stop.value
                         try:
@@ -543,7 +574,12 @@ class _Observe:
             async def async_wrapper(*args: Any, **kwargs: Any):
                 span, scope = run._begin(name, args, kwargs)
                 try:
-                    with use_span(span, end_on_exit=False, record_exception=False, set_status_on_exception=False):
+                    with use_span(
+                        span,
+                        end_on_exit=False,
+                        record_exception=False,
+                        set_status_on_exception=False,
+                    ):
                         result = await func(*args, **kwargs)
                 except BaseException as exc:
                     run._finish(span, scope, error=exc)
@@ -557,7 +593,12 @@ class _Observe:
         def wrapper(*args: Any, **kwargs: Any):
             span, scope = run._begin(name, args, kwargs)
             try:
-                with use_span(span, end_on_exit=False, record_exception=False, set_status_on_exception=False):
+                with use_span(
+                    span,
+                    end_on_exit=False,
+                    record_exception=False,
+                    set_status_on_exception=False,
+                ):
                     result = func(*args, **kwargs)
             except BaseException as exc:
                 run._finish(span, scope, error=exc)

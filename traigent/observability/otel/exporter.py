@@ -157,7 +157,9 @@ class TraigentOTLPExporter(SpanExporter):
             if remaining is not None and remaining <= 0:
                 outcome.dropped_deadline += count
                 return
-            timeout = self._timeout if remaining is None else min(self._timeout, remaining)
+            timeout = (
+                self._timeout if remaining is None else min(self._timeout, remaining)
+            )
             try:
                 resp = self._transport.post(body, timeout=timeout)
             except TransportError:
