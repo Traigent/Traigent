@@ -572,3 +572,81 @@ def test_sql_metric_requires_schema_and_seed(tmp_path: Path) -> None:
     cfg_path.write_text(json.dumps(base))
     with pytest.raises(rd.DiagnosticError, match="seed_path"):
         rd.load_config(cfg_path)
+
+
+@pytest.mark.unit
+def test_grouped_bootstrap_is_not_narrowed_by_duplicates() -> None:
+    uniq = [1.0, -1.0] * 100  # 200 unique inputs, mixed differences
+    ukeys = [f"u{i}" for i in range(200)]
+    dedup = rd.paired_bootstrap(uniq, 1000, 1, groups=ukeys)
+    # one input duplicated 800x with differences of 0 dominates a naive bootstrap
+    dup_diffs = [0.0] * 800 + uniq
+    dup_keys = ["dup"] * 800 + ukeys
+    grouped = rd.paired_bootstrap(dup_diffs, 1000, 1, groups=dup_keys)
+    naive = rd.paired_bootstrap(dup_diffs, 1000, 1)
+    assert dedup and grouped and naive
+    assert (naive[1] - naive[0]) < (grouped[1] - grouped[0])
+    # cluster count (201), not row count (1000), drives the resampling noise
+    assert (grouped[1] - grouped[0]) > 3 * (naive[1] - naive[0])
+
+
+@pytest.mark.unit
+def test_duplicates_do_not_establish_claim_below_unique_requirement() -> None:
+    n_unique = 10
+    diffs = [0.0] * 500
+    keys = [f"q{i % n_unique}" for i in range(500)]
+    iv = rd.paired_bootstrap(diffs, 200, 1, groups=keys)
+    ok, text = rd.noninferiority_claim(iv, 0.02, 500, n_unique, True)
+    assert not ok and "unestablished" in text
+
+
+@pytest.mark.unit
+def test_sql_randomblob_is_a_safe_candidate_error() -> None:
+    sc = _sql_scorer()
+    assert sc.score("SELECT randomblob(100000000)", "SELECT 1") == 0.0
+    assert sc.score("SELECT zeroblob(100000000)", "SELECT 1") == 0.0
+    # a normal query still works afterwards
+    assert sc.score("SELECT 1", "SELECT 1") == 1.0
+
+
+@pytest.mark.unit
+def test_sql_result_too_large_scores_zero_with_reason() -> None:
+    sc = _sql_scorer()
+    q = (
+        "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c "
+        f"WHERE x < {rd._SQL_MAX_ROWS + 5}) SELECT x FROM c"
+    )
+    assert sc.score(q, "SELECT 1") == 0.0
+    assert sc.last_error == "result too large"
+
+
+@pytest.mark.unit
+def test_order_by_detection_ignores_literals_comments_and_subqueries() -> None:
+    assert not rd.has_outer_order_by("SELECT 'order by x' FROM customers")
+    assert not rd.has_outer_order_by("SELECT 1 -- order by\n")
+    assert not rd.has_outer_order_by("SELECT 1 /* order by */")
+    assert not rd.has_outer_order_by(
+        "SELECT * FROM (SELECT id FROM customers ORDER BY id LIMIT 3)"
+    )
+    assert rd.has_outer_order_by("SELECT id FROM customers ORDER BY id")
+    sc = _sql_scorer()
+    # literal containing 'order by' -> order-insensitive comparison
+    ref = "SELECT 'order by' AS t UNION ALL SELECT 'b'"
+    out = "SELECT 'b' AS t UNION ALL SELECT 'order by'"
+    assert sc.score(out, ref) == 1.0
+
+
+@pytest.mark.unit
+def test_unmatched_final_holdout_call_is_recorded(monkeypatch) -> None:
+    ctx = _ctx(ScriptedProvider(lambda m, u: "x"))
+    rows = _rows(2)
+
+    def fake(c, model, rid, row, phase):
+        return None if model == "cand" else {"row_id": rid, "model": model}
+
+    monkeypatch.setattr(rd, "run_request", fake)
+    pairs = rd.run_holdout(ctx, rows, [0, 1], "base", "cand")
+    assert pairs == []
+    assert ctx.unpaired_holdout == [
+        {"row_id": 0, "baseline": {"row_id": 0, "model": "base"}}
+    ]

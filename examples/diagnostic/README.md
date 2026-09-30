@@ -104,14 +104,18 @@ Mock mode prints a banner in the report: its models, costs and latencies are syn
    holdout row, interleaved per row, with the same timeout and retries. Latency
    is monotonic time around the whole request including retries. Errors score 0
    in the denominator; failed calls' cost counts toward spend.
-6. A seeded paired bootstrap of the per-row quality difference gives a 95%
+6. A seeded paired bootstrap, resampling unique holdout inputs (duplicates
+   form one cluster, so they cannot narrow it), gives a 95%
    interval, shown as descriptive. "Non-inferior at margin m" is claimed only if
    the holdout is complete AND the number of independent pairs (unique holdout
    inputs) is at least `ceil(ln(0.025)/ln(1-m))` (183 at m=0.02) AND the bootstrap
    lower bound is above -m. Otherwise the report says "non-inferiority
    unestablished (holdout n=...; at least N independent pairs needed at margin
    m)". An incomplete holdout (spend-guard stop, unknown cost, missing rows)
-   suppresses every inferential claim.
+   suppresses every inferential claim. A final baseline call whose candidate
+   call was stopped is kept in `results.json` as `holdout_unpaired`.
+   Generated SQL is bounded: at most 10,000 result rows and 1,000,000 bytes per
+   value (`randomblob` beyond that fails); exceeding either scores 0.
 
 ## Reading the report
 

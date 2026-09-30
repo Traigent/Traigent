@@ -178,6 +178,11 @@ def score(output: str, expected: str) -> float:
 
 _FENCE = re.compile(r"```[a-zA-Z0-9_+-]*[ \t]*\n?(.*?)```", re.DOTALL)
 _ORDER_BY = re.compile(r"\border\s+by\b", re.IGNORECASE)
+_SQL_LITERALS_AND_COMMENTS = re.compile(
+    r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|--[^\n]*|/\*.*?\*/", re.DOTALL
+)
+_SQL_MAX_ROWS = 10_000  # more rows than this scores 0 ("result too large")
+_SQL_MAX_VALUE_BYTES = 1_000_000  # per value; randomblob/zeroblob beyond fails
 _READ_ONLY_START = re.compile(r"^(select|with)\b", re.IGNORECASE)
 _SQL_MAX_PROGRESS_TICKS = 5000  # x1000 VM ops: aborts runaway queries
 
@@ -190,6 +195,22 @@ def strip_code_fences(text: str) -> str:
 
 def _row_key(row: tuple[Any, ...]) -> tuple[Any, ...]:
     return tuple(round(v, 6) if isinstance(v, float) else v for v in row)
+
+
+def has_outer_order_by(sql: str) -> bool:
+    """True if ORDER BY appears in the outermost query, ignoring string
+    literals, quoted identifiers, comments and anything inside parentheses."""
+    text = _SQL_LITERALS_AND_COMMENTS.sub(" ", sql)
+    depth = 0
+    top: list[str] = []
+    for ch in text:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            top.append(ch)
+    return bool(_ORDER_BY.search("".join(top)))
 
 
 class SqlScorer:
@@ -207,6 +228,10 @@ class SqlScorer:
         self._db.executescript(seed_sql)
         self._db.commit()
         self._db.execute("PRAGMA query_only = ON")
+        with contextlib.suppress(AttributeError, ValueError, sqlite3.Error):
+            # Python >= 3.11: SQLite rejects any string/blob over the limit.
+            self._db.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, _SQL_MAX_VALUE_BYTES)
+        self.last_error: str | None = None
         self._lock = threading.Lock()
         self._ref_cache: dict[str, list[tuple[Any, ...]] | None] = {}
 
@@ -223,9 +248,16 @@ class SqlScorer:
 
         self._db.set_progress_handler(guard, 1000)
         try:
-            return self._db.execute(stmt).fetchall()
+            rows = self._db.execute(stmt).fetchmany(_SQL_MAX_ROWS + 1)
         finally:
             self._db.set_progress_handler(None, 0)
+        if len(rows) > _SQL_MAX_ROWS:
+            raise ValueError("result too large")
+        for row in rows:
+            for v in row:
+                if isinstance(v, (str, bytes)) and len(v) > _SQL_MAX_VALUE_BYTES:
+                    raise ValueError("result too large")
+        return rows
 
     def reference_rows(self, expected: str) -> list[tuple[Any, ...]] | None:
         """Rows of the expected query, or None if it errors or returns no rows."""
@@ -246,9 +278,11 @@ class SqlScorer:
         with self._lock:
             try:
                 got = self._run(output)
-            except (sqlite3.Error, ValueError):
+            except (sqlite3.Error, ValueError) as exc:
+                self.last_error = str(exc)
                 return 0.0
-        if _ORDER_BY.search(expected):
+        self.last_error = None
+        if has_outer_order_by(expected):
             return (
                 1.0 if [_row_key(r) for r in got] == [_row_key(r) for r in ref] else 0.0
             )
@@ -276,16 +310,31 @@ def nearest_rank(values: list[float], pct: float) -> float | None:
 
 
 def paired_bootstrap(
-    diffs: list[float], resamples: int, seed: int
+    diffs: list[float],
+    resamples: int,
+    seed: int,
+    groups: list[Any] | None = None,
 ) -> tuple[float, float] | None:
-    """Seeded 95% percentile interval of the mean paired difference."""
+    """Seeded 95% percentile interval of the mean paired difference.
+
+    With ``groups`` (one key per difference, e.g. the input text) the bootstrap
+    resamples whole groups, so duplicated inputs cannot narrow the interval; each
+    resample's mean is the size-weighted mean over the drawn groups."""
     if not diffs:
         return None
     rng = random.Random(seed)
-    n = len(diffs)
-    means = sorted(
-        sum(diffs[rng.randrange(n)] for _ in range(n)) / n for _ in range(resamples)
-    )
+    if groups is None:
+        groups = list(range(len(diffs)))
+    clusters: dict[Any, list[float]] = {}
+    for g, d in zip(groups, diffs, strict=True):
+        clusters.setdefault(g, []).append(d)
+    stats = [(sum(v), len(v)) for v in clusters.values()]
+    m = len(stats)
+    means = []
+    for _ in range(resamples):
+        drawn = [stats[rng.randrange(m)] for _ in range(m)]
+        means.append(sum(t for t, _ in drawn) / sum(c for _, c in drawn))
+    means.sort()
     lo = means[int(0.025 * (resamples - 1))]
     hi = means[int(math.ceil(0.975 * (resamples - 1)))]
     return lo, hi
@@ -544,6 +593,7 @@ class Context:
     scorer: Any = None
     stopped: str | None = None
     records: list[dict[str, Any]] = field(default_factory=list)
+    unpaired_holdout: list[dict[str, Any]] = field(default_factory=list)
     _sleep: Any = None
 
     def budget_left_for(self, phase: str) -> bool:
@@ -849,6 +899,7 @@ def run_holdout(
             break
         c = run_request(ctx, selected, rid, rows[rid], "holdout")
         if c is None:
+            ctx.unpaired_holdout.append({"row_id": rid, "baseline": b})
             break
         pairs.append({"row_id": rid, "baseline": b, "selected": c})
     return pairs
@@ -1197,6 +1248,7 @@ def run_diagnostic(
     pairs: list[dict[str, Any]] = []
     if selected is not None and not ctx.stopped:
         pairs = run_holdout(ctx, rows, holdout_ids, baseline, selected)
+    res["holdout_unpaired"] = ctx.unpaired_holdout  # spend stays traceable
     holdout_complete = (
         selected is not None and len(pairs) == len(holdout_ids) and not ctx.stopped
     )
@@ -1215,7 +1267,10 @@ def run_diagnostic(
         dmean = None
         if holdout_complete and diffs:
             iv = paired_bootstrap(
-                diffs, int(cfg["bootstrap_resamples"]), int(cfg["seed"]) + 1
+                diffs,
+                int(cfg["bootstrap_resamples"]),
+                int(cfg["seed"]) + 1,
+                groups=[rows[p["row_id"]]["input"] for p in valid],
             )
             dmean = sum(diffs) / len(diffs)
         _, claim = noninferiority_claim(
