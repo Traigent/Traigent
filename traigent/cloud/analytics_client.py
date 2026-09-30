@@ -751,6 +751,11 @@ def _exact_observability_object(
     return source
 
 
+_OBSERVABILITY_COST_STATUSES = frozenset(
+    {"priced", "unpriced", "partial", "not_applicable"}
+)
+
+
 def _project_observability_trace_search(payload: Any) -> dict[str, Any]:
     """Rebuild the safe subset of the ordinary trace-summary response."""
     source = _require_object(payload, what="observability trace search")
@@ -777,6 +782,9 @@ def _project_observability_trace_search(payload: Any) -> dict[str, Any]:
             "total_tokens",
             "total_cost_usd",
             "total_latency_ms",
+            "cost_status",
+            "priced_cost_usd",
+            "unpriced_observation_count",
         }
     )
     known_content_keys = frozenset(
@@ -865,9 +873,23 @@ def _project_observability_trace_search(payload: Any) -> dict[str, Any]:
                 _require_observability_integer(
                     item[field], what=f"items[{index}].{field}"
                 )
-        if "total_cost_usd" in item:
-            _require_non_negative_observability_number(
-                item["total_cost_usd"], what=f"items[{index}].total_cost_usd"
+        # Null total_cost_usd means unknown cost (unpriced/partial); reject only
+        # negatives and non-numbers.
+        for field in ("total_cost_usd", "priced_cost_usd"):
+            if field in item and item[field] is not None:
+                _require_non_negative_observability_number(
+                    item[field], what=f"items[{index}].{field}"
+                )
+        if "cost_status" in item:
+            _require_observability_enum(
+                item["cost_status"],
+                _OBSERVABILITY_COST_STATUSES,
+                what=f"items[{index}].cost_status",
+            )
+        if item.get("unpriced_observation_count") is not None:
+            _require_observability_integer(
+                item["unpriced_observation_count"],
+                what=f"items[{index}].unpriced_observation_count",
             )
         projected_items.append(
             {key: item[key] for key in safe_item_keys if key in item}
