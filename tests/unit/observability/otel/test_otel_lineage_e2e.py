@@ -189,3 +189,31 @@ def test_negative_control_without_stamping_the_ids_disappear(collector, monkeypa
             pass
     assert otel.flush(5).flushed
     assert C.ATTR_TRIAL_ID not in _by_name(collector)["s"][0]
+
+
+def test_parallel_grid_trials_have_unique_ids(optimizer_env):
+    """4 distinct grid configs at trial_concurrency=2 must yield 4 distinct ids.
+
+    Trial ids are a content hash of (session, config, dataset), so distinct
+    configs must never share one; lineage joins on this id.
+    """
+
+    @traigent.optimize(
+        evaluation={"eval_dataset": DATASET},
+        objectives=["accuracy"],
+        scoring_function=lambda output, expected_output=None, **_: 1.0,
+        configuration_space={"temperature": [0.0, 1.0], "model": ["a", "b"]},
+        injection_mode="context",
+        offline=True,
+        mock_mode_config={"base_accuracy": 0.9, "variance": 0.0, "random_seed": 1},
+        parallel_config={"trial_concurrency": 2},
+    )
+    def agent(q: str) -> str:
+        traigent.get_config()
+        return q
+
+    results = asyncio.run(agent.optimize(algorithm="grid", max_trials=4))
+    ids = [str(t.trial_id) for t in results.trials]
+    configs = {tuple(sorted(t.config.items())) for t in results.trials}
+    assert len(ids) == 4 and len(configs) == 4
+    assert len(set(ids)) == 4, ids

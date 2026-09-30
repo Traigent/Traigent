@@ -168,7 +168,41 @@ def test_sample_rate_env_and_validation(collector, monkeypatch):
         _init(collector, sample_rate=2)
 
 
-def test_flush_and_stats_without_init_are_safe():
+def test_flush_and_stats_without_init_are_safe(monkeypatch):
+    from traigent.observability.otel import api
+
+    monkeypatch.setattr(api, "_last_handle", None)  # nothing ever initialised
     assert otel.flush().flushed
     assert otel.stats() == {"enabled": False}
     otel.shutdown()
+
+
+def test_stats_of_an_active_pipeline_says_enabled_true(collector):
+    h = _init(collector)
+    with h.tracer.start_as_current_span("x"):
+        pass
+    assert otel.flush(5).flushed
+    for snap in (otel.stats(), h.stats()):
+        assert snap["enabled"] is True
+        assert snap["exported"] == 1
+
+
+def test_stats_after_shutdown_keep_the_final_counters_not_a_bare_disabled(collector):
+    h = _init(collector)
+    with h.tracer.start_as_current_span("x"):
+        pass
+    assert otel.flush(5).flushed
+    otel.shutdown()
+    for snap in (otel.stats(), h.stats()):
+        assert snap["enabled"] is False
+        assert snap["shutdown"] is True
+        assert snap["exported"] == 1
+    # a fresh init starts from a clean slate
+    _init(collector)
+    assert otel.stats()["enabled"] is True and otel.stats()["exported"] == 0
+
+
+def test_stats_of_an_offline_handle_say_why_it_is_disabled(collector, monkeypatch):
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+    _init(collector, api_key=None)
+    assert otel.stats() == {"enabled": False, "reason": "offline"}

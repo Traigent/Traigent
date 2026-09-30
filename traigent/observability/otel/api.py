@@ -72,6 +72,7 @@ class ObservabilityHandle:
         self._allow_unverified = allow_unverified_exporters
         self._instrumentors: list[Any] = []
         self._closed = False
+        self._final_stats: dict[str, Any] | None = None
 
     @property
     def enabled(self) -> bool:
@@ -102,28 +103,47 @@ class ObservabilityHandle:
         return self.processor.flush(timeout)
 
     def stats(self) -> dict[str, Any]:
-        return self.processor.stats() if self.processor else {"enabled": False}
+        """Counters of this pipeline; ``enabled`` says whether it is live.
+
+        After ``shutdown`` the final counters are kept (``enabled`` False,
+        ``shutdown`` True); an offline handle reports ``reason: offline``.
+        """
+        if self._final_stats is not None:
+            return dict(self._final_stats)
+        if self.processor is None:
+            return {"enabled": False, "reason": "offline"}
+        return {"enabled": True, **self.processor.stats()}
 
     def shutdown(self) -> None:
-        global _handle
+        global _handle, _last_handle
         if self._closed:
             return
         self._closed = True
+        if self.processor is not None:
+            # captured before the worker stops; refreshed after the final drain
+            self._final_stats = {"enabled": False, "shutdown": True}
         for instrumentor in self._instrumentors:
             with contextlib.suppress(Exception):
                 instrumentor.uninstrument()
         if self.processor is not None:
             self.processor.shutdown()
+            self._final_stats = {
+                **self.processor.stats(),
+                "enabled": False,
+                "shutdown": True,
+            }
         if self.created_provider:
             with contextlib.suppress(Exception):
                 self.provider.shutdown()
         with _lock:
             if _handle is self:
                 _handle = None
+                _last_handle = self
 
 
 _lock = threading.Lock()
 _handle: ObservabilityHandle | None = None
+_last_handle: ObservabilityHandle | None = None  # most recent shut-down handle
 
 
 def get_handle() -> ObservabilityHandle | None:
@@ -175,7 +195,7 @@ def init(
     ``content_mode`` resolves most-restrictive-wins against the environment,
     exactly like the legacy client; the default is ``metadata``.
     """
-    global _handle
+    global _handle, _last_handle
     with _lock:
         if _handle is not None:
             raise RuntimeError("Traigent observability is already initialised")
@@ -254,6 +274,7 @@ def init(
             allow_unverified_exporters=allow_unverified_exporters,
         )
         _handle = handle
+        _last_handle = None
     if instrument:
         names = (
             ("openai", "anthropic", "langchain", "bedrock")
@@ -303,7 +324,7 @@ def shutdown() -> None:
 
 
 def stats() -> dict[str, Any]:
-    handle = _handle
+    handle = _handle or _last_handle
     return handle.stats() if handle else {"enabled": False}
 
 
