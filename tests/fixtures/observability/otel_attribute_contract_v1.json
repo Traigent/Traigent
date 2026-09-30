@@ -85,6 +85,7 @@
       "traigent.experiment_run_id": {"type": "string", "max_length": 128},
       "traigent.config_hash": {"type": "string", "max_length": 128},
       "traigent.optimization_session_id": {"type": "string", "max_length": 128},
+      "traigent.observation_type": {"type": "string", "max_length": 32},
       "traigent.content_mode.v1": {"type": "string", "max_length": 16},
       "traigent.content.dropped_attrs": {"type": "integer"}
     },
@@ -105,7 +106,7 @@
     "cost_note": "Client-reported cost attributes (llm.cost.*) are not trusted or stored as cost; cost is unknown (null) unless priced server-side."
   },
   "observation_type_mapping": {
-    "evaluation_order": ["gen_ai.operation.name", "openinference.span.kind", "fallback_attributes", "default"],
+    "evaluation_order": ["traigent.observation_type", "gen_ai.operation.name", "openinference.span.kind", "fallback_attributes", "default"],
     "gen_ai_operation_name": {
       "chat": "generation", "text_completion": "generation", "generate_content": "generation",
       "embeddings": "embedding", "execute_tool": "tool_call",
@@ -123,6 +124,20 @@
       {"if_present": "gen_ai.tool.name", "type": "tool_call"}
     ],
     "default": "span",
+    "explicit_attribute": {
+      "name": "traigent.observation_type",
+      "allowed_values": ["span", "generation", "event", "tool_call", "agent", "chain", "tool", "retriever", "evaluator", "embedding", "guardrail"],
+      "rule": "When the span carries traigent.observation_type with a value that is exactly a member of allowed_values (case-sensitive string), it wins over every other mapping source. An absent, non-string, empty or unlisted value is ignored and evaluation continues with the next source; it is never an error."
+    },
+    "vectors": [
+      {"id": "explicit_wins_over_genai_operation", "attributes": {"traigent.observation_type": "evaluator", "gen_ai.operation.name": "chat"}, "expected": "evaluator"},
+      {"id": "explicit_wins_over_openinference_kind", "attributes": {"traigent.observation_type": "guardrail", "openinference.span.kind": "LLM"}, "expected": "guardrail"},
+      {"id": "invalid_explicit_falls_back_to_genai", "attributes": {"traigent.observation_type": "llm", "gen_ai.operation.name": "chat"}, "expected": "generation"},
+      {"id": "case_mismatch_is_invalid", "attributes": {"traigent.observation_type": "Generation", "openinference.span.kind": "TOOL"}, "expected": "tool"},
+      {"id": "non_string_explicit_ignored", "attributes": {"traigent.observation_type": 3}, "expected": "span"},
+      {"id": "explicit_alone", "attributes": {"traigent.observation_type": "retriever"}, "expected": "retriever"},
+      {"id": "existing_mapping_unchanged_without_explicit", "attributes": {"gen_ai.operation.name": "execute_tool"}, "expected": "tool_call"}
+    ],
     "note": "The Traigent observation type enum is fixed by observability/observation_ingest_schema.json (_ObservationType); every mapped value must be a member."
   },
   "precedence": {

@@ -18,12 +18,12 @@ from traigent.observability.otel import contract as C
 PATH = (
     Path(__file__).parents[3] / "fixtures/observability/otel_attribute_contract_v1.json"
 )
-LOCKED_SHA256 = "d4b260cabc3b45b00e0369ca2a70a7139981746d0c26670b04bcda8a2aa5aad0"
+LOCKED_SHA256 = "6515d3e0c8c7a758189bfd156fc18362df9ad492ec5db35b817b62f6263da962"
 CONTRACT = json.loads(PATH.read_text())
 
-# SDK-only keys the receiver snapshot does not know yet.  Each is a reviewed
+# SDK-only keys the receiver snapshot does not know.  Each must be a reviewed
 # integration item (the receiver counts unknown keys as dropped, never fails).
-SDK_ONLY_ALLOWED = {"traigent.observation_type"}
+SDK_ONLY_ALLOWED: set[str] = set()
 
 
 def test_vendored_contract_is_hash_locked():
@@ -43,6 +43,12 @@ def test_every_sdk_allowlisted_key_is_known_to_the_receiver_or_reviewed():
         known |= set(attrs)
     known |= set(CONTRACT["usage_classes"]["total_tokens"])
     assert set(C.ATTRIBUTE_ALLOWLIST) - known == SDK_ONLY_ALLOWED
+
+
+def test_observation_type_values_equal_the_contract_enum():
+    rule = CONTRACT["observation_type_mapping"]["explicit_attribute"]
+    assert rule["name"] == C.ATTR_OBSERVATION_TYPE
+    assert set(rule["allowed_values"]) == set(C.OBSERVATION_TYPES)
 
 
 def test_sdk_never_allowlists_a_receiver_content_key():
