@@ -15,9 +15,12 @@ so content classification only matters for ``redacted`` (placeholder) and
 
 from __future__ import annotations
 
+import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Final
+from pathlib import Path
+from typing import Any, Final
 
 CONTRACT_VERSION: Final = "1"
 
@@ -79,22 +82,11 @@ class AttrSpec:
     choices: frozenset[str] | None = None
 
 
-def _s(n: int = 128) -> AttrSpec:
-    return AttrSpec("str", max_len=n)
-
-
-def _i(lo: int = 0, hi: int = 2**53) -> AttrSpec:
-    return AttrSpec("int", lo=lo, hi=hi)
-
-
-def _e(choices) -> AttrSpec:
-    values = frozenset(choices)
-    return AttrSpec("enum", max_len=max(len(v) for v in values), choices=values)
-
-
-def _f(lo: float = -1e12, hi: float = 1e12) -> AttrSpec:
-    return AttrSpec("float", lo=lo, hi=hi)
-
+_CONTRACT_PATH = Path(__file__).with_name("otel_attribute_contract_v1.json")
+#: The shared OTel attribute contract (hash-locked copy of the Schema repo's
+#: file).  The SDK CONSUMES it: the egress set, the content-mode resolution
+#: vectors and the usage rules below all come from here, not from private lists.
+CONTRACT: Final[dict[str, Any]] = json.loads(_CONTRACT_PATH.read_text(encoding="utf-8"))
 
 _OI_KINDS = frozenset(
     {
@@ -112,55 +104,62 @@ _OI_KINDS = frozenset(
     }
 )
 
-# Typed, bounded, exact-key allowlist for span attributes in metadata mode.
+#: Keys in the contract's egress set that belong to another channel: resource
+#: attributes and the exception event.  They are never span attributes.
+RESOURCE_KEYS: Final = frozenset(
+    {
+        "service.name",
+        "service.version",
+        "deployment.environment",
+        "deployment.environment.name",
+    }
+)
+EVENT_KEYS: Final = frozenset({"exception.type"})
+
+# SDK-side refinements that only NARROW a contract type (never widen): the
+# contract types these as bounded strings, the SDK accepts only the known set.
+_ENUM_NARROWING: Final[dict[str, frozenset[str]]] = {
+    "openinference.span.kind": _OI_KINDS,
+    ATTR_OBSERVATION_TYPE: OBSERVATION_TYPES,
+    CONTENT_MODE_ATTRIBUTE: frozenset(CONTENT_MODES),
+}
+
+
+def _spec_from_contract(key: str, rule: Mapping[str, Any]) -> AttrSpec:
+    kind = rule["type"]
+    if key in _ENUM_NARROWING:
+        values = _ENUM_NARROWING[key]
+        return AttrSpec(
+            "enum",
+            max_len=min(rule.get("max_length", 128), max(len(v) for v in values)),
+            choices=values,
+        )
+    if "enum" in rule:
+        values = frozenset(rule["enum"])
+        return AttrSpec("enum", max_len=rule.get("max_length", 128), choices=values)
+    if kind == "string":
+        return AttrSpec("str", max_len=rule["max_length"])
+    if kind == "string_array":
+        return AttrSpec(
+            "str_seq", max_len=rule["max_length"], max_items=rule["max_items"]
+        )
+    if kind == "non_negative_integer":
+        return AttrSpec("int", lo=rule["minimum"], hi=rule["maximum"])
+    if kind == "number":
+        return AttrSpec("float")
+    raise ValueError(f"unsupported contract attribute type {kind!r} for {key}")
+
+
+_EGRESS: Final[Mapping[str, Mapping[str, Any]]] = CONTRACT["metadata_allowlist"][
+    "attributes"
+]
+
+# Typed, bounded, exact-key allowlist for span attributes in metadata mode:
+# the contract's single egress set minus the resource/event-only keys.
 ATTRIBUTE_ALLOWLIST: Final[dict[str, AttrSpec]] = {
-    # GenAI semantic-convention names (public spec)
-    "gen_ai.operation.name": _s(64),
-    "gen_ai.provider.name": _s(64),
-    "gen_ai.system": _s(64),
-    "gen_ai.request.model": _s(128),
-    "gen_ai.request.temperature": _f(0, 100),
-    "gen_ai.request.top_p": _f(0, 1),
-    "gen_ai.request.max_tokens": _i(),
-    "gen_ai.response.model": _s(128),
-    "gen_ai.response.id": _s(128),
-    "gen_ai.response.finish_reasons": AttrSpec("str_seq", max_len=32, max_items=8),
-    "gen_ai.usage.input_tokens": _i(),
-    "gen_ai.usage.output_tokens": _i(),
-    "gen_ai.usage.cache_read.input_tokens": _i(),
-    "gen_ai.usage.cache_creation.input_tokens": _i(),
-    "gen_ai.usage.reasoning.output_tokens": _i(),
-    "gen_ai.agent.name": _s(128),
-    "gen_ai.agent.id": _s(128),
-    "gen_ai.tool.name": _s(128),
-    "gen_ai.tool.call.id": _s(128),
-    "gen_ai.tool.type": _s(32),
-    "gen_ai.conversation.id": _s(128),
-    "error.type": _s(128),
-    # OpenInference-style names (public spec)
-    "openinference.span.kind": _e(_OI_KINDS),
-    "llm.model_name": _s(128),
-    "embedding.model_name": _s(128),
-    "tool.name": _s(128),
-    "enduser.id": _s(128),
-    "llm.provider": _s(64),
-    "llm.system": _s(64),
-    "llm.token_count.prompt": _i(),
-    "llm.token_count.completion": _i(),
-    "llm.token_count.total": _i(),
-    # Correlation
-    ATTR_SESSION_ID: _s(128),
-    ATTR_USER_ID: _s(128),
-    # Traigent
-    ATTR_OBSERVATION_TYPE: _e(OBSERVATION_TYPES),
-    ATTR_TRIAL_ID: _s(128),
-    ATTR_OPTIMIZATION_SESSION_ID: _s(128),
-    ATTR_EXPERIMENT_RUN_ID: _s(128),
-    ATTR_CONFIG_HASH: _s(128),
-    ATTR_PROMPT_NAME: _s(128),
-    ATTR_PROMPT_VERSION: _i(0, 1_000_000),
-    ATTR_DROPPED_ATTRS: _i(0, 1_000_000),
-    CONTENT_MODE_ATTRIBUTE: _e(CONTENT_MODES),
+    key: _spec_from_contract(key, rule)
+    for key, rule in _EGRESS.items()
+    if key not in RESOURCE_KEYS and key not in EVENT_KEYS
 }
 
 # Keys known to carry user content: dropped in metadata mode (they are not
@@ -197,15 +196,14 @@ CONTENT_ATTRIBUTE_KEYS: Final = frozenset(
 
 # Resource attribute allowlist (exact keys).
 RESOURCE_ALLOWLIST: Final[dict[str, AttrSpec]] = {
-    "service.name": _s(128),
-    "service.version": _s(128),
-    "service.namespace": _s(128),
-    "deployment.environment": _s(64),
-    "deployment.environment.name": _s(64),
-    "telemetry.sdk.name": _s(64),
-    "telemetry.sdk.language": _s(32),
-    "telemetry.sdk.version": _s(32),
-    CONTENT_MODE_ATTRIBUTE: _e(CONTENT_MODES),
+    **{
+        key: _spec_from_contract(key, rule)
+        for key, rule in _EGRESS.items()
+        if key in RESOURCE_KEYS
+    },
+    CONTENT_MODE_ATTRIBUTE: _spec_from_contract(
+        CONTENT_MODE_ATTRIBUTE, _EGRESS[CONTENT_MODE_ATTRIBUTE]
+    ),
 }
 
 # Event names that survive metadata/redacted mode and the only attribute on them.
@@ -215,6 +213,8 @@ ALLOWED_EVENTS: Final[dict[str, frozenset[str]]] = {
 
 MAX_RECORD_ATTR_BYTES: Final = 64 * 1024
 MAX_SPAN_NAME_LEN: Final = 80
+MAX_RECORD_NAME_LEN: Final = 256
+MAX_RECORD_STATUS_LEN: Final = 1024
 
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.\-/:]{1,80}$")
 # Identifier-shaped data hides in "static-looking" names (``order_12345_john``,

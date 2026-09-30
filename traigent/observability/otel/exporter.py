@@ -7,11 +7,17 @@ Retry contract (PLAN-v2, from the public OTLP/HTTP specification):
 * full-jitter exponential backoff, at most ``max_attempts`` attempts, a batch
   is abandoned once older than ``max_batch_age`` seconds;
 * 413 splits the batch in two ONCE; a second 413 drops the part;
-* 200 with ``partial_success`` is final (never retried);
+* 200 with ``partial_success`` is final (never retried); a non-empty 200 body
+  that is not a valid ``ExportTraceServiceResponse`` is a protocol failure, not
+  a success (an empty body is success);
+* a single span whose encoded request exceeds ``max_batch_bytes`` is dropped
+  and counted before transport (no request ever exceeds the cap);
+* a shut-down exporter never starts another POST;
 * every other status (400/401/403/404/408/500/501 ...) is dropped and counted.
 
 Every wait is bounded by an optional absolute ``deadline`` that is independent
-of the retry budget (used by ``flush`` and exit hooks).
+of the retry budget (used by ``flush`` and exit hooks).  The deadline may be a
+callable so an export already in flight sees a deadline set LATER by ``flush``.
 """
 
 from __future__ import annotations
@@ -38,6 +44,9 @@ from traigent.observability.otel.transport import (
 
 RETRYABLE_STATUS = frozenset({429, 502, 503, 504})
 
+#: An absolute deadline, or a callable returning the CURRENT one (or ``None``).
+Deadline = float | Callable[[], float | None] | None
+
 
 @dataclass
 class ExportOutcome:
@@ -48,6 +57,7 @@ class ExportOutcome:
     dropped_deadline: int = 0
     retries: int = 0
     stripped_attrs: int = 0
+    protocol_failures: int = 0
 
     def add(self, other: ExportOutcome) -> None:
         for name in self.__dataclass_fields__:
@@ -95,7 +105,7 @@ class TraigentOTLPExporter(SpanExporter):
 
     # -- public API -----------------------------------------------------
     def export_batch(
-        self, spans: Sequence[ReadableSpan], deadline: float | None = None
+        self, spans: Sequence[ReadableSpan], deadline: Deadline = None
     ) -> ExportOutcome:
         outcome = ExportOutcome()
         if not spans:
@@ -114,6 +124,7 @@ class TraigentOTLPExporter(SpanExporter):
             outcome.dropped_retry_exhausted
             + outcome.dropped_non_retryable
             + outcome.dropped_deadline
+            + outcome.protocol_failures
         )
         return SpanExportResult.FAILURE if lost else SpanExportResult.SUCCESS
 
@@ -127,26 +138,32 @@ class TraigentOTLPExporter(SpanExporter):
     def _send_sized(
         self,
         spans: list[ReadableSpan],
-        deadline: float | None,
+        deadline: Deadline,
         outcome: ExportOutcome,
     ) -> None:
         """Encode; halve until each request fits ``max_batch_bytes``."""
         body = encode_spans(spans).SerializeToString()
-        if len(body) > self._max_batch_bytes and len(spans) > 1:
-            mid = len(spans) // 2
-            self._send_sized(spans[:mid], deadline, outcome)
-            self._send_sized(spans[mid:], deadline, outcome)
+        if len(body) > self._max_batch_bytes:
+            if len(spans) > 1:
+                mid = len(spans) // 2
+                self._send_sized(spans[:mid], deadline, outcome)
+                self._send_sized(spans[mid:], deadline, outcome)
+                return
+            # one span alone is over the cap: never send it (the cap is a hard
+            # bound on every request), count it as a non-retryable loss
+            outcome.dropped_non_retryable += 1
             return
         self._send_with_retry(spans, body, deadline, outcome, may_split=True)
 
-    def _remaining(self, deadline: float | None) -> float | None:
-        return None if deadline is None else deadline - self._clock()
+    def _remaining(self, deadline: Deadline) -> float | None:
+        current = deadline() if callable(deadline) else deadline
+        return None if current is None else current - self._clock()
 
     def _send_with_retry(
         self,
         spans: list[ReadableSpan],
         body: bytes,
-        deadline: float | None,
+        deadline: Deadline,
         outcome: ExportOutcome,
         *,
         may_split: bool,
@@ -154,6 +171,9 @@ class TraigentOTLPExporter(SpanExporter):
         started = self._clock()
         count = len(spans)
         for attempt in range(self._max_attempts):
+            if self._stop.is_set():  # shut down: no further POST, ever
+                outcome.dropped_deadline += count
+                return
             remaining = self._remaining(deadline)
             if remaining is not None and remaining <= 0:
                 outcome.dropped_deadline += count
@@ -217,7 +237,9 @@ class TraigentOTLPExporter(SpanExporter):
                 parsed.ParseFromString(resp.body)
                 rejected = max(0, int(parsed.partial_success.rejected_spans))
             except Exception:
-                rejected = 0
+                # a garbled acknowledgement proves nothing was accepted
+                outcome.protocol_failures += count
+                return
         rejected = min(rejected, count)
         outcome.rejected_by_server += rejected
         outcome.exported += count - rejected

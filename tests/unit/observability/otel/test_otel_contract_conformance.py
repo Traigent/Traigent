@@ -1,10 +1,12 @@
 """SDK attribute contract vs the receiver's shared contract (vendored, hash-locked).
 
-The vendored file is a snapshot of the Backend receiver branch's contract
-(TraigentBackend feat/otlp-ingest, commit f780d4ef2).  Until the Schema repo
-publishes the canonical file this test only proves agreement with that
-snapshot: it does not prove the receiver's behaviour (a hash proves agreement,
-not correctness - see the receiver-side golden tests for that).
+The vendored file is a byte copy of the Schema repo's
+``traigent_schema/data/observability/otel_attribute_contract_v1.json``
+(TraigentSchema otel-contract branch, commit 700bbb57a).  A hash proves
+agreement with that snapshot, not correctness of any consumer: the SDK CONSUMES
+the contract (egress set, content-mode vectors, usage rules), and the tests
+below drive the SDK from the contract's own vectors so they fail if the SDK
+diverges.
 """
 
 from __future__ import annotations
@@ -18,7 +20,8 @@ from traigent.observability.otel import contract as C
 PATH = (
     Path(__file__).parents[3] / "fixtures/observability/otel_attribute_contract_v1.json"
 )
-LOCKED_SHA256 = "6515d3e0c8c7a758189bfd156fc18362df9ad492ec5db35b817b62f6263da962"
+PACKAGED = Path(C.__file__).with_name("otel_attribute_contract_v1.json")
+LOCKED_SHA256 = "ca27ffe64b71af0a2dfa1f35343a53448ae080beeb93ed17cca2d2e6fab4bc91"
 CONTRACT = json.loads(PATH.read_text())
 
 # SDK-only keys the receiver snapshot does not know.  Each must be a reviewed
@@ -87,3 +90,88 @@ def test_negative_control_a_renamed_lineage_key_would_be_caught():
         "traigent.optimization_run_id"
         not in CONTRACT["metadata_allowlist"]["attributes"]
     )
+
+
+def test_the_contract_the_sdk_loads_is_the_hash_locked_one():
+    assert PACKAGED.read_bytes() == PATH.read_bytes()
+    assert C.CONTRACT == CONTRACT
+
+
+def test_span_allowlist_is_exactly_the_contract_egress_set_minus_other_channels():
+    egress = set(CONTRACT["metadata_allowlist"]["attributes"])
+    assert set(C.ATTRIBUTE_ALLOWLIST) == egress - C.RESOURCE_KEYS - C.EVENT_KEYS
+    assert set(C.RESOURCE_ALLOWLIST) <= egress
+    assert set(ALLOWED_EVENT_ATTRS) <= egress
+
+
+ALLOWED_EVENT_ATTRS = [a for attrs in C.ALLOWED_EVENTS.values() for a in attrs]
+
+
+def test_every_usage_alias_and_marker_is_egress_allowed():
+    usage = CONTRACT["usage_classes"]
+    aliases = {a for names in usage["attributes"].values() for a in names}
+    aliases |= set(usage["total_tokens"])
+    aliases.add(usage["semantics_marker"]["attribute"])
+    assert aliases <= set(C.ATTRIBUTE_ALLOWLIST)
+
+
+def test_specs_carry_the_contract_types_and_bounds():
+    for key, rule in CONTRACT["metadata_allowlist"]["attributes"].items():
+        spec = C.ATTRIBUTE_ALLOWLIST.get(key) or C.RESOURCE_ALLOWLIST.get(key)
+        if spec is None:
+            assert key in C.EVENT_KEYS, key
+            continue
+        if rule["type"] == "non_negative_integer":
+            assert (spec.kind, spec.lo, spec.hi) == (
+                "int",
+                rule["minimum"],
+                rule["maximum"],
+            ), key
+        elif rule["type"] == "string":
+            assert spec.kind in {"str", "enum"}, key
+            assert spec.max_len <= rule["max_length"], key
+        elif rule["type"] == "string_array":
+            assert (spec.kind, spec.max_items, spec.max_len) == (
+                "str_seq",
+                rule["max_items"],
+                rule["max_length"],
+            ), key
+        elif rule["type"] == "number":
+            assert spec.kind == "float", key
+
+
+def test_content_mode_resolution_vectors_drive_the_policy():
+    from traigent.observability.otel.policy import ContentPolicy
+
+    for vector in CONTRACT["content_mode"]["resolution_vectors"]:
+        declared = vector["declared"]
+        attrs = (
+            {C.CONTENT_MODE_ATTRIBUTE: declared["value"]} if declared["present"] else {}
+        )
+        got = ContentPolicy(vector["configured"]).effective_mode(attrs)
+        assert got == vector["expected"], vector["id"]
+
+
+def test_negative_control_a_fail_open_resolver_fails_the_vectors():
+    """The vectors can fail: a resolver that falls back to the configured mode
+    for an invalid declaration (the original defect) disagrees with them."""
+
+    def fail_open(configured, attrs):
+        declared = attrs.get(C.CONTENT_MODE_ATTRIBUTE)
+        if declared in C.CONTENT_MODES:
+            order = CONTRACT["content_mode"]["restrictiveness_order_most_to_least"]
+            return min(configured, declared, key=order.index)
+        return configured
+
+    wrong = [
+        v["id"]
+        for v in CONTRACT["content_mode"]["resolution_vectors"]
+        if fail_open(
+            v["configured"],
+            {C.CONTENT_MODE_ATTRIBUTE: v["declared"].get("value")}
+            if v["declared"]["present"]
+            else {},
+        )
+        != v["expected"]
+    ]
+    assert wrong, "the contract vectors no longer catch a fail-open resolver"

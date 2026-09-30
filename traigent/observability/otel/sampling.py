@@ -69,9 +69,13 @@ class TraceIdRatioRoot(Sampler):
         trace_state: TraceState | None = None,
     ) -> SamplingResult:
         sampled = (trace_id & _MASK64) < self._threshold
+        if not sampled:
+            return SamplingResult(Decision.DROP, trace_state=trace_state)
+        # The SDK seeds a sampled root span from the sampler's attributes, so
+        # the attributes given to ``start_span`` must be handed back.
         return SamplingResult(
-            Decision.RECORD_AND_SAMPLE if sampled else Decision.DROP,
-            attributes=None,
+            Decision.RECORD_AND_SAMPLE,
+            attributes=attributes,
             trace_state=trace_state,
         )
 

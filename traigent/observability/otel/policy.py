@@ -105,6 +105,11 @@ def coerce_value(value: Any, spec: C.AttrSpec) -> Any | None:
     return None
 
 
+def _record_text(text: str, limit: int) -> str:
+    """Record-mode free text (names, status): secret-scrubbed, then capped."""
+    return redact_sensitive_text(text)[:limit]
+
+
 def _record_value(value: Any) -> Any | None:
     """Record-mode value: existing secret scrubbers plus a per-attribute cap."""
     if isinstance(value, str):
@@ -157,10 +162,20 @@ class ContentPolicy:
 
     # -- effective mode -------------------------------------------------
     def effective_mode(self, span_attrs: Mapping[str, Any]) -> str:
-        override = span_attrs.get(C.CONTENT_MODE_ATTRIBUTE)
-        if isinstance(override, str) and override in C.CONTENT_MODES:
-            return most_restrictive_content_mode(self.mode, override)
-        return self.mode
+        """Resolve per the contract's ``content_mode.resolution_vectors``.
+
+        ABSENT declaration inherits the configured mode.  A PRESENT declaration
+        that is not exactly one of the contract values (wrong case, empty,
+        non-string, unknown) is INVALID and resolves to ``metadata`` whatever
+        the configured mode is.  A valid one never loosens: most restrictive
+        of configured and declared.
+        """
+        if C.CONTENT_MODE_ATTRIBUTE not in span_attrs:
+            return self.mode
+        declared = span_attrs[C.CONTENT_MODE_ATTRIBUTE]
+        if isinstance(declared, str) and declared in C.CONTENT_MODES:
+            return most_restrictive_content_mode(self.mode, declared)
+        return "metadata"
 
     # -- attributes -----------------------------------------------------
     def _attrs(
@@ -227,7 +242,7 @@ class ContentPolicy:
         self, raw: Any, attrs: Mapping[str, Any], scope_name: str, mode: str
     ) -> str:
         if mode == "record" and isinstance(raw, str) and raw:
-            return raw[:256]
+            return _record_text(raw, C.MAX_RECORD_NAME_LEN)
         if isinstance(raw, str):
             # No scope is exempt: ``observe(name)`` shares the SDK's own scope
             # but its name is user-supplied, so it is not a content-free channel.
@@ -259,8 +274,12 @@ class ContentPolicy:
         for event in events or ():
             if mode == "record":
                 attrs, d = self._attrs(event.attributes, mode)
-                name = event.name if isinstance(event.name, str) else "event"
-                out.append(Event(name[:256], attrs, event.timestamp))
+                name = (
+                    _record_text(event.name, C.MAX_RECORD_NAME_LEN)
+                    if isinstance(event.name, str) and event.name
+                    else "event"
+                )
+                out.append(Event(name, attrs, event.timestamp))
                 dropped += d
                 continue
             allowed = C.ALLOWED_EVENTS.get(event.name)
@@ -297,7 +316,11 @@ class ContentPolicy:
     def _status(status: Status, attrs: Mapping[str, Any], mode: str) -> Status:
         if status.status_code is StatusCode.ERROR:
             if mode == "record":
-                return status
+                text = status.description
+                return Status(
+                    StatusCode.ERROR,
+                    _record_text(text, C.MAX_RECORD_STATUS_LEN) if text else None,
+                )
             etype = attrs.get("error.type")
             return Status(StatusCode.ERROR, etype if isinstance(etype, str) else None)
         return Status(status.status_code)

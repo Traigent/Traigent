@@ -59,6 +59,7 @@ _STAT_KEYS = (
     "sampled_out",
     "content_attrs_stripped",
     "retries",
+    "protocol_failures",
 )
 
 
@@ -250,11 +251,12 @@ class TraigentSpanProcessor(SpanProcessor):
                         break
                 self._queued_bytes = sum(_estimate_bytes(s) for s in self._queue)
                 self._first_queued_at = self._clock() if self._queue else None
-                deadline = self._flush_deadline
                 self._in_flight = True
             outcome = ExportOutcome()
             try:
-                outcome = self._exporter.export_batch(batch, deadline=deadline)
+                outcome = self._exporter.export_batch(
+                    batch, deadline=self._current_flush_deadline
+                )
             except Exception:  # exporter bug must not kill the worker
                 logger.debug("otel export failed unexpectedly", exc_info=True)
                 outcome.dropped_non_retryable += len(batch)
@@ -267,12 +269,17 @@ class TraigentSpanProcessor(SpanProcessor):
                 if self._shutdown and not self._queue:
                     return
 
+    def _current_flush_deadline(self) -> float | None:
+        """Live deadline: a ``flush`` that arrives mid-export still bounds it."""
+        return self._flush_deadline
+
     def _account(self, outcome: ExportOutcome) -> None:
         lost = {
             "retry_exhausted": outcome.dropped_retry_exhausted,
             "non_retryable": outcome.dropped_non_retryable,
             "deadline": outcome.dropped_deadline,
             "rejected_by_server": outcome.rejected_by_server,
+            "protocol_failure": outcome.protocol_failures,
         }
         with self._cond:
             s = self._stats
@@ -281,6 +288,7 @@ class TraigentSpanProcessor(SpanProcessor):
             s["dropped_non_retryable"] += outcome.dropped_non_retryable
             s["dropped_deadline"] += outcome.dropped_deadline
             s["rejected_by_server"] += outcome.rejected_by_server
+            s["protocol_failures"] += outcome.protocol_failures
             s["content_attrs_stripped"] += outcome.stripped_attrs
             s["retries"] += outcome.retries
         for reason, count in lost.items():

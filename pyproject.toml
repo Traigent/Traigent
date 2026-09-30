@@ -313,6 +313,7 @@ traigent = [
     "examples/**/*.jsonl",
     "skills/**/*.md",
     "playbook/schemas/*.json",
+    "observability/otel/*.json",
 ]
 traigent_validation = ["py.typed"]
 

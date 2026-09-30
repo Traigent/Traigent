@@ -55,6 +55,15 @@ class UnverifiedExporterError(RuntimeError):
     """Raised when instrumenting a provider that has unknown exporters."""
 
 
+class InstrumentationStateError(RuntimeError):
+    """An instrumentor is already installed, or did not actually install.
+
+    OpenTelemetry instrumentors return silently when they are already
+    instrumented (possibly onto an unaudited provider) and when a dependency
+    conflict stops them; neither is visible from the return value.
+    """
+
+
 @dataclass(frozen=True)
 class ExporterAudit:
     verified: bool
@@ -144,6 +153,23 @@ def resolve_instrumentor(spec: Any) -> Any:
     return spec
 
 
+def _is_instrumented(instrumentor: Any) -> bool | None:
+    """The instrumentor's own install state, or ``None`` if it exposes none."""
+    try:
+        state = getattr(instrumentor, "_is_instrumented_by_opentelemetry", None)
+    except Exception:
+        return None
+    return state if isinstance(state, bool) else None
+
+
+def _rollback(installed: list[Any]) -> None:
+    for instrumentor in reversed(installed):
+        try:
+            instrumentor.uninstrument()
+        except Exception:
+            logger.debug("instrumentor rollback failed", exc_info=True)
+
+
 def install(
     provider: Any,
     specs: tuple[Any, ...],
@@ -151,21 +177,51 @@ def install(
     mode: str,
     allow_unverified_exporters: bool,
 ) -> list[Any]:
-    """Install instrumentors onto ``provider`` explicitly (never via globals)."""
+    """Install instrumentors onto ``provider`` explicitly (never via globals).
+
+    Returns only instrumentors THIS call installed (the caller owns exactly
+    those).  An instrumentor that is already installed is rejected, never
+    adopted: it may hold an unaudited provider, and uninstrumenting it later
+    would remove instrumentation Traigent did not install.  An install that
+    leaves the instrumentor not installed (dependency conflict) raises.  If any
+    instrumentor fails, every one installed earlier in this call is rolled back.
+    """
     check_exporters(provider, allow_unverified_exporters=allow_unverified_exporters)
     installed: list[Any] = []
-    for spec in specs:
-        instrumentor = resolve_instrumentor(spec)
-        kwargs: dict[str, Any] = {"tracer_provider": provider}
-        config = _masking_config(mode)
-        if config is not None and _accepts(instrumentor.instrument, "config"):
-            kwargs["config"] = config
-        elif mode != "record":
-            logger.info(
-                "instrumentor %s was not given a source-masking config; content "
-                "is still removed by Traigent's exporter",
-                type(instrumentor).__name__,
-            )
-        instrumentor.instrument(**kwargs)
-        installed.append(instrumentor)
+    try:
+        for spec in specs:
+            instrumentor = resolve_instrumentor(spec)
+            name = type(instrumentor).__name__
+            if _is_instrumented(instrumentor) is True:
+                raise InstrumentationStateError(
+                    f"{name} is already instrumented (by the application or another "
+                    "library); Traigent will not adopt it because it may hold an "
+                    "unaudited tracer provider. Uninstrument it first."
+                )
+            kwargs: dict[str, Any] = {"tracer_provider": provider}
+            config = _masking_config(mode)
+            if config is not None and _accepts(instrumentor.instrument, "config"):
+                kwargs["config"] = config
+            elif mode != "record":
+                logger.info(
+                    "instrumentor %s was not given a source-masking config; content "
+                    "is still removed by Traigent's exporter",
+                    name,
+                )
+            try:
+                instrumentor.instrument(**kwargs)
+            except BaseException:
+                if _is_instrumented(instrumentor) is True:
+                    installed.append(instrumentor)  # partial install: undo it too
+                raise
+            if _is_instrumented(instrumentor) is False:
+                raise InstrumentationStateError(
+                    f"{name}.instrument() returned without installing (dependency "
+                    "conflict or unsupported library version); nothing was "
+                    "instrumented."
+                )
+            installed.append(instrumentor)
+    except BaseException:
+        _rollback(installed)
+        raise
     return installed

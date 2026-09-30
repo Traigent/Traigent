@@ -11,12 +11,14 @@ environment variable must not be able to redirect the Traigent API key.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import functools
 import inspect
 import json
 import os
 import threading
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from opentelemetry import trace
@@ -35,6 +37,11 @@ from traigent.observability.otel import contract as C
 from traigent.observability.otel.policy import ContentPolicy
 from traigent.observability.otel.exporter import TraigentOTLPExporter
 from traigent.observability.otel.instrument import install
+from traigent.observability.otel.lineage import (
+    _CallerAttributes,
+    activate,
+    merged_attributes,
+)
 from traigent.observability.otel.lineage import attributes as attributes  # re-export
 from traigent.observability.otel.processor import FlushOutcome, TraigentSpanProcessor
 from traigent.observability.otel.sampling import (
@@ -368,6 +375,25 @@ def _serialise(value: Any) -> str:
     return text
 
 
+@dataclass(frozen=True)
+class _Entry:
+    """One live ``with``/``async with`` entry of an ``observe()`` object."""
+
+    owner: Any
+    span: Span
+    mode: str
+    scope: contextlib.ExitStack
+
+
+# Live context-manager entries, PER CONTEXT (thread / asyncio task).  One
+# module-level variable (never one per ``observe()`` call) holding an immutable
+# tuple: concurrent users of one reused ``observe()`` object can neither pop
+# each other's span nor each other's context tokens.
+_ACTIVE: contextvars.ContextVar[tuple[_Entry, ...]] = contextvars.ContextVar(
+    "traigent_otel_observe_entries", default=()
+)
+
+
 class _Observe:
     """Decorator and (async) context manager producing one OTel span."""
 
@@ -399,41 +425,47 @@ class _Observe:
         self._redact_input = redact_input
         self._redact_output = redact_output
         self._override = validate_content_mode_override(content_mode)
-        self._stack: list[tuple[Span, Any, Any]] = []
 
     # -- mode -----------------------------------------------------------
-    def _mode(self) -> str:
+    def _prepare(self) -> tuple[_CallerAttributes, str]:
+        """Caller attributes + effective mode for ONE invocation.
+
+        The mode (client mode, tightened by this call's override and by any
+        enclosing ``observe``) is established here, BEFORE the span starts, so
+        the span's own stamping, its at-source capture and every descendant use
+        the same mode.  Nothing is entered: the caller activates the state only
+        around the code that must see it.
+        """
         handle = _handle
         base = handle.content_mode if handle else "metadata"
-        if self._override is None:
-            return base
-        return most_restrictive_content_mode(base, self._override)  # only tightens
+        state = merged_attributes(
+            session_id=self._session_id,
+            user_id=self._user_id,
+            tags=self._tags,
+            prompt_reference=self._prompt_reference,
+            content_mode=self._override,
+        )
+        mode = (
+            base
+            if state.content_mode is None
+            else most_restrictive_content_mode(base, state.content_mode)
+        )
+        return state, mode
 
     # -- span lifecycle ---------------------------------------------------
-    def _begin(self, name: str, args: tuple, kwargs: dict) -> tuple[Span, Any]:
-        mode = self._mode()
+    def _start(
+        self,
+        name: str,
+        args: tuple,
+        kwargs: dict,
+        state: _CallerAttributes,
+        mode: str,
+    ) -> Span:
         handle = _handle
-        # Enter the caller-attribute scope first so this span itself is stamped
-        # by the processor's on_start, not only its children.
-        scope = contextlib.ExitStack()
-        if any(
-            v is not None
-            for v in (
-                self._session_id,
-                self._user_id,
-                self._tags,
-                self._prompt_reference,
-            )
-        ):
-            scope.enter_context(
-                attributes(
-                    session_id=self._session_id,
-                    user_id=self._user_id,
-                    tags=self._tags,
-                    prompt_reference=self._prompt_reference,
-                )
-            )
-        span = _tracer().start_span(name, kind=SpanKind.INTERNAL)
+        # Start inside the state so this span itself is stamped by the
+        # processor's on_start, not only its children.
+        with activate(state):
+            span = _tracer().start_span(name, kind=SpanKind.INTERNAL)
         span.set_attribute(C.ATTR_OBSERVATION_TYPE, self._as_type)
         if self._tool_name:
             span.set_attribute("gen_ai.tool.name", self._tool_name)
@@ -455,19 +487,18 @@ class _Observe:
                         f"{C.CONTENT_METADATA_PREFIX}{key}",
                         value if mode == "record" else C.REDACTED_PLACEHOLDER,
                     )
-        return span, scope
+        return span
 
     def _finish(
         self,
         span: Span,
-        scope: Any,
+        mode: str,
         *,
         result: Any = None,
         error: BaseException | None = None,
         has_result: bool = False,
     ) -> None:
         try:
-            mode = self._mode()
             if has_result and mode != "metadata":
                 if mode == "record" and not self._redact_output:
                     span.set_attribute(C.ATTR_OUTPUT, _serialise(result))
@@ -484,26 +515,51 @@ class _Observe:
                 span.add_event("exception", event_attrs)
                 span.set_status(Status(StatusCode.ERROR, description))
         finally:
-            scope.close()
             span.end()
 
     # -- context manager --------------------------------------------------
     def __enter__(self) -> Span:
-        span, scope = self._begin(self._name or "observe", (), {})
-        cm = use_span(
-            span,
-            end_on_exit=False,
-            record_exception=False,
-            set_status_on_exception=False,
-        )
-        cm.__enter__()
-        self._stack.append((span, scope, cm))
+        state, mode = self._prepare()
+        span = self._start(self._name or "observe", (), {}, state, mode)
+        scope = contextlib.ExitStack()
+        try:
+            scope.enter_context(activate(state))
+            scope.enter_context(
+                use_span(
+                    span,
+                    end_on_exit=False,
+                    record_exception=False,
+                    set_status_on_exception=False,
+                )
+            )
+        except BaseException:
+            scope.close()
+            span.end()
+            raise
+        _ACTIVE.set((*_ACTIVE.get(), _Entry(self, span, mode, scope)))
         return span
 
     def __exit__(self, exc_type, exc, tb) -> Literal[False]:
-        span, scope, cm = self._stack.pop()
-        cm.__exit__(None, None, None)
-        self._finish(span, scope, error=exc if isinstance(exc, BaseException) else None)
+        entries = _ACTIVE.get()
+        index = next(
+            (i for i in range(len(entries) - 1, -1, -1) if entries[i].owner is self),
+            None,
+        )
+        if index is None:
+            raise RuntimeError(
+                "observe() was not entered in this thread/task; enter and exit "
+                "it in the same context"
+            )
+        entry = entries[index]
+        _ACTIVE.set(entries[:index] + entries[index + 1 :])
+        try:
+            entry.scope.close()
+        finally:
+            self._finish(
+                entry.span,
+                entry.mode,
+                error=exc if isinstance(exc, BaseException) else None,
+            )
         return False
 
     async def __aenter__(self) -> Span:
@@ -517,22 +573,36 @@ class _Observe:
         name: str = self._name or str(getattr(func, "__name__", "observe"))
         run = self
 
+        def step_scope(state: _CallerAttributes, span: Span) -> contextlib.ExitStack:
+            """Context for ONE resume of a stream: entered and left within it."""
+            stack = contextlib.ExitStack()
+            stack.enter_context(activate(state))
+            stack.enter_context(
+                use_span(
+                    span,
+                    end_on_exit=False,
+                    record_exception=False,
+                    set_status_on_exception=False,
+                )
+            )
+            return stack
+
         if inspect.isasyncgenfunction(func):
 
             @functools.wraps(func)
             async def agen_wrapper(*args: Any, **kwargs: Any):
-                span, scope = run._begin(name, args, kwargs)
+                state, mode = run._prepare()
+                span: Span | None = run._start(name, args, kwargs, state, mode)
                 agen = func(*args, **kwargs)
                 to_send: Any = None
                 to_throw: BaseException | None = None
                 try:
                     while True:
-                        with use_span(
-                            span,
-                            end_on_exit=False,
-                            record_exception=False,
-                            set_status_on_exception=False,
-                        ):
+                        # Re-entered around every resume and left BEFORE the
+                        # yield: a suspended stream holds no context state, so
+                        # interleaved streams cannot stamp each other and
+                        # cleanup from another task cannot fail a token reset.
+                        with step_scope(state, span):
                             try:
                                 if to_throw is not None:
                                     exc, to_throw = to_throw, None
@@ -540,7 +610,7 @@ class _Observe:
                                 else:
                                     item = await agen.asend(to_send)
                             except StopAsyncIteration:
-                                run._finish(span, scope)
+                                run._finish(span, mode)
                                 span = None
                                 return
                         try:
@@ -554,12 +624,12 @@ class _Observe:
                     raise
                 except BaseException as exc:
                     if span is not None:
-                        run._finish(span, scope, error=exc)
+                        run._finish(span, mode, error=exc)
                         span = None
                     raise
                 finally:
                     if span is not None:  # abandoned / closed early
-                        run._finish(span, scope)
+                        run._finish(span, mode)
 
             return agen_wrapper
 
@@ -567,18 +637,14 @@ class _Observe:
 
             @functools.wraps(func)
             def gen_wrapper(*args: Any, **kwargs: Any):
-                span, scope = run._begin(name, args, kwargs)
+                state, mode = run._prepare()
+                span: Span | None = run._start(name, args, kwargs, state, mode)
                 gen = func(*args, **kwargs)
                 to_send: Any = None
                 to_throw: BaseException | None = None
                 try:
                     while True:
-                        with use_span(
-                            span,
-                            end_on_exit=False,
-                            record_exception=False,
-                            set_status_on_exception=False,
-                        ):
+                        with step_scope(state, span):
                             try:
                                 if to_throw is not None:
                                     exc, to_throw = to_throw, None
@@ -587,7 +653,7 @@ class _Observe:
                                     item = gen.send(to_send)
                             except StopIteration as stop:
                                 run._finish(
-                                    span, scope, result=stop.value, has_result=True
+                                    span, mode, result=stop.value, has_result=True
                                 )
                                 span = None
                                 return stop.value
@@ -602,12 +668,12 @@ class _Observe:
                     raise
                 except BaseException as exc:
                     if span is not None:
-                        run._finish(span, scope, error=exc)
+                        run._finish(span, mode, error=exc)
                         span = None
                     raise
                 finally:
                     if span is not None:
-                        run._finish(span, scope)
+                        run._finish(span, mode)
 
             return gen_wrapper
 
@@ -615,38 +681,30 @@ class _Observe:
 
             @functools.wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any):
-                span, scope = run._begin(name, args, kwargs)
+                state, mode = run._prepare()
+                span = run._start(name, args, kwargs, state, mode)
                 try:
-                    with use_span(
-                        span,
-                        end_on_exit=False,
-                        record_exception=False,
-                        set_status_on_exception=False,
-                    ):
+                    with step_scope(state, span):
                         result = await func(*args, **kwargs)
                 except BaseException as exc:
-                    run._finish(span, scope, error=exc)
+                    run._finish(span, mode, error=exc)
                     raise
-                run._finish(span, scope, result=result, has_result=True)
+                run._finish(span, mode, result=result, has_result=True)
                 return result
 
             return async_wrapper
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any):
-            span, scope = run._begin(name, args, kwargs)
+            state, mode = run._prepare()
+            span = run._start(name, args, kwargs, state, mode)
             try:
-                with use_span(
-                    span,
-                    end_on_exit=False,
-                    record_exception=False,
-                    set_status_on_exception=False,
-                ):
+                with step_scope(state, span):
                     result = func(*args, **kwargs)
             except BaseException as exc:
-                run._finish(span, scope, error=exc)
+                run._finish(span, mode, error=exc)
                 raise
-            run._finish(span, scope, result=result, has_result=True)
+            run._finish(span, mode, result=result, has_result=True)
             return result
 
         return wrapper

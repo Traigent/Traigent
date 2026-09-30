@@ -17,11 +17,15 @@ from traigent.observability.otel.api import (
     shutdown,
     stats,
 )
-from traigent.observability.otel.instrument import UnverifiedExporterError
+from traigent.observability.otel.instrument import (
+    InstrumentationStateError,
+    UnverifiedExporterError,
+)
 from traigent.observability.otel.processor import FlushOutcome
 
 __all__ = [
     "FlushOutcome",
+    "InstrumentationStateError",
     "ObservabilityHandle",
     "UnverifiedExporterError",
     "attributes",

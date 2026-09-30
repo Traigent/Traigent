@@ -159,7 +159,8 @@ def test_allowlist_has_no_wildcards_and_only_bounded_specs():
 
 @pytest.mark.parametrize(
     "value",
-    ["x" * 129, "line\nbreak", "", 5, True, ["a"]],
+    # the bound is the shared contract's (max_length 255 for this key)
+    ["x" * 256, "line\nbreak", "", 5, True, ["a"]],
 )
 def test_string_bounds_are_enforced(memory_provider, value):
     provider, exporter = memory_provider
