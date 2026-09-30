@@ -118,3 +118,66 @@ def test_observability_query_usage_fields_keep_explicit_zero(
         value = getattr(record, field)
         assert value == 0
         assert value is not None
+
+
+# ---------------------------------------------------------------------------
+# Cost/usage fields (Schema cost-usage-fields): shared fixtures prove that null,
+# zero, partial cost and provenance survive parsing in observation, trace and
+# session records.
+# ---------------------------------------------------------------------------
+import json as _json  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
+
+_COST_FIXTURES = _json.loads(
+    (
+        _Path(__file__).parents[2] / "fixtures/observability/cost_usage_records_v1.json"
+    ).read_text()
+)
+
+
+@pytest.mark.parametrize("case", _COST_FIXTURES["observations"], ids=lambda c: c["id"])
+def test_observation_record_keeps_cost_and_usage_fields(case):
+    from traigent.observability.dtos import ObservationRecord
+
+    record = ObservationRecord.from_dict(case["payload"])
+    for name, expected in case["expected"].items():
+        got = getattr(record, name)
+        assert got == expected, (case["id"], name)
+        # null must stay None (unknown) and a reported zero must not become None
+        assert (got is None) == (expected is None), (case["id"], name)
+        assert isinstance(got, bool) == isinstance(expected, bool), (case["id"], name)
+
+
+@pytest.mark.parametrize("case", _COST_FIXTURES["rollups"], ids=lambda c: c["id"])
+def test_trace_and_session_records_keep_completeness_and_lower_bounds(case):
+    from traigent.observability.dtos import SessionRecord, TraceRecord
+
+    trace = TraceRecord.from_dict(
+        {"id": "t", "name": "n", "status": "completed", **case["payload"]}
+    )
+    session = SessionRecord.from_dict({"id": "s", **case["payload"]})
+    for record in (trace, session):
+        for name, expected in case["expected"].items():
+            got = getattr(record, name)
+            assert got == expected, (case["id"], type(record).__name__, name)
+            assert (got is None) == (expected is None)
+
+
+def test_negative_control_the_fixtures_detect_dropped_fields():
+    """The fixtures can fail: a parser that forgets cost_status/priced_cost_usd
+    leaves them None and the partial-cost fixture notices."""
+    from traigent.observability.dtos import ObservationRecord
+
+    (partial,) = [
+        c
+        for c in _COST_FIXTURES["observations"]
+        if c["id"] == "partial_cost_lower_bound"
+    ]
+    stripped = {
+        k: v
+        for k, v in partial["payload"].items()
+        if k not in {"cost_status", "priced_cost_usd"}
+    }
+    record = ObservationRecord.from_dict(stripped)
+    assert record.cost_status != partial["expected"]["cost_status"]
+    assert record.priced_cost_usd != partial["expected"]["priced_cost_usd"]
