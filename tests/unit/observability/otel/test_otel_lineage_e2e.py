@@ -23,6 +23,10 @@ DATASET = [
 ]
 
 
+# Connected-mode semantics (mocked local collector), declared per file (#2033).
+pytestmark = pytest.mark.backend_online
+
+
 def _init(collector, **kw):
     return otel.init(
         api_key="k",

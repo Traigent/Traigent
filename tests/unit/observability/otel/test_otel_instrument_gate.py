@@ -17,6 +17,10 @@ import traigent.observability.otel as otel
 from traigent.observability.otel.instrument import INSTRUMENTORS
 
 
+# Connected-mode semantics (mocked local collector), declared per file (#2033).
+pytestmark = pytest.mark.backend_online
+
+
 class FakeInstrumentor:
     """Stands in for a third-party instrumentor forced to capture content."""
 

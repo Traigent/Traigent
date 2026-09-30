@@ -142,8 +142,6 @@ def _otel_env(monkeypatch):
     """Development env (local stub allowed), no ambient credentials/redirects."""
     monkeypatch.setenv("TRAIGENT_ENV", "development")
     monkeypatch.delenv("ENVIRONMENT", raising=False)
-    monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
-    monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
     monkeypatch.delenv("TRAIGENT_DISABLE_TELEMETRY", raising=False)
     monkeypatch.delenv("TRAIGENT_OBSERVABILITY_CONTENT", raising=False)
     monkeypatch.delenv("TRAIGENT_OBSERVABILITY_CAPTURE_CONTENT", raising=False)

@@ -17,6 +17,10 @@ import traigent.observability.otel as otel
 from traigent.observability.otel import contract as C
 
 
+# Connected-mode semantics (mocked local collector), declared per file (#2033).
+pytestmark = pytest.mark.backend_online
+
+
 @pytest.fixture
 def h(collector):
     """Initialised handle attached to a provider that also has an in-memory exporter."""
