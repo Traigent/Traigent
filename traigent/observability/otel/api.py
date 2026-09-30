@@ -17,7 +17,7 @@ import json
 import os
 import threading
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, Literal
 
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
@@ -32,6 +32,7 @@ from traigent.observability.config import (
     validate_content_mode_override,
 )
 from traigent.observability.otel import contract as C
+from traigent.observability.otel.policy import ContentPolicy
 from traigent.observability.otel.exporter import TraigentOTLPExporter
 from traigent.observability.otel.instrument import install
 from traigent.observability.otel.lineage import attributes as attributes  # re-export
@@ -170,6 +171,7 @@ def init(
     project: str | None = None,
     endpoint: str | None = None,
     content_mode: str | None = None,
+    allowed_span_names: Sequence[str] | None = None,
     sample_rate: float | None = None,
     environment: str | None = None,
     release: str | None = None,
@@ -194,12 +196,18 @@ def init(
     pass in keeps its own sampler (which is authoritative).
     ``content_mode`` resolves most-restrictive-wins against the environment,
     exactly like the legacy client; the default is ``metadata``.
+    Outside ``record`` mode a span name is exported only if it looks like a
+    static operation name; when ``allowed_span_names`` is set, ONLY those names
+    are exported (others fall back to a derived name).  Span names must be
+    static strings, never data.
     """
     global _handle, _last_handle
     with _lock:
         if _handle is not None:
             raise RuntimeError("Traigent observability is already initialised")
         mode, _explicit = resolve_client_content_mode(content_mode)
+        # Validate eagerly so a bad allowlist fails even in offline mode.
+        ContentPolicy(mode, allowed_span_names)
         rate = _resolve_rate(sample_rate)
         offline = is_backend_offline() or is_truthy(
             os.getenv("TRAIGENT_DISABLE_TELEMETRY")
@@ -249,6 +257,7 @@ def init(
             exporter = TraigentOTLPExporter(
                 transport or UrllibTransport(f"{url}/v1/traces", headers),
                 content_mode=mode,
+                allowed_span_names=allowed_span_names,
                 max_batch_bytes=max_batch_bytes,
                 export_timeout=export_timeout_s,
             )
@@ -383,12 +392,10 @@ class _Observe:
         self._as_type = as_type
         self._tool_name = tool_name
         self._metadata = dict(metadata) if metadata else None
-        self._ctx_attrs = {
-            "session_id": session_id,
-            "user_id": user_id,
-            "tags": tags,
-            "prompt_reference": prompt_reference,
-        }
+        self._session_id = session_id
+        self._user_id = user_id
+        self._tags = tags
+        self._prompt_reference = prompt_reference
         self._redact_input = redact_input
         self._redact_output = redact_output
         self._override = validate_content_mode_override(content_mode)
@@ -409,8 +416,23 @@ class _Observe:
         # Enter the caller-attribute scope first so this span itself is stamped
         # by the processor's on_start, not only its children.
         scope = contextlib.ExitStack()
-        if any(v is not None for v in self._ctx_attrs.values()):
-            scope.enter_context(attributes(**self._ctx_attrs))
+        if any(
+            v is not None
+            for v in (
+                self._session_id,
+                self._user_id,
+                self._tags,
+                self._prompt_reference,
+            )
+        ):
+            scope.enter_context(
+                attributes(
+                    session_id=self._session_id,
+                    user_id=self._user_id,
+                    tags=self._tags,
+                    prompt_reference=self._prompt_reference,
+                )
+            )
         span = _tracer().start_span(name, kind=SpanKind.INTERNAL)
         span.set_attribute(C.ATTR_OBSERVATION_TYPE, self._as_type)
         if self._tool_name:
@@ -478,7 +500,7 @@ class _Observe:
         self._stack.append((span, scope, cm))
         return span
 
-    def __exit__(self, exc_type, exc, tb) -> bool:
+    def __exit__(self, exc_type, exc, tb) -> Literal[False]:
         span, scope, cm = self._stack.pop()
         cm.__exit__(None, None, None)
         self._finish(span, scope, error=exc if isinstance(exc, BaseException) else None)
@@ -487,12 +509,12 @@ class _Observe:
     async def __aenter__(self) -> Span:
         return self.__enter__()
 
-    async def __aexit__(self, exc_type, exc, tb) -> bool:
+    async def __aexit__(self, exc_type, exc, tb) -> Literal[False]:
         return self.__exit__(exc_type, exc, tb)
 
     # -- decorator ----------------------------------------------------------
     def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        name = self._name or getattr(func, "__name__", "observe")
+        name: str = self._name or str(getattr(func, "__name__", "observe"))
         run = self
 
         if inspect.isasyncgenfunction(func):

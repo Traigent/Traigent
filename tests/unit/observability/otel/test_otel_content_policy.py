@@ -263,8 +263,7 @@ def test_negative_control_name_scope_exemption_leaks(memory_provider):
     _name_and_tracestate_span(provider, NAME_CANARY, C.TRAIGENT_SCOPE_NAME)
 
     class Exempt(ContentPolicy):
-        @staticmethod
-        def _name(raw, attrs, scope_name, mode):
+        def _name(self, raw, attrs, scope_name, mode):
             return raw  # restored scope exemption
 
     assert CANARY.encode() in _sanitized_wire(exporter, Exempt("metadata"))
@@ -288,3 +287,99 @@ def test_negative_control_keeping_tracestate_leaks(memory_provider, monkeypatch)
     assert CANARY.encode() not in _sanitized_wire(exporter, ContentPolicy("metadata"))
     monkeypatch.setattr(pol, "_strip_trace_state", lambda c: c)
     assert CANARY.encode() in _sanitized_wire(exporter, ContentPolicy("metadata"))
+
+
+# -- span-name tightening (identifier-shaped data is not a static name) -------
+
+_UUID = "550e8400-e29b-41d4-a716-446655440000"
+LEAKY_NAMES = [
+    "order_12345_john",  # run of >=3 digits
+    "cust_4411",  # run of >=3 digits
+    "user:42",  # purely numeric segment
+    "/users/42/orders",  # purely numeric segment
+    "v1.2.3",  # purely numeric segments
+    _UUID,  # UUID shape
+    "req_deadbeefcafe",  # run of >=8 hex chars
+    "trace9f8e7d6c5b",  # hex run
+]
+STATIC_NAMES = ["llm.call", "retrieve_docs", "my_tool.step-1", "rag/rerank", "a:b"]
+
+
+@pytest.mark.parametrize("name", LEAKY_NAMES)
+@pytest.mark.parametrize("mode", ["metadata", "redacted"])
+def test_identifier_shaped_names_fall_through_and_are_counted(
+    memory_provider, mode, name
+):
+    provider, exporter = memory_provider
+    _name_and_tracestate_span(provider, name, C.TRAIGENT_SCOPE_NAME)
+    (s,) = exporter.get_finished_spans()
+    out = ContentPolicy(mode).sanitize(s)
+    assert out.name == "tool"  # derived from the observation type
+    assert out.attributes[C.ATTR_DROPPED_ATTRS] >= 1
+    assert name.encode() not in _sanitized_wire(exporter, ContentPolicy(mode))
+
+
+@pytest.mark.parametrize("name", STATIC_NAMES)
+def test_static_names_are_kept(memory_provider, name):
+    provider, exporter = memory_provider
+    _name_and_tracestate_span(provider, name, C.TRAIGENT_SCOPE_NAME)
+    (s,) = exporter.get_finished_spans()
+    assert ContentPolicy("metadata").sanitize(s).name == name
+
+
+def test_identifier_shaped_names_pass_in_record_mode(memory_provider):
+    provider, exporter = memory_provider
+    _name_and_tracestate_span(provider, "order_12345_john", C.TRAIGENT_SCOPE_NAME)
+    (s,) = exporter.get_finished_spans()
+    assert ContentPolicy("record").sanitize(s).name == "order_12345_john"
+
+
+def test_allowed_span_names_exports_only_listed(memory_provider):
+    provider, exporter = memory_provider
+    policy = ContentPolicy("metadata", allowed_span_names=["llm.call"])
+    for name in ("llm.call", "retrieve_docs"):
+        _name_and_tracestate_span(provider, name, C.TRAIGENT_SCOPE_NAME)
+    kept, other = exporter.get_finished_spans()
+    assert policy.sanitize(kept).name == "llm.call"
+    assert C.ATTR_DROPPED_ATTRS not in policy.sanitize(kept).attributes
+    out = policy.sanitize(other)
+    assert out.name == "tool"  # unlisted, even though it looks static
+    assert out.attributes[C.ATTR_DROPPED_ATTRS] >= 1
+
+
+def test_allowed_span_names_does_not_apply_in_record_mode(memory_provider):
+    provider, exporter = memory_provider
+    _name_and_tracestate_span(provider, "retrieve_docs", C.TRAIGENT_SCOPE_NAME)
+    (s,) = exporter.get_finished_spans()
+    policy = ContentPolicy("record", allowed_span_names=["llm.call"])
+    assert policy.sanitize(s).name == "retrieve_docs"
+
+
+@pytest.mark.parametrize("bad", ["llm call", "", "x" * 81, "naïve", "a\nb"])
+def test_allowed_span_names_rejects_non_static_entries(bad):
+    with pytest.raises(ValueError):
+        ContentPolicy("metadata", allowed_span_names=[bad])
+
+
+def test_allowed_span_names_rejects_bare_string():
+    with pytest.raises(ValueError):
+        ContentPolicy("metadata", allowed_span_names="llm.call")
+
+
+def test_init_validates_allowed_span_names_even_offline(monkeypatch):
+    from traigent.observability.otel import api
+
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+    with pytest.raises(ValueError):
+        api.init(allowed_span_names=["not static"])
+
+
+def test_negative_control_without_the_new_rule_names_leak(memory_provider, monkeypatch):
+    """Revert to charset-only checking: every leaky name egresses again."""
+    provider, exporter = memory_provider
+    for name in LEAKY_NAMES:
+        _name_and_tracestate_span(provider, name, C.TRAIGENT_SCOPE_NAME)
+    spans = exporter.get_finished_spans()
+    assert all(ContentPolicy("metadata").sanitize(s).name == "tool" for s in spans)
+    monkeypatch.setattr(C, "is_safe_token", C.is_token_charset)
+    assert [ContentPolicy("metadata").sanitize(s).name for s in spans] == LEAKY_NAMES

@@ -185,7 +185,10 @@ observability = [
     "opentelemetry-proto>=1.44.0,<2.0.0",
 ]
 # Optional third-party instrumentors (Apache-2.0).  Exact pins: metadata was
-# verified for these versions only; NOT exercised by this repo's tests.
+# verified for these versions only.  tests/unit/observability/otel/
+# test_otel_instrument_gate.py resolves the instrumentor class names against the
+# real packages when an extra is installed (it skips cleanly otherwise), so a
+# default install does not exercise them.
 observability-openai = [
     "opentelemetry-api>=1.44.0,<2.0.0",
     "opentelemetry-sdk>=1.44.0,<2.0.0",

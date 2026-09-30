@@ -19,7 +19,7 @@ from __future__ import annotations
 import random
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 
 from opentelemetry.exporter.otlp.proto.common.trace_encoder import encode_spans
@@ -60,6 +60,7 @@ class TraigentOTLPExporter(SpanExporter):
         transport: Transport,
         *,
         content_mode: str = "metadata",
+        allowed_span_names: Collection[str] | None = None,
         max_batch_bytes: int = 4 * 1024 * 1024,
         export_timeout: float = 10.0,
         max_attempts: int = 5,
@@ -72,7 +73,7 @@ class TraigentOTLPExporter(SpanExporter):
         rng: Callable[[], float] = random.random,
     ) -> None:
         self._transport = transport
-        self.policy = ContentPolicy(content_mode)
+        self.policy = ContentPolicy(content_mode, allowed_span_names)
         self._max_batch_bytes = max_batch_bytes
         self._timeout = export_timeout
         self._max_attempts = max_attempts
@@ -203,7 +204,7 @@ class TraigentOTLPExporter(SpanExporter):
         if resp is not None and resp.retry_after is not None:
             return min(max(resp.retry_after, 0.0), self._retry_after_cap)
         ceiling = min(self._backoff_max, self._backoff_base * (2**attempt))
-        return ceiling * self._rng()
+        return float(ceiling * self._rng())
 
     @staticmethod
     def _record_success(

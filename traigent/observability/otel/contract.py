@@ -217,6 +217,15 @@ MAX_RECORD_ATTR_BYTES: Final = 64 * 1024
 MAX_SPAN_NAME_LEN: Final = 80
 
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.\-/:]{1,80}$")
+# Identifier-shaped data hides in "static-looking" names (``order_12345_john``,
+# ``user:42``, ``/users/42/orders``).  A name that carries any of these shapes
+# is treated as data, not a static operation name.
+_DIGIT_RUN = re.compile(r"[0-9]{3,}")
+_HEX_RUN = re.compile(r"[0-9A-Fa-f]{8,}")
+_UUID_SHAPE = re.compile(
+    r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"
+)
+_SEGMENT_SPLIT = re.compile(r"[:/.]")
 # Scope names are module paths by OTel convention.  Free text (hyphens,
 # spaces, slashes) is rejected; a dotted identifier that merely *looks* like a
 # module path cannot be told apart from one (documented residual).
@@ -227,8 +236,22 @@ _SAFE_SCOPE_VERSION = re.compile(r"^[A-Za-z0-9_.\-+]{1,32}$")
 _SAFE_KEY = re.compile(r"^[A-Za-z0-9_.\-]{1,128}$")
 
 
-def is_safe_token(value: str) -> bool:
+def is_token_charset(value: str) -> bool:
+    """Charset + length only (no identifier-shape heuristics)."""
     return bool(_SAFE_TOKEN.match(value))
+
+
+def is_safe_token(value: str) -> bool:
+    """A static-looking name: safe charset and no identifier-shaped data.
+
+    Rejected: a run of >=3 digits, a run of >=8 hex characters, a UUID shape,
+    or a purely numeric ``:``/``/``/``.`` separated segment.
+    """
+    if not _SAFE_TOKEN.match(value):
+        return False
+    if _DIGIT_RUN.search(value) or _HEX_RUN.search(value) or _UUID_SHAPE.search(value):
+        return False
+    return not any(seg.isdigit() for seg in _SEGMENT_SPLIT.split(value))
 
 
 def is_safe_scope_name(value: str) -> bool:

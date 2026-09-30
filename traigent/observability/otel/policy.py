@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
 from opentelemetry.sdk.resources import Resource
@@ -134,10 +134,26 @@ def _record_value(value: Any) -> Any | None:
 class ContentPolicy:
     """Rebuild spans according to the content mode (most restrictive wins)."""
 
-    def __init__(self, mode: str = "metadata") -> None:
+    def __init__(
+        self,
+        mode: str = "metadata",
+        allowed_span_names: Collection[str] | None = None,
+    ) -> None:
         if mode not in C.CONTENT_MODES:
             raise ValueError(f"content mode must be one of {C.CONTENT_MODES}")
         self.mode = mode
+        self.allowed_span_names: frozenset[str] | None = None
+        if allowed_span_names is not None:
+            if isinstance(allowed_span_names, (str, bytes)):
+                raise ValueError("allowed_span_names must be a collection of names")
+            names = frozenset(allowed_span_names)
+            for name in names:
+                if not isinstance(name, str) or not C.is_token_charset(name):
+                    raise ValueError(
+                        "allowed_span_names entries must be static strings of "
+                        "letters, digits and _ . - / : (max 80 characters)"
+                    )
+            self.allowed_span_names = names
 
     # -- effective mode -------------------------------------------------
     def effective_mode(self, span_attrs: Mapping[str, Any]) -> str:
@@ -207,14 +223,18 @@ class ContentPolicy:
         return InstrumentationScope(name=name, version=version)
 
     # -- names ----------------------------------------------------------
-    @staticmethod
-    def _name(raw: Any, attrs: Mapping[str, Any], scope_name: str, mode: str) -> str:
+    def _name(
+        self, raw: Any, attrs: Mapping[str, Any], scope_name: str, mode: str
+    ) -> str:
         if mode == "record" and isinstance(raw, str) and raw:
             return raw[:256]
         if isinstance(raw, str):
             # No scope is exempt: ``observe(name)`` shares the SDK's own scope
             # but its name is user-supplied, so it is not a content-free channel.
-            if C.is_safe_token(raw):
+            if self.allowed_span_names is not None:
+                if raw in self.allowed_span_names:
+                    return raw
+            elif C.is_safe_token(raw):
                 return raw
         op = attrs.get("gen_ai.operation.name")
         model = attrs.get("gen_ai.request.model")

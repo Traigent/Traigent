@@ -104,7 +104,7 @@ class TraigentSpanProcessor(SpanProcessor):
 
             os.register_at_fork(after_in_child=_after_fork)
         if exit_flush:
-            self._atexit = _make_exit_hook(weakref.ref(self))
+            self._atexit: Callable[[], None] | None = _make_exit_hook(weakref.ref(self))
             atexit.register(self._atexit)
         else:
             self._atexit = None

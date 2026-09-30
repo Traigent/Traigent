@@ -59,6 +59,13 @@ policy.
   This applies to every scope, including spans created by `observe(name)`:
   a name is not a content channel, and outside `record` mode a non-identifier
   name is replaced by the observation type (counted in `traigent.content.dropped_attrs`).
+* Span names must be static strings, never data. Outside `record` mode a name is
+  also replaced (and counted) when it contains a run of 3 or more digits, a run
+  of 8 or more hex characters, a UUID shape, or a purely numeric `:`, `/` or `.`
+  separated segment (`order_12345_john`, `user:42`, `/users/42/orders`). Static
+  names such as `llm.call` or `retrieve_docs` are kept. For a strict guarantee
+  pass `allowed_span_names=[...]` to `otel.init`: only those names are exported
+  (others get the derived name); entries must themselves be static strings.
 * W3C `tracestate` (an arbitrary vendor key/value field) is never forwarded on
   spans or links in any mode; contexts are rebuilt with an empty tracestate.
 
