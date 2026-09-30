@@ -107,7 +107,8 @@ def coerce_value(value: Any, spec: C.AttrSpec) -> Any | None:
 
 def _record_text(text: str, limit: int) -> str:
     """Record-mode free text (names, status): secret-scrubbed, then capped."""
-    return redact_sensitive_text(text)[:limit]
+    scrubbed: str = redact_sensitive_text(text)
+    return scrubbed[:limit]
 
 
 def _record_value(value: Any) -> Any | None:

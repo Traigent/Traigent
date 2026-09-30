@@ -15,7 +15,6 @@ import threading
 import time
 
 import pytest
-from opentelemetry import context as otctx
 from opentelemetry import trace as ot
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
