@@ -31,16 +31,22 @@ import math
 import os
 import random
 import re
+import sqlite3
 import sys
+import threading
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any, Protocol
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 METRIC_NAME = "normalized_exact_match"
+SQL_METRIC_NAME = "sql_execution_match"
+METRICS = (METRIC_NAME, SQL_METRIC_NAME)
 
 DEFAULTS: dict[str, Any] = {
     "temperature": 0.0,
@@ -77,8 +83,14 @@ def load_config(path: str | Path) -> dict[str, Any]:
     missing = [k for k in REQUIRED if k not in cfg]
     if missing:
         raise DiagnosticError(f"config is missing required keys: {missing}")
-    if cfg["metric"] != METRIC_NAME:
-        raise DiagnosticError(f"only metric {METRIC_NAME!r} is supported")
+    if cfg["metric"] not in METRICS:
+        raise DiagnosticError(f"metric must be one of {list(METRICS)}")
+    if cfg["metric"] == SQL_METRIC_NAME and not (
+        cfg.get("schema_path") and cfg.get("seed_path")
+    ):
+        raise DiagnosticError(
+            f"metric {SQL_METRIC_NAME!r} needs both schema_path and seed_path"
+        )
     if not isinstance(cfg["baseline"], dict) or "model" not in cfg["baseline"]:
         raise DiagnosticError("baseline must be an object with a 'model' key")
     if not cfg["candidate_models"]:
@@ -92,7 +104,7 @@ def load_config(path: str | Path) -> dict[str, Any]:
     if cfg["provider"] not in ("openrouter", "mock"):
         raise DiagnosticError("provider must be 'openrouter' or 'mock'")
     base = path.parent
-    for key in ("samples_path", "schema_path"):
+    for key in ("samples_path", "schema_path", "seed_path"):
         if cfg.get(key) and not Path(cfg[key]).is_absolute():
             cfg[key] = str(_resolve_relative(cfg[key], base))
     return cfg
@@ -164,6 +176,97 @@ def score(output: str, expected: str) -> float:
     return 1.0 if normalize(output) == normalize(expected) else 0.0
 
 
+_FENCE = re.compile(r"```[a-zA-Z0-9_+-]*[ \t]*\n?(.*?)```", re.DOTALL)
+_ORDER_BY = re.compile(r"\border\s+by\b", re.IGNORECASE)
+_READ_ONLY_START = re.compile(r"^(select|with)\b", re.IGNORECASE)
+_SQL_MAX_PROGRESS_TICKS = 5000  # x1000 VM ops: aborts runaway queries
+
+
+def strip_code_fences(text: str) -> str:
+    """Return the body of the first markdown code fence, else the stripped text."""
+    m = _FENCE.search(text)
+    return (m.group(1) if m else text).strip()
+
+
+def _row_key(row: tuple[Any, ...]) -> tuple[Any, ...]:
+    return tuple(round(v, 6) if isinstance(v, float) else v for v in row)
+
+
+class SqlScorer:
+    """Scores SQL by executing it against a seeded in-memory SQLite database.
+
+    One connection is used for both the candidate and the reference query, so
+    date functions such as ``date('now')`` see the same instant. The database is
+    made read-only (``PRAGMA query_only``) after seeding and only ``SELECT`` /
+    ``WITH`` statements are executed.
+    """
+
+    def __init__(self, schema_sql: str, seed_sql: str) -> None:
+        self._db = sqlite3.connect(":memory:", check_same_thread=False)
+        self._db.executescript(schema_sql)
+        self._db.executescript(seed_sql)
+        self._db.commit()
+        self._db.execute("PRAGMA query_only = ON")
+        self._lock = threading.Lock()
+        self._ref_cache: dict[str, list[tuple[Any, ...]] | None] = {}
+
+    def _run(self, sql: str) -> list[tuple[Any, ...]]:
+        stmt = strip_code_fences(sql).strip().rstrip(";").strip()
+        if not _READ_ONLY_START.match(stmt):
+            raise ValueError("only SELECT/WITH statements are executed")
+        ticks = 0
+
+        def guard() -> int:
+            nonlocal ticks
+            ticks += 1
+            return 1 if ticks > _SQL_MAX_PROGRESS_TICKS else 0
+
+        self._db.set_progress_handler(guard, 1000)
+        try:
+            return self._db.execute(stmt).fetchall()
+        finally:
+            self._db.set_progress_handler(None, 0)
+
+    def reference_rows(self, expected: str) -> list[tuple[Any, ...]] | None:
+        """Rows of the expected query, or None if it errors or returns no rows."""
+        with self._lock:
+            if expected not in self._ref_cache:
+                try:
+                    rows = self._run(expected)
+                except (sqlite3.Error, ValueError):
+                    rows = []
+                self._ref_cache[expected] = rows or None
+            return self._ref_cache[expected]
+
+    def score(self, output: str, expected: str) -> float | None:
+        """1.0 match, 0.0 mismatch/error, None if the reference is invalid."""
+        ref = self.reference_rows(expected)
+        if ref is None:
+            return None
+        with self._lock:
+            try:
+                got = self._run(output)
+            except (sqlite3.Error, ValueError):
+                return 0.0
+        if _ORDER_BY.search(expected):
+            return (
+                1.0 if [_row_key(r) for r in got] == [_row_key(r) for r in ref] else 0.0
+            )
+        same = Counter(_row_key(r) for r in got) == Counter(_row_key(r) for r in ref)
+        return 1.0 if same else 0.0
+
+
+def make_scorer(cfg: dict[str, Any]) -> Any:
+    """Return ``scorer(output, expected) -> float | None`` for the configured metric."""
+    if cfg["metric"] == SQL_METRIC_NAME:
+        sql = SqlScorer(
+            Path(cfg["schema_path"]).read_text(encoding="utf-8"),
+            Path(cfg["seed_path"]).read_text(encoding="utf-8"),
+        )
+        return sql.score
+    return score
+
+
 def nearest_rank(values: list[float], pct: float) -> float | None:
     if not values:
         return None
@@ -188,15 +291,39 @@ def paired_bootstrap(
     return lo, hi
 
 
+def n_required(margin: float) -> int:
+    """Independent pairs needed so that zero observed regressions rule out a
+    regression rate >= margin with 97.5% one-sided confidence:
+    ceil(ln(0.025) / ln(1 - margin))."""
+    if not 0.0 < margin < 1.0:
+        raise ValueError("margin must be strictly between 0 and 1")
+    return math.ceil(math.log(0.025) / math.log(1.0 - margin))
+
+
 def noninferiority_claim(
-    interval: tuple[float, float] | None, margin: float, n: int
+    interval: tuple[float, float] | None,
+    margin: float,
+    n: int,
+    n_independent: int | None = None,
+    complete: bool = True,
 ) -> tuple[bool, str]:
-    if interval is not None and interval[0] > -margin:
+    """Claim non-inferiority only with a complete holdout, enough independent
+    pairs and a bootstrap lower bound above -margin. The interval alone is never
+    enough: with few pairs a zero-variance sample gives a degenerate interval."""
+    if not complete:
+        return False, "no inferential claim: the holdout is incomplete"
+    indep = n if n_independent is None else n_independent
+    need = n_required(margin)
+    if indep >= need and interval is not None and interval[0] > -margin:
         return True, (
             f"non-inferior at margin {margin:g} (95% paired bootstrap lower bound "
-            f"{interval[0]:+.3f} > {-margin:+.3f}, holdout n={n})"
+            f"{interval[0]:+.3f} > {-margin:+.3f}; holdout n={n}, {indep} independent "
+            f"pairs >= {need} required)"
         )
-    return False, f"non-inferiority unestablished (holdout n={n})"
+    return False, (
+        f"non-inferiority unestablished (holdout n={n}; at least {need} independent "
+        f"pairs needed at margin {margin:g})"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -260,8 +387,7 @@ class OpenRouterProvider:
             ],
             "temperature": temperature,
             "max_tokens": max_tokens,
-            "usage": {"include": True},  # ask OpenRouter for usage.cost
-        }
+        }  # usage.cost is returned by default; absent means unknown
         try:
             with httpx.Client(timeout=timeout_s) as client:
                 resp = client.post(
@@ -328,11 +454,13 @@ class MockProvider:
         for row in samples:
             self._answers[row["input"]].append(row["expected"])
         self.calls = 0
+        self.call_log: list[tuple[str, str]] = []  # (model, user) per call
 
     def complete(
         self, model, system, user, *, temperature, max_tokens, timeout_s
     ) -> Completion:
         self.calls += 1
+        self.call_log.append((model, user))
         err, pin, pout, base = mock_profile(model)
         expected = self._answers[user][0] if self._answers.get(user) else ""
         wrong = _unit_hash("wrong", model, user) < err
@@ -348,11 +476,48 @@ class MockProvider:
         )
 
 
-def price_per_token(model: str, mock: bool) -> tuple[float, float, str] | None:
+def fetch_openrouter_prices(
+    models: list[str], timeout_s: float = 30.0
+) -> dict[str, tuple[float, float, str]]:
+    """Per-token prices for ``models`` from OpenRouter's public /models listing.
+
+    Never called in mock mode. Returns only the ids it found; callers fall back.
+    """
+    import httpx
+
+    with httpx.Client(timeout=timeout_s) as client:
+        resp = client.get(OPENROUTER_MODELS_URL)
+    resp.raise_for_status()
+    stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    wanted = set(models)
+    found: dict[str, tuple[float, float, str]] = {}
+    for item in resp.json().get("data", []):
+        mid = item.get("id")
+        pricing = item.get("pricing") or {}
+        if mid not in wanted:
+            continue
+        try:
+            found[mid] = (
+                float(pricing["prompt"]),
+                float(pricing["completion"]),
+                f"OpenRouter /models at {stamp}",
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return found
+
+
+def price_per_token(
+    model: str,
+    mock: bool,
+    table: dict[str, tuple[float, float, str]] | None = None,
+) -> tuple[float, float, str] | None:
     """(input $/token, output $/token, provenance) or None if unknown."""
     if mock:
         _, pin, pout, _ = mock_profile(model)
         return pin / 1000.0, pout / 1000.0, "mock_profile"
+    if table and model in table:
+        return table[model]
     try:
         from traigent.utils.cost_calculator import get_model_token_pricing
 
@@ -376,6 +541,7 @@ class Context:
     holdout_reserve_usd: float = 0.0
     spend_usd: float = 0.0
     unknown_cost_calls: int = 0
+    scorer: Any = None
     stopped: str | None = None
     records: list[dict[str, Any]] = field(default_factory=list)
     _sleep: Any = None
@@ -390,22 +556,17 @@ def run_request(
 ) -> dict[str, Any] | None:
     """The one place a model is invoked, scored and accounted for.
 
-    Returns None (and sets ``ctx.stopped``) if the spend guard stops the run
-    before the call. Latency is monotonic elapsed time around the whole request
-    including retries.
+    The spend guard is checked before EVERY provider attempt (retries included)
+    and each attempt's charge is booked as soon as it returns, success or
+    failure. A charge that cannot be determined stops all further provider calls.
+    Returns None (and sets ``ctx.stopped``) if no attempt was made. Latency is
+    monotonic elapsed time around the whole request including retries.
     """
-    if ctx.stopped:
-        return None
-    if not ctx.budget_left_for(phase):
-        ctx.stopped = (
-            f"spend guard: actual spend ${ctx.spend_usd:.6f} reached the limit "
-            f"before a {phase} call"
-        )
-        return None
     cfg = ctx.cfg
     attempts = 1 + int(cfg["max_retries"])
     cost_total = 0.0
     unknown_attempts = 0
+    made = 0
     ptoks = ctoks = 0
     tokens_known = True
     simulated = 0.0
@@ -413,6 +574,15 @@ def run_request(
     text = ""
     start = time.monotonic()
     for _ in range(attempts):
+        if ctx.stopped:
+            break
+        if not ctx.budget_left_for(phase):
+            ctx.stopped = (
+                f"spend guard: actual spend ${ctx.spend_usd:.6f} reached the limit "
+                f"before a {phase} call"
+            )
+            break
+        made += 1
         try:
             comp = ctx.provider.complete(
                 model,
@@ -425,6 +595,7 @@ def run_request(
         except ProviderError as exc:
             error = str(exc)
             simulated += exc.simulated_latency_s
+            _book(ctx, exc.cost_usd)
             if exc.cost_usd is None:
                 unknown_attempts += 1
             else:
@@ -433,6 +604,7 @@ def run_request(
             continue
         error = None
         simulated += comp.simulated_latency_s
+        _book(ctx, comp.cost_usd)
         if comp.cost_usd is None:
             unknown_attempts += 1
         else:
@@ -444,14 +616,22 @@ def run_request(
             ctoks += comp.completion_tokens
         text = comp.text
         break
+    if made == 0:
+        return None
     latency = time.monotonic() - start + simulated
-    ctx.spend_usd += cost_total
     ctx.unknown_cost_calls += 1 if unknown_attempts else 0
+    scorer = ctx.scorer or score
+    quality = 0.0 if error else scorer(text, row["expected"])
+    if error:
+        # the reference may still be invalid; do not penalise both arms for it
+        ref_check = scorer("", row["expected"])
+        quality = None if ref_check is None else 0.0
     rec = {
         "phase": phase,
         "model": model,
         "row_id": row_id,
-        "quality": 0.0 if error else score(text, row["expected"]),
+        "quality": quality,
+        "reference_invalid": quality is None,
         "error": error,
         "cost_usd": None if unknown_attempts else cost_total,
         "known_cost_usd": cost_total,
@@ -464,6 +644,17 @@ def run_request(
     return rec
 
 
+def _book(ctx: Context, cost: float | None) -> None:
+    """Account one attempt's charge; an undeterminable charge stops the run."""
+    if cost is None:
+        ctx.stopped = (
+            "unknown charge: a provider call returned no cost; further provider "
+            "calls were stopped"
+        )
+    else:
+        ctx.spend_usd += cost
+
+
 # ---------------------------------------------------------------------------
 # Search stats + selection
 # ---------------------------------------------------------------------------
@@ -474,9 +665,12 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
     unknown = sum(1 for r in records if r["cost_usd"] is None)
     known = sum(r["known_cost_usd"] for r in records)
     lat = [r["latency_s"] for r in records]
+    valid = [r["quality"] for r in records if r["quality"] is not None]
     return {
         "n": n,
-        "quality": sum(r["quality"] for r in records) / n if n else None,
+        "n_scored": len(valid),
+        "reference_invalid": n - len(valid),
+        "quality": sum(valid) / len(valid) if valid else None,
         "errors": sum(1 for r in records if r["error"]),
         "unknown_cost_calls": unknown,
         "cost_per_request_usd": (known / n) if n and unknown == 0 else None,
@@ -552,16 +746,20 @@ def run_search(
         queue[rows[i]["input"]].append(i)
     seen: dict[tuple[str, str], int] = defaultdict(int)
 
+    scorer = ctx.scorer or score
+    metric_name = str(ctx.cfg["metric"])
+
     def metric(output: str, expected: str, **_: object) -> float:
-        return score(output, expected)
+        value = scorer(output, expected)  # informational for Traigent only
+        return 0.0 if value is None else value
 
     @traigent.optimize(
         eval_dataset=str(dataset),
         objectives=create_default_objectives(
-            [METRIC_NAME], orientations={METRIC_NAME: "maximize"}
+            [metric_name], orientations={metric_name: "maximize"}
         ),
         configuration_space={"model": list(models)},
-        metric_functions={METRIC_NAME: metric},
+        metric_functions={metric_name: metric},
         injection_mode="context",
         offline=True,
     )
@@ -594,13 +792,14 @@ def estimate_cost(
     mock: bool,
     system_prompt: str,
     avg_input_chars: float,
+    prices: dict[str, tuple[float, float, str]] | None = None,
 ) -> dict[str, Any]:
     in_tok = _approx_tokens(system_prompt) + int(avg_input_chars / 4) + 1
     out_tok = int(cfg["max_tokens"])  # conservative upper bound
     per_model: dict[str, float | None] = {}
     provenance: dict[str, str] = {}
     for model in models:
-        price = price_per_token(model, mock)
+        price = price_per_token(model, mock, prices)
         if price is None:
             per_model[model] = None
             provenance[model] = "unknown"
@@ -664,7 +863,10 @@ def _fmt_s(v: float | None) -> str:
 
 
 def arm_summary(
-    records: list[dict[str, Any]], model: str, mock: bool
+    records: list[dict[str, Any]],
+    model: str,
+    mock: bool,
+    prices: dict[str, tuple[float, float, str]] | None = None,
 ) -> dict[str, Any]:
     s = summarize(records)
     s["model"] = model
@@ -672,7 +874,7 @@ def arm_summary(
         None if s["cost_per_request_usd"] is None else s["cost_per_request_usd"] * 1000
     )
     est = None
-    price = price_per_token(model, mock)
+    price = price_per_token(model, mock, prices)
     if price and records and all(r["prompt_tokens"] is not None for r in records):
         tot = sum(
             r["prompt_tokens"] * price[0] + r["completion_tokens"] * price[1]
@@ -682,6 +884,16 @@ def arm_summary(
     s["price_table_estimate_per_1k_requests_usd"] = est
     s["price_table_provenance"] = price[2] if price else "unknown"
     return s
+
+
+def _metric_line(metric: str) -> str:
+    if metric == SQL_METRIC_NAME:
+        return (
+            f"{SQL_METRIC_NAME} (same result rows as the reference query on a seeded "
+            "in-memory SQLite test database; order-sensitive only if the reference "
+            "has ORDER BY)"
+        )
+    return f"{METRIC_NAME} (lowercase, collapse whitespace, strip trailing ';')"
 
 
 def render_report(res: dict[str, Any]) -> str:
@@ -696,11 +908,16 @@ def render_report(res: dict[str, Any]) -> str:
             "",
         ]
     sp = res["split"]
+    if res.get("spend", {}).get("total_usd", 0) is None:
+        lines += [
+            "**Total spend is UNKNOWN: at least one provider call returned no cost.**",
+            "",
+        ]
     lines += [
         "## Setup",
         f"- Samples: {sp['n_total']} rows; search n={sp['n_search']}, "
         f"holdout n={sp['n_holdout']} (seed {cfg['seed']}, duplicates kept together)",
-        f"- Metric: {METRIC_NAME} (lowercase, collapse whitespace, strip trailing ';')",
+        f"- Metric: {_metric_line(res['metric'])}",
         f"- Baseline: {cfg['baseline']['model']}; candidates: "
         f"{', '.join(cfg['candidate_models'])}",
         f"- Temperature {cfg['temperature']}, max_tokens {cfg['max_tokens']}, "
@@ -708,14 +925,16 @@ def render_report(res: dict[str, Any]) -> str:
         f"- Spend cap USD {cfg['max_spend_usd']}: {CAP_DESCRIPTION}",
         "",
         "## Search (search split only)",
-        "| model | quality | cost/request (provider) | errors | unknown-cost calls |",
-        "|---|---|---|---|---|",
+        "| model | quality | cost/request (provider) | errors | unknown-cost calls | "
+        "reference_invalid rows |",
+        "|---|---|---|---|---|---|",
     ]
     for model, s in res["search"]["per_config"].items():
         q = "n/a" if s["quality"] is None else f"{s['quality']:.3f}"
         lines.append(
             f"| {model} | {q} | {_fmt_usd(s['cost_per_request_usd'])} | "
-            f"{s['errors']} | {s['unknown_cost_calls']} |"
+            f"{s['errors']} | {s['unknown_cost_calls']} | "
+            f"{s.get('reference_invalid', 0)} |"
         )
     if res["status"] == "frozen_plan":
         return "\n".join(lines + ["Plan frozen; no calls were made.", ""])
@@ -748,18 +967,23 @@ def render_report(res: dict[str, Any]) -> str:
             a = h[arm]
             est = a["price_table_estimate_per_1k_requests_usd"]
             est_s = "unknown" if est is None else f"${est:.4f} (estimate)"
+            q = "n/a" if a["quality"] is None else f"{a['quality']:.3f}"
             lines.append(
-                f"| {arm} | {a['model']} | {a['quality']:.3f} | "
+                f"| {arm} | {a['model']} | {q} | "
                 f"{_fmt_usd(a['cost_per_1k_requests_usd'])} | {est_s} | "
                 f"{_fmt_s(a['latency_p50_s'])} | "
                 f"{_fmt_s(a['latency_p95_s'])}{p95_label} | {a['errors']} |"
             )
         iv = h["quality_diff_interval_95"]
+        dm = h["quality_diff_mean"]
         lines += [
             "",
-            f"- Holdout n={h['n']}; quality difference (selected - baseline) = "
-            f"{h['quality_diff_mean']:+.3f}",
-            "- Paired bootstrap 95% interval: "
+            f"- Holdout n={h['n']} of {sp['n_holdout']} planned rows "
+            f"({h['n_independent']} independent pairs; "
+            f"{h['reference_invalid']} reference_invalid rows excluded)",
+            "- Quality difference (selected - baseline) = "
+            + ("n/a" if dm is None else f"{dm:+.3f}"),
+            "- Paired bootstrap 95% interval (descriptive): "
             + ("n/a" if iv is None else f"[{iv[0]:+.3f}, {iv[1]:+.3f}]")
             + f" ({cfg['bootstrap_resamples']} resamples, seeded)",
             f"- **{h['claim']}**",
@@ -775,22 +999,36 @@ def render_report(res: dict[str, Any]) -> str:
     lines += [
         "",
         "## Spend",
-        f"- Actual total (search + holdout, provider-reported): "
-        f"{_fmt_usd(sp_['actual_total_usd'])}",
-        f"- Calls with unknown provider cost (excluded from the total): "
-        f"{sp_['unknown_cost_calls']}",
+        f"- Total spend (search + holdout, provider-reported): "
+        f"{_fmt_usd(sp_['total_usd'])}",
+        f"- Known subtotal (calls with a reported cost): "
+        f"{_fmt_usd(sp_['known_subtotal_usd'])}",
+        f"- Calls with unknown provider cost: {sp_['unknown_cost_calls']}",
         f"- Pre-flight estimate: {_fmt_usd(res['preflight']['total_usd'])}",
         "",
         "## Caveats",
         f"- Small samples: search n={sp['n_search']}, holdout n={sp['n_holdout']}. "
         "One row changes quality by 1/n; differences of a few points are noise.",
-        "- Normalized exact match measures textual agreement with the reference, "
-        "not execution correctness (for SQL, an equivalent query can score 0).",
+        *_metric_caveat(res["metric"]),
         "- Results describe the tested models, prompt and sample only; customer "
         "sampling bias limits extrapolation. This is not a production guarantee.",
         "",
     ]
     return "\n".join(lines)
+
+
+def _metric_caveat(metric: str) -> list[str]:
+    if metric == SQL_METRIC_NAME:
+        return [
+            "- SQL execution match compares result rows on a seeded test database; "
+            "it is not proof of correctness on the customer's real data. Rows whose "
+            "reference query errors or returns nothing are excluded as "
+            "reference_invalid.",
+        ]
+    return [
+        "- Normalized exact match measures textual agreement with the reference, "
+        "not execution correctness (for SQL, an equivalent query can score 0).",
+    ]
 
 
 def write_outputs(out: Path, res: dict[str, Any]) -> None:
@@ -835,6 +1073,7 @@ def run_diagnostic(
     allow_unknown_price: bool = False,
     provider: Provider | None = None,
 ) -> dict[str, Any]:
+    mock = mock or cfg.get("provider") == "mock"
     rows = load_samples(cfg["samples_path"])
     schema_text = ""
     if cfg.get("schema_path"):
@@ -854,18 +1093,35 @@ def run_diagnostic(
         rows, float(cfg["holdout_fraction"]), int(cfg["seed"])
     )
     avg_chars = sum(len(r["input"]) for r in rows) / len(rows)
-    est = estimate_cost(
-        cfg, models, len(search_ids), len(holdout_ids), mock, system_prompt, avg_chars
-    )
     if provider is None:
         provider = MockProvider(rows) if mock else OpenRouterProvider()
+    prices: dict[str, tuple[float, float, str]] = {}
+    if not mock and provider.name == "openrouter":
+        try:
+            prices = fetch_openrouter_prices(models)
+        except Exception as exc:  # falls back to traigent pricing, then unknown
+            print(
+                f"warning: OpenRouter /models fetch failed ({type(exc).__name__}); "
+                "falling back to Traigent pricing",
+                file=sys.stderr,
+            )
+    est = estimate_cost(
+        cfg,
+        models,
+        len(search_ids),
+        len(holdout_ids),
+        mock,
+        system_prompt,
+        avg_chars,
+        prices,
+    )
     res: dict[str, Any] = {
         "status": "frozen_plan",
         "incomplete_reason": None,
         "mock": mock,
         "provider": provider.name,
         "config": dict(cfg),
-        "metric": METRIC_NAME,
+        "metric": cfg["metric"],
         "split": {
             "n_total": len(rows),
             "n_search": len(search_ids),
@@ -886,7 +1142,11 @@ def run_diagnostic(
             "incomplete_reason": "no calls made yet",
             "search": {"per_config": {}, "selection_notes": []},
             "selected_model": None,
-            "spend": {"actual_total_usd": 0.0, "unknown_cost_calls": 0},
+            "spend": {
+                "total_usd": 0.0,
+                "known_subtotal_usd": 0.0,
+                "unknown_cost_calls": 0,
+            },
         },
     )
     if est["unknown_price_models"] and not allow_unknown_price:
@@ -907,6 +1167,7 @@ def run_diagnostic(
         mock=mock,
         cap_usd=cap,
         holdout_reserve_usd=est["holdout_reserve_usd"] or 0.0,
+        scorer=make_scorer(cfg),
     )
 
     work = out / "work"
@@ -936,26 +1197,50 @@ def run_diagnostic(
     pairs: list[dict[str, Any]] = []
     if selected is not None and not ctx.stopped:
         pairs = run_holdout(ctx, rows, holdout_ids, baseline, selected)
+    holdout_complete = (
+        selected is not None and len(pairs) == len(holdout_ids) and not ctx.stopped
+    )
     if pairs:
         b_recs = [p["baseline"] for p in pairs]
         s_recs = [p["selected"] for p in pairs]
-        diffs = [p["selected"]["quality"] - p["baseline"]["quality"] for p in pairs]
-        iv = paired_bootstrap(
-            diffs, int(cfg["bootstrap_resamples"]), int(cfg["seed"]) + 1
+        valid = [
+            p
+            for p in pairs
+            if p["selected"]["quality"] is not None
+            and p["baseline"]["quality"] is not None
+        ]
+        diffs = [p["selected"]["quality"] - p["baseline"]["quality"] for p in valid]
+        n_indep = len({rows[p["row_id"]]["input"] for p in valid})
+        iv = None
+        dmean = None
+        if holdout_complete and diffs:
+            iv = paired_bootstrap(
+                diffs, int(cfg["bootstrap_resamples"]), int(cfg["seed"]) + 1
+            )
+            dmean = sum(diffs) / len(diffs)
+        _, claim = noninferiority_claim(
+            iv, float(cfg["margin"]), len(pairs), n_indep, holdout_complete
         )
-        _, claim = noninferiority_claim(iv, float(cfg["margin"]), len(pairs))
-        b_arm = arm_summary(b_recs, baseline, mock)
-        s_arm = arm_summary(s_recs, selected, mock)
+        b_arm = arm_summary(b_recs, baseline, mock, prices)
+        s_arm = arm_summary(s_recs, selected, mock, prices)
         saving = None
-        if b_arm["cost_per_request_usd"] and s_arm["cost_per_request_usd"] is not None:
+        if (
+            holdout_complete
+            and b_arm["cost_per_request_usd"]
+            and s_arm["cost_per_request_usd"] is not None
+        ):
             saving = 100.0 * (
                 1 - s_arm["cost_per_request_usd"] / b_arm["cost_per_request_usd"]
             )
         res["holdout"] = {
             "n": len(pairs),
+            "n_independent": n_indep,
+            "n_required_independent": n_required(float(cfg["margin"])),
+            "complete": holdout_complete,
+            "reference_invalid": len(pairs) - len(valid),
             "baseline": b_arm,
             "selected": s_arm,
-            "quality_diff_mean": sum(diffs) / len(diffs),
+            "quality_diff_mean": dmean,
             "quality_diff_interval_95": iv,
             "claim": claim,
             "cost_saving_pct": saving,
@@ -971,7 +1256,8 @@ def run_diagnostic(
     res["status"] = "complete" if reason is None else "incomplete"
     res["incomplete_reason"] = reason
     res["spend"] = {
-        "actual_total_usd": ctx.spend_usd,
+        "total_usd": None if ctx.unknown_cost_calls else ctx.spend_usd,
+        "known_subtotal_usd": ctx.spend_usd,
         "unknown_cost_calls": ctx.unknown_cost_calls,
         "semantics": CAP_DESCRIPTION,
     }

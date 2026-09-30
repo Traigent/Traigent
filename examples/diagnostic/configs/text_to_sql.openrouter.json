@@ -1,6 +1,7 @@
 {
   "samples_path": "examples/datasets/text-to-sql/evaluation_set.jsonl",
   "schema_path": "examples/core/text-to-sql/schema.sql",
+  "seed_path": "examples/diagnostic/data/text_to_sql_seed.sql",
   "provider": "openrouter",
   "baseline": {"model": "anthropic/claude-sonnet-4.5"},
   "candidate_models": [
@@ -15,7 +16,7 @@
   "timeout_s": 60,
   "holdout_fraction": 0.3,
   "seed": 7,
-  "metric": "normalized_exact_match",
+  "metric": "sql_execution_match",
   "margin": 0.02,
   "max_spend_usd": 15,
   "bootstrap_resamples": 2000

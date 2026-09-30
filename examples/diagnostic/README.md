@@ -16,9 +16,22 @@ Providers: `openrouter` (real) and `mock` (deterministic, zero network).
 2. Their current model id and the system prompt they use today.
 3. Optionally a schema or context file referenced from the prompt as `{schema_text}`.
 
-Scoring uses one built-in metric, `normalized_exact_match`: lowercase, collapse
-whitespace, strip a trailing `;`, then compare. For SQL this measures textual
-agreement with the reference, not whether the query executes correctly.
+Two built-in metrics, selected by the config field `metric`:
+
+- `normalized_exact_match`: lowercase, collapse whitespace, strip a trailing `;`,
+  then compare. This is textual agreement with the reference: an equivalent SQL
+  query written differently scores 0.
+- `sql_execution_match` (needs `schema_path` and `seed_path`): both the model's
+  SQL and the reference SQL are executed on an in-memory SQLite database built
+  from the schema plus a deterministic seed file
+  (`data/text_to_sql_seed.sql`, dates relative to `date('now')`). Score is 1 if
+  the result rows match as a multiset (order-sensitive only if the reference has
+  `ORDER BY`), else 0; a SQL error scores 0. Markdown code fences are stripped,
+  only `SELECT`/`WITH` statements run, and the database is read-only. Rows whose
+  reference query errors or returns no rows are marked `reference_invalid`,
+  excluded from quality means and counted in the report. This shows the same
+  results on a seeded test database; it is still not proof of correctness on the
+  customer's real data.
 
 ## Config (JSON)
 
@@ -40,6 +53,9 @@ See `diagnostic.example.json` and `configs/text_to_sql.openrouter.json`.
 | `margin` | absolute quality margin for selection and non-inferiority | 0.02 |
 | `max_spend_usd` | spend cap (see below) | required |
 | `bootstrap_resamples` | paired bootstrap resamples | 2000 |
+| `metric` | `normalized_exact_match` or `sql_execution_match` | `normalized_exact_match` |
+| `seed_path` | SQL seed file (required for `sql_execution_match`) | none |
+| `provider` | `openrouter` or `mock` (`--mock` / `TRAIGENT_MOCK_LLM` force mock) | `openrouter` |
 
 Relative paths resolve against the working directory first, then the config's
 directory. **Model ids must be checked against OpenRouter's model list
@@ -61,8 +77,11 @@ python examples/diagnostic/run_diagnostic.py \
   --out ./diag
 ```
 
-Add `--allow-unknown-price` if a model has no price in Traigent's pricing tables;
-the pre-flight estimate is then "unknown" and only the actual-spend guard applies.
+For `provider=openrouter` the pre-flight prices come from OpenRouter's public
+`/models` listing, fetched at run time (provenance `OpenRouter /models at <UTC>`),
+then Traigent's pricing tables, else "unknown". Mock mode never fetches. Add
+`--allow-unknown-price` if a model has no price anywhere; the pre-flight estimate
+is then "unknown" and only the actual-spend guard applies.
 Mock mode prints a banner in the report: its models, costs and latencies are synthetic.
 
 ## What happens, in order
@@ -86,8 +105,13 @@ Mock mode prints a banner in the report: its models, costs and latencies are syn
    is monotonic time around the whole request including retries. Errors score 0
    in the denominator; failed calls' cost counts toward spend.
 6. A seeded paired bootstrap of the per-row quality difference gives a 95%
-   interval. "Non-inferior at margin m" is claimed only if the lower bound is
-   above -m; otherwise the report says "non-inferiority unestablished".
+   interval, shown as descriptive. "Non-inferior at margin m" is claimed only if
+   the holdout is complete AND the number of independent pairs (unique holdout
+   inputs) is at least `ceil(ln(0.025)/ln(1-m))` (183 at m=0.02) AND the bootstrap
+   lower bound is above -m. Otherwise the report says "non-inferiority
+   unestablished (holdout n=...; at least N independent pairs needed at margin
+   m)". An incomplete holdout (spend-guard stop, unknown cost, missing rows)
+   suppresses every inferential claim.
 
 ## Reading the report
 
@@ -95,9 +119,11 @@ Mock mode prints a banner in the report: its models, costs and latencies are syn
   A call with no reported cost is "unknown", never zero, and is counted
   separately. A price-table figure, if shown, is labelled "estimate".
 - **p95 latency** uses nearest-rank and is marked descriptive below 20 rows.
-- **Spend cap** is stop-on-actual: the run stops before the next call once actual
-  spend reaches the cap; a single in-flight call may exceed it. A stopped run
-  writes a partial report marked INCOMPLETE.
+- **Spend cap** is stop-on-actual: the guard is checked before every provider
+  attempt, retries included, and each attempt's charge is booked immediately. A
+  single in-flight call may exceed the cap. A call whose cost cannot be determined
+  stops all further provider calls; the report is marked INCOMPLETE, total spend
+  is shown as "unknown" and the known subtotal is listed separately.
 - Outputs land in `--out`: `report.md`, `results.json` (paired per-row
   measurements including model outputs, pricing provenance, config, split ids,
   spend), and `work/` (the search split and Traigent's local run state). Treat
@@ -111,6 +137,6 @@ one metric, one prompt, fixed temperature.
 
 ## Limits
 
-Two providers only, JSON config only, one metric, fixed prompt and temperature,
+Two providers only, JSON config only, two metrics, fixed prompt and temperature,
 serial execution. The search split shares Traigent's local run state under `--out`;
 no data leaves the machine except the model calls themselves.
