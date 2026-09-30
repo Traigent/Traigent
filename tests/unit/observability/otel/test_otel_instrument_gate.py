@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
 import types
 
@@ -13,6 +14,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 )
 
 import traigent.observability.otel as otel
+from traigent.observability.otel.instrument import INSTRUMENTORS
 
 
 class FakeInstrumentor:
@@ -130,7 +132,9 @@ def test_init_with_instrument_on_unverified_provider_fails_and_cleans_up(collect
     _init(collector)  # and can be retried
 
 
-def test_unknown_name_and_missing_package_messages(collector):
+def test_unknown_name_and_missing_package_messages(collector, monkeypatch):
+    # simulate the extra being absent even if it is installed in this env
+    monkeypatch.setitem(sys.modules, "openinference.instrumentation.openai", None)
     h = _init(collector)
     with pytest.raises(ValueError, match="unknown instrumentor"):
         h.instrument("nope")
@@ -169,3 +173,42 @@ def test_shutdown_uninstruments(collector):
     h.instrument(fake)
     otel.shutdown()
     assert fake.uninstrumented
+
+
+# --- real-package resolution (optional; skipped when the extra is absent) ----
+# Verified 2026-09-30 against the exact pins in pyproject.toml extras.
+
+
+@pytest.mark.parametrize("name", sorted(INSTRUMENTORS))
+def test_registered_instrumentor_names_resolve_in_real_package(name):
+    inst = importlib.import_module("traigent.observability.otel.instrument")
+
+    module_name, class_name, _extra = inst.INSTRUMENTORS[name]
+    pytest.importorskip(module_name)
+    module = importlib.import_module(module_name)
+    cls = getattr(module, class_name, None)
+    assert cls is not None, f"{module_name} has no {class_name}"
+    try:
+        instance = inst.resolve_instrumentor(name)
+    except ImportError as exc:  # host library (boto3, ...) not installed
+        pytest.skip(f"host library for {name} not installed: {exc}")
+    assert isinstance(instance, cls)
+    assert callable(instance.instrument) and callable(instance.uninstrument)
+    assert inst._accepts(instance.instrument, "config")
+
+
+def test_real_openinference_trace_config_accepts_every_masking_flag():
+    pytest.importorskip("openinference.instrumentation")
+    inst = importlib.import_module("traigent.observability.otel.instrument")
+
+    cfg = inst._masking_config("metadata")
+    assert cfg is not None, "TraceConfig call failed against the real package"
+    for flag in (
+        "hide_inputs",
+        "hide_outputs",
+        "hide_input_messages",
+        "hide_output_messages",
+        "hide_llm_invocation_parameters",
+        "hide_embedding_vectors",
+    ):
+        assert getattr(cfg, flag) is True, flag

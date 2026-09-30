@@ -14,7 +14,7 @@ reproduced. Verified on 2026-09-30.
 | Traigent receiver contract snapshot | TraigentBackend feat/otlp-ingest @ f780d4ef2 | Traigent | (internal) | shared attribute contract, hash-locked | `test_otel_contract_conformance.py` |
 
 Packages (versions and licences from PyPI metadata; "used" = imported by the
-SDK code and tests, "optional" = named in an extra only, not exercised here):
+SDK code and tests, "optional" = named in an extra only, not exercised by default; resolution verified by optional tests):
 
 | Package | Version | Licence | Role |
 |---------|---------|---------|------|
@@ -32,7 +32,17 @@ SDK code and tests, "optional" = named in an extra only, not exercised here):
 | dacite | 1.9.2 | MIT | optional (bedrock transitive) |
 | typing-extensions | 4.16.0 | PSF-2.0 | optional (transitive) |
 
-Open items: the optional OpenInference `TraceConfig` masking call is written
-from the package's documented public API and is exercised in tests only
-against a stand-in (the packages are not installed in this repo's test
-environment). It must be verified against the real packages before release.
+Real-package verification (2026-09-30, throwaway venv, Python 3.13, exact pins
+above plus opentelemetry-api/-sdk 1.44.0, semantic-conventions 0.65b0,
+instrumentation 0.65b0; licences read from each installed package's metadata,
+including transitive deps): every module path and class name in `INSTRUMENTORS`
+(`OpenAIInstrumentor`, `AnthropicInstrumentor`, `LangChainInstrumentor`,
+`BedrockInstrumentor`) imports, constructs, and `instrument(tracer_provider=...,
+config=TraceConfig(...))` succeeds; `openinference.instrumentation.TraceConfig`
+accepts all six `hide_*` flags used by `_masking_config`. The bedrock
+instrumentor imports only when `botocore` is present, and each other one only
+instruments when its host library (openai / anthropic / langchain-core) is
+installed; those host libraries are the caller's, not Traigent extras. Covered
+by `test_registered_instrumentor_names_resolve_in_real_package` and
+`test_real_openinference_trace_config_accepts_every_masking_flag`, which skip
+cleanly when the extras are absent.

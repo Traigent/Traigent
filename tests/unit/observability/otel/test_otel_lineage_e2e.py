@@ -144,6 +144,108 @@ def test_concurrent_asyncio_trials_do_not_bleed(collector):
     assert C.ATTR_TRIAL_ID not in spans["outside"][0]
 
 
+def test_concurrent_threads_and_tasks_stamp_only_their_own_trial(collector):
+    """Threads and asyncio tasks running at once never see each other's trial id,
+    and a span started after a trial ends carries no trial id."""
+    _init(collector)
+    barrier = threading.Barrier(4)
+    errors: list[BaseException] = []
+
+    def thread_trial(i: int):
+        try:
+            with TrialContext(trial_id=f"th{i}"):
+                with WorkflowTraceContext(
+                    {"configuration_run_id": f"th{i}", "workflow_trace_id": "run-9"}
+                ):
+                    barrier.wait(timeout=5)  # all trials are live simultaneously
+                    with otel.observe(f"thread-span-{i}"):
+                        with otel.observe(f"thread-child-{i}"):
+                            pass
+            with otel.observe(f"thread-after-{i}"):  # trial ended in this thread
+                pass
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            errors.append(exc)
+
+    async def task_trial(i: int):
+        async with (
+            TrialContext(trial_id=f"as{i}"),
+            WorkflowTraceContext(
+                {"configuration_run_id": f"as{i}", "workflow_trace_id": "run-9"}
+            ),
+        ):
+            await asyncio.sleep(0.02)
+            with otel.observe(f"task-span-{i}"):
+                await asyncio.sleep(0)
+        with otel.observe(f"task-after-{i}"):
+            pass
+
+    async def run_tasks():
+        await asyncio.gather(*(task_trial(i) for i in range(3)))
+
+    threads = [threading.Thread(target=thread_trial, args=(i,)) for i in range(4)]
+    for t in threads:
+        t.start()
+    asyncio.run(run_tasks())
+    for t in threads:
+        t.join()
+    assert not errors, errors
+    assert otel.flush(5).flushed
+    spans = _by_name(collector)
+    for i in range(4):
+        for name in (f"thread-span-{i}", f"thread-child-{i}"):
+            assert len(spans[name]) == 1
+            assert spans[name][0][C.ATTR_TRIAL_ID] == f"th{i}"
+        assert C.ATTR_TRIAL_ID not in spans[f"thread-after-{i}"][0]
+    for i in range(3):
+        assert spans[f"task-span-{i}"][0][C.ATTR_TRIAL_ID] == f"as{i}"
+        assert C.ATTR_TRIAL_ID not in spans[f"task-after-{i}"][0]
+        assert C.ATTR_OPTIMIZATION_SESSION_ID not in spans[f"task-after-{i}"][0]
+
+
+def test_negative_control_shared_lineage_would_leak_across_concurrent_trials(
+    collector, monkeypatch
+):
+    """Mutation: a process-global lineage (instead of per-context) leaks ids."""
+    from traigent.observability.otel import lineage
+
+    shared: dict[str, str] = {}
+    real = lineage.current_lineage
+
+    def leaky():
+        cur = real()
+        if cur:
+            shared.update(cur)  # last writer wins, like a global
+        return dict(shared)
+
+    monkeypatch.setattr(lineage, "current_lineage", leaky)
+    _init(collector)
+
+    async def trial(i: int, gate: asyncio.Event, done: list):
+        async with TrialContext(trial_id=f"n{i}"):
+            if i == 0:
+                with otel.observe("first"):
+                    pass
+                gate.set()
+                await done[0].wait()
+            else:
+                await gate.wait()
+                with otel.observe("second"):
+                    pass
+                done[0].set()
+
+    async def main():
+        gate, fin = asyncio.Event(), asyncio.Event()
+        await asyncio.gather(trial(0, gate, [fin]), trial(1, gate, [fin]))
+        with otel.observe("outside"):
+            pass
+
+    asyncio.run(main())
+    assert otel.flush(5).flushed
+    spans = _by_name(collector)
+    # the leaky variant stamps the finished trial's id on a span outside any trial
+    assert spans["outside"][0].get(C.ATTR_TRIAL_ID) == "n1"
+
+
 def test_threads_only_see_lineage_when_context_is_propagated(collector):
     """Documented limit: a bare thread does not inherit trial context."""
     _init(collector)
