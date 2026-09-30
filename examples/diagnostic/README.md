@@ -115,7 +115,9 @@ Mock mode prints a banner in the report: its models, costs and latencies are syn
    suppresses every inferential claim. A final baseline call whose candidate
    call was stopped is kept in `results.json` as `holdout_unpaired`.
    Generated SQL is bounded: at most 10,000 result rows and 1,000,000 bytes per
-   value (`randomblob` beyond that fails); exceeding either scores 0.
+   value (`randomblob` beyond that fails) and 20,000,000 bytes cumulative across
+   the result, checked row by row so oversized results stop early; exceeding any
+   of these scores 0.
 
 ## Reading the report
 

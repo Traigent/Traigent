@@ -621,6 +621,23 @@ def test_sql_result_too_large_scores_zero_with_reason() -> None:
 
 
 @pytest.mark.unit
+def test_sql_cumulative_byte_budget_stops_early() -> None:
+    sc = _sql_scorer()
+    q = (
+        "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c "
+        "WHERE x < 200) SELECT zeroblob(900000) FROM c"
+    )
+    assert sc.score(q, "SELECT 1") == 0.0
+    assert sc.last_error == "result too large"
+    assert sc.last_rows_fetched <= rd.MAX_RESULT_BYTES // 900000 + 1
+    assert sc.last_rows_fetched < 200
+    # the reference path is bounded the same way
+    assert sc.reference_rows(q) is None
+    assert sc.last_rows_fetched <= rd.MAX_RESULT_BYTES // 900000 + 1
+    assert sc.score("SELECT 1", "SELECT 1") == 1.0
+
+
+@pytest.mark.unit
 def test_order_by_detection_ignores_literals_comments_and_subqueries() -> None:
     assert not rd.has_outer_order_by("SELECT 'order by x' FROM customers")
     assert not rd.has_outer_order_by("SELECT 1 -- order by\n")

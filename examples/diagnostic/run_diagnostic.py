@@ -183,6 +183,9 @@ _SQL_LITERALS_AND_COMMENTS = re.compile(
 )
 _SQL_MAX_ROWS = 10_000  # more rows than this scores 0 ("result too large")
 _SQL_MAX_VALUE_BYTES = 1_000_000  # per value; randomblob/zeroblob beyond fails
+_SQL_MAX_RESULT_BYTES = 20_000_000  # cumulative across all retained rows
+MAX_RESULT_BYTES = _SQL_MAX_RESULT_BYTES
+_SQL_SMALL_VALUE_BYTES = 16  # nominal size of numbers / NULL
 _READ_ONLY_START = re.compile(r"^(select|with)\b", re.IGNORECASE)
 _SQL_MAX_PROGRESS_TICKS = 5000  # x1000 VM ops: aborts runaway queries
 
@@ -234,6 +237,7 @@ class SqlScorer:
         self.last_error: str | None = None
         self._lock = threading.Lock()
         self._ref_cache: dict[str, list[tuple[Any, ...]] | None] = {}
+        self.last_rows_fetched = 0  # rows pulled by the most recent _run
 
     def _run(self, sql: str) -> list[tuple[Any, ...]]:
         stmt = strip_code_fences(sql).strip().rstrip(";").strip()
@@ -247,16 +251,30 @@ class SqlScorer:
             return 1 if ticks > _SQL_MAX_PROGRESS_TICKS else 0
 
         self._db.set_progress_handler(guard, 1000)
+        rows: list[tuple[Any, ...]] = []
+        total = 0
+        self.last_rows_fetched = 0
         try:
-            rows = self._db.execute(stmt).fetchmany(_SQL_MAX_ROWS + 1)
+            cur = self._db.execute(stmt)
+            while (row := cur.fetchone()) is not None:
+                self.last_rows_fetched += 1
+                if len(rows) >= _SQL_MAX_ROWS:
+                    rows.clear()
+                    raise ValueError("result too large")
+                for v in row:
+                    if isinstance(v, (str, bytes)):
+                        if len(v) > _SQL_MAX_VALUE_BYTES:
+                            rows.clear()
+                            raise ValueError("result too large")
+                        total += len(v)
+                    else:
+                        total += _SQL_SMALL_VALUE_BYTES
+                if total > MAX_RESULT_BYTES:
+                    rows.clear()
+                    raise ValueError("result too large")
+                rows.append(row)
         finally:
             self._db.set_progress_handler(None, 0)
-        if len(rows) > _SQL_MAX_ROWS:
-            raise ValueError("result too large")
-        for row in rows:
-            for v in row:
-                if isinstance(v, (str, bytes)) and len(v) > _SQL_MAX_VALUE_BYTES:
-                    raise ValueError("result too large")
         return rows
 
     def reference_rows(self, expected: str) -> list[tuple[Any, ...]] | None:
