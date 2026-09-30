@@ -1,0 +1,22 @@
+{
+  "samples_path": "examples/datasets/text-to-sql/evaluation_set.jsonl",
+  "schema_path": "examples/core/text-to-sql/schema.sql",
+  "provider": "openrouter",
+  "baseline": {"model": "anthropic/claude-sonnet-4.5"},
+  "candidate_models": [
+    "openai/gpt-4o-mini",
+    "google/gemini-2.5-flash-lite",
+    "anthropic/claude-haiku-4.5"
+  ],
+  "prompt": "You are an expert SQL assistant. Convert the user's question into a valid SQL query. Return ONLY the SQL query, with no explanation, no markdown and no code fences.\n\nDatabase schema:\n{schema_text}",
+  "temperature": 0,
+  "max_tokens": 512,
+  "max_retries": 1,
+  "timeout_s": 60,
+  "holdout_fraction": 0.3,
+  "seed": 7,
+  "metric": "normalized_exact_match",
+  "margin": 0.02,
+  "max_spend_usd": 15,
+  "bootstrap_resamples": 2000
+}
