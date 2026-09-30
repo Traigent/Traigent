@@ -616,6 +616,11 @@ def observe(name: Any = None, **options: Any) -> Any:
     span at all.  ``content_mode`` may only tighten the client's mode.  In
     ``record`` mode the current receiver still drops content (see docs); the SDK
     sends it only because you asked for ``record``.
+
+    ``name`` is NOT a content channel: outside ``record`` mode a name that is not
+    identifier-shaped (letters, digits and ``_ . - / :``, at most 80 characters)
+    is replaced by the observation type and counted as a dropped attribute.
+    Never put user text in a span name.
     """
     if callable(name):
         return _Observe(None)(name)

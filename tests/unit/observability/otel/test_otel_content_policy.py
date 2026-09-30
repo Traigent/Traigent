@@ -185,3 +185,106 @@ def test_negative_control_denylist_policy_leaks(memory_provider, monkeypatch):
 
     body = _wire(provider, exporter, Denylist("metadata"))
     assert CANARY.encode() in body
+
+
+# -- span names are not a content channel; tracestate is not forwarded ----------
+NAME_CANARY = f"what is {CANARY} for user@example.com"
+VENDOR_TS = f"vendor={CANARY},other=v"
+
+
+def _name_and_tracestate_span(provider, name: str, scope: str):
+    from opentelemetry.trace import TraceState
+
+    ts = TraceState.from_header([VENDOR_TS])
+    linked = SpanContext(1, 2, False, TraceFlags(1), trace_state=ts)
+    with provider.get_tracer(scope).start_as_current_span(
+        name, links=[Link(linked)]
+    ) as span:
+        span.set_attribute(C.ATTR_OBSERVATION_TYPE, "tool")
+
+
+def _sanitized_wire(exporter, policy) -> bytes:
+    spans = exporter.get_finished_spans()
+    return encode_spans([policy.sanitize(s) for s in spans]).SerializeToString()
+
+
+@pytest.mark.parametrize("mode", ["metadata", "redacted"])
+def test_default_scope_name_is_not_a_content_channel(memory_provider, mode):
+    provider, exporter = memory_provider
+    _name_and_tracestate_span(provider, NAME_CANARY, C.TRAIGENT_SCOPE_NAME)
+    (s,) = exporter.get_finished_spans()
+    out = ContentPolicy(mode).sanitize(s)
+    assert out.name == "tool"  # replaced by the observation type
+    assert out.attributes[C.ATTR_DROPPED_ATTRS] >= 1  # replacement is counted
+    assert CANARY.encode() not in _sanitized_wire(exporter, ContentPolicy(mode))
+
+
+def test_identifier_names_still_pass_in_default_scope(memory_provider):
+    provider, exporter = memory_provider
+    _name_and_tracestate_span(provider, "my_tool.step-1", C.TRAIGENT_SCOPE_NAME)
+    (s,) = exporter.get_finished_spans()
+    assert ContentPolicy("metadata").sanitize(s).name == "my_tool.step-1"
+
+
+@pytest.mark.parametrize("mode", ["metadata", "redacted", "record"])
+def test_tracestate_is_dropped_on_span_link_and_parent(memory_provider, mode):
+    from opentelemetry.trace import TraceState
+
+    provider, exporter = memory_provider
+    _name_and_tracestate_span(provider, "ok", C.TRAIGENT_SCOPE_NAME)
+    (s,) = exporter.get_finished_spans()
+    out = ContentPolicy(mode).sanitize(s)
+    assert len(out.links[0].context.trace_state) == 0
+    assert len(out.context.trace_state) == 0
+    body = _sanitized_wire(exporter, ContentPolicy(mode))
+    assert CANARY.encode() not in body
+    # link identity survives (only tracestate is rebuilt)
+    assert out.links[0].context.trace_id == 1 and out.links[0].context.span_id == 2
+
+    # the span's OWN tracestate and a parent's, via a remote parent context
+    ts = TraceState.from_header([VENDOR_TS])
+    remote = SpanContext(0xAB, 0xCD, True, TraceFlags(1), trace_state=ts)
+    import opentelemetry.trace as ot
+
+    ctx = ot.set_span_in_context(ot.NonRecordingSpan(remote))
+    exporter.clear()
+    with provider.get_tracer("t").start_as_current_span("child", context=ctx):
+        pass
+    (child,) = exporter.get_finished_spans()
+    assert CANARY in str(child.context.trace_state) + str(child.parent.trace_state)
+    out2 = ContentPolicy(mode).sanitize(child)
+    assert len(out2.parent.trace_state) == 0 and len(out2.context.trace_state) == 0
+    assert CANARY.encode() not in _sanitized_wire(exporter, ContentPolicy(mode))
+    assert out2.context.trace_id == child.context.trace_id  # ids preserved
+
+
+def test_negative_control_name_scope_exemption_leaks(memory_provider):
+    provider, exporter = memory_provider
+    _name_and_tracestate_span(provider, NAME_CANARY, C.TRAIGENT_SCOPE_NAME)
+
+    class Exempt(ContentPolicy):
+        @staticmethod
+        def _name(raw, attrs, scope_name, mode):
+            return raw  # restored scope exemption
+
+    assert CANARY.encode() in _sanitized_wire(exporter, Exempt("metadata"))
+
+
+def test_negative_control_keeping_tracestate_leaks(memory_provider, monkeypatch):
+    """The installed Python encoder serialises only the span's OWN tracestate
+    (links' tracestate never reaches the wire), so drive it via a remote parent."""
+    import opentelemetry.trace as ot
+    from opentelemetry.trace import TraceState
+
+    import traigent.observability.otel.policy as pol
+
+    provider, exporter = memory_provider
+    remote = SpanContext(
+        0xAB, 0xCD, True, TraceFlags(1), trace_state=TraceState.from_header([VENDOR_TS])
+    )
+    ctx = ot.set_span_in_context(ot.NonRecordingSpan(remote))
+    with provider.get_tracer("t").start_as_current_span("ok", context=ctx):
+        pass
+    assert CANARY.encode() not in _sanitized_wire(exporter, ContentPolicy("metadata"))
+    monkeypatch.setattr(pol, "_strip_trace_state", lambda c: c)
+    assert CANARY.encode() in _sanitized_wire(exporter, ContentPolicy("metadata"))

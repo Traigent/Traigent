@@ -57,6 +57,7 @@ class CollectorStub:
     def __init__(self):
         self.requests: list[dict] = []
         self.raw_bodies: list[bytes] = []
+        self.raw_wire: list[bytes] = []  # as received (possibly gzipped)
         self.statuses: list[int] = []  # scripted, popped left; default 200
         self.redirect_to: str | None = None
         self._lock = threading.Lock()
@@ -83,6 +84,7 @@ class CollectorStub:
                     req = ExportTraceServiceRequest()
                     req.ParseFromString(body)
                     stub.raw_bodies.append(body)
+                    stub.raw_wire.append(raw)
                     stub.requests.append(
                         {
                             "path": self.path,

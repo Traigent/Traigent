@@ -350,3 +350,36 @@ def test_observe_arguments_stamp_the_span_itself_and_tags_follow_mode(collector)
         pass
     red = {s.name: s for s in mem.get_finished_spans()}["red"]
     assert tuple(red.attributes[C.ATTR_TAGS]) == (C.REDACTED_PLACEHOLDER,)
+
+
+def test_wire_has_no_name_or_tracestate_canary_in_metadata_mode(h, canary):
+    """observe(name) under the default scope + a vendor tracestate: raw and
+    gunzipped wire bytes never contain the canary."""
+    import opentelemetry.trace as ot
+    from opentelemetry.trace import SpanContext, TraceFlags, TraceState
+
+    ts = TraceState.from_header([f"vendor={canary}"])
+    remote = SpanContext(0xAB, 0xCD, True, TraceFlags(1), trace_state=ts)
+    ctx = ot.set_span_in_context(ot.NonRecordingSpan(remote))
+    link = ot.Link(SpanContext(1, 2, False, TraceFlags(1), trace_state=ts))
+    name = f"summarise {canary} for bob@example.com"
+
+    def run():
+        with otel.observe(name):
+            pass
+        tracer = h.provider.get_tracer("traigent.observability")
+        tracer.start_span("linked", context=ctx, links=[link]).end()
+
+    from opentelemetry import context as otctx
+
+    token = otctx.attach(ctx)
+    try:
+        run()
+    finally:
+        otctx.detach(token)
+    assert otel.flush(5).flushed
+    assert h.collector.spans()
+    joined = b"".join(h.collector.raw_bodies)
+    assert canary.encode() not in joined
+    assert canary.encode() not in b"".join(h.collector.raw_wire)
+    assert b"user@example.com" not in joined

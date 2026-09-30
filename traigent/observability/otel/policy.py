@@ -21,7 +21,7 @@ from typing import Any
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import Event, ReadableSpan
 from opentelemetry.sdk.util.instrumentation import InstrumentationScope
-from opentelemetry.trace import Link, SpanKind
+from opentelemetry.trace import Link, SpanContext, SpanKind, TraceState
 from opentelemetry.trace.status import Status, StatusCode
 
 from traigent.observability.config import most_restrictive_content_mode
@@ -37,6 +37,24 @@ _SCALARS = (str, bool, int, float)
 
 def _has_control(text: str) -> bool:
     return any(ord(ch) < 32 or ord(ch) == 127 for ch in text)
+
+
+def _strip_trace_state(ctx: SpanContext | None) -> SpanContext | None:
+    """Rebuild a span/link context with an EMPTY ``tracestate``.
+
+    W3C tracestate is an arbitrary vendor key/value channel that would
+    otherwise be serialized verbatim.  Policy: no mode forwards it (no
+    allowlisted vendor key is required today), so it is dropped everywhere.
+    """
+    if ctx is None:
+        return None
+    return SpanContext(
+        trace_id=ctx.trace_id,
+        span_id=ctx.span_id,
+        is_remote=ctx.is_remote,
+        trace_flags=ctx.trace_flags,
+        trace_state=TraceState(),
+    )
 
 
 def coerce_value(value: Any, spec: C.AttrSpec) -> Any | None:
@@ -194,10 +212,9 @@ class ContentPolicy:
         if mode == "record" and isinstance(raw, str) and raw:
             return raw[:256]
         if isinstance(raw, str):
-            if scope_name == C.TRAIGENT_SCOPE_NAME:
-                if raw and len(raw) <= C.MAX_SPAN_NAME_LEN and not _has_control(raw):
-                    return raw
-            elif C.is_safe_token(raw):
+            # No scope is exempt: ``observe(name)`` shares the SDK's own scope
+            # but its name is user-supplied, so it is not a content-free channel.
+            if C.is_safe_token(raw):
                 return raw
         op = attrs.get("gen_ai.operation.name")
         model = attrs.get("gen_ai.request.model")
@@ -208,6 +225,9 @@ class ContentPolicy:
         kind = attrs.get("openinference.span.kind")
         if isinstance(kind, str):
             return kind.lower()
+        otype = attrs.get(C.ATTR_OBSERVATION_TYPE)
+        if isinstance(otype, str) and otype in C.OBSERVATION_TYPES:
+            return otype
         return "span"
 
     # -- events / links / status ----------------------------------------
@@ -250,7 +270,7 @@ class ContentPolicy:
                 dropped += d
             else:
                 dropped += len(link.attributes or {})
-            out.append(Link(link.context, attrs))
+            out.append(Link(_strip_trace_state(link.context), attrs))
         return tuple(out), dropped
 
     @staticmethod
@@ -280,6 +300,8 @@ class ContentPolicy:
         dropped += ev_dropped + link_dropped
         scope = self._scope(span.instrumentation_scope)
         name = self._name(span.name, attrs, scope.name, mode)
+        if mode != "record" and name != span.name:
+            dropped += 1  # a replaced (non-identifier) name is a counted drop
         if dropped:
             attrs[C.ATTR_DROPPED_ATTRS] = dropped
         # the effective mode is per span: declare it only if it tightens
@@ -287,8 +309,8 @@ class ContentPolicy:
             attrs[C.CONTENT_MODE_ATTRIBUTE] = mode
         return ReadableSpan(
             name=name,
-            context=span.context,
-            parent=span.parent,
+            context=_strip_trace_state(span.context),
+            parent=_strip_trace_state(span.parent),
             resource=self._resource(span.resource, mode),
             attributes=attrs,
             events=events,

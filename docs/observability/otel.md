@@ -56,6 +56,11 @@ policy.
   mode (best effort; depends on the instrumentor accepting a config).
 * Names and scope names are heuristically identifier-checked; a single-token
   string placed in a span name cannot be told apart from an identifier.
+  This applies to every scope, including spans created by `observe(name)`:
+  a name is not a content channel, and outside `record` mode a non-identifier
+  name is replaced by the observation type (counted in `traigent.content.dropped_attrs`).
+* W3C `tracestate` (an arbitrary vendor key/value field) is never forwarded on
+  spans or links in any mode; contexts are rebuilt with an empty tracestate.
 
 `OTEL_EXPORTER_OTLP_*` variables are ignored on purpose: an environment
 variable must not be able to redirect the Traigent API key.
