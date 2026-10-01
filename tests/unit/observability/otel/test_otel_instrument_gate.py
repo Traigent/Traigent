@@ -28,13 +28,17 @@ class FakeInstrumentor:
         self.provider = None
         self.kwargs = None
         self.uninstrumented = False
+        # like OpenTelemetry's BaseInstrumentor, it exposes its install state
+        self._is_instrumented_by_opentelemetry = False
 
     def instrument(self, tracer_provider=None, config=None, **kw):
         self.provider = tracer_provider
         self.kwargs = {"config": config, **kw}
+        self._is_instrumented_by_opentelemetry = True
 
     def uninstrument(self):
         self.uninstrumented = True
+        self._is_instrumented_by_opentelemetry = False
 
     def call_llm(self, prompt):
         tracer = self.provider.get_tracer("fake.llm.lib")

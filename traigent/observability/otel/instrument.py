@@ -162,6 +162,29 @@ def _is_instrumented(instrumentor: Any) -> bool | None:
     return state if isinstance(state, bool) else None
 
 
+def _undo_failed(instrumentor: Any) -> None:
+    """Undo a FAILED instrument() call's own partial patches.
+
+    OpenTelemetry's ``BaseInstrumentor.instrument`` flips its installed flag only
+    AFTER ``_instrument()`` returns, and its public ``uninstrument()`` is a
+    no-op while the flag is False, so a raise midway leaves patches applied that
+    the public API will not remove.  Safe to run: Traigent only calls
+    ``instrument()`` on an instrumentor verified not installed (or explicitly
+    adopted), so whatever is patched now came from this call.
+    """
+    try:
+        if _is_instrumented(instrumentor) is True:
+            instrumentor.uninstrument()
+            return
+        private = getattr(instrumentor, "_uninstrument", None)
+        if callable(private):
+            private()
+        else:
+            instrumentor.uninstrument()
+    except Exception:
+        logger.debug("failed-install cleanup raised", exc_info=True)
+
+
 def _rollback(installed: list[Any]) -> None:
     for instrumentor in reversed(installed):
         try:
@@ -176,6 +199,7 @@ def install(
     *,
     mode: str,
     allow_unverified_exporters: bool,
+    adopt_unverifiable: bool = False,
 ) -> list[Any]:
     """Install instrumentors onto ``provider`` explicitly (never via globals).
 
@@ -184,7 +208,13 @@ def install(
     adopted: it may hold an unaudited provider, and uninstrumenting it later
     would remove instrumentation Traigent did not install.  An install that
     leaves the instrumentor not installed (dependency conflict) raises.  If any
-    instrumentor fails, every one installed earlier in this call is rolled back.
+    instrumentor fails, every one installed earlier in this call is rolled back,
+    and the failing one's own partial patches are undone too.
+
+    An instrumentor that exposes no install state (``_is_instrumented`` is
+    ``None``) cannot be verified, so it is treated as NOT owned and refused,
+    failing closed; pass ``adopt_unverifiable=True`` to take responsibility for
+    it explicitly.
     """
     check_exporters(provider, allow_unverified_exporters=allow_unverified_exporters)
     installed: list[Any] = []
@@ -192,7 +222,15 @@ def install(
         for spec in specs:
             instrumentor = resolve_instrumentor(spec)
             name = type(instrumentor).__name__
-            if _is_instrumented(instrumentor) is True:
+            state = _is_instrumented(instrumentor)
+            if state is None and not adopt_unverifiable:
+                raise InstrumentationStateError(
+                    f"{name} exposes no install state, so Traigent cannot verify "
+                    "that it is not already instrumented or that it installed; "
+                    "refusing to treat it as owned. Pass adopt_unverifiable=True "
+                    "to adopt it explicitly."
+                )
+            if state is True:
                 raise InstrumentationStateError(
                     f"{name} is already instrumented (by the application or another "
                     "library); Traigent will not adopt it because it may hold an "
@@ -211,8 +249,7 @@ def install(
             try:
                 instrumentor.instrument(**kwargs)
             except BaseException:
-                if _is_instrumented(instrumentor) is True:
-                    installed.append(instrumentor)  # partial install: undo it too
+                _undo_failed(instrumentor)  # works before the installed flag flips
                 raise
             if _is_instrumented(instrumentor) is False:
                 raise InstrumentationStateError(

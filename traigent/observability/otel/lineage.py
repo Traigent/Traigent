@@ -87,6 +87,7 @@ def activate(state: _CallerAttributes) -> Iterator[None]:
         _caller.reset(token)
 
 
+@contextlib.contextmanager
 def attributes(
     *,
     session_id: str | None = None,
@@ -94,14 +95,19 @@ def attributes(
     tags: Sequence[str] | None = None,
     metadata: Mapping[str, Any] | None = None,
     prompt_reference: Mapping[str, Any] | None = None,
-) -> contextlib.AbstractContextManager[None]:
+) -> Iterator[None]:
     """Attach attributes to every span started inside the ``with`` block.
 
     Nesting merges (inner wins per field).  ``metadata`` is content: it is
     exported only where the content mode allows.  The previous value is always
     restored, including on exceptions.
+
+    The merge with the ambient state happens on ENTRY, not when the object is
+    created: a scope prepared early and entered later (under another session or
+    a tighter ``content_mode`` override) sees the state in effect where it is
+    entered, so it can neither restore a captured session nor loosen a mode.
     """
-    return activate(
+    with activate(
         merged_attributes(
             session_id=session_id,
             user_id=user_id,
@@ -109,7 +115,17 @@ def attributes(
             metadata=metadata,
             prompt_reference=prompt_reference,
         )
-    )
+    ):
+        yield
+
+
+def set_current(state: _CallerAttributes) -> None:
+    """Set ``state`` current WITHOUT a reset token.
+
+    Only for a context that is discarded as a whole (a stream's private
+    ``contextvars.Context``), where there is nothing to restore.
+    """
+    _caller.set(state)
 
 
 def _str_id(value: Any) -> str | None:

@@ -21,6 +21,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -41,6 +42,7 @@ from traigent.observability.otel.lineage import (
     _CallerAttributes,
     activate,
     merged_attributes,
+    set_current,
 )
 from traigent.observability.otel.lineage import attributes as attributes  # re-export
 from traigent.observability.otel.processor import FlushOutcome, TraigentSpanProcessor
@@ -91,7 +93,10 @@ class ObservabilityHandle:
         return self.provider.get_tracer(C.TRAIGENT_SCOPE_NAME)
 
     def instrument(
-        self, *specs: Any, allow_unverified_exporters: bool | None = None
+        self,
+        *specs: Any,
+        allow_unverified_exporters: bool | None = None,
+        adopt_unverifiable: bool = False,
     ) -> None:
         allow = (
             self._allow_unverified
@@ -103,6 +108,7 @@ class ObservabilityHandle:
             specs,
             mode=self.content_mode,
             allow_unverified_exporters=allow,
+            adopt_unverifiable=adopt_unverifiable,
         )
 
     def flush(self, timeout: float = 5.0) -> FlushOutcome:
@@ -323,9 +329,17 @@ def _installed_auto_names() -> list[str]:
     return found
 
 
-def instrument(*specs: Any, allow_unverified_exporters: bool | None = None) -> None:
+def instrument(
+    *specs: Any,
+    allow_unverified_exporters: bool | None = None,
+    adopt_unverifiable: bool = False,
+) -> None:
     handle = _require_handle()
-    handle.instrument(*specs, allow_unverified_exporters=allow_unverified_exporters)
+    handle.instrument(
+        *specs,
+        allow_unverified_exporters=allow_unverified_exporters,
+        adopt_unverifiable=adopt_unverifiable,
+    )
 
 
 def flush(timeout: float = 5.0) -> FlushOutcome:
@@ -392,6 +406,44 @@ class _Entry:
 _ACTIVE: contextvars.ContextVar[tuple[_Entry, ...]] = contextvars.ContextVar(
     "traigent_otel_observe_entries", default=()
 )
+
+
+class _InContext:
+    """Awaitable that drives ``coro`` with every step run inside ``ctx``.
+
+    ``asyncio`` runs a task's steps in the TASK's context, so an async stream
+    resumed from different tasks would otherwise see (and corrupt) a different
+    context each time.  Stepping the awaited object by hand inside the stream's
+    own context keeps one execution context per stream while the real future
+    still goes up to the real event loop.
+    """
+
+    __slots__ = ("_ctx", "_coro")
+
+    def __init__(self, ctx: contextvars.Context, coro: Any) -> None:
+        self._ctx = ctx
+        self._coro = coro
+
+    def __await__(self):
+        ctx, coro = self._ctx, self._coro
+        send_value: Any = None
+        error: BaseException | None = None
+        try:
+            while True:
+                try:
+                    if error is not None:
+                        exc, error = error, None
+                        yielded = ctx.run(coro.throw, exc)
+                    else:
+                        yielded = ctx.run(coro.send, send_value)
+                except StopIteration as stop:
+                    return stop.value
+                try:
+                    send_value = yield yielded
+                except BaseException as exc:  # cancellation etc.: forward it
+                    send_value, error = None, exc
+        finally:
+            ctx.run(coro.close)
 
 
 class _Observe:
@@ -587,36 +639,54 @@ class _Observe:
             )
             return stack
 
+        def open_stream(
+            args: tuple, kwargs: dict
+        ) -> tuple[contextvars.Context, str, Span]:
+            """Start the stream's span and its PRIVATE execution context.
+
+            Every resume, throw and close of the wrapped generator runs inside
+            this one context (``Context.run``), so scopes the generator opens
+            itself survive its yields, its cleanup sees the stream's mode,
+            identity and parent rather than the closing caller's, and nothing
+            leaks into the consumer between resumes.
+            """
+            ctx = contextvars.copy_context()
+
+            def begin() -> tuple[str, Span]:
+                state, mode = run._prepare()
+                span = run._start(name, args, kwargs, state, mode)
+                set_current(state)
+                otel_context.attach(trace.set_span_in_context(span))
+                return mode, span
+
+            mode, span = ctx.run(begin)
+            return ctx, mode, span
+
         if inspect.isasyncgenfunction(func):
 
             @functools.wraps(func)
             async def agen_wrapper(*args: Any, **kwargs: Any):
-                state, mode = run._prepare()
-                span: Span | None = run._start(name, args, kwargs, state, mode)
+                ctx, mode, started = open_stream(args, kwargs)
+                span: Span | None = started
                 agen = func(*args, **kwargs)
                 to_send: Any = None
                 to_throw: BaseException | None = None
                 try:
                     while True:
-                        # Re-entered around every resume and left BEFORE the
-                        # yield: a suspended stream holds no context state, so
-                        # interleaved streams cannot stamp each other and
-                        # cleanup from another task cannot fail a token reset.
-                        with step_scope(state, span):
-                            try:
-                                if to_throw is not None:
-                                    exc, to_throw = to_throw, None
-                                    item = await agen.athrow(exc)
-                                else:
-                                    item = await agen.asend(to_send)
-                            except StopAsyncIteration:
-                                run._finish(span, mode)
-                                span = None
-                                return
+                        try:
+                            if to_throw is not None:
+                                exc, to_throw = to_throw, None
+                                item = await _InContext(ctx, agen.athrow(exc))
+                            else:
+                                item = await _InContext(ctx, agen.asend(to_send))
+                        except StopAsyncIteration:
+                            run._finish(started, mode)
+                            span = None
+                            return
                         try:
                             to_send = yield item
                         except GeneratorExit:
-                            await agen.aclose()
+                            await _InContext(ctx, agen.aclose())
                             raise
                         except BaseException as exc:  # thrown into the wrapper
                             to_throw, to_send = exc, None
@@ -637,30 +707,29 @@ class _Observe:
 
             @functools.wraps(func)
             def gen_wrapper(*args: Any, **kwargs: Any):
-                state, mode = run._prepare()
-                span: Span | None = run._start(name, args, kwargs, state, mode)
+                ctx, mode, started = open_stream(args, kwargs)
+                span: Span | None = started
                 gen = func(*args, **kwargs)
                 to_send: Any = None
                 to_throw: BaseException | None = None
                 try:
                     while True:
-                        with step_scope(state, span):
-                            try:
-                                if to_throw is not None:
-                                    exc, to_throw = to_throw, None
-                                    item = gen.throw(exc)
-                                else:
-                                    item = gen.send(to_send)
-                            except StopIteration as stop:
-                                run._finish(
-                                    span, mode, result=stop.value, has_result=True
-                                )
-                                span = None
-                                return stop.value
+                        try:
+                            if to_throw is not None:
+                                exc, to_throw = to_throw, None
+                                item = ctx.run(gen.throw, exc)
+                            else:
+                                item = ctx.run(gen.send, to_send)
+                        except StopIteration as stop:
+                            run._finish(
+                                started, mode, result=stop.value, has_result=True
+                            )
+                            span = None
+                            return stop.value
                         try:
                             to_send = yield item
                         except GeneratorExit:
-                            gen.close()
+                            ctx.run(gen.close)
                             raise
                         except BaseException as exc:
                             to_throw, to_send = exc, None

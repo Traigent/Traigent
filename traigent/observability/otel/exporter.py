@@ -93,15 +93,34 @@ class TraigentOTLPExporter(SpanExporter):
         self._max_batch_age = max_batch_age
         self._clock = clock
         self._stop = threading.Event()
-        self._sleep = sleep if sleep is not None else self._interruptible_sleep
+        self._wake = threading.Event()  # set by shutdown() and by wake()
+        self._injected_sleep = sleep
         self._rng = rng
 
     @property
     def content_mode(self) -> str:
         return self.policy.mode
 
-    def _interruptible_sleep(self, seconds: float) -> None:
-        self._stop.wait(seconds)
+    def wake(self) -> None:
+        """Ask a backoff wait to re-read its deadline (a flush just arrived)."""
+        self._wake.set()
+
+    def _backoff_wait(self, delay: float, deadline: Deadline) -> None:
+        """Wait ``delay`` seconds, ending early on shutdown or at the live deadline.
+
+        The deadline is re-read on every wake, so a flush that lands DURING the
+        wait bounds it: a 60 s Retry-After cannot outlive a 1 s flush.
+        """
+        end = self._clock() + delay
+        while not self._stop.is_set():
+            left = end - self._clock()
+            remaining = self._remaining(deadline)
+            if remaining is not None:
+                left = min(left, remaining)
+            if left <= 0:
+                return
+            self._wake.wait(left)
+            self._wake.clear()
 
     # -- public API -----------------------------------------------------
     def export_batch(
@@ -130,6 +149,7 @@ class TraigentOTLPExporter(SpanExporter):
 
     def shutdown(self) -> None:
         self._stop.set()
+        self._wake.set()
 
     def force_flush(self, timeout_millis: int = 30000) -> bool:
         return True
@@ -217,7 +237,10 @@ class TraigentOTLPExporter(SpanExporter):
                 outcome.dropped_retry_exhausted += count
                 return
             outcome.retries += 1
-            self._sleep(delay)
+            if self._injected_sleep is not None:
+                self._injected_sleep(delay)
+            else:
+                self._backoff_wait(delay, deadline)
         outcome.dropped_retry_exhausted += count
 
     def _delay(self, attempt: int, resp: TransportResponse | None) -> float:

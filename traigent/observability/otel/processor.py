@@ -189,6 +189,9 @@ class TraigentSpanProcessor(SpanProcessor):
                 self._flush_deadline = max(deadline, self._flush_deadline or 0.0)
                 self._ensure_worker_locked()
                 self._cond.notify_all()
+                wake = getattr(self._exporter, "wake", None)
+                if callable(wake):  # a backoff wait must re-read the new deadline
+                    wake()
             while self._queue or self._in_flight:
                 remaining = deadline - self._clock()
                 if remaining <= 0:
