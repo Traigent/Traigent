@@ -57,6 +57,29 @@ def _strip_trace_state(ctx: SpanContext | None) -> SpanContext | None:
     )
 
 
+def looks_sensitive(text: str) -> bool:
+    """True when the shared secret scrubbers would redact something in ``text``."""
+    return bool(redact_sensitive_text(text) != text)
+
+
+def coerce_clean(value: Any, spec: C.AttrSpec) -> Any | None:
+    """``coerce_value`` plus: a credential-shaped string value is dropped.
+
+    A string that merely fits its bound is still a channel (a session id
+    holding an API key), in every mode.  Mirrors the JS ``coerceClean``.
+    """
+    coerced = coerce_value(value, spec)
+    if coerced is None:
+        return None
+    if isinstance(coerced, str):
+        return None if looks_sensitive(coerced) else coerced
+    if isinstance(coerced, tuple) and any(
+        isinstance(v, str) and looks_sensitive(v) for v in coerced
+    ):
+        return None
+    return coerced
+
+
 def coerce_value(value: Any, spec: C.AttrSpec) -> Any | None:
     """Return ``value`` if it satisfies ``spec`` exactly, else ``None`` (drop)."""
     kind = spec.kind
@@ -190,7 +213,7 @@ class ContentPolicy:
                 continue
             spec = C.ATTRIBUTE_ALLOWLIST.get(key)
             if spec is not None:
-                coerced = coerce_value(value, spec)
+                coerced = coerce_clean(value, spec)
                 if coerced is None:
                     dropped += 1
                 else:
@@ -221,7 +244,7 @@ class ContentPolicy:
             spec = C.RESOURCE_ALLOWLIST.get(key)
             if spec is None or key == C.CONTENT_MODE_ATTRIBUTE:
                 continue
-            coerced = coerce_value(value, spec)
+            coerced = coerce_clean(value, spec)
             if coerced is not None:
                 kept[key] = coerced
         # The declaration is ours: always set, never copied from user input.
@@ -232,9 +255,17 @@ class ContentPolicy:
     def _scope(scope: InstrumentationScope | None) -> InstrumentationScope:
         name = getattr(scope, "name", None)
         version = getattr(scope, "version", None)
-        if not isinstance(name, str) or not C.is_safe_scope_name(name):
+        if (
+            not isinstance(name, str)
+            or not C.is_safe_scope_name(name)
+            or looks_sensitive(name)
+        ):
             name = "unknown"
-        if not isinstance(version, str) or not C.is_safe_scope_version(version):
+        if (
+            not isinstance(version, str)
+            or not C.is_safe_scope_version(version)
+            or looks_sensitive(version)
+        ):
             version = None
         return InstrumentationScope(name=name, version=version)
 
