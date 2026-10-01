@@ -21,7 +21,7 @@ PATH = (
     Path(__file__).parents[3] / "fixtures/observability/otel_attribute_contract_v1.json"
 )
 PACKAGED = Path(C.__file__).with_name("otel_attribute_contract_v1.json")
-LOCKED_SHA256 = "ca27ffe64b71af0a2dfa1f35343a53448ae080beeb93ed17cca2d2e6fab4bc91"
+LOCKED_SHA256 = "0ce328a0cd9c9206573b34fdd5b63cf79897e132ce88d6f915fea6101b9b6900"
 CONTRACT = json.loads(PATH.read_text())
 
 # SDK-only keys the receiver snapshot does not know.  Each must be a reviewed

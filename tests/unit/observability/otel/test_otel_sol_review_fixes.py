@@ -368,18 +368,24 @@ def test_sdk_never_pre_subtracts_usage_for_any_normalisation_vector(collector):
     classes = C.CONTRACT["usage_classes"]["attributes"]
     vectors = C.CONTRACT["usage_classes"]["normalisation_vectors"]
     marker = C.CONTRACT["usage_classes"]["semantics_marker"]["attribute"]
+    marker_values = C.CONTRACT["usage_classes"]["semantics_marker"]["values"]
     for vector in vectors:
         with tracer.start_as_current_span(vector["id"]) as span:
             for bucket in ("input", "output", "cache_read", "cache_write", "reasoning"):
-                span.set_attribute(classes[bucket][0], vector[bucket])
+                if bucket in vector:  # absent counters stay absent (contract 0ce328a0)
+                    span.set_attribute(classes[bucket][0], vector[bucket])
             if vector["semantics"] is not None:
                 span.set_attribute(marker, vector["semantics"])
     assert otel.flush(5).flushed
     for vector in vectors:
         wire = _wire_attrs(collector, vector["id"])
         for bucket in ("input", "output", "cache_read", "cache_write", "reasoning"):
-            assert wire[classes[bucket][0]] == vector[bucket], vector["id"]
-        assert wire.get(marker) == vector["semantics"], vector["id"]
+            if bucket in vector:
+                assert wire[classes[bucket][0]] == vector[bucket], vector["id"]
+            else:
+                assert classes[bucket][0] not in wire, vector["id"]
+        declared = vector["semantics"] if vector["semantics"] in marker_values else None
+        assert wire.get(marker) == declared, vector["id"]
 
 
 def test_invalid_usage_semantics_marker_is_dropped(collector):
