@@ -6180,7 +6180,7 @@ requires-dist = [
     { name = "langchain-core", marker = "extra == 'integrations'", specifier = ">=1.2.28" },
     { name = "langchain-google-genai", marker = "extra == 'integrations'", specifier = ">=2.1.4" },
     { name = "langchain-openai", marker = "extra == 'integrations'", specifier = ">=1.1.14" },
-    { name = "langchain-text-splitters", marker = "extra == 'integrations'", specifier = ">=0.3.9" },
+    { name = "langchain-text-splitters", marker = "extra == 'integrations'", specifier = ">=1.1.2" },
     { name = "litellm", specifier = ">=1.87.1,<2" },
     { name = "matplotlib", marker = "extra == 'analytics'", specifier = ">=3.5.0" },
     { name = "matplotlib", marker = "extra == 'visualization'", specifier = ">=3.5.0" },
