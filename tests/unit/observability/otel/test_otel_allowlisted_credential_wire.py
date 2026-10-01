@@ -51,6 +51,8 @@ def test_credential_in_allowlisted_channels_never_reaches_the_wire(
     span.end()
     with otel.observe("credential-canary", session_id=secret, user_id=secret):
         pass
+    with otel.observe("event-canary") as ev_span:
+        ev_span.add_event("exception", {"exception.type": secret})
     assert otel.flush(5).flushed
     assert collector.spans(), "nothing was exported"
     raw = _raw(collector)
@@ -68,8 +70,8 @@ def test_ordinary_session_and_user_ids_survive(collector, mode):
         exit_flush=False,
         schedule_delay_s=0.05,
     )
-    with otel.observe("control", session_id="sess-1234", user_id="user-42"):
-        pass
+    with otel.observe("control", session_id="sess-1234", user_id="user-42") as span:
+        span.add_event("exception", {"exception.type": "ValueError"})
     assert otel.flush(5).flushed
     attrs = [collector.attrs(span) for _, _, span in collector.spans()]
     assert any(
@@ -78,3 +80,4 @@ def test_ordinary_session_and_user_ids_survive(collector, mode):
     ), attrs
     raw = _raw(collector)
     assert b"checkout-service" in raw
+    assert b"ValueError" in raw

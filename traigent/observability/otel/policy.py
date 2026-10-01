@@ -198,7 +198,7 @@ class ContentPolicy:
             return self.mode
         declared = span_attrs[C.CONTENT_MODE_ATTRIBUTE]
         if isinstance(declared, str) and declared in C.CONTENT_MODES:
-            return most_restrictive_content_mode(self.mode, declared)
+            return str(most_restrictive_content_mode(self.mode, declared))
         return "metadata"
 
     # -- attributes -----------------------------------------------------
@@ -326,6 +326,7 @@ class ContentPolicy:
                     and raw
                     and len(raw) <= 128
                     and not _has_control(raw)
+                    and not looks_sensitive(raw)
                 ):
                     attrs[key] = raw
             out.append(Event(event.name, attrs, event.timestamp))
