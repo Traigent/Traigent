@@ -4,7 +4,7 @@
 -r requirements.txt
 
 # Enterprise security features
-pyjwt>=2.13.0
+pyjwt>=2.15.0
 cryptography>=50.0.0
 passlib>=1.7.4
 python-multipart>=0.0.26
