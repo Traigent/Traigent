@@ -16,6 +16,32 @@ _API_KEY_PATTERN = re.compile(
 _BEARER_TOKEN_PATTERN = re.compile(
     r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b", re.IGNORECASE
 )
+
+# Well-known credential shapes, each written from the vendor's published token
+# format (GitHub token-format announcement and fine-grained PAT docs; AWS IAM
+# unique-identifier prefixes; Slack token types; Google Cloud API-key format;
+# Stripe API-key docs; Anthropic API-key docs; RFC 7519/7515 compact JWTs;
+# RFC 7468 PEM). The trailing lookahead stands in for \b so a key ending in
+# "-" or "_" is still bounded.
+_TOKEN_END = r"(?![A-Za-z0-9_-])"
+_PEM_PRIVATE_KEY_PATTERN = re.compile(
+    r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----"
+    r"[\s\S]*?(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----|\Z)"
+)
+_JWT_PATTERN = re.compile(
+    r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}" + _TOKEN_END
+)
+_VENDOR_TOKEN_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_-])(?:"
+    r"gh[pousr]_[A-Za-z0-9]{36,255}"  # GitHub classic / OAuth / user / server / refresh
+    r"|github_pat_[A-Za-z0-9_]{22,255}"  # GitHub fine-grained PAT
+    r"|(?:AKIA|ASIA)[A-Z0-9]{16}"  # AWS access key id (long-term / temporary)
+    r"|xox[abprs]-[A-Za-z0-9-]{10,}"  # Slack
+    r"|AIza[A-Za-z0-9_-]{35}"  # Google API key
+    r"|[sr]k_live_[A-Za-z0-9]{10,}"  # Stripe secret / restricted live key
+    r"|sk-ant-[A-Za-z0-9_-]{10,}"  # Anthropic
+    r")" + _TOKEN_END
+)
 _COMPACT_TIMESTAMP_PATTERN = re.compile(r"^\d{8}[- ]?\d{6}$")
 _CREDENTIAL_KEY_REDACTION = "[REDACTED]"
 
@@ -234,6 +260,11 @@ def redact_sensitive_text(value: str | None) -> str | None:
     if value is None:
         return None
     redacted = value
+    # Credential shapes first: their digit runs must not be chewed by the PII
+    # patterns below, and a PEM block spans lines.
+    redacted = _PEM_PRIVATE_KEY_PATTERN.sub("[REDACTED:private_key]", redacted)
+    redacted = _JWT_PATTERN.sub("[REDACTED:jwt]", redacted)
+    redacted = _VENDOR_TOKEN_PATTERN.sub("[REDACTED:api_key]", redacted)
     redacted = _EMAIL_PATTERN.sub("[REDACTED:email]", redacted)
     redacted = _SSN_PATTERN.sub("[REDACTED:ssn]", redacted)
     redacted = _CREDIT_CARD_CANDIDATE.sub(_redact_credit_card, redacted)
