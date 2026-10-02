@@ -31,8 +31,8 @@ _PEM_PRIVATE_KEY_PATTERN = re.compile(
 _JWT_PATTERN = re.compile(
     r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}" + _TOKEN_END
 )
-_VENDOR_TOKEN_PATTERN = re.compile(
-    r"(?<![A-Za-z0-9_-])(?:"
+_VENDOR_TOKEN_BODY = (
+    r"(?:"
     r"gh[pousr]_[A-Za-z0-9]{36,255}"  # GitHub classic / OAuth / user / server / refresh
     r"|github_pat_[A-Za-z0-9_]{22,255}"  # GitHub fine-grained PAT
     r"|(?:AKIA|ASIA)[A-Z0-9]{16}"  # AWS access key id (long-term / temporary)
@@ -42,6 +42,46 @@ _VENDOR_TOKEN_PATTERN = re.compile(
     r"|sk-ant-[A-Za-z0-9_-]{10,}"  # Anthropic
     r")" + _TOKEN_END
 )
+_VENDOR_TOKEN_PATTERN = re.compile(r"(?<![A-Za-z0-9_-])" + _VENDOR_TOKEN_BODY)
+# Embedded variants: a credential glued to an identifier by "_" or "-"
+# (``sess_AKIA...``) is still a credential. Only credential shapes are matched
+# here - never the PII heuristics (SSN, card) - so numeric ids are untouched.
+_EMBEDDED_BOUNDARY = r"(?<![A-Za-z0-9])"
+_EMBEDDED_CREDENTIAL_PATTERNS = (
+    _PEM_PRIVATE_KEY_PATTERN,
+    re.compile(
+        _EMBEDDED_BOUNDARY
+        + r"eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}"
+        + _TOKEN_END
+    ),
+    re.compile(_EMBEDDED_BOUNDARY + _VENDOR_TOKEN_BODY),
+    re.compile(
+        _EMBEDDED_BOUNDARY + r"(?:sk|pk|ak|rk|api)[-_][A-Za-z0-9][A-Za-z0-9._-]{10,}\b"
+    ),
+    _BEARER_TOKEN_PATTERN,
+)
+
+
+def redact_embedded_credentials(value: str) -> str:
+    """Mask credential shapes glued to identifiers (``sess_AKIA...``).
+
+    Complements :func:`redact_sensitive_text`, whose boundaries skip a
+    credential preceded by ``_``. Credential shapes only; no PII heuristics.
+    """
+    for pattern in _EMBEDDED_CREDENTIAL_PATTERNS:
+        value = pattern.sub("[REDACTED:api_key]", value)
+    return value
+
+
+def contains_credential_shape(value: str) -> bool:
+    """True when ``value`` contains a credential shape, even inside an identifier.
+
+    Credential-only: unlike :func:`redact_sensitive_text` it does not react to
+    PII heuristics (SSN, card, email), so a numeric id is not a credential.
+    """
+    return any(p.search(value) for p in _EMBEDDED_CREDENTIAL_PATTERNS)
+
+
 _COMPACT_TIMESTAMP_PATTERN = re.compile(r"^\d{8}[- ]?\d{6}$")
 _CREDENTIAL_KEY_REDACTION = "[REDACTED]"
 

@@ -27,7 +27,9 @@ from opentelemetry.trace.status import Status, StatusCode
 from traigent.observability.config import most_restrictive_content_mode
 from traigent.observability.otel import contract as C
 from traigent.security.redaction import (
+    contains_credential_shape,
     is_credential_key_name,
+    redact_embedded_credentials,
     redact_sensitive_data,
     redact_sensitive_text,
 )
@@ -58,8 +60,8 @@ def _strip_trace_state(ctx: SpanContext | None) -> SpanContext | None:
 
 
 def looks_sensitive(text: str) -> bool:
-    """True when the shared secret scrubbers would redact something in ``text``."""
-    return bool(redact_sensitive_text(text) != text)
+    """True when ``text`` holds a credential shape (credential-only, not PII)."""
+    return contains_credential_shape(text)
 
 
 def coerce_clean(value: Any, spec: C.AttrSpec) -> Any | None:
@@ -130,19 +132,22 @@ def coerce_value(value: Any, spec: C.AttrSpec) -> Any | None:
 
 def _record_text(text: str, limit: int) -> str:
     """Record-mode free text (names, status): secret-scrubbed, then capped."""
-    scrubbed: str = redact_sensitive_text(text)
+    scrubbed: str = redact_embedded_credentials(redact_sensitive_text(text))
     return scrubbed[:limit]
 
 
 def _record_value(value: Any) -> Any | None:
     """Record-mode value: existing secret scrubbers plus a per-attribute cap."""
     if isinstance(value, str):
-        scrubbed: Any = redact_sensitive_text(value)
+        scrubbed: Any = redact_embedded_credentials(redact_sensitive_text(value))
     elif isinstance(value, _SCALARS):
         scrubbed = value
     elif isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
         try:
-            scrubbed = tuple(redact_sensitive_data(list(value)))
+            scrubbed = tuple(
+                redact_embedded_credentials(v) if isinstance(v, str) else v
+                for v in redact_sensitive_data(list(value))
+            )
         except Exception:
             return None
     else:
