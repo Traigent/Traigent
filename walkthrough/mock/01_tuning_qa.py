@@ -36,7 +36,6 @@ traigent.initialize(offline=True, minimal_logging=True)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).resolve().parent.parent / "datasets"
-SIMULATED_BEST = {"model": "gpt-4o", "temperature": 0.1, "accuracy": 0.80}
 OBJECTIVES = ["accuracy", "cost"]
 CONFIG_SPACE = {
     "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o", "gpt-4.1-nano"],

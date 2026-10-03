@@ -272,39 +272,14 @@ def resolve_effective_parallel_config(
 
 
 # ---------------------------------------------------------------------------
-# Phase 7: Evaluator construction
-# ---------------------------------------------------------------------------
-
-
-def resolve_custom_evaluator(
-    custom_evaluator: Callable[..., Any] | None,
-    *,
-    decorator_custom_evaluator: Callable[..., Any] | None,
-) -> Callable[..., Any] | None:
-    """Resolve the effective custom evaluator.
-
-    The user-provided custom evaluator (from either the ``@optimize`` decorator
-    or the ``optimize()`` call) is always honoured.
-
-    Args:
-        custom_evaluator: Custom evaluator from optimize() call.
-        decorator_custom_evaluator: Custom evaluator from decorator.
-
-    Returns:
-        The custom evaluator to use, or None if LocalEvaluator should be used.
-    """
-    provided_custom_evaluator = custom_evaluator or decorator_custom_evaluator
-    return provided_custom_evaluator if provided_custom_evaluator is not None else None
-
-
-# ---------------------------------------------------------------------------
 # Surrogate (pre-screen) evaluator: a cheap second scorer over already
 # captured outputs. It NEVER re-executes the decorated function; the trial
 # lifecycle scores ``example_result.actual_output`` only. Resolution mirrors
-# ``resolve_custom_evaluator`` (optimize()-arg over decorator); the resolved
-# scorer is stashed on the evaluator instance so the trial-lifecycle seam can
-# reach it via the stable ``orchestrator.evaluator`` handle (the ``func`` that
-# reaches the seam is injection/effectuation-wrapped, so it is not a stable key).
+# the custom-evaluator choice made when the evaluator is built (optimize()-arg
+# over decorator); the resolved scorer is stashed on the evaluator instance so
+# the trial-lifecycle seam can reach it via the stable ``orchestrator.evaluator``
+# handle (the ``func`` that reaches the seam is injection/effectuation-wrapped,
+# so it is not a stable key).
 # ---------------------------------------------------------------------------
 
 _SURROGATE_ATTR = "_traigent_surrogate_evaluator"
@@ -795,10 +770,8 @@ def create_effective_evaluator(
     Returns:
         Tuple of (evaluator, reserved auxiliary resource or None)
     """
-    effective_evaluator = resolve_custom_evaluator(
-        custom_evaluator,
-        decorator_custom_evaluator=decorator_custom_evaluator,
-    )
+    # The optimize()-call evaluator wins over the decorator's.
+    effective_evaluator = custom_evaluator or decorator_custom_evaluator
 
     # Warn once when mock LLM mode is active and an output-based scorer is supplied.
     # Mock mode returns a canned constant string for every LLM call, so any evaluator

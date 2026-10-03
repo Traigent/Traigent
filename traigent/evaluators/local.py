@@ -429,7 +429,10 @@ class LocalEvaluator(BaseEvaluator):
             timeout: Timeout for individual evaluations (seconds)
             max_workers: Maximum number of concurrent evaluations
             detailed: Whether to preserve detailed example results
-            execution_mode: Execution mode ("local", "hybrid", or "hybrid_api") for determining submission format
+            execution_mode: Internal execution-mode value for determining
+                submission format: ``"local"`` (public mode ``local``),
+                ``"hybrid"`` (the internal value for public mode ``cloud``) or
+                ``"hybrid_api"`` (public mode ``hybrid_api``).
             **kwargs: Additional configuration
         """
         if "privacy_enabled" in kwargs:

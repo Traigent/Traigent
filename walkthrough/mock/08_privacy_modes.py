@@ -33,7 +33,6 @@ traigent.initialize(
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
 RESULTS_DIR = os.getenv("TRAIGENT_RESULTS_FOLDER", "./local_results")
-SIMULATED_BEST = {"model": "gpt-3.5-turbo", "temperature": 0.1}
 OBJECTIVES = ["accuracy"]
 CONFIG_SPACE = {
     "model": ["gpt-3.5-turbo", "gpt-4o-mini"],

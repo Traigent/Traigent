@@ -295,7 +295,6 @@ class TestApplyBestConfig:
             configuration_space=sample_config_space,
             objectives=sample_objectives,
             execution_mode="local",
-            use_cloud_service=False,
         )
 
         result_local = opt_func_local.apply_best_config(sample_optimization_result)
@@ -307,7 +306,6 @@ class TestApplyBestConfig:
             configuration_space=sample_config_space,
             objectives=sample_objectives,
             execution_mode="hybrid",
-            use_cloud_service=False,
         )
 
         result_commercial = opt_func_commercial.apply_best_config(
@@ -321,7 +319,6 @@ class TestApplyBestConfig:
             configuration_space=sample_config_space,
             objectives=sample_objectives,
             execution_mode="hybrid",
-            use_cloud_service=True,
         )
 
         result_hybrid = opt_func_hybrid.apply_best_config(sample_optimization_result)

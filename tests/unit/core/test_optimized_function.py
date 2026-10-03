@@ -160,7 +160,6 @@ class TestOptimizedFunction:
             timeout=120.0,
             custom_evaluator=mock_custom_evaluator,
             execution_mode="hybrid",
-            use_cloud_service=False,
         )
 
         assert opt_func.algorithm == "bayesian"
@@ -168,7 +167,30 @@ class TestOptimizedFunction:
         assert opt_func.timeout == 120.0
         assert opt_func.custom_evaluator is mock_custom_evaluator
         assert opt_func.execution_mode == "hybrid"
-        assert opt_func.use_cloud_service is False
+
+    def test_removed_use_cloud_service_kwarg_is_rejected(
+        self, mock_function, sample_config_space, sample_objectives
+    ):
+        """A stale use_cloud_service= caller fails loudly instead of being ignored."""
+        with pytest.raises(TypeError, match="use_cloud_service was removed"):
+            OptimizedFunction(
+                func=mock_function,
+                configuration_space=sample_config_space,
+                objectives=sample_objectives,
+                use_cloud_service=True,
+            )
+
+    def test_singular_framework_target_kwarg_is_rejected(
+        self, mock_function, sample_config_space, sample_objectives
+    ):
+        """framework_target= (singular) points the caller at framework_targets."""
+        with pytest.raises(TypeError, match="did you mean framework_targets"):
+            OptimizedFunction(
+                func=mock_function,
+                configuration_space=sample_config_space,
+                objectives=sample_objectives,
+                framework_target="openai",
+            )
 
     def test_optimized_function_creation_invalid_function(
         self, sample_config_space, sample_objectives

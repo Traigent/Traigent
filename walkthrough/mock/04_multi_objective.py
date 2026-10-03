@@ -31,14 +31,6 @@ traigent.initialize(offline=True, minimal_logging=True)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
-SIMULATED_BEST = {
-    "model": "gpt-4o",
-    "temperature": 0.0,
-    "instructions": "CoT",
-    "accuracy": 0.95,
-    # Cost and latency are not listed here: they are simulated per trial from
-    # the shared mock tables (get_mock_cost / get_mock_latency below).
-}
 CONFIG_SPACE = {
     "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
     "prompt": ["v1", "v2"],
