@@ -48,14 +48,14 @@ from traigent.api.decorators import ExecutionOptions
 
 ### Edge Analytics (Default)
 
-Optimization runs on your local machine. Set `TRAIGENT_OFFLINE_MODE=true` when you want no Traigent backend communication. With `offline=True` no Traigent backend client is created and no session, trial or trace records are sent to the backend, so tuned config values (including string values) are not sent to Traigent; results are still stored locally. Without it, the default portal-backed path still sends the tuned config-space values and numeric metrics (not dataset inputs, expected outputs or model responses). `offline=True` does not stop your own function from calling LLM providers, and does not disable OpenTelemetry export if you enabled it (trial configuration and example content can still be exported to your collector).
+Optimization runs on your local machine. `offline=True` (or `TRAIGENT_OFFLINE_MODE=true`) stops the optimizer's own backend submissions: no Traigent backend client is created for the run, and its session, trial and workflow-trace records are not sent, so tuned config values (including string values) do not reach Traigent through the optimizer; results are still stored locally. It is not a global network switch: SDK clients you enable separately (observability ingest, direct workflow-trace submission, MCP login, analytics or economics clients, license validation) follow their own settings, your own function still calls its LLM providers, and OpenTelemetry export, if you enabled it, can still send trial configuration and example content to your collector. Without `offline=True`, the default portal-backed path sends the tuned config-space values and numeric metrics (not dataset inputs, expected outputs or model responses).
 
 ```python
 @traigent.optimize(
     execution=ExecutionOptions(
         execution_mode="local",
         local_storage_path="./results",
-        offline=True,  # no traffic to the Traigent backend; own LLM calls and OpenTelemetry export unaffected
+        offline=True,  # no optimizer submissions to the Traigent backend; see the caveats above
     ),
     configuration_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
 )

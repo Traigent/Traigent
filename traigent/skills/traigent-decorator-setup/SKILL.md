@@ -197,7 +197,7 @@ Configure where and how optimization runs execute.
     execution=ExecutionOptions(
         execution_mode="local",  # Local execution
         local_storage_path="./results",
-        offline=True,  # no traffic to the Traigent backend; your own LLM calls and any OpenTelemetry export are unaffected
+        offline=True,  # optimizer sends nothing to the Traigent backend; separately enabled clients, your LLM calls and OpenTelemetry are unaffected
         # reps_per_trial / reps_aggregation are enterprise-only in this SDK
         # release. Non-default values raise ValidationError at construction.
     ),
