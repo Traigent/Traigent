@@ -179,19 +179,24 @@ def declare_agent_assets(
     return apply(func)
 
 
+def _merge_layer(found: dict[str, Any], declared: dict[Any, Any]) -> None:
+    """Add one layer's declarations to ``found``; categories already found win."""
+    for category, digests in declared.items():
+        if category in found:
+            continue
+        if isinstance(digests, dict):
+            found[category] = dict(digests)
+        elif category == "coverage" and isinstance(digests, str):
+            found[category] = digests
+
+
 def _declared_assets_of(func: Any) -> dict[str, dict[str, str]]:
     """Merge declarations found on ``func`` and every layer it wraps."""
     found: dict[str, dict[str, str]] = {}
     for layer in _unwrap_chain(func):
         declared = getattr(layer, _DECLARED_ASSETS_ATTR, None)
         if isinstance(declared, dict):
-            for category, digests in declared.items():
-                if category in found:
-                    continue
-                if isinstance(digests, dict):
-                    found[category] = dict(digests)
-                elif category == "coverage" and isinstance(digests, str):
-                    found[category] = digests  # type: ignore[assignment]
+            _merge_layer(found, declared)
     return found
 
 
@@ -245,6 +250,28 @@ def _source_without_decorators(target: Any) -> str | None:
     return normalize_source(source)
 
 
+def _closure_cells(function: Any, closure: Any) -> dict[str, Any] | None:
+    """``name -> value`` for ``function``'s closure; ``None`` if unobservable."""
+    code = getattr(function, "__code__", None)
+    if code is None:
+        return None
+    cells: dict[str, Any] = {}
+    for name, cell in zip(code.co_freevars, closure, strict=False):
+        try:
+            cells[name] = cell.cell_contents
+        except ValueError:  # an empty cell: state we cannot observe
+            return None
+    return cells
+
+
+def _instance_attributes(target: Any) -> Any:
+    """A bound method's raw instance ``__dict__`` (``{}`` if none); ``None`` if unobservable."""
+    instance = getattr(target, "__self__", None)
+    if instance is None or inspect.ismodule(instance):
+        return {}
+    return getattr(instance, "__dict__", None)
+
+
 def _bound_state(
     partial: functools.partial[Any] | None, target: Any
 ) -> dict[str, Any] | None:
@@ -262,23 +289,15 @@ def _bound_state(
     function = getattr(target, "__func__", target)
     closure = getattr(function, "__closure__", None)
     if closure:
-        code = getattr(function, "__code__", None)
-        if code is None:
+        cells = _closure_cells(function, closure)
+        if cells is None:
             return None
-        cells: dict[str, Any] = {}
-        for name, cell in zip(code.co_freevars, closure, strict=False):
-            try:
-                cells[name] = cell.cell_contents
-            except ValueError:  # an empty cell: state we cannot observe
-                return None
         bound["closure"] = cells
-    instance = getattr(target, "__self__", None)
-    if instance is not None and not inspect.ismodule(instance):
-        attributes = getattr(instance, "__dict__", None)
-        if attributes is None:
-            return None
-        if attributes:
-            bound["instance"] = dict(attributes)
+    attributes = _instance_attributes(target)
+    if attributes is None:
+        return None
+    if attributes:
+        bound["instance"] = dict(attributes)
     return bound
 
 
@@ -488,6 +507,42 @@ class AgentBuildBase:
         return manifest
 
 
+def _code_revision_of(
+    source_file: str | None, gaps: list[str]
+) -> tuple[dict[str, Any] | None, set[str], Path | None]:
+    """``(code_revision, dirty paths, project root)`` for the entry source file."""
+    if not source_file:
+        gaps.append("entry_source_file_unknown")
+        return None, set(), None
+    entry = Path(source_file).resolve()
+    state = _git_state(entry.parent)
+    if state is None:
+        gaps.append("no_code_revision")
+        return None, set(), entry.parent
+    project_root, commit, dirty_paths = state
+    code_revision = {"vcs": "git", "commit": commit, "dirty": bool(dirty_paths)}
+    return code_revision, dirty_paths, project_root
+
+
+def _helper_modules_of(
+    declared: Mapping[str, Any], project_root: Path | None, gaps: list[str]
+) -> tuple[dict[str, str], set[str]]:
+    """``(helper modules, names they cover)``, declared or SDK-enumerated."""
+    if "helper_modules" in declared:
+        helper_modules = dict(declared["helper_modules"])
+        return helper_modules, set(helper_modules)
+    if project_root is None:
+        gaps.append("helper_modules_not_declared")
+        return {}, set()
+    # The SDK's own enumeration sees only modules already loaded from
+    # inside the project, as .py files; it cannot prove it saw every
+    # helper, so it never supports a complete claim (M2 review).
+    helper_modules, covered, helper_gaps = _enumerate_helper_modules(project_root)
+    gaps.extend(helper_gaps)
+    gaps.append("helper_modules_not_declared")
+    return helper_modules, covered
+
+
 def collect_agent_build_base(
     func: Callable[..., Any], *, agent_id: str | None
 ) -> AgentBuildBase | None:
@@ -518,20 +573,7 @@ def collect_agent_build_base(
     if source_digest is None:
         gaps.append("source_digest_unknown")
 
-    code_revision: dict[str, Any] | None = None
-    dirty_paths: set[str] = set()
-    project_root: Path | None = None
-    if source_file:
-        entry = Path(source_file).resolve()
-        state = _git_state(entry.parent)
-        if state is not None:
-            project_root, commit, dirty_paths = state
-            code_revision = {"vcs": "git", "commit": commit, "dirty": bool(dirty_paths)}
-        else:
-            project_root = entry.parent
-            gaps.append("no_code_revision")
-    else:
-        gaps.append("entry_source_file_unknown")
+    code_revision, dirty_paths, project_root = _code_revision_of(source_file, gaps)
 
     if code_revision is None and source_digest is None:
         logger.debug(
@@ -547,20 +589,7 @@ def collect_agent_build_base(
         return None
 
     declared = _declared_assets_of(func)
-    helper_modules: dict[str, str] = {}
-    if "helper_modules" in declared:
-        helper_modules = dict(declared["helper_modules"])
-        covered = set(helper_modules)
-    elif project_root is not None:
-        # The SDK's own enumeration sees only modules already loaded from
-        # inside the project, as .py files; it cannot prove it saw every
-        # helper, so it never supports a complete claim (M2 review).
-        helper_modules, covered, helper_gaps = _enumerate_helper_modules(project_root)
-        gaps.extend(helper_gaps)
-        gaps.append("helper_modules_not_declared")
-    else:
-        covered = set()
-        gaps.append("helper_modules_not_declared")
+    helper_modules, covered = _helper_modules_of(declared, project_root, gaps)
     if dirty_paths - covered:
         gaps.append("dirty_files_outside_manifest")
 

@@ -46,13 +46,11 @@ or the built-in `LocalEvaluator` accuracy calculator scores the real
 LLM outputs end-to-end — the SDK does not fabricate evaluator scores
 in either mode.
 
-> Note: The legacy `MockModeOptions` knobs (`enabled`,
-> `override_evaluator`, `base_accuracy`, `variance`) are retained on the
-> schema for backwards compatibility but are **all inert** — mock mode
-> is activated by `traigent.testing.enable_mock_mode_for_quickstart()`
-> in local code, not via that object. The legacy `TRAIGENT_MOCK_LLM=true`
-> env var remains for shell fixtures and backwards compatibility, but emits
-> `DeprecationWarning` when users set it directly. See issue #874.
+> Note: The inert `mock=...` / `mock_mode_config=...` parameters (and
+> `MockModeOptions`) were removed and now raise `TypeError`. Mock mode is
+> activated by `traigent.testing.enable_mock_mode_for_quickstart()` in local
+> code. The legacy `TRAIGENT_MOCK_LLM=true` env var remains for shell
+> fixtures and emits `DeprecationWarning` when users set it directly.
 
 ## Optional Extras
 

@@ -26,16 +26,6 @@ traigent.initialize(offline=True, minimal_logging=True)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
-SIMULATED_BEST = {
-    "model": "gpt-3.5-turbo",
-    "temperature": 0.0,
-    "style": "documented",
-    "accuracy": 0.8890,
-}
-MOCK_MODE_CONFIG = {
-    "base_accuracy": SIMULATED_BEST["accuracy"],
-    "variance": 0.0,
-}
 OBJECTIVES = ["accuracy", "cost"]
 CONFIG_SPACE = {
     "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
@@ -93,7 +83,6 @@ def _suppress_code_gen_warning() -> None:
     configuration_space=CONFIG_SPACE,
     injection_mode="context",  # default, added explicitly for clarity
     offline=True,
-    mock_mode_config=MOCK_MODE_CONFIG,
 )
 def generate_code(task: str) -> str:
     """Generate code with configurable style."""

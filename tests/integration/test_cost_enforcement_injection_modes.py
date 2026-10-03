@@ -27,7 +27,6 @@ def _assert_invariants_hold() -> None:
     configuration_space={"mode_tag": ["context-mode"]},
     objectives=["accuracy"],
     injection={"injection_mode": "context"},
-    mock={"enabled": True},
 )
 def _context_injected_function() -> str:
     """Return the injected config marker via context provider."""
@@ -39,7 +38,6 @@ def _context_injected_function() -> str:
     configuration_space={"mode_tag": ["parameter-mode"]},
     objectives=["accuracy"],
     injection={"injection_mode": "parameter", "config_param": "cfg"},
-    mock={"enabled": True},
 )
 def _parameter_injected_function(cfg=None) -> str:
     """Return the injected config marker passed as a parameter."""
@@ -51,7 +49,6 @@ def _parameter_injected_function(cfg=None) -> str:
     configuration_space={"mode_tag": ["seamless-mode"]},
     objectives=["accuracy"],
     injection={"injection_mode": "seamless"},
-    mock={"enabled": True},
 )
 def _seamless_injected_function() -> str:
     """Return the injected config marker via seamless injection."""

@@ -33,7 +33,6 @@ def optimize(
     injection: InjectionOptions | dict[str, Any] | None = None,
     effectuation: bool = False,
     execution: ExecutionOptions | dict[str, Any] | None = None,
-    mock: MockModeOptions | dict[str, Any] | None = None,
     strategy: str | None = None,
     strategy_params: Mapping[str, Any] | None = None,
     # Multi-agent configuration
@@ -117,7 +116,6 @@ def my_agent(question: str) -> str:
 | `evaluation` | `EvaluationOptions \| dict \| None` | Bundle for `eval_dataset`, `custom_evaluator`, `scoring_function`, and `metric_functions`. |
 | `injection` | `InjectionOptions \| dict \| None` | Bundle for `injection_mode`, `config_param`, `auto_override_frameworks`, and `framework_targets`. |
 | `execution` | `ExecutionOptions \| dict \| None` | Bundle for execution settings including `algorithm`, `offline`, `local_storage_path`, `parallel_config`, and `max_total_examples`. |
-| `mock` | `MockModeOptions \| dict \| None` | **Deprecated — all fields inert.** Retained on the schema for backwards compatibility (config round-trip). Mock mode is enabled by calling `traigent.testing.enable_mock_mode_for_quickstart()` in local tutorial or test code, not via this object. The legacy `TRAIGENT_MOCK_LLM=true` env var remains available outside production for shell fixtures and backwards compatibility but emits `DeprecationWarning` when users set it directly. See issue #874. |
 
 **ExecutionOptions Fields**
 
@@ -145,7 +143,7 @@ def my_agent(question: str) -> str:
 
 - The default path is `algorithm="auto"`: Traigent smart optimization when portal credentials are available, with trials executing in your process.
 - Set `TRAIGENT_REQUIRE_CLOUD=1` to turn that connectivity fallback into a hard error.
-- Prefer the grouped option classes (`EvaluationOptions`, `InjectionOptions`, `ExecutionOptions`) when you need to adjust several related knobs. Import them from `traigent.api.decorators` and pass either instances or plain dicts. `MockModeOptions` is **deprecated** (all fields inert; see the `mock` row above and issue #874) — do not use it for new code.
+- Prefer the grouped option classes (`EvaluationOptions`, `InjectionOptions`, `ExecutionOptions`) when you need to adjust several related knobs. Import them from `traigent.api.decorators` and pass either instances or plain dicts. The former `mock` / `MockModeOptions` and `mock_mode_config` parameters were removed (Traigent#1370); passing them raises `TypeError`.
 - `parallel_config=ParallelConfig(...)` remains the primary way to control concurrency. Set global defaults via `traigent.configure(parallel_config=...)`, override them in the decorator, and fine-tune per `.optimize()` call. Later scopes override earlier ones field-by-field.
 - `ParallelConfig` lives in `traigent.config.parallel`. You can pass either an instance or a simple `dict` with the same keys.
 - Use `offline=True` when policy requires zero Traigent backend egress. Local `grid` and `random` runs still sync results to the portal unless `offline=True`.

@@ -104,7 +104,9 @@ from traigent.core.objectives import (
     normalize_objectives,
 )
 from traigent.core.optimized_function import (
+    _REMOVED_MOCK_PARAMETERS,
     OptimizedFunction,
+    _removed_mock_parameter_message,
     _reject_removed_strategy_preset,
 )
 from traigent.defaults import DEFAULT_MAX_TRIALS
@@ -130,7 +132,6 @@ __all__ = [
     "ExternalServiceEvaluator",
     "ExecutionOptions",
     "SmartPruningOptions",
-    "MockModeOptions",
     "optimize",
 ]
 
@@ -482,40 +483,6 @@ class ExecutionOptions(BaseModel):
                 "Enterprise. Contact sales@traigent.ai."
             )
         return v
-
-
-class MockModeOptions(BaseModel):
-    """Fine-grained configuration for mock mode behaviour.
-
-    .. deprecated::
-        **All MockModeOptions fields are inert in the current SDK.**
-        Mock mode is enabled by calling ``traigent.testing.enable_mock_mode_for_quickstart()``
-        from local tutorial or test code, not via this object. The
-        legacy ``TRAIGENT_MOCK_LLM=true`` env var remains available outside
-        production for shell fixtures and backwards compatibility, but
-        direct user-set env-var activation emits ``DeprecationWarning``. ``enabled``,
-        ``override_evaluator``, ``base_accuracy``, and ``variance`` are
-        retained on the schema for backwards compatibility so existing
-        serialized configs round-trip without breaking, but the
-        optimization pipeline ignores all of them. In mock mode the LLM
-        call layer is intercepted with canned/deterministic responses;
-        the scoring path (built-in metrics, custom evaluators, and the
-        ``LocalEvaluator`` accuracy calculator) is unchanged — there is
-        no random-score fabrication. Walkthrough scripts under
-        ``walkthrough/mock/`` use their own helper ``get_mock_accuracy``
-        for example scoring; that helper is example-only and is not part
-        of the SDK runtime behavior.
-
-        This deprecation is doc-only. The fields will be removed in a
-        future major version.
-    """
-
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
-
-    enabled: bool = True  # inert; see class docstring
-    override_evaluator: bool = True  # inert; see class docstring
-    base_accuracy: float = 0.75  # inert; see class docstring
-    variance: float = 0.25  # inert; see class docstring
 
 
 BundleModel = TypeVar("BundleModel", bound=BaseModel)
@@ -1009,14 +976,12 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "samples_include_pruned": True,
     "winner_stability_reps": 0,
     "smart_pruning": None,
-    "mock_mode_config": None,
     "custom_evaluator": None,
     "scoring_function": None,
     "metric_functions": None,
     "evaluation": None,
     "injection": None,
     "execution": None,
-    "mock": None,
     "max_trials": DEFAULT_MAX_TRIALS,
     # NOTE: plateau_window / plateau_epsilon / semantic_saturation are
     # intentionally NOT listed here (issue #1692). They are early-stop
@@ -1096,6 +1061,7 @@ _REMOVED_PARAMETERS = frozenset(
         "trigger",
         "batch_size",
         "parallel_trials",
+        *_REMOVED_MOCK_PARAMETERS,
         *_JS_BRIDGE_REMOVED_PARAMETERS,
     )
 )
@@ -1147,6 +1113,8 @@ def _warn_for_legacy_execution_options(keys: set[str]) -> None:
 def _removed_parameter_message(parameter_name: str) -> str:
     if parameter_name in _JS_BRIDGE_REMOVED_PARAMETERS:
         return _JS_BRIDGE_REMOVED_MESSAGE
+    if parameter_name in _REMOVED_MOCK_PARAMETERS:
+        return _removed_mock_parameter_message(parameter_name)
     return (
         f"{parameter_name} parameter has been removed. Use supported arguments such as "
         "parallel_config or ExecutionOptions instead."
@@ -1216,7 +1184,6 @@ class LegacyOptimizeArgs:
     max_total_examples: int | None = None
     samples_include_pruned: bool | None = None
     winner_stability_reps: int | None = None
-    mock_mode_config: dict[str, Any] | None = None
     custom_evaluator: Callable[..., Any] | None = None
     scoring_function: Callable[..., Any] | None = None
     metric_functions: dict[str, Callable[..., Any]] | None = None
@@ -1224,7 +1191,6 @@ class LegacyOptimizeArgs:
     injection: InjectionOptions | dict[str, Any] | None = None
     execution: ExecutionOptions | dict[str, Any] | None = None
     evaluator: ExternalServiceEvaluator | dict[str, Any] | None = None
-    mock: MockModeOptions | dict[str, Any] | None = None
     algorithm: str | None = None
     offline: bool | None = None
     max_trials: int | None = None
@@ -1310,7 +1276,6 @@ class LegacyOptimizeArgs:
             ("max_total_examples", self.max_total_examples),
             ("samples_include_pruned", self.samples_include_pruned),
             ("winner_stability_reps", self.winner_stability_reps),
-            ("mock_mode_config", self.mock_mode_config),
             ("custom_evaluator", self.custom_evaluator),
             ("scoring_function", self.scoring_function),
             ("metric_functions", self.metric_functions),
@@ -1318,7 +1283,6 @@ class LegacyOptimizeArgs:
             ("injection", self.injection),
             ("execution", self.execution),
             ("evaluator", self.evaluator),
-            ("mock", self.mock),
             ("algorithm", self.algorithm),
             ("offline", self.offline),
             ("max_trials", self.max_trials),
@@ -1434,6 +1398,20 @@ def _apply_tvl_artifact(
     return configuration_space, objectives, constraints, default_config
 
 
+def _reject_removed_names_early(
+    runtime_overrides: Mapping[str, Any],
+    legacy: LegacyOptimizeArgs | dict[str, Any] | None,
+) -> None:
+    """Reject removed mock parameters even when later shortcuts would skip them."""
+    names = set(runtime_overrides)
+    if isinstance(legacy, LegacyOptimizeArgs):
+        names |= set(legacy.extra)
+    elif isinstance(legacy, dict):
+        names |= set(legacy)
+    for name in sorted(names & _REMOVED_MOCK_PARAMETERS):
+        raise TypeError(_removed_parameter_message(name))
+
+
 def _parse_legacy_args(
     legacy: LegacyOptimizeArgs | dict[str, Any] | None,
 ) -> LegacyOptimizeArgs | None:
@@ -1455,10 +1433,10 @@ def _build_settings_recorder(
 
     def record_option(key: str, value: Any, source: str) -> None:
         """Record a resolved option and track its configuration source."""
-        if value is None:
-            return
         if key in _REMOVED_PARAMETERS:
             raise TypeError(_removed_parameter_message(key))
+        if value is None:
+            return
         existing_source = provided_sources.get(key)
         if existing_source is not None:
             existing_value = combined_settings[key]
@@ -2539,7 +2517,6 @@ def optimize(  # NOSONAR(S107)
     effectuation: bool = False,
     execution: ExecutionOptions | dict[str, Any] | None = None,
     evaluator: ExternalServiceEvaluator | dict[str, Any] | None = None,
-    mock: MockModeOptions | dict[str, Any] | None = None,
     algorithm: str = "auto",
     offline: bool = False,
     strategy: str | None = None,
@@ -2700,19 +2677,6 @@ def optimize(  # NOSONAR(S107)
                 session creation and emits content-free intermediate reports only
                 for managed/cloud runs.
 
-        Mock mode options:
-            mock: Grouped mock-mode preferences (MockModeOptions or dict).
-            mock_mode_config: Legacy mock-mode dict. **Inert** — the SDK
-                no longer reads ``enabled``, ``override_evaluator``,
-                ``base_accuracy``, or ``variance`` from this dict. Use
-                ``traigent.testing.enable_mock_mode_for_quickstart()`` in
-                local tutorial or test code to enable mock mode. The legacy
-                ``TRAIGENT_MOCK_LLM`` env var remains supported outside
-                production for shell fixtures but emits ``DeprecationWarning``
-                when users set it directly. The parameter is retained for
-                config round-trip;
-                see the tracked fix.
-
         Cost safeguards:
             cost_limit: Maximum USD spending per optimization run. Defaults to
                 TRAIGENT_RUN_COST_LIMIT env var or $2.00. It cannot bound
@@ -2869,6 +2833,10 @@ def optimize(  # NOSONAR(S107)
         Set TRAIGENT_DISABLED=1 environment variable to disable all optimization.
         The decorator becomes a pass-through that returns the original function.
     """
+    # Explicitly supplied removed parameters are rejected before any shortcut
+    # (including the TRAIGENT_DISABLED pass-through below).
+    _reject_removed_names_early(runtime_overrides, legacy)
+
     # Check if Traigent is disabled via environment variable
     # When disabled, @optimize becomes a no-op that returns the original function
     if is_traigent_disabled():
@@ -2925,7 +2893,6 @@ def optimize(  # NOSONAR(S107)
         "effectuation": effectuation,
         "execution": execution,
         "evaluator": evaluator,
-        "mock": mock,
         "algorithm": algorithm,
         "offline": offline,
         "smart_pruning": smart_pruning,
@@ -3036,7 +3003,6 @@ def optimize(  # NOSONAR(S107)
         combined_settings["winner_stability_reps"]
     )
     smart_pruning_value = combined_settings["smart_pruning"]
-    mock_mode_config = combined_settings["mock_mode_config"]
     custom_evaluator = combined_settings["custom_evaluator"]
     scoring_function = combined_settings["scoring_function"]
     metric_functions = combined_settings["metric_functions"]
@@ -3119,7 +3085,6 @@ def optimize(  # NOSONAR(S107)
     execution_bundle = _coerce_bundle(
         combined_settings["execution"], ExecutionOptions, "execution"
     )
-    mock_bundle = _coerce_bundle(combined_settings["mock"], MockModeOptions, "mock")
     tvl_bundle = _coerce_bundle(combined_settings["tvl"], TVLOptions, "tvl")
 
     # Resolve options from bundles
@@ -3276,14 +3241,6 @@ def optimize(  # NOSONAR(S107)
 
     if samples_include_pruned is None:
         samples_include_pruned = True
-
-    if mock_bundle:
-        mock_mode_config = _resolve_option(
-            "mock_mode_config",
-            mock_mode_config,
-            mock_bundle.model_dump(exclude_none=True),
-            defaults,
-        )
 
     _validate_objectives(objectives)
     execution_policy = _resolve_execution_policy_from_options(
@@ -3458,7 +3415,6 @@ def optimize(  # NOSONAR(S107)
             require_run_id=require_run_id_value,
             smart_pruning=smart_pruning_config,
             parallel_config=combined_parallel_config,
-            mock_mode_config=mock_mode_config,
             custom_evaluator=custom_evaluator,
             scoring_function=scoring_function,
             metric_functions=metric_functions,

@@ -419,7 +419,6 @@ class LocalEvaluator(BaseEvaluator):
         max_workers: int = 1,
         detailed: bool = False,
         execution_mode: str | None = None,
-        mock_mode_config: dict[str, Any] | None = None,
         metric_functions: dict[str, Callable[..., Any]] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -430,7 +429,10 @@ class LocalEvaluator(BaseEvaluator):
             timeout: Timeout for individual evaluations (seconds)
             max_workers: Maximum number of concurrent evaluations
             detailed: Whether to preserve detailed example results
-            execution_mode: Execution mode ("local", "hybrid", or "hybrid_api") for determining submission format
+            execution_mode: Internal execution-mode value for determining
+                submission format: ``"local"`` (public mode ``local``),
+                ``"hybrid"`` (the internal value for public mode ``cloud``) or
+                ``"hybrid_api"`` (public mode ``hybrid_api``).
             **kwargs: Additional configuration
         """
         if "privacy_enabled" in kwargs:
@@ -459,15 +461,6 @@ class LocalEvaluator(BaseEvaluator):
         self.execution_mode = (
             self.execution_mode_enum.value if self.execution_mode_enum else None
         )
-        # ``mock_mode_config`` is retained as an accepted parameter for
-        # backward compatibility with public APIs that thread it through
-        # (e.g. ``@traigent.optimize(mock_mode_config=...)``), but it no
-        # longer drives any evaluator behaviour. The previous behaviour
-        # (TRAIGENT_MOCK_LLM-gated fabricated accuracy via
-        # ``_compute_mock_accuracy``) was removed because a stray env var
-        # in production caused real evaluations to be silently replaced
-        # with random.uniform()-based fake scores.
-        self.mock_mode_config = mock_mode_config or {}
         self.metric_functions = metric_functions or {}
         # One-shot guard for the dual-scorer run notice (issue #1845). The
         # evaluator instance is shared across a run's trials, so a flag here

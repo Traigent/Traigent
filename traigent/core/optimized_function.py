@@ -108,6 +108,11 @@ from traigent.integrations.framework_override import override_context
 from traigent.optimizers import get_optimizer
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.spec_loader import load_tvl_spec
+from traigent.utils.removed_params import (
+    REMOVED_MOCK_PARAMETERS,
+    reject_removed_mock_parameters,
+    removed_mock_parameter_message,
+)
 from traigent.utils.artifact_fingerprints import build_artifact_fingerprints
 from traigent.utils.cost_calculator import (
     UnknownModelError,
@@ -192,6 +197,11 @@ def _reject_removed_strategy_preset(
         raise TypeError(_removed_strategy_preset_message(strategy, parameter))
 
 
+_REMOVED_MOCK_PARAMETERS = REMOVED_MOCK_PARAMETERS
+_removed_mock_parameter_message = removed_mock_parameter_message
+_reject_removed_mock_parameters = reject_removed_mock_parameters
+
+
 def _reject_removed_strategy_constructor_kwargs(kwargs: Mapping[str, Any]) -> None:
     """Refuse the retired preset arguments passed to ``OptimizedFunction(...)``.
 
@@ -209,6 +219,15 @@ def _reject_removed_strategy_constructor_kwargs(kwargs: Mapping[str, Any]) -> No
     consumers are untouched.
     """
     _reject_removed_strategy_preset(kwargs.get("strategy"))
+    if "use_cloud_service" in kwargs:
+        raise TypeError(
+            "use_cloud_service was removed; remote cloud execution is not "
+            "available. Use execution_mode='local' or 'hybrid_api'."
+        )
+    if "framework_target" in kwargs:
+        raise TypeError(
+            "framework_target is not a parameter; did you mean framework_targets?"
+        )
     for parameter in ("strategy_params", "strategy_preset"):
         value = kwargs.get(parameter)
         if value is None:
@@ -949,6 +968,7 @@ class OptimizedFunction(Generic[_P, _R]):
         # the removed preset arguments into _decorator_runtime_overrides and
         # run as if they had not been passed.
         _reject_removed_strategy_constructor_kwargs(kwargs)
+        _reject_removed_mock_parameters(kwargs)
 
         # Extract decorator-provided metadata before core storage
         max_trials_explicit = kwargs.pop("_max_trials_explicit", None)
@@ -1134,9 +1154,6 @@ class OptimizedFunction(Generic[_P, _R]):
         except ValueError as exc:
             raise ValidationError(str(exc)) from exc
 
-    def _is_cloud_execution_mode(self) -> bool:
-        return False
-
     def _setup_configuration_space(self, configuration_space) -> None:
         """Setup configuration space."""
         try:
@@ -1241,9 +1258,6 @@ class OptimizedFunction(Generic[_P, _R]):
 
         self._store_callbacks(kwargs, sentinel)
 
-        self.use_cloud_service = self._store_optional_param(
-            kwargs, sentinel, "use_cloud_service", False, as_bool=True
-        )
         raw_cloud_fallback_policy = kwargs.pop("cloud_fallback_policy", sentinel)
         if (
             raw_cloud_fallback_policy is not sentinel
@@ -1259,9 +1273,6 @@ class OptimizedFunction(Generic[_P, _R]):
             )
         self.cloud_fallback_policy = "auto"
         kwargs["cloud_fallback_policy"] = self.cloud_fallback_policy
-        self.framework_target = self._store_optional_param(
-            kwargs, sentinel, "framework_target", None
-        )
 
         # Hybrid API evaluator configuration (execution_mode="hybrid_api")
         self.hybrid_api_endpoint = kwargs.pop("hybrid_api_endpoint", None)
@@ -1284,14 +1295,11 @@ class OptimizedFunction(Generic[_P, _R]):
 
         # Execution knobs
         provided_parallel = coerce_parallel_config(kwargs.pop("parallel_config", None))
-        combined_parallel, sources = merge_parallel_configs(
+        combined_parallel, _sources = merge_parallel_configs(
             [(provided_parallel, "decorator")]
         )
         self.parallel_config = combined_parallel
-        self.parallel_config_sources = sources
         kwargs["parallel_config"] = combined_parallel
-        if sources:
-            kwargs["_parallel_config_sources"] = sources
 
         self.privacy_enabled = self._store_optional_param(
             kwargs, sentinel, "privacy_enabled", False, as_bool=True
@@ -1302,10 +1310,6 @@ class OptimizedFunction(Generic[_P, _R]):
             kwargs["privacy_enabled"] = True
             self._privacy_alias_requested = False
 
-        # Mock mode configuration
-        self.mock_mode_config = self._store_optional_param(
-            kwargs, sentinel, "mock_mode_config", None
-        )
         self.max_examples = self._store_optional_param(
             kwargs, sentinel, "max_examples", None
         )
@@ -1379,12 +1383,8 @@ class OptimizedFunction(Generic[_P, _R]):
             "save_to",
             "callbacks",
             "parallel_config",
-            "_parallel_config_sources",
-            "use_cloud_service",
             "cloud_fallback_policy",
-            "framework_target",
             "privacy_enabled",
-            "mock_mode_config",
             "max_total_examples",
             "samples_include_pruned",
             "winner_stability_reps",
@@ -1404,9 +1404,6 @@ class OptimizedFunction(Generic[_P, _R]):
             for key, value in kwargs.items()
             if key not in excluded_runtime_keys
         }
-
-        # Cloud service client (initialized lazily)
-        self._cloud_client: Any | None = None
 
     def _initialize_provider_and_validate(self) -> None:
         """Initialize configuration provider and validate inputs."""
@@ -1763,6 +1760,7 @@ class OptimizedFunction(Generic[_P, _R]):
         # Bug A). Previously these were silently swallowed into the
         # optimizer's algorithm_config and had no effect. The rejected set is
         # now derived from the allowlist above, not hand-maintained (#1705).
+        _reject_removed_mock_parameters(algorithm_kwargs)
         decorator_only = _decorator_only_optimize_params()
         rejected = decorator_only.intersection(algorithm_kwargs)
         if rejected:
@@ -2650,7 +2648,6 @@ class OptimizedFunction(Generic[_P, _R]):
             effective_privacy_enabled=effective_privacy_enabled,
             objectives=self.objectives,
             execution_mode=self.execution_mode,
-            mock_mode_config=self.mock_mode_config,
             metric_functions=self.metric_functions,
             scoring_function=self.scoring_function,
             decorator_custom_evaluator=self.custom_evaluator,
@@ -3285,37 +3282,6 @@ class OptimizedFunction(Generic[_P, _R]):
                 )
             return None
 
-    def _apply_mock_config_overrides(
-        self, algorithm: str, optimizer_kwargs: dict[str, Any]
-    ) -> str:
-        """No-op retained for backward compatibility.
-
-        Historically this method consulted ``self.mock_mode_config`` to
-        override the optimizer algorithm and to inject ``random_seed`` into
-        ``optimizer_kwargs``. As part of the F5 retirement of the mock-mode
-        flag, ``mock_mode_config`` is now fully inert: callers may still pass
-        the parameter through public APIs, but it must not change optimizer
-        selection or seeding. A stray production config in the past silently
-        rerouted real optimizations to a different algorithm with a fixed
-        seed, so we now ignore it entirely. Real seeding should go through
-        the normal ``algorithm_kwargs`` / ``random_seed`` parameter path.
-        """
-        mock_config = self.mock_mode_config
-        if not isinstance(mock_config, Mapping):
-            return algorithm
-
-        inert_keys = sorted(
-            key for key in ("optimizer", "sampler", "random_seed") if key in mock_config
-        )
-        if inert_keys:
-            logger.warning(
-                "mock_mode_config keys %s are inert post-F5 and no longer select "
-                "optimizers or seed runs; pass algorithm/random_seed via "
-                "decorated.optimize(algorithm=..., random_seed=...) instead.",
-                ", ".join(inert_keys),
-            )
-        return algorithm
-
     def _preflight_model_cost_coverage(
         self,
         effective_config_space: Mapping[str, Any],
@@ -3759,9 +3725,6 @@ Remediation:
         if self.objective_schema is not None:
             optimizer_kwargs["objective_schema"] = self.objective_schema
 
-        # Apply mock config overrides if present
-        algorithm = self._apply_mock_config_overrides(algorithm, optimizer_kwargs)
-
         optimizer = get_optimizer(
             algorithm, effective_config_space, self.objectives, **optimizer_kwargs
         )
@@ -3859,226 +3822,6 @@ Remediation:
             raise wrapped from e
         finally:
             self._restore_hybrid_discovery_state(hybrid_discovery_state, evaluator)
-
-    async def _optimize_with_cloud_service(
-        self,
-        dataset: Dataset,
-        max_trials: int | None = None,
-        timeout: float | None = None,
-        **kwargs: Any,
-    ) -> OptimizationResult:
-        """Run optimization through the reserved Traigent Cloud path.
-
-        Remote cloud execution is not available yet. The cloud client is
-        expected to fail closed with guidance to use hybrid for portal-tracked
-        optimization.
-
-        Args:
-            dataset: Evaluation dataset
-            max_trials: Maximum number of trials
-            timeout: Optimization timeout
-            **kwargs: Additional arguments
-
-        Returns:
-            OptimizationResult from cloud service when the future path is implemented
-        """
-        from traigent.cloud.client import TraigentCloudClient
-
-        # Initialize cloud client if not already done
-        if self._cloud_client is None:
-            self._cloud_client = TraigentCloudClient(enable_fallback=False)
-
-        async with self._cloud_client as client:
-            # Extract configuration_space from kwargs if provided
-            config_space_override = kwargs.pop("configuration_space", None)
-            effective_config_space = self._resolve_cloud_config_space(
-                config_space_override
-            )
-            cloud_result = await self._execute_cloud_service_optimization(
-                client,
-                dataset,
-                effective_config_space,
-                max_trials,
-            )
-            cloud_payload = await self._extract_cloud_result_payload(cloud_result)
-            result = self._build_cloud_optimization_result(cloud_payload)
-
-            # Store results
-            self._optimization_results = result
-            self._csm.append_optimization_result(result)
-
-            # Update current config and best config (consistent with local optimization)
-            if result.best_config:
-                self.apply_best_config(result)
-
-            logger.info(
-                "Cloud optimization completed: %s trials, %.1f%% cost reduction",
-                cloud_payload["trials_count"],
-                cloud_payload["cost_reduction"] * 100,
-            )
-
-            return result
-
-    @staticmethod
-    async def _resolve_awaitable_value(value: Any) -> Any:
-        """Await values only when necessary."""
-        return await value if inspect.isawaitable(value) else value
-
-    def _resolve_cloud_config_space(
-        self, config_space_override: dict[str, Any] | None
-    ) -> dict[str, Any]:
-        """Resolve the configuration space used for cloud optimization."""
-        if config_space_override is not None:
-            return config_space_override
-        return self.configuration_space
-
-    async def _execute_cloud_service_optimization(
-        self,
-        client: Any,
-        dataset: Dataset,
-        effective_config_space: dict[str, Any],
-        max_trials: int | None,
-    ) -> Any:
-        """Run the cloud optimization request inside the configuration context."""
-        from traigent.config.context import ConfigurationSpaceContext
-
-        with ConfigurationSpaceContext(effective_config_space):
-            cloud_candidate = await client.optimize_function(
-                function_name=self.experiment_name,
-                dataset=dataset,
-                configuration_space=effective_config_space,
-                objectives=self.objectives,
-                max_trials=max_trials if max_trials is not None else DEFAULT_MAX_TRIALS,
-                local_function=self.func,
-            )
-            return await self._resolve_awaitable_value(cloud_candidate)
-
-    async def _resolve_cloud_result_attribute(
-        self, cloud_result: Any, attribute: str, default: Any
-    ) -> Any:
-        """Resolve a cloud-result attribute that may be awaitable."""
-        value = getattr(cloud_result, attribute, default)
-        return await self._resolve_awaitable_value(value)
-
-    @staticmethod
-    def _coerce_cloud_metric_map(raw_metrics: Any) -> dict[str, float]:
-        """Normalize cloud metrics into a string-to-float mapping."""
-        if not isinstance(raw_metrics, dict):
-            return {}
-
-        best_metrics: dict[str, float] = {}
-        for key, raw_value in raw_metrics.items():
-            try:
-                best_metrics[str(key)] = float(raw_value)
-            except (TypeError, ValueError):
-                continue
-        return best_metrics
-
-    @staticmethod
-    def _coerce_cloud_int(raw_value: Any, default: int = 0) -> int:
-        """Convert cloud numeric fields to ints with a stable fallback."""
-        try:
-            return int(raw_value)
-        except (TypeError, ValueError):
-            return default
-
-    @staticmethod
-    def _coerce_cloud_float(raw_value: Any, default: float = 0.0) -> float:
-        """Convert cloud numeric fields to floats with a stable fallback."""
-        try:
-            return float(raw_value)
-        except (TypeError, ValueError):
-            return default
-
-    @staticmethod
-    def _coerce_optional_cloud_int(raw_value: Any) -> int | None:
-        """Convert optional cloud integer fields when valid."""
-        return raw_value if isinstance(raw_value, int) else None
-
-    def _select_cloud_best_score(self, best_metrics: dict[str, float]) -> float:
-        """Resolve the best score using the primary objective when available."""
-        primary_objective = self.objectives[0] if self.objectives else None
-        if primary_objective and primary_objective in best_metrics:
-            return best_metrics[primary_objective]
-        if best_metrics:
-            return next(iter(best_metrics.values()))
-        return 0.0
-
-    async def _extract_cloud_result_payload(self, cloud_result: Any) -> dict[str, Any]:
-        """Normalize cloud result attributes into a local payload dict."""
-        best_config_raw = await self._resolve_cloud_result_attribute(
-            cloud_result, "best_config", {}
-        )
-        best_metrics_raw = await self._resolve_cloud_result_attribute(
-            cloud_result, "best_metrics", {}
-        )
-        trials_count_raw = await self._resolve_cloud_result_attribute(
-            cloud_result, "trials_count", 0
-        )
-        cost_reduction_raw = await self._resolve_cloud_result_attribute(
-            cloud_result, "cost_reduction", 0.0
-        )
-        optimization_time_raw = await self._resolve_cloud_result_attribute(
-            cloud_result, "optimization_time", 0.0
-        )
-        subset_used_raw = await self._resolve_cloud_result_attribute(
-            cloud_result, "subset_used", False
-        )
-        subset_size_raw = await self._resolve_cloud_result_attribute(
-            cloud_result, "subset_size", None
-        )
-
-        best_config = (
-            best_config_raw.copy() if isinstance(best_config_raw, dict) else {}
-        )
-        best_metrics = self._coerce_cloud_metric_map(best_metrics_raw)
-        return {
-            "best_config": best_config,
-            "best_metrics": best_metrics,
-            "trials_count": self._coerce_cloud_int(trials_count_raw),
-            "cost_reduction": self._coerce_cloud_float(cost_reduction_raw),
-            "optimization_time": self._coerce_cloud_float(optimization_time_raw),
-            "subset_used": bool(subset_used_raw),
-            "subset_size": self._coerce_optional_cloud_int(subset_size_raw),
-            "best_score": self._select_cloud_best_score(best_metrics),
-        }
-
-    def _build_cloud_optimization_result(self, cloud_result: Any) -> OptimizationResult:
-        """Convert a cloud result payload into a standard optimization result."""
-        from traigent.api.types import TrialResult, TrialStatus
-
-        best_config = cloud_result["best_config"]
-        best_metrics = cloud_result["best_metrics"]
-        optimization_time = cloud_result["optimization_time"]
-        mock_trial = TrialResult(
-            trial_id="cloud_best",
-            config=best_config,
-            metrics=best_metrics,
-            status=TrialStatus.COMPLETED,
-            duration=optimization_time,
-            timestamp=datetime.now(UTC),
-            metadata={},
-        )
-
-        return OptimizationResult(
-            trials=[mock_trial],  # Cloud service doesn't expose all trials
-            best_config=best_config,
-            best_score=cloud_result["best_score"],
-            optimization_id=f"cloud_{int(time.time())}",
-            duration=optimization_time,
-            convergence_info={},
-            status=OptimizationStatus.COMPLETED,
-            objectives=self.objectives,
-            algorithm="cloud_service",
-            timestamp=datetime.now(UTC),
-            metadata={
-                "cloud_service": True,
-                "cost_reduction": cloud_result["cost_reduction"],
-                "subset_used": cloud_result["subset_used"],
-                "subset_size": cloud_result["subset_size"],
-                "trials_count": cloud_result["trials_count"],
-            },
-        )
 
     def optimize_with_guidance(
         self,

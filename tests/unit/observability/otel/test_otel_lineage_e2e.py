@@ -53,7 +53,6 @@ def _real_optimizer_run(collector, *, max_trials=4, concurrency=1):
         configuration_space={"temperature": [0.0, 0.5, 1.0]},
         injection_mode="context",
         offline=True,
-        mock_mode_config={"base_accuracy": 0.9, "variance": 0.0, "random_seed": 1},
         **(
             {"parallel_config": {"trial_concurrency": concurrency}}
             if concurrency > 1
@@ -311,7 +310,6 @@ def test_parallel_grid_trials_have_unique_ids(optimizer_env):
         configuration_space={"temperature": [0.0, 1.0], "model": ["a", "b"]},
         injection_mode="context",
         offline=True,
-        mock_mode_config={"base_accuracy": 0.9, "variance": 0.0, "random_seed": 1},
         parallel_config={"trial_concurrency": 2},
     )
     def agent(q: str) -> str:
