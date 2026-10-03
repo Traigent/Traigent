@@ -103,3 +103,27 @@ def test_validate_config_cli_reports_removed_parameter(
     assert "validation failed" in result.output
     assert name in result.output
     assert "passed" not in result.output
+
+
+@pytest.mark.parametrize("name", REMOVED)
+@pytest.mark.parametrize("cls_name", ["GridSearchOptimizer", "RandomSearchOptimizer"])
+def test_optimizer_constructors_reject_removed_parameter(
+    name: str, cls_name: str
+) -> None:
+    import traigent.optimizers as optimizers
+
+    cls = getattr(optimizers, cls_name)
+    with pytest.raises(TypeError, match=name):
+        cls({"x": [1, 2]}, ["accuracy"], **{name: None})
+    # unrelated unknown kwargs keep their previous behaviour
+    assert cls({"x": [1, 2]}, ["accuracy"], some_extra=1) is not None
+
+
+@pytest.mark.parametrize("name", REMOVED)
+@pytest.mark.parametrize("algorithm", ["grid", "random"])
+def test_get_optimizer_rejects_removed_parameter(name: str, algorithm: str) -> None:
+    from traigent.optimizers import get_optimizer
+    from traigent.utils.exceptions import OptimizationError
+
+    with pytest.raises(OptimizationError, match=name):
+        get_optimizer(algorithm, {"x": [1, 2]}, ["accuracy"], **{name: None})

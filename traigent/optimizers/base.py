@@ -16,6 +16,7 @@ from traigent.utils.objectives import (
 )
 from traigent.utils.discrete_domains import discrete_cardinality_for_config_param
 from traigent.utils.validation import validate_objectives
+from traigent.utils.removed_params import reject_removed_mock_parameters
 
 logger = get_logger(__name__)
 
@@ -45,6 +46,7 @@ class BaseOptimizer(ABC):
             objective_weights: Optional weights for each objective
             **kwargs: Algorithm-specific configuration
         """
+        reject_removed_mock_parameters(kwargs)
         self.config_space = config_space
         if isinstance(objectives, (list, tuple, set)):
             normalized_objectives = list(objectives)

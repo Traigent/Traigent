@@ -35,7 +35,7 @@ import sys
 import threading
 import time
 import warnings
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -108,6 +108,11 @@ from traigent.integrations.framework_override import override_context
 from traigent.optimizers import get_optimizer
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.spec_loader import load_tvl_spec
+from traigent.utils.removed_params import (
+    REMOVED_MOCK_PARAMETERS,
+    reject_removed_mock_parameters,
+    removed_mock_parameter_message,
+)
 from traigent.utils.artifact_fingerprints import build_artifact_fingerprints
 from traigent.utils.cost_calculator import (
     UnknownModelError,
@@ -192,23 +197,9 @@ def _reject_removed_strategy_preset(
         raise TypeError(_removed_strategy_preset_message(strategy, parameter))
 
 
-# Inert parameters removed from the public API (Traigent#1370 Item 6). They are
-# refused loudly instead of being absorbed into runtime overrides.
-_REMOVED_MOCK_PARAMETERS: frozenset[str] = frozenset(("mock_mode_config", "mock"))
-
-
-def _removed_mock_parameter_message(parameter_name: str) -> str:
-    return (
-        f"{parameter_name} parameter has been removed (it was inert). For "
-        "tutorial or test code, call "
-        "traigent.testing.enable_mock_mode_for_quickstart() instead."
-    )
-
-
-def _reject_removed_mock_parameters(names: Iterable[str]) -> None:
-    """Raise ``TypeError`` naming the first removed mock parameter in ``names``."""
-    for name in sorted(set(names) & _REMOVED_MOCK_PARAMETERS):
-        raise TypeError(_removed_mock_parameter_message(name))
+_REMOVED_MOCK_PARAMETERS = REMOVED_MOCK_PARAMETERS
+_removed_mock_parameter_message = removed_mock_parameter_message
+_reject_removed_mock_parameters = reject_removed_mock_parameters
 
 
 def _reject_removed_strategy_constructor_kwargs(kwargs: Mapping[str, Any]) -> None:
