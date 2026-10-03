@@ -1,0 +1,228 @@
+{
+  "contract_id": "traigent.observability.otel_attribute_contract",
+  "contract_version": 1,
+  "description": "Shared contract between Traigent SDK exporters and the Backend OTLP receiver: which OpenTelemetry span attribute names are read, in what precedence, which are content-bearing (dropped by the receiver this round), which bounded metadata keys may be preserved, how spans map to Traigent observation types, and how token usage classes are named. Consumers vendor this file and pin its sha256 in a lock test.",
+  "sources": [
+    {"name": "OpenTelemetry GenAI semantic conventions", "url": "https://github.com/open-telemetry/semantic-conventions-genai", "version": "commit bcc7f9c2 (status: Development; old and new attribute names both accepted)", "purpose": "interoperability: attribute names only", "fetched": "2026-09-30", "covered_by": ["tests/test_observability_otel_attribute_contract.py"]},
+    {"name": "OpenInference semantic conventions", "url": "https://github.com/Arize-ai/openinference/blob/main/spec/semantic_conventions.md", "version": "main as of 2026-09-30", "purpose": "interoperability: attribute names and span-kind names only", "fetched": "2026-09-30", "covered_by": ["tests/test_observability_otel_attribute_contract.py"]},
+    {"name": "OpenTelemetry Protocol (OTLP) specification", "url": "https://opentelemetry.io/docs/specs/otlp/", "version": "1.x", "purpose": "wire format for the receiver (not encoded in this file)", "fetched": "2026-09-30", "covered_by": []}
+  ],
+  "content_mode": {
+    "resource_attribute": "traigent.content_mode.v1",
+    "values": ["metadata", "redacted", "record"],
+    "restrictiveness_order_most_to_least": ["metadata", "redacted", "record"],
+    "default_when_missing_invalid_or_conflicting": "metadata",
+    "resolution_rule": "Let configured be the SDK's configured mode. A span-level declaration that is ABSENT inherits configured. A declaration that is PRESENT but not exactly one of values (wrong case, empty, non-string, null, unknown) is INVALID and resolves to metadata (fail closed), whatever configured is. A VALID declaration resolves to the most restrictive of configured and the declared value (a declaration never grants permission). Consumers (both SDKs and the receiver) must pass every vector in resolution_vectors; a failing vector is merge-blocking for that consumer.",
+    "resolution_vectors": [
+      {"id": "absent_inherits_metadata", "configured": "metadata", "declared": {"present": false}, "expected": "metadata"},
+      {"id": "absent_inherits_redacted", "configured": "redacted", "declared": {"present": false}, "expected": "redacted"},
+      {"id": "absent_inherits_record", "configured": "record", "declared": {"present": false}, "expected": "record"},
+      {"id": "valid_metadata_under_record", "configured": "record", "declared": {"present": true, "value": "metadata"}, "expected": "metadata"},
+      {"id": "valid_redacted_under_record", "configured": "record", "declared": {"present": true, "value": "redacted"}, "expected": "redacted"},
+      {"id": "valid_record_under_record", "configured": "record", "declared": {"present": true, "value": "record"}, "expected": "record"},
+      {"id": "valid_record_cannot_loosen_metadata", "configured": "metadata", "declared": {"present": true, "value": "record"}, "expected": "metadata"},
+      {"id": "valid_record_cannot_loosen_redacted", "configured": "redacted", "declared": {"present": true, "value": "record"}, "expected": "redacted"},
+      {"id": "invalid_unknown_string_under_record", "configured": "record", "declared": {"present": true, "value": "full"}, "expected": "metadata"},
+      {"id": "invalid_case_mismatch_under_record", "configured": "record", "declared": {"present": true, "value": "Record"}, "expected": "metadata"},
+      {"id": "invalid_empty_string_under_record", "configured": "record", "declared": {"present": true, "value": ""}, "expected": "metadata"},
+      {"id": "invalid_null_under_record", "configured": "record", "declared": {"present": true, "value": null}, "expected": "metadata"},
+      {"id": "invalid_number_under_redacted", "configured": "redacted", "declared": {"present": true, "value": 1}, "expected": "metadata"},
+      {"id": "invalid_boolean_under_record", "configured": "record", "declared": {"present": true, "value": true}, "expected": "metadata"}
+    ],
+    "mixed_mode_batches": "per-span most restrictive",
+    "declaration_grants_permission": false,
+    "receiver_stores_content": false,
+    "receiver_note": "This round the receiver always drops every content key regardless of the declared mode. Storing content will require an authenticated project policy (future owner decision). The declaration is recorded as metadata only.",
+    "sdk_egress_by_mode": {
+      "metadata": "content keys removed, only metadata_allowlist keys sent (the allowlist includes every supported usage key)",
+      "redacted": "content keys kept with the value \"[REDACTED]\"",
+      "record": "content keys sent after secret scrubbing and size cap"
+    }
+  },
+  "content_keys": {
+    "exact": [
+      "gen_ai.input.messages", "gen_ai.output.messages", "gen_ai.system_instructions",
+      "gen_ai.tool.call.arguments", "gen_ai.tool.call.result", "gen_ai.tool.definitions",
+      "gen_ai.prompt", "gen_ai.completion",
+      "input.value", "output.value", "input.mime_type", "output.mime_type",
+      "llm.input_messages", "llm.output_messages", "llm.prompts", "llm.invocation_parameters",
+      "llm.tools", "tool.parameters", "tool.description",
+      "embedding.text", "embedding.vector", "embedding.embeddings", "retrieval.documents",
+      "metadata", "tag.tags",
+      "traigent.input", "traigent.output",
+      "exception.message", "exception.stacktrace"
+    ],
+    "prefixes": [
+      "gen_ai.prompt.", "gen_ai.completion.",
+      "llm.input_messages.", "llm.output_messages.", "llm.prompts.", "llm.tools.",
+      "retrieval.documents.", "embedding.embeddings.", "reranker.input_documents.", "reranker.output_documents."
+    ],
+    "prefix_exceptions": ["gen_ai.prompt.name", "gen_ai.prompt.version"],
+    "event_names": ["gen_ai.client.inference.operation.details", "gen_ai.content.prompt", "gen_ai.content.completion"],
+    "event_attribute_allowlist": ["exception.type"],
+    "unknown_keys_in_metadata_mode": "dropped (allowlist model)"
+  },
+  "metadata_allowlist": {
+    "description": "THE single typed metadata-egress set: the only keys an SDK may send in metadata mode and the only keys the receiver may preserve under metadata.otel.*. It covers the general metadata keys and every supported usage key and alias (GenAI current and deprecated names, OpenInference counters). SDKs and the receiver consume this set instead of private lists. Type non_negative_integer means a JSON integer (not boolean) with minimum and maximum inclusive. No wildcards. Anything else is counted in metadata.otel.dropped_attribute_count and dropped.",
+    "attributes": {
+      "gen_ai.operation.name": {"type": "string", "max_length": 64},
+      "gen_ai.provider.name": {"type": "string", "max_length": 64},
+      "gen_ai.system": {"type": "string", "max_length": 64},
+      "gen_ai.request.model": {"type": "string", "max_length": 255},
+      "gen_ai.response.model": {"type": "string", "max_length": 255},
+      "gen_ai.response.id": {"type": "string", "max_length": 255},
+      "gen_ai.response.finish_reasons": {"type": "string_array", "max_items": 16, "max_length": 64},
+      "gen_ai.request.temperature": {"type": "number"},
+      "gen_ai.request.top_p": {"type": "number"},
+      "gen_ai.request.max_tokens": {"type": "non_negative_integer", "minimum": 0, "maximum": 9007199254740991},
+      "gen_ai.agent.id": {"type": "string", "max_length": 255},
+      "gen_ai.agent.name": {"type": "string", "max_length": 255},
+      "gen_ai.tool.name": {"type": "string", "max_length": 255},
+      "gen_ai.tool.call.id": {"type": "string", "max_length": 255},
+      "gen_ai.tool.type": {"type": "string", "max_length": 64},
+      "gen_ai.conversation.id": {"type": "string", "max_length": 255},
+      "gen_ai.prompt.name": {"type": "string", "max_length": 255},
+      "gen_ai.prompt.version": {"type": "non_negative_integer", "minimum": 0, "maximum": 9007199254740991},
+      "openinference.span.kind": {"type": "string", "max_length": 32},
+      "llm.model_name": {"type": "string", "max_length": 255},
+      "llm.provider": {"type": "string", "max_length": 64},
+      "llm.system": {"type": "string", "max_length": 64},
+      "embedding.model_name": {"type": "string", "max_length": 255},
+      "tool.name": {"type": "string", "max_length": 255},
+      "session.id": {"type": "string", "max_length": 255},
+      "user.id": {"type": "string", "max_length": 255},
+      "enduser.id": {"type": "string", "max_length": 255},
+      "error.type": {"type": "string", "max_length": 255},
+      "exception.type": {"type": "string", "max_length": 255},
+      "deployment.environment.name": {"type": "string", "max_length": 64},
+      "deployment.environment": {"type": "string", "max_length": 64},
+      "service.name": {"type": "string", "max_length": 255},
+      "service.version": {"type": "string", "max_length": 128},
+      "traigent.trial_id": {"type": "string", "max_length": 128},
+      "traigent.experiment_run_id": {"type": "string", "max_length": 128},
+      "traigent.config_hash": {"type": "string", "max_length": 128},
+      "traigent.optimization_session_id": {"type": "string", "max_length": 128},
+      "traigent.observation_type": {"type": "string", "max_length": 32},
+      "traigent.content_mode.v1": {"type": "string", "max_length": 16},
+      "gen_ai.usage.cache_creation.input_tokens": {"type": "non_negative_integer", "minimum": 0, "maximum": 9007199254740991},
+      "gen_ai.usage.cache_read.input_tokens": {"type": "non_negative_integer", "minimum": 0, "maximum": 9007199254740991},
+      "gen_ai.usage.completion_tokens": {"type": "non_negative_integer", "minimum": 0, "maximum": 9007199254740991},
+      "gen_ai.usage.input_tokens": {"type": "non_negative_integer", "minimum": 0, "maximum": 9007199254740991},
+      "gen_ai.usage.output_tokens": {"type": "non_negative_integer", "minimum": 0, "maximum": 9007199254740991},
+      "gen_ai.usage.prompt_tokens": {"type": "non_negative_integer", "minimum": 0, "maximum": 9007199254740991},
+      "gen_ai.usage.reasoning.output_tokens": {"type": "non_negative_integer", "minimum": 0, "maximum": 9007199254740991},
+      "llm.token_count.completion": {"type": "non_negative_integer", "minimum": 0, "maximum": 9007199254740991},
+      "llm.token_count.completion_details.reasoning": {"type": "non_negative_integer", "minimum": 0, "maximum": 9007199254740991},
+      "llm.token_count.prompt": {"type": "non_negative_integer", "minimum": 0, "maximum": 9007199254740991},
+      "llm.token_count.prompt_details.cache_read": {"type": "non_negative_integer", "minimum": 0, "maximum": 9007199254740991},
+      "llm.token_count.prompt_details.cache_write": {"type": "non_negative_integer", "minimum": 0, "maximum": 9007199254740991},
+      "llm.token_count.total": {"type": "non_negative_integer", "minimum": 0, "maximum": 9007199254740991},
+      "traigent.usage.semantics": {"type": "string", "max_length": 16, "enum": ["inclusive", "disjoint"]},
+      "traigent.content.dropped_attrs": {"type": "non_negative_integer", "minimum": 0, "maximum": 9007199254740991}
+    },
+    "limits": {"max_attributes_per_span": 128, "max_key_length": 256, "max_string_length": 4096, "max_array_items": 64, "max_depth": 8, "max_span_metadata_bytes": 16384}
+  },
+  "usage_classes": {
+    "classes": ["input", "cache_read", "cache_write", "reasoning", "output"],
+    "wire_semantics": "inclusive",
+    "wire_semantics_rule": "On the wire (OTLP attributes, SDK exporters) input INCLUDES cache_read and cache_write, and output INCLUDES reasoning, as in the OpenTelemetry GenAI and OpenInference conventions. cache_read and cache_write are SUBSETS of input; reasoning is a SUBSET of output. A source that instead reports disjoint buckets (legacy) declares it with the span attribute traigent.usage.semantics = disjoint; absent means inclusive. Exporters must never pre-subtract. Normalisation to the canonical disjoint buckets (common_types CacheReadTokens convention) happens exactly once, in the receiver, by normalisation_rule.",
+    "semantics_marker": {"attribute": "traigent.usage.semantics", "values": ["inclusive", "disjoint"], "default_when_absent": "inclusive", "invalid_value": "UNKNOWN: normalised as inclusive (the upper bound, never under-charges) AND the cache usage fields are listed in unreported_usage_fields; never silently accepted as a valid inclusive declaration"},
+    "normalisation_rule": "Canonical fields: input_fresh, cache_read, cache_write, output_total, reasoning, unreported_usage_fields. Arithmetic default: an absent cache_read/cache_write/reasoning counter counts as 0, so inclusive input is priced as fresh (an upper bound that never under-charges). Unknown stays visible: every absent counter is ALSO reported in unreported_usage_fields (common_types UnreportedUsageFields vocabulary: absent cache_read -> cache_read_tokens, absent cache_write -> cache_creation_tokens; the vocabulary has no reasoning entry and no new status is added. KNOWN LIMITATION: an absent reasoning counter is NOT listed anywhere, because reasoning is priced as output so the arithmetic is unaffected). An explicit 0 gives the same arithmetic but is NOT listed. An invalid traigent.usage.semantics value is UNKNOWN: normalise as inclusive and list both cache_read_tokens and cache_creation_tokens (the input split cannot be trusted); an absent marker is a valid default inclusive and lists nothing extra. inclusive: input_fresh = input - cache_read - cache_write; output_total = output; reasoning is a subset of output_total. disjoint: input_fresh = input; output_total = output + reasoning. Inclusive with cache_read + cache_write > input, or reasoning > output_total, is inconsistent: the receiver records the raw values and flags usage as not normalised (input_fresh null) instead of pricing a negative number. The canonical result (excluding unreported_usage_fields) must be identical for an inclusive and a disjoint representation of the same usage.",
+    "normalisation_vectors": [
+      {"id": "inclusive_cache_read_subtracted", "semantics": "inclusive", "input": 100, "output": 50, "cache_read": 40, "cache_write": 0, "reasoning": 0, "expected": {"input_fresh": 60, "cache_read": 40, "cache_write": 0, "output_total": 50, "reasoning": 0, "unreported_usage_fields": []}},
+      {"id": "disjoint_same_usage_same_result", "semantics": "disjoint", "input": 60, "output": 50, "cache_read": 40, "cache_write": 0, "reasoning": 0, "expected": {"input_fresh": 60, "cache_read": 40, "cache_write": 0, "output_total": 50, "reasoning": 0, "unreported_usage_fields": []}},
+      {"id": "inclusive_cache_read_and_write", "semantics": "inclusive", "input": 100, "output": 10, "cache_read": 30, "cache_write": 20, "reasoning": 0, "expected": {"input_fresh": 50, "cache_read": 30, "cache_write": 20, "output_total": 10, "reasoning": 0, "unreported_usage_fields": []}},
+      {"id": "absent_marker_means_inclusive", "semantics": null, "input": 100, "output": 50, "cache_read": 40, "cache_write": 0, "reasoning": 0, "expected": {"input_fresh": 60, "cache_read": 40, "cache_write": 0, "output_total": 50, "reasoning": 0, "unreported_usage_fields": []}},
+      {"id": "inclusive_reasoning_is_output_subset", "semantics": "inclusive", "input": 10, "output": 80, "cache_read": 0, "cache_write": 0, "reasoning": 30, "expected": {"input_fresh": 10, "cache_read": 0, "cache_write": 0, "output_total": 80, "reasoning": 30, "unreported_usage_fields": []}},
+      {"id": "disjoint_reasoning_added_to_output", "semantics": "disjoint", "input": 10, "output": 50, "cache_read": 0, "cache_write": 0, "reasoning": 30, "expected": {"input_fresh": 10, "cache_read": 0, "cache_write": 0, "output_total": 80, "reasoning": 30, "unreported_usage_fields": []}},
+      {"id": "inclusive_inconsistent_not_normalised", "semantics": "inclusive", "input": 30, "output": 5, "cache_read": 40, "cache_write": 0, "reasoning": 0, "expected": {"input_fresh": null, "cache_read": 40, "cache_write": 0, "output_total": 5, "reasoning": 0, "unreported_usage_fields": []}},
+      {"id": "inclusive_cache_omitted_vs_explicit_zero_omitted", "semantics": "inclusive", "input": 100, "output": 50, "reasoning": 0, "cache_write": 0, "expected": {"input_fresh": 100, "cache_read": 0, "cache_write": 0, "output_total": 50, "reasoning": 0, "unreported_usage_fields": ["cache_read_tokens"]}},
+      {"id": "inclusive_cache_omitted_vs_explicit_zero_explicit", "semantics": "inclusive", "input": 100, "output": 50, "cache_read": 0, "cache_write": 0, "reasoning": 0, "expected": {"input_fresh": 100, "cache_read": 0, "cache_write": 0, "output_total": 50, "reasoning": 0, "unreported_usage_fields": []}},
+      {"id": "all_counters_omitted", "semantics": "inclusive", "input": 100, "output": 50, "expected": {"input_fresh": 100, "cache_read": 0, "cache_write": 0, "output_total": 50, "reasoning": 0, "unreported_usage_fields": ["cache_read_tokens", "cache_creation_tokens"]}},
+      {"id": "invalid_semantics_is_unknown_inclusive", "semantics": "bogus", "input": 100, "output": 50, "cache_read": 40, "cache_write": 0, "reasoning": 0, "expected": {"input_fresh": 60, "cache_read": 40, "cache_write": 0, "output_total": 50, "reasoning": 0, "unreported_usage_fields": ["cache_read_tokens", "cache_creation_tokens"]}},
+      {"id": "non_string_semantics_is_unknown_inclusive", "semantics": 7, "input": 100, "output": 50, "cache_read": 0, "cache_write": 0, "reasoning": 0, "expected": {"input_fresh": 100, "cache_read": 0, "cache_write": 0, "output_total": 50, "reasoning": 0, "unreported_usage_fields": ["cache_read_tokens", "cache_creation_tokens"]}}
+    ],
+    "attributes": {
+      "input": ["gen_ai.usage.input_tokens", "gen_ai.usage.prompt_tokens", "llm.token_count.prompt"],
+      "output": ["gen_ai.usage.output_tokens", "gen_ai.usage.completion_tokens", "llm.token_count.completion"],
+      "cache_read": ["gen_ai.usage.cache_read.input_tokens", "llm.token_count.prompt_details.cache_read"],
+      "cache_write": ["gen_ai.usage.cache_creation.input_tokens", "llm.token_count.prompt_details.cache_write"],
+      "reasoning": ["gen_ai.usage.reasoning.output_tokens", "llm.token_count.completion_details.reasoning"]
+    },
+    "total_tokens": ["llm.token_count.total"],
+    "cost_attributes_trusted": false,
+    "cost_note": "Client-reported cost attributes (llm.cost.*) are not trusted or stored as cost; cost is unknown (null) unless priced server-side."
+  },
+  "observation_type_mapping": {
+    "evaluation_order": ["traigent.observation_type", "gen_ai.operation.name", "openinference.span.kind", "fallback_attributes", "default"],
+    "gen_ai_operation_name": {
+      "chat": "generation", "text_completion": "generation", "generate_content": "generation",
+      "embeddings": "embedding", "execute_tool": "tool_call",
+      "invoke_agent": "agent", "create_agent": "agent", "invoke_workflow": "chain",
+      "retrieval": "retriever", "search_memory": "retriever"
+    },
+    "openinference_span_kind": {
+      "LLM": "generation", "EMBEDDING": "embedding", "CHAIN": "chain", "RETRIEVER": "retriever",
+      "RERANKER": "retriever", "TOOL": "tool", "AGENT": "agent", "GUARDRAIL": "guardrail",
+      "EVALUATOR": "evaluator", "PROMPT": "span"
+    },
+    "fallback_attributes": [
+      {"if_present": "gen_ai.request.model", "type": "generation"},
+      {"if_present": "llm.model_name", "type": "generation"},
+      {"if_present": "gen_ai.tool.name", "type": "tool_call"}
+    ],
+    "default": "span",
+    "fallback_validity": "A fallback attribute counts as present only when its value is a non-empty string. null, empty string, boolean, number, array and object values fall through to the next fallback and finally the default. The same validity applies to explicit, gen_ai.operation.name and openinference.span.kind lookups (an unlisted or non-string value is ignored).",
+    "explicit_attribute": {
+      "name": "traigent.observation_type",
+      "allowed_values": ["span", "generation", "event", "tool_call", "agent", "chain", "tool", "retriever", "evaluator", "embedding", "guardrail"],
+      "rule": "When the span carries traigent.observation_type with a value that is exactly a member of allowed_values (case-sensitive string), it wins over every other mapping source. An absent, non-string, empty or unlisted value is ignored and evaluation continues with the next source; it is never an error."
+    },
+    "vectors": [
+      {"id": "explicit_wins_over_genai_operation", "attributes": {"traigent.observation_type": "evaluator", "gen_ai.operation.name": "chat"}, "expected": "evaluator"},
+      {"id": "explicit_wins_over_openinference_kind", "attributes": {"traigent.observation_type": "guardrail", "openinference.span.kind": "LLM"}, "expected": "guardrail"},
+      {"id": "invalid_explicit_falls_back_to_genai", "attributes": {"traigent.observation_type": "llm", "gen_ai.operation.name": "chat"}, "expected": "generation"},
+      {"id": "case_mismatch_is_invalid", "attributes": {"traigent.observation_type": "Generation", "openinference.span.kind": "TOOL"}, "expected": "tool"},
+      {"id": "non_string_explicit_ignored", "attributes": {"traigent.observation_type": 3}, "expected": "span"},
+      {"id": "explicit_alone", "attributes": {"traigent.observation_type": "retriever"}, "expected": "retriever"},
+      {"id": "existing_mapping_unchanged_without_explicit", "attributes": {"gen_ai.operation.name": "execute_tool"}, "expected": "tool_call"},
+      {"id": "fallback_valid_model_string", "attributes": {"gen_ai.request.model": "m"}, "expected": "generation"},
+      {"id": "fallback_null_falls_through", "attributes": {"gen_ai.request.model": null}, "expected": "span"},
+      {"id": "fallback_empty_string_falls_through", "attributes": {"gen_ai.request.model": ""}, "expected": "span"},
+      {"id": "fallback_boolean_falls_through", "attributes": {"gen_ai.request.model": true}, "expected": "span"},
+      {"id": "fallback_number_falls_through", "attributes": {"gen_ai.request.model": 7}, "expected": "span"},
+      {"id": "fallback_invalid_first_then_valid_next", "attributes": {"gen_ai.request.model": null, "llm.model_name": "m"}, "expected": "generation"},
+      {"id": "fallback_invalid_model_valid_tool", "attributes": {"gen_ai.request.model": "", "gen_ai.tool.name": "t"}, "expected": "tool_call"}
+    ],
+    "note": "The Traigent observation type enum is fixed by observability/observation_ingest_schema.json (_ObservationType); every mapped value must be a member."
+  },
+  "precedence": {
+    "rule": "For each canonical field the first attribute in the list that is present with a valid value wins. Validity includes the contract bounds of metadata_allowlist (type, minimum, maximum), applied BEFORE precedence: an out-of-range higher-priority alias is skipped and the next valid alias is used. Lower entries are ignored (not merged), and the winning source name is recorded. GenAI semantic conventions win over OpenInference on ties because they are the standard; OpenInference names are accepted for instrumentors that emit only them.",
+    "fields": {
+      "operation_type_source": ["gen_ai.operation.name", "openinference.span.kind"],
+      "model_name": ["gen_ai.response.model", "gen_ai.request.model", "llm.model_name", "embedding.model_name"],
+      "provider": ["gen_ai.provider.name", "gen_ai.system", "llm.provider", "llm.system"],
+      "session_id": ["session.id", "resource:session.id", "gen_ai.conversation.id"],
+      "user_id": ["user.id", "enduser.id"],
+      "environment": ["deployment.environment.name", "deployment.environment"],
+      "release": ["service.version"],
+      "tool_name": ["gen_ai.tool.name", "tool.name"],
+      "usage_input": ["gen_ai.usage.input_tokens", "gen_ai.usage.prompt_tokens", "llm.token_count.prompt"],
+      "usage_output": ["gen_ai.usage.output_tokens", "gen_ai.usage.completion_tokens", "llm.token_count.completion"]
+    },
+    "vectors": [
+      {"id": "genai_beats_openinference_model", "field": "model_name", "attributes": {"llm.model_name": "oi-model", "gen_ai.request.model": "req-model"}, "expected": "req-model"},
+      {"id": "response_model_beats_request", "field": "model_name", "attributes": {"gen_ai.request.model": "req-model", "gen_ai.response.model": "resp-model"}, "expected": "resp-model"},
+      {"id": "openinference_only_model", "field": "model_name", "attributes": {"llm.model_name": "oi-model"}, "expected": "oi-model"},
+      {"id": "span_attr_session_beats_resource", "field": "session_id", "attributes": {"session.id": "span-s", "resource:session.id": "res-s", "gen_ai.conversation.id": "conv"}, "expected": "span-s"},
+      {"id": "conversation_last_resort", "field": "session_id", "attributes": {"gen_ai.conversation.id": "conv"}, "expected": "conv"},
+      {"id": "invalid_top_falls_through", "field": "usage_input", "attributes": {"gen_ai.usage.input_tokens": -5, "llm.token_count.prompt": 7}, "expected": 7},
+      {"id": "over_max_first_alias_skipped", "field": "usage_input", "attributes": {"gen_ai.usage.input_tokens": 9007199254740992, "llm.token_count.prompt": 7}, "expected": 7},
+      {"id": "max_safe_integer_first_alias_wins", "field": "usage_input", "attributes": {"gen_ai.usage.input_tokens": 9007199254740991, "llm.token_count.prompt": 7}, "expected": 9007199254740991},
+      {"id": "over_max_output_alias_skipped", "field": "usage_output", "attributes": {"gen_ai.usage.output_tokens": 9007199254740993, "gen_ai.usage.completion_tokens": 3}, "expected": 3},
+      {"id": "all_aliases_out_of_range_is_absent", "field": "usage_input", "attributes": {"gen_ai.usage.input_tokens": 9007199254740992, "llm.token_count.prompt": -1}, "expected": null},
+      {"id": "provider_semconv_first", "field": "provider", "attributes": {"llm.provider": "oi-p", "gen_ai.provider.name": "std-p"}, "expected": "std-p"},
+      {"id": "nothing_present", "field": "environment", "attributes": {}, "expected": null}
+    ]
+  }
+}

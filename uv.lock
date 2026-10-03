@@ -947,6 +947,15 @@ wheels = [
 ]
 
 [[package]]
+name = "dacite"
+version = "1.9.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/55/a0/7ca79796e799a3e782045d29bf052b5cde7439a2bbb17f15ff44f7aacc63/dacite-1.9.2.tar.gz", hash = "sha256:6ccc3b299727c7aa17582f0021f6ae14d5de47c7227932c47fec4cdfefd26f09", size = 22420, upload-time = "2025-02-05T09:27:29.757Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/94/35/386550fd60316d1e37eccdda609b074113298f23cef5bddb2049823fe666/dacite-1.9.2-py3-none-any.whl", hash = "sha256:053f7c3f5128ca2e9aceb66892b1a3c8936d02c686e707bee96e19deef4bc4a0", size = 16600, upload-time = "2025-02-05T09:27:24.345Z" },
+]
+
+[[package]]
 name = "databricks-sdk"
 version = "0.106.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3771,6 +3780,102 @@ wheels = [
 ]
 
 [[package]]
+name = "openinference-instrumentation"
+version = "0.1.66"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "openinference-semantic-conventions" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-sdk" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/31/71/3c4d73b3fc3eee1870bc245bfcd85768a8eb8c996d456ea3f44889595bf7/openinference_instrumentation-0.1.66.tar.gz", hash = "sha256:e0b01776fd5b1699ce720f6241bd8bc77286c0a7aa7a19f8f13ddd6ffe725c07", size = 44000, upload-time = "2026-09-24T03:52:46.106Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7e/7d/98aab8f8428c747cc9369f261713e5f21a93910acc22f65be5e30e4b42e9/openinference_instrumentation-0.1.66-py3-none-any.whl", hash = "sha256:6d01a0f62aaf83c771c84bb919bf49f36ec6eee074552c61cc5c311899467326", size = 51738, upload-time = "2026-09-24T03:52:44.522Z" },
+]
+
+[[package]]
+name = "openinference-instrumentation-anthropic"
+version = "2.1.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "openinference-instrumentation" },
+    { name = "openinference-semantic-conventions" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "typing-extensions" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c6/99/97a7267d6816df66129db600168233fd41caf0a087f06647defb8aa2af80/openinference_instrumentation_anthropic-2.1.7.tar.gz", hash = "sha256:4e9fbfc50b04beb829cfdd068fee603bc7688ef8aa7634034981bf60c74f7651", size = 19214, upload-time = "2026-09-29T18:16:58.693Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3c/10/1d4b3603dbab9b93f37407270a246c5767e58d7da087a669107c0a1f6b96/openinference_instrumentation_anthropic-2.1.7-py3-none-any.whl", hash = "sha256:814aa0fe4cf49c3d6ded59d0989ebd1530ae92bae6ad50b77df3d7a8e6ad70df", size = 22927, upload-time = "2026-09-29T18:16:57.553Z" },
+]
+
+[[package]]
+name = "openinference-instrumentation-bedrock"
+version = "0.1.54"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "dacite" },
+    { name = "openinference-instrumentation" },
+    { name = "openinference-semantic-conventions" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "typing-extensions" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9e/79/c9bf8dafa93b43f142fe03794589b4af2afae9517827cb7d60347190b4a8/openinference_instrumentation_bedrock-0.1.54.tar.gz", hash = "sha256:2258882c8987eb0b8fc89d7adc3a246a9abc611b94231d904d6920c52d077ff0", size = 242489, upload-time = "2026-09-29T18:17:06.576Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6a/53/291b854cc76e0db3e7dd2bf85fc49489675dc437f169a3909f5ab94bee8d/openinference_instrumentation_bedrock-0.1.54-py3-none-any.whl", hash = "sha256:7bb17616fd2d94b9ecd5f08c188f7741d118b662f231b0c2014b96dc9f3cd326", size = 72833, upload-time = "2026-09-29T18:17:04.982Z" },
+]
+
+[[package]]
+name = "openinference-instrumentation-langchain"
+version = "0.1.76"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "openinference-instrumentation" },
+    { name = "openinference-semantic-conventions" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ce/75/616b2ae54e7a2da3396fec122f29323f8c840afdec452c6c0d86fcefe121/openinference_instrumentation_langchain-0.1.76.tar.gz", hash = "sha256:dbe28e88ae11b5f148b30243af2ff100691d4a9941cff6d492ce61e13be12e5d", size = 79596, upload-time = "2026-09-10T05:43:20.168Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e0/81/f797cdc84da0f3b6f9306fc435507583be6fac47ecb79a87607590fec9c4/openinference_instrumentation_langchain-0.1.76-py3-none-any.whl", hash = "sha256:a5fd219508e351899e82b7bdd817f26ad775dfdbf642aaa78a868cdba3e08933", size = 25517, upload-time = "2026-09-10T05:43:18.665Z" },
+]
+
+[[package]]
+name = "openinference-instrumentation-openai"
+version = "0.1.61"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "openinference-instrumentation" },
+    { name = "openinference-semantic-conventions" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "typing-extensions" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8b/3a/3bb17c6af76d8f627cd361644bea314667ec332cf8bfb4ab1803b280b59b/openinference_instrumentation_openai-0.1.61.tar.gz", hash = "sha256:ddfd78c54b040781b38717a4c02fa5f7570d3d5a5f7173253028bef7edb72468", size = 24977, upload-time = "2026-09-24T03:52:49.795Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fe/7c/a0c0d7dd812452500fe5d807550caae8279fa83edbeea3a3478ea513df8f/openinference_instrumentation_openai-0.1.61-py3-none-any.whl", hash = "sha256:0f73a37b6bd9d6755889a8a5b94852303fe147ec9a1cc62092b13700a735c6c4", size = 32621, upload-time = "2026-09-24T03:52:48.428Z" },
+]
+
+[[package]]
+name = "openinference-semantic-conventions"
+version = "0.1.39"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/10/7c1628bd969d2540ba3850df19e698b73ee7d27277d2e7a3de1dfd185a33/openinference_semantic_conventions-0.1.39.tar.gz", hash = "sha256:e7ca74d297f9fa166c5bad871195e24582da35861039ccb459103cda81a354ad", size = 14590, upload-time = "2026-09-24T03:52:38.667Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9a/19/54eec742c937c0ed0de2b9d1ee679d7a502934e31bbd1ff4772322df0e62/openinference_semantic_conventions-0.1.39-py3-none-any.whl", hash = "sha256:2c98d7b9d2ce8b19fbd97d6a496a781fd32d7f31ea63575f1c0cbf8f349b29fa", size = 11701, upload-time = "2026-09-24T03:52:37.413Z" },
+]
+
+[[package]]
 name = "opentelemetry-api"
 version = "1.44.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3841,6 +3946,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1a/87/95e2a5aaa795b4e2260d74e16df2d5541deb2ea9de010bcd615f4dee2654/opentelemetry_exporter_otlp_proto_http-1.44.0.tar.gz", hash = "sha256:c633d7270ad6b57cd4cfbe8b0007a9e2e7c0cb50bd6c50fe2a7b245f721a09d8", size = 25806, upload-time = "2026-07-16T15:25:39.162Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cd/d0/fdeb1a98d8d3a6205f5f297c51b4a9bfe65126ab60339669bbe3dd54c2e2/opentelemetry_exporter_otlp_proto_http-1.44.0-py3-none-any.whl", hash = "sha256:838592fce774c1c8bb7b9a0a7facbfa82e17be5a8a4e94cef10cb84ae026bae3", size = 21850, upload-time = "2026-07-16T15:25:20.006Z" },
+]
+
+[[package]]
+name = "opentelemetry-instrumentation"
+version = "0.65b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "packaging" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/13/91/3c58961cb0360cd60509064734f0be4275383c8681d73c580a40ca83ddce/opentelemetry_instrumentation-0.65b0.tar.gz", hash = "sha256:071d9d9eced9bd6460444ec3b0c77229870ed05a881c22c84fdede58e4eed09b", size = 42689, upload-time = "2026-07-16T15:25:50.275Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/40/7b/85eab1215f72adf0e68d3dc4a679b9bff993fa679ff34cd8dd378e2659fd/opentelemetry_instrumentation-0.65b0-py3-none-any.whl", hash = "sha256:ea967a72b9939b5fcfdad572753b4306c59dcb99e3f382d95dae04286805e137", size = 36717, upload-time = "2026-07-16T15:24:51.424Z" },
 ]
 
 [[package]]
@@ -6078,6 +6198,40 @@ ml = [
     { name = "scikit-learn" },
     { name = "scipy" },
 ]
+observability = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-common" },
+    { name = "opentelemetry-proto" },
+    { name = "opentelemetry-sdk" },
+]
+observability-anthropic = [
+    { name = "openinference-instrumentation-anthropic" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-common" },
+    { name = "opentelemetry-proto" },
+    { name = "opentelemetry-sdk" },
+]
+observability-bedrock = [
+    { name = "openinference-instrumentation-bedrock" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-common" },
+    { name = "opentelemetry-proto" },
+    { name = "opentelemetry-sdk" },
+]
+observability-langchain = [
+    { name = "openinference-instrumentation-langchain" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-common" },
+    { name = "opentelemetry-proto" },
+    { name = "opentelemetry-sdk" },
+]
+observability-openai = [
+    { name = "openinference-instrumentation-openai" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-common" },
+    { name = "opentelemetry-proto" },
+    { name = "opentelemetry-sdk" },
+]
 pydanticai = [
     { name = "pydantic-ai-slim" },
 ]
@@ -6195,8 +6349,32 @@ requires-dist = [
     { name = "numpy", marker = "extra == 'analytics'", specifier = ">=1.21.0" },
     { name = "numpy", marker = "extra == 'ml'", specifier = ">=1.21.0" },
     { name = "openai", marker = "extra == 'integrations'", specifier = ">=2.0.0" },
+    { name = "openinference-instrumentation-anthropic", marker = "extra == 'observability-anthropic'", specifier = "==2.1.7" },
+    { name = "openinference-instrumentation-bedrock", marker = "extra == 'observability-bedrock'", specifier = "==0.1.54" },
+    { name = "openinference-instrumentation-langchain", marker = "extra == 'observability-langchain'", specifier = "==0.1.76" },
+    { name = "openinference-instrumentation-openai", marker = "extra == 'observability-openai'", specifier = "==0.1.61" },
+    { name = "opentelemetry-api", marker = "extra == 'observability'", specifier = ">=1.44.0,<2.0.0" },
+    { name = "opentelemetry-api", marker = "extra == 'observability-anthropic'", specifier = ">=1.44.0,<2.0.0" },
+    { name = "opentelemetry-api", marker = "extra == 'observability-bedrock'", specifier = ">=1.44.0,<2.0.0" },
+    { name = "opentelemetry-api", marker = "extra == 'observability-langchain'", specifier = ">=1.44.0,<2.0.0" },
+    { name = "opentelemetry-api", marker = "extra == 'observability-openai'", specifier = ">=1.44.0,<2.0.0" },
     { name = "opentelemetry-api", marker = "extra == 'tracing'", specifier = ">=1.20.0,<2.0.0" },
     { name = "opentelemetry-exporter-otlp", marker = "extra == 'tracing'", specifier = ">=1.20.0,<2.0.0" },
+    { name = "opentelemetry-exporter-otlp-proto-common", marker = "extra == 'observability'", specifier = ">=1.44.0,<2.0.0" },
+    { name = "opentelemetry-exporter-otlp-proto-common", marker = "extra == 'observability-anthropic'", specifier = ">=1.44.0,<2.0.0" },
+    { name = "opentelemetry-exporter-otlp-proto-common", marker = "extra == 'observability-bedrock'", specifier = ">=1.44.0,<2.0.0" },
+    { name = "opentelemetry-exporter-otlp-proto-common", marker = "extra == 'observability-langchain'", specifier = ">=1.44.0,<2.0.0" },
+    { name = "opentelemetry-exporter-otlp-proto-common", marker = "extra == 'observability-openai'", specifier = ">=1.44.0,<2.0.0" },
+    { name = "opentelemetry-proto", marker = "extra == 'observability'", specifier = ">=1.44.0,<2.0.0" },
+    { name = "opentelemetry-proto", marker = "extra == 'observability-anthropic'", specifier = ">=1.44.0,<2.0.0" },
+    { name = "opentelemetry-proto", marker = "extra == 'observability-bedrock'", specifier = ">=1.44.0,<2.0.0" },
+    { name = "opentelemetry-proto", marker = "extra == 'observability-langchain'", specifier = ">=1.44.0,<2.0.0" },
+    { name = "opentelemetry-proto", marker = "extra == 'observability-openai'", specifier = ">=1.44.0,<2.0.0" },
+    { name = "opentelemetry-sdk", marker = "extra == 'observability'", specifier = ">=1.44.0,<2.0.0" },
+    { name = "opentelemetry-sdk", marker = "extra == 'observability-anthropic'", specifier = ">=1.44.0,<2.0.0" },
+    { name = "opentelemetry-sdk", marker = "extra == 'observability-bedrock'", specifier = ">=1.44.0,<2.0.0" },
+    { name = "opentelemetry-sdk", marker = "extra == 'observability-langchain'", specifier = ">=1.44.0,<2.0.0" },
+    { name = "opentelemetry-sdk", marker = "extra == 'observability-openai'", specifier = ">=1.44.0,<2.0.0" },
     { name = "opentelemetry-sdk", marker = "extra == 'tracing'", specifier = ">=1.20.0,<2.0.0" },
     { name = "pandas", marker = "extra == 'analytics'", specifier = ">=1.3.0" },
     { name = "pandas", marker = "extra == 'integrations'", specifier = ">=1.3.0" },
@@ -6245,7 +6423,7 @@ requires-dist = [
     { name = "wandb", marker = "extra == 'integrations'", specifier = ">=0.15.0" },
     { name = "yarl", specifier = ">=1.24.5,<2" },
 ]
-provides-extras = ["analytics", "bayesian", "integrations", "pydanticai", "security", "visualization", "hybrid", "mcp", "test", "tracing", "dev", "docs", "ml", "deepeval", "cloud", "recommended", "all", "enterprise"]
+provides-extras = ["analytics", "bayesian", "integrations", "pydanticai", "security", "visualization", "hybrid", "mcp", "test", "tracing", "observability", "observability-openai", "observability-anthropic", "observability-langchain", "observability-bedrock", "dev", "docs", "ml", "deepeval", "cloud", "recommended", "all", "enterprise"]
 
 [[package]]
 name = "truststore"
