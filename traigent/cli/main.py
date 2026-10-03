@@ -25,6 +25,10 @@ from traigent.storage.local_storage import LocalStorageManager, OptimizationSess
 from traigent.utils.console import configure_stdout_encoding
 from traigent.utils.logging import setup_logging
 from traigent.utils.persistence import PersistenceManager
+from traigent.utils.removed_params import (
+    REMOVED_MOCK_PARAMETERS,
+    removed_mock_parameter_message,
+)
 from traigent.utils.secure_path import (
     PathTraversalError,
     safe_open,
@@ -1783,15 +1787,11 @@ def validate_config(config_file: str) -> None:
             config = json.load(f)
 
         # Removed parameters must be reported, not silently dropped.
-        removed = [name for name in ("mock_mode_config", "mock") if name in config]
+        removed = sorted(REMOVED_MOCK_PARAMETERS & set(config))
         if removed:
-            from traigent.core.optimized_function import (
-                _removed_mock_parameter_message,
-            )
-
             console.print("❌ [red]Configuration validation failed[/red]")
             for name in removed:
-                console.print(f"[red]{_removed_mock_parameter_message(name)}[/red]")
+                console.print(f"[red]{removed_mock_parameter_message(name)}[/red]")
             return
 
         # Extract configuration components

@@ -48,14 +48,14 @@ from traigent.api.decorators import ExecutionOptions
 
 ### Edge Analytics (Default)
 
-Optimization runs on your local machine. Set `TRAIGENT_OFFLINE_MODE=true` when you want no Traigent backend communication. With `offline=True` no Traigent backend client, session, trial or trace is created, so tuned config values (including string values) are not sent to Traigent. Without it, the default portal-backed path still sends the tuned config-space values and numeric metrics (not dataset inputs, expected outputs or model responses). `offline=True` does not stop your own function from calling LLM providers, and does not disable OpenTelemetry export if you enabled it.
+Optimization runs on your local machine. Set `TRAIGENT_OFFLINE_MODE=true` when you want no Traigent backend communication. With `offline=True` no Traigent backend client is created and no session, trial or trace records are sent to the backend, so tuned config values (including string values) are not sent to Traigent; results are still stored locally. Without it, the default portal-backed path still sends the tuned config-space values and numeric metrics (not dataset inputs, expected outputs or model responses). `offline=True` does not stop your own function from calling LLM providers, and does not disable OpenTelemetry export if you enabled it (trial configuration and example content can still be exported to your collector).
 
 ```python
 @traigent.optimize(
     execution=ExecutionOptions(
         execution_mode="local",
         local_storage_path="./results",
-        offline=True,  # no Traigent backend egress
+        offline=True,  # no traffic to the Traigent backend; own LLM calls and OpenTelemetry export unaffected
     ),
     configuration_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
 )
