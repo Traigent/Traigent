@@ -6,6 +6,22 @@ from dataclasses import dataclass
 from typing import Any
 
 
+def _optional_cost(payload: dict[str, Any], key: str) -> float | None:
+    """Read a nullable cost field; null/absent means unknown and is never coerced to 0."""
+    value = payload.get(key)
+    return None if value is None else float(value)
+
+
+def _optional_str(payload: dict[str, Any], key: str) -> str | None:
+    value = payload.get(key)
+    return None if value is None else str(value)
+
+
+def _optional_int(payload: dict[str, Any], key: str) -> int | None:
+    value = payload.get(key)
+    return None if value is None else int(value)
+
+
 @dataclass(frozen=True)
 class AnalyticsContextDTO:
     tenant_id: str
@@ -507,11 +523,24 @@ class ObservabilitySummaryCardsDTO:
     bookmarked_traces_in_range: int
     published_traces_in_range: int
     commented_traces_in_range: int
-    total_cost_usd_in_range: float
+    # None = unknown (unpriced/partial); never coerced to 0.
+    total_cost_usd_in_range: float | None
     total_tokens_in_range: int
+    total_cost_usd: float | None = None
+    cost_status: str | None = None
+    priced_cost_usd: float | None = None
+    unpriced_trace_count: int | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> ObservabilitySummaryCardsDTO:
+        # ``total_cost_usd_in_range`` is the deprecated alias of ``total_cost_usd``.
+        # Older payloads carry only the alias; either may be null (unknown cost).
+        alias = _optional_cost(payload, "total_cost_usd_in_range")
+        total = (
+            _optional_cost(payload, "total_cost_usd")
+            if "total_cost_usd" in payload
+            else alias
+        )
         return cls(
             sessions_in_range=int(payload["sessions_in_range"]),
             traces_in_range=int(payload["traces_in_range"]),
@@ -519,8 +548,12 @@ class ObservabilitySummaryCardsDTO:
             bookmarked_traces_in_range=int(payload["bookmarked_traces_in_range"]),
             published_traces_in_range=int(payload["published_traces_in_range"]),
             commented_traces_in_range=int(payload["commented_traces_in_range"]),
-            total_cost_usd_in_range=float(payload["total_cost_usd_in_range"]),
+            total_cost_usd_in_range=alias if alias is not None else total,
             total_tokens_in_range=int(payload["total_tokens_in_range"]),
+            total_cost_usd=total,
+            cost_status=_optional_str(payload, "cost_status"),
+            priced_cost_usd=_optional_cost(payload, "priced_cost_usd"),
+            unpriced_trace_count=_optional_int(payload, "unpriced_trace_count"),
         )
 
 
@@ -530,7 +563,7 @@ class ObservabilityActivityTrendPointDTO:
     bucket_label: str
     traces: int
     observations: int
-    total_cost_usd: float
+    total_cost_usd: float | None
     total_tokens: int
 
     @classmethod
@@ -540,7 +573,7 @@ class ObservabilityActivityTrendPointDTO:
             bucket_label=str(payload["bucket_label"]),
             traces=int(payload["traces"]),
             observations=int(payload["observations"]),
-            total_cost_usd=float(payload["total_cost_usd"]),
+            total_cost_usd=_optional_cost(payload, "total_cost_usd"),
             total_tokens=int(payload["total_tokens"]),
         )
 
@@ -552,13 +585,16 @@ class ObservabilityTopTraceDTO:
     name: str
     status: str
     observation_count: int
-    total_cost_usd: float
+    total_cost_usd: float | None
     total_tokens: int
     total_latency_ms: int
     is_bookmarked: bool
     is_published: bool
     started_at: str | None
     privacy_classification: str
+    cost_status: str | None = None
+    priced_cost_usd: float | None = None
+    unpriced_observation_count: int | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> ObservabilityTopTraceDTO:
@@ -572,7 +608,7 @@ class ObservabilityTopTraceDTO:
             name=str(payload["name"]),
             status=str(payload["status"]),
             observation_count=int(payload["observation_count"]),
-            total_cost_usd=float(payload["total_cost_usd"]),
+            total_cost_usd=_optional_cost(payload, "total_cost_usd"),
             total_tokens=int(payload["total_tokens"]),
             total_latency_ms=int(payload["total_latency_ms"]),
             is_bookmarked=bool(payload["is_bookmarked"]),
@@ -583,6 +619,11 @@ class ObservabilityTopTraceDTO:
                 else None
             ),
             privacy_classification=str(payload["privacy_classification"]),
+            cost_status=_optional_str(payload, "cost_status"),
+            priced_cost_usd=_optional_cost(payload, "priced_cost_usd"),
+            unpriced_observation_count=_optional_int(
+                payload, "unpriced_observation_count"
+            ),
         )
 
 
