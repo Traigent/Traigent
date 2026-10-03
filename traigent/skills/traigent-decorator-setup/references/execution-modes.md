@@ -16,7 +16,7 @@ from traigent.api.decorators import ExecutionOptions
 | `local_storage_path` | `str \| None` | `None` | Directory path for local result storage. |
 | `minimal_logging` | `bool` | `True` | Minimize logging output during optimization. |
 | `parallel_config` | `ParallelConfig \| dict \| None` | `None` | Parallel execution settings. See ParallelConfig section. |
-| `privacy_enabled` | `bool \| None` | `None` | **Deprecated, no effect** (it emits a warning). It does not protect data. Use `offline=True` for no Traigent backend egress. |
+| `privacy_enabled` | `bool \| None` | `None` | **Deprecated, no effect** (it emits a warning). It does not protect data. Use `offline=True` to stop the optimizer's own submissions to the Traigent backend (not OpenTelemetry export; see Edge Analytics below). |
 | `max_total_examples` | `int \| None` | `None` | Cap total examples evaluated across all trials. |
 | `samples_include_pruned` | `bool` | `True` | Whether pruned trials count toward sample limits. |
 | `cloud_fallback_policy` | `str \| None` | `None` | Legacy setting for future cloud execution. `cloud` is not available yet and fails closed. |
@@ -48,14 +48,14 @@ from traigent.api.decorators import ExecutionOptions
 
 ### Edge Analytics (Default)
 
-Optimization runs on your local machine. `offline=True` (or `TRAIGENT_OFFLINE_MODE=true`) stops the optimizer's own backend submissions: no Traigent backend client is created for the run, and its session, trial and workflow-trace records are not sent, so tuned config values (including string values) do not reach Traigent through the optimizer; results are still stored locally. It is not a global network switch: SDK clients you enable separately (observability ingest, direct workflow-trace submission, MCP login, analytics or economics clients, license validation) follow their own settings, your own function still calls its LLM providers, and OpenTelemetry export, if you enabled it, can still send trial configuration and example content to your collector. Without `offline=True`, the default portal-backed path sends the tuned config-space values and numeric metrics (not dataset inputs, expected outputs or model responses).
+Optimization runs on your local machine. `offline=True` (or `TRAIGENT_OFFLINE_MODE=true`) stops the optimizer's own backend submissions: no Traigent backend client is created for the run, and its session, trial and workflow-trace records are not sent, so tuned config values (including string values) do not reach Traigent through the optimizer; results are still stored locally. It is not a global network switch: SDK clients you enable separately (observability ingest, direct workflow-trace submission, MCP login, analytics or economics clients, license validation) follow their own settings, your own function still calls its LLM providers, and OpenTelemetry export is not controlled by `offline=True`: if you call `traigent.observability.otel.init()`, its exporter sends spans to the Traigent backend by default (override with `endpoint=`) and is disabled only by the environment flags `TRAIGENT_OFFLINE_MODE=true` / `TRAIGENT_OFFLINE=true` (or `TRAIGENT_DISABLE_TELEMETRY`), and OpenTelemetry export to your own collector can still send trial configuration and example content. Without `offline=True`, the default portal-backed path sends the tuned config-space values and numeric metrics (not dataset inputs, expected outputs or model responses).
 
 ```python
 @traigent.optimize(
     execution=ExecutionOptions(
         execution_mode="local",
         local_storage_path="./results",
-        offline=True,  # no optimizer submissions to the Traigent backend; see the caveats above
+        offline=True,  # no optimizer submissions to the Traigent backend; OTel export is separate (TRAIGENT_OFFLINE_MODE), see above
     ),
     configuration_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
 )

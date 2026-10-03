@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from traigent.api.types import ExampleResult
+from traigent.utils.removed_params import reject_removed_mock_parameters
 from traigent.identity.examples import result_identity_fields
 from traigent.evaluators.dataset_registry import (
     DatasetRegistryEntry,
@@ -1401,6 +1402,7 @@ class BaseEvaluator(ABC):
             custom_eval_func: Optional custom evaluation function
             **kwargs: Additional configuration
         """
+        reject_removed_mock_parameters(kwargs)
         self.metrics = metrics or ["accuracy"]
         self.timeout = timeout
         self.max_workers = max_workers

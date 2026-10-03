@@ -52,6 +52,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   exported. Mock LLM behaviour is unchanged: use
   `traigent.testing.enable_mock_mode_for_quickstart()` (or the `TRAIGENT_MOCK_LLM`
   env var) instead.
+- **BREAKING: `OptimizedFunction(...)` rejects `use_cloud_service` and the singular
+  `framework_target`.** Presence alone raises (even `False` / `None`), instead of
+  being absorbed. Migration: drop `use_cloud_service` (it had no effect); use
+  `framework_targets` in place of `framework_target`.
+- **BREAKING: optimizer constructors and `get_optimizer(...)` reject `mock` and
+  `mock_mode_config`.** `get_optimizer` wraps the constructor `TypeError` in
+  `OptimizationError`; `validate_optimize_parameters()` raises `ValidationError`.
+- **BREAKING: evaluators reject `mock` and `mock_mode_config`.** `LocalEvaluator(...)`
+  (and every `BaseEvaluator` subclass) now raises `TypeError` for either name,
+  even when the value is `None`, instead of storing it in `evaluator.config`.
 
 ## [0.30.0] - 2026-09-26
 

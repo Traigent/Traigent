@@ -127,3 +127,12 @@ def test_get_optimizer_rejects_removed_parameter(name: str, algorithm: str) -> N
 
     with pytest.raises(OptimizationError, match=name):
         get_optimizer(algorithm, {"x": [1, 2]}, ["accuracy"], **{name: None})
+
+
+@pytest.mark.parametrize("name", REMOVED)
+@pytest.mark.parametrize("value", [{"enabled": True}, None])
+def test_local_evaluator_rejects_removed_parameter(name: str, value: Any) -> None:
+    from traigent.evaluators.local import LocalEvaluator
+
+    with pytest.raises(TypeError, match=name):
+        LocalEvaluator(**{name: value})
