@@ -239,7 +239,6 @@ def test_public_decorator_rejects_unknown_bare_objective_early(
             objectives=["plugin_quality"],
             configuration_space={"temperature": [0.0]},
             offline=offline,
-            mock={"enabled": True},
         )
         def agent(prompt: str) -> str:
             return prompt
@@ -254,7 +253,6 @@ def test_public_decorator_preserves_declared_custom_orientation() -> None:
         objectives=schema,
         configuration_space={"temperature": [0.0, 1.0]},
         offline=True,
-        mock={"enabled": True},
     )
     def agent(prompt: str, temperature: float = 0.0) -> str:
         return prompt

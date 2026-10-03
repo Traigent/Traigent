@@ -35,7 +35,7 @@ import sys
 import threading
 import time
 import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -190,6 +190,25 @@ def _reject_removed_strategy_preset(
     """
     if isinstance(strategy, str) and strategy in _REMOVED_STRATEGY_PRESETS:
         raise TypeError(_removed_strategy_preset_message(strategy, parameter))
+
+
+# Inert parameters removed from the public API (Traigent#1370 Item 6). They are
+# refused loudly instead of being absorbed into runtime overrides.
+_REMOVED_MOCK_PARAMETERS: frozenset[str] = frozenset(("mock_mode_config", "mock"))
+
+
+def _removed_mock_parameter_message(parameter_name: str) -> str:
+    return (
+        f"{parameter_name} parameter has been removed (it was inert). For "
+        "tutorial or test code, call "
+        "traigent.testing.enable_mock_mode_for_quickstart() instead."
+    )
+
+
+def _reject_removed_mock_parameters(names: Iterable[str]) -> None:
+    """Raise ``TypeError`` naming the first removed mock parameter in ``names``."""
+    for name in sorted(set(names) & _REMOVED_MOCK_PARAMETERS):
+        raise TypeError(_removed_mock_parameter_message(name))
 
 
 def _reject_removed_strategy_constructor_kwargs(kwargs: Mapping[str, Any]) -> None:
@@ -949,6 +968,7 @@ class OptimizedFunction(Generic[_P, _R]):
         # the removed preset arguments into _decorator_runtime_overrides and
         # run as if they had not been passed.
         _reject_removed_strategy_constructor_kwargs(kwargs)
+        _reject_removed_mock_parameters(kwargs)
 
         # Extract decorator-provided metadata before core storage
         max_trials_explicit = kwargs.pop("_max_trials_explicit", None)
@@ -1302,10 +1322,6 @@ class OptimizedFunction(Generic[_P, _R]):
             kwargs["privacy_enabled"] = True
             self._privacy_alias_requested = False
 
-        # Mock mode configuration
-        self.mock_mode_config = self._store_optional_param(
-            kwargs, sentinel, "mock_mode_config", None
-        )
         self.max_examples = self._store_optional_param(
             kwargs, sentinel, "max_examples", None
         )
@@ -1384,7 +1400,6 @@ class OptimizedFunction(Generic[_P, _R]):
             "cloud_fallback_policy",
             "framework_target",
             "privacy_enabled",
-            "mock_mode_config",
             "max_total_examples",
             "samples_include_pruned",
             "winner_stability_reps",
@@ -1763,6 +1778,7 @@ class OptimizedFunction(Generic[_P, _R]):
         # Bug A). Previously these were silently swallowed into the
         # optimizer's algorithm_config and had no effect. The rejected set is
         # now derived from the allowlist above, not hand-maintained (#1705).
+        _reject_removed_mock_parameters(algorithm_kwargs)
         decorator_only = _decorator_only_optimize_params()
         rejected = decorator_only.intersection(algorithm_kwargs)
         if rejected:
@@ -2650,7 +2666,6 @@ class OptimizedFunction(Generic[_P, _R]):
             effective_privacy_enabled=effective_privacy_enabled,
             objectives=self.objectives,
             execution_mode=self.execution_mode,
-            mock_mode_config=self.mock_mode_config,
             metric_functions=self.metric_functions,
             scoring_function=self.scoring_function,
             decorator_custom_evaluator=self.custom_evaluator,
@@ -3285,37 +3300,6 @@ class OptimizedFunction(Generic[_P, _R]):
                 )
             return None
 
-    def _apply_mock_config_overrides(
-        self, algorithm: str, optimizer_kwargs: dict[str, Any]
-    ) -> str:
-        """No-op retained for backward compatibility.
-
-        Historically this method consulted ``self.mock_mode_config`` to
-        override the optimizer algorithm and to inject ``random_seed`` into
-        ``optimizer_kwargs``. As part of the F5 retirement of the mock-mode
-        flag, ``mock_mode_config`` is now fully inert: callers may still pass
-        the parameter through public APIs, but it must not change optimizer
-        selection or seeding. A stray production config in the past silently
-        rerouted real optimizations to a different algorithm with a fixed
-        seed, so we now ignore it entirely. Real seeding should go through
-        the normal ``algorithm_kwargs`` / ``random_seed`` parameter path.
-        """
-        mock_config = self.mock_mode_config
-        if not isinstance(mock_config, Mapping):
-            return algorithm
-
-        inert_keys = sorted(
-            key for key in ("optimizer", "sampler", "random_seed") if key in mock_config
-        )
-        if inert_keys:
-            logger.warning(
-                "mock_mode_config keys %s are inert post-F5 and no longer select "
-                "optimizers or seed runs; pass algorithm/random_seed via "
-                "decorated.optimize(algorithm=..., random_seed=...) instead.",
-                ", ".join(inert_keys),
-            )
-        return algorithm
-
     def _preflight_model_cost_coverage(
         self,
         effective_config_space: Mapping[str, Any],
@@ -3758,9 +3742,6 @@ Remediation:
             optimizer_kwargs["max_trials"] = max_trials
         if self.objective_schema is not None:
             optimizer_kwargs["objective_schema"] = self.objective_schema
-
-        # Apply mock config overrides if present
-        algorithm = self._apply_mock_config_overrides(algorithm, optimizer_kwargs)
 
         optimizer = get_optimizer(
             algorithm, effective_config_space, self.objectives, **optimizer_kwargs

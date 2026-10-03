@@ -33,10 +33,6 @@ traigent.initialize(offline=True, minimal_logging=True)
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
 SIMULATED_BEST = {"model": "gpt-4o", "temperature": 0.1, "accuracy": 0.9}
-MOCK_MODE_CONFIG = {
-    "base_accuracy": SIMULATED_BEST["accuracy"],
-    "variance": 0.0,
-}
 OBJECTIVES = ["accuracy", "cost"]
 CONFIG_SPACE = {
     "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
@@ -70,7 +66,6 @@ def results_match_score(
     configuration_space=CONFIG_SPACE,
     injection_mode="seamless",
     offline=True,
-    mock_mode_config=MOCK_MODE_CONFIG,
 )
 def answer_question(question: str) -> str:
     """Your existing code - unchanged! Traigent intercepts the LLM call.

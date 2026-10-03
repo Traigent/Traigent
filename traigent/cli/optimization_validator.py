@@ -212,12 +212,10 @@ class OptimizationValidator:
             return LocalEvaluator(
                 metrics=func_info.objectives or ["accuracy"],
                 execution_mode=execution_mode,
-                mock_mode_config=getattr(func_info.func, "mock_mode_config", None),
             )
         return LocalEvaluator(
             metrics=func_info.objectives,
             execution_mode=execution_mode,
-            mock_mode_config=getattr(func_info.func, "mock_mode_config", None),
         )
 
     def _local_evaluator_mode(

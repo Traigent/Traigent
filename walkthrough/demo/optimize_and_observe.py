@@ -529,11 +529,6 @@ def create_demo_agent(runtime: RuntimeSettings, client: ObservabilityClient):
         configuration_space=runtime.config_space,
         injection_mode="context",
         offline=True,
-        mock_mode_config={
-            "base_accuracy": 0.85,
-            "variance": 0.0,
-            "random_seed": 42,
-        },
     )
     @observe(
         name=runtime.trace_name,

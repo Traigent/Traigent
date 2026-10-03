@@ -449,7 +449,14 @@ def validate_optimize_parameters(**kwargs: Any) -> OptimizeParameters:
     """
     unsupported = {
         key
-        for key in ("auto_optimize", "trigger", "batch_size", "parallel_trials")
+        for key in (
+            "auto_optimize",
+            "trigger",
+            "batch_size",
+            "parallel_trials",
+            "mock_mode_config",
+            "mock",
+        )
         if key in kwargs
     }
     if unsupported:

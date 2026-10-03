@@ -757,10 +757,6 @@ class TestOptimizedFunction:
             custom_evaluator=mock_custom_evaluator,
             max_trials=2,
             eval_dataset=sample_dataset,
-            mock_mode_config={
-                "enabled": True,
-                "override_evaluator": False,
-            },  # Don't override custom evaluator in mock mode
         )
 
         with (

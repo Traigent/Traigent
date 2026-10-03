@@ -1782,6 +1782,18 @@ def validate_config(config_file: str) -> None:
         ) as f:
             config = json.load(f)
 
+        # Removed parameters must be reported, not silently dropped.
+        removed = [name for name in ("mock_mode_config", "mock") if name in config]
+        if removed:
+            from traigent.core.optimized_function import (
+                _removed_mock_parameter_message,
+            )
+
+            console.print("❌ [red]Configuration validation failed[/red]")
+            for name in removed:
+                console.print(f"[red]{_removed_mock_parameter_message(name)}[/red]")
+            return
+
         # Extract configuration components
         config_space = config.get("configuration_space", {})
         objectives = config.get("objectives", ["accuracy"])

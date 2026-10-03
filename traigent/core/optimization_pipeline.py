@@ -279,21 +279,15 @@ def resolve_effective_parallel_config(
 def resolve_custom_evaluator(
     custom_evaluator: Callable[..., Any] | None,
     *,
-    mock_mode_config: dict[str, Any] | None,  # noqa: ARG001 - retained for API compat
     decorator_custom_evaluator: Callable[..., Any] | None,
 ) -> Callable[..., Any] | None:
     """Resolve the effective custom evaluator.
 
     The user-provided custom evaluator (from either the ``@optimize`` decorator
-    or the ``optimize()`` call) is always honoured. ``mock_mode_config`` is
-    accepted for backward compatibility with the public API but is otherwise
-    ignored: it previously combined with the now-retired ``TRAIGENT_MOCK_LLM``
-    env var to silently swap a user-supplied evaluator for ``LocalEvaluator``,
-    which was unsafe in production environments where the env var leaked.
+    or the ``optimize()`` call) is always honoured.
 
     Args:
         custom_evaluator: Custom evaluator from optimize() call.
-        mock_mode_config: Ignored. Retained for backward-compatible signatures.
         decorator_custom_evaluator: Custom evaluator from decorator.
 
     Returns:
@@ -742,7 +736,6 @@ def _create_local_evaluator(
     *,
     objectives: Sequence[str],
     execution_mode: str,
-    mock_mode_config: dict[str, Any] | None,
     metric_functions: dict[str, Callable[..., Any]] | None,
     scoring_function: Callable[..., Any] | None,
 ) -> tuple[BaseEvaluator, None]:
@@ -761,7 +754,6 @@ def _create_local_evaluator(
             max_workers=effective_workers,
             detailed=True,
             execution_mode=execution_mode,
-            mock_mode_config=mock_mode_config,
             metric_functions=effective_metric_fns or None,
         ),
         None,
@@ -777,7 +769,6 @@ def create_effective_evaluator(
     *,
     objectives: Sequence[str],
     execution_mode: str,
-    mock_mode_config: dict[str, Any] | None,
     metric_functions: dict[str, Callable[..., Any]] | None,
     scoring_function: Callable[..., Any] | None,
     decorator_custom_evaluator: Callable[..., Any] | None,
@@ -797,7 +788,6 @@ def create_effective_evaluator(
         effective_privacy_enabled: Whether privacy mode is enabled
         objectives: Objective names
         execution_mode: Execution mode string
-        mock_mode_config: Mock mode configuration
         metric_functions: Explicit metric functions
         scoring_function: Scoring function
         decorator_custom_evaluator: Custom evaluator from decorator
@@ -807,7 +797,6 @@ def create_effective_evaluator(
     """
     effective_evaluator = resolve_custom_evaluator(
         custom_evaluator,
-        mock_mode_config=mock_mode_config,
         decorator_custom_evaluator=decorator_custom_evaluator,
     )
 
@@ -856,7 +845,6 @@ def create_effective_evaluator(
                 effective_thread_workers,
                 objectives=objectives,
                 execution_mode=execution_mode,
-                mock_mode_config=mock_mode_config,
                 metric_functions=metric_functions,
                 scoring_function=scoring_function,
             )

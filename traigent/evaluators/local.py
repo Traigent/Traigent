@@ -419,7 +419,6 @@ class LocalEvaluator(BaseEvaluator):
         max_workers: int = 1,
         detailed: bool = False,
         execution_mode: str | None = None,
-        mock_mode_config: dict[str, Any] | None = None,
         metric_functions: dict[str, Callable[..., Any]] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -459,15 +458,6 @@ class LocalEvaluator(BaseEvaluator):
         self.execution_mode = (
             self.execution_mode_enum.value if self.execution_mode_enum else None
         )
-        # ``mock_mode_config`` is retained as an accepted parameter for
-        # backward compatibility with public APIs that thread it through
-        # (e.g. ``@traigent.optimize(mock_mode_config=...)``), but it no
-        # longer drives any evaluator behaviour. The previous behaviour
-        # (TRAIGENT_MOCK_LLM-gated fabricated accuracy via
-        # ``_compute_mock_accuracy``) was removed because a stray env var
-        # in production caused real evaluations to be silently replaced
-        # with random.uniform()-based fake scores.
-        self.mock_mode_config = mock_mode_config or {}
         self.metric_functions = metric_functions or {}
         # One-shot guard for the dual-scorer run notice (issue #1845). The
         # evaluator instance is shared across a run's trials, so a flag here

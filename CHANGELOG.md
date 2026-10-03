@@ -42,6 +42,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   temporarily unavailable; it will return in a future release. Use
   apply=True (the default)." The `apply` parameter remains in the signature
   and `apply=True` (the default) is unaffected.
+- **BREAKING: the inert `mock_mode_config` and `mock` (`MockModeOptions`) parameters
+  are removed** (Traigent#1370 Item 6). Both were accepted and ignored since the
+  mock-mode retirement. Passing either to `@traigent.optimize`, runtime
+  `.optimize()`, `OptimizedFunction(...)` or `validate_optimize_parameters()` now
+  raises an error naming the removed parameter (even when the value is `None` or
+  `TRAIGENT_DISABLED` is set), and `traigent validate-config` reports a top-level
+  `mock_mode_config` / `mock` key as a failure. `MockModeOptions` is no longer
+  exported. Mock LLM behaviour is unchanged: use
+  `traigent.testing.enable_mock_mode_for_quickstart()` (or the `TRAIGENT_MOCK_LLM`
+  env var) instead.
 
 ## [0.30.0] - 2026-09-26
 

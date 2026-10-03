@@ -34,7 +34,6 @@ traigent.initialize(
 DATASETS = Path(__file__).parent.parent / "datasets"
 RESULTS_DIR = os.getenv("TRAIGENT_RESULTS_FOLDER", "./local_results")
 SIMULATED_BEST = {"model": "gpt-3.5-turbo", "temperature": 0.1}
-MOCK_MODE_CONFIG = {"base_accuracy": 0.9, "variance": 0.0}
 OBJECTIVES = ["accuracy"]
 CONFIG_SPACE = {
     "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
@@ -65,7 +64,6 @@ def results_match_score(
     injection_mode="context",  # default, added explicitly for clarity
     offline=True,
     local_storage_path=RESULTS_DIR,
-    mock_mode_config=MOCK_MODE_CONFIG,
 )
 def local_mode(question: str) -> str:
     """Local mode - all data stays on your machine and backend calls are disabled."""

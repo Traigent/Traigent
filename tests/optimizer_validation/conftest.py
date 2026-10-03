@@ -29,9 +29,6 @@ if TYPE_CHECKING:
     from .tracing.capture import CapturedTrace
 
 
-_CANONICALIZED_MOCK_OPTIMIZER_KEYS = frozenset({"optimizer", "sampler", "random_seed"})
-
-
 def _resolve_mock_algorithm(mock_config: dict[str, Any] | None) -> str | None:
     """Resolve legacy scenario optimizer keys to the canonical algorithm name."""
     if not mock_config:
@@ -61,18 +58,6 @@ def _resolve_mock_random_seed(scenario: TestScenario) -> int | None:
     # Use a stable hash to avoid process-randomized Python hash() output.
     seed_bytes = hashlib.sha256(scenario.name.encode("utf-8")).digest()
     return int.from_bytes(seed_bytes[:8], "big") % (2**31)
-
-
-def _mock_payload_for_decorator(mock_config: dict[str, Any] | None) -> dict[str, Any]:
-    """Keep non-optimizer mock payload keys after canonicalizing optimizer knobs."""
-    if not mock_config:
-        return {}
-
-    return {
-        key: value
-        for key, value in mock_config.items()
-        if key not in _CANONICALIZED_MOCK_OPTIMIZER_KEYS
-    }
 
 
 def _serialize_config_space(config_space: dict[str, Any]) -> dict[str, Any]:
@@ -827,8 +812,6 @@ def scenario_runner(
         # Test scenarios should not use this combination - it will raise ValueError.
 
         # Canonicalize legacy scenario optimizer keys before applying the decorator.
-        # The remaining mock payload is only for inert score/evaluator dry-run keys.
-        mock_config = _mock_payload_for_decorator(scenario.mock_mode_config)
         algorithm = _resolve_mock_algorithm(scenario.mock_mode_config)
         random_seed = _resolve_mock_random_seed(scenario)
 
@@ -841,7 +824,6 @@ def scenario_runner(
                 constraints=constraints if constraints else None,
                 injection=injection_kwargs,
                 execution={"execution_mode": scenario.execution_mode},
-                mock=mock_config,
                 evaluation={"eval_dataset": dataset_path, **evaluator_kwargs},
                 tvl_spec=scenario.tvl_spec_path,
                 tvl_environment=scenario.tvl_environment,

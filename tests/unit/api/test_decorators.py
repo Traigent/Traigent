@@ -500,22 +500,6 @@ objectives:
         assert isinstance(tvl_wrapped, OptimizedFunction)
         assert tvl_wrapped.configuration_space["retrieval_depth"] == (3, 8)
 
-    def test_mock_mode_options_round_trip_base_accuracy_and_variance(self):
-        from traigent.api.decorators import MockModeOptions
-
-        @optimize(
-            configuration_space={"x": [1, 2, 3]},
-            mock=MockModeOptions(base_accuracy=0.9, variance=0.05),
-        )
-        def func_with_mock_round_trip(x):
-            return x
-
-        # base_accuracy and variance are inert; this only confirms they survive
-        # decorator construction / round-trip into mock_mode_config.
-        assert isinstance(func_with_mock_round_trip, OptimizedFunction)
-        assert func_with_mock_round_trip.mock_mode_config["base_accuracy"] == 0.9
-        assert func_with_mock_round_trip.mock_mode_config["variance"] == 0.05
-
     def test_decorator_wires_agent_configuration_parameters(self):
         from traigent.api.types import AgentDefinition
 
@@ -712,13 +696,12 @@ class TestOptimizedFunctionIntegration:
         assert func_dict_bundle.eval_dataset == inline_examples
         assert func_model_bundle.eval_dataset == inline_examples
 
-    def test_mock_and_legacy_parameter_variations(self):
-        """Grouped mock options and legacy bridge inputs should decorate cleanly."""
-        from traigent.api.decorators import LegacyOptimizeArgs, MockModeOptions
+    def test_legacy_parameter_variations(self):
+        """Legacy bridge inputs should decorate cleanly."""
+        from traigent.api.decorators import LegacyOptimizeArgs
 
         @optimize(
             configuration_space={"x": [1, 2, 3]},
-            mock=MockModeOptions(enabled=True, override_evaluator=False),
             legacy=LegacyOptimizeArgs(objectives=["accuracy"]),
         )
         def func_with_models(x):
@@ -733,7 +716,6 @@ class TestOptimizedFunctionIntegration:
 
         assert isinstance(func_with_models, OptimizedFunction)
         assert isinstance(func_with_legacy_dict, OptimizedFunction)
-        assert func_with_models.mock_mode_config["override_evaluator"] is False
         assert func_with_legacy_dict.algorithm == "grid"
 
     def test_injection_modes(self):
