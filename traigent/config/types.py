@@ -403,10 +403,12 @@ def _warn_deprecated_config_execution_mode(
 def _warn_deprecated_config_privacy_enabled(*, stacklevel: int = 4) -> None:
     _warn_deprecated_once(
         "TraigentConfig.privacy_enabled",
-        "privacy_enabled is deprecated for TraigentConfig and has no effect in "
-        "execution policy resolution. Use offline=True for no-egress local "
-        "optimization. This compatibility flag will be removed in a future "
-        "major release.",
+        "privacy_enabled is deprecated for TraigentConfig. It does not affect "
+        "execution policy resolution, but it still redacts string config values "
+        "in per-trial submissions and withholds some trial metadata from the "
+        "backend; it does not stop session creation from sending the tuned "
+        "config space. Use offline=True for no Traigent backend egress. This "
+        "compatibility flag will be removed in a future major release.",
         stacklevel=stacklevel,
     )
 

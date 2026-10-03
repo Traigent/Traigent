@@ -197,7 +197,7 @@ Configure where and how optimization runs execute.
     execution=ExecutionOptions(
         execution_mode="local",  # Local execution
         local_storage_path="./results",
-        privacy_enabled=True,
+        offline=True,  # no Traigent backend egress (run stays on this machine)
         # reps_per_trial / reps_aggregation are enterprise-only in this SDK
         # release. Non-default values raise ValidationError at construction.
     ),

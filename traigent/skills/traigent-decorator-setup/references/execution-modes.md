@@ -16,7 +16,7 @@ from traigent.api.decorators import ExecutionOptions
 | `local_storage_path` | `str \| None` | `None` | Directory path for local result storage. |
 | `minimal_logging` | `bool` | `True` | Minimize logging output during optimization. |
 | `parallel_config` | `ParallelConfig \| dict \| None` | `None` | Parallel execution settings. See ParallelConfig section. |
-| `privacy_enabled` | `bool \| None` | `None` | Enable privacy-preserving mode (no raw data sent to cloud). |
+| `privacy_enabled` | `bool \| None` | `None` | **Deprecated, no effect** (it emits a warning). It does not protect data. Use `offline=True` for no Traigent backend egress. |
 | `max_total_examples` | `int \| None` | `None` | Cap total examples evaluated across all trials. |
 | `samples_include_pruned` | `bool` | `True` | Whether pruned trials count toward sample limits. |
 | `cloud_fallback_policy` | `str \| None` | `None` | Legacy setting for future cloud execution. `cloud` is not available yet and fails closed. |
@@ -48,14 +48,14 @@ from traigent.api.decorators import ExecutionOptions
 
 ### Edge Analytics (Default)
 
-Optimization runs on your local machine. Set `TRAIGENT_OFFLINE_MODE=true` when you want no Traigent backend communication. Raw data, prompts, and model outputs never leave your environment in local mode.
+Optimization runs on your local machine. Set `TRAIGENT_OFFLINE_MODE=true` when you want no Traigent backend communication. With `offline=True` no Traigent backend client, session, trial or trace is created, so tuned config values (including string values) are not sent to Traigent. Without it, the default portal-backed path still sends the tuned config-space values and numeric metrics (not dataset inputs, expected outputs or model responses). `offline=True` does not stop your own function from calling LLM providers, and does not disable OpenTelemetry export if you enabled it.
 
 ```python
 @traigent.optimize(
     execution=ExecutionOptions(
         execution_mode="local",
         local_storage_path="./results",
-        privacy_enabled=True,
+        offline=True,  # no Traigent backend egress
     ),
     configuration_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
 )
