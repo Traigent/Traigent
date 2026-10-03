@@ -9,6 +9,8 @@ provable: certificates bind to these bytes.
 from __future__ import annotations
 
 import functools
+import platform
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -66,7 +68,14 @@ def _summary(result: Any) -> tuple[Any, ...]:
     binding, source, reason = result
     if binding is None:
         return (None, source, reason)
-    return (binding["version_digest"], source, reason, binding["manifest"])
+    return (
+        binding["version_digest"],
+        source,
+        reason,
+        binding["manifest"],
+        binding["evaluator_id"],
+        binding["resolution"],
+    )
 
 
 def _closure_fn(threshold: float) -> Any:
@@ -274,6 +283,53 @@ def test_bound_state_shapes() -> None:
     assert list(state) == ["partial_args", "partial_kwargs", "instance"]
 
 
+class _FalsyMapping(dict):  # type: ignore[type-arg]
+    def __bool__(self) -> bool:
+        return False
+
+
+class _FalsyState:
+    """Instance whose ``__dict__`` is a non-empty mapping that is falsy.
+
+    A property named ``__dict__`` supplies the mapping (plain classes cannot be
+    assigned a dict subclass as ``__dict__``).
+    """
+
+    @property
+    def __dict__(self) -> Any:  # type: ignore[override]
+        return _FalsyMapping(secret=1)
+
+    def m(self) -> None:
+        return None
+
+
+class _TruthyEmptyCopy(dict):  # type: ignore[type-arg]
+    def __bool__(self) -> bool:
+        return True
+
+    def keys(self) -> Any:
+        return []
+
+    def __iter__(self) -> Any:
+        return iter(())
+
+
+class _TruthyState:
+    @property
+    def __dict__(self) -> Any:  # type: ignore[override]
+        return _TruthyEmptyCopy(secret=1)
+
+    def m(self) -> None:
+        return None
+
+
+def test_bound_state_truth_tests_the_raw_instance_dict() -> None:
+    # raw __dict__ is falsy -> no "instance" key, even though a copy is non-empty
+    assert _bound_state(None, _FalsyState().m) == {}
+    # raw __dict__ is truthy -> "instance" holds dict(raw), here an empty copy
+    assert _bound_state(None, _TruthyState().m) == {"instance": {}}
+
+
 def test_afp2_digest_exact() -> None:
     assert afp2_source_digest(_kw_scorer) == EXPECTED_AFP2["plain"]
     assert (
@@ -359,6 +415,17 @@ def _base_view(base: Any) -> Any:
         base.code_revision is not None and sorted(base.code_revision),
         base.code_revision and base.code_revision["dirty"],
         base.dependency_lock_digest,
+        {
+            **base.runtime,
+            "language_version": base.runtime["language_version"]
+            == platform.python_version()[:64],
+        },
+        base.code_revision
+        and (
+            base.code_revision["vcs"],
+            bool(re.fullmatch(r"[0-9a-f]{40}", base.code_revision["commit"])),
+            base.code_revision["dirty"],
+        ),
     )
 
 
@@ -440,6 +507,8 @@ EXPECTED_BINDINGS: dict[str, Any] = {
                 {"name": "accuracy", "orientation": "maximize", "weight": 1.0}
             ],
         },
+        "sdk_local_evaluator",
+        "declared_at_session_start",
     ),
     "builtin": (
         "sha256:37af35dc2be195d158e799d2af44a473093234b497f23ba3737f528aafae1c91",
@@ -457,6 +526,8 @@ EXPECTED_BINDINGS: dict[str, Any] = {
                 {"name": "accuracy", "orientation": "maximize", "weight": 1.0}
             ],
         },
+        "sdk_local_evaluator",
+        "declared_at_session_start",
     ),
     "builtin_declared_id": (
         "sha256:6fc4a5f3709828e6f8a64eed3f365f6994999cb1c3488f095e634c078fa2e63b",
@@ -474,6 +545,8 @@ EXPECTED_BINDINGS: dict[str, Any] = {
                 {"name": "accuracy", "orientation": "maximize", "weight": 1.0}
             ],
         },
+        "ev_1",
+        "declared_at_session_start",
     ),
     "class_with_config": (
         "sha256:0f1fda8d67c81414b90e7f89fd29be08795ce5bacf36e671f387103af9b3d25c",
@@ -491,6 +564,8 @@ EXPECTED_BINDINGS: dict[str, Any] = {
                 {"name": "accuracy", "orientation": "maximize", "weight": 1.0}
             ],
         },
+        "sdk_local_evaluator",
+        "declared_at_session_start",
     ),
     "closure": (
         "sha256:5b08f685029ed4041c61a0914e18c74790d25a8cac9db95248c9bc7538d23808",
@@ -508,6 +583,8 @@ EXPECTED_BINDINGS: dict[str, Any] = {
                 {"name": "accuracy", "orientation": "maximize", "weight": 1.0}
             ],
         },
+        "sdk_local_evaluator",
+        "declared_at_session_start",
     ),
     "function": (
         "sha256:16ec0b0dde182f0df2c6097f2ef309ca5f2f782a23037bdc56193084bccfa564",
@@ -525,6 +602,8 @@ EXPECTED_BINDINGS: dict[str, Any] = {
                 {"name": "accuracy", "orientation": "maximize", "weight": 1.0}
             ],
         },
+        "sdk_local_evaluator",
+        "declared_at_session_start",
     ),
     "judged": (
         "sha256:6a835f210a18f2f7c948afc80fd004f02e760b8d99325dc71dc3a79022767449",
@@ -548,6 +627,8 @@ EXPECTED_BINDINGS: dict[str, Any] = {
                 {"name": "accuracy", "orientation": "maximize", "weight": 1.0}
             ],
         },
+        "ev_j",
+        "declared_at_session_start",
     ),
     "partial_kwargs": (
         "sha256:c11bf46a245be8dc54c1ba096ed8164665b66d184f15dabb73f45269ea2d498a",
@@ -565,6 +646,8 @@ EXPECTED_BINDINGS: dict[str, Any] = {
                 {"name": "accuracy", "orientation": "maximize", "weight": 1.0}
             ],
         },
+        "sdk_local_evaluator",
+        "declared_at_session_start",
     ),
     "two_slots": (
         "sha256:905fc901b9a3767d2a08e8bfa7b2684efaf81ea0852671fb13f766fd3d3dfda1",
@@ -583,8 +666,11 @@ EXPECTED_BINDINGS: dict[str, Any] = {
                 {"name": "z", "orientation": "minimize", "weight": 2},
             ],
         },
+        "sdk_local_evaluator",
+        "declared_at_session_start",
     ),
 }
+
 EXPECTED_AFP2: dict[str, Any] = {
     "closure": "sha256:cc4a422b19020b092aab433d88720e5d24db4454ec7778e43f4b09e4bbf440a2",
     "method": "sha256:76abb4eacceb50b331b046b63bd0909d1df70404be9c65e15f4d99b73f0f1f46",
@@ -613,6 +699,8 @@ EXPECTED_COLLECT: dict[str, Any] = {
         ["commit", "dirty", "vcs"],
         False,
         None,
+        {"language": "python", "language_version": True, "sdk_version": "9.9.9"},
+        ("git", True, False),
     ),
     "git_dirty": (
         "a1",
@@ -636,6 +724,8 @@ EXPECTED_COLLECT: dict[str, Any] = {
         ["commit", "dirty", "vcs"],
         True,
         None,
+        {"language": "python", "language_version": True, "sdk_version": "9.9.9"},
+        ("git", True, True),
     ),
     "no_source_file": (
         "a1",
@@ -651,6 +741,8 @@ EXPECTED_COLLECT: dict[str, Any] = {
         {"helper_modules": {}, "prompts": {}, "tool_definitions": {}},
         False,
         None,
+        None,
+        {"language": "python", "language_version": True, "sdk_version": "9.9.9"},
         None,
     ),
     "nogit_declared": (
@@ -669,6 +761,8 @@ EXPECTED_COLLECT: dict[str, Any] = {
         },
         False,
         None,
+        None,
+        {"language": "python", "language_version": True, "sdk_version": "9.9.9"},
         None,
     ),
     "nogit_enumerated": (
@@ -692,6 +786,8 @@ EXPECTED_COLLECT: dict[str, Any] = {
         },
         False,
         None,
+        None,
+        {"language": "python", "language_version": True, "sdk_version": "9.9.9"},
         None,
     ),
 }

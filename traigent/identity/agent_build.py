@@ -264,15 +264,12 @@ def _closure_cells(function: Any, closure: Any) -> dict[str, Any] | None:
     return cells
 
 
-def _instance_attributes(target: Any) -> dict[str, Any] | None:
-    """A bound method's instance attributes (``{}`` if none); ``None`` if unobservable."""
+def _instance_attributes(target: Any) -> Any:
+    """A bound method's raw instance ``__dict__`` (``{}`` if none); ``None`` if unobservable."""
     instance = getattr(target, "__self__", None)
     if instance is None or inspect.ismodule(instance):
         return {}
-    attributes = getattr(instance, "__dict__", None)
-    if attributes is None:
-        return None
-    return dict(attributes)
+    return getattr(instance, "__dict__", None)
 
 
 def _bound_state(
@@ -296,11 +293,11 @@ def _bound_state(
         if cells is None:
             return None
         bound["closure"] = cells
-    instance = _instance_attributes(target)
-    if instance is None:
+    attributes = _instance_attributes(target)
+    if attributes is None:
         return None
-    if instance:
-        bound["instance"] = instance
+    if attributes:
+        bound["instance"] = dict(attributes)
     return bound
 
 
