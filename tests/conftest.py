@@ -24,10 +24,12 @@ os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 # setdefault keeps an explicit opt-in (TRAIGENT_SKIP_DOTENV=0) available; the
 # dotenv-loading tests in tests/unit/utils/test_env_config.py clear it themselves.
 os.environ.setdefault("TRAIGENT_SKIP_DOTENV", "1")
-# litellm ignores TRAIGENT_SKIP_DOTENV: unless LITELLM_MODE != "DEV" (its default)
-# it calls a bare load_dotenv() on import, searching upward from site-packages --
-# which reaches the repo `.env` whenever the venv lives inside the checkout.
-# LITELLM_MODE gates nothing else in litellm.
+# litellm ignores TRAIGENT_SKIP_DOTENV: while LITELLM_MODE is "DEV" (its default)
+# it calls a bare load_dotenv() on import. That searches upward from
+# site-packages, or from cwd when a tracer is active (coverage, a debugger) or
+# in a REPL / `python -c`; either way it reaches the repo `.env` when the venv
+# lives inside the checkout or pytest runs from it.
+# LITELLM_MODE gates nothing else in litellm (checked against 1.98 and 1.104).
 os.environ.setdefault("LITELLM_MODE", "PRODUCTION")
 
 import asyncio
