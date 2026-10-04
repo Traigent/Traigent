@@ -37,7 +37,9 @@ try:
     env_path = Path(__file__).resolve().parents[2] / ".env"
     if env_path.exists():
         load_dotenv(env_path)
-        print(f"Loaded environment from: {env_path}")
+        # stderr: stdout carries only the key, so `--quiet` capture
+        # (KEY=$(... --quiet)) must not pick up this diagnostic.
+        print(f"Loaded environment from: {env_path}", file=sys.stderr)
 except ImportError:
     # python-dotenv not installed, rely on shell environment
     pass

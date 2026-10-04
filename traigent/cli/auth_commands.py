@@ -54,6 +54,9 @@ from traigent.security.credentials import (
     SecurityError,
     get_secure_credential_store,
 )
+
+# Imported for its side effect: loads .env with the #1830 guards (see auth()).
+from traigent.utils import env_config as _env_config  # noqa: F401
 from traigent.utils.logging import get_logger
 
 console = Console()
@@ -1711,12 +1714,11 @@ def auth() -> None:
         traigent auth refresh           # Refresh authentication tokens
         traigent auth configure         # Configure authentication settings
     """
-    try:
-        from dotenv import load_dotenv
-
-        load_dotenv()
-    except ImportError:
-        pass
+    # No load_dotenv() here: this module imports traigent.utils.env_config,
+    # whose import runs _load_dotenv_files(). That loader honours
+    # TRAIGENT_SKIP_DOTENV and stops at the project boundary (#1830). A bare
+    # load_dotenv() searches upward from this file's directory to `/`, so it
+    # bypassed both and could load an unrelated ancestor's `.env`.
 
 
 @auth.command()

@@ -240,9 +240,8 @@ class TestOpenAIDiscovery:
         # Retired o1 preview line (#1936/#1937): shape still matches the
         # pattern, but the canonical denylist rejects it.
         for retired in ["o1-preview", "o1-mini", "o1-preview-2024-09-12"]:
-            assert not discovery.is_valid_model(retired), (
-                f"Retired model {retired} must not validate"
-            )
+            message = f"Retired model {retired} must not validate"
+            assert not discovery.is_valid_model(retired), message
 
     def test_pattern_validation_invalid_models(self) -> None:
         """Invalid models should fail pattern validation."""
@@ -306,9 +305,8 @@ class TestAnthropicDiscovery:
 
         # Retired claude-3-opus (#1936/#1937): shape-valid but denylisted.
         for retired in ["claude-3-opus-20240229", "claude-3-opus-latest"]:
-            assert not discovery.is_valid_model(retired), (
-                f"Retired model {retired} must not validate"
-            )
+            message = f"Retired model {retired} must not validate"
+            assert not discovery.is_valid_model(retired), message
 
     def test_pattern_validation_invalid_models(self) -> None:
         """Invalid Anthropic-like model names should fail pattern validation."""
@@ -399,9 +397,8 @@ class TestGeminiDiscovery:
             "gemini-2.0-flash-exp",
         ]
         for model in retired_models:
-            assert not discovery.is_valid_model(model), (
-                f"Retired model {model} must not validate"
-            )
+            message = f"Retired model {model} must not validate"
+            assert not discovery.is_valid_model(model), message
 
     @patch("traigent.integrations.model_discovery.gemini_discovery.os.getenv")
     def test_sdk_discovery_without_api_key(self, mock_getenv: MagicMock) -> None:
@@ -677,6 +674,22 @@ class TestCacheNoFileMode:
         assert result == ["model1", "model2"]
 
 
+def _clear_openai_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drop ambient OpenAI credentials so discovery stays offline.
+
+    With OPENAI_API_KEY set, list_models() calls the live OpenAI API and keys its
+    cache entry by a credential fingerprint ("openai-<hash>"), not "openai".
+    """
+    for var in (
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_API_BASE",
+        "OPENAI_ORG_ID",
+        "OPENAI_PROJECT_ID",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+
 class TestBaseDiscoveryAbstract:
     """Tests for base ModelDiscovery abstract methods."""
 
@@ -697,8 +710,11 @@ class TestBaseDiscoveryAbstract:
         assert fetch() == ["model-from-default-hook"]
         assert discovery.list_models() == ["model-from-default-hook"]
 
-    def test_refresh_cache_calls_list_models(self) -> None:
+    def test_refresh_cache_calls_list_models(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """refresh_cache should invalidate and re-fetch."""
+        _clear_openai_env(monkeypatch)
         discovery = OpenAIDiscovery()
         reset_global_cache()
 
@@ -738,8 +754,9 @@ class TestBaseDiscoveryAbstract:
         discovery = OpenAIDiscovery()
         assert discovery.is_valid_model("") is False
 
-    def test_list_models_caches_result(self) -> None:
+    def test_list_models_caches_result(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """list_models should cache results."""
+        _clear_openai_env(monkeypatch)
         discovery = OpenAIDiscovery()
         reset_global_cache()
 
