@@ -17,8 +17,8 @@ except ImportError:  # pragma: no cover
     )
     import traigent
 
-from traigent.metrics import configure_ragas_defaults  # noqa: E402
 from traigent.core.objectives import create_default_objectives  # noqa: E402
+from traigent.metrics import configure_ragas_defaults  # noqa: E402
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -32,6 +32,7 @@ os.environ.setdefault("RAGAS_DISABLE_ANALYTICS", "true")
 
 _RESPONSES = {
     "Summarize the benefits of RAG.": "RAG lets language models ground answers in retrieved knowledge bases.",
+    "What does the retriever do in a RAG pipeline?": "The retriever finds the passages most relevant to the query in a knowledge base.",
 }
 
 
