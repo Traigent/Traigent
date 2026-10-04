@@ -15,6 +15,21 @@ import os
 
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
+# CRITICAL: Set TRAIGENT_SKIP_DOTENV BEFORE any traigent import. The first import
+# of traigent.utils.env_config (pulled in by most of the SDK) runs
+# _load_dotenv_files(), which otherwise loads the developer's repo/project
+# `.env` into os.environ for the whole session -- real
+# TRAIGENT_API_KEY / OPENAI_API_KEY / TRAIGENT_BACKEND_URL -- so unit tests make
+# live network calls and pass or fail depending on whose machine runs them.
+# setdefault keeps an explicit opt-in (TRAIGENT_SKIP_DOTENV=0) available; the
+# dotenv-loading tests in tests/unit/utils/test_env_config.py clear it themselves.
+os.environ.setdefault("TRAIGENT_SKIP_DOTENV", "1")
+# litellm ignores TRAIGENT_SKIP_DOTENV: unless LITELLM_MODE != "DEV" (its default)
+# it calls a bare load_dotenv() on import, searching upward from site-packages --
+# which reaches the repo `.env` whenever the venv lives inside the checkout.
+# LITELLM_MODE gates nothing else in litellm.
+os.environ.setdefault("LITELLM_MODE", "PRODUCTION")
+
 import asyncio
 import functools
 import json
@@ -80,7 +95,8 @@ async def cleanup_lingering_asyncio_tasks():
 def _reset_execution_mode_deprecation_warnings():
     """The execution-mode deprecation warn-once guard (traigent.config.types) is
     process-global; reset it around every test so a warning emitted in one test can't
-    suppress a warns-assertion in another (otherwise test order/xdist worker would matter)."""
+    suppress a warns-assertion in another (otherwise test order/xdist worker would matter).
+    """
     from traigent.config.types import _reset_deprecation_warning_state_for_tests
 
     _reset_deprecation_warning_state_for_tests()

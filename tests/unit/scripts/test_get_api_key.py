@@ -161,6 +161,40 @@ def test_main_reads_password_from_stdin(
     assert capfd.readouterr().out == "tg_generated_key\n"
 
 
+def test_dotenv_notice_goes_to_stderr_not_stdout(
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """stdout is reserved for the key: `KEY=$(get_api_key.py --quiet)`.
+
+    The script loads `<repo>/.env` at import time; its "Loaded environment"
+    notice used to go to stdout and was captured as part of the key.
+    """
+    repo_root = Path(__file__).resolve().parents[3]
+    script_dir = tmp_path / "scripts" / "auth"
+    script_dir.mkdir(parents=True)
+    script = script_dir / "get_api_key.py"
+    script.write_text(
+        (repo_root / "scripts" / "auth" / "get_api_key.py").read_text(),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text("TRAIGENT_TEST_DOTENV_PROBE=1\n", encoding="utf-8")
+    # Pre-set so load_dotenv() leaves os.environ unchanged and monkeypatch
+    # restores it afterwards.
+    monkeypatch.setenv("TRAIGENT_TEST_DOTENV_PROBE", "1")
+
+    spec = importlib.util.spec_from_file_location("get_api_key_dotenv_probe", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+
+    captured = capfd.readouterr()
+    assert captured.out == ""
+    assert f"Loaded environment from: {tmp_path / '.env'}" in captured.err
+
+
 def test_verbose_responses_are_redacted(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -108,9 +108,11 @@ def _install_fake_aiohttp(
 def _run_whoami(
     monkeypatch: pytest.MonkeyPatch, api_key: str | None = "tg_test_key"
 ) -> Any:
+    # whoami resolves its target through get_cloud_api_url(); pin it so no test
+    # in this module can reach a real backend even if a key leaks in.
     monkeypatch.setattr(
         auth_commands.BackendConfig,
-        "get_backend_api_url",
+        "get_cloud_api_url",
         staticmethod(lambda: "http://localhost:5000/api/v1"),
     )
     runner = CliRunner()
@@ -163,7 +165,7 @@ def test_whoami_posts_json_payload_to_validate_endpoint(
 def test_whoami_uses_env_api_key_when_argument_omitted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    api_key = "tg_" + "a" * 43
+    api_key = "tg_" + "a" * 43  # pragma: allowlist secret
     monkeypatch.setenv("TRAIGENT_API_KEY", api_key)
     _install_fake_aiohttp(
         monkeypatch,
@@ -185,6 +187,35 @@ def test_whoami_requires_argument_or_env(monkeypatch: pytest.MonkeyPatch) -> Non
     assert result.exit_code == 1
     assert "Missing API key" in result.output
     assert "TRAIGENT_API_KEY" in result.output
+
+
+def test_auth_group_does_not_reload_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The auth group must not call load_dotenv() itself.
+
+    A bare load_dotenv() searches upward from traigent/cli/ to the filesystem
+    root, so it ignored TRAIGENT_SKIP_DOTENV and the #1830 project boundary and
+    re-injected a developer's real TRAIGENT_API_KEY into "no key" runs.
+    `import traigent` already loads .env through env_config with both guards.
+    """
+    import dotenv
+    import dotenv.main
+
+    calls: list[tuple[Any, ...]] = []
+
+    def _spy(*args: Any, **kwargs: Any) -> bool:
+        calls.append(args)
+        monkeypatch.setenv("TRAIGENT_API_KEY", "tg_" + "x" * 43)
+        return True
+
+    monkeypatch.setattr(dotenv, "load_dotenv", _spy)
+    monkeypatch.setattr(dotenv.main, "load_dotenv", _spy)
+    monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+
+    result = _run_whoami(monkeypatch, None)
+
+    assert calls == []
+    assert result.exit_code == 1
+    assert "Missing API key" in result.output
 
 
 @pytest.mark.parametrize("prefix", ["tg_", "uk_", "sk_", "ak_", "tk_"])
@@ -390,7 +421,7 @@ def test_whoami_403_with_a_cloudflare_header_is_an_edge_block(
         response=_FakeResponse(
             status=403,
             text_payload="<html>Attention Required</html>",
-            headers={"CF-RAY": "8abc123def456"},
+            headers={"CF-RAY": "8abc123def456"},  # pragma: allowlist secret
         ),
     )
 

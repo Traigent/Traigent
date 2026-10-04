@@ -2359,10 +2359,18 @@ class TestConfigPersistence:
             assert opt_func._current_config.get("temperature") == pytest.approx(0.6)
 
     def test_find_latest_config_path_with_mock(
-        self, mock_function, sample_config_space, sample_objectives, sample_dataset
+        self,
+        mock_function,
+        sample_config_space,
+        sample_objectives,
+        sample_dataset,
+        monkeypatch,
     ):
-        """Test _find_latest_config_path with mocked Path.cwd to isolate test."""
+        """Test _find_latest_config_path with every search root isolated."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            # The search also covers $TRAIGENT_RESULTS_FOLDER, defaulting to
+            # ~/.traigent -- pin it too, or a developer's real past runs are found.
+            monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", tmpdir)
             opt_func = OptimizedFunction(
                 func=mock_function,
                 configuration_space=sample_config_space,
