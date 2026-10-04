@@ -77,6 +77,10 @@ except ImportError:
             pass
 
         @staticmethod
+        def search_runs(*args, **kwargs) -> Any:
+            raise RuntimeError("MLflow not available")
+
+        @staticmethod
         def log_param(*args, **kwargs) -> None:
             pass
 
@@ -159,7 +163,8 @@ class TraigentMLflowTracker:
         if tracking_uri:
             mlflow.set_tracking_uri(tracking_uri)
 
-        # Set or create experiment
+        # Set or create experiment; stays None if MLflow cannot provide one.
+        self.experiment_id: str | None = None
         try:
             experiment = mlflow.get_experiment_by_name(experiment_name)
             if experiment is None:
