@@ -1719,7 +1719,9 @@ def auth() -> None:
     # No load_dotenv() here: this module imports traigent.utils.env_config,
     # whose import runs _load_dotenv_files(). That loader honours
     # TRAIGENT_SKIP_DOTENV and stops at the project boundary (#1830). A bare
-    # load_dotenv() searches upward from this file's directory to `/`, so it
+    # load_dotenv() searches upward to `/` (from this file's directory when run
+    # as a script or console entry point, from cwd in a REPL or under a tracer
+    # such as a debugger or coverage), so it
     # bypassed both and could load an unrelated ancestor's `.env`.
 
 

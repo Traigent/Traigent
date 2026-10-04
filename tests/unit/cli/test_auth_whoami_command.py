@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 import types
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -195,7 +198,8 @@ def test_auth_group_does_not_reload_dotenv(monkeypatch: pytest.MonkeyPatch) -> N
     A bare load_dotenv() searches upward from traigent/cli/ to the filesystem
     root, so it ignored TRAIGENT_SKIP_DOTENV and the #1830 project boundary and
     re-injected a developer's real TRAIGENT_API_KEY into "no key" runs.
-    `import traigent` already loads .env through env_config with both guards.
+    auth_commands imports traigent.utils.env_config, whose import loads .env
+    with both guards.
     """
     import dotenv
     import dotenv.main
@@ -216,6 +220,47 @@ def test_auth_group_does_not_reload_dotenv(monkeypatch: pytest.MonkeyPatch) -> N
     assert calls == []
     assert result.exit_code == 1
     assert "Missing API key" in result.output
+
+
+def test_auth_still_loads_the_project_dotenv(tmp_path: Path) -> None:
+    """`traigent auth` must keep reading the caller's project `.env`.
+
+    The group no longer calls load_dotenv() itself; the project file has to
+    arrive through traigent.utils.env_config. Runs in a fresh interpreter so
+    the import-time load actually happens, with litellm's own loader off so it
+    cannot be the one supplying the key.
+    """
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "probe"\n')
+    # A malformed key: whoami rejects it before any network call, and the
+    # rejection proves the value was read from this file.
+    malformed_key = "xx_from_project_dotenv"  # pragma: allowlist secret
+    (tmp_path / ".env").write_text("=".join(("TRAIGENT_API_KEY", malformed_key)) + "\n")
+    runner = tmp_path / "run_whoami.py"
+    runner.write_text(
+        "from click.testing import CliRunner\n"
+        "from traigent.cli.auth_commands import auth\n"
+        "print(CliRunner().invoke(auth, ['whoami']).output)\n"
+    )
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in {"TRAIGENT_API_KEY", "TRAIGENT_SKIP_DOTENV"}
+    }
+    env["LITELLM_MODE"] = "PRODUCTION"
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[3])
+
+    proc = subprocess.run(
+        [sys.executable, str(runner)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert "Invalid API key format" in proc.stdout, proc.stdout + proc.stderr
+    assert "Missing API key" not in proc.stdout
 
 
 @pytest.mark.parametrize("prefix", ["tg_", "uk_", "sk_", "ak_", "tk_"])

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -161,6 +162,33 @@ def test_main_reads_password_from_stdin(
     assert capfd.readouterr().out == "tg_generated_key\n"
 
 
+def _exec_script_copy_with_dotenv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, module_name: str
+) -> Path:
+    """Execute a copy of the script whose `parents[2]` holds a probe `.env`.
+
+    The real script loads `<repo>/.env` at import time; a copy under
+    `tmp_path` points that lookup at a file the test controls.
+    """
+    repo_root = Path(__file__).resolve().parents[3]
+    script_dir = tmp_path / "scripts" / "auth"
+    script_dir.mkdir(parents=True)
+    script = script_dir / "get_api_key.py"
+    script.write_text(
+        (repo_root / "scripts" / "auth" / "get_api_key.py").read_text(),
+        encoding="utf-8",
+    )
+    env_file = tmp_path / ".env"
+    env_file.write_text("TRAIGENT_TEST_DOTENV_PROBE=from-dotenv\n", encoding="utf-8")
+
+    spec = importlib.util.spec_from_file_location(module_name, script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    return env_file
+
+
 def test_dotenv_notice_goes_to_stderr_not_stdout(
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
@@ -171,28 +199,41 @@ def test_dotenv_notice_goes_to_stderr_not_stdout(
     The script loads `<repo>/.env` at import time; its "Loaded environment"
     notice used to go to stdout and was captured as part of the key.
     """
-    repo_root = Path(__file__).resolve().parents[3]
-    script_dir = tmp_path / "scripts" / "auth"
-    script_dir.mkdir(parents=True)
-    script = script_dir / "get_api_key.py"
-    script.write_text(
-        (repo_root / "scripts" / "auth" / "get_api_key.py").read_text(),
-        encoding="utf-8",
-    )
-    (tmp_path / ".env").write_text("TRAIGENT_TEST_DOTENV_PROBE=1\n", encoding="utf-8")
+    monkeypatch.delenv("TRAIGENT_SKIP_DOTENV", raising=False)
     # Pre-set so load_dotenv() leaves os.environ unchanged and monkeypatch
     # restores it afterwards.
-    monkeypatch.setenv("TRAIGENT_TEST_DOTENV_PROBE", "1")
+    monkeypatch.setenv("TRAIGENT_TEST_DOTENV_PROBE", "preset")
 
-    spec = importlib.util.spec_from_file_location("get_api_key_dotenv_probe", script)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    monkeypatch.setitem(sys.modules, spec.name, module)
-    spec.loader.exec_module(module)
+    env_file = _exec_script_copy_with_dotenv(
+        monkeypatch, tmp_path, "get_api_key_dotenv_probe"
+    )
 
     captured = capfd.readouterr()
     assert captured.out == ""
-    assert f"Loaded environment from: {tmp_path / '.env'}" in captured.err
+    assert f"Loaded environment from: {env_file}" in captured.err
+
+
+def test_skip_dotenv_opt_out_is_honoured(
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """TRAIGENT_SKIP_DOTENV must stop the script's import-time .env load.
+
+    Without it, importing the script (as these tests do) put a developer's
+    real keys from `<repo>/.env` into the test worker's os.environ, and
+    monkeypatch never reverted them.
+    """
+    monkeypatch.setenv("TRAIGENT_SKIP_DOTENV", " True ")
+    # setenv-then-delenv registers the variable with monkeypatch, so a value
+    # leaked by a regressed load is still removed at teardown.
+    monkeypatch.setenv("TRAIGENT_TEST_DOTENV_PROBE", "sentinel")
+    monkeypatch.delenv("TRAIGENT_TEST_DOTENV_PROBE")
+
+    _exec_script_copy_with_dotenv(monkeypatch, tmp_path, "get_api_key_skip_probe")
+
+    assert "TRAIGENT_TEST_DOTENV_PROBE" not in os.environ
+    assert "Loaded environment from" not in capfd.readouterr().err
 
 
 def test_verbose_responses_are_redacted(
