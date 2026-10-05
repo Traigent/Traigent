@@ -7,6 +7,7 @@ Handles migration of local data to Traigent backend when users upgrade.
 
 import hashlib
 import json
+import math
 import os
 import re
 from collections.abc import Callable, Mapping
@@ -43,6 +44,12 @@ from ..utils.exceptions import TraigentStorageError
 from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# Backend per-example measures limits (TraigentBackend workflow_metadata).
+_MAX_EXAMPLE_MEASURES = 1000
+_MAX_EXAMPLE_METRICS = 50
+_MAX_EXAMPLE_METRIC_KEY_LENGTH = 100
+_EXAMPLE_METRIC_KEY_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 _BACKEND_NAME_DISALLOWED = re.compile(r"[^a-zA-Z0-9 _-]+")
 _BACKEND_NAME_SPACES = re.compile(r"\s+")
@@ -523,14 +530,18 @@ class SyncManager:
                     if isinstance(metadata_config, Mapping) and metadata_config:
                         experiment_parameters = dict(metadata_config)
             status = "FAILED" if result.get("status") == "failed" else "COMPLETED"
-            configuration_runs.append(
-                {
-                    "trial_id": result.get("trial_id"),
-                    "experiment_parameters": experiment_parameters,
-                    "measures": measures,
-                    "status": status,
-                }
+            configuration_run: dict[str, Any] = {
+                "trial_id": result.get("trial_id"),
+                "experiment_parameters": experiment_parameters,
+                "measures": measures,
+                "status": status,
+            }
+            example_measures = self._content_free_example_measures(
+                result.get("metadata")
             )
+            if example_measures:
+                configuration_run["example_measures"] = example_measures
+            configuration_runs.append(configuration_run)
 
         return configuration_runs
 
@@ -552,6 +563,43 @@ class SyncManager:
                 measures[key] = value
 
         return measures
+
+    @classmethod
+    def _content_free_example_measures(cls, metadata: Any) -> list[dict[str, Any]]:
+        """Build content-free per-example measures from ``metadata["measures"]``.
+
+        Mirrors the live submit shape (``[{"example_id", "metrics"}]``) so the
+        backend can count distinct examples, but keeps no customer content:
+        ``example_id`` is regenerated from the list position (customer-chosen
+        ids count as content) and only finite numeric metrics with
+        backend-valid keys survive. Malformed entries are skipped.
+        """
+        if not isinstance(metadata, Mapping):
+            return []
+        raw = metadata.get("measures")
+        if not isinstance(raw, list):
+            return []
+
+        out: list[dict[str, Any]] = []
+        for index, entry in enumerate(raw[:_MAX_EXAMPLE_MEASURES]):
+            if not isinstance(entry, Mapping):
+                continue
+            metrics = entry.get("metrics")
+            if not isinstance(metrics, Mapping):
+                continue
+            clean: dict[str, Any] = {}
+            for key, value in metrics.items():
+                if (
+                    isinstance(key, str)
+                    and len(key) <= _MAX_EXAMPLE_METRIC_KEY_LENGTH
+                    and _EXAMPLE_METRIC_KEY_RE.match(key)
+                    and cls._is_numeric(value)
+                    and math.isfinite(value)
+                    and len(clean) < _MAX_EXAMPLE_METRICS
+                ):
+                    clean[key] = value
+            out.append({"example_id": f"example_{index}", "metrics": clean})
+        return out
 
     @staticmethod
     def _is_numeric(value: Any) -> bool:
@@ -1280,6 +1328,9 @@ class SyncManager:
                 "status": configuration_run.get("status") or "COMPLETED",
                 "metrics": configuration_run.get("measures", {}),
             }
+            if configuration_run.get("example_measures"):
+                # Same top-level ``measures`` list the live path submits.
+                result_payload["measures"] = configuration_run["example_measures"]
             try:
                 response = self._session.post(
                     f"{self.base_url}/sessions/{session_id}/results",

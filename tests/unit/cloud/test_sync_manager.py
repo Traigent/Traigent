@@ -14,7 +14,9 @@ sync fix).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -1019,6 +1021,127 @@ class TestSyncManager:
         # Never the classic agent/dataset/experiment endpoints.
         sync_manager._session.get.assert_not_called()
         sync_manager._session.put.assert_not_called()
+
+    @staticmethod
+    def _session_with_example_measures(measures: Any) -> OptimizationSession:
+        metadata: dict[str, Any] = {"latency": 120}
+        if measures is not None:
+            metadata["measures"] = measures
+        return OptimizationSession(
+            session_id="test_session_123",
+            function_name="test_function",
+            created_at="2025-01-01T12:00:00Z",
+            updated_at="2025-01-01T12:10:00Z",
+            status="completed",
+            total_trials=1,
+            completed_trials=1,
+            best_config={"model": "gpt-4"},
+            best_score=0.9,
+            baseline_score=0.5,
+            trials=[
+                TrialResult(
+                    trial_id=1,
+                    config={"model": "gpt-4"},
+                    score=0.9,
+                    timestamp="2025-01-01T12:00:00Z",
+                    metadata=metadata,
+                    error=None,
+                )
+            ],
+        )
+
+    def _sync_and_get_result_body(
+        self, sync_manager: SyncManager, session: OptimizationSession
+    ) -> dict[str, Any]:
+        sync_manager.storage.load_session.return_value = session
+        sync_manager._session.post.side_effect = [
+            create_response(),
+            backend_response(payload={"suggestion": {"trial_id": "bt-1"}}),
+            backend_response(payload={"id": "result-1"}),
+            backend_response(status_code=200, payload={"status": "finalized"}),
+        ]
+        result = sync_manager.sync_session_to_cloud("test_session_123")
+        assert result["status"] == "success"
+        return sync_manager._session.post.call_args_list[2].kwargs["json"]
+
+    def test_sync_uploads_content_free_per_example_measures(
+        self, sync_manager: SyncManager
+    ) -> None:
+        """Per-example measures upload with index ids and numeric-only metrics."""
+        session = self._session_with_example_measures(
+            [
+                {
+                    "example_id": "Alice_has_diabetes",
+                    "metrics": {
+                        "accuracy": 1.0,
+                        "tokens": 42,
+                        "cost": 0.001,
+                        "label": "Alice_has_diabetes",
+                        "flag": True,
+                        "bad": float("nan"),
+                        "nested": {"a": 1},
+                        "bad key!": 3,
+                    },
+                    "input": "Alice has diabetes",
+                    "output": "secret answer",
+                },
+                "not-a-dict",
+                {"example_id": "x", "metrics": "nope"},
+                {"example_id": "Bob_secret", "metrics": {"accuracy": 0.0}},
+            ]
+        )
+
+        body = self._sync_and_get_result_body(sync_manager, session)
+
+        assert body["measures"] == [
+            {
+                "example_id": "example_0",
+                "metrics": {"accuracy": 1.0, "tokens": 42, "cost": 0.001},
+            },
+            {"example_id": "example_3", "metrics": {"accuracy": 0.0}},
+        ]
+        # Flat aggregate fields are unchanged.
+        assert set(body) == {"trial_id", "config", "status", "metrics", "measures"}
+        assert "measures" not in body["metrics"]
+
+    def test_sync_per_example_measures_canary_no_customer_content(
+        self, sync_manager: SyncManager
+    ) -> None:
+        """Customer ids and string values never reach the serialized payload."""
+        session = self._session_with_example_measures(
+            [
+                {
+                    "example_id": "Alice_has_diabetes",
+                    "metrics": {
+                        "accuracy": 1.0,
+                        "verdict": "Alice_has_diabetes",
+                        "note": "patient notes SECRET_CANARY",
+                    },
+                    "output": "SECRET_CANARY",
+                }
+            ]
+        )
+
+        body = self._sync_and_get_result_body(sync_manager, session)
+
+        serialized = json.dumps(body)
+        assert "Alice_has_diabetes" not in serialized
+        assert "SECRET_CANARY" not in serialized
+        assert "patient" not in serialized
+        assert body["measures"] == [
+            {"example_id": "example_0", "metrics": {"accuracy": 1.0}}
+        ]
+
+    @pytest.mark.parametrize("absent", [None, [], "not-a-list", [{"metrics": 1}]])
+    def test_sync_without_usable_example_measures_payload_unchanged(
+        self, sync_manager: SyncManager, absent: Any
+    ) -> None:
+        """No usable per-example list => payload identical to the legacy shape."""
+        body = self._sync_and_get_result_body(
+            sync_manager, self._session_with_example_measures(absent)
+        )
+
+        assert set(body) == {"trial_id", "config", "status", "metrics"}
 
     def test_sync_session_to_cloud_create_failure_is_error(
         self, sync_manager: SyncManager, sample_session: OptimizationSession
