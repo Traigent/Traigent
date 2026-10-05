@@ -337,7 +337,15 @@ class SyncManager:
         # to 1 — exactly like the live SDK builder
         # (api_operations._build_typed_session_payload). The empty-dataset
         # pass-through comes from binding NO benchmark, not from the size field.
+        session_metadata = (
+            session.metadata if isinstance(session.metadata, dict) else {}
+        )
+        # Offline sessions persist dataset_size / evaluation_set under
+        # session.metadata (written by the orchestrator); optimization_config
+        # wins when it carries them.
         dataset_size = opt_config.get("dataset_size")
+        if dataset_size is None:
+            dataset_size = session_metadata.get("dataset_size")
         if (
             not isinstance(dataset_size, int)
             or isinstance(dataset_size, bool)
@@ -345,10 +353,23 @@ class SyncManager:
         ):
             dataset_size = 1
         dataset_name = sanitize_backend_name(f"Local Dataset {session.function_name}")
-        evaluation_set = opt_config.get("evaluation_set") or "default"
+        evaluation_set = opt_config.get("evaluation_set")
+        if not evaluation_set:
+            evaluation_set = session_metadata.get("evaluation_set")
+        if not isinstance(evaluation_set, str) or not evaluation_set:
+            evaluation_set = "default"
+        # Mirror the live path (BackendSessionManager): the portal experiment
+        # name is the display name when present, while metadata.function_name
+        # keeps the stable derived identifier.
+        display_name = session_metadata.get("function_display_name")
+        if not isinstance(display_name, str) or not display_name.strip():
+            display_name = None
+        else:
+            display_name = display_name.strip()
+        portal_name = display_name or session.function_name
 
         session_create = {
-            "function_name": session.function_name,
+            "function_name": portal_name,
             "configuration_space": _typed_configuration_space(search_space),
             "objectives": objectives,
             "dataset_metadata": {
@@ -377,6 +398,8 @@ class SyncManager:
                 "source": "offline_sync",
             },
         }
+        if display_name:
+            session_create["metadata"]["function_display_name"] = display_name
         # Declared dataset identity: sent only when the local record persisted
         # one at creation (the value the live create would have sent). Legacy
         # records without it send none -- identity is never invented here, and
