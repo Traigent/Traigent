@@ -41,12 +41,18 @@ PY
 ## Smoke checks
 
 ```bash
-traigent auth whoami "$(python - <<'PY'
+python - <<'PY'
 import json
+import os
+import subprocess
 from pathlib import Path
-print(json.loads((Path.home() / ".traigent" / "credentials.json").read_text())["api_key"])
+
+path = Path.home() / ".traigent" / "credentials.json"
+credentials = json.loads(path.read_text())
+env = os.environ.copy()
+env["TRAIGENT_API_KEY"] = credentials["api_key"]
+raise SystemExit(subprocess.run(["traigent", "auth", "whoami"], env=env).returncode)
 PY
-)"
 ```
 
 If a newly minted key is listed in the UI but `whoami` or `/keys/validate` returns 401,

@@ -129,11 +129,13 @@ Options:
 
 ### Who Am I
 
-Check API key validity:
+With `TRAIGENT_API_KEY` set in your environment, check API key validity:
 
 ```bash
-traigent auth whoami tg_your_api_key_here
+traigent auth whoami
 ```
+
+This command does not automatically load a key from saved credentials.
 
 ## Automatic Credential Discovery
 
@@ -380,7 +382,7 @@ traigent auth logout       # Clear credentials
 traigent auth status       # Check status
 traigent auth refresh      # Refresh tokens
 traigent auth configure    # Configuration wizard
-traigent auth whoami KEY   # Validate API key
+traigent auth whoami       # Validate TRAIGENT_API_KEY from the environment
 
 # Options
 --email EMAIL             # Specify email
