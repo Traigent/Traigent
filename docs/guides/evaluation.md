@@ -344,7 +344,7 @@ Best accuracy: 0.00
 2. **Check API Keys**
    ```bash
    # Check whether an OpenAI API key is configured for embeddings
-   if python -c 'import os, sys; sys.exit(0 if os.environ.get("OPENAI_API_KEY") else 1)'; then
+   if printenv OPENAI_API_KEY | grep -q .; then
      echo "OPENAI_API_KEY is set"
    else
      echo "OPENAI_API_KEY is not set"
