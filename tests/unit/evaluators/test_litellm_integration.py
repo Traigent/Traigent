@@ -530,23 +530,28 @@ async def test_cost_from_token_counts_anthropic_alias_fields(monkeypatch):
     """Ensure cost uses token-count fallback for Anthropic alias fields via litellm per-token rates."""
     from traigent.evaluators.metrics_tracker import extract_llm_metrics
 
-    # Use actual litellm pricing if available, otherwise use test values
-    try:
-        import litellm
+    import litellm
 
-        if "claude-3-haiku-20240307" in litellm.model_cost:
-            # Use actual pricing from litellm
-            actual_pricing = litellm.model_cost["claude-3-haiku-20240307"]
-            input_rate = actual_pricing.get("input_cost_per_token", 0.00000025)
-            output_rate = actual_pricing.get("output_cost_per_token", 0.00000125)
-        else:
-            # Use test values if model not in litellm
-            input_rate = 0.00000025
-            output_rate = 0.00000075
-    except ImportError:
-        # Use test values if litellm not available
-        input_rate = 0.00000025
-        output_rate = 0.00000075
+    # Pin the catalog entry so the test does not depend on which models the
+    # installed litellm release still ships (1.104.0 dropped this one).
+    input_rate = 0.00000025
+    output_rate = 0.00000125
+    monkeypatch.setitem(
+        litellm.model_cost,
+        "claude-3-haiku-20240307",
+        {
+            "input_cost_per_token": input_rate,
+            "output_cost_per_token": output_rate,
+            "litellm_provider": "anthropic",
+            "mode": "chat",
+        },
+    )
+    # litellm resolves bare model names to a provider through this set.
+    monkeypatch.setattr(
+        litellm,
+        "anthropic_models",
+        set(litellm.anthropic_models) | {"claude-3-haiku-20240307"},
+    )
 
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "")
     monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
