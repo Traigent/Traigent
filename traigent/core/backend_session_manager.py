@@ -63,15 +63,15 @@ from traigent.core.session_types import (
 from traigent.evaluators.base import Dataset
 from traigent.metrics.content_features import SimhashFeatureExtractor
 from traigent.optimizers.base import BaseOptimizer
+from traigent.utils.env_config import is_untracked_fallback_allowed
+from traigent.utils.exceptions import ConfigurationError
+from traigent.utils.function_identity import FunctionDescriptor
+from traigent.utils.logging import get_logger
 from traigent.utils.trial_costs import (
     TRIAL_COST_FIELDS,
     extract_trial_cost_metric,
     is_finite_numeric_cost,
 )
-from traigent.utils.env_config import is_untracked_fallback_allowed
-from traigent.utils.exceptions import ConfigurationError
-from traigent.utils.function_identity import FunctionDescriptor
-from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -307,9 +307,9 @@ def sanitize_session_aggregation_payload(payload: Any) -> dict[str, Any] | None:
         "trials_completed": _bounded_int(payload.get("trials_completed")) or 0,
         "successful_trials": _bounded_int(payload.get("successful_trials")) or 0,
         "success_rate": _bounded_number(payload.get("success_rate")),
-        "best_weighted_config": best_weighted_config
-        if isinstance(best_weighted_config, dict)
-        else None,
+        "best_weighted_config": (
+            best_weighted_config if isinstance(best_weighted_config, dict) else None
+        ),
         "best_weighted_score": _bounded_number(payload.get("best_weighted_score")),
         "statistical_significance": _sanitize_significance(
             payload.get("statistical_significance")
@@ -1561,9 +1561,11 @@ class BackendSessionManager:
             )
             logger.info(
                 "Creating backend session with max_trials=%s for %s (remote_name=%s)",
-                max_trials_value
-                if max_trials_value is not None
-                else "unset (no budget)",
+                (
+                    max_trials_value
+                    if max_trials_value is not None
+                    else "unset (no budget)"
+                ),
                 function_identifier,
                 function_slug,
             )
@@ -1779,7 +1781,7 @@ class BackendSessionManager:
         if isinstance(generation, bool) or not isinstance(generation, int):
             logger.debug("Agent head generation was not an integer; no head capture")
             return None
-        return generation
+        return cast(int, generation)
 
     def _create_offline_local_session(
         self,
@@ -3029,9 +3031,9 @@ class BackendSessionManager:
             ),
             "metrics": metrics,
             "samples_per_config": samples_per_config,
-            "total_examples": sum(samples_per_config.values())
-            if samples_per_config
-            else 0,
+            "total_examples": (
+                sum(samples_per_config.values()) if samples_per_config else 0
+            ),
             "trials_completed": trials_completed,
             "successful_trials": successful_trials,
             "success_rate": success_rate,

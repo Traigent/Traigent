@@ -31,8 +31,8 @@ except ImportError:
 
     # Mock mlflow for type hints
     class mlflow:  # type: ignore[no-redef]
-        _tracking_uri = None
-        _active_experiment = None
+        _tracking_uri: str | None = None
+        _active_experiment: str | None = None
         _experiments: dict[str, Any] = {}
         _current_run: Any = None
 
@@ -158,6 +158,8 @@ class TraigentMLflowTracker:
         # Set tracking URI
         if tracking_uri:
             mlflow.set_tracking_uri(tracking_uri)
+
+        self.experiment_id: str | None
 
         # Set or create experiment
         try:
@@ -453,7 +455,7 @@ class TraigentMLflowTracker:
                 return None
 
             # Search for runs with the metric
-            runs = mlflow.search_runs(
+            runs = cast(Any, mlflow).search_runs(
                 experiment_ids=[experiment.experiment_id],
                 filter_string=f"metrics.best_{metric_name} IS NOT NULL",
                 order_by=[

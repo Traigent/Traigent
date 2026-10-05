@@ -92,7 +92,7 @@ Output shows:
 - Authentication status
 - User email and ID
 - Backend URL
-- API key (masked for security)
+- Whether an API key is configured (the key is never shown)
 
 ### Logout
 
@@ -129,13 +129,20 @@ Options:
 
 ### Who Am I
 
-With `TRAIGENT_API_KEY` set in your environment, check API key validity:
+Check that the API key the SDK sends to the backend is valid:
 
 ```bash
 traigent auth whoami
 ```
 
-This command does not automatically load a key from saved credentials.
+Without an argument, `whoami` validates the key the SDK resolves:
+`TRAIGENT_API_KEY` first, then an API key stored by `traigent auth login`, then
+`TRAIGENT_DEV_API_KEY` only when development mode is explicitly enabled. JWT
+sessions are not used. It prints where the key came from, never the key itself,
+and exits non-zero when no key is found.
+
+Do not pass the key as an argument: a command-line argument is visible in the
+process list and in shell history.
 
 ## Automatic Credential Discovery
 
@@ -310,10 +317,19 @@ For automated environments:
 
 ### Docker
 
-```dockerfile
-# Set API key at runtime
-ENV TRAIGENT_API_KEY=${TRAIGENT_API_KEY}
+Inject the API key when the container starts, not when the image is built:
 
+```bash
+# Name only: Docker copies the value from the caller's environment
+docker run --rm -e TRAIGENT_API_KEY your-image
+```
+
+You can also use `docker run --env-file` with a gitignored file, or your
+orchestrator's secret mechanism. Never pass the key through a Dockerfile `ARG`
+or `ENV` instruction or `docker build --build-arg`: it persists in the image
+metadata and in `docker history`, and travels wherever the image is pushed.
+
+```dockerfile
 # Or mount CLI-managed encrypted credentials
 VOLUME /root/.traigent
 ```
@@ -382,7 +398,7 @@ traigent auth logout       # Clear credentials
 traigent auth status       # Check status
 traigent auth refresh      # Refresh tokens
 traigent auth configure    # Configuration wizard
-traigent auth whoami       # Validate TRAIGENT_API_KEY from the environment
+traigent auth whoami       # Validate the API key the SDK will send
 
 # Options
 --email EMAIL             # Specify email
