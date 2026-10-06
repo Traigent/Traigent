@@ -77,6 +77,7 @@ integrations = [
     "langchain-openai>=1.1.14",  # GHSA-r7w7-9xr2-qq2r (SSRF) fix
     "langchain-text-splitters>=1.1.2",  # Document chunking for RAG; CVE-2025-6985 (XXE) + CVE-2026-41481 (SSRF) fix
     "langchain-google-genai>=2.1.4",  # Google Gemini support via LangChain
+    "langgraph-sdk>=0.4.4,<0.5",  # langchain -> langgraph admits 0.4.2/0.4.3 (vulnerable); the [tool.uv] constraint only binds uv, not pip consumers
     "openai>=2.0.0",
     "anthropic>=0.18.0",
     "groq>=0.9.0",  # Groq cloud inference
