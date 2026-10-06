@@ -286,7 +286,7 @@ constraint-dependencies = [
     "pyasn1>=0.6.3",
     "python-dotenv>=1.2.2",
     "urllib3>=2.8.0",
-    "virtualenv>=20.36.1",
+    "virtualenv>=21.14.4",
     "werkzeug>=3.1.6",
 ]
 
