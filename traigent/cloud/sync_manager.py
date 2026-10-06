@@ -46,6 +46,9 @@ from ..utils.logging import get_logger
 logger = get_logger(__name__)
 
 # Backend per-example measures limits (TraigentBackend workflow_metadata).
+# Version of the converted-payload shape whose hash is recorded in sync_state:
+# 2 = content-free typed-session payload; 3 = adds per-example measures.
+PAYLOAD_HASH_VERSION = 3
 _MAX_EXAMPLE_MEASURES = 1000
 _MAX_EXAMPLE_METRICS = 50
 _MAX_EXAMPLE_METRIC_KEY_LENGTH = 100
@@ -299,7 +302,11 @@ class SyncManager:
         }
 
     def convert_session_to_traigent_format(
-        self, session: OptimizationSession, *, legacy_shape: bool = False
+        self,
+        session: OptimizationSession,
+        *,
+        legacy_shape: bool = False,
+        include_example_measures: bool = True,
     ) -> dict[str, Any]:
         """
         Convert a local session to the content-free typed-session payload.
@@ -330,8 +337,11 @@ class SyncManager:
         if not isinstance(search_space, dict):
             search_space = {}
 
+        # Releases before payload hash version 3 never produced per-example
+        # measures; their fingerprints are reproduced without them.
         configuration_runs = self._convert_trials_to_configuration_runs(
-            session.trials or []
+            session.trials or [],
+            include_example_measures=include_example_measures and not legacy_shape,
         )
         objectives = self._derive_objectives(opt_config, configuration_runs)
         # Guard: the backend rejects a COMPLETED trial whose metrics lack any
@@ -503,7 +513,7 @@ class SyncManager:
                     measures[objective] = fallback
 
     def _convert_trials_to_configuration_runs(
-        self, trials: list[Any]
+        self, trials: list[Any], *, include_example_measures: bool = True
     ) -> list[dict[str, Any]]:
         """Reshape local trial results into per-trial result payloads.
 
@@ -536,8 +546,10 @@ class SyncManager:
                 "measures": measures,
                 "status": status,
             }
-            example_measures = self._content_free_example_measures(
-                result.get("metadata")
+            example_measures = (
+                self._content_free_example_measures(result.get("metadata"))
+                if include_example_measures
+                else []
             )
             if example_measures:
                 configuration_run["example_measures"] = example_measures
@@ -683,6 +695,36 @@ class SyncManager:
             self.convert_session_to_traigent_format(session, legacy_shape=True)
         )
 
+    def _acceptable_payload_hashes(
+        self,
+        session: OptimizationSession,
+        stored_version: Any,
+        current_hash: str,
+    ) -> list[str]:
+        """Fingerprints that name this session's content for a stored state.
+
+        State records the hash version of the release that wrote it:
+
+        * no version  -> pre-metadata releases: legacy shape or current
+        * version 2   -> no per-example measures yet: v2 shape or current
+        * version 3+  -> current hash only
+
+        Every shape hashes the same trials, so a genuinely changed session
+        differs under all of them.
+        """
+        accepted = [current_hash]
+        if stored_version is None:
+            accepted.append(self._legacy_payload_hash(session))
+        elif stored_version == 2:
+            accepted.append(
+                self._compute_payload_hash(
+                    self.convert_session_to_traigent_format(
+                        session, include_example_measures=False
+                    )
+                )
+            )
+        return accepted
+
     @staticmethod
     def _config_run_key(index: int) -> str:
         """Stable key identifying a configuration-run within a session's batch.
@@ -745,9 +787,9 @@ class SyncManager:
             # A hash recorded by a pre-upgrade release names the same content.
             # State written by the current release carries a hash version and is
             # compared against the current hash only.
-            accepted_hashes = [payload_hash]
-            if "payload_hash_version" not in prior_state:
-                accepted_hashes.append(self._legacy_payload_hash(session))
+            accepted_hashes = self._acceptable_payload_hashes(
+                session, prior_state.get("payload_hash_version"), payload_hash
+            )
             same_content = prior_state.get("payload_hash") in accepted_hashes
             already_synced = prior_state.get("status") == "synced" and same_content
 
@@ -1022,7 +1064,7 @@ class SyncManager:
             "status": marker_status,
             "source": "offline_sync",
             "payload_hash": payload_hash,
-            "payload_hash_version": 2,
+            "payload_hash_version": PAYLOAD_HASH_VERSION,
             # Persist all cloud ids so a retry of a partial sync reuses them
             # instead of creating a duplicate session/experiment.
             "cloud_session_id": sync_result.get("cloud_session_id"),
