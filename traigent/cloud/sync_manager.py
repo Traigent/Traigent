@@ -7,8 +7,10 @@ Handles migration of local data to Traigent backend when users upgrade.
 
 import hashlib
 import json
+import math
 import os
 import re
+import sys
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -43,6 +45,19 @@ from ..utils.exceptions import TraigentStorageError
 from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# Backend per-example measures limits (TraigentBackend workflow_metadata).
+# Version of the converted-payload shape whose hash is recorded in sync_state:
+# 2 = content-free typed-session payload; 3 = adds per-example measures.
+PAYLOAD_HASH_VERSION = 3
+_MAX_EXAMPLE_MEASURES = 1000
+_MAX_EXAMPLE_METRICS = 50
+_MAX_EXAMPLE_METRIC_KEY_LENGTH = 100
+_EXAMPLE_METRIC_KEY_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+# SDK-minted example ids (traigent/core/metadata_helpers.py, utils/example_id):
+# only the index digits are ever read from them.
+_SDK_EXAMPLE_ID_RE = re.compile(r"(?:example_([0-9]{1,9})|ex_[0-9a-f]+_([0-9]{1,9}))")
 
 _BACKEND_NAME_DISALLOWED = re.compile(r"[^a-zA-Z0-9 _-]+")
 _BACKEND_NAME_SPACES = re.compile(r"\s+")
@@ -292,7 +307,11 @@ class SyncManager:
         }
 
     def convert_session_to_traigent_format(
-        self, session: OptimizationSession, *, legacy_shape: bool = False
+        self,
+        session: OptimizationSession,
+        *,
+        legacy_shape: bool = False,
+        include_example_measures: bool = True,
     ) -> dict[str, Any]:
         """
         Convert a local session to the content-free typed-session payload.
@@ -323,8 +342,11 @@ class SyncManager:
         if not isinstance(search_space, dict):
             search_space = {}
 
+        # Releases before payload hash version 3 never produced per-example
+        # measures; their fingerprints are reproduced without them.
         configuration_runs = self._convert_trials_to_configuration_runs(
-            session.trials or []
+            session.trials or [],
+            include_example_measures=include_example_measures and not legacy_shape,
         )
         objectives = self._derive_objectives(opt_config, configuration_runs)
         # Guard: the backend rejects a COMPLETED trial whose metrics lack any
@@ -496,7 +518,7 @@ class SyncManager:
                     measures[objective] = fallback
 
     def _convert_trials_to_configuration_runs(
-        self, trials: list[Any]
+        self, trials: list[Any], *, include_example_measures: bool = True
     ) -> list[dict[str, Any]]:
         """Reshape local trial results into per-trial result payloads.
 
@@ -523,14 +545,20 @@ class SyncManager:
                     if isinstance(metadata_config, Mapping) and metadata_config:
                         experiment_parameters = dict(metadata_config)
             status = "FAILED" if result.get("status") == "failed" else "COMPLETED"
-            configuration_runs.append(
-                {
-                    "trial_id": result.get("trial_id"),
-                    "experiment_parameters": experiment_parameters,
-                    "measures": measures,
-                    "status": status,
-                }
+            configuration_run: dict[str, Any] = {
+                "trial_id": result.get("trial_id"),
+                "experiment_parameters": experiment_parameters,
+                "measures": measures,
+                "status": status,
+            }
+            example_measures = (
+                self._content_free_example_measures(result.get("metadata"))
+                if include_example_measures
+                else []
             )
+            if example_measures:
+                configuration_run["example_measures"] = example_measures
+            configuration_runs.append(configuration_run)
 
         return configuration_runs
 
@@ -552,6 +580,96 @@ class SyncManager:
                 measures[key] = value
 
         return measures
+
+    @classmethod
+    def _content_free_example_measures(cls, metadata: Any) -> list[dict[str, Any]]:
+        """Build content-free per-example measures from ``metadata["measures"]``.
+
+        Mirrors the live submit shape (``[{"example_id", "metrics"}]``) so the
+        backend can count distinct examples, but keeps no customer content:
+        ``example_id`` is regenerated as ``example_<dataset index>`` (customer-
+        chosen ids count as content) and only finite numeric metrics with
+        backend-valid keys survive. Malformed entries, rows left with no
+        metrics and repeated indices within one trial are skipped, mirroring
+        the live builder (which drops examples without numeric metrics).
+
+        The dataset index is recovered from SDK-minted ids only
+        (``example_<n>`` / ``ex_<hash>_<n>``): only the parsed digits are used,
+        never the original string. The live builder drops rows, so the list
+        position drifts from the dataset position and differs per trial; the
+        backend counts distinct examples by id across all trials.
+
+        The choice is made per trial and never mixed: if EVERY kept row's id
+        parses as SDK-minted, parsed indices are used; otherwise the list
+        position is used for ALL rows. Mixing would let a position fallback
+        collide with another row's parsed index and drop a genuine row. Files
+        whose ids are all customer-chosen (SDK <= 0.27) therefore get position
+        ids, which may not align across trials.
+        """
+        if not isinstance(metadata, Mapping):
+            return []
+        raw = metadata.get("measures")
+        if not isinstance(raw, list):
+            return []
+
+        rows: list[tuple[int, int | None, dict[str, Any]]] = []
+        for position, entry in enumerate(raw):
+            if not isinstance(entry, Mapping):
+                continue
+            metrics = entry.get("metrics")
+            if not isinstance(metrics, Mapping):
+                continue
+            clean: dict[str, Any] = {}
+            for key, value in metrics.items():
+                if (
+                    isinstance(key, str)
+                    and len(key) <= _MAX_EXAMPLE_METRIC_KEY_LENGTH
+                    and _EXAMPLE_METRIC_KEY_RE.match(key)
+                    and cls._is_finite_number(value)
+                    and len(clean) < _MAX_EXAMPLE_METRICS
+                ):
+                    clean[key] = value
+            if clean:
+                rows.append(
+                    (
+                        position,
+                        cls._dataset_example_index(entry.get("example_id")),
+                        clean,
+                    )
+                )
+
+        use_parsed = bool(rows) and all(parsed is not None for _, parsed, _ in rows)
+        out: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        for position, parsed, clean in rows:
+            if len(out) >= _MAX_EXAMPLE_MEASURES:
+                break
+            index = parsed if use_parsed and parsed is not None else position
+            if index in seen:
+                continue
+            seen.add(index)
+            out.append({"example_id": f"example_{index}", "metrics": clean})
+        return out
+
+    @staticmethod
+    def _dataset_example_index(example_id: Any) -> int | None:
+        """Integer dataset index from an SDK-minted id, else ``None``."""
+        if isinstance(example_id, str):
+            match = _SDK_EXAMPLE_ID_RE.fullmatch(example_id)
+            if match:
+                return int(match.group(1) or match.group(2))
+        return None
+
+    @classmethod
+    def _is_finite_number(cls, value: Any) -> bool:
+        """Numeric, non-bool and finite; huge ints count as non-finite."""
+        if not cls._is_numeric(value):
+            return False
+        if isinstance(value, int):
+            # int vs float compares exactly (no conversion), so huge ints are
+            # rejected without math.isfinite raising OverflowError.
+            return abs(value) <= sys.float_info.max
+        return math.isfinite(value)
 
     @staticmethod
     def _is_numeric(value: Any) -> bool:
@@ -635,6 +753,42 @@ class SyncManager:
             self.convert_session_to_traigent_format(session, legacy_shape=True)
         )
 
+    def _acceptable_payload_hashes(
+        self,
+        session: OptimizationSession,
+        stored_version: Any,
+        current_hash: str,
+    ) -> list[str]:
+        """Fingerprints that name this session's content for a stored state.
+
+        State records the hash version of the release that wrote it:
+
+        * no version  -> pre-metadata releases: legacy shape or current
+        * version 2   -> no per-example measures yet: v2 shape or current
+        * version 3+  -> current hash only
+
+        Every shape hashes the same trials, so a genuinely changed session
+        differs under all of them.
+
+        Known limitation: for state written before version 3, a change ONLY to
+        per-example scores (aggregates and trials otherwise identical) is
+        treated as already synced, because older fingerprints never covered
+        per-example scores. ``--force`` re-uploads. Intentional; pinned by
+        ``test_pre_v3_state_ignores_per_example_score_only_change``.
+        """
+        accepted = [current_hash]
+        if stored_version is None:
+            accepted.append(self._legacy_payload_hash(session))
+        elif stored_version == 2:
+            accepted.append(
+                self._compute_payload_hash(
+                    self.convert_session_to_traigent_format(
+                        session, include_example_measures=False
+                    )
+                )
+            )
+        return accepted
+
     @staticmethod
     def _config_run_key(index: int) -> str:
         """Stable key identifying a configuration-run within a session's batch.
@@ -697,9 +851,9 @@ class SyncManager:
             # A hash recorded by a pre-upgrade release names the same content.
             # State written by the current release carries a hash version and is
             # compared against the current hash only.
-            accepted_hashes = [payload_hash]
-            if "payload_hash_version" not in prior_state:
-                accepted_hashes.append(self._legacy_payload_hash(session))
+            accepted_hashes = self._acceptable_payload_hashes(
+                session, prior_state.get("payload_hash_version"), payload_hash
+            )
             same_content = prior_state.get("payload_hash") in accepted_hashes
             already_synced = prior_state.get("status") == "synced" and same_content
 
@@ -974,7 +1128,7 @@ class SyncManager:
             "status": marker_status,
             "source": "offline_sync",
             "payload_hash": payload_hash,
-            "payload_hash_version": 2,
+            "payload_hash_version": PAYLOAD_HASH_VERSION,
             # Persist all cloud ids so a retry of a partial sync reuses them
             # instead of creating a duplicate session/experiment.
             "cloud_session_id": sync_result.get("cloud_session_id"),
@@ -1280,6 +1434,9 @@ class SyncManager:
                 "status": configuration_run.get("status") or "COMPLETED",
                 "metrics": configuration_run.get("measures", {}),
             }
+            if configuration_run.get("example_measures"):
+                # Same top-level ``measures`` list the live path submits.
+                result_payload["measures"] = configuration_run["example_measures"]
             try:
                 response = self._session.post(
                     f"{self.base_url}/sessions/{session_id}/results",
