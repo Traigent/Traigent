@@ -71,6 +71,12 @@ pytest tests/integration/ -v
 pytest tests/integration/optimizers/ -v
 ```
 
+The test suite does not read your `.env`: `tests/conftest.py` sets
+`TRAIGENT_SKIP_DOTENV=1` (the SDK's loader) and `LITELLM_MODE=PRODUCTION`
+(litellm otherwise loads `.env` on import), so a local key file never leaks into
+a run. Tests that need real keys only see the ones exported in the shell (as CI
+provides them). Live tests can call paid providers.
+
 ### Security Tests
 
 Located in `tests/security/`, these validate security features:

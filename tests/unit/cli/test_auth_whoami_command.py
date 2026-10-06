@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 import types
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -108,9 +111,11 @@ def _install_fake_aiohttp(
 def _run_whoami(
     monkeypatch: pytest.MonkeyPatch, api_key: str | None = "tg_test_key"
 ) -> Any:
+    # whoami resolves its target through get_cloud_api_url(); pin it so no test
+    # in this module can reach a real backend even if a key leaks in.
     monkeypatch.setattr(
         auth_commands.BackendConfig,
-        "get_backend_api_url",
+        "get_cloud_api_url",
         staticmethod(lambda: "http://localhost:5000/api/v1"),
     )
     runner = CliRunner()
@@ -163,7 +168,7 @@ def test_whoami_posts_json_payload_to_validate_endpoint(
 def test_whoami_uses_env_api_key_when_argument_omitted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    api_key = "tg_" + "a" * 43
+    api_key = "tg_" + "a" * 43  # pragma: allowlist secret
     monkeypatch.setenv("TRAIGENT_API_KEY", api_key)
     _install_fake_aiohttp(
         monkeypatch,
@@ -185,6 +190,77 @@ def test_whoami_requires_argument_or_env(monkeypatch: pytest.MonkeyPatch) -> Non
     assert result.exit_code == 1
     assert "Missing API key" in result.output
     assert "TRAIGENT_API_KEY" in result.output
+
+
+def test_auth_group_does_not_reload_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The auth group must not call load_dotenv() itself.
+
+    A bare load_dotenv() searches upward from traigent/cli/ to the filesystem
+    root, so it ignored TRAIGENT_SKIP_DOTENV and the #1830 project boundary and
+    re-injected a developer's real TRAIGENT_API_KEY into "no key" runs.
+    auth_commands imports traigent.utils.env_config, whose import loads .env
+    with both guards.
+    """
+    import dotenv
+    import dotenv.main
+
+    calls: list[tuple[Any, ...]] = []
+
+    def _spy(*args: Any, **kwargs: Any) -> bool:
+        calls.append(args)
+        monkeypatch.setenv("TRAIGENT_API_KEY", "tg_" + "x" * 43)
+        return True
+
+    monkeypatch.setattr(dotenv, "load_dotenv", _spy)
+    monkeypatch.setattr(dotenv.main, "load_dotenv", _spy)
+    monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+
+    result = _run_whoami(monkeypatch, None)
+
+    assert calls == []
+    assert result.exit_code == 1
+    assert "Missing API key" in result.output
+
+
+def test_auth_still_loads_the_project_dotenv(tmp_path: Path) -> None:
+    """`traigent auth` must keep reading the caller's project `.env`.
+
+    The group no longer calls load_dotenv() itself; the project file has to
+    arrive through traigent.utils.env_config. Runs in a fresh interpreter so
+    the import-time load actually happens, with litellm's own loader off so it
+    cannot be the one supplying the key.
+    """
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "probe"\n')
+    # A malformed key: whoami rejects it before any network call, and the
+    # rejection proves the value was read from this file.
+    malformed_key = "xx_from_project_dotenv"  # pragma: allowlist secret
+    (tmp_path / ".env").write_text("=".join(("TRAIGENT_API_KEY", malformed_key)) + "\n")
+    runner = tmp_path / "run_whoami.py"
+    runner.write_text(
+        "from click.testing import CliRunner\n"
+        "from traigent.cli.auth_commands import auth\n"
+        "print(CliRunner().invoke(auth, ['whoami']).output)\n"
+    )
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in {"TRAIGENT_API_KEY", "TRAIGENT_SKIP_DOTENV"}
+    }
+    env["LITELLM_MODE"] = "PRODUCTION"
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[3])
+
+    proc = subprocess.run(
+        [sys.executable, str(runner)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert "Invalid API key format" in proc.stdout, proc.stdout + proc.stderr
+    assert "Missing API key" not in proc.stdout
 
 
 @pytest.mark.parametrize("prefix", ["tg_", "uk_", "sk_", "ak_", "tk_"])
@@ -390,7 +466,7 @@ def test_whoami_403_with_a_cloudflare_header_is_an_edge_block(
         response=_FakeResponse(
             status=403,
             text_payload="<html>Attention Required</html>",
-            headers={"CF-RAY": "8abc123def456"},
+            headers={"CF-RAY": "8abc123def456"},  # pragma: allowlist secret
         ),
     )
 

@@ -18,13 +18,13 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
 
-from traigent.core.backend_session_manager import (
-    EDGE_BLOCK_SIGNALS as _SESSION_EDGE_BLOCK_SIGNALS,
-)
-
 import click
 from rich.console import Console
 from rich.panel import Panel
+
+from traigent.core.backend_session_manager import (
+    EDGE_BLOCK_SIGNALS as _SESSION_EDGE_BLOCK_SIGNALS,
+)
 
 # Try to import aiohttp for exception handling
 try:
@@ -53,6 +53,9 @@ from traigent.security.credentials import (
     SecurityError,
     get_secure_credential_store,
 )
+
+# Imported for its side effect: loads .env with the #1830 guards (see auth()).
+from traigent.utils import env_config as _env_config  # noqa: F401
 from traigent.utils.logging import get_logger
 
 console = Console()
@@ -1713,12 +1716,13 @@ def auth() -> None:
         traigent auth refresh           # Refresh authentication tokens
         traigent auth configure         # Configure authentication settings
     """
-    try:
-        from dotenv import load_dotenv
-
-        load_dotenv()
-    except ImportError:
-        pass
+    # No load_dotenv() here: this module imports traigent.utils.env_config,
+    # whose import runs _load_dotenv_files(). That loader honours
+    # TRAIGENT_SKIP_DOTENV and stops at the project boundary (#1830). A bare
+    # load_dotenv() searches upward to `/` (from this file's directory when run
+    # as a script or console entry point, from cwd in a REPL or under a tracer
+    # such as a debugger or coverage), so it
+    # bypassed both and could load an unrelated ancestor's `.env`.
 
 
 @auth.command()
