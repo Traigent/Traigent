@@ -640,27 +640,87 @@ class TestSyncManager:
         assert session_create["function_name"] == session.function_name
         assert "function_display_name" not in session_create["metadata"]
 
-    def test_convert_uses_display_name_as_experiment_name(
+    def test_convert_sends_stored_portal_name_not_bare_display_name(
         self, sync_manager: SyncManager
     ) -> None:
-        """Display name is the portal name; the identifier stays in metadata."""
+        """function_name is the live path's portal name (agent identity)."""
         session = self._session_with(
-            metadata={"function_display_name": "traigent-certified-agent-demo"}
+            metadata={
+                "function_display_name": "run",
+                "portal_name": "opt:accuracy · model (abc12345)",
+            }
         )
 
         session_create = sync_manager.convert_session_to_traigent_format(session)[
             "session_create"
         ]
 
-        assert session_create["function_name"] == "traigent-certified-agent-demo"
+        assert session_create["function_name"] == "opt:accuracy · model (abc12345)"
         assert (
             session_create["metadata"]["function_name"]
             == "traigent-runs/wrapper.py_wrapper_agent"
         )
-        assert (
-            session_create["metadata"]["function_display_name"]
-            == "traigent-certified-agent-demo"
+        assert session_create["metadata"]["function_display_name"] == "run"
+        assert "agent_key" not in session_create
+
+    def test_same_display_name_different_slug_gives_distinct_function_name(
+        self, sync_manager: SyncManager
+    ) -> None:
+        a = self._session_with(
+            metadata={"function_display_name": "run", "portal_name": "run (aaaa1111)"}
         )
+        b = self._session_with(
+            metadata={"function_display_name": "run", "portal_name": "run (bbbb2222)"}
+        )
+
+        name_a = sync_manager.convert_session_to_traigent_format(a)["session_create"][
+            "function_name"
+        ]
+        name_b = sync_manager.convert_session_to_traigent_format(b)["session_create"][
+            "function_name"
+        ]
+
+        assert name_a != name_b
+
+    def test_old_file_without_portal_name_sends_exactly_session_function_name(
+        self, sync_manager: SyncManager
+    ) -> None:
+        session = self._session_with(metadata={"function_display_name": "run"})
+
+        session_create = sync_manager.convert_session_to_traigent_format(session)[
+            "session_create"
+        ]
+
+        assert session_create["function_name"] == session.function_name
+
+    def test_blank_or_wrong_typed_portal_name_falls_back(
+        self, sync_manager: SyncManager
+    ) -> None:
+        for bad in ("  ", 5, None, ["x"]):
+            session = self._session_with(metadata={"portal_name": bad})
+            session_create = sync_manager.convert_session_to_traigent_format(session)[
+                "session_create"
+            ]
+            assert session_create["function_name"] == session.function_name
+
+    def test_declared_agent_key_sent_top_level_only_when_valid(
+        self, sync_manager: SyncManager
+    ) -> None:
+        with_key = self._session_with(metadata={"agent_key": "  my-agent  "})
+        assert (
+            sync_manager.convert_session_to_traigent_format(with_key)["session_create"][
+                "agent_key"
+            ]
+            == "my-agent"
+        )
+        for bad in ("", "   ", 7, None):
+            session = self._session_with(metadata={"agent_key": bad})
+            assert (
+                "agent_key"
+                not in sync_manager.convert_session_to_traigent_format(session)[
+                    "session_create"
+                ]
+            )
 
     def test_convert_keeps_derived_name_without_display_name(
         self, sync_manager: SyncManager

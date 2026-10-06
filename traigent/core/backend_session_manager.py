@@ -636,6 +636,45 @@ def _format_untracked_warning_block(
     return "\n".join(lines)
 
 
+def compute_portal_name(
+    *,
+    experiment_display_name: str | None,
+    objectives: list[Any] | None,
+    knob_names: list[str],
+    function_display_name: str | None,
+    function_identifier: str,
+    function_slug: str | None,
+) -> str:
+    """Portal experiment / agent-routing name shared by live and offline paths.
+
+    When the user supplied an explicit experiment_name, honour it. When no name
+    was given, weave in objectives and knob names so the experiment is
+    self-describing in the portal's Recent Experiments list (issue #1422): e.g.
+    "opt:accuracy,cost · model,temperature". The function slug's hash suffix is
+    ALWAYS appended so same-named functions in different modules stay distinct
+    (the backend uses ``function_name`` as agent identity absent an agent_key).
+    """
+    slug_hash = function_slug.rsplit("_", 1)[-1] if function_slug else ""
+    if experiment_display_name is None:
+        # Up to 3 objective names and up to 4 knob names keep the label concise.
+        obj_names = (objectives or [])[:3]
+        label_parts: list[str] = []
+        if obj_names:
+            label_parts.append("opt:" + ",".join(obj_names))
+        if knob_names[:4]:
+            label_parts.append(",".join(knob_names[:4]))
+        portal_name = (
+            " · ".join(label_parts)
+            if label_parts
+            else (function_display_name or function_identifier)
+        )
+    else:
+        portal_name = function_display_name or function_identifier
+    if slug_hash:
+        portal_name = f"{portal_name} ({slug_hash})"
+    return portal_name
+
+
 class BackendSessionManager:
     """Manages backend session lifecycle and trial synchronization.
 
@@ -1519,6 +1558,9 @@ class BackendSessionManager:
                 dataset=dataset,
                 max_trials=max_trials,
                 dataset_id=dataset_id,
+                experiment_display_name=experiment_display_name,
+                function_slug=function_slug,
+                agent_key=agent_key,
             )
             return SessionContext(
                 session_id=local_session_id,
@@ -1594,33 +1636,17 @@ class BackendSessionManager:
             if warm_start_from:
                 session_metadata["warm_start_from"] = warm_start_from
 
-            # Build the portal display name.
-            # When the user supplied an explicit experiment_name, honour it.
-            # When no name was given, weave in objectives and knob names so the
-            # experiment is self-describing in the portal's Recent Experiments
-            # list (issue #1422): e.g. "opt:accuracy,cost · model,temperature".
-            slug_hash = function_slug.rsplit("_", 1)[-1] if function_slug else ""
-            if experiment_display_name is None:
-                # Collect up to 3 objective names and up to 4 knob names to
-                # keep the label concise.
-                obj_names = (self._objectives or [])[:3]
-                knob_names = list(
+            # Build the portal display name (see compute_portal_name).
+            portal_name = compute_portal_name(
+                experiment_display_name=experiment_display_name,
+                objectives=self._objectives,
+                knob_names=list(
                     (getattr(self._optimizer, "config_space", {}) or {}).keys()
-                )[:4]
-                label_parts: list[str] = []
-                if obj_names:
-                    label_parts.append("opt:" + ",".join(obj_names))
-                if knob_names:
-                    label_parts.append(",".join(knob_names))
-                portal_name = (
-                    " · ".join(label_parts)
-                    if label_parts
-                    else (function_display_name or function_identifier)
-                )
-            else:
-                portal_name = function_display_name or function_identifier
-            if slug_hash:
-                portal_name = f"{portal_name} ({slug_hash})"
+                ),
+                function_display_name=function_display_name,
+                function_identifier=function_identifier,
+                function_slug=function_slug,
+            )
 
             # Tell create_session whether this run actually INTENDS cloud egress
             # (managed / auto-cloud) vs. a LOCAL-routed run (grid/random/offline/
@@ -1789,6 +1815,9 @@ class BackendSessionManager:
         dataset: Dataset,
         max_trials: int | None,
         dataset_id: str | None = None,
+        experiment_display_name: str | None = None,
+        function_slug: str | None = None,
+        agent_key: str | None = None,
     ) -> str | None:
         """Create the syncable LOCAL session for a no-egress run (#1939).
 
@@ -1830,7 +1859,21 @@ class BackendSessionManager:
                 "offline": True,
                 "algorithm": getattr(policy, "algorithm", None),
                 "created_with_version": get_version(),
+                # The exact name the live create would send as function_name
+                # (agent identity absent an agent_key); sync reuses it.
+                "portal_name": compute_portal_name(
+                    experiment_display_name=experiment_display_name,
+                    objectives=self._objectives,
+                    knob_names=list(
+                        (getattr(self._optimizer, "config_space", {}) or {}).keys()
+                    ),
+                    function_display_name=function_display_name,
+                    function_identifier=function_identifier,
+                    function_slug=function_slug,
+                ),
             }
+            if isinstance(agent_key, str) and agent_key.strip():
+                metadata["agent_key"] = agent_key.strip()
             # Persist the identity the live create would have declared (explicit
             # id, else a real label, else none) so `traigent sync` sends it.
             from traigent.cloud.models import (  # local: traigent.cloud is optional

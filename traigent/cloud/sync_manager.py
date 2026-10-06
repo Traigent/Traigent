@@ -292,7 +292,7 @@ class SyncManager:
         }
 
     def convert_session_to_traigent_format(
-        self, session: OptimizationSession
+        self, session: OptimizationSession, *, legacy_shape: bool = False
     ) -> dict[str, Any]:
         """
         Convert a local session to the content-free typed-session payload.
@@ -311,6 +311,9 @@ class SyncManager:
 
         Args:
             session: Local optimization session
+            legacy_shape: Reproduce the payload exactly as releases before
+                offline metadata was read were converting it. Used ONLY to
+                recognise a fingerprint recorded by such a release; never sent.
 
         Returns:
             Dict with a ``session_create`` payload plus ``configuration_runs``.
@@ -338,7 +341,9 @@ class SyncManager:
         # (api_operations._build_typed_session_payload). The empty-dataset
         # pass-through comes from binding NO benchmark, not from the size field.
         session_metadata = (
-            session.metadata if isinstance(session.metadata, dict) else {}
+            session.metadata
+            if isinstance(session.metadata, dict) and not legacy_shape
+            else {}
         )
         # Offline sessions persist dataset_size / evaluation_set under
         # session.metadata (written by the orchestrator); optimization_config
@@ -366,7 +371,22 @@ class SyncManager:
             display_name = None
         else:
             display_name = display_name.strip()
-        portal_name = display_name or session.function_name
+        # The live path's agent-routing name (objectives/knobs label + slug
+        # hash) is persisted at offline-session creation; the backend uses
+        # function_name as agent identity when no agent_key is sent, so the bare
+        # display name must never be used here. Old files without it keep the
+        # pre-existing behaviour (the derived identifier).
+        stored_portal_name = session_metadata.get("portal_name")
+        if isinstance(stored_portal_name, str) and stored_portal_name.strip():
+            portal_name = stored_portal_name.strip()
+        else:
+            portal_name = session.function_name
+        stored_agent_key = session_metadata.get("agent_key")
+        agent_key = (
+            stored_agent_key.strip()
+            if isinstance(stored_agent_key, str) and stored_agent_key.strip()
+            else None
+        )
 
         session_create = {
             "function_name": portal_name,
@@ -400,6 +420,8 @@ class SyncManager:
         }
         if display_name:
             session_create["metadata"]["function_display_name"] = display_name
+        if agent_key:
+            session_create["agent_key"] = agent_key
         # Declared dataset identity: sent only when the local record persisted
         # one at creation (the value the live create would have sent). Legacy
         # records without it send none -- identity is never invented here, and
@@ -595,6 +617,19 @@ class SyncManager:
         canonical = json.dumps(traigent_data, sort_keys=True, default=str)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
+    def _legacy_payload_hash(self, session: OptimizationSession) -> str:
+        """Fingerprint as recorded by releases that ignored offline metadata.
+
+        Those releases hashed a payload derived from ``optimization_config``
+        only. Recomputing it lets an already- or partially-synced session be
+        recognised after upgrade instead of being re-uploaded as a duplicate
+        experiment. It hashes the same trials, so a genuinely changed session
+        still differs.
+        """
+        return self._compute_payload_hash(
+            self.convert_session_to_traigent_format(session, legacy_shape=True)
+        )
+
     @staticmethod
     def _config_run_key(index: int) -> str:
         """Stable key identifying a configuration-run within a session's batch.
@@ -654,10 +689,12 @@ class SyncManager:
             traigent_data = self.convert_session_to_traigent_format(session)
             payload_hash = self._compute_payload_hash(traigent_data)
             prior_state = dict(session.sync_state or {})
-            already_synced = (
-                prior_state.get("status") == "synced"
-                and prior_state.get("payload_hash") == payload_hash
+            # A hash recorded by a pre-upgrade release names the same content.
+            same_content = prior_state.get("payload_hash") in (
+                payload_hash,
+                self._legacy_payload_hash(session),
             )
+            already_synced = prior_state.get("status") == "synced" and same_content
 
             sync_result: dict[str, Any] = {
                 "session_id": session_id,
@@ -718,7 +755,7 @@ class SyncManager:
             # after a partial/failed attempt — that is what prevents duplicate
             # experiments. A changed run, or --force, starts a fresh experiment.
             resume = (
-                prior_state.get("payload_hash") == payload_hash
+                same_content
                 and prior_state.get("status") in {"partial", "failed"}
                 and not force
             )

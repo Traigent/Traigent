@@ -10,6 +10,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock
 
+from typing import Any
+
 import pytest
 
 from traigent.api.types import (
@@ -4221,3 +4223,116 @@ class TestStoreRelativeSyncId:
         manager._local_storage = Mock(return_value=ExplodingStore())
 
         assert manager.syncable_local_session_id("sess-2020") == "sess-2020"
+
+
+class TestComputePortalName:
+    """Pin the shared portal-name helper (live + offline-sync use it)."""
+
+    def test_explicit_name_uses_display_name_and_slug_hash(self):
+        from traigent.core.backend_session_manager import compute_portal_name
+
+        assert (
+            compute_portal_name(
+                experiment_display_name="My Exp",
+                objectives=["accuracy"],
+                knob_names=["model"],
+                function_display_name="My Exp",
+                function_identifier="mod.py_fn",
+                function_slug="fn_deadbeef",
+            )
+            == "My Exp (deadbeef)"
+        )
+
+    def test_auto_label_caps_objectives_and_knobs(self):
+        from traigent.core.backend_session_manager import compute_portal_name
+
+        assert (
+            compute_portal_name(
+                experiment_display_name=None,
+                objectives=["a", "b", "c", "d"],
+                knob_names=["k1", "k2", "k3", "k4", "k5"],
+                function_display_name="fn",
+                function_identifier="mod.py_fn",
+                function_slug="fn_deadbeef",
+            )
+            == "opt:a,b,c · k1,k2,k3,k4 (deadbeef)"
+        )
+
+    def test_fallback_and_no_slug(self):
+        from traigent.core.backend_session_manager import compute_portal_name
+
+        kwargs: dict[str, Any] = {
+            "experiment_display_name": None,
+            "objectives": None,
+            "knob_names": [],
+            "function_identifier": "mod.py_fn",
+            "function_slug": None,
+        }
+        assert compute_portal_name(function_display_name="fn", **kwargs) == "fn"
+        assert compute_portal_name(function_display_name=None, **kwargs) == "mod.py_fn"
+
+    def test_offline_stored_portal_name_matches_live_portal_name(
+        self, traigent_config, objective_schema, mock_dataset, tmp_path, monkeypatch
+    ):
+        """Parity: same descriptor/settings -> offline-stored == live name."""
+        from unittest.mock import Mock
+
+        from traigent.utils.function_identity import resolve_function_descriptor
+
+        def my_agent_func(x):
+            return x
+
+        descriptor = resolve_function_descriptor(my_agent_func)
+        optimizer = Mock()
+        optimizer.config_space = {"model": ["a", "b"], "temperature": [0.0, 0.7]}
+
+        client = Mock()
+        client.create_session = Mock(
+            return_value=SessionCreationResult.connected(session_id="sess-1")
+        )
+        client.get_session_mapping = Mock(return_value=None)
+        live = BackendSessionManager(
+            backend_client=client,
+            traigent_config=traigent_config,
+            objectives=["accuracy", "cost"],
+            objective_schema=objective_schema,
+            optimizer=optimizer,
+            optimization_id="opt-live",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+        live.create_session(
+            func=my_agent_func,
+            dataset=mock_dataset,
+            function_descriptor=descriptor,
+            max_trials=5,
+            start_time=0.0,
+            experiment_display_name=None,
+            agent_key="stable-agent",
+        )
+        live_name = client.create_session.call_args[1]["function_name"]
+
+        storage = Mock()
+        storage.create_session = Mock(return_value="local-1")
+        offline = BackendSessionManager(
+            backend_client=None,
+            traigent_config=traigent_config,
+            objectives=["accuracy", "cost"],
+            objective_schema=objective_schema,
+            optimizer=optimizer,
+            optimization_id="opt-off",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+        monkeypatch.setattr(offline, "_local_storage", lambda: storage)
+        offline._create_offline_local_session(
+            function_identifier=descriptor.identifier,
+            function_display_name=descriptor.display_name,
+            dataset=mock_dataset,
+            max_trials=5,
+            experiment_display_name=None,
+            function_slug=descriptor.slug,
+            agent_key="  stable-agent ",
+        )
+        metadata = storage.create_session.call_args[1]["metadata"]
+        assert metadata["portal_name"] == live_name
+        assert metadata["agent_key"] == "stable-agent"
+        assert client.create_session.call_args[1]["agent_key"] == "stable-agent"
