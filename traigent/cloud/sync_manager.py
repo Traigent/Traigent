@@ -54,6 +54,10 @@ _MAX_EXAMPLE_METRICS = 50
 _MAX_EXAMPLE_METRIC_KEY_LENGTH = 100
 _EXAMPLE_METRIC_KEY_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
+# SDK-minted example ids (traigent/core/metadata_helpers.py, utils/example_id):
+# only the index digits are ever read from them.
+_SDK_EXAMPLE_ID_RE = re.compile(r"^(?:example_([0-9]{1,9})|ex_[0-9a-f]+_([0-9]{1,9}))$")
+
 _BACKEND_NAME_DISALLOWED = re.compile(r"[^a-zA-Z0-9 _-]+")
 _BACKEND_NAME_SPACES = re.compile(r"\s+")
 
@@ -582,9 +586,18 @@ class SyncManager:
 
         Mirrors the live submit shape (``[{"example_id", "metrics"}]``) so the
         backend can count distinct examples, but keeps no customer content:
-        ``example_id`` is regenerated from the list position (customer-chosen
-        ids count as content) and only finite numeric metrics with
-        backend-valid keys survive. Malformed entries are skipped.
+        ``example_id`` is regenerated as ``example_<dataset index>`` (customer-
+        chosen ids count as content) and only finite numeric metrics with
+        backend-valid keys survive. Malformed entries, rows left with no
+        metrics and repeated indices within one trial are skipped, mirroring
+        the live builder (which drops examples without numeric metrics).
+
+        The dataset index is recovered from SDK-minted ids only
+        (``example_<n>`` / ``ex_<hash>_<n>``): only the parsed digits are used,
+        never the original string. The live builder drops rows, so the list
+        position drifts from the dataset position and differs per trial; the
+        backend counts distinct examples by id across all trials. Any other id
+        shape falls back to the list position.
         """
         if not isinstance(metadata, Mapping):
             return []
@@ -593,7 +606,10 @@ class SyncManager:
             return []
 
         out: list[dict[str, Any]] = []
-        for index, entry in enumerate(raw[:_MAX_EXAMPLE_MEASURES]):
+        seen: set[int] = set()
+        for position, entry in enumerate(raw):
+            if len(out) >= _MAX_EXAMPLE_MEASURES:
+                break
             if not isinstance(entry, Mapping):
                 continue
             metrics = entry.get("metrics")
@@ -605,13 +621,37 @@ class SyncManager:
                     isinstance(key, str)
                     and len(key) <= _MAX_EXAMPLE_METRIC_KEY_LENGTH
                     and _EXAMPLE_METRIC_KEY_RE.match(key)
-                    and cls._is_numeric(value)
-                    and math.isfinite(value)
+                    and cls._is_finite_number(value)
                     and len(clean) < _MAX_EXAMPLE_METRICS
                 ):
                     clean[key] = value
+            if not clean:
+                continue
+            index = cls._dataset_example_index(entry.get("example_id"), position)
+            if index in seen:
+                continue
+            seen.add(index)
             out.append({"example_id": f"example_{index}", "metrics": clean})
         return out
+
+    @staticmethod
+    def _dataset_example_index(example_id: Any, position: int) -> int:
+        """Integer dataset index from an SDK-minted id, else ``position``."""
+        if isinstance(example_id, str):
+            match = _SDK_EXAMPLE_ID_RE.match(example_id)
+            if match:
+                return int(match.group(1) or match.group(2))
+        return position
+
+    @classmethod
+    def _is_finite_number(cls, value: Any) -> bool:
+        """Numeric, non-bool and finite; huge ints count as non-finite."""
+        if not cls._is_numeric(value):
+            return False
+        try:
+            return math.isfinite(value)
+        except OverflowError:
+            return False
 
     @staticmethod
     def _is_numeric(value: Any) -> bool:
@@ -711,6 +751,12 @@ class SyncManager:
 
         Every shape hashes the same trials, so a genuinely changed session
         differs under all of them.
+
+        Known limitation: for state written before version 3, a change ONLY to
+        per-example scores (aggregates and trials otherwise identical) is
+        treated as already synced, because older fingerprints never covered
+        per-example scores. ``--force`` re-uploads. Intentional; pinned by
+        ``test_pre_v3_state_ignores_per_example_score_only_change``.
         """
         accepted = [current_hash]
         if stored_version is None:

@@ -883,7 +883,9 @@ def test_versioned_partial_state_with_only_legacy_hash_does_not_resume(sync_mana
 # --------------------------------------------------------------------------- #
 
 
-def _make_measures_session(storage: LocalStorageManager) -> str:
+def _make_measures_session(
+    storage: LocalStorageManager, first_accuracy: float = 1.0
+) -> str:
     """Offline session whose trials carry per-example measures."""
     session_id = storage.create_session(
         "answer_question",
@@ -897,7 +899,7 @@ def _make_measures_session(storage: LocalStorageManager) -> str:
             score=score,
             metadata={
                 "measures": [
-                    {"example_id": "ex-1", "metrics": {"accuracy": 1.0}},
+                    {"example_id": "ex-1", "metrics": {"accuracy": first_accuracy}},
                     {"example_id": "ex-2", "metrics": {"accuracy": 0.5}},
                 ]
             },
@@ -1042,3 +1044,119 @@ def test_pinned_hashes_match_current_shape_reconstruction(sync_manager):
     session = sync_manager.storage.load_session(sid)
     assert sync_manager._legacy_payload_hash(session) == HASH_WRITTEN_BY_ORIGIN_DEVELOP
     assert _v2_hash(sync_manager, session) == HASH_WRITTEN_BY_PR_2489
+
+
+# --------------------------------------------------------------------------- #
+# _content_free_example_measures: indices, filtering, caps, overflow
+# --------------------------------------------------------------------------- #
+
+
+def _ex(example_id, **metrics):
+    return {"example_id": example_id, "metrics": metrics}
+
+
+def _measures(rows):
+    return SyncManager._content_free_example_measures({"measures": rows})
+
+
+def test_huge_int_metric_is_dropped_and_sync_succeeds(sync_manager):
+    sid = sync_manager.storage.create_session(
+        "answer_question",
+        optimization_config={"search_space": {"model": ["a"]}},
+    )
+    sync_manager.storage.add_trial_result(
+        sid,
+        config={"model": "a"},
+        score=0.8,
+        metadata={"measures": [_ex("example_0", accuracy=1.0, big=10**400)]},
+    )
+    sync_manager.storage.finalize_session(sid, "completed")
+    _stub_backend_success(sync_manager)
+
+    assert _measures([_ex("example_0", big=10**400, ok=1)]) == [
+        {"example_id": "example_0", "metrics": {"ok": 1}}
+    ]
+    assert sync_manager.sync_session_to_cloud(sid)["status"] == "success"
+
+
+def test_dataset_index_survives_per_trial_compaction():
+    trial_a = _measures([_ex("example_0", a=1.0), _ex("example_2", a=0.0)])
+    trial_b = _measures([_ex("example_0", a=1.0), _ex("example_1", a=1.0)])
+    ids = {m["example_id"] for m in trial_a + trial_b}
+    assert ids == {"example_0", "example_1", "example_2"}
+    assert [m["example_id"] for m in trial_a] == ["example_0", "example_2"]
+
+
+def test_hashed_sdk_id_yields_index_only():
+    out = _measures([_ex("ex_deadbeef01_7", a=1.0)])
+    assert out == [{"example_id": "example_7", "metrics": {"a": 1.0}}]
+    assert "deadbeef" not in json.dumps(out)
+
+
+def test_customer_id_with_trailing_digits_falls_back_to_position():
+    rows = [_ex("Alice_has_diabetes_7", a=1.0), _ex("example_x_9", a=1.0)]
+    out = _measures(rows)
+    assert [m["example_id"] for m in out] == ["example_0", "example_1"]
+    assert "Alice" not in json.dumps(out)
+
+
+def test_empty_metric_rows_are_omitted():
+    out = _measures(
+        [
+            _ex("example_0", a=1.0),
+            _ex("example_1", label="text", flag=True, nan=float("nan")),
+            {"example_id": "example_2", "metrics": {}},
+            _ex("example_3", a=0.5),
+        ]
+    )
+    assert [m["example_id"] for m in out] == ["example_0", "example_3"]
+
+
+def test_duplicate_index_within_trial_keeps_first():
+    out = _measures(
+        [_ex("example_4", a=1.0), _ex("ex_abc_4", a=0.0), _ex("example_5", a=2.0)]
+    )
+    assert out == [
+        {"example_id": "example_4", "metrics": {"a": 1.0}},
+        {"example_id": "example_5", "metrics": {"a": 2.0}},
+    ]
+
+
+@pytest.mark.parametrize("count,expected", [(1000, 1000), (1001, 1000)])
+def test_example_count_cap_boundary(count, expected):
+    out = _measures([_ex(f"example_{i}", a=1.0) for i in range(count)])
+    assert len(out) == expected
+    assert out[-1]["example_id"] == "example_999"
+
+
+@pytest.mark.parametrize("count,expected", [(50, 50), (51, 50)])
+def test_metric_count_cap_boundary(count, expected):
+    metrics = {f"m{i}": float(i) for i in range(count)}
+    out = _measures([{"example_id": "example_0", "metrics": metrics}])
+    assert len(out[0]["metrics"]) == expected
+
+
+@pytest.mark.parametrize("length,kept", [(100, True), (101, False)])
+def test_metric_key_length_boundary(length, kept):
+    key = "k" * length
+    out = _measures([_ex("example_0", **{key: 1.0, "other": 2.0})])
+    assert (key in out[0]["metrics"]) is kept
+    assert "other" in out[0]["metrics"]
+
+
+def test_pre_v3_state_ignores_per_example_score_only_change(sync_manager):
+    """Known limitation: pre-v3 fingerprints never covered per-example scores."""
+    sid = _make_measures_session(sync_manager.storage, first_accuracy=0.0)
+    mocks = _stub_backend_success(sync_manager)
+    session = sync_manager.storage.load_session(sid)
+    sync_manager.storage.update_sync_state(
+        sid, _prior_state(2, HASH_WRITTEN_BY_PR_2489)
+    )
+    # Persisted state is compared against a recomputed v2 shape, which omits
+    # per-example measures entirely.
+    assert HASH_WRITTEN_BY_PR_2489 in sync_manager._acceptable_payload_hashes(
+        session, 2, "unused-current"
+    )
+    assert _current_hash(sync_manager, session) != _v2_hash(sync_manager, session)
+    assert sync_manager.sync_session_to_cloud(sid)["status"] == "already_synced"
+    mocks["_sync_create_session"].assert_not_called()
