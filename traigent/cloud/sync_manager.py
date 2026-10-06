@@ -10,6 +10,7 @@ import json
 import math
 import os
 import re
+import sys
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -664,10 +665,11 @@ class SyncManager:
         """Numeric, non-bool and finite; huge ints count as non-finite."""
         if not cls._is_numeric(value):
             return False
-        try:
-            return math.isfinite(value)
-        except OverflowError:
-            return False
+        if isinstance(value, int):
+            # int vs float compares exactly (no conversion), so huge ints are
+            # rejected without math.isfinite raising OverflowError.
+            return abs(value) <= sys.float_info.max
+        return math.isfinite(value)
 
     @staticmethod
     def _is_numeric(value: Any) -> bool:
