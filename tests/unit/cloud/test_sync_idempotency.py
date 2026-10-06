@@ -947,9 +947,10 @@ def test_legacy_shape_has_no_example_measures(sync_manager):
 # sync_manager.py` and hashing convert_session_to_traigent_format(session).
 # Pinned literals (not recomputed) so these tests do not share code with the
 # fix under test.
-# origin/develop (pre-#2489): no payload_hash_version in sync_state.
-HASH_WRITTEN_BY_ORIGIN_DEVELOP = "22e1c4c54e621ccf"
-# PR #2489 head 29f93034: payload_hash_version 2, no example_measures.
+# develop before #2489 merged (cec3bffa^1): no payload_hash_version in sync_state.
+HASH_WRITTEN_BY_PRE_2489_DEVELOP = "22e1c4c54e621ccf"
+# PR #2489 head 29f93034: payload_hash_version 2, no example_measures. This
+# equals what merged develop (cec3bffa) writes.
 HASH_WRITTEN_BY_PR_2489 = "6fe4f43fb695fe5b"
 
 
@@ -970,7 +971,7 @@ def test_older_version_state_with_measures_session_is_skipped(sync_manager, vers
     sid = _make_measures_session(sync_manager.storage)
     mocks = _stub_backend_success(sync_manager)
     old_hash = (
-        HASH_WRITTEN_BY_ORIGIN_DEVELOP if version is None else HASH_WRITTEN_BY_PR_2489
+        HASH_WRITTEN_BY_PRE_2489_DEVELOP if version is None else HASH_WRITTEN_BY_PR_2489
     )
     sync_manager.storage.update_sync_state(sid, _prior_state(version, old_hash))
 
@@ -987,7 +988,7 @@ def test_older_version_partial_state_with_measures_session_resumes(
     sid = _make_measures_session(sync_manager.storage)
     mocks = _stub_backend_success(sync_manager)
     old_hash = (
-        HASH_WRITTEN_BY_ORIGIN_DEVELOP if version is None else HASH_WRITTEN_BY_PR_2489
+        HASH_WRITTEN_BY_PRE_2489_DEVELOP if version is None else HASH_WRITTEN_BY_PR_2489
     )
     sync_manager.storage.update_sync_state(
         sid, _prior_state(version, old_hash, status="partial")
@@ -1024,7 +1025,7 @@ def test_changed_trials_resync_under_every_version(sync_manager, version):
     mocks = _stub_backend_success(sync_manager)
     session = sync_manager.storage.load_session(sid)
     old_hash = {
-        None: HASH_WRITTEN_BY_ORIGIN_DEVELOP,
+        None: HASH_WRITTEN_BY_PRE_2489_DEVELOP,
         2: HASH_WRITTEN_BY_PR_2489,
         3: _current_hash(sync_manager, session),
     }[version]
@@ -1042,7 +1043,9 @@ def test_pinned_hashes_match_current_shape_reconstruction(sync_manager):
     """The literals are what the current code reproduces (and nothing else)."""
     sid = _make_measures_session(sync_manager.storage)
     session = sync_manager.storage.load_session(sid)
-    assert sync_manager._legacy_payload_hash(session) == HASH_WRITTEN_BY_ORIGIN_DEVELOP
+    assert (
+        sync_manager._legacy_payload_hash(session) == HASH_WRITTEN_BY_PRE_2489_DEVELOP
+    )
     assert _v2_hash(sync_manager, session) == HASH_WRITTEN_BY_PR_2489
 
 
@@ -1160,3 +1163,21 @@ def test_pre_v3_state_ignores_per_example_score_only_change(sync_manager):
     assert _current_hash(sync_manager, session) != _v2_hash(sync_manager, session)
     assert sync_manager.sync_session_to_cloud(sid)["status"] == "already_synced"
     mocks["_sync_create_session"].assert_not_called()
+
+
+def test_mixed_id_shapes_do_not_collide():
+    out = _measures([_ex("example_1", a=1.0), _ex("customer_ticket", a=2.0)])
+    assert [m["example_id"] for m in out] == ["example_0", "example_1"]
+    out = _measures([_ex("Q1", a=1.0), _ex("ex_ab_0", a=2.0)])
+    assert [m["example_id"] for m in out] == ["example_0", "example_1"]
+    assert "Q1" not in json.dumps(out)
+
+
+def test_all_parseable_trial_uses_parsed_indices():
+    out = _measures([_ex("example_3", a=1.0), _ex("ex_ab_7", a=2.0)])
+    assert [m["example_id"] for m in out] == ["example_3", "example_7"]
+
+
+def test_trailing_newline_id_does_not_parse():
+    out = _measures([_ex("example_2\n", a=1.0)])
+    assert [m["example_id"] for m in out] == ["example_0"]

@@ -56,7 +56,7 @@ _EXAMPLE_METRIC_KEY_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 # SDK-minted example ids (traigent/core/metadata_helpers.py, utils/example_id):
 # only the index digits are ever read from them.
-_SDK_EXAMPLE_ID_RE = re.compile(r"^(?:example_([0-9]{1,9})|ex_[0-9a-f]+_([0-9]{1,9}))$")
+_SDK_EXAMPLE_ID_RE = re.compile(r"(?:example_([0-9]{1,9})|ex_[0-9a-f]+_([0-9]{1,9}))")
 
 _BACKEND_NAME_DISALLOWED = re.compile(r"[^a-zA-Z0-9 _-]+")
 _BACKEND_NAME_SPACES = re.compile(r"\s+")
@@ -596,8 +596,14 @@ class SyncManager:
         (``example_<n>`` / ``ex_<hash>_<n>``): only the parsed digits are used,
         never the original string. The live builder drops rows, so the list
         position drifts from the dataset position and differs per trial; the
-        backend counts distinct examples by id across all trials. Any other id
-        shape falls back to the list position.
+        backend counts distinct examples by id across all trials.
+
+        The choice is made per trial and never mixed: if EVERY kept row's id
+        parses as SDK-minted, parsed indices are used; otherwise the list
+        position is used for ALL rows. Mixing would let a position fallback
+        collide with another row's parsed index and drop a genuine row. Files
+        whose ids are all customer-chosen (SDK <= 0.27) therefore get position
+        ids, which may not align across trials.
         """
         if not isinstance(metadata, Mapping):
             return []
@@ -605,11 +611,8 @@ class SyncManager:
         if not isinstance(raw, list):
             return []
 
-        out: list[dict[str, Any]] = []
-        seen: set[int] = set()
+        rows: list[tuple[int, int | None, dict[str, Any]]] = []
         for position, entry in enumerate(raw):
-            if len(out) >= _MAX_EXAMPLE_MEASURES:
-                break
             if not isinstance(entry, Mapping):
                 continue
             metrics = entry.get("metrics")
@@ -625,9 +628,22 @@ class SyncManager:
                     and len(clean) < _MAX_EXAMPLE_METRICS
                 ):
                     clean[key] = value
-            if not clean:
-                continue
-            index = cls._dataset_example_index(entry.get("example_id"), position)
+            if clean:
+                rows.append(
+                    (
+                        position,
+                        cls._dataset_example_index(entry.get("example_id")),
+                        clean,
+                    )
+                )
+
+        use_parsed = bool(rows) and all(parsed is not None for _, parsed, _ in rows)
+        out: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        for position, parsed, clean in rows:
+            if len(out) >= _MAX_EXAMPLE_MEASURES:
+                break
+            index = parsed if use_parsed and parsed is not None else position
             if index in seen:
                 continue
             seen.add(index)
@@ -635,13 +651,13 @@ class SyncManager:
         return out
 
     @staticmethod
-    def _dataset_example_index(example_id: Any, position: int) -> int:
-        """Integer dataset index from an SDK-minted id, else ``position``."""
+    def _dataset_example_index(example_id: Any) -> int | None:
+        """Integer dataset index from an SDK-minted id, else ``None``."""
         if isinstance(example_id, str):
-            match = _SDK_EXAMPLE_ID_RE.match(example_id)
+            match = _SDK_EXAMPLE_ID_RE.fullmatch(example_id)
             if match:
                 return int(match.group(1) or match.group(2))
-        return position
+        return None
 
     @classmethod
     def _is_finite_number(cls, value: Any) -> bool:
