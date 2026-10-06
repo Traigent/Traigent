@@ -39,6 +39,7 @@ dependencies = [
     "rich>=12.0.0",
     "aiohttp>=3.14.3,<4.0",  # AIKIDO-2026-168095 fixed in 3.14.3
     "yarl>=1.24.5,<2",  # AIKIDO-2026-181733 — URL host parsing/normalisation; transitive via aiohttp, which does not floor it
+    "multidict>=6.9.1,<7",  # patched multidict; transitive via aiohttp/yarl, which do not floor it
     "anyio>=4.14.2",  # AIKIDO-2026-889297 / anyio#1208 IDNA2008 TLS hostname cert-matching (fixed 4.14.2; transitive via httpx/anthropic/mcp)
     "requests>=2.33.0",  # Required by Langfuse integration sync fallback; CVE-2026-25645 / GHSA-9hjg-9r4m-mvj7 fix
     "jsonschema>=4.0.0",
