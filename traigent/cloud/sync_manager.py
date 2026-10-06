@@ -359,10 +359,15 @@ class SyncManager:
             dataset_size = 1
         dataset_name = sanitize_backend_name(f"Local Dataset {session.function_name}")
         evaluation_set = opt_config.get("evaluation_set")
-        if not evaluation_set:
-            evaluation_set = session_metadata.get("evaluation_set")
-        if not isinstance(evaluation_set, str) or not evaluation_set:
-            evaluation_set = "default"
+        if legacy_shape:
+            # Exactly the pre-upgrade expression: any truthy value (even a
+            # non-string) was kept verbatim.
+            evaluation_set = evaluation_set or "default"
+        else:
+            if not evaluation_set:
+                evaluation_set = session_metadata.get("evaluation_set")
+            if not isinstance(evaluation_set, str) or not evaluation_set:
+                evaluation_set = "default"
         # Mirror the live path (BackendSessionManager): the portal experiment
         # name is the display name when present, while metadata.function_name
         # keeps the stable derived identifier.
@@ -690,10 +695,12 @@ class SyncManager:
             payload_hash = self._compute_payload_hash(traigent_data)
             prior_state = dict(session.sync_state or {})
             # A hash recorded by a pre-upgrade release names the same content.
-            same_content = prior_state.get("payload_hash") in (
-                payload_hash,
-                self._legacy_payload_hash(session),
-            )
+            # State written by the current release carries a hash version and is
+            # compared against the current hash only.
+            accepted_hashes = [payload_hash]
+            if "payload_hash_version" not in prior_state:
+                accepted_hashes.append(self._legacy_payload_hash(session))
+            same_content = prior_state.get("payload_hash") in accepted_hashes
             already_synced = prior_state.get("status") == "synced" and same_content
 
             sync_result: dict[str, Any] = {
@@ -967,6 +974,7 @@ class SyncManager:
             "status": marker_status,
             "source": "offline_sync",
             "payload_hash": payload_hash,
+            "payload_hash_version": 2,
             # Persist all cloud ids so a retry of a partial sync reuses them
             # instead of creating a duplicate session/experiment.
             "cloud_session_id": sync_result.get("cloud_session_id"),
