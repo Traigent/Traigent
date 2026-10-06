@@ -644,3 +644,235 @@ def test_declared_objective_backfilled_when_missing_on_a_trial(sync_manager):
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+# --------------------------------------------------------------------------- #
+# Upgrade idempotency: sync state recorded by a release that ignored offline
+# session.metadata (dataset_size / evaluation_set / display name).
+# --------------------------------------------------------------------------- #
+
+
+def _make_offline_session(storage: LocalStorageManager) -> str:
+    """An offline-style session: dataset_size/evaluation_set live in metadata."""
+    session_id = storage.create_session(
+        "answer_question",
+        optimization_config={"search_space": {"model": ["a", "b"]}},
+        metadata={
+            "dataset_size": 18,
+            "evaluation_set": "tuning",
+            "function_display_name": "run",
+            "portal_name": "opt:accuracy · model (abc12345)",
+            "offline": True,
+        },
+    )
+    storage.add_trial_result(session_id, config={"model": "a"}, score=0.8)
+    storage.add_trial_result(session_id, config={"model": "b"}, score=0.9)
+    storage.finalize_session(session_id, "completed")
+    return session_id
+
+
+def _pre_upgrade_hash(sync_manager: SyncManager, session_id: str) -> str:
+    """Fingerprint as the pre-PR conversion computed it (origin/develop).
+
+    That conversion read dataset_size / evaluation_set from optimization_config
+    only, sent function_name = session.function_name, and added no
+    function_display_name / agent_key.
+    """
+    session = sync_manager.storage.load_session(session_id)
+    data = sync_manager.convert_session_to_traigent_format(session)
+    create = data["session_create"]
+    create["function_name"] = session.function_name
+    create["dataset_metadata"]["size"] = 1
+    create["metadata"]["evaluation_set"] = "default"
+    create["metadata"].pop("function_display_name", None)
+    create.pop("agent_key", None)
+    return SyncManager._compute_payload_hash(data)
+
+
+def test_pre_upgrade_hash_differs_from_current_hash(sync_manager):
+    sid = _make_offline_session(sync_manager.storage)
+    session = sync_manager.storage.load_session(sid)
+    current = SyncManager._compute_payload_hash(
+        sync_manager.convert_session_to_traigent_format(session)
+    )
+    assert _pre_upgrade_hash(sync_manager, sid) != current
+
+
+def test_pre_upgrade_synced_session_is_skipped_not_reuploaded(sync_manager):
+    sid = _make_offline_session(sync_manager.storage)
+    mocks = _stub_backend_success(sync_manager)
+    sync_manager.storage.update_sync_state(
+        sid,
+        {
+            "status": "synced",
+            "payload_hash": _pre_upgrade_hash(sync_manager, sid),
+            "cloud_experiment_id": "exp-old",
+            "cloud_url": "https://example.test/exp-old",
+        },
+    )
+
+    result = sync_manager.sync_session_to_cloud(sid)
+
+    assert result["status"] == "already_synced"
+    assert result["cloud_experiment_id"] == "exp-old"
+    mocks["_sync_create_session"].assert_not_called()
+    mocks["_sync_session_results"].assert_not_called()
+
+
+def test_pre_upgrade_partial_session_resumes_existing_cloud_session(sync_manager):
+    sid = _make_offline_session(sync_manager.storage)
+    mocks = _stub_backend_success(sync_manager)
+    sync_manager.storage.update_sync_state(
+        sid,
+        {
+            "status": "partial",
+            "payload_hash": _pre_upgrade_hash(sync_manager, sid),
+            "cloud_session_id": "sess-old",
+            "cloud_experiment_id": "exp-old",
+        },
+    )
+
+    result = sync_manager.sync_session_to_cloud(sid)
+
+    assert result["status"] == "success"
+    mocks["_sync_create_session"].assert_not_called()
+    assert result["cloud_session_id"] == "sess-old"
+    assert result["cloud_experiment_id"] == "exp-old"
+
+
+def test_pre_upgrade_synced_session_with_changed_trials_is_resynced(sync_manager):
+    sid = _make_offline_session(sync_manager.storage)
+    mocks = _stub_backend_success(sync_manager)
+    sync_manager.storage.update_sync_state(
+        sid,
+        {
+            "status": "synced",
+            "payload_hash": _pre_upgrade_hash(sync_manager, sid),
+            "cloud_experiment_id": "exp-old",
+        },
+    )
+    sync_manager.storage.add_trial_result(sid, config={"model": "c"}, score=0.95)
+    sync_manager.storage.finalize_session(sid, "completed")
+
+    result = sync_manager.sync_session_to_cloud(sid)
+
+    assert result["status"] == "success"
+    mocks["_sync_create_session"].assert_called_once()
+
+
+# --------------------------------------------------------------------------- #
+# Legacy-shape parity with origin/develop + payload_hash_version
+# --------------------------------------------------------------------------- #
+
+
+def _session_with_config(manager: SyncManager, **extra) -> object:
+    sid = manager.storage.create_session(
+        "fn",
+        optimization_config={"search_space": {"model": ["a"]}, **extra},
+        metadata={
+            "dataset_size": 18,
+            "evaluation_set": "tuning",
+            "function_display_name": "run",
+            "portal_name": "opt:accuracy",
+            "agent_key": "k",
+        },
+    )
+    return manager.storage.load_session(sid)
+
+
+# Expected values are what origin/develop's convert_session_to_traigent_format
+# produced (verified once by importing that file): evaluation_set was
+# ``opt_config.get("evaluation_set") or "default"`` (any truthy value kept
+# verbatim, even non-str); dataset_size accepted only a positive non-bool int.
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(7, 7), (None, "default"), ("", "default"), ("tuning", "tuning")],
+)
+def test_legacy_shape_evaluation_set_matches_origin_develop(
+    sync_manager, value, expected
+):
+    session = _session_with_config(sync_manager, evaluation_set=value)
+    create = sync_manager.convert_session_to_traigent_format(
+        session, legacy_shape=True
+    )["session_create"]
+    assert create["metadata"]["evaluation_set"] == expected
+    # Offline metadata is ignored in legacy shape.
+    assert create["function_name"] == "fn"
+    assert "agent_key" not in create
+    assert "function_display_name" not in create["metadata"]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(None, 1), (0, 1), (18, 18), ("18", 1), (True, 1)],
+)
+def test_legacy_shape_dataset_size_matches_origin_develop(
+    sync_manager, value, expected
+):
+    session = _session_with_config(sync_manager, dataset_size=value)
+    create = sync_manager.convert_session_to_traigent_format(
+        session, legacy_shape=True
+    )["session_create"]
+    assert create["dataset_metadata"]["size"] == expected
+
+
+def test_current_shape_non_string_evaluation_set_still_defaults(sync_manager):
+    session = _session_with_config(sync_manager, evaluation_set=7)
+    create = sync_manager.convert_session_to_traigent_format(session)["session_create"]
+    assert create["metadata"]["evaluation_set"] == "default"
+
+
+def test_fresh_sync_writes_payload_hash_version_2(sync_manager):
+    sid = _make_offline_session(sync_manager.storage)
+    _stub_backend_success(sync_manager)
+
+    sync_manager.sync_session_to_cloud(sid)
+
+    state = sync_manager.storage.load_session(sid).sync_state
+    assert state["payload_hash_version"] == 2
+
+
+def test_versioned_state_with_only_legacy_hash_is_not_treated_as_synced(
+    sync_manager,
+):
+    sid = _make_offline_session(sync_manager.storage)
+    mocks = _stub_backend_success(sync_manager)
+    session = sync_manager.storage.load_session(sid)
+    legacy = sync_manager._legacy_payload_hash(session)
+    assert legacy != SyncManager._compute_payload_hash(
+        sync_manager.convert_session_to_traigent_format(session)
+    )
+    sync_manager.storage.update_sync_state(
+        sid,
+        {
+            "status": "synced",
+            "payload_hash": legacy,
+            "payload_hash_version": 2,
+            "cloud_experiment_id": "exp-new",
+        },
+    )
+
+    result = sync_manager.sync_session_to_cloud(sid)
+
+    assert result["status"] != "already_synced"
+    mocks["_sync_create_session"].assert_called_once()
+
+
+def test_versioned_partial_state_with_only_legacy_hash_does_not_resume(sync_manager):
+    sid = _make_offline_session(sync_manager.storage)
+    mocks = _stub_backend_success(sync_manager)
+    session = sync_manager.storage.load_session(sid)
+    sync_manager.storage.update_sync_state(
+        sid,
+        {
+            "status": "partial",
+            "payload_hash": sync_manager._legacy_payload_hash(session),
+            "payload_hash_version": 2,
+            "cloud_session_id": "sess-new",
+        },
+    )
+
+    result = sync_manager.sync_session_to_cloud(sid)
+
+    mocks["_sync_create_session"].assert_called_once()
+    assert result["cloud_session_id"] != "sess-new"

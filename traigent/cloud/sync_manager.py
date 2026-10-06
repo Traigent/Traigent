@@ -292,7 +292,7 @@ class SyncManager:
         }
 
     def convert_session_to_traigent_format(
-        self, session: OptimizationSession
+        self, session: OptimizationSession, *, legacy_shape: bool = False
     ) -> dict[str, Any]:
         """
         Convert a local session to the content-free typed-session payload.
@@ -311,6 +311,9 @@ class SyncManager:
 
         Args:
             session: Local optimization session
+            legacy_shape: Reproduce the payload exactly as releases before
+                offline metadata was read were converting it. Used ONLY to
+                recognise a fingerprint recorded by such a release; never sent.
 
         Returns:
             Dict with a ``session_create`` payload plus ``configuration_runs``.
@@ -337,7 +340,17 @@ class SyncManager:
         # to 1 — exactly like the live SDK builder
         # (api_operations._build_typed_session_payload). The empty-dataset
         # pass-through comes from binding NO benchmark, not from the size field.
+        session_metadata = (
+            session.metadata
+            if isinstance(session.metadata, dict) and not legacy_shape
+            else {}
+        )
+        # Offline sessions persist dataset_size / evaluation_set under
+        # session.metadata (written by the orchestrator); optimization_config
+        # wins when it carries them.
         dataset_size = opt_config.get("dataset_size")
+        if dataset_size is None:
+            dataset_size = session_metadata.get("dataset_size")
         if (
             not isinstance(dataset_size, int)
             or isinstance(dataset_size, bool)
@@ -345,10 +358,43 @@ class SyncManager:
         ):
             dataset_size = 1
         dataset_name = sanitize_backend_name(f"Local Dataset {session.function_name}")
-        evaluation_set = opt_config.get("evaluation_set") or "default"
+        evaluation_set = opt_config.get("evaluation_set")
+        if legacy_shape:
+            # Exactly the pre-upgrade expression: any truthy value (even a
+            # non-string) was kept verbatim.
+            evaluation_set = evaluation_set or "default"
+        else:
+            if not evaluation_set:
+                evaluation_set = session_metadata.get("evaluation_set")
+            if not isinstance(evaluation_set, str) or not evaluation_set:
+                evaluation_set = "default"
+        # Mirror the live path (BackendSessionManager): the portal experiment
+        # name is the display name when present, while metadata.function_name
+        # keeps the stable derived identifier.
+        display_name = session_metadata.get("function_display_name")
+        if not isinstance(display_name, str) or not display_name.strip():
+            display_name = None
+        else:
+            display_name = display_name.strip()
+        # The live path's agent-routing name (objectives/knobs label + slug
+        # hash) is persisted at offline-session creation; the backend uses
+        # function_name as agent identity when no agent_key is sent, so the bare
+        # display name must never be used here. Old files without it keep the
+        # pre-existing behaviour (the derived identifier).
+        stored_portal_name = session_metadata.get("portal_name")
+        if isinstance(stored_portal_name, str) and stored_portal_name.strip():
+            portal_name = stored_portal_name.strip()
+        else:
+            portal_name = session.function_name
+        stored_agent_key = session_metadata.get("agent_key")
+        agent_key = (
+            stored_agent_key.strip()
+            if isinstance(stored_agent_key, str) and stored_agent_key.strip()
+            else None
+        )
 
         session_create = {
-            "function_name": session.function_name,
+            "function_name": portal_name,
             "configuration_space": _typed_configuration_space(search_space),
             "objectives": objectives,
             "dataset_metadata": {
@@ -377,6 +423,10 @@ class SyncManager:
                 "source": "offline_sync",
             },
         }
+        if display_name:
+            session_create["metadata"]["function_display_name"] = display_name
+        if agent_key:
+            session_create["agent_key"] = agent_key
         # Declared dataset identity: sent only when the local record persisted
         # one at creation (the value the live create would have sent). Legacy
         # records without it send none -- identity is never invented here, and
@@ -572,6 +622,19 @@ class SyncManager:
         canonical = json.dumps(traigent_data, sort_keys=True, default=str)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
+    def _legacy_payload_hash(self, session: OptimizationSession) -> str:
+        """Fingerprint as recorded by releases that ignored offline metadata.
+
+        Those releases hashed a payload derived from ``optimization_config``
+        only. Recomputing it lets an already- or partially-synced session be
+        recognised after upgrade instead of being re-uploaded as a duplicate
+        experiment. It hashes the same trials, so a genuinely changed session
+        still differs.
+        """
+        return self._compute_payload_hash(
+            self.convert_session_to_traigent_format(session, legacy_shape=True)
+        )
+
     @staticmethod
     def _config_run_key(index: int) -> str:
         """Stable key identifying a configuration-run within a session's batch.
@@ -631,10 +694,14 @@ class SyncManager:
             traigent_data = self.convert_session_to_traigent_format(session)
             payload_hash = self._compute_payload_hash(traigent_data)
             prior_state = dict(session.sync_state or {})
-            already_synced = (
-                prior_state.get("status") == "synced"
-                and prior_state.get("payload_hash") == payload_hash
-            )
+            # A hash recorded by a pre-upgrade release names the same content.
+            # State written by the current release carries a hash version and is
+            # compared against the current hash only.
+            accepted_hashes = [payload_hash]
+            if "payload_hash_version" not in prior_state:
+                accepted_hashes.append(self._legacy_payload_hash(session))
+            same_content = prior_state.get("payload_hash") in accepted_hashes
+            already_synced = prior_state.get("status") == "synced" and same_content
 
             sync_result: dict[str, Any] = {
                 "session_id": session_id,
@@ -695,7 +762,7 @@ class SyncManager:
             # after a partial/failed attempt — that is what prevents duplicate
             # experiments. A changed run, or --force, starts a fresh experiment.
             resume = (
-                prior_state.get("payload_hash") == payload_hash
+                same_content
                 and prior_state.get("status") in {"partial", "failed"}
                 and not force
             )
@@ -907,6 +974,7 @@ class SyncManager:
             "status": marker_status,
             "source": "offline_sync",
             "payload_hash": payload_hash,
+            "payload_hash_version": 2,
             # Persist all cloud ids so a retry of a partial sync reuses them
             # instead of creating a duplicate session/experiment.
             "cloud_session_id": sync_result.get("cloud_session_id"),
