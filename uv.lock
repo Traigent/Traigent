@@ -32,7 +32,7 @@ constraints = [
     { name = "pyasn1", specifier = ">=0.6.3" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "urllib3", specifier = ">=2.8.0" },
-    { name = "virtualenv", specifier = ">=21.7.13" },
+    { name = "virtualenv", specifier = ">=21.14.4" },
     { name = "werkzeug", specifier = ">=3.1.6" },
 ]
 
