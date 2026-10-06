@@ -940,6 +940,17 @@ def test_legacy_shape_has_no_example_measures(sync_manager):
     assert all("example_measures" not in r for r in legacy["configuration_runs"])
 
 
+# Fingerprints of _make_measures_session() as recorded by the releases that
+# actually wrote them, computed once by loading `git show <ref>:traigent/cloud/
+# sync_manager.py` and hashing convert_session_to_traigent_format(session).
+# Pinned literals (not recomputed) so these tests do not share code with the
+# fix under test.
+# origin/develop (pre-#2489): no payload_hash_version in sync_state.
+HASH_WRITTEN_BY_ORIGIN_DEVELOP = "22e1c4c54e621ccf"
+# PR #2489 head 29f93034: payload_hash_version 2, no example_measures.
+HASH_WRITTEN_BY_PR_2489 = "6fe4f43fb695fe5b"
+
+
 def _prior_state(version, hash_value, status="synced"):
     state = {
         "status": status,
@@ -956,11 +967,8 @@ def _prior_state(version, hash_value, status="synced"):
 def test_older_version_state_with_measures_session_is_skipped(sync_manager, version):
     sid = _make_measures_session(sync_manager.storage)
     mocks = _stub_backend_success(sync_manager)
-    session = sync_manager.storage.load_session(sid)
     old_hash = (
-        sync_manager._legacy_payload_hash(session)
-        if version is None
-        else _v2_hash(sync_manager, session)
+        HASH_WRITTEN_BY_ORIGIN_DEVELOP if version is None else HASH_WRITTEN_BY_PR_2489
     )
     sync_manager.storage.update_sync_state(sid, _prior_state(version, old_hash))
 
@@ -976,11 +984,8 @@ def test_older_version_partial_state_with_measures_session_resumes(
 ):
     sid = _make_measures_session(sync_manager.storage)
     mocks = _stub_backend_success(sync_manager)
-    session = sync_manager.storage.load_session(sid)
     old_hash = (
-        sync_manager._legacy_payload_hash(session)
-        if version is None
-        else _v2_hash(sync_manager, session)
+        HASH_WRITTEN_BY_ORIGIN_DEVELOP if version is None else HASH_WRITTEN_BY_PR_2489
     )
     sync_manager.storage.update_sync_state(
         sid, _prior_state(version, old_hash, status="partial")
@@ -1017,8 +1022,8 @@ def test_changed_trials_resync_under_every_version(sync_manager, version):
     mocks = _stub_backend_success(sync_manager)
     session = sync_manager.storage.load_session(sid)
     old_hash = {
-        None: sync_manager._legacy_payload_hash(session),
-        2: _v2_hash(sync_manager, session),
+        None: HASH_WRITTEN_BY_ORIGIN_DEVELOP,
+        2: HASH_WRITTEN_BY_PR_2489,
         3: _current_hash(sync_manager, session),
     }[version]
     sync_manager.storage.update_sync_state(sid, _prior_state(version, old_hash))
@@ -1029,3 +1034,11 @@ def test_changed_trials_resync_under_every_version(sync_manager, version):
 
     assert result["status"] == "success"
     mocks["_sync_create_session"].assert_called_once()
+
+
+def test_pinned_hashes_match_current_shape_reconstruction(sync_manager):
+    """The literals are what the current code reproduces (and nothing else)."""
+    sid = _make_measures_session(sync_manager.storage)
+    session = sync_manager.storage.load_session(sid)
+    assert sync_manager._legacy_payload_hash(session) == HASH_WRITTEN_BY_ORIGIN_DEVELOP
+    assert _v2_hash(sync_manager, session) == HASH_WRITTEN_BY_PR_2489
