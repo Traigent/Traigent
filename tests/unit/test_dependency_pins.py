@@ -50,23 +50,26 @@ def _get_litellm_specifier_from_pyproject() -> str:
     raise AssertionError("litellm not found in pyproject.toml [project.dependencies]")
 
 
-def test_litellm_specifier_admits_1_88():
-    """litellm specifier must admit version 1.88.0 (the demo requirement)."""
+def test_litellm_specifier_admits_later_1x_minor():
+    """litellm specifier must stay a range admitting later 1.x minors (#1418).
+
+    The security floor now sits above the old 1.88.0 demo requirement; the
+    intent (a range, not an exact pin) is checked against a later minor.
+    """
     raw_spec = _get_litellm_specifier_from_pyproject()
     spec_set = SpecifierSet(raw_spec)
-    assert spec_set.contains("1.88.0"), (
-        f"litellm specifier '{raw_spec}' does NOT admit 1.88.0. "
-        "The demo (TraigentDemo) requires litellm 1.88.0. "
-        "Loosen the pin from '==1.87.1' to '>=1.87.1,<2' (see GitHub issue #1418)."
+    assert spec_set.contains("1.101.0"), (
+        f"litellm specifier '{raw_spec}' does NOT admit 1.101.0. "
+        "Keep a range ('>=<floor>,<2') rather than an exact pin (see GitHub issue #1418)."
     )
 
 
-def test_litellm_specifier_admits_baseline_1_87_1():
-    """litellm specifier must still admit the baseline 1.87.1."""
+def test_litellm_specifier_admits_security_floor_1_100_4():
+    """litellm specifier must admit the patched security floor 1.100.4."""
     raw_spec = _get_litellm_specifier_from_pyproject()
     spec_set = SpecifierSet(raw_spec)
-    assert spec_set.contains("1.87.1"), (
-        f"litellm specifier '{raw_spec}' does NOT admit 1.87.1, the previously-verified baseline."
+    assert spec_set.contains("1.100.4"), (
+        f"litellm specifier '{raw_spec}' does NOT admit 1.100.4, the patched security floor."
     )
 
 
@@ -98,7 +101,7 @@ def test_quickstart_install_hint_uses_range():
     assert "litellm==1.87.1" not in source, (
         "traigent/examples/quickstart/__main__.py still hardcodes 'litellm==1.87.1' "
         "in the install hint. Update it to match the pyproject.toml range "
-        "(e.g. 'litellm>=1.87.1,<2'). See GitHub issue #1418."
+        "(e.g. 'litellm>=1.100.4,<2'). See GitHub issue #1418."
     )
 
 
@@ -107,6 +110,6 @@ def test_requirements_txt_not_exact_litellm_pin():
     requirements_text = REQUIREMENTS_CORE_PATH.read_text()
     assert "litellm==1.87.1" not in requirements_text, (
         "requirements/requirements.txt still has 'litellm==1.87.1'. "
-        "Update it to match the pyproject.toml range (e.g. 'litellm>=1.87.1,<2'). "
+        "Update it to match the pyproject.toml range (e.g. 'litellm>=1.100.4,<2'). "
         "See GitHub issue #1418."
     )
