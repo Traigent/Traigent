@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import litellm
 import pytest
 
 import traigent.utils.cost_calculator as cc
@@ -57,12 +58,48 @@ class TestGetModelTokenPricing:
             "Anthropic/claude-3-haiku-20240307",
         ],
     )
-    def test_mixed_case_provider_prefix_resolves(self, name: str) -> None:
+    def test_mixed_case_provider_prefix_resolves(
+        self, name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Weird-case provider prefixes must resolve, not raise."""
+        # Pin the catalog entry: newer litellm releases drop retired models.
+        monkeypatch.setitem(
+            litellm.model_cost,
+            "claude-3-haiku-20240307",
+            {
+                "input_cost_per_token": 2.5e-7,
+                "output_cost_per_token": 1.25e-6,
+                "litellm_provider": "anthropic",
+                "mode": "chat",
+            },
+        )
+        # litellm resolves bare model names to a provider through this set.
+        monkeypatch.setattr(
+            litellm,
+            "anthropic_models",
+            set(litellm.anthropic_models) | {"claude-3-haiku-20240307"},
+        )
         inp, out, method = get_model_token_pricing(name)
         assert inp > 0
         assert out > 0
         assert method == "litellm"
+
+    def test_model_absent_from_catalog_uses_builtin_pricing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without a litellm catalog entry the built-in table must price it."""
+        monkeypatch.delitem(
+            litellm.model_cost, "claude-3-haiku-20240307", raising=False
+        )
+        monkeypatch.setattr(
+            litellm,
+            "anthropic_models",
+            set(litellm.anthropic_models) - {"claude-3-haiku-20240307"},
+        )
+        inp, out, method = get_model_token_pricing("claude-3-haiku-20240307")
+        assert inp > 0
+        assert out > 0
+        assert method == "builtin_pricing"
 
     def test_unknown_model_raises_with_actionable_message(self) -> None:
         with pytest.raises(UnknownModelError, match="has no known pricing"):
