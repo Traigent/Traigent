@@ -73,6 +73,26 @@ if TYPE_CHECKING:
 _V2_OBSERVATIONS_PATH = "/api/public/v2/observations"
 _V2_FIELDS = "core,basic,metadata,model,usage,metrics,trace_context"
 _V2_IO_FIELDS = _V2_FIELDS + ",io"  # adds input/output payloads (get_trace only)
+
+
+def _root_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Root observations among v2 rows.
+
+    Langfuse logical roots (``isRootObservation`` true, ``basic`` field group)
+    may carry a non-null ``parentObservationId`` (distributed/linked traces),
+    so they take precedence. Physical roots (``parentObservationId`` present
+    and None) are the fallback when no row is flagged.
+    """
+    logical = [r for r in rows if r.get("isRootObservation") is True]
+    if logical:
+        return logical
+    return [
+        r
+        for r in rows
+        if "parentObservationId" in r and r["parentObservationId"] is None
+    ]
+
+
 _V2_PAGE_LIMIT = 1000  # v2 max (v1 was 100)
 # Legacy v1 /api/public/observations rejects limits above 100.
 _LEGACY_PAGE_LIMIT = 100
@@ -85,9 +105,6 @@ _V2_MAX_LOOKBACK_DAYS = 3650
 # to the legacy API; the downgrade expires after this many seconds so a
 # transient 404 (proxy, rolling deploy) cannot pin the client to v1 forever.
 _LEGACY_REPROBE_SECONDS = 600
-# If the earliest observation starts this close to the window's lower bound the
-# trace may extend beyond the window, so the result is flagged partial.
-_WINDOW_EDGE_MARGIN = timedelta(hours=1)
 
 
 class _V2Unavailable(Exception):
@@ -249,9 +266,10 @@ class LangfuseClient:
             searches for a trace's observations (default 30). The window is
             ``[now - v2_lookback_days, now + 1h]`` computed once per fetch; the
             +1h upper bound tolerates client clock skew. Traces whose
-            observations started before the window are NOT found, and traces
-            only partly inside it are reported partial when their earliest
-            observation starts within 1 hour of the window's lower bound.
+            observations started before the window are NOT found. A fetched
+            trace whose rows contain no root observation (its root started
+            before the window) is reported partial; a trace with a root
+            inside the window is complete.
             Must be an int (not bool) with ``1 <= v2_lookback_days <= 3650``,
             otherwise ``ValueError`` is raised.
 
@@ -391,8 +409,12 @@ class LangfuseClient:
         Args:
             trace_id: The trace ID to fetch
             include_io: Also fetch trace ``input``/``output`` (v2 ``io`` field
-                group, taken from the root observation). Metrics extraction
-                passes False to avoid transferring content.
+                group, taken from the root observation). Defaults to True
+                (unchanged public behaviour). On the legacy (self-hosted v3)
+                fallback, I/O is still downloaded and is only stripped from
+                the returned dicts when False. Callers that only need metrics
+                should use ``get_trace_metrics``, which never requests io on the
+                v2 path (on the legacy fallback io is downloaded, then stripped).
 
         Returns:
             Trace data dict or None if not found
@@ -522,26 +544,20 @@ class LangfuseClient:
     ) -> tuple[list[dict[str, Any]], bool]:
         """Final (rows, partial) once pagination ended cleanly.
 
-        Partial if rows were dropped for invalid ids, or if the earliest
-        observation starts within an hour of the window's lower bound (the
-        trace may extend before the window).
+        Partial if rows were dropped for invalid ids, or if rows were fetched
+        but none is a root observation (``isRootObservation`` true, or
+        ``parentObservationId`` present and None): the root started before the window's lower bound, so only
+        later children were found.
         """
         partial = False
         if invalid:
             logger.warning(f"Dropped {invalid} observation row(s) with invalid id.")
             partial = True
-        lower = self._parse_timestamp(window[0])
-        if lower is not None and lower.tzinfo is None:
-            lower = lower.replace(tzinfo=UTC)
-        starts = []
-        for r in rows:
-            ts = self._parse_timestamp(r.get("startTime"))
-            if ts is not None:
-                starts.append(ts if ts.tzinfo else ts.replace(tzinfo=UTC))
-        if lower is not None and starts and min(starts) - lower <= _WINDOW_EDGE_MARGIN:
+        has_root = bool(_root_rows(rows))
+        if rows and not has_root:
             logger.warning(
-                "Earliest observation is near the lookback window start; "
-                "trace may extend beyond it."
+                "No root observation in the lookback window; "
+                "trace started before it and is partial."
             )
             partial = True
         return rows, partial
@@ -669,18 +685,15 @@ class LangfuseClient:
         """Rebuild a v1-shaped trace dict from v2 observation rows.
 
         v4 has no trace objects; trace-level fields come from the root
-        observation (``parentObservationId`` present and null; the earliest
+        observation (``isRootObservation`` true, else ``parentObservationId``
+        present and null; explicit logical roots win; the earliest
         ``startTime`` wins, ties broken by ``id``). With no root, root-derived fields stay
         unset instead of borrowing a child's. Returns None when the trace has no
         observations (same as a v1 404).
         """
         if not rows:
             return None
-        roots = [
-            r
-            for r in rows
-            if "parentObservationId" in r and r["parentObservationId"] is None
-        ]
+        roots = _root_rows(rows)
         root: dict[str, Any] | None = None
         if roots:
             root = min(
@@ -730,6 +743,8 @@ class LangfuseClient:
         Returns:
             LangfuseTraceMetrics with aggregated data, or None if trace not found
         """
+        # v2 never requests io here; the legacy fallback downloads the full
+        # response and strips io afterwards.
         trace_data = self.get_trace(trace_id, include_io=False)
         if not trace_data:
             return None

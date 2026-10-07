@@ -185,11 +185,11 @@ def test_cursor_cycle_stops_with_unique_partial_rows(client):
 def test_two_distinct_pages_are_not_partial(client):
     pages = [
         _resp({"data": [GEN_A], "meta": {"cursor": "c1"}}),
-        _resp({"data": [GEN_B], "meta": {}}),
+        _resp({"data": [ROOT, GEN_B], "meta": {}}),
     ]
     with patch("requests.get", side_effect=pages):
         obs = client._get_observations_http("t1")
-    assert [o.id for o in obs] == ["obs-a", "obs-b"]
+    assert [o.id for o in obs] == ["obs-a", "obs-root", "obs-b"]
     assert client._observations_partial_by_trace["t1"] is False
 
 
@@ -304,6 +304,53 @@ def test_no_root_leaves_root_fields_unset(client):
     assert trace["sessionId"] is None and trace["userId"] is None
     assert trace["input"] is None and trace["output"] is None
     assert not trace["metadata"]
+
+
+def test_logical_root_with_parent_is_not_partial_and_used(client):
+    logical = {
+        **ROOT,
+        "id": "logical",
+        "traceName": "logical-name",
+        "parentObservationId": "external-parent",
+        "isRootObservation": True,
+        "input": "in",
+        "output": "out",
+    }
+    child = {**GEN_A, "parentObservationId": "logical"}
+    rows = [child, logical]
+    assert client._finish_v2(rows, 0, ("a", "b")) == (rows, False)
+    with patch("requests.get", return_value=_resp({"data": rows, "meta": {}})):
+        trace = client.get_trace("t1")
+    assert trace["name"] == "logical-name"
+    assert trace["input"] == "in" and trace["output"] == "out"
+
+
+def test_children_without_any_root_flag_are_partial(client):
+    child = {**GEN_A, "isRootObservation": False}
+    _, partial = client._finish_v2([child], 0, ("a", "b"))
+    assert partial is True
+
+
+def test_logical_root_preferred_over_physical_root(client):
+    physical = {
+        **ROOT,
+        "id": "phys",
+        "traceName": "phys",
+        "isRootObservation": False,
+        "startTime": "2026-10-01T08:00:00Z",
+    }
+    logical = {
+        **ROOT,
+        "id": "log",
+        "traceName": "log",
+        "parentObservationId": "ext",
+        "startTime": "2026-10-01T12:00:00Z",
+    }
+    with patch(
+        "requests.get", return_value=_resp({"data": [physical, logical], "meta": {}})
+    ):
+        trace = client.get_trace("t1")
+    assert trace["name"] == "log"
 
 
 def test_string_cost_and_flat_usage_parsed(client):
@@ -467,20 +514,38 @@ async def test_async_cursor_cycle_partial(client):
     assert client._observations_partial_by_trace["t1"] is True
 
 
-# ---- review round 3: window edge, downgrade state, validation, io ------------
+# ---- review round 3: root coverage, downgrade state, validation, io ---------
 
 
-def _edge_row(**over):
+def _child_only_rows():
+    """Reviewer counterexample: root began before the window, children 2h in."""
+    from datetime import UTC, datetime, timedelta
+
+    start = datetime.now(UTC) - timedelta(days=30) + timedelta(hours=2)
+    return [
+        {**GEN_A, "startTime": start.isoformat()},
+        {**GEN_B, "startTime": (start + timedelta(minutes=5)).isoformat()},
+    ]
+
+
+def _root_near_edge_row():
     from datetime import UTC, datetime, timedelta
 
     start = datetime.now(UTC) - timedelta(days=30) + timedelta(minutes=10)
-    return {**ROOT, "id": "edge", "startTime": start.isoformat(), **over}
+    return {**ROOT, "id": "edge", "startTime": start.isoformat()}
 
 
-def test_trace_near_window_start_is_partial(client):
-    with patch("requests.get", return_value=_resp({"data": [_edge_row()], "meta": {}})):
+def test_trace_without_root_observation_is_partial(client):
+    resp = _resp({"data": _child_only_rows(), "meta": {}})
+    with patch("requests.get", return_value=resp):
         trace = client.get_trace("t1")
     assert trace["observationsPartial"] is True
+
+
+def test_trace_with_root_near_window_start_is_not_partial(client):
+    resp = _resp({"data": [_root_near_edge_row()], "meta": {}})
+    with patch("requests.get", return_value=resp):
+        assert client.get_trace("t1")["observationsPartial"] is False
 
 
 def test_trace_well_inside_window_is_not_partial(client):
@@ -488,8 +553,9 @@ def test_trace_well_inside_window_is_not_partial(client):
         assert client.get_trace("t1")["observationsPartial"] is False
 
 
-def test_window_edge_partial_flows_to_metrics_and_observations(client):
-    with patch("requests.get", return_value=_resp({"data": [_edge_row()], "meta": {}})):
+def test_missing_root_partial_flows_to_metrics_and_observations(client):
+    resp = _resp({"data": _child_only_rows(), "meta": {}})
+    with patch("requests.get", return_value=resp):
         assert client.get_trace_metrics("t1").observations_partial is True
         client.get_observations_for_trace("t1")
     assert client._observations_partial_by_trace["t1"] is True
@@ -497,13 +563,24 @@ def test_window_edge_partial_flows_to_metrics_and_observations(client):
 
 @pytest.mark.skipif(not AIOHTTP_AVAILABLE, reason="aiohttp not installed")
 @pytest.mark.asyncio
-async def test_async_trace_near_window_start_is_partial(client):
-    session = _fake_aiohttp([{"data": [_edge_row()], "meta": {}}])
+async def test_async_trace_without_root_observation_is_partial(client):
+    session = _fake_aiohttp([{"data": _child_only_rows(), "meta": {}}])
     with patch(
         "traigent.integrations.langfuse.client.aiohttp.ClientSession", new=session
     ):
         trace = await client.get_trace_async("t1")
-    assert trace["observationsPartial"] is True
+        assert trace["observationsPartial"] is True
+
+
+@pytest.mark.skipif(not AIOHTTP_AVAILABLE, reason="aiohttp not installed")
+@pytest.mark.asyncio
+async def test_async_missing_root_partial_flows_to_metrics(client):
+    session = _fake_aiohttp([{"data": _child_only_rows(), "meta": {}}])
+    with patch(
+        "traigent.integrations.langfuse.client.aiohttp.ClientSession", new=session
+    ):
+        metrics = await client.get_trace_metrics_async("t1")
+    assert metrics.observations_partial is True
 
 
 def test_success_after_downgrade_clears_legacy(client):
@@ -580,9 +657,10 @@ def test_rows_with_invalid_ids_excluded_and_partial(client):
 
 
 def test_root_requires_present_null_parent(client):
-    no_key = {k: v for k, v in ROOT.items() if k != "parentObservationId"}
+    no_flag = {k: v for k, v in ROOT.items() if k != "isRootObservation"}
+    no_key = {k: v for k, v in no_flag.items() if k != "parentObservationId"}
     no_key["id"] = "nokey"
-    empty = {**ROOT, "id": "empty", "parentObservationId": ""}
+    empty = {**no_flag, "id": "empty", "parentObservationId": ""}
     with patch(
         "requests.get", return_value=_resp({"data": [no_key, empty], "meta": {}})
     ):
