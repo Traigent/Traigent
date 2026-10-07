@@ -2,11 +2,23 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from traigent.connectors.models import ConnectionRef, DatasetItem, ExternalRef, Observation, Score
+from traigent.connectors.models import (
+    ConnectionRef,
+    DatasetItem,
+    ExternalRef,
+    Observation,
+    Score,
+)
 
 
 def test_content_models_are_frozen():
-    values = [Observation("q", "a"), Score("quality", 1.0), DatasetItem("q", "a"), ExternalRef("vendor", "x"), ConnectionRef("langfuse")]
+    values = [
+        Observation("q", "a"),
+        Score("quality", 1.0),
+        DatasetItem("q", "a"),
+        ExternalRef("vendor", "x"),
+        ConnectionRef("langfuse"),
+    ]
     for value in values:
         with pytest.raises((FrozenInstanceError, AttributeError, TypeError)):
             value.__dict__[next(iter(value.__dict__))] = "canary"

@@ -3,6 +3,7 @@
 These records may contain source content and are intentionally local values;
 the connector package defines no backend transport or exporter.
 """
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -53,12 +54,19 @@ class ConnectionRef:
 @dataclass(frozen=True, slots=True, init=False, weakref_slot=True)
 class VerifiedCodeFact:
     """Code location derived from a live Python object, not arbitrary text."""
+
     function_ref: str
     file_path: str
 
     @classmethod
-    def from_callable(cls, value: Any, *, repository_root: str | Path) -> VerifiedCodeFact:
-        if not (isfunction(value) or ismethod(value) or isinstance(value, (FunctionType, MethodType))):
+    def from_callable(
+        cls, value: Any, *, repository_root: str | Path
+    ) -> VerifiedCodeFact:
+        if not (
+            isfunction(value)
+            or ismethod(value)
+            or isinstance(value, (FunctionType, MethodType))
+        ):
             raise ValueError("code fact requires a Python callable")
         code = value.__code__
         module = value.__module__
@@ -77,8 +85,12 @@ class VerifiedCodeFact:
         return fact
 
 
-_FUNCTION_REF = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?::(?:<locals>|[A-Za-z_][A-Za-z0-9_]*)(?:\.(?:<locals>|[A-Za-z_][A-Za-z0-9_]*))*)?$")
-_FILE_PATH = re.compile(r"^(?:(?!\.{1,2}/)[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:py|ts|tsx|js|jsx|mjs|cjs|json|yaml|yml)$")
+_FUNCTION_REF = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?::(?:<locals>|[A-Za-z_][A-Za-z0-9_]*)(?:\.(?:<locals>|[A-Za-z_][A-Za-z0-9_]*))*)?$"
+)
+_FILE_PATH = re.compile(
+    r"^(?:(?!\.{1,2}/)[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:py|ts|tsx|js|jsx|mjs|cjs|json|yaml|yml)$"
+)
 
 
 def _validate_locator(function_ref: str, file_path: str) -> None:
@@ -89,10 +101,16 @@ def _validate_locator(function_ref: str, file_path: str) -> None:
 
 
 def serialize_locator(value: VerifiedCodeFact) -> dict[str, str]:
-    if not isinstance(value, VerifiedCodeFact) or _VERIFIED_CODE_FACTS.get(id(value)) is not value:
+    if (
+        not isinstance(value, VerifiedCodeFact)
+        or _VERIFIED_CODE_FACTS.get(id(value)) is not value
+    ):
         raise ValueError("locator requires a verified code fact")
     _validate_locator(value.function_ref, value.file_path)
-    return {"agent_function_ref": value.function_ref, "agent_file_path": value.file_path}
+    return {
+        "agent_function_ref": value.function_ref,
+        "agent_file_path": value.file_path,
+    }
 
 
 def validate_summary(payload: Mapping[str, Any]) -> dict[str, Any]:

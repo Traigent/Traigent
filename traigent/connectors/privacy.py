@@ -1,4 +1,5 @@
 """Opaque customer-side identities and closed summary validation."""
+
 from __future__ import annotations
 
 from hashlib import sha256
@@ -16,9 +17,29 @@ from .models import ConnectionRef, VerifiedCodeFact, serialize_locator
 
 _SCHEMA_DIR = Path(__file__).with_name("schemas")
 _SCHEMA_FILES = {
-    "connector_run_summary.json": frozenset({"run_token", "connector_kind", "connection_token", "command", "status", "counts", "guarantees"}),
-    "dataset_revision_summary.json": frozenset({"dataset_token", "source_connector_kind", "revision", "sampling_policy", "score_semantics"}),
-    "correlation_summary.json": frozenset({"run_token", "tier_counts", "trials_total", "trials_linked", "trials_unknown"}),
+    "connector_run_summary.json": frozenset(
+        {
+            "run_token",
+            "connector_kind",
+            "connection_token",
+            "command",
+            "status",
+            "counts",
+            "guarantees",
+        }
+    ),
+    "dataset_revision_summary.json": frozenset(
+        {
+            "dataset_token",
+            "source_connector_kind",
+            "revision",
+            "sampling_policy",
+            "score_semantics",
+        }
+    ),
+    "correlation_summary.json": frozenset(
+        {"run_token", "tier_counts", "trials_total", "trials_linked", "trials_unknown"}
+    ),
 }
 _SCHEMAS: dict[str, dict[str, Any]] = {}
 _TOKEN_RE = re.compile(r"^tk_[0-9a-hjkmnp-tv-z]{26}$")
@@ -33,7 +54,9 @@ class SummaryValidationError(ValueError):
 class OpaqueToken:
     __slots__ = ("_value", "_connection_id")
 
-    def __init__(self, value: str, capability: object = None, connection_id: str = "") -> None:
+    def __init__(
+        self, value: str, capability: object = None, connection_id: str = ""
+    ) -> None:
         if capability is not _MINT_CAPABILITY or not _TOKEN_RE.fullmatch(value):
             raise ValueError("opaque tokens can only be minted by CustomerSideMinter")
         self._value = value
@@ -69,8 +92,13 @@ def validate_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, Mapping):
         raise SummaryValidationError("/")
     name = _schema_for(payload)
-    validator = Draft7Validator(_schema(name), format_checker=Draft7Validator.FORMAT_CHECKER)
-    errors = sorted(validator.iter_errors(dict(payload)), key=lambda err: (list(map(str, err.absolute_path)), err.validator or ""))
+    validator = Draft7Validator(
+        _schema(name), format_checker=Draft7Validator.FORMAT_CHECKER
+    )
+    errors = sorted(
+        validator.iter_errors(dict(payload)),
+        key=lambda err: (list(map(str, err.absolute_path)), err.validator or ""),
+    )
     if errors:
         pointers = sorted({_pointer(err.absolute_path) for err in errors})
         raise SummaryValidationError("invalid summary at " + ", ".join(pointers))
@@ -79,6 +107,7 @@ def validate_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 class CustomerSideMinter:
     """Mints random opaque tokens and HMAC digests under a per-connection key."""
+
     __slots__ = ("connection", "_key", "_connection_id", "_tokens", "connection_token")
 
     def __init__(self, connection: ConnectionRef, key: bytes | None = None) -> None:
@@ -102,7 +131,12 @@ class CustomerSideMinter:
         return token
 
     def mint(self, kind: str, source_id: str) -> OpaqueToken:
-        if not isinstance(kind, str) or not kind or not isinstance(source_id, str) or not source_id:
+        if (
+            not isinstance(kind, str)
+            or not kind
+            or not isinstance(source_id, str)
+            or not source_id
+        ):
             raise ValueError("token kind and source identity must be nonempty strings")
         return self._mint_token()
 
@@ -112,10 +146,19 @@ class CustomerSideMinter:
         return hmac.new(self._key, value.encode("utf-8"), sha256).hexdigest()
 
     def owns(self, token: Any) -> bool:
-        return isinstance(token, OpaqueToken) and token._connection_id == self._connection_id and self._tokens.get(token.value) is token
+        return (
+            isinstance(token, OpaqueToken)
+            and token._connection_id == self._connection_id
+            and self._tokens.get(token.value) is token
+        )
 
 
-def serialize_summary(payload: Mapping[str, Any], *, minter: CustomerSideMinter, code_fact: VerifiedCodeFact | None = None) -> dict[str, Any]:
+def serialize_summary(
+    payload: Mapping[str, Any],
+    *,
+    minter: CustomerSideMinter,
+    code_fact: VerifiedCodeFact | None = None,
+) -> dict[str, Any]:
     """Validate a summary and require every opaque token to be owned by minter.
 
     Token positions must be supplied as minted :class:`OpaqueToken` instances;
@@ -132,6 +175,7 @@ def serialize_summary(payload: Mapping[str, Any], *, minter: CustomerSideMinter,
         if not isinstance(code_fact, VerifiedCodeFact):
             raise ValueError("code location requires verified code facts")
         result.update(serialize_locator(code_fact))
+
     def visit(node: Any, path: tuple[str, ...] = ()) -> None:
         if isinstance(node, dict):
             for key, value in node.items():
@@ -143,7 +187,9 @@ def serialize_summary(payload: Mapping[str, Any], *, minter: CustomerSideMinter,
         elif isinstance(node, list):
             for index, value in enumerate(node):
                 visit(value, path + (str(index),))
+
     visit(result)
+
     def wire(node: Any) -> Any:
         if isinstance(node, OpaqueToken):
             return node.value
@@ -152,4 +198,5 @@ def serialize_summary(payload: Mapping[str, Any], *, minter: CustomerSideMinter,
         if isinstance(node, list):
             return [wire(value) for value in node]
         return node
+
     return validate_summary(wire(result))
