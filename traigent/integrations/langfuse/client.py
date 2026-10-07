@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from traigent.utils.logging import get_logger
@@ -62,6 +62,32 @@ except ImportError:
 
 if TYPE_CHECKING:
     from langfuse import Langfuse as LangfuseType
+
+
+# Observations API v2 (Langfuse v4 data model). See
+# https://langfuse.com/faq/all/deprecated-api-migration
+_V2_OBSERVATIONS_PATH = "/api/public/v2/observations"
+_V2_FIELDS = "core,basic,metadata,model,usage,metrics,trace_context"
+_V2_PAGE_LIMIT = 1000  # v2 max (v1 was 100)
+# v2 requires a bounded start-time window; traces are looked up shortly after
+# they are produced, so a 30 day look-back is generous.
+_V2_LOOKBACK_DAYS = 30
+
+
+class _V2Unavailable(Exception):
+    """The v2 observations endpoint does not exist (Langfuse v3 self-hosted)."""
+
+
+def _to_float(value: Any) -> float:
+    """Coerce numbers or decimal strings (v2 returns costs as strings) to float."""
+    try:
+        return float(value) if value is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _to_int(value: Any) -> int:
+    return int(_to_float(value))
 
 
 # =============================================================================
@@ -232,6 +258,9 @@ class LangfuseClient:
         self.host = resolved_host.rstrip("/")
         self.timeout = timeout
         self._observations_partial_by_trace: dict[str, bool] = {}
+        # Set once the v2 endpoint answers 404 (Langfuse v3 self-hosted): use
+        # the legacy v1 endpoints from then on.
+        self._legacy_api = False
 
         # Initialize SDK client if available
         self._sdk_client: LangfuseType | None = None
@@ -274,26 +303,33 @@ class LangfuseClient:
         Returns:
             Trace data dict or None if not found
         """
-        # Try SDK first
-        if self._sdk_client:
-            try:
-                trace = self._sdk_client.get_trace(trace_id)
-                if trace:
-                    # SDK returns a Trace object, convert to dict
-                    return self._trace_to_dict(trace)
-            except Exception as e:
-                logger.warning(f"SDK get_trace failed, falling back to HTTP: {e}")
-
-        # Fall back to HTTP API
+        # The Langfuse SDK's read helpers (get_trace/get_observations) were
+        # removed in SDK v3+ and the endpoints they call are removed in Langfuse
+        # v4, so reads always go through the HTTP API (v2 with v1 fallback).
         return self._get_trace_http(trace_id)
 
     def _get_trace_http(self, trace_id: str) -> dict[str, Any] | None:
-        """Get trace via HTTP API."""
+        """Get trace via HTTP API (v2 observations, legacy v1 on Langfuse v3)."""
         if not REQUESTS_AVAILABLE:
             raise ImportError(
                 "requests is required. Install with: pip install requests"
             )
 
+        if not self._legacy_api:
+            try:
+                rows, partial = self._fetch_observations_v2(trace_id)
+            except _V2Unavailable:
+                self._legacy_api = True
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Failed to get trace {trace_id}: {e}")
+                return None
+            else:
+                return self._trace_from_observation_rows(trace_id, rows, partial)
+
+        return self._get_trace_http_legacy(trace_id)
+
+    def _get_trace_http_legacy(self, trace_id: str) -> dict[str, Any] | None:
+        """Legacy v1 ``GET /api/public/traces/{id}`` (Langfuse v3 self-hosted only)."""
         try:
             response = requests.get(
                 f"{self.host}/api/public/traces/{trace_id}",
@@ -310,6 +346,124 @@ class LangfuseClient:
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to get trace {trace_id}: {e}")
             return None
+
+    # ---- v2 helpers -------------------------------------------------------
+
+    def _v2_params(self, trace_id: str, cursor: str | None) -> dict[str, str]:
+        now = datetime.now(UTC)
+        params = {
+            "traceId": trace_id,
+            "fields": _V2_FIELDS,
+            "limit": str(_V2_PAGE_LIMIT),
+            "fromStartTime": (now - timedelta(days=_V2_LOOKBACK_DAYS)).isoformat(),
+            "toStartTime": (now + timedelta(hours=1)).isoformat(),
+        }
+        if cursor:
+            params["cursor"] = cursor
+        return params
+
+    @staticmethod
+    def _v2_page(payload: Any) -> tuple[list[dict[str, Any]], str | None]:
+        """Split a v2 response into (rows, next cursor)."""
+        if not isinstance(payload, dict):
+            return [], None
+        rows = payload.get("data") or []
+        meta = payload.get("meta") or {}
+        cursor = meta.get("cursor") if isinstance(meta, dict) else None
+        return [r for r in rows if isinstance(r, dict)], cursor or None
+
+    def _fetch_observations_v2(
+        self, trace_id: str, *, max_pages: int = 100
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Fetch all observation rows of a trace via cursor pagination (sync).
+
+        Returns (rows, partial). Raises _V2Unavailable on 404 and lets
+        requests exceptions propagate when no rows were fetched yet.
+        """
+        rows: list[dict[str, Any]] = []
+        cursor: str | None = None
+        for _ in range(max_pages):
+            try:
+                response = requests.get(
+                    f"{self.host}{_V2_OBSERVATIONS_PATH}",
+                    params=self._v2_params(trace_id, cursor),
+                    headers=self._get_auth_header(),
+                    timeout=self.timeout,
+                )
+                if response.status_code == 404:
+                    raise _V2Unavailable()
+                response.raise_for_status()
+                page, cursor = self._v2_page(response.json())
+            except requests.exceptions.RequestException:
+                if not rows:
+                    raise
+                return rows, True
+            rows.extend(page)
+            if not cursor:
+                return rows, False
+        logger.warning(
+            f"Hit max_pages limit ({max_pages}) fetching observations "
+            f"for trace {trace_id}. Some observations may be missing."
+        )
+        return rows, True
+
+    async def _fetch_observations_v2_async(
+        self, trace_id: str, *, max_pages: int = 100
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Async version of _fetch_observations_v2."""
+        rows: list[dict[str, Any]] = []
+        cursor: str | None = None
+        async with aiohttp.ClientSession(trust_env=True) as session:
+            for _ in range(max_pages):
+                try:
+                    async with session.get(
+                        f"{self.host}{_V2_OBSERVATIONS_PATH}",
+                        params=self._v2_params(trace_id, cursor),
+                        headers=self._get_auth_header(),
+                        timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    ) as response:
+                        if response.status == 404:
+                            raise _V2Unavailable()
+                        response.raise_for_status()
+                        page, cursor = self._v2_page(await response.json())
+                except aiohttp.ClientError:
+                    if not rows:
+                        raise
+                    return rows, True
+                rows.extend(page)
+                if not cursor:
+                    return rows, False
+        logger.warning(
+            f"Hit max_pages limit ({max_pages}) fetching observations "
+            f"for trace {trace_id}. Some observations may be missing."
+        )
+        return rows, True
+
+    @staticmethod
+    def _trace_from_observation_rows(
+        trace_id: str, rows: list[dict[str, Any]], partial: bool
+    ) -> dict[str, Any] | None:
+        """Rebuild a v1-shaped trace dict from v2 observation rows.
+
+        v4 has no trace objects; trace-level fields come from the root
+        observation (``parentObservationId`` is null). Returns None when the
+        trace has no observations (same as a v1 404).
+        """
+        if not rows:
+            return None
+        root = next(
+            (r for r in rows if not r.get("parentObservationId")),
+            rows[-1],  # rows are startTime-descending: last is the earliest
+        )
+        return {
+            "id": trace_id,
+            "name": root.get("traceName") or root.get("name"),
+            "metadata": root.get("metadata") or {},
+            "sessionId": root.get("sessionId"),
+            "userId": root.get("userId"),
+            "observations": rows,
+            "observationsPartial": partial,
+        }
 
     def get_trace_metrics(self, trace_id: str) -> LangfuseTraceMetrics | None:
         """Get aggregated metrics for a trace.
@@ -340,20 +494,6 @@ class LangfuseClient:
         Returns:
             List of LangfuseObservation objects
         """
-        # Try SDK first
-        if self._sdk_client:
-            try:
-                # SDK method to get observations
-                observations = self._sdk_client.get_observations(trace_id=trace_id)
-                if observations:
-                    self._observations_partial_by_trace[trace_id] = False
-                    return [
-                        self._observation_to_model(obs) for obs in observations.data
-                    ]
-            except Exception as e:
-                logger.warning(f"SDK get_observations failed: {e}")
-
-        # Fall back to HTTP API
         return self._get_observations_http(trace_id)
 
     def _get_observations_http(
@@ -361,15 +501,34 @@ class LangfuseClient:
     ) -> list[LangfuseObservation]:
         """Get observations via HTTP API with pagination.
 
-        Args:
-            trace_id: The trace ID to fetch observations for
-            max_pages: Maximum number of pages to fetch (safety limit)
-
-        Returns:
-            List of all observations for the trace
+        Uses v2 cursor pagination; falls back to legacy v1 page pagination on
+        Langfuse v3 self-hosted (v2 answers 404).
         """
         if not REQUESTS_AVAILABLE:
             raise ImportError("requests is required")
+
+        if not self._legacy_api:
+            self._observations_partial_by_trace[trace_id] = False
+            try:
+                rows, partial = self._fetch_observations_v2(
+                    trace_id, max_pages=max_pages
+                )
+            except _V2Unavailable:
+                self._legacy_api = True
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Failed to get observations for trace {trace_id}: {e}")
+                self._observations_partial_by_trace[trace_id] = True
+                return []
+            else:
+                self._observations_partial_by_trace[trace_id] = partial
+                return [self._dict_to_observation(r) for r in rows]
+
+        return self._get_observations_http_legacy(trace_id, max_pages=max_pages)
+
+    def _get_observations_http_legacy(
+        self, trace_id: str, *, max_pages: int = 100
+    ) -> list[LangfuseObservation]:
+        """Legacy v1 ``GET /api/public/observations`` (Langfuse v3 self-hosted)."""
 
         observations: list[LangfuseObservation] = []
         page = 1
@@ -460,6 +619,21 @@ class LangfuseClient:
                 "aiohttp is required for async. Install with: pip install aiohttp"
             )
 
+        if not self._legacy_api:
+            try:
+                rows, partial = await self._fetch_observations_v2_async(trace_id)
+            except _V2Unavailable:
+                self._legacy_api = True
+            except aiohttp.ClientError as e:
+                logger.error(f"Failed to get trace {trace_id}: {e}")
+                return None
+            else:
+                return self._trace_from_observation_rows(trace_id, rows, partial)
+
+        return await self._get_trace_async_legacy(trace_id)
+
+    async def _get_trace_async_legacy(self, trace_id: str) -> dict[str, Any] | None:
+        """Legacy v1 trace endpoint (Langfuse v3 self-hosted only)."""
         try:
             async with aiohttp.ClientSession(trust_env=True) as session:
                 async with session.get(
@@ -501,6 +675,28 @@ class LangfuseClient:
         if not AIOHTTP_AVAILABLE:
             raise ImportError("aiohttp is required for async")
 
+        if not self._legacy_api:
+            self._observations_partial_by_trace[trace_id] = False
+            try:
+                rows, partial = await self._fetch_observations_v2_async(
+                    trace_id, max_pages=max_pages
+                )
+            except _V2Unavailable:
+                self._legacy_api = True
+            except aiohttp.ClientError as e:
+                logger.error(f"Failed to get observations for trace {trace_id}: {e}")
+                self._observations_partial_by_trace[trace_id] = True
+                return []
+            else:
+                self._observations_partial_by_trace[trace_id] = partial
+                return [self._dict_to_observation(r) for r in rows]
+
+        return await self._get_observations_async_legacy(trace_id, max_pages=max_pages)
+
+    async def _get_observations_async_legacy(
+        self, trace_id: str, *, max_pages: int = 100
+    ) -> list[LangfuseObservation]:
+        """Legacy v1 observations endpoint (Langfuse v3 self-hosted only)."""
         observations: list[LangfuseObservation] = []
         page = 1
         self._observations_partial_by_trace[trace_id] = False
@@ -636,17 +832,28 @@ class LangfuseClient:
         metadata = obs_data.get("metadata") or {}
         usage = obs_data.get("usage") or {}
 
-        # Extract token counts
-        input_tokens = usage.get("input", 0) or usage.get("promptTokens", 0) or 0
-        output_tokens = usage.get("output", 0) or usage.get("completionTokens", 0) or 0
+        # Extract token counts (v1: ``usage`` dict; v2: flat *Usage fields)
+        input_tokens = (
+            usage.get("input", 0)
+            or usage.get("promptTokens", 0)
+            or _to_int(obs_data.get("inputUsage"))
+        )
+        output_tokens = (
+            usage.get("output", 0)
+            or usage.get("completionTokens", 0)
+            or _to_int(obs_data.get("outputUsage"))
+        )
         total_tokens = (
             usage.get("total", 0)
             or usage.get("totalTokens", 0)
+            or _to_int(obs_data.get("totalUsage"))
             or (input_tokens + output_tokens)
         )
 
-        # Extract cost
-        cost = obs_data.get("calculatedTotalCost") or 0.0
+        # Extract cost (v1: calculatedTotalCost number; v2: totalCost string)
+        cost = _to_float(obs_data.get("calculatedTotalCost")) or _to_float(
+            obs_data.get("totalCost")
+        )
 
         # Calculate latency from timestamps
         latency_ms = 0.0
