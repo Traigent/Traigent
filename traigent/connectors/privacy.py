@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from hashlib import sha256
 import hmac
 import json
+import math
 from pathlib import Path
 import re
 import secrets
@@ -45,6 +47,57 @@ _SCHEMAS: dict[str, dict[str, Any]] = {}
 _TOKEN_RE = re.compile(r"^tk_[0-9a-hjkmnp-tv-z]{26}$")
 _MINT_CAPABILITY = object()
 _LOCATOR_FIELDS = ("agent_function_ref", "agent_file_path")
+_TIMESTAMP_FIELDS = frozenset({"started_at", "finished_at", "approval_at"})
+_SAFE_POINTER_SEGMENTS = frozenset(
+    {
+        "agent_file_path",
+        "agent_function_ref",
+        "ambiguous",
+        "approval_at",
+        "approved",
+        "command",
+        "commit_name",
+        "connection_token",
+        "connector_kind",
+        "counts",
+        "dataset_token",
+        "deployment",
+        "direction",
+        "error_code",
+        "exact",
+        "finished_at",
+        "fraction",
+        "guarantees",
+        "holdout_count",
+        "item_count",
+        "items_written",
+        "kind",
+        "name_only",
+        "observations_read",
+        "operation",
+        "pages",
+        "reason",
+        "revision",
+        "rows_dropped_invalid",
+        "run_token",
+        "sample_size",
+        "sampling_policy",
+        "schema_version",
+        "score_semantics",
+        "score_token",
+        "scores_read",
+        "seed",
+        "source_connector_kind",
+        "started_at",
+        "status",
+        "support",
+        "tier_counts",
+        "trials_linked",
+        "trials_total",
+        "trials_unknown",
+        "type",
+    }
+)
 
 
 class SummaryValidationError(ValueError):
@@ -75,8 +128,24 @@ def _schema_for(payload: Mapping[str, Any]) -> str:
 
 
 def _pointer(path: Any) -> str:
-    parts = [str(part).replace("~", "~0").replace("/", "~1") for part in path]
+    parts = []
+    for part in path:
+        if isinstance(part, int):
+            parts.append(str(part))
+        elif type(part) is str and part in _SAFE_POINTER_SEGMENTS:
+            parts.append(part)
+        else:
+            parts.append("<unknown>")
     return "/" + "/".join(parts) if parts else "/"
+
+
+def _error_pointer(error: Any) -> str:
+    path = tuple(error.absolute_path)
+    if error.validator == "additionalProperties":
+        allowed = error.schema.get("properties", {})
+        if any(key not in allowed for key in error.instance):
+            path += ("<unknown>",)
+    return _pointer(path)
 
 
 def _schema(name: str) -> dict[str, Any]:
@@ -87,22 +156,68 @@ def _schema(name: str) -> dict[str, Any]:
     return _SCHEMAS[name]
 
 
+def _normalize_json_primitive(value: Any, path: tuple[Any, ...] = ()) -> Any:
+    """Return exact JSON primitives, rejecting subclasses and non-finite numbers."""
+    value_type = type(value)
+    if value_type in {str, int, bool, type(None)}:
+        return value
+    if value_type is float:
+        if math.isfinite(value):
+            return value
+        raise SummaryValidationError(_pointer(path)) from None
+    if value_type is list:
+        return [
+            _normalize_json_primitive(item, path + (index,))
+            for index, item in enumerate(value)
+        ]
+    if value_type is dict:
+        normalized: dict[str, Any] = {}
+        for key, item in value.items():
+            if type(key) is not str:
+                raise SummaryValidationError(_pointer(path + (key,))) from None
+            normalized[key] = _normalize_json_primitive(item, path + (key,))
+        return normalized
+    raise SummaryValidationError(_pointer(path)) from None
+
+
+def _validate_timestamps(payload: dict[str, Any]) -> None:
+    def visit(value: Any, path: tuple[Any, ...] = ()) -> None:
+        if type(value) is dict:
+            for key, item in value.items():
+                item_path = path + (key,)
+                if key in _TIMESTAMP_FIELDS and type(item) is str:
+                    try:
+                        parsed = datetime.fromisoformat(item)
+                    except ValueError:
+                        raise SummaryValidationError(_pointer(item_path)) from None
+                    if parsed.tzinfo is not timezone.utc or parsed.utcoffset() is None:
+                        raise SummaryValidationError(_pointer(item_path)) from None
+                visit(item, item_path)
+        elif type(value) is list:
+            for index, item in enumerate(value):
+                visit(item, path + (index,))
+
+    visit(payload)
+
+
 def validate_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Validate and shallow-copy one of the three closed summary shapes."""
-    if not isinstance(payload, Mapping):
+    """Validate one of the three closed summary shapes using exact JSON primitives."""
+    if type(payload) is not dict:
         raise SummaryValidationError("/")
-    name = _schema_for(payload)
+    normalized = _normalize_json_primitive(payload)
+    name = _schema_for(normalized)
     validator = Draft7Validator(
         _schema(name), format_checker=Draft7Validator.FORMAT_CHECKER
     )
     errors = sorted(
-        validator.iter_errors(dict(payload)),
+        validator.iter_errors(normalized),
         key=lambda err: (list(map(str, err.absolute_path)), err.validator or ""),
     )
     if errors:
-        pointers = sorted({_pointer(err.absolute_path) for err in errors})
+        pointers = sorted({_error_pointer(err) for err in errors})
         raise SummaryValidationError("invalid summary at " + ", ".join(pointers))
-    return dict(payload)
+    _validate_timestamps(normalized)
+    return normalized
 
 
 class CustomerSideMinter:
@@ -111,16 +226,18 @@ class CustomerSideMinter:
     __slots__ = ("connection", "_key", "_connection_id", "_tokens", "connection_token")
 
     def __init__(self, connection: ConnectionRef, key: bytes | None = None) -> None:
-        if not isinstance(connection, ConnectionRef):
+        if type(connection) is not ConnectionRef:
             raise TypeError("connection must be a ConnectionRef")
         actual_key = secrets.token_bytes(32) if key is None else key
         if not isinstance(actual_key, bytes) or len(actual_key) < 32:
             raise ValueError("connection key must contain at least 32 bytes")
         self.connection = connection
-        self._key = actual_key
         self._connection_id = secrets.token_hex(16)
         self._tokens: dict[str, OpaqueToken] = {}
         self.connection_token = self._mint_token()
+        self._key = hmac.new(
+            actual_key, self.connection_token.value.encode("utf-8"), sha256
+        ).digest()
 
     def _mint_token(self) -> OpaqueToken:
         alphabet = "0123456789abcdefghjkmnpqrstvwxyz"
@@ -147,7 +264,7 @@ class CustomerSideMinter:
 
     def owns(self, token: Any) -> bool:
         return (
-            isinstance(token, OpaqueToken)
+            type(token) is OpaqueToken
             and token._connection_id == self._connection_id
             and self._tokens.get(token.value) is token
         )
@@ -164,39 +281,56 @@ def serialize_summary(
     Token positions must be supplied as minted :class:`OpaqueToken` instances;
     raw strings, including syntactically valid forged tokens, are rejected.
     """
-    if not isinstance(minter, CustomerSideMinter):
+    if type(minter) is not CustomerSideMinter:
         raise TypeError("a CustomerSideMinter is required")
     token_fields = {"run_token", "dataset_token", "connection_token", "score_token"}
+    if type(payload) is not dict:
+        raise SummaryValidationError("/")
     result = dict(payload)
     for field in _LOCATOR_FIELDS:
         if field in result:
             raise SummaryValidationError(_pointer((field,)))
     if code_fact is not None:
-        if not isinstance(code_fact, VerifiedCodeFact):
+        if type(code_fact) is not VerifiedCodeFact:
             raise ValueError("code location requires verified code facts")
         result.update(serialize_locator(code_fact))
 
+    def check_shape(node: Any, path: tuple[Any, ...] = ()) -> None:
+        node_type = type(node)
+        if node_type is dict:
+            for key, value in node.items():
+                if type(key) is not str:
+                    raise SummaryValidationError(_pointer(path + (key,))) from None
+                check_shape(value, path + (key,))
+        elif node_type is list:
+            for index, value in enumerate(node):
+                check_shape(value, path + (index,))
+        elif node_type not in {str, int, float, bool, type(None), OpaqueToken}:
+            raise SummaryValidationError(_pointer(path)) from None
+
+    check_shape(result)
+
     def visit(node: Any, path: tuple[str, ...] = ()) -> None:
-        if isinstance(node, dict):
+        if type(node) is dict:
             for key, value in node.items():
                 if key in token_fields:
                     if not minter.owns(value):
                         raise SummaryValidationError(_pointer(path + (key,)))
                 else:
                     visit(value, path + (key,))
-        elif isinstance(node, list):
+        elif type(node) is list:
             for index, value in enumerate(node):
                 visit(value, path + (str(index),))
 
     visit(result)
 
     def wire(node: Any) -> Any:
-        if isinstance(node, OpaqueToken):
+        if type(node) is OpaqueToken:
             return node.value
-        if isinstance(node, dict):
+        if type(node) is dict:
             return {key: wire(value) for key, value in node.items()}
-        if isinstance(node, list):
+        if type(node) is list:
             return [wire(value) for value in node]
         return node
 
-    return validate_summary(wire(result))
+    return validate_summary(_normalize_json_primitive(wire(result)))

@@ -103,6 +103,24 @@ def test_summary_errors_contain_json_pointers_not_values():
     assert "PRIVATE-CANARY-7931" not in str(exc.value)
 
 
+def test_unknown_summary_pointer_redacts_customer_key_and_exception_chain():
+    canary = "CUSTOMER_CONTENT_CANARY"
+    minter = CustomerSideMinter(ConnectionRef("langfuse"), b"k" * 32)
+    payload = {
+        **GOLDEN["connector_run_summary.json"],
+        "run_token": minter.mint("run", "synthetic"),
+        "connection_token": minter.connection_token,
+        canary: {"score_token": minter.mint("score", "synthetic")},
+    }
+
+    with pytest.raises(ValueError) as exc:
+        serialize_summary(payload, minter=minter)
+
+    assert "/<unknown>" in str(exc.value)
+    assert canary not in str(exc.value)
+    assert exc.value.__cause__ is None
+
+
 def test_summary_serialization_excludes_content_canaries():
     minter = CustomerSideMinter(ConnectionRef("langfuse"), b"k" * 32)
     token = minter.mint("run", "CUSTOMER_CONTENT_CANARY")
@@ -182,6 +200,38 @@ def test_enum_pattern_and_format_negatives_are_rejected():
     bad["status"] = "SUCCEEDED"
     with pytest.raises(ValueError):
         validate_summary(bad)
+    for impossible in ("2026-99-99T99:99:99Z", "2026-02-30T00:00:00Z"):
+        bad = copy.deepcopy(GOLDEN["connector_run_summary.json"])
+        bad["started_at"] = impossible
+        with pytest.raises(ValueError, match="/started_at"):
+            validate_summary(bad)
+
+
+def test_summary_rejects_json_primitive_subclasses_before_serialization():
+    class CanaryString(str):
+        def __eq__(self, other):
+            return True
+
+    direct_payload = {
+        **GOLDEN["connector_run_summary.json"],
+        "connector_kind": CanaryString("CUSTOMER_CONTENT_CANARY"),
+    }
+    with pytest.raises(ValueError, match="^/connector_kind$") as exc:
+        validate_summary(direct_payload)
+    assert "CUSTOMER_CONTENT_CANARY" not in str(exc.value)
+
+    minter = CustomerSideMinter(ConnectionRef("langfuse"), b"k" * 32)
+    payload = {
+        **GOLDEN["connector_run_summary.json"],
+        "run_token": minter.mint("run", "synthetic"),
+        "connection_token": minter.connection_token,
+        "connector_kind": CanaryString("CUSTOMER_CONTENT_CANARY"),
+    }
+
+    with pytest.raises(ValueError, match="^/connector_kind$") as exc:
+        serialize_summary(payload, minter=minter)
+
+    assert "CUSTOMER_CONTENT_CANARY" not in str(exc.value)
     bad = copy.deepcopy(GOLDEN["connector_run_summary.json"])
     bad["run_token"] = "tk_alice_has_diabetes"
     with pytest.raises(ValueError):
@@ -209,5 +259,18 @@ def test_tokenizer_isolates_connections():
 
 def test_keyed_digests_are_connection_scoped():
     a = CustomerSideMinter(ConnectionRef("langfuse"), b"a" * 32)
-    b = CustomerSideMinter(ConnectionRef("langfuse"), b"b" * 32)
+    b = CustomerSideMinter(ConnectionRef("langfuse"), b"a" * 32)
     assert a.digest("same-id") != b.digest("same-id")
+
+
+def test_cross_minter_connection_token_is_rejected():
+    a = CustomerSideMinter(ConnectionRef("langfuse"), b"a" * 32)
+    b = CustomerSideMinter(ConnectionRef("langfuse"), b"a" * 32)
+    payload = {
+        **GOLDEN["connector_run_summary.json"],
+        "run_token": a.mint("run", "synthetic"),
+        "connection_token": b.connection_token,
+    }
+
+    with pytest.raises(ValueError, match="^/connection_token$"):
+        serialize_summary(payload, minter=a)

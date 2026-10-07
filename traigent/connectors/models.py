@@ -17,33 +17,75 @@ from weakref import WeakValueDictionary
 
 
 _VERIFIED_CODE_FACTS: WeakValueDictionary[int, VerifiedCodeFact] = WeakValueDictionary()
+_TOKEN_RE = re.compile(r"^tk_[0-9a-hjkmnp-tv-z]{26}$")
 
 
-@dataclass(frozen=True, slots=True)
+def _content_length(value: Any) -> int:
+    try:
+        return len(value)
+    except TypeError:
+        return 0
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class Observation:
     input: Any
     output: Any
     metadata: dict[str, Any] | None = None
 
+    def __repr__(self) -> str:
+        return (
+            "Observation("
+            f"input_length={_content_length(self.input)}, "
+            f"output_length={_content_length(self.output)}, "
+            f"metadata_length={_content_length(self.metadata)})"
+        )
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(frozen=True, slots=True, repr=False)
 class Score:
     name: str
     value: float | bool | str
     metadata: dict[str, Any] | None = None
 
+    def __repr__(self) -> str:
+        return (
+            "Score("
+            f"name_length={_content_length(self.name)}, "
+            f"value_length={_content_length(self.value)}, "
+            f"metadata_length={_content_length(self.metadata)})"
+        )
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(frozen=True, slots=True, repr=False)
 class DatasetItem:
     input: Any
     expected_output: Any
     scores: tuple[Score, ...] = ()
+
+    def __repr__(self) -> str:
+        return (
+            "DatasetItem("
+            f"input_length={_content_length(self.input)}, "
+            f"expected_output_length={_content_length(self.expected_output)}, "
+            f"scores_length={_content_length(self.scores)})"
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class ExternalRef:
     kind: str
     identifier: str
+    connection_token: str
+    platform_id: str
+
+    def __post_init__(self) -> None:
+        if type(self.connection_token) is not str or not _TOKEN_RE.fullmatch(
+            self.connection_token
+        ):
+            raise ValueError("external reference requires a validated connection token")
+        if type(self.platform_id) is not str:
+            raise TypeError("platform identifier must be an opaque string")
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,11 +114,18 @@ class VerifiedCodeFact:
         module = value.__module__
         qualname = value.__qualname__
         function_ref = f"{module}:{qualname}"
-        root = Path(repository_root).resolve()
         try:
-            file_path = Path(code.co_filename).resolve().relative_to(root).as_posix()
-        except (OSError, ValueError) as exc:
-            raise ValueError("callable is outside repository root") from exc
+            if not isinstance(repository_root, (str, Path)) or not repository_root:
+                raise ValueError("code fact requires a declared repository root")
+            root = Path(repository_root).resolve(strict=True)
+            source = Path(code.co_filename).resolve(strict=True)
+            if not root.is_dir() or not source.is_file():
+                raise ValueError("callable source must exist inside repository root")
+            file_path = source.relative_to(root).as_posix()
+        except (OSError, RuntimeError, ValueError):
+            raise ValueError(
+                "callable source must exist inside repository root"
+            ) from None
         fact = object.__new__(cls)
         object.__setattr__(fact, "function_ref", function_ref)
         object.__setattr__(fact, "file_path", file_path)

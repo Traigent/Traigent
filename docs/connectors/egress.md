@@ -1,6 +1,6 @@
 # Connector egress
 
-In this release, connector code paths send nothing to Traigent's backend. This is enforced by `tests/unit/connectors/test_egress_boundaries.py::test_connector_paths_cannot_reach_backend_exporters`.
+`tests/unit/connectors/test_egress_boundaries.py::test_connector_operations_do_not_use_backend_egress_paths` replaces requests, httpx, aiohttp, and urllib request entry points, the OTLP exporter, and the observability ingest batch sender with failures while it validates and serializes a connector run summary. The test asserts that none of those replacements is called.
 
 Summaries that may later be sent are closed allowlists validated by `traigent.connectors.models.validate_summary`.
 
