@@ -1371,6 +1371,29 @@ class TrialLifecycle:
             # Note: trial_id IS the configuration_run_id (backend creates it at /next-trial)
             # Use timezone-aware datetime with UTC; .isoformat() includes +00:00 offset
             # DO NOT add "Z" suffix - that would create invalid "+00:00Z" format
+            privacy_enabled = bool(
+                getattr(
+                    getattr(orchestrator, "traigent_config", None),
+                    "privacy_enabled",
+                    False,
+                )
+            )
+            span_config = trial_result.config
+            span_error = trial_result.error_message
+            if privacy_enabled:
+                # Reuse the canonical config policy used by trial submissions.
+                from traigent.cloud.trial_operations import TrialOperations
+
+                # Workflow traces retain config names for attribution but no values.
+                # Use the submission sanitizer to normalize names, then apply its
+                # canonical marker consistently to every retained key.
+                span_config = {
+                    key: TrialOperations._redaction_marker(None)
+                    for key in TrialOperations._redact_privacy_config(span_config)
+                }
+                if span_error:
+                    span_error = getattr(trial_result.error, "error_type", None)
+
             span = SpanPayload(
                 span_id=uuid.uuid4().hex[:16],
                 trace_id=orchestrator._optimization_id,  # Use optimization ID as trace
@@ -1381,7 +1404,7 @@ class TrialLifecycle:
                 end_time=datetime.fromtimestamp(end_time, UTC).isoformat(),
                 status=span_status,
                 node_id="optimization_run",  # Links span to workflow graph node
-                error_message=trial_result.error_message,
+                error_message=span_error,
                 input_tokens=(
                     trial_result.metadata.get("input_tokens", 0)
                     if trial_result.metadata
@@ -1397,7 +1420,7 @@ class TrialLifecycle:
                     if trial_result.metrics
                     else 0.0
                 ),
-                input_data={"config": trial_result.config},
+                input_data={"config": span_config},
                 output_data={"metrics": trial_result.metrics},
                 metadata={
                     "trial_number": (
