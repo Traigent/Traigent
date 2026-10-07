@@ -130,7 +130,7 @@ def _schema_for(payload: Mapping[str, Any]) -> str:
 def _pointer(path: Any) -> str:
     parts = []
     for part in path:
-        if isinstance(part, int):
+        if type(part) is int:
             parts.append(str(part))
         elif type(part) is str and part in _SAFE_POINTER_SEGMENTS:
             parts.append(part)
@@ -174,7 +174,7 @@ def _normalize_json_primitive(value: Any, path: tuple[Any, ...] = ()) -> Any:
         normalized: dict[str, Any] = {}
         for key, item in value.items():
             if type(key) is not str:
-                raise SummaryValidationError(_pointer(path + (key,))) from None
+                raise SummaryValidationError(_pointer(path + ("<unknown>",))) from None
             normalized[key] = _normalize_json_primitive(item, path + (key,))
         return normalized
     raise SummaryValidationError(_pointer(path)) from None
@@ -300,7 +300,9 @@ def serialize_summary(
         if node_type is dict:
             for key, value in node.items():
                 if type(key) is not str:
-                    raise SummaryValidationError(_pointer(path + (key,))) from None
+                    raise SummaryValidationError(
+                        _pointer(path + ("<unknown>",))
+                    ) from None
                 check_shape(value, path + (key,))
         elif node_type is list:
             for index, value in enumerate(node):
@@ -310,7 +312,7 @@ def serialize_summary(
 
     check_shape(result)
 
-    def visit(node: Any, path: tuple[str, ...] = ()) -> None:
+    def visit(node: Any, path: tuple[Any, ...] = ()) -> None:
         if type(node) is dict:
             for key, value in node.items():
                 if key in token_fields:
@@ -320,7 +322,7 @@ def serialize_summary(
                     visit(value, path + (key,))
         elif type(node) is list:
             for index, value in enumerate(node):
-                visit(value, path + (str(index),))
+                visit(value, path + (index,))
 
     visit(result)
 

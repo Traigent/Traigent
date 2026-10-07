@@ -121,6 +121,50 @@ def test_unknown_summary_pointer_redacts_customer_key_and_exception_chain():
     assert exc.value.__cause__ is None
 
 
+@pytest.mark.parametrize("entry_point", ["validate", "serialize"])
+def test_summary_pointer_redacts_int_subclass_dict_key(entry_point):
+    canary = "CUSTOMER_KEY_CANARY"
+    string_calls = []
+
+    class CanaryInt(int):
+        def __str__(self):
+            string_calls.append(self)
+            return canary
+
+    payload = {**GOLDEN["connector_run_summary.json"], CanaryInt(42): None}
+    minter = CustomerSideMinter(ConnectionRef("langfuse"), b"k" * 32)
+    if entry_point == "serialize":
+        payload["run_token"] = minter.mint("run", "synthetic")
+        payload["connection_token"] = minter.connection_token
+
+    with pytest.raises(ValueError) as exc:
+        if entry_point == "validate":
+            validate_summary(payload)
+        else:
+            serialize_summary(payload, minter=minter)
+
+    assert str(exc.value) == "/<unknown>"
+    assert canary not in str(exc.value)
+    assert not string_calls
+
+
+@pytest.mark.parametrize("entry_point", ["validate", "serialize"])
+def test_summary_pointer_redacts_plain_int_dict_key(entry_point):
+    payload = {**GOLDEN["connector_run_summary.json"], 42: None}
+    minter = CustomerSideMinter(ConnectionRef("langfuse"), b"k" * 32)
+    if entry_point == "serialize":
+        payload["run_token"] = minter.mint("run", "synthetic")
+        payload["connection_token"] = minter.connection_token
+
+    with pytest.raises(ValueError) as exc:
+        if entry_point == "validate":
+            validate_summary(payload)
+        else:
+            serialize_summary(payload, minter=minter)
+
+    assert str(exc.value) == "/<unknown>"
+
+
 def test_summary_serialization_excludes_content_canaries():
     minter = CustomerSideMinter(ConnectionRef("langfuse"), b"k" * 32)
     token = minter.mint("run", "CUSTOMER_CONTENT_CANARY")
