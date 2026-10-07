@@ -26,7 +26,10 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
+import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -68,9 +71,13 @@ if TYPE_CHECKING:
 # https://langfuse.com/faq/all/deprecated-api-migration
 _V2_OBSERVATIONS_PATH = "/api/public/v2/observations"
 _V2_FIELDS = "core,basic,metadata,model,usage,metrics,trace_context"
+_V2_IO_FIELDS = _V2_FIELDS + ",io"  # adds input/output payloads (get_trace only)
 _V2_PAGE_LIMIT = 1000  # v2 max (v1 was 100)
+# Legacy v1 /api/public/observations rejects limits above 100.
+_LEGACY_PAGE_LIMIT = 100
 # v2 requires a bounded start-time window; traces are looked up shortly after
-# they are produced, so a 30 day look-back is generous.
+# they are produced, so a 30 day look-back is generous. Default for the
+# ``v2_lookback_days`` constructor argument.
 _V2_LOOKBACK_DAYS = 30
 
 
@@ -229,6 +236,11 @@ class LangfuseClient:
         secret_key: Langfuse secret key (or env LANGFUSE_SECRET_KEY)
         host: Langfuse host URL (default: https://cloud.langfuse.com)
         timeout: Request timeout in seconds
+        v2_lookback_days: How far back (days) the Langfuse v4 Observations API v2
+            searches for a trace's observations (default 30). The window is
+            ``[now - v2_lookback_days, now + 1h]`` computed once per fetch; the
+            +1h upper bound tolerates client clock skew. Traces whose
+            observations started before the window are NOT found.
 
     Example:
         client = LangfuseClient(
@@ -248,6 +260,7 @@ class LangfuseClient:
         secret_key: str | None = None,
         host: str | None = None,
         timeout: float = 30.0,
+        v2_lookback_days: int = _V2_LOOKBACK_DAYS,
     ) -> None:
         """Initialize the Langfuse client."""
         self.public_key = public_key or os.environ.get("LANGFUSE_PUBLIC_KEY")
@@ -257,10 +270,15 @@ class LangfuseClient:
         )
         self.host = resolved_host.rstrip("/")
         self.timeout = timeout
+        self.v2_lookback_days = v2_lookback_days
         self._observations_partial_by_trace: dict[str, bool] = {}
         # Set once the v2 endpoint answers 404 (Langfuse v3 self-hosted): use
         # the legacy v1 endpoints from then on.
         self._legacy_api = False
+        # Set once any v2 request succeeded: from then on a 404 is an ordinary
+        # failure, never evidence that the endpoint is missing.
+        self._v2_confirmed = False
+        self._api_flag_lock = threading.Lock()
 
         # Initialize SDK client if available
         self._sdk_client: LangfuseType | None = None
@@ -294,11 +312,26 @@ class LangfuseClient:
     # Sync API
     # =========================================================================
 
-    def get_trace(self, trace_id: str) -> dict[str, Any] | None:
+    def _confirm_v2(self) -> None:
+        with self._api_flag_lock:
+            self._v2_confirmed = True
+
+    def _switch_to_legacy(self) -> None:
+        """Flip to the v1 API unless a v2 request has already succeeded."""
+        with self._api_flag_lock:
+            if not self._v2_confirmed:
+                self._legacy_api = True
+
+    def get_trace(
+        self, trace_id: str, *, include_io: bool = True
+    ) -> dict[str, Any] | None:
         """Get a trace by ID.
 
         Args:
             trace_id: The trace ID to fetch
+            include_io: Also fetch trace ``input``/``output`` (v2 ``io`` field
+                group, taken from the root observation). Metrics extraction
+                passes False to avoid transferring content.
 
         Returns:
             Trace data dict or None if not found
@@ -306,9 +339,13 @@ class LangfuseClient:
         # The Langfuse SDK's read helpers (get_trace/get_observations) were
         # removed in SDK v3+ and the endpoints they call are removed in Langfuse
         # v4, so reads always go through the HTTP API (v2 with v1 fallback).
-        return self._get_trace_http(trace_id)
+        if include_io:
+            return self._get_trace_http(trace_id)
+        return self._get_trace_http(trace_id, include_io=False)
 
-    def _get_trace_http(self, trace_id: str) -> dict[str, Any] | None:
+    def _get_trace_http(
+        self, trace_id: str, *, include_io: bool = True
+    ) -> dict[str, Any] | None:
         """Get trace via HTTP API (v2 observations, legacy v1 on Langfuse v3)."""
         if not REQUESTS_AVAILABLE:
             raise ImportError(
@@ -317,14 +354,18 @@ class LangfuseClient:
 
         if not self._legacy_api:
             try:
-                rows, partial = self._fetch_observations_v2(trace_id)
+                rows, partial = self._fetch_observations_v2(
+                    trace_id, include_io=include_io
+                )
             except _V2Unavailable:
-                self._legacy_api = True
+                self._switch_to_legacy()
             except requests.exceptions.RequestException as e:
                 logger.error(f"Failed to get trace {trace_id}: {e}")
                 return None
             else:
-                return self._trace_from_observation_rows(trace_id, rows, partial)
+                return self._trace_from_observation_rows(
+                    trace_id, rows, partial, include_io=include_io
+                )
 
         return self._get_trace_http_legacy(trace_id)
 
@@ -349,14 +390,27 @@ class LangfuseClient:
 
     # ---- v2 helpers -------------------------------------------------------
 
-    def _v2_params(self, trace_id: str, cursor: str | None) -> dict[str, str]:
+    def _v2_window(self) -> tuple[str, str]:
+        """Start-time window for one fetch (computed once, reused on every page)."""
         now = datetime.now(UTC)
+        return (
+            (now - timedelta(days=self.v2_lookback_days)).isoformat(),
+            (now + timedelta(hours=1)).isoformat(),
+        )
+
+    @staticmethod
+    def _v2_params(
+        trace_id: str,
+        cursor: str | None,
+        window: tuple[str, str],
+        include_io: bool = False,
+    ) -> dict[str, str]:
         params = {
             "traceId": trace_id,
-            "fields": _V2_FIELDS,
+            "fields": _V2_IO_FIELDS if include_io else _V2_FIELDS,
             "limit": str(_V2_PAGE_LIMIT),
-            "fromStartTime": (now - timedelta(days=_V2_LOOKBACK_DAYS)).isoformat(),
-            "toStartTime": (now + timedelta(hours=1)).isoformat(),
+            "fromStartTime": window[0],
+            "toStartTime": window[1],
         }
         if cursor:
             params["cursor"] = cursor
@@ -372,35 +426,67 @@ class LangfuseClient:
         cursor = meta.get("cursor") if isinstance(meta, dict) else None
         return [r for r in rows if isinstance(r, dict)], cursor or None
 
+    @staticmethod
+    def _merge_rows(
+        rows: list[dict[str, Any]],
+        seen_ids: set[str],
+        page: list[dict[str, Any]],
+    ) -> None:
+        """Append page rows, de-duplicating observations by ``id``."""
+        for row in page:
+            row_id = row.get("id")
+            if isinstance(row_id, str):
+                if row_id in seen_ids:
+                    continue
+                seen_ids.add(row_id)
+            rows.append(row)
+
     def _fetch_observations_v2(
-        self, trace_id: str, *, max_pages: int = 100
+        self,
+        trace_id: str,
+        *,
+        max_pages: int = 100,
+        include_io: bool = False,
     ) -> tuple[list[dict[str, Any]], bool]:
         """Fetch all observation rows of a trace via cursor pagination (sync).
 
-        Returns (rows, partial). Raises _V2Unavailable on 404 and lets
-        requests exceptions propagate when no rows were fetched yet.
+        Returns (rows, partial). Raises _V2Unavailable only when the FIRST page
+        answers 404 and no v2 request has ever succeeded. A failure after at
+        least one page returns the accumulated rows with partial=True. With no
+        rows yet, requests exceptions propagate. A repeated cursor stops the
+        loop (partial=True).
         """
         rows: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        seen_cursors: set[str] = set()
+        window = self._v2_window()
         cursor: str | None = None
-        for _ in range(max_pages):
+        for page_no in range(max_pages):
             try:
                 response = requests.get(
                     f"{self.host}{_V2_OBSERVATIONS_PATH}",
-                    params=self._v2_params(trace_id, cursor),
+                    params=self._v2_params(trace_id, cursor, window, include_io),
                     headers=self._get_auth_header(),
                     timeout=self.timeout,
                 )
                 if response.status_code == 404:
-                    raise _V2Unavailable()
+                    if page_no == 0 and not self._v2_confirmed:
+                        raise _V2Unavailable()
+                    raise requests.exceptions.HTTPError("404 from v2 observations")
                 response.raise_for_status()
                 page, cursor = self._v2_page(response.json())
             except requests.exceptions.RequestException:
                 if not rows:
                     raise
                 return rows, True
-            rows.extend(page)
+            self._confirm_v2()
+            self._merge_rows(rows, seen_ids, page)
             if not cursor:
                 return rows, False
+            if cursor in seen_cursors:
+                logger.warning(f"Cursor cycle fetching observations for {trace_id}.")
+                return rows, True
+            seen_cursors.add(cursor)
         logger.warning(
             f"Hit max_pages limit ({max_pages}) fetching observations "
             f"for trace {trace_id}. Some observations may be missing."
@@ -408,31 +494,47 @@ class LangfuseClient:
         return rows, True
 
     async def _fetch_observations_v2_async(
-        self, trace_id: str, *, max_pages: int = 100
+        self,
+        trace_id: str,
+        *,
+        max_pages: int = 100,
+        include_io: bool = False,
     ) -> tuple[list[dict[str, Any]], bool]:
         """Async version of _fetch_observations_v2."""
         rows: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        seen_cursors: set[str] = set()
+        window = self._v2_window()
         cursor: str | None = None
         async with aiohttp.ClientSession(trust_env=True) as session:
-            for _ in range(max_pages):
+            for page_no in range(max_pages):
                 try:
                     async with session.get(
                         f"{self.host}{_V2_OBSERVATIONS_PATH}",
-                        params=self._v2_params(trace_id, cursor),
+                        params=self._v2_params(trace_id, cursor, window, include_io),
                         headers=self._get_auth_header(),
                         timeout=aiohttp.ClientTimeout(total=self.timeout),
                     ) as response:
                         if response.status == 404:
-                            raise _V2Unavailable()
+                            if page_no == 0 and not self._v2_confirmed:
+                                raise _V2Unavailable()
+                            raise aiohttp.ClientError("404 from v2 observations")
                         response.raise_for_status()
                         page, cursor = self._v2_page(await response.json())
-                except aiohttp.ClientError:
+                except (TimeoutError, aiohttp.ClientError):
                     if not rows:
                         raise
                     return rows, True
-                rows.extend(page)
+                self._confirm_v2()
+                self._merge_rows(rows, seen_ids, page)
                 if not cursor:
                     return rows, False
+                if cursor in seen_cursors:
+                    logger.warning(
+                        f"Cursor cycle fetching observations for {trace_id}."
+                    )
+                    return rows, True
+                seen_cursors.add(cursor)
         logger.warning(
             f"Hit max_pages limit ({max_pages}) fetching observations "
             f"for trace {trace_id}. Some observations may be missing."
@@ -440,30 +542,64 @@ class LangfuseClient:
         return rows, True
 
     @staticmethod
+    def _decode_io(value: Any) -> Any:
+        """JSON-decode a string payload; keep the raw string if it is not JSON."""
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except ValueError:
+                return value
+        return value
+
+    @staticmethod
     def _trace_from_observation_rows(
-        trace_id: str, rows: list[dict[str, Any]], partial: bool
+        trace_id: str,
+        rows: list[dict[str, Any]],
+        partial: bool,
+        *,
+        include_io: bool = False,
     ) -> dict[str, Any] | None:
         """Rebuild a v1-shaped trace dict from v2 observation rows.
 
         v4 has no trace objects; trace-level fields come from the root
-        observation (``parentObservationId`` is null). Returns None when the
-        trace has no observations (same as a v1 404).
+        observation (``parentObservationId`` is null; the earliest ``startTime``
+        wins if there are several). With no root, root-derived fields stay
+        unset instead of borrowing a child's. Returns None when the trace has no
+        observations (same as a v1 404).
         """
         if not rows:
             return None
-        root = next(
-            (r for r in rows if not r.get("parentObservationId")),
-            rows[-1],  # rows are startTime-descending: last is the earliest
-        )
-        return {
+        roots = [r for r in rows if not r.get("parentObservationId")]
+        root: dict[str, Any] | None = None
+        if roots:
+            root = min(
+                roots,
+                key=lambda r: (r.get("startTime") is None, r.get("startTime") or ""),
+            )
+            if len(roots) > 1:
+                logger.warning(
+                    f"Trace {trace_id} has {len(roots)} root observations; "
+                    f"using the earliest ({root.get('id')})."
+                )
+        else:
+            logger.warning(f"Trace {trace_id} has no root observation.")
+        trace: dict[str, Any] = {
             "id": trace_id,
-            "name": root.get("traceName") or root.get("name"),
-            "metadata": root.get("metadata") or {},
-            "sessionId": root.get("sessionId"),
-            "userId": root.get("userId"),
+            "name": (root.get("traceName") or root.get("name")) if root else None,
+            "metadata": (root.get("metadata") or {}) if root else None,
+            "sessionId": root.get("sessionId") if root else None,
+            "userId": root.get("userId") if root else None,
             "observations": rows,
             "observationsPartial": partial,
         }
+        if include_io:
+            trace["input"] = (
+                LangfuseClient._decode_io(root.get("input")) if root else None
+            )
+            trace["output"] = (
+                LangfuseClient._decode_io(root.get("output")) if root else None
+            )
+        return trace
 
     def get_trace_metrics(self, trace_id: str) -> LangfuseTraceMetrics | None:
         """Get aggregated metrics for a trace.
@@ -479,7 +615,7 @@ class LangfuseClient:
         Returns:
             LangfuseTraceMetrics with aggregated data, or None if trace not found
         """
-        trace_data = self.get_trace(trace_id)
+        trace_data = self.get_trace(trace_id, include_io=False)
         if not trace_data:
             return None
 
@@ -514,7 +650,7 @@ class LangfuseClient:
                     trace_id, max_pages=max_pages
                 )
             except _V2Unavailable:
-                self._legacy_api = True
+                self._switch_to_legacy()
             except requests.exceptions.RequestException as e:
                 logger.error(f"Failed to get observations for trace {trace_id}: {e}")
                 self._observations_partial_by_trace[trace_id] = True
@@ -538,7 +674,11 @@ class LangfuseClient:
             while page <= max_pages:
                 response = requests.get(
                     f"{self.host}/api/public/observations",
-                    params={"traceId": trace_id, "limit": "1000", "page": str(page)},
+                    params={
+                        "traceId": trace_id,
+                        "limit": str(_LEGACY_PAGE_LIMIT),
+                        "page": str(page),
+                    },
                     headers=self._get_auth_header(),
                     timeout=self.timeout,
                 )
@@ -612,7 +752,9 @@ class LangfuseClient:
     # Async API
     # =========================================================================
 
-    async def get_trace_async(self, trace_id: str) -> dict[str, Any] | None:
+    async def get_trace_async(
+        self, trace_id: str, *, include_io: bool = True
+    ) -> dict[str, Any] | None:
         """Async version of get_trace."""
         if not AIOHTTP_AVAILABLE:
             raise ImportError(
@@ -621,14 +763,18 @@ class LangfuseClient:
 
         if not self._legacy_api:
             try:
-                rows, partial = await self._fetch_observations_v2_async(trace_id)
+                rows, partial = await self._fetch_observations_v2_async(
+                    trace_id, include_io=include_io
+                )
             except _V2Unavailable:
-                self._legacy_api = True
-            except aiohttp.ClientError as e:
+                self._switch_to_legacy()
+            except (TimeoutError, aiohttp.ClientError) as e:
                 logger.error(f"Failed to get trace {trace_id}: {e}")
                 return None
             else:
-                return self._trace_from_observation_rows(trace_id, rows, partial)
+                return self._trace_from_observation_rows(
+                    trace_id, rows, partial, include_io=include_io
+                )
 
         return await self._get_trace_async_legacy(trace_id)
 
@@ -646,7 +792,7 @@ class LangfuseClient:
                     response.raise_for_status()
                     result: dict[str, Any] = await response.json()
                     return result
-        except aiohttp.ClientError as e:
+        except (TimeoutError, aiohttp.ClientError) as e:
             logger.error(f"Failed to get trace {trace_id}: {e}")
             return None
 
@@ -654,7 +800,7 @@ class LangfuseClient:
         self, trace_id: str
     ) -> LangfuseTraceMetrics | None:
         """Async version of get_trace_metrics."""
-        trace_data = await self.get_trace_async(trace_id)
+        trace_data = await self.get_trace_async(trace_id, include_io=False)
         if not trace_data:
             return None
 
@@ -682,8 +828,8 @@ class LangfuseClient:
                     trace_id, max_pages=max_pages
                 )
             except _V2Unavailable:
-                self._legacy_api = True
-            except aiohttp.ClientError as e:
+                self._switch_to_legacy()
+            except (TimeoutError, aiohttp.ClientError) as e:
                 logger.error(f"Failed to get observations for trace {trace_id}: {e}")
                 self._observations_partial_by_trace[trace_id] = True
                 return []
@@ -708,7 +854,7 @@ class LangfuseClient:
                         f"{self.host}/api/public/observations",
                         params={
                             "traceId": trace_id,
-                            "limit": "1000",
+                            "limit": str(_LEGACY_PAGE_LIMIT),
                             "page": str(page),
                         },
                         headers=self._get_auth_header(),
@@ -741,7 +887,7 @@ class LangfuseClient:
                 self._observations_partial_by_trace[trace_id] = True
 
             return observations
-        except aiohttp.ClientError as e:
+        except (TimeoutError, aiohttp.ClientError) as e:
             logger.error(f"Failed to get observations for trace {trace_id}: {e}")
             self._observations_partial_by_trace[trace_id] = True
             return observations  # Return what we have so far
@@ -753,8 +899,6 @@ class LangfuseClient:
         poll_interval: float = 1.0,
     ) -> bool:
         """Async version of wait_for_trace."""
-        import asyncio
-
         loop = asyncio.get_running_loop()
         start = loop.time()
         while loop.time() - start < timeout_seconds:
