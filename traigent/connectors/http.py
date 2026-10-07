@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from dataclasses import dataclass, field
+from datetime import UTC
 from email.utils import parsedate_to_datetime
-import random
-import time
 import math
+import random
+import threading
+import time
 from typing import Any, Protocol
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from urllib.parse import urljoin, urlsplit
 
 
@@ -38,38 +42,52 @@ class Transport(Protocol):
     ) -> HttpResponse: ...
 
 
+class _RejectCookies(DefaultCookiePolicy):
+    """Prevent bearer-authenticated connector sessions from accepting cookies."""
+
+    def set_ok(self, cookie: Any, request: Any) -> bool:
+        return False
+
+
 class _HttpxTransport:
-    def __init__(self, transport: Any = None, *, clock: Callable[[], float]) -> None:
+    def __init__(self, transport: Any = None) -> None:
         import httpx
 
-        self._client = httpx.Client(follow_redirects=False, transport=transport)
-        self._clock = clock
+        if transport is not None and not isinstance(
+            transport, httpx.AsyncBaseTransport
+        ):
+            transport = _AsyncTransportAdapter(transport)
+        self._client = httpx.AsyncClient(
+            cookies=CookieJar(policy=_RejectCookies()),
+            follow_redirects=False,
+            transport=transport,
+        )
 
-    def send(
+    async def send(
         self,
         method: str,
         url: str,
         *,
         headers: Mapping[str, str],
         timeout: float,
-        deadline: float | None = None,
     ) -> HttpResponse:
-        with self._client.stream(
+        async with self._client.stream(
             method, url, headers=headers, timeout=timeout
         ) as response:
-            chunks: list[bytes] = []
-            for chunk in response.iter_bytes():
-                if deadline is not None and self._clock() > deadline:
-                    raise DeadlineExceeded("connector request deadline exceeded")
-                chunks.append(chunk)
-            if deadline is not None and self._clock() > deadline:
-                raise DeadlineExceeded("connector request deadline exceeded")
+            chunks = [chunk async for chunk in response.aiter_bytes()]
             return HttpResponse(
                 response.status_code, dict(response.headers), b"".join(chunks)
             )
 
-    def close(self) -> None:
-        self._client.close()
+
+class _AsyncTransportAdapter:
+    """Adapt legacy test doubles without putting production I/O on a sync client."""
+
+    def __init__(self, transport: Any) -> None:
+        self._transport = transport
+
+    async def handle_async_request(self, request: Any) -> Any:
+        return await asyncio.to_thread(self._transport.handle_request, request)
 
 
 class HttpKernel:
@@ -121,7 +139,7 @@ class HttpKernel:
             base_port,
         )
         self._credentials = credentials
-        self._transport = self._new_transport(transport, clock)
+        self._transport = self._new_transport(transport)
         self._deadline = deadline
         self._timeout = timeout
         self._max_retries = max_retries
@@ -133,18 +151,18 @@ class HttpKernel:
 
     @staticmethod
     def _new_transport(
-        transport: Transport | Any | None, clock: Callable[[], float]
-    ) -> Transport:
+        transport: Transport | Any | None,
+    ) -> Transport | _HttpxTransport:
         if transport is None:
-            return _HttpxTransport(clock=clock)
+            return _HttpxTransport()
         try:
             import httpx
         except ImportError:
             return transport
-        if isinstance(transport, httpx.BaseTransport):
-            # A shared HTTPX transport is safe to reuse only underneath a new
-            # client for each connection, which gives each its own cookie jar.
-            return _HttpxTransport(transport, clock=clock)
+        if isinstance(transport, (httpx.BaseTransport, httpx.AsyncBaseTransport)):
+            # Each kernel owns a client and a rejecting cookie jar, even when
+            # its low-level transport is shared by several connections.
+            return _HttpxTransport(transport)
         return transport
 
     @staticmethod
@@ -166,7 +184,9 @@ class HttpKernel:
             except (TypeError, ValueError, IndexError, OverflowError):
                 return None
             if retry_at.tzinfo is None:
-                return None
+                # RFC 9110 permits asctime-date, whose historical spelling
+                # has no explicit zone and is defined as GMT.
+                retry_at = retry_at.replace(tzinfo=UTC)
             delay = retry_at.timestamp() - self._wall_clock()
         if not math.isfinite(delay):
             return None
@@ -179,6 +199,54 @@ class HttpKernel:
         *,
         headers: Mapping[str, str] | None = None,
         timeout: float | None = None,
+    ) -> HttpResponse:
+        return self._run_async(self._request_async(method, path, headers, timeout))
+
+    @staticmethod
+    def _run_async(coroutine: Coroutine[Any, Any, HttpResponse]) -> HttpResponse:
+        """Run the async kernel without ever nesting an event loop."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coroutine)
+
+        result: list[HttpResponse] = []
+        error: list[BaseException] = []
+
+        def run_in_worker() -> None:
+            try:
+                result.append(asyncio.run(coroutine))
+            except BaseException as caught:
+                error.append(caught)
+
+        worker = threading.Thread(target=run_in_worker, daemon=True)
+        worker.start()
+        worker.join()
+        if error:
+            raise error[0]
+        return result[0]
+
+    async def _request_async(
+        self,
+        method: str,
+        path: str,
+        headers: Mapping[str, str] | None,
+        timeout: float | None,
+    ) -> HttpResponse:
+        try:
+            return await asyncio.wait_for(
+                self._request_with_retries(method, path, headers, timeout),
+                timeout=self._deadline,
+            )
+        except TimeoutError as error:
+            raise DeadlineExceeded("connector request deadline exceeded") from error
+
+    async def _request_with_retries(
+        self,
+        method: str,
+        path: str,
+        headers: Mapping[str, str] | None,
+        timeout: float | None,
     ) -> HttpResponse:
         if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
             raise ValueError("request timeout must be finite and positive")
@@ -199,7 +267,7 @@ class HttpKernel:
         request_headers = {
             name: value
             for name, value in (headers or {}).items()
-            if name.lower() != "authorization"
+            if name.lower() not in {"authorization", "cookie"}
         }
         request_headers["Authorization"] = self._credentials.authorization
         for attempt in range(self._max_retries + 1):
@@ -208,16 +276,19 @@ class HttpKernel:
                 raise DeadlineExceeded("connector request deadline exceeded")
             attempt_timeout = min(self._timeout, timeout or self._timeout, remaining)
             if isinstance(self._transport, _HttpxTransport):
-                response = self._transport.send(
+                response = await self._transport.send(
                     method,
                     url,
                     headers=request_headers,
                     timeout=attempt_timeout,
-                    deadline=end,
                 )
             else:
-                response = self._transport.send(
-                    method, url, headers=request_headers, timeout=attempt_timeout
+                response = await asyncio.to_thread(
+                    self._transport.send,
+                    method,
+                    url,
+                    headers=request_headers,
+                    timeout=attempt_timeout,
                 )
             if self._clock() > end:
                 raise DeadlineExceeded("connector request deadline exceeded")
@@ -253,7 +324,10 @@ class HttpKernel:
                 delay = server_delay
             if self._clock() + delay >= end:
                 raise DeadlineExceeded("connector request deadline exceeded")
-            self._sleep(delay)
+            if self._sleep is time.sleep:
+                await asyncio.sleep(delay)
+            else:
+                self._sleep(delay)
         raise AssertionError("unreachable")
 
 

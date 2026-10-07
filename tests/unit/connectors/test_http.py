@@ -1,6 +1,8 @@
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import format_datetime
+import time
 
 import pytest
 
@@ -146,32 +148,68 @@ def test_http_kernel_timeout_is_bounded():
     assert [request[3] for request in transport.requests] == [2]
 
 
-def test_http_kernel_total_deadline_includes_body_read():
+def test_http_kernel_total_deadline_includes_fragmented_headers():
     httpx = pytest.importorskip("httpx")
-    clock = Clock()
 
-    class SlowDripStream(httpx.SyncByteStream):
-        def __iter__(self):
-            for _ in range(11):
-                clock.now += 0.1
-                yield b"x"
+    class FragmentedHeadersTransport(httpx.BaseTransport, httpx.AsyncBaseTransport):
+        """Models a peer which takes several fragments to finish response headers."""
 
-    slow_transport = httpx.MockTransport(
-        lambda request: httpx.Response(200, stream=SlowDripStream())
-    )
+        def handle_request(self, request):
+            for _ in range(10):
+                time.sleep(0.05)
+            return httpx.Response(200, request=request, content=b"ok")
+
+        async def handle_async_request(self, request):
+            for _ in range(10):
+                await asyncio.sleep(0.05)
+            return httpx.Response(200, request=request, content=b"ok")
 
     kernel = HttpKernel(
         "https://safe.example",
         ConnectionCredentials("x"),
-        transport=slow_transport,
-        deadline=1,
+        transport=FragmentedHeadersTransport(),
+        deadline=0.1,
         timeout=10,
-        clock=clock,
-        sleep=clock.sleep,
     )
+    started = time.monotonic()
     with pytest.raises(DeadlineExceeded):
         kernel.request("GET", "/")
-    assert clock.now <= 1.2
+    assert time.monotonic() - started <= 0.35
+
+
+def test_http_kernel_total_deadline_includes_body_read():
+    httpx = pytest.importorskip("httpx")
+
+    class DrippingBodyTransport(httpx.BaseTransport, httpx.AsyncBaseTransport):
+        def handle_request(self, request):
+            return httpx.Response(200, request=request, stream=SyncDripStream())
+
+        async def handle_async_request(self, request):
+            return httpx.Response(200, request=request, stream=AsyncDripStream())
+
+    class SyncDripStream(httpx.SyncByteStream):
+        def __iter__(self):
+            for _ in range(10):
+                time.sleep(0.5)
+                yield b"x"
+
+    class AsyncDripStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for _ in range(10):
+                await asyncio.sleep(0.5)
+                yield b"x"
+
+    kernel = HttpKernel(
+        "https://safe.example",
+        ConnectionCredentials("x"),
+        transport=DrippingBodyTransport(),
+        deadline=0.1,
+        timeout=10,
+    )
+    started = time.monotonic()
+    with pytest.raises(DeadlineExceeded):
+        kernel.request("GET", "/")
+    assert time.monotonic() - started <= 0.35
 
 
 def test_http_kernel_retries_are_bounded(monkeypatch):
@@ -205,7 +243,10 @@ def test_http_kernel_honours_retry_after_forms(monkeypatch):
     wall_now = 1_700_000_000.0
     http_date = format_datetime(datetime.fromtimestamp(wall_now + 30, UTC), usegmt=True)
     monkeypatch.setattr("traigent.connectors.http.random.uniform", lambda a, b: 0.0)
-    for retry_after in ("30", http_date):
+    retry_at = datetime.fromtimestamp(wall_now + 30, UTC)
+    rfc850_date = retry_at.strftime("%A, %d-%b-%y %H:%M:%S GMT")
+    asctime_date = retry_at.strftime("%a %b %e %H:%M:%S %Y")
+    for retry_after in ("30", http_date, rfc850_date, asctime_date):
         transport = Transport(
             [
                 HttpResponse(503, {"Retry-After": retry_after}, b""),
@@ -228,30 +269,31 @@ def test_http_kernel_honours_retry_after_forms(monkeypatch):
         assert clock.now - before == 3
 
 
-def test_http_kernel_isolates_cookies_across_connections():
+def test_http_kernel_never_forwards_cookies_same_host():
     httpx = pytest.importorskip("httpx")
     received_cookies = []
 
     def handler(request):
         received_cookies.append(request.headers.get("cookie"))
-        if request.url.host == "one.example":
+        if len(received_cookies) == 1:
             return httpx.Response(200, headers={"set-cookie": "session=one"})
         return httpx.Response(200)
 
     shared_transport = httpx.MockTransport(handler)
     one = HttpKernel(
-        "https://one.example",
+        "https://same.example",
         ConnectionCredentials("Bearer one"),
         transport=shared_transport,
     )
     two = HttpKernel(
-        "https://two.example",
+        "https://same.example",
         ConnectionCredentials("Bearer two"),
         transport=shared_transport,
     )
+    one.request("GET", "/", headers={"Cookie": "caller=one"})
     one.request("GET", "/")
-    two.request("GET", "/")
-    assert received_cookies == [None, None]
+    two.request("GET", "/", headers={"Cookie": "caller=two"})
+    assert received_cookies == [None, None, None]
 
 
 def test_transport_boundary_excludes_summary_content_canaries():
