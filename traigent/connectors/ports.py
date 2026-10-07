@@ -35,7 +35,9 @@ class ScoreSink(Protocol):
 
 class DatasetSource(Protocol):
     def list(self, query: Any = None, cursor: str | None = None) -> Page[Any]: ...
-    def read(self, dataset: Any, revision: str) -> Page[DatasetItem]: ...
+    def read(
+        self, dataset: Any, revision: str, cursor: str | None = None
+    ) -> Page[DatasetItem]: ...
 
 
 class DatasetSink(Protocol):

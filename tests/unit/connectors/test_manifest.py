@@ -1,3 +1,5 @@
+import pytest
+
 from traigent.connectors.manifest import (
     GuaranteeState,
     load_manifest,
@@ -77,3 +79,40 @@ def test_manifest_is_closed_and_rejects_unknown_fields():
         pass
     else:
         raise AssertionError("unknown manifest key accepted")
+
+
+def test_manifest_rejects_reserved_guarantee_collision():
+    with pytest.raises(ValueError, match="reserved"):
+        load_manifest(
+            {
+                "schema_version": "1",
+                "connector": "dummy",
+                "version": "1",
+                "operations": {
+                    "write": {
+                        "conditional_update": "none",
+                        "guarantees": {"conditional_update": "atomic"},
+                    }
+                },
+            }
+        )
+
+
+def test_resolver_fails_closed_on_undeclared_requirement():
+    manifest = load_manifest(
+        {
+            "schema_version": "1",
+            "connector": "dummy",
+            "version": "1",
+            "operations": {"write": {"idempotency": "native"}},
+        }
+    )
+    result = resolve_guarantee(
+        manifest,
+        "write",
+        {"idempotency": "native"},
+        "1",
+        {"audit_log": "native"},
+    )
+    assert result.state is GuaranteeState.UNAVAILABLE
+    assert result.reason.value == "not_declared"

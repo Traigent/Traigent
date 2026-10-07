@@ -36,6 +36,7 @@ class GuaranteeReason(StrEnum):
     VERSION_MISMATCH = "version_mismatch"
     PROBE_UNAVAILABLE = "probe_unavailable"
     GUARANTEE_REDUCED = "guarantee_reduced"
+    NOT_DECLARED = "not_declared"
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +44,7 @@ class OperationManifest:
     idempotency: GuaranteeLevel = GuaranteeLevel.NONE
     conditional_update: ConditionalUpdate = ConditionalUpdate.NONE
     limits: Mapping[str, int] | None = None
-    guarantees: Mapping[str, GuaranteeLevel | ConditionalUpdate] | None = None
+    guarantees: Mapping[str, GuaranteeLevel] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,13 +115,13 @@ def load_manifest(source: str | Path | Mapping[str, Any]) -> ConnectorManifest:
         guarantees = op.get("guarantees", {})
         if type(guarantees) is not dict:
             raise ValueError(f"invalid guarantees for operation {name}")
-        typed: dict[str, GuaranteeLevel | ConditionalUpdate] = {}
+        typed: dict[str, GuaranteeLevel] = {}
         for key, value in guarantees.items():
-            if type(key) is not str or (
-                value not in _LEVELS and value not in _CONDITIONAL
-            ):
+            if type(key) is not str or key in _OP_KEYS:
+                raise ValueError(f"reserved guarantee key for operation {name}")
+            if type(value) is not str or value not in _LEVELS:
                 raise ValueError(f"unknown guarantee value for operation {name}")
-            typed[key] = _LEVELS.get(value, _CONDITIONAL.get(value))  # type: ignore[assignment]
+            typed[key] = _LEVELS[value]
         operations[name] = OperationManifest(
             _LEVELS[idem], _CONDITIONAL[conditional], dict(limits), typed
         )
@@ -165,6 +166,17 @@ def resolve_guarantee(
         "conditional_update": op.conditional_update.value,
     }
     declared.update({k: v.value for k, v in (op.guarantees or {}).items()})
+    for key, requirement in (required or {}).items():
+        allowed = _allowed_values(key)
+        if (
+            type(key) is not str
+            or type(requirement) is not str
+            or key not in declared
+            or requirement not in allowed
+        ):
+            return GuaranteeResult(
+                GuaranteeState.UNAVAILABLE, GuaranteeReason.NOT_DECLARED, declared
+            )
     final: dict[str, str] = {}
     reduced = False
     for key, value in declared.items():

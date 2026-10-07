@@ -1,3 +1,5 @@
+import inspect
+
 from traigent.connectors.ports import (
     ArtifactStore,
     DatasetSink,
@@ -26,3 +28,8 @@ def test_port_protocols_are_runtime_checkable_shapes():
             EventSource,
         )
     )
+
+
+def test_dataset_source_paginates():
+    parameters = inspect.signature(DatasetSource.read).parameters
+    assert parameters["cursor"].default is None

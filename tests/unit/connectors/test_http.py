@@ -1,9 +1,12 @@
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import format_datetime
 
 import pytest
 
 from traigent.connectors.http import (
     ConnectionCredentials,
+    DeadlineExceeded,
     HttpKernel,
     HttpResponse,
     iter_pages,
@@ -46,6 +49,44 @@ def test_http_kernel_isolates_connection_credentials():
     two.request("GET", "/x")
     assert transport.requests[0][2]["Authorization"] == "Bearer one"
     assert transport.requests[1][2]["Authorization"] == "Bearer two"
+
+
+def test_http_kernel_rejects_host_header_override():
+    transport = Transport([], [])
+    kernel = HttpKernel(
+        "https://safe.example",
+        ConnectionCredentials("Bearer secret"),
+        transport=transport,
+    )
+    for name in ("Host", ":authority", "Forwarded", "X-Forwarded-Host"):
+        with pytest.raises(ValueError, match="authority"):
+            kernel.request("GET", "/", headers={name: "evil.example"})
+    assert transport.requests == []
+
+
+def test_http_kernel_rejects_userinfo():
+    transport = Transport([], [])
+    kernel = HttpKernel(
+        "https://safe.example",
+        ConnectionCredentials("Bearer secret"),
+        transport=transport,
+    )
+    with pytest.raises(ValueError, match="credentials"):
+        kernel.request("GET", "https://safe.example:443@safe.example/steal")
+    assert transport.requests == []
+
+
+def test_http_kernel_rejects_port_mismatch():
+    transport = Transport([], [])
+    kernel = HttpKernel(
+        "https://safe.example",
+        ConnectionCredentials("Bearer secret"),
+        transport=transport,
+    )
+    for url in ("https://safe.example:0/x", "https://safe.example:444/x"):
+        with pytest.raises(ValueError, match="configured host"):
+            kernel.request("GET", url)
+    assert transport.requests == []
 
 
 def test_http_kernel_rejects_non_tls_base_url():
@@ -105,6 +146,34 @@ def test_http_kernel_timeout_is_bounded():
     assert [request[3] for request in transport.requests] == [2]
 
 
+def test_http_kernel_total_deadline_includes_body_read():
+    httpx = pytest.importorskip("httpx")
+    clock = Clock()
+
+    class SlowDripStream(httpx.SyncByteStream):
+        def __iter__(self):
+            for _ in range(11):
+                clock.now += 0.1
+                yield b"x"
+
+    slow_transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, stream=SlowDripStream())
+    )
+
+    kernel = HttpKernel(
+        "https://safe.example",
+        ConnectionCredentials("x"),
+        transport=slow_transport,
+        deadline=1,
+        timeout=10,
+        clock=clock,
+        sleep=clock.sleep,
+    )
+    with pytest.raises(DeadlineExceeded):
+        kernel.request("GET", "/")
+    assert clock.now <= 1.2
+
+
 def test_http_kernel_retries_are_bounded(monkeypatch):
     clock = Clock()
     transport = Transport(
@@ -129,6 +198,60 @@ def test_http_kernel_retries_are_bounded(monkeypatch):
         kernel.request("GET", "/")
     assert len(transport.requests) == 2
     assert clock.now == 0.5
+
+
+def test_http_kernel_honours_retry_after_forms(monkeypatch):
+    clock = Clock()
+    wall_now = 1_700_000_000.0
+    http_date = format_datetime(datetime.fromtimestamp(wall_now + 30, UTC), usegmt=True)
+    monkeypatch.setattr("traigent.connectors.http.random.uniform", lambda a, b: 0.0)
+    for retry_after in ("30", http_date):
+        transport = Transport(
+            [
+                HttpResponse(503, {"Retry-After": retry_after}, b""),
+                HttpResponse(200, {}, b""),
+            ],
+            [],
+        )
+        kernel = HttpKernel(
+            "https://safe.example",
+            ConnectionCredentials("x"),
+            transport=transport,
+            max_retries=1,
+            max_backoff=3,
+            clock=clock,
+            wall_clock=lambda: wall_now,
+            sleep=clock.sleep,
+        )
+        before = clock.now
+        assert kernel.request("GET", "/").status_code == 200
+        assert clock.now - before == 3
+
+
+def test_http_kernel_isolates_cookies_across_connections():
+    httpx = pytest.importorskip("httpx")
+    received_cookies = []
+
+    def handler(request):
+        received_cookies.append(request.headers.get("cookie"))
+        if request.url.host == "one.example":
+            return httpx.Response(200, headers={"set-cookie": "session=one"})
+        return httpx.Response(200)
+
+    shared_transport = httpx.MockTransport(handler)
+    one = HttpKernel(
+        "https://one.example",
+        ConnectionCredentials("Bearer one"),
+        transport=shared_transport,
+    )
+    two = HttpKernel(
+        "https://two.example",
+        ConnectionCredentials("Bearer two"),
+        transport=shared_transport,
+    )
+    one.request("GET", "/")
+    two.request("GET", "/")
+    assert received_cookies == [None, None]
 
 
 def test_transport_boundary_excludes_summary_content_canaries():
