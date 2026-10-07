@@ -17,6 +17,8 @@ import pytest
 from traigent.integrations.langfuse.client import (
     AIOHTTP_AVAILABLE,
     REQUESTS_AVAILABLE,
+    _LEGACY_REPROBE_SECONDS,
+    _V2Unavailable,
     LangfuseClient,
 )
 
@@ -463,3 +465,213 @@ async def test_async_cursor_cycle_partial(client):
         obs = await client.get_observations_for_trace_async("t1")
     assert [o.id for o in obs] == ["obs-a"]
     assert client._observations_partial_by_trace["t1"] is True
+
+
+# ---- review round 3: window edge, downgrade state, validation, io ------------
+
+
+def _edge_row(**over):
+    from datetime import UTC, datetime, timedelta
+
+    start = datetime.now(UTC) - timedelta(days=30) + timedelta(minutes=10)
+    return {**ROOT, "id": "edge", "startTime": start.isoformat(), **over}
+
+
+def test_trace_near_window_start_is_partial(client):
+    with patch("requests.get", return_value=_resp({"data": [_edge_row()], "meta": {}})):
+        trace = client.get_trace("t1")
+    assert trace["observationsPartial"] is True
+
+
+def test_trace_well_inside_window_is_not_partial(client):
+    with patch("requests.get", return_value=_resp({"data": [ROOT], "meta": {}})):
+        assert client.get_trace("t1")["observationsPartial"] is False
+
+
+def test_window_edge_partial_flows_to_metrics_and_observations(client):
+    with patch("requests.get", return_value=_resp({"data": [_edge_row()], "meta": {}})):
+        assert client.get_trace_metrics("t1").observations_partial is True
+        client.get_observations_for_trace("t1")
+    assert client._observations_partial_by_trace["t1"] is True
+
+
+@pytest.mark.skipif(not AIOHTTP_AVAILABLE, reason="aiohttp not installed")
+@pytest.mark.asyncio
+async def test_async_trace_near_window_start_is_partial(client):
+    session = _fake_aiohttp([{"data": [_edge_row()], "meta": {}}])
+    with patch(
+        "traigent.integrations.langfuse.client.aiohttp.ClientSession", new=session
+    ):
+        trace = await client.get_trace_async("t1")
+    assert trace["observationsPartial"] is True
+
+
+def test_success_after_downgrade_clears_legacy(client):
+    client._switch_to_legacy()
+    assert client._legacy_api is True
+    client._confirm_v2()
+    assert client._legacy_api is False and client._v2_confirmed is True
+
+
+def test_refused_switch_does_not_call_legacy(client):
+    def confirmed_then_404(*_a, **_k):
+        client._v2_confirmed = True
+        raise _V2Unavailable()
+
+    with (
+        patch.object(client, "_fetch_observations_v2", side_effect=confirmed_then_404),
+        patch("requests.get") as get,
+    ):
+        assert client.get_trace("t1") is None
+        assert client.get_observations_for_trace("t1") == []
+    get.assert_not_called()
+    assert client._legacy_api is False
+    assert client._observations_partial_by_trace["t1"] is True
+
+
+@pytest.mark.skipif(not AIOHTTP_AVAILABLE, reason="aiohttp not installed")
+@pytest.mark.asyncio
+async def test_async_refused_switch_does_not_call_legacy(client):
+    async def confirmed_then_404(*_a, **_k):
+        client._v2_confirmed = True
+        raise _V2Unavailable()
+
+    with (
+        patch.object(
+            client, "_fetch_observations_v2_async", side_effect=confirmed_then_404
+        ),
+        patch.object(client, "_get_trace_async_legacy") as legacy,
+    ):
+        assert await client.get_trace_async("t1") is None
+        assert await client.get_observations_for_trace_async("t1") == []
+    legacy.assert_not_called()
+
+
+def test_unconfirmed_downgrade_reprobes_v2_after_ttl(client):
+    now = [1000.0]
+    client._clock = lambda: now[0]
+    with patch("requests.get", return_value=_resp({}, 404)):
+        client.get_trace("t1")  # 404 on v2 then legacy 404 -> None
+    assert client._legacy_api is True
+
+    now[0] += _LEGACY_REPROBE_SECONDS - 1
+    with patch("requests.get", return_value=_resp({}, 404)) as get:
+        client.get_trace("t1")
+    assert get.call_args.args[0].endswith("/api/public/traces/t1")
+
+    now[0] += 2
+    with patch("requests.get", return_value=_resp({"data": [ROOT], "meta": {}})) as get:
+        trace = client.get_trace("t1")
+    assert get.call_args.args[0].endswith("/api/public/v2/observations")
+    assert trace is not None
+    assert client._legacy_api is False and client._v2_confirmed is True
+
+
+def test_rows_with_invalid_ids_excluded_and_partial(client):
+    bad = [
+        {**GEN_A, "id": None},
+        {**GEN_A, "id": ""},
+        {k: v for k, v in GEN_A.items() if k != "id"},
+    ]
+    with patch("requests.get", return_value=_resp({"data": [ROOT, *bad], "meta": {}})):
+        trace = client.get_trace("t1")
+    assert [o["id"] for o in trace["observations"]] == ["obs-root"]
+    assert trace["observationsPartial"] is True
+
+
+def test_root_requires_present_null_parent(client):
+    no_key = {k: v for k, v in ROOT.items() if k != "parentObservationId"}
+    no_key["id"] = "nokey"
+    empty = {**ROOT, "id": "empty", "parentObservationId": ""}
+    with patch(
+        "requests.get", return_value=_resp({"data": [no_key, empty], "meta": {}})
+    ):
+        trace = client.get_trace("t1")
+    assert trace["name"] is None and trace["sessionId"] is None
+
+
+def test_root_tie_break_by_id(client):
+    a = {**ROOT, "id": "a", "traceName": "A"}
+    b = {**ROOT, "id": "b", "traceName": "B"}
+    for order in ([a, b], [b, a]):
+        with patch("requests.get", return_value=_resp({"data": order, "meta": {}})):
+            assert client.get_trace("t1")["name"] == "A"
+
+
+@pytest.mark.parametrize("bad", [0, -1, 3651, True, 1.5, "30", None])
+def test_invalid_lookback_days_rejected(bad):
+    with pytest.raises(ValueError):
+        LangfuseClient(public_key="pk", secret_key="sk", v2_lookback_days=bad)
+
+
+@pytest.mark.parametrize("ok", [1, 30, 3650])
+def test_valid_lookback_days_accepted(ok):
+    c = LangfuseClient(public_key="pk", secret_key="sk", v2_lookback_days=ok)
+    assert c.v2_lookback_days == ok
+
+
+def test_legacy_without_io_strips_input_output(client):
+    legacy = {
+        "id": "t1",
+        "name": "n",
+        "input": "secret",
+        "output": "secret",
+        "observations": [{"id": "o", "input": "x", "output": "y", "name": "k"}],
+    }
+    client._switch_to_legacy()
+    with patch("requests.get", return_value=_resp(legacy)):
+        stripped = client.get_trace("t1", include_io=False)
+        full = client.get_trace("t1")
+    assert "input" not in stripped and "output" not in stripped
+    assert stripped["observations"] == [{"id": "o", "name": "k"}]
+    assert full["input"] == "secret"
+
+
+def test_wait_for_trace_polls_without_io(client):
+    with patch("requests.get", return_value=_resp({"data": [ROOT], "meta": {}})) as get:
+        assert client.wait_for_trace("t1", timeout_seconds=5, poll_interval=0) is True
+    for call in get.call_args_list:
+        assert "io" not in call.kwargs["params"]["fields"].split(",")
+
+
+@pytest.mark.skipif(not AIOHTTP_AVAILABLE, reason="aiohttp not installed")
+@pytest.mark.asyncio
+async def test_wait_for_trace_async_polls_without_io(client):
+    seen: list[dict] = []
+    row = {"data": [ROOT], "meta": {}}
+
+    class Resp:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        async def json(self):
+            return row
+
+    class Session:
+        def __init__(self, **_k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+        def get(self, url, **kwargs):
+            seen.append(kwargs["params"])
+            return Resp()
+
+    with patch(
+        "traigent.integrations.langfuse.client.aiohttp.ClientSession", new=Session
+    ):
+        assert await client.wait_for_trace_async("t1", 5, 0) is True
+    assert seen
+    assert all("io" not in p["fields"].split(",") for p in seen)
