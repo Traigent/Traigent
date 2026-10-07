@@ -255,3 +255,80 @@ def test_get_credentials_env_url_and_key_override_stale_stored_credentials(
         and expected_backend_url in record.message
         for record in caplog.records
     )
+
+
+@pytest.mark.parametrize(
+    ("env", "stored", "expected"),
+    [
+        (
+            {"TRAIGENT_API_KEY": "env-api-key"},  # pragma: allowlist secret
+            {"api_key": "stored-api-key"},  # pragma: allowlist secret
+            ("env-api-key", "TRAIGENT_API_KEY"),
+        ),
+        (
+            {},
+            {"api_key": "stored-api-key"},  # pragma: allowlist secret
+            ("stored-api-key", "stored CLI credentials"),
+        ),
+        (
+            {"TRAIGENT_API_KEY": ""},
+            {"api_key": "stored-api-key"},  # pragma: allowlist secret
+            ("stored-api-key", "stored CLI credentials"),
+        ),
+        (
+            {
+                "TRAIGENT_DEV_MODE": "true",
+                "TRAIGENT_DEV_API_KEY": "dev-api-key",  # pragma: allowlist secret
+            },
+            None,
+            ("dev-api-key", "TRAIGENT_DEV_API_KEY (development mode)"),
+        ),
+        ({"TRAIGENT_DEV_MODE": "true"}, None, (None, None)),
+        ({}, None, (None, None)),
+    ],
+    ids=[
+        "env",
+        "stored",
+        "empty-env-falls-back",
+        "dev-mode",
+        "dev-mode-without-key",
+        "missing",
+    ],
+)
+def test_get_api_key_with_source_reports_the_key_get_api_key_returns(
+    monkeypatch, env, stored, expected
+) -> None:
+    """The source names the tier get_api_key() selected, in the same order."""
+    _clear_env(monkeypatch)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+
+    with patch.object(CredentialManager, "_load_cli_credentials", return_value=stored):
+        pair = CredentialManager.get_api_key_with_source()
+        key = CredentialManager.get_api_key()
+
+    assert pair == expected
+    assert key == pair[0]
+
+
+def test_get_api_key_with_source_jwt_only_login_resolves_nothing(
+    monkeypatch, caplog
+) -> None:
+    """A JWT-only login is not an API key: no key, no source, and a warning."""
+    _clear_env(monkeypatch)
+
+    with (
+        patch.object(
+            CredentialManager,
+            "_load_cli_credentials",
+            return_value={"jwt_token": "header.payload.signature"},
+        ),
+        caplog.at_level(logging.WARNING, logger="traigent.cloud.credential_manager"),
+    ):
+        pair = CredentialManager.get_api_key_with_source()
+
+    assert pair == (None, None)
+    assert any(
+        "stored jwt_token but no api_key" in record.getMessage()
+        for record in caplog.records
+    )

@@ -18,13 +18,13 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
 
-from traigent.core.backend_session_manager import (
-    EDGE_BLOCK_SIGNALS as _SESSION_EDGE_BLOCK_SIGNALS,
-)
-
 import click
 from rich.console import Console
 from rich.panel import Panel
+
+from traigent.core.backend_session_manager import (
+    EDGE_BLOCK_SIGNALS as _SESSION_EDGE_BLOCK_SIGNALS,
+)
 
 # Try to import aiohttp for exception handling
 try:
@@ -44,6 +44,7 @@ from traigent.cloud.auth import (
     AuthManager,
     InvalidCredentialsError,
 )
+from traigent.cloud.credential_manager import CredentialManager
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.config.backend_config import SIGNUP_URL, BackendConfig
 from traigent.config.project import PROJECT_ENV_VAR, read_optional_project_env
@@ -1488,12 +1489,9 @@ class TraigentAuthCLI:
                 env_table.add_row(
                     "Status", "[green]✅ Authenticated (environment variable)[/green]"
                 )
-                masked = (
-                    f"{env_api_key[:10]}...{env_api_key[-4:]}"
-                    if len(env_api_key) > 14
-                    else "***"
+                env_table.add_row(
+                    "TRAIGENT_API_KEY", "configured (environment variable)"
                 )
-                env_table.add_row("TRAIGENT_API_KEY", masked)
                 env_table.add_row("Backend", self.backend_url)
                 console.print(env_table)
                 console.print()
@@ -1880,25 +1878,44 @@ def configure() -> None:
 @auth.command()
 @click.argument("key", required=False)
 def whoami(key: str | None) -> None:
-    """Show information about an API key.
+    """Validate an API key and show its associated information.
 
-    This command will validate an API key and show associated user information.
+    Without KEY, validates the API key the SDK resolves: TRAIGENT_API_KEY
+    first, then an API key stored by 'traigent auth login', then
+    TRAIGENT_DEV_API_KEY only when development mode is enabled. Prints where
+    the key came from, never the key itself.
 
-    Args:
-        key: API key to check
+    Passing KEY on the command line still works, but exposes the key in
+    the process list and shell history.
 
     Examples:
-        traigent auth whoami tg_1234567890abcdef
+        traigent auth whoami
     """
     console.print("\n[bold blue]🔍 API Key Information[/bold blue]\n")
 
-    key = key or os.environ.get("TRAIGENT_API_KEY")
+    source: str | None
+    if key:
+        console.print(
+            "[yellow]Warning: passing an API key as a command-line argument "
+            "exposes it in the process list and shell history. Run "
+            "'traigent auth whoami' without KEY instead.[/yellow]",
+            soft_wrap=True,
+        )
+        source = "command-line argument"
+    else:
+        key, source = CredentialManager.get_api_key_with_source()
     if not key:
         console.print("[red]❌ Missing API key[/red]")
         console.print(
-            "Provide an API key as an argument or set TRAIGENT_API_KEY in your environment.\n"
+            "Set TRAIGENT_API_KEY in your environment, or run "
+            "'traigent auth login' to store credentials. If you already logged "
+            "in, set TRAIGENT_MASTER_PASSWORD so the stored credentials can be "
+            "unlocked.\n",
+            soft_wrap=True,
         )
         sys.exit(1)
+    # Before the format check, so a malformed key still says where it came from.
+    console.print(f"[dim]API key source: {source}[/dim]")
 
     # Validate format
     valid_prefixes = ("tg_", "uk_", "sk_", "ak_", "tk_")
@@ -1917,8 +1934,35 @@ def whoami(key: str | None) -> None:
     sys.exit(0 if success else 1)
 
 
-def _print_valid_key_info(key_data: dict[str, Any]) -> None:
+_REDACTED_KEY_MARKER = "<redacted API key>"
+
+
+def _redact_key(text: str, api_key: str | None) -> str:
+    """Replace every occurrence of ``api_key`` in ``text`` with a fixed marker.
+
+    whoami prints backend text (error bodies, exception messages, key metadata)
+    that can echo the key it was sent, e.g. a 422 validation error's ``input``.
+    """
+    if not api_key:
+        return text
+    representations = {
+        api_key,
+        json.dumps(api_key, ensure_ascii=True)[1:-1],
+        json.dumps(api_key, ensure_ascii=False)[1:-1],
+    }
+    for representation in sorted(representations, key=len, reverse=True):
+        text = text.replace(representation, _REDACTED_KEY_MARKER)
+    return text
+
+
+def _print_valid_key_info(
+    key_data: dict[str, Any], *, api_key: str | None = None
+) -> None:
     """Print a table with valid API key metadata."""
+
+    def _shown(value: Any) -> Any:
+        return _redact_key(value, api_key) if isinstance(value, str) else value
+
     table = Table(show_header=False, box=None)
     table.add_column("Field", style="cyan")
     table.add_column("Value")
@@ -1926,9 +1970,9 @@ def _print_valid_key_info(key_data: dict[str, Any]) -> None:
     table.add_row("Status", "[green]✅ Valid[/green]")
     table.add_row("Category", "authenticated")
     table.add_row("HTTP", "200")
-    table.add_row("Key Name", key_data.get("key_name", "Unknown"))
-    table.add_row("User ID", str(key_data.get("user_id", "Unknown")))
-    table.add_row("Created", key_data.get("created_at", "Unknown"))
+    table.add_row("Key Name", _shown(key_data.get("key_name", "Unknown")))
+    table.add_row("User ID", _shown(str(key_data.get("user_id", "Unknown"))))
+    table.add_row("Created", _shown(key_data.get("created_at", "Unknown")))
 
     console.print(table)
     console.print()
@@ -2169,12 +2213,15 @@ async def _check_api_key(backend_api_url: str, key: str) -> bool:
                 json={"api_key": key},
             ) as response:
                 if response.status == 200:
-                    return _handle_200_response(await _safe_parse_json(response))
+                    return _handle_200_response(
+                        await _safe_parse_json(response), api_key=key
+                    )
 
                 # Classify on the WHOLE body, display only the preview: an edge
-                # block's giveaway often sits past the 220-character cut.
+                # block's giveaway often sits past the 220-character cut. Redact
+                # before cutting, so a key straddling the cut cannot show a prefix.
                 full_body = (await response.text()).strip().replace("\n", " ")
-                body_preview = full_body[:220]
+                body_preview = _redact_key(full_body, key)[:220]
                 _print_error_status(
                     response.status,
                     body_preview,
@@ -2185,7 +2232,10 @@ async def _check_api_key(backend_api_url: str, key: str) -> bool:
     except (TimeoutError, aiohttp.ClientError) as exc:
         console.print("[red]❌ Cannot reach backend to validate API key[/red]")
         console.print("[yellow]Category:[/yellow] connectivity_error")
-        console.print(f"[yellow]Error:[/yellow] {type(exc).__name__}: {exc}")
+        console.print(
+            f"[yellow]Error:[/yellow] {type(exc).__name__}: "
+            f"{_redact_key(str(exc), key)}"
+        )
         console.print()
         return False
 
@@ -2199,10 +2249,10 @@ async def _safe_parse_json(response: Any) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _handle_200_response(data: dict[str, Any]) -> bool:
+def _handle_200_response(data: dict[str, Any], *, api_key: str | None = None) -> bool:
     """Handle a 200 response from the key validation endpoint."""
     if data.get("valid"):
-        _print_valid_key_info(data.get("data", {}))
+        _print_valid_key_info(data.get("data", {}), api_key=api_key)
         return True
 
     console.print("[red]❌ Invalid API key[/red]")

@@ -343,8 +343,12 @@ Best accuracy: 0.00
 
 2. **Check API Keys**
    ```bash
-   # Verify OpenAI API key for embeddings
-   echo $OPENAI_API_KEY
+   # Check whether an OpenAI API key is configured for embeddings
+   if printenv OPENAI_API_KEY | grep -q .; then
+     echo "OPENAI_API_KEY is set"
+   else
+     echo "OPENAI_API_KEY is not set"
+   fi
 
    # Or use custom evaluator if no API key
    ```
