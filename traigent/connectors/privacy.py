@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import sha256
 import hmac
 import json
@@ -190,7 +190,7 @@ def _validate_timestamps(payload: dict[str, Any]) -> None:
                         parsed = datetime.fromisoformat(item)
                     except ValueError:
                         raise SummaryValidationError(_pointer(item_path)) from None
-                    if parsed.tzinfo is not timezone.utc or parsed.utcoffset() is None:
+                    if parsed.tzinfo is not UTC or parsed.utcoffset() is None:
                         raise SummaryValidationError(_pointer(item_path)) from None
                 visit(item, item_path)
         elif type(value) is list:
