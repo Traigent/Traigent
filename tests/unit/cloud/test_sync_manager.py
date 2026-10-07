@@ -128,6 +128,56 @@ def test_build_experiment_url_omits_empty_context_query() -> None:
     )
 
 
+# Backend TraigentBackend #3735 / TraigentSchema #536 (session_create_response_schema.json):
+# POST /api/v1/sessions returns top-level optional non-empty ``project_id`` /
+# ``tenant_id`` (omitted, never null). Hard-coded from the documented example.
+_META = {
+    "experiment_id": "e-1",
+    "experiment_run_id": "r-1",
+    "total_configurations": 4,
+    "agent_id": None,
+}
+SCOPED_CREATE_PAYLOAD: dict[str, Any] = {
+    "session_id": "s-1",
+    "status": "created",
+    "metadata": dict(_META),
+    "project_id": "p-1",
+    "tenant_id": "t-1",
+}
+LEGACY_SCOPED_CREATE_PAYLOAD: dict[str, Any] = {
+    "success": True,
+    "message": "ok",
+    "session_id": "s-1",
+    "metadata": dict(_META),
+    "data": {"session_id": "s-1", "metadata": dict(_META)},
+    "project_id": "p-1",
+    "tenant_id": "t-1",
+}
+SCOPELESS_CREATE_PAYLOAD: dict[str, Any] = {
+    "session_id": "s-1",
+    "status": "created",
+    "metadata": dict(_META),
+}
+PORTAL = "https://portal.traigent.ai"
+SCOPED_URL = f"{PORTAL}/experiments/view/e-1?run_id=r-1&project_id=p-1&tenant_id=t-1"
+BARE_URL = f"{PORTAL}/experiments/view/e-1?run_id=r-1"
+
+
+def _session_router(create_payload: dict[str, Any]):
+    """POST side_effect: /sessions -> create_payload, then slots/results/finalize."""
+
+    def _router(url, *args, **kwargs):
+        if url.endswith("/sessions"):
+            return backend_response(payload=create_payload)
+        if url.endswith("/next-trial"):
+            return backend_response(payload={"suggestion": {"trial_id": "bt"}})
+        if url.endswith("/finalize"):
+            return backend_response(status_code=200, payload={"status": "finalized"})
+        return backend_response(payload={"id": "result"})
+
+    return _router
+
+
 class TestSyncManager:
     """Tests for SyncManager class."""
 
@@ -1976,3 +2026,148 @@ class TestSyncManager:
         # The base_url should have trailing slash removed
         assert not sync_manager.base_url.endswith("/")
         assert "http" in sync_manager.base_url
+
+    # ---- TRAIG-12: SDK portal links carry project_id/tenant_id ----------------
+
+    def _sync(self, sync_manager, session, payload, **kwargs):
+        sync_manager.storage.load_session.return_value = session
+        self._wire_persisting_sync_state(sync_manager, session)
+        sync_manager._session.post.side_effect = _session_router(payload)
+        with patch(
+            "traigent.cloud.sync_manager.BackendConfig.get_cloud_web_url",
+            return_value=f"{PORTAL}/",
+        ):
+            return sync_manager.sync_session_to_cloud("test_session_123", **kwargs)
+
+    @pytest.mark.parametrize(
+        "payload",
+        [SCOPED_CREATE_PAYLOAD, LEGACY_SCOPED_CREATE_PAYLOAD],
+        ids=["typed", "legacy"],
+    )
+    def test_offline_sync_url_carries_scope_from_real_create_response(
+        self, sync_manager, sample_session, payload
+    ) -> None:
+        """Contract backend #3735 / schema #536: top-level project/tenant ids
+        in the real create response reach the offline-sync cloud_url."""
+        result = self._sync(sync_manager, sample_session, payload)
+
+        assert result["status"] == "success"
+        assert result["project_id"] == "p-1"
+        assert result["tenant_id"] == "t-1"
+        assert result["cloud_url"] == SCOPED_URL
+        assert sample_session.sync_state["project_id"] == "p-1"
+        assert sample_session.sync_state["tenant_id"] == "t-1"
+
+    def test_offline_sync_scopeless_response_gives_bare_url(
+        self, sync_manager, sample_session
+    ) -> None:
+        """Contract backend #3735 / schema #536: keys omitted -> bare URL."""
+        result = self._sync(sync_manager, sample_session, SCOPELESS_CREATE_PAYLOAD)
+
+        assert result["status"] == "success"
+        assert result["project_id"] is None
+        assert result["tenant_id"] is None
+        assert result["cloud_url"] == BARE_URL
+
+    @pytest.mark.parametrize("empty", ["", None, "   "])
+    def test_offline_sync_empty_or_null_scope_not_added_to_url(
+        self, sync_manager, sample_session, empty
+    ) -> None:
+        """Contract backend #3735 / schema #536: empty or null ids are never
+        emitted by the backend; if one arrives it must not enter the URL."""
+        payload = dict(SCOPED_CREATE_PAYLOAD, project_id=empty, tenant_id=empty)
+        result = self._sync(sync_manager, sample_session, payload)
+
+        assert result["cloud_url"] == BARE_URL
+        assert "project_id" not in result["cloud_url"]
+        assert "tenant_id" not in result["cloud_url"]
+        assert result["project_id"] is None
+
+    def test_offline_sync_second_sync_keeps_scope_and_url(
+        self, sync_manager, sample_session
+    ) -> None:
+        """Contract backend #3735: an unchanged synced session is a no-op that
+        returns the persisted scoped cloud_url and does not clobber the scope."""
+        first = self._sync(sync_manager, sample_session, SCOPED_CREATE_PAYLOAD)
+        assert first["cloud_url"] == SCOPED_URL
+        sync_manager._session.post.reset_mock()
+
+        second = self._sync(sync_manager, sample_session, SCOPELESS_CREATE_PAYLOAD)
+
+        assert second["status"] == "already_synced"
+        assert second["cloud_url"] == SCOPED_URL
+        sync_manager._session.post.assert_not_called()
+        assert sample_session.sync_state["project_id"] == "p-1"
+        assert sample_session.sync_state["tenant_id"] == "t-1"
+
+    def test_offline_sync_partial_resume_reuses_scope_from_prior_state(
+        self, sync_manager, sample_session
+    ) -> None:
+        """Contract backend #3735: a partial retry reuses prior_state scope
+        (no re-create, so nothing else to read it from) and keeps the URL."""
+        payload_hash = sync_manager._compute_payload_hash(
+            sync_manager.convert_session_to_traigent_format(sample_session)
+        )
+        sample_session.sync_state = {
+            "status": "partial",
+            "payload_hash": payload_hash,
+            "cloud_session_id": "s-1",
+            "cloud_experiment_id": "e-1",
+            "cloud_experiment_run_id": "r-1",
+            "project_id": "p-1",
+            "tenant_id": "t-1",
+            "attempts": 1,
+        }
+
+        result = self._sync(sync_manager, sample_session, SCOPELESS_CREATE_PAYLOAD)
+
+        assert result["status"] == "success"
+        assert result["cloud_url"] == SCOPED_URL
+        urls = [c.args[0] for c in sync_manager._session.post.call_args_list]
+        assert f"{sync_manager.base_url}/sessions" not in urls
+        assert sample_session.sync_state["project_id"] == "p-1"
+
+    def test_offline_sync_failed_create_retry_does_not_keep_stale_scope(
+        self, sync_manager, sample_session
+    ) -> None:
+        """Contract backend #3735: when the prior attempt never created a session
+        (no cloud_session_id) a retry re-creates and the NEW response decides the
+        scope; a stale prior project/tenant must not survive a scopeless reply."""
+        payload_hash = sync_manager._compute_payload_hash(
+            sync_manager.convert_session_to_traigent_format(sample_session)
+        )
+        sample_session.sync_state = {
+            "status": "failed",
+            "payload_hash": payload_hash,
+            "project_id": "stale-p",
+            "tenant_id": "stale-t",
+            "attempts": 1,
+        }
+
+        result = self._sync(sync_manager, sample_session, SCOPELESS_CREATE_PAYLOAD)
+
+        assert result["cloud_url"] == BARE_URL
+        assert result["project_id"] is None
+        assert sample_session.sync_state["project_id"] is None
+        assert sample_session.sync_state["tenant_id"] is None
+
+    def test_offline_sync_force_resync_scopeless_then_scoped_and_back(
+        self, sync_manager, sample_session
+    ) -> None:
+        """Contract backend #3735: --force starts a fresh session; the scope
+        follows each create response, scopeless -> scoped -> scopeless, with no
+        stale empty or stale old scope carried between syncs."""
+        first = self._sync(sync_manager, sample_session, SCOPELESS_CREATE_PAYLOAD)
+        assert first["cloud_url"] == BARE_URL
+
+        second = self._sync(
+            sync_manager, sample_session, SCOPED_CREATE_PAYLOAD, force=True
+        )
+        assert second["cloud_url"] == SCOPED_URL
+        assert sample_session.sync_state["project_id"] == "p-1"
+
+        third = self._sync(
+            sync_manager, sample_session, SCOPELESS_CREATE_PAYLOAD, force=True
+        )
+        assert third["cloud_url"] == BARE_URL
+        assert sample_session.sync_state["project_id"] is None
