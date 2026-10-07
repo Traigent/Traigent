@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 import secrets
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from jsonschema import Draft7Validator
 
@@ -217,7 +217,7 @@ def validate_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
         pointers = sorted({_error_pointer(err) for err in errors})
         raise SummaryValidationError("invalid summary at " + ", ".join(pointers))
     _validate_timestamps(normalized)
-    return normalized
+    return cast(dict[str, Any], normalized)
 
 
 class CustomerSideMinter:
