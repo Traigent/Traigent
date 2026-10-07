@@ -73,6 +73,26 @@ if TYPE_CHECKING:
 _V2_OBSERVATIONS_PATH = "/api/public/v2/observations"
 _V2_FIELDS = "core,basic,metadata,model,usage,metrics,trace_context"
 _V2_IO_FIELDS = _V2_FIELDS + ",io"  # adds input/output payloads (get_trace only)
+
+
+def _root_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Root observations among v2 rows.
+
+    Langfuse logical roots (``isRootObservation`` true, ``basic`` field group)
+    may carry a non-null ``parentObservationId`` (distributed/linked traces),
+    so they take precedence. Physical roots (``parentObservationId`` present
+    and None) are the fallback when no row is flagged.
+    """
+    logical = [r for r in rows if r.get("isRootObservation") is True]
+    if logical:
+        return logical
+    return [
+        r
+        for r in rows
+        if "parentObservationId" in r and r["parentObservationId"] is None
+    ]
+
+
 _V2_PAGE_LIMIT = 1000  # v2 max (v1 was 100)
 # Legacy v1 /api/public/observations rejects limits above 100.
 _LEGACY_PAGE_LIMIT = 100
@@ -393,7 +413,8 @@ class LangfuseClient:
                 (unchanged public behaviour). On the legacy (self-hosted v3)
                 fallback, I/O is still downloaded and is only stripped from
                 the returned dicts when False. Callers that only need metrics
-                should use ``get_trace_metrics``, which never requests io.
+                should use ``get_trace_metrics``, which never requests io on the
+                v2 path (on the legacy fallback io is downloaded, then stripped).
 
         Returns:
             Trace data dict or None if not found
@@ -524,18 +545,15 @@ class LangfuseClient:
         """Final (rows, partial) once pagination ended cleanly.
 
         Partial if rows were dropped for invalid ids, or if rows were fetched
-        but none is a root observation (``parentObservationId`` present and
-        None): the root started before the window's lower bound, so only
+        but none is a root observation (``isRootObservation`` true, or
+        ``parentObservationId`` present and None): the root started before the window's lower bound, so only
         later children were found.
         """
         partial = False
         if invalid:
             logger.warning(f"Dropped {invalid} observation row(s) with invalid id.")
             partial = True
-        has_root = any(
-            "parentObservationId" in r and r["parentObservationId"] is None
-            for r in rows
-        )
+        has_root = bool(_root_rows(rows))
         if rows and not has_root:
             logger.warning(
                 "No root observation in the lookback window; "
@@ -667,18 +685,15 @@ class LangfuseClient:
         """Rebuild a v1-shaped trace dict from v2 observation rows.
 
         v4 has no trace objects; trace-level fields come from the root
-        observation (``parentObservationId`` present and null; the earliest
+        observation (``isRootObservation`` true, else ``parentObservationId``
+        present and null; explicit logical roots win; the earliest
         ``startTime`` wins, ties broken by ``id``). With no root, root-derived fields stay
         unset instead of borrowing a child's. Returns None when the trace has no
         observations (same as a v1 404).
         """
         if not rows:
             return None
-        roots = [
-            r
-            for r in rows
-            if "parentObservationId" in r and r["parentObservationId"] is None
-        ]
+        roots = _root_rows(rows)
         root: dict[str, Any] | None = None
         if roots:
             root = min(
@@ -728,6 +743,8 @@ class LangfuseClient:
         Returns:
             LangfuseTraceMetrics with aggregated data, or None if trace not found
         """
+        # v2 never requests io here; the legacy fallback downloads the full
+        # response and strips io afterwards.
         trace_data = self.get_trace(trace_id, include_io=False)
         if not trace_data:
             return None

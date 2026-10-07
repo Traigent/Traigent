@@ -306,6 +306,53 @@ def test_no_root_leaves_root_fields_unset(client):
     assert not trace["metadata"]
 
 
+def test_logical_root_with_parent_is_not_partial_and_used(client):
+    logical = {
+        **ROOT,
+        "id": "logical",
+        "traceName": "logical-name",
+        "parentObservationId": "external-parent",
+        "isRootObservation": True,
+        "input": "in",
+        "output": "out",
+    }
+    child = {**GEN_A, "parentObservationId": "logical"}
+    rows = [child, logical]
+    assert client._finish_v2(rows, 0, ("a", "b")) == (rows, False)
+    with patch("requests.get", return_value=_resp({"data": rows, "meta": {}})):
+        trace = client.get_trace("t1")
+    assert trace["name"] == "logical-name"
+    assert trace["input"] == "in" and trace["output"] == "out"
+
+
+def test_children_without_any_root_flag_are_partial(client):
+    child = {**GEN_A, "isRootObservation": False}
+    _, partial = client._finish_v2([child], 0, ("a", "b"))
+    assert partial is True
+
+
+def test_logical_root_preferred_over_physical_root(client):
+    physical = {
+        **ROOT,
+        "id": "phys",
+        "traceName": "phys",
+        "isRootObservation": False,
+        "startTime": "2026-10-01T08:00:00Z",
+    }
+    logical = {
+        **ROOT,
+        "id": "log",
+        "traceName": "log",
+        "parentObservationId": "ext",
+        "startTime": "2026-10-01T12:00:00Z",
+    }
+    with patch(
+        "requests.get", return_value=_resp({"data": [physical, logical], "meta": {}})
+    ):
+        trace = client.get_trace("t1")
+    assert trace["name"] == "log"
+
+
 def test_string_cost_and_flat_usage_parsed(client):
     obs = client._dict_to_observation(GEN_A)
     assert obs.cost == pytest.approx(0.0015)
@@ -610,9 +657,10 @@ def test_rows_with_invalid_ids_excluded_and_partial(client):
 
 
 def test_root_requires_present_null_parent(client):
-    no_key = {k: v for k, v in ROOT.items() if k != "parentObservationId"}
+    no_flag = {k: v for k, v in ROOT.items() if k != "isRootObservation"}
+    no_key = {k: v for k, v in no_flag.items() if k != "parentObservationId"}
     no_key["id"] = "nokey"
-    empty = {**ROOT, "id": "empty", "parentObservationId": ""}
+    empty = {**no_flag, "id": "empty", "parentObservationId": ""}
     with patch(
         "requests.get", return_value=_resp({"data": [no_key, empty], "meta": {}})
     ):
