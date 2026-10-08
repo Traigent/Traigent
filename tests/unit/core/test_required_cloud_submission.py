@@ -18,7 +18,8 @@ def connected_manager(monkeypatch):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("TRAIGENT_REQUIRE_CLOUD", "1")
     client = Mock()
-    client.auth_manager = SimpleNamespace(has_api_key=Mock(return_value=True))
+    client.auth_manager = Mock(spec=["has_api_key"])
+    client.auth_manager.has_api_key.return_value = True
     client.get_session_mapping.return_value = SimpleNamespace(
         experiment_id="exp-local-control", experiment_run_id="run-local-control"
     )

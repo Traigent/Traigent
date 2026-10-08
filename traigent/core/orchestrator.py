@@ -127,9 +127,7 @@ from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.interactive_optimizer import CloudBrainOptimizationComplete
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
-from traigent.utils.env_config import (  # noqa: F401
-    is_backend_offline as is_backend_offline,
-)
+from traigent.utils.env_config import is_backend_offline as is_backend_offline
 from traigent.utils.exceptions import (
     ConfigurationError,
     OptimizationError,
