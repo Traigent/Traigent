@@ -24,8 +24,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from traigent.api.types import ExampleResult
-from traigent.utils.removed_params import reject_removed_mock_parameters
-from traigent.identity.examples import result_identity_fields
 from traigent.evaluators.dataset_registry import (
     DatasetRegistryEntry,
     resolve_dataset_reference,
@@ -37,15 +35,18 @@ from traigent.evaluators.metrics_tracker import (
     extract_llm_metrics,
     is_reserved_metric_key,
 )
+from traigent.identity.examples import result_identity_fields
 from traigent.utils.env_config import is_truthy
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
+from traigent.utils.error_handler import provider_credential_error
 from traigent.utils.exceptions import ConfigurationError, EvaluationError
 from traigent.utils.exceptions import TraigentError as CoreTraigentError
 from traigent.utils.exceptions import TrialPrunedError, ValidationError
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.langchain_interceptor import get_captured_response_by_key
 from traigent.utils.logging import get_logger
+from traigent.utils.removed_params import reject_removed_mock_parameters
 
 if TYPE_CHECKING:
     from traigent.core.execution_budget import ExecutionBudget
@@ -2615,13 +2616,9 @@ class BaseEvaluator(ABC):
         Raises:
             APIKeyError: If the error appears to be API key related
         """
-        api_key_tokens = ("api key", "api_key", "authentication", "openai_api_key")
-        if any(token in str(error).lower() for token in api_key_tokens):
-            raise APIKeyError(
-                f"API key error detected. Set the required API key environment "
-                f"variable or use TRAIGENT_MOCK_LLM=true for testing. "
-                f"Original error: {error}"
-            ) from error
+        credential_error = provider_credential_error(error)
+        if credential_error is not None:
+            raise credential_error from error
 
     async def _execute_function(
         self,

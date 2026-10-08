@@ -14,7 +14,7 @@ from typing import Any
 
 from traigent.config.providers import get_provider
 from traigent.invokers.base import BaseInvoker, InvocationResult
-from traigent.utils.error_handler import APIKeyError
+from traigent.utils.error_handler import provider_credential_error
 from traigent.utils.exceptions import InvocationError
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.logging import get_logger
@@ -149,16 +149,9 @@ class LocalInvoker(BaseInvoker):
             error_msg = f"Function call failed: {e}"
 
             # Fail fast on API key errors - don't retry 309 times
-            lowered = str(e).lower()
-            if any(
-                token in lowered
-                for token in ("api key", "api_key", "authentication", "openai_api_key")
-            ):
-                raise APIKeyError(
-                    f"API key error detected. Set the required API key environment "
-                    f"variable or use TRAIGENT_MOCK_LLM=true for testing. "
-                    f"Original error: {e}"
-                ) from e
+            credential_error = provider_credential_error(e)
+            if credential_error is not None:
+                raise credential_error from e
 
             logger.warning(error_msg)
 
