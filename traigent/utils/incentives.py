@@ -86,8 +86,13 @@ class IncentiveManager:
             logger.warning(f"Failed to save incentive state: {e}")
 
     def update_usage_stats(self) -> None:
-        """Update usage statistics."""
-        sessions = self.storage.list_sessions()
+        """Update usage statistics.
+
+        Uses ``session_summaries()`` (stat-keyed index) instead of
+        ``list_sessions()``, which parses every stored session: this runs
+        after every local-mode run, so a full rescan grew with history (#2457).
+        """
+        sessions = self.storage.session_summaries()
         completed_sessions = [
             s for s in sessions if s.status == OptimizationStatus.COMPLETED.value
         ]

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from traigent.cloud.client import CloudRemoteExecutionUnavailableError
+from traigent.cloud.models import BOOLEAN_KNOB_ENCODING_ADVICE
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
@@ -124,8 +125,7 @@ class TraigentCloudService:
             _field_refs = ", ".join(f'"{k}"' for k in _bool_knobs)
             raise ValidationException(
                 f"configuration_space[{_field_refs}]: boolean values are not "
-                f"supported by the cloud session API — encode as strings "
-                f'(e.g. "true"/"false") or 0/1'
+                f"supported by the cloud session API — {BOOLEAN_KNOB_ENCODING_ADVICE}"
             )
 
         validate_or_raise(

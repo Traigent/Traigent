@@ -23,6 +23,7 @@ from traigent.cloud.client import (
     raise_if_cloud_egress_disabled,
 )
 from traigent.cloud.models import (
+    BOOLEAN_KNOB_ENCODING_ADVICE,
     DECLARED_DATASET_IDENTITY_METADATA_KEY,
     EvaluatorIdSource,
     OptimizationFinalizationResponse,
@@ -236,8 +237,7 @@ class SessionOperations:
             field_refs = ", ".join(f'"{k}"' for k in offending)
             raise ValidationException(
                 f"{field_name}[{field_refs}]: boolean values are not supported "
-                f"by the cloud session API — encode as strings "
-                f'(e.g. "true"/"false") or 0/1'
+                f"by the cloud session API — {BOOLEAN_KNOB_ENCODING_ADVICE}"
             )
 
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:

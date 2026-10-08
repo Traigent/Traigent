@@ -20,6 +20,7 @@ from traigent.cloud.client import (
 )
 from traigent.cloud.governance import promotion_policy_to_wire, tvl_governance_to_wire
 from traigent.cloud.models import (
+    BOOLEAN_KNOB_ENCODING_ADVICE,
     AgentExecutionRequest,
     AgentExecutionResponse,
     AgentOptimizationRequest,
@@ -29,8 +30,8 @@ from traigent.cloud.models import (
     SessionCreationRequest,
     SessionCreationResponse,
     TrialResultSubmission,
-    session_dataset_identity_to_wire,
     session_content_identity_to_wire,
+    session_dataset_identity_to_wire,
     session_identity_v2_to_wire,
     session_narrative_to_wire,
     session_task_type_to_wire,
@@ -297,9 +298,9 @@ def _warn_boolean_config_values(space: Any) -> None:
     logger.warning(
         "configuration_space parameter(s) %s use boolean values, which the "
         "cloud session API does not accept and will reject with a generic "
-        "HTTP 400. Encode boolean knobs as strings (e.g. ['with','without']) "
-        "or integers (0/1) and map back at the call site. See issue #1488.",
+        "HTTP 400: %s. See issue #1488.",
         offending_parameters,
+        BOOLEAN_KNOB_ENCODING_ADVICE,
     )
 
 

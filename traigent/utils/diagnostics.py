@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from traigent.config.provider_support import PROVIDER_SPECS
 from traigent.utils.console import _safe_print
 from traigent.utils.env_config import is_truthy
 
@@ -31,7 +32,7 @@ from traigent.utils.env_config import is_truthy
 #   1. Environment values are printed only for variables on an ALLOWLIST.
 #      A denylist ("redact anything with KEY in the name") is what this file
 #      used to do, and it leaked TRAIGENT_BACKEND_URL -- whose name contains
-#      no secret-looking token but whose value carries `https://user:pass@host`.
+#      no secret-looking token but whose value carries `https://user:pass@host`.  # pragma: allowlist secret
 #      Anything not on the allowlist is reported as present, never quoted.
 #
 #   2. Free text we did not author is scrubbed before it is reported. That
@@ -68,7 +69,7 @@ _REDACTED = "***redacted***"
 #: Credentials embedded in a URL. Covers BOTH userinfo shapes, because the
 #: token-only one is the more common way an API URL carries a secret and the
 #: first version of this matched only the pair:
-#:     scheme://user:password@host  ->  scheme://user:***@host
+#:     scheme://user:password@host  ->  scheme://user:***@host  # pragma: allowlist secret
 #:     scheme://token@host          ->  scheme://***@host
 #: The userinfo run is greedy up to the LAST "@" before the host, so a password
 #: that itself contains "@" is masked whole rather than leaving its tail behind.
@@ -375,20 +376,47 @@ class DiagnosticReport:
         _safe_print("=" * 60 + "\n")
 
 
+# Credential conventions that are not a single key-managed env var in
+# PROVIDER_SPECS but are still a documented way to reach a provider: Bedrock
+# through the AWS credential chain, Azure OpenAI through an endpoint+key pair,
+# and OpenRouter, which the SDK reaches as an OpenAI-compatible client and so
+# has no ProviderSpec at all. Presence-only; nothing here validates them.
+ADDITIONAL_PROVIDER_CREDENTIAL_MARKERS: tuple[str, ...] = (
+    "AWS_ACCESS_KEY_ID",  # Bedrock
+    "AWS_PROFILE",  # Bedrock (profile-based auth, no static key in env)
+    "AZURE_OPENAI_API_KEY",  # Azure OpenAI
+    "OPENROUTER_API_KEY",  # OpenRouter
+)
+
+#: Every env var whose presence means "a model provider is reachable", derived
+#: from the canonical provider table (#1568) plus the markers above.
+PROVIDER_CREDENTIAL_MARKERS: tuple[str, ...] = (
+    tuple(dict.fromkeys(key for spec in PROVIDER_SPECS for key in spec.env_keys))
+    + ADDITIONAL_PROVIDER_CREDENTIAL_MARKERS
+)
+
+
 class TraigentDiagnostics:
     """Diagnostic tool for Traigent SDK."""
 
-    REQUIRED_PACKAGES = [
+    #: Only what the SDK itself needs to run. Framework packages (LangChain,
+    #: pandas, the OpenAI client, ...) are optional: a LiteLLM agent on
+    #: OpenRouter is a correct setup without any of them, and listing them
+    #: here made `doctor` FAIL and exit 1 on a working project (#2504).
+    REQUIRED_PACKAGES: list[tuple[str, str, str | None]] = [
         ("traigent", "Traigent SDK", None),
+        ("litellm", "LiteLLM", "litellm"),
+        ("pydantic", "Pydantic", "pydantic"),
+        ("aiohttp", "aiohttp", "aiohttp"),
+    ]
+
+    OPTIONAL_PACKAGES: list[tuple[str, str, str | None]] = [
         ("langchain", "LangChain", "langchain"),
         ("langchain_openai", "LangChain OpenAI", "langchain-openai"),
         ("openai", "OpenAI", "openai"),
         ("dotenv", "Python-dotenv", "python-dotenv"),
         ("numpy", "NumPy", "numpy"),
         ("pandas", "Pandas", "pandas"),
-    ]
-
-    OPTIONAL_PACKAGES: list[tuple[str, str, str | None]] = [
         ("mlflow", "MLflow", "mlflow"),
         ("wandb", "Weights & Biases", "wandb"),
         ("streamlit", "Streamlit", "streamlit"),
@@ -396,8 +424,11 @@ class TraigentDiagnostics:
 
     #: Any ONE of these satisfies "you can reach a model provider". Requiring
     #: OPENAI_API_KEY specifically made `doctor` report a hard FAIL for a user
-    #: running entirely on Anthropic -- a correct setup called broken.
-    PROVIDER_KEY_VARIABLES = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY")
+    #: running entirely on Anthropic -- a correct setup called broken. It is
+    #: the same set `traigent doctor`'s Auth row checks, so the two rows cannot
+    #: disagree about one environment (#2504: OpenRouter passed Auth and failed
+    #: here).
+    PROVIDER_KEY_VARIABLES: tuple[str, ...] = PROVIDER_CREDENTIAL_MARKERS
 
     ENVIRONMENT_VARIABLES = [
         ("OPENAI_API_KEY", "OpenAI API access", False),
@@ -534,7 +565,7 @@ class TraigentDiagnostics:
             if value:
                 # Allowlist, not a name heuristic. The previous rule was
                 # `"KEY" in var_name`, which printed TRAIGENT_BACKEND_URL in
-                # full -- credentials included, for a `https://user:pass@host`
+                # full -- credentials included, for a `https://user:pass@host`  # pragma: allowlist secret
                 # style URL.
                 if var_name in PRINTABLE_ENV_VALUES:
                     report.add_success("Environment", f"{var_name} = {value}")
@@ -629,9 +660,24 @@ class TraigentDiagnostics:
         ]
 
         for path in test_paths:
+            # A diagnostic must not create project directories (#2504: it
+            # left an empty ./data behind). For a directory that does not
+            # exist yet, report whether it COULD be created.
+            if not path.exists():
+                parent = next(
+                    (p for p in path.parents if p.exists()), Path(path.anchor)
+                )
+                if parent.is_dir() and os.access(parent, os.W_OK | os.X_OK):
+                    report.add_success(
+                        "Permissions", f"Can create {path} (not created)"
+                    )
+                else:
+                    report.add_warning(
+                        "Permissions",
+                        f"Cannot create {path} (may affect some features)",
+                    )
+                continue
             try:
-                # Try to create directory
-                path.mkdir(parents=True, exist_ok=True)
                 # Write probe through a UNIQUE temp name. The previous code
                 # wrote and then unlinked a fixed ".test_permission", which
                 # destroyed a pre-existing file of that name -- a diagnostic
@@ -679,7 +725,9 @@ class TraigentDiagnostics:
         # enabled" and still gets the recommendation (issue #1766).
         if not is_truthy(os.environ.get("TRAIGENT_MOCK_LLM")):
             report.add_recommendation(
-                "Enable mock LLM mode for testing: export TRAIGENT_MOCK_LLM=true"
+                "Enable mock LLM mode for testing: call "
+                "traigent.testing.enable_mock_mode_for_quickstart() before "
+                "optimizing"
             )
 
         if not any(
@@ -692,7 +740,7 @@ class TraigentDiagnostics:
             )
 
         report.add_recommendation(
-            "Run quickstart script for guided setup: python scripts/quickstart.py"
+            "Run the bundled mock-mode demo for a first run: traigent quickstart"
         )
 
 

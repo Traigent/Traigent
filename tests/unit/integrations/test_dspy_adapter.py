@@ -567,11 +567,11 @@ class TestRunMipro:
                     teacher=None,
                 )
 
+                # #2419: only constructor-accepted args; num_candidates is
+                # dropped because DSPy rejects it alongside an auto preset.
                 mock_dspy.MIPROv2.assert_called_once_with(
                     metric=_always_one_metric,
                     auto="heavy",
-                    num_candidates=5,
-                    requires_permission_to_run=True,
                 )
                 assert metadata["method"] == "mipro"
                 assert metadata["auto_setting"] == "heavy"
@@ -727,3 +727,150 @@ class TestModuleExports:
             assert isinstance(DSPY_INTEGRATION_AVAILABLE, bool)
         except ImportError:
             pytest.skip("DSPy integration not available")
+
+
+class _FakeMIPROv2Base:
+    """Mirrors the argument contract of real ``dspy.MIPROv2`` (#2419).
+
+    The constructor does not accept ``requires_permission_to_run``, and
+    ``compile`` rejects ``num_candidates``/``num_trials`` together with
+    ``auto`` -- the two errors the adapter used to hit on every MIPRO call.
+    """
+
+    compile_calls: list[dict[str, Any]]
+
+    def __init__(self, metric, auto="light", num_candidates=None, seed=9):
+        self.metric = metric
+        self.auto = auto
+        self.num_candidates = num_candidates
+        type(self).compile_calls = []
+
+    def _check(self, num_trials):
+        if self.auto is not None and (
+            self.num_candidates is not None or num_trials is not None
+        ):
+            raise ValueError(
+                "If auto is not None, num_candidates and num_trials cannot be set"
+            )
+        if self.auto is None and num_trials is None:
+            raise ValueError("If auto is None, num_trials must also be provided.")
+
+
+class _FakeMIPROv2Dspy3(_FakeMIPROv2Base):
+    def compile(
+        self,
+        student,
+        *,
+        trainset,
+        num_trials=None,
+        minibatch=True,
+        requires_permission_to_run=None,
+    ):
+        if requires_permission_to_run is True:
+            raise ValueError("User confirmation is removed from MIPROv2.")
+        self._check(num_trials)
+        type(self).compile_calls.append(
+            {
+                "num_trials": num_trials,
+                "minibatch": minibatch,
+                "requires_permission_to_run": requires_permission_to_run,
+            }
+        )
+        return student
+
+
+class _FakeMIPROv2Dspy26(_FakeMIPROv2Base):
+    def compile(
+        self,
+        student,
+        *,
+        trainset,
+        num_trials=None,
+        minibatch=True,
+        requires_permission_to_run=True,
+    ):
+        self._check(num_trials)
+        type(self).compile_calls.append(
+            {
+                "num_trials": num_trials,
+                "minibatch": minibatch,
+                "requires_permission_to_run": requires_permission_to_run,
+            }
+        )
+        return student
+
+
+class TestMiproArgumentContract:
+    """#2419: the MIPRO path must call MIPROv2 the way DSPy accepts."""
+
+    @pytest.fixture(params=[_FakeMIPROv2Dspy3, _FakeMIPROv2Dspy26])
+    def fake_mipro(self, request):
+        return request.param
+
+    def _optimize(self, fake_mipro, **init_kwargs):
+        fake_dspy = MagicMock()
+        fake_dspy.MIPROv2 = fake_mipro
+        with patch("traigent.integrations.dspy_adapter.DSPY_AVAILABLE", True):
+            with patch("traigent.integrations.dspy_adapter.dspy", fake_dspy):
+                from traigent.integrations.dspy_adapter import DSPyPromptOptimizer
+
+                optimizer = DSPyPromptOptimizer(**init_kwargs)
+                with patch.object(optimizer, "_compute_best_score", return_value=1.0):
+                    return optimizer.optimize_prompt(
+                        module=MagicMock(),
+                        trainset=[MagicMock() for _ in range(5)],
+                        metric=_always_one_metric,
+                    )
+
+    def test_default_optimizer_runs_mipro_without_argument_errors(
+        self, fake_mipro
+    ) -> None:
+        result = self._optimize(fake_mipro)
+
+        assert result.method == "mipro"
+        (call,) = fake_mipro.compile_calls
+        assert call["num_trials"] is None
+        if fake_mipro is _FakeMIPROv2Dspy26:
+            # Never reach DSPy 2.6's 20 s stdin confirmation.
+            assert call["requires_permission_to_run"] is False
+        else:
+            # DSPy 3.x: deprecated arg omitted (False would only warn).
+            assert call["requires_permission_to_run"] is None
+
+    def test_auto_none_forwards_candidates_and_trials(self, fake_mipro) -> None:
+        self._optimize(fake_mipro, method="mipro", auto_setting=None)
+
+        (call,) = fake_mipro.compile_calls
+        assert call["num_trials"] == 15
+        # 5-example trainset -> 4-example valset, smaller than minibatch_size.
+        assert call["minibatch"] is False
+
+
+def test_mipro_real_dspy_accepts_adapter_arguments(monkeypatch) -> None:
+    """#2419 against the installed DSPy: construction and compile()'s
+    argument validation must pass. The run is stopped right after that
+    validation (before any LM/optuna work) by a sentinel."""
+    dspy = pytest.importorskip("dspy")
+    from dspy.utils import DummyLM
+
+    from traigent.integrations.dspy_adapter import DSPyPromptOptimizer
+
+    class _ArgsValidated(Exception):
+        pass
+
+    def _stop(self, trainset, valset):
+        raise _ArgsValidated
+
+    monkeypatch.setattr(dspy.MIPROv2, "_set_and_validate_datasets", _stop)
+    dspy.configure(lm=DummyLM([{"answer": "4"}] * 10))
+    trainset = [
+        dspy.Example(question=f"{i}+{4 - i}?", answer="4").with_inputs("question")
+        for i in range(5)
+    ]
+    for kwargs in ({}, {"auto_setting": None}):
+        with pytest.raises(_ArgsValidated):
+            DSPyPromptOptimizer(**kwargs).optimize_prompt(
+                module=dspy.Predict("question -> answer"),
+                trainset=trainset,
+                metric=_always_one_metric,
+            )

@@ -106,9 +106,8 @@ class TestSessionOperationsBoolValidation:
         assert "include_schema" in msg, f"offending field name missing from: {msg}"
         assert "boolean" in msg.lower(), f"'boolean' missing from: {msg}"
         # Workaround hint must be present
-        assert '"true"' in msg or "true" in msg.lower() or "0/1" in msg, (
-            f"workaround hint missing from: {msg}"
-        )
+        _failure_detail = f"workaround hint missing from: {msg}"
+        assert '"true"' in msg or "true" in msg.lower() or "0/1" in msg, _failure_detail
 
         # The HTTP call must NOT have been reached
         client._create_traigent_session_via_api.assert_not_called()
@@ -370,10 +369,52 @@ class TestCloudServiceBoolValidation:
         try:
             await service.process_optimization_request(request)
         except ValidationException as exc:
-            assert "boolean" not in str(exc).lower(), (
-                f"int 0/1 was falsely flagged as boolean: {exc}"
-            )
+            _failure_detail = f"int 0/1 was falsely flagged as boolean: {exc}"
+            assert "boolean" not in str(exc).lower(), _failure_detail
         except Exception:
             # Any other error (billing, subset, etc.) is fine — we only care that
             # the boolean guard was NOT the cause.
             pass
+
+
+# --- #2502: one recommendation, and never the truthy "true"/"false" strings ---
+
+
+def test_every_boolean_guard_gives_the_same_non_truthy_advice(caplog):
+    import logging
+
+    from traigent.cloud.api_operations import _warn_boolean_config_values
+    from traigent.cloud.models import BOOLEAN_KNOB_ENCODING_ADVICE
+    from traigent.cloud.session_operations import SessionOperations
+
+    with pytest.raises(ValidationException) as excinfo:
+        SessionOperations._validate_configuration_space_no_bools(
+            {"think_first": [False, True]}, "configuration_space"
+        )
+    message = str(excinfo.value)
+    assert "think_first" in message
+    assert BOOLEAN_KNOB_ENCODING_ADVICE in message
+    # The old advice recommended exactly the encoding the Skills forbid.
+    assert 'encode as strings (e.g. "true"/"false")' not in message
+    assert "Do not use 'true'/'false'" in message
+
+    with caplog.at_level(logging.WARNING):
+        _warn_boolean_config_values({"think_first": [False, True]})
+    warning = " ".join(r.getMessage() for r in caplog.records)
+    assert BOOLEAN_KNOB_ENCODING_ADVICE in warning
+    assert "['with','without']" not in warning
+
+
+@pytest.mark.asyncio
+async def test_service_guard_gives_the_same_advice():
+    from traigent.cloud.models import BOOLEAN_KNOB_ENCODING_ADVICE
+
+    request = OptimizationRequest(
+        function_name="greet",
+        dataset=_sample_dataset(),
+        configuration_space={"think_first": [True, False]},
+        objectives=["accuracy"],
+    )
+    with pytest.raises(ValidationException) as excinfo:
+        await TraigentCloudService().process_optimization_request(request)
+    assert BOOLEAN_KNOB_ENCODING_ADVICE in str(excinfo.value)
