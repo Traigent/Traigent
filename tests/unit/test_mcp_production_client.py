@@ -423,12 +423,10 @@ class TestMCPRequestHandling:
 
                 # The client handles timeout gracefully - returns MCPResponse with success=False
                 result = await self.client.call_tool("test_tool", {})
-                assert result.success is False, (
-                    "Timeout should result in failed response"
-                )
-                assert "timeout" in result.error_message.lower(), (
-                    "Error message should mention timeout"
-                )
+                response_message = "Timeout should result in failed response"
+                assert result.success is False, response_message
+                error_message = "Error message should mention timeout"
+                assert "timeout" in result.error_message.lower(), error_message
 
 
 class TestMCPRetryMechanism:
@@ -2138,9 +2136,10 @@ class TestCreateAgent:
                 await self.client.create_agent(spec)
 
             _, arguments = mock_call_tool.call_args.args
-            assert "agent_id" not in arguments, (
+            agent_message = (
                 f"create_agent must not forward agent_id (spec.id={spec.id!r})"
             )
+            assert "agent_id" not in arguments, agent_message
 
 
 class TestUploadDataset:
@@ -2731,3 +2730,16 @@ class TestSessionUnavailableAfterConnect:
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+def test_installed_mcp_uses_real_error_class_and_is_available():
+    """Installing either supported MCP major must enable the real client path."""
+    mcp = pytest.importorskip("mcp")
+    from traigent.cloud import production_mcp_client
+
+    error_class = getattr(mcp, "MCPError", None)
+    if error_class is None:
+        error_class = mcp.McpError
+    assert production_mcp_client.MCP_AVAILABLE is True
+    assert production_mcp_client.McpError is error_class
+    assert production_mcp_client._MCP_IMPORT_ERROR is None

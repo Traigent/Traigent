@@ -10,7 +10,13 @@ from typing import Any
 
 import pytest
 from mcp import ClientSession
-from mcp.shared.memory import create_connected_server_and_client_session
+
+try:
+    from mcp.client import Client
+except ImportError:
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    Client = None
 
 from traigent.mcp.server import create_server
 from traigent.mcp.tools import V1_TOOL_NAMES
@@ -25,10 +31,14 @@ def reset_traigent_mock_mode() -> None:
 
 
 @asynccontextmanager
-async def mcp_session() -> AsyncIterator[ClientSession]:
+async def mcp_session() -> AsyncIterator[Any]:
     server = create_server()
-    async with create_connected_server_and_client_session(server) as session:
-        yield session
+    if Client is not None:
+        async with Client(server) as client:
+            yield client
+    else:
+        async with create_connected_server_and_client_session(server) as session:
+            yield session
 
 
 async def call_tool(
@@ -37,8 +47,11 @@ async def call_tool(
     arguments: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     result = await session.call_tool(name, arguments or {})
-    assert result.structuredContent is not None
-    return dict(result.structuredContent)
+    structured = (
+        result.structured_content if Client is not None else result.structuredContent
+    )
+    assert structured is not None
+    return dict(structured)
 
 
 def write_fixture_agent(path: Path) -> None:

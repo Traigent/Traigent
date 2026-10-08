@@ -26,7 +26,12 @@ from typing import Any, cast
 # MCP_AVAILABLE reflects whether ``mcp`` is actually importable; the transport wiring
 # that used the symbol is handled at its own site below.
 try:
-    from mcp import ClientSession, McpError, StdioServerParameters
+    from mcp import ClientSession, StdioServerParameters
+
+    try:
+        from mcp import MCPError as McpError
+    except ImportError:
+        from mcp import McpError
 
     MCP_AVAILABLE = True
     _MCP_IMPORT_ERROR = None
