@@ -54,7 +54,12 @@ from traigent.config.types import (
     validate_execution_mode,
 )
 from traigent.core.ci_approval import check_ci_approval
-from traigent.core.config_state_manager import ConfigStateManager, OptimizationState
+from traigent.core.config_state_manager import (
+    ConfigStateManager,  # Per-function configuration manager.
+)
+from traigent.core.config_state_manager import (
+    OptimizationState,  # Lifecycle state owned by that manager.
+)
 from traigent.core.cost_enforcement import is_cost_preapproved, normalize_cost_approved
 from traigent.core.execution_budget import ExecutionBudget
 from traigent.core.execution_policy_runtime import (
@@ -3201,6 +3206,11 @@ class OptimizedFunction(Generic[_P, _R]):
             optimizer_kwargs.pop("invocations_per_example", None)
             if max_trials:
                 optimizer_kwargs["max_trials"] = max_trials
+            # Forward the declared schema exactly as the local path does: from
+            # names alone the base optimizer cannot orient a custom objective
+            # and refuses to build (#2514).
+            if self.objective_schema is not None:
+                optimizer_kwargs["objective_schema"] = self.objective_schema
 
             optimizer = InteractiveOptimizer(
                 effective_config_space,

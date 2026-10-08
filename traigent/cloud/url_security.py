@@ -104,6 +104,33 @@ def _is_development_environment() -> bool:
     return all(name in development_env_names for name in declared)
 
 
+def _production_assumed_hint() -> str:
+    """Explain why plain-http/local hosts were refused and how to change it.
+
+    The gate fails closed when no environment is declared, so the message must
+    say production was *assumed* and name the variable that changes it (#2503).
+    """
+    from traigent.utils.env_config import _ENVIRONMENT_KEYS, _normalize_str
+
+    declared = [
+        f"{key}={value}"
+        for key in _ENVIRONMENT_KEYS
+        if (value := _normalize_str(os.getenv(key))) is not None
+    ]
+    keys = " / ".join(_ENVIRONMENT_KEYS)
+    if declared:
+        return (
+            f"the declared environment ({', '.join(declared)}) is not a "
+            "development environment (staging counts as production here). Use "
+            "https, or for a local backend set every declared key to a "
+            "development value such as ENVIRONMENT=development"
+        )
+    return (
+        f"no {keys} is set, so production was assumed. Use https, or set "
+        "ENVIRONMENT=development for a local backend"
+    )
+
+
 def _normalize_hostname(hostname: str) -> str:
     return hostname.strip("[]").rstrip(".").lower()
 
@@ -249,7 +276,8 @@ def _reject_unsafe_hostname(hostname: str, *, allow_local: bool) -> None:
     if _is_local_name(normalized):
         if not allow_local:
             raise ValueError(
-                "Cloud base URL host is not allowed in production"
+                "Cloud base URL host is not allowed in production: "
+                f"{_production_assumed_hint()}"
             ) from None
         # ``localhost``/``.localhost`` are reserved for loopback and cannot
         # reach a metadata endpoint. ``.local`` (mDNS) can, so it falls through
@@ -343,7 +371,10 @@ def validate_cloud_base_url(base_url: str, *, purpose: str = "cloud request") ->
 
     allow_local = _is_development_environment()
     if not allow_local and parsed.scheme != "https":
-        raise ValueError(f"{purpose} base URL must use https in production") from None
+        raise ValueError(
+            f"{purpose} base URL must use https in production: "
+            f"{_production_assumed_hint()}"
+        ) from None
 
     # Decode to a fixed point (bounded) so multiply-encoded traversal
     # (e.g. %25252e) cannot survive a fixed two-pass decode. Mirrors the

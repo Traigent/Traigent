@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import click
 from rich.console import Console
@@ -33,14 +33,12 @@ from traigent.utils.secure_path import (
     PathTraversalError,
     safe_open,
     safe_write_text,
-    validate_path,
     validate_user_path,
 )
 from traigent.utils.validation import OptimizationValidator
 from traigent.visualization.plots import create_quick_plot
 
 console = Console()
-WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 
 # Style constant for table headers
 _TABLE_HEADER_STYLE = "bold magenta"
@@ -57,30 +55,6 @@ _STYLE_HIGHLIGHT = "[yellow]"
 _ADVISORY_SELECTION_NOTICE = (
     "advisory selection — no statistical certificate; results are task-local"
 )
-
-
-def _resolve_workspace_path(
-    path: Path,
-    description: str,
-    *,
-    must_exist: bool = False,
-) -> Path:
-    """Resolve a path and ensure it lives within the repository workspace."""
-    try:
-        return cast(
-            Path,
-            validate_path(
-                path.expanduser(),
-                WORKSPACE_ROOT,
-                must_exist=must_exist,
-            ),
-        )
-    except FileNotFoundError as exc:
-        raise click.ClickException(f"{description} does not exist: {exc}") from exc
-    except PathTraversalError as exc:
-        raise click.ClickException(
-            f"{description} must reside within the Traigent workspace ({WORKSPACE_ROOT})"
-        ) from exc
 
 
 def _resolve_user_cli_path(
@@ -965,19 +939,19 @@ def report_example_map(
     )
 
     try:
-        dataset_candidate = Path(dataset_path)
-        if not dataset_candidate.is_absolute():
-            dataset_candidate = Path.cwd() / dataset_candidate
-        resolved_dataset = _resolve_workspace_path(
-            dataset_candidate,
+        # Resolved against the caller's CWD, never the SDK install dir: on an
+        # installed SDK that is site-packages, which rejected every project
+        # file (#2511, the sibling #1244 missed).
+        resolved_dataset = _resolve_user_cli_path(
+            Path(dataset_path),
             "Dataset file",
             must_exist=True,
         )
-
-        output_candidate = Path(output_path)
-        if not output_candidate.is_absolute():
-            output_candidate = Path.cwd() / output_candidate
-        resolved_output = _resolve_workspace_path(output_candidate, "Output file")
+        resolved_output = _resolve_user_cli_path(
+            Path(output_path),
+            "Output file",
+            for_write=True,
+        )
         resolved_output.parent.mkdir(parents=True, exist_ok=True)
 
         effective_identifier = dataset_identifier or str(resolved_dataset)
@@ -993,7 +967,7 @@ def report_example_map(
                 )
 
         serialized = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
-        safe_write_text(resolved_output, serialized, WORKSPACE_ROOT)
+        safe_write_text(resolved_output, serialized, resolved_output.parent)
     except click.ClickException:
         raise
     except Exception as exc:
@@ -1665,7 +1639,7 @@ def export(
         else:
             output_path = Path(output)
 
-        output_path = output_path.expanduser()
+        output_path = _resolve_user_cli_path(output_path, "Output file", for_write=True)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Build export data based on format
@@ -1711,7 +1685,7 @@ def export(
         safe_write_text(
             output_path,
             json.dumps(export_data, indent=2, default=str),
-            WORKSPACE_ROOT,
+            output_path.parent,
             encoding="utf-8",
         )
 

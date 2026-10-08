@@ -1,3 +1,5 @@
+import asyncio
+import threading
 import time
 
 import pytest
@@ -54,16 +56,31 @@ async def test_local_evaluator_respects_max_workers():
     assert res_seq.metrics is not None
     assert res_par.metrics is not None
     # Parallel run should be significantly faster (rough heuristic)
-    assert dur_par < dur_seq * 0.75, (
+    _failure_detail = (
         f"Expected parallel < 75% of sequential, got {dur_par:.3f} vs {dur_seq:.3f}"
     )
+    assert dur_par < dur_seq * 0.75, _failure_detail
 
 
 @pytest.mark.asyncio
 async def test_orchestrator_parallel_trials(monkeypatch):
-    # Create a simple function and decorate with optimize
-    # Build dataset of 4 examples
+    """trial_concurrency=2 runs trials at the same time; =1 never does.
+
+    Counts overlapping executions of the decorated function directly instead
+    of comparing two wall-clock runs: each ``optimize()`` carries ~14 s of
+    fixed overhead around ~0.4 s of work, so a duration ratio measured xdist
+    load, not parallelism (#2478).
+
+    The function is async so overlap reflects the orchestrator's trial
+    scheduling alone. (A sync function's calls go through the shared
+    evaluator's worker lane, sized by example_concurrency, which serialises
+    them across trials; that is tracked separately from this test.)
+    """
     ds = _make_dataset(4)
+
+    lock = threading.Lock()
+    active = 0
+    max_active = 0
 
     @traigent.optimize(
         eval_dataset=ds,
@@ -71,11 +88,16 @@ async def test_orchestrator_parallel_trials(monkeypatch):
         objectives=["accuracy"],
         execution_mode="local",
     )
-    def fn(x: int) -> str:
-        # Each call ~0.1s; with trial_concurrency=2 total ~ half of sequential
-        import time as _t
-
-        _t.sleep(0.1)
+    async def fn(x: int) -> str:
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        try:
+            await asyncio.sleep(0.2)
+        finally:
+            with lock:
+                active -= 1
         return f"val-{x}"
 
     # Monkeypatch BackendIntegratedClient to avoid network/backends in orchestrator
@@ -95,37 +117,28 @@ async def test_orchestrator_parallel_trials(monkeypatch):
         backend_mod, "BackendIntegratedClient", lambda *a, **k: _DummyBackend()
     )
 
-    # Run sequential trials (trial_concurrency=1)
-    t0 = time.time()
-    await fn.optimize(
-        algorithm="random",
-        configuration_space={"p": [1, 2, 3, 4]},
-        max_trials=4,
-        parallel_config={"example_concurrency": 1, "trial_concurrency": 1},
-        timeout=10.0,
-        callbacks=[],
-    )
-    t1 = time.time()
-    dur_seq = t1 - t0
+    async def _peak_concurrency(trial_concurrency: int) -> int:
+        nonlocal max_active
+        max_active = 0
+        await fn.optimize(
+            algorithm="random",
+            configuration_space={"p": [1, 2, 3, 4]},
+            max_trials=4,
+            parallel_config={
+                "example_concurrency": 1,
+                "trial_concurrency": trial_concurrency,
+            },
+            timeout=10.0,
+            callbacks=[],
+        )
+        assert active == 0
+        return max_active
 
-    # Run parallel trials (trial_concurrency=2)
-    t2 = time.time()
-    await fn.optimize(
-        algorithm="random",
-        configuration_space={"p": [1, 2, 3, 4]},
-        max_trials=4,
-        parallel_config={"example_concurrency": 1, "trial_concurrency": 2},
-        timeout=10.0,
-        callbacks=[],
-    )
-    t3 = time.time()
-    dur_par = t3 - t2
-
-    # Heuristic check with jitter tolerance: parallel execution should not
-    # regress materially vs sequential under shared CI runners.
-    assert dur_par <= dur_seq * 1.20, (
-        f"Expected parallel trials within 20% of sequential: {dur_par:.3f} vs {dur_seq:.3f}"
-    )
+    # Control: sequential trials with one example at a time never overlap,
+    # which shows the counter is not trivially high.
+    assert await _peak_concurrency(1) == 1
+    # Two trials in flight: their example calls must overlap.
+    assert await _peak_concurrency(2) == 2
 
 
 @pytest.mark.asyncio

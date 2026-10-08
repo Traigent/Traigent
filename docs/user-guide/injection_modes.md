@@ -622,7 +622,7 @@ Understanding **when** to use each config access method is critical:
 | Lifecycle Phase | Access Method | Description |
 |-----------------|---------------|-------------|
 | **During/After Optimization** | `traigent.get_config()` | Unified accessor inside your optimized function. Works during trials and after `apply_best_config()`. |
-| **During Optimization** | `traigent.get_trial_config()` | Returns the config being tested in the current trial. Deprecated; prefer `traigent.get_config()` unless you need explicit trial-only access. |
+| **During Optimization** | `traigent.get_trial_config()` | Returns the config being tested in the current trial, and raises outside a trial. Prefer `traigent.get_config()` unless you need explicit trial-only access. |
 | **After Optimization** | `result.best_config` | The best configuration found, returned in `OptimizationResult`. Recommended for most post-optimization use. |
 | **After Optimization** | `func.current_config` | The config currently applied to the function (same as `best_config` after optimization). |
 
