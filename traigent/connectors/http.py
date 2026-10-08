@@ -64,7 +64,9 @@ class _HeaderGuardTransport(httpx.AsyncBaseTransport):
     @staticmethod
     def _host_for(url: httpx.URL) -> str:
         default_port = 443 if url.scheme == "https" else 80
-        return url.host if url.port in (None, default_port) else f"{url.host}:{url.port}"
+        return (
+            url.host if url.port in (None, default_port) else f"{url.host}:{url.port}"
+        )
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         for name in tuple(request.headers):

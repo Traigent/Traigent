@@ -403,7 +403,9 @@ def test_http_kernel_never_forwards_cookies_shared_protocol_transport():
                 request.headers["Cookie"] = self.cookie
             received_cookies.append(request.headers.get("cookie"))
             self.cookie = "session=one"
-            return httpx.Response(200, headers={"set-cookie": self.cookie}, request=request)
+            return httpx.Response(
+                200, headers={"set-cookie": self.cookie}, request=request
+            )
 
     one = HttpKernel(
         "https://same.example",
