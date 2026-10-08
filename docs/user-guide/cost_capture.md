@@ -12,7 +12,7 @@ not know, and what a trial reports when nothing was captured.
 
 | Client | Captured when | Notes |
 | --- | --- | --- |
-| LangChain `ChatOpenAI.invoke`, `ChatAnthropic.invoke`, Bedrock chat models | always (patched by the evaluator) | synchronous `invoke` only: `ainvoke`/`abatch` are not captured yet ([#2445](https://github.com/Traigent/Traigent/issues/2445)); `stream`/`astream` capture the last chunk, which carries usage only with `stream_usage=True` |
+| LangChain `ChatOpenAI` and `ChatAnthropic` `invoke`/`ainvoke` (and `batch`/`abatch`, which go through them), Bedrock chat models (same methods) | always (patched by the evaluator) | `stream`/`astream` capture the last chunk, which carries usage only with `stream_usage=True` |
 | `litellm.completion` / `litellm.acompletion` | always (patched by the evaluator) | streaming calls are not captured |
 | Traigent's `BedrockChatClient` | always | |
 | Raw OpenAI SDK: `openai.OpenAI` / `openai.AsyncOpenAI` `chat.completions.create` and `completions.create` | the OpenAI override is active (see below) | non-streaming calls that return `usage` |

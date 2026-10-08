@@ -734,7 +734,7 @@ def test_default_sized_unmeasured_run_stops_at_the_safety_limit(
         "more trials",
         "max_total_examples caps the total examples and also counts as your "
         "explicit consent, but does not raise max_trials",
-        "async .ainvoke/.abatch are not captured",
+        ".invoke/.ainvoke/.batch/.abatch",
         "docs/user-guide/cost_capture.md",
         "enable_openai_optimization()",
         "TRAIGENT_FALLBACK_TRIAL_LIMIT",
@@ -1052,3 +1052,101 @@ async def test_simple_scoring_lane_charges_every_captured_call(clean_capture):
             "only the first captured call of the example was charged (#2444)"
         )
         assert row.metrics["total_tokens"] == 2 * (PROMPT_TOKENS + COMPLETION_TOKENS)
+
+
+# --------------------------------------------------------------------------
+# LangChain async entry points (#2445)
+# --------------------------------------------------------------------------
+
+
+def _langchain_chat(**kwargs: Any) -> Any:
+    langchain_openai = pytest.importorskip("langchain_openai")
+    from traigent.utils.langchain_interceptor import (
+        patch_langchain_for_metadata_capture,
+    )
+
+    patch_langchain_for_metadata_capture()
+    return langchain_openai.ChatOpenAI(
+        model=KNOWN_MODEL,
+        api_key="test-key",  # pragma: allowlist secret
+        base_url="https://gateway.invalid/v1",
+        http_client=httpx.Client(transport=httpx.MockTransport(_handler())),
+        http_async_client=httpx.AsyncClient(transport=httpx.MockTransport(_handler())),
+        max_retries=0,
+        **kwargs,
+    )
+
+
+@pytest.fixture
+def real_llm_path(monkeypatch):
+    """The capture wrappers return a canned reply in mock mode; these tests
+    exercise the real (mock-transport) provider path."""
+    monkeypatch.delenv("TRAIGENT_MOCK_LLM", raising=False)
+    monkeypatch.delenv("TRAIGENT_GENERATE_MOCKS", raising=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry_point", ["ainvoke", "abatch", "batch"])
+async def test_langchain_async_and_batch_calls_are_captured(
+    entry_point, real_llm_path, clean_capture
+):
+    llm = _langchain_chat()
+
+    async def agent(question: str) -> str:
+        if entry_point == "ainvoke":
+            message = await llm.ainvoke(question)
+        elif entry_point == "abatch":
+            (message,) = await llm.abatch([question])
+        else:
+            (message,) = llm.batch([question])
+        return message.content
+
+    result = await _evaluator().evaluate(agent, {"model": KNOWN_MODEL}, _dataset())
+    _assert_measured(result, KNOWN_MODEL, n=2)
+
+
+def test_async_langchain_agent_is_not_cut_at_the_fallback_limit(
+    monkeypatch, tmp_path, real_llm_path, clean_capture
+):
+    # Before #2445 every ainvoke trial was unmeasured, so a run with no
+    # explicit size stopped at TRAIGENT_FALLBACK_TRIAL_LIMIT (4 here) instead
+    # of running all 6 configurations.
+    from traigent.core.optimized_function import OptimizedFunction
+
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
+    monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
+    monkeypatch.setenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", "4")
+    llm = _langchain_chat()
+
+    async def agent(question: str) -> str:
+        return (await llm.ainvoke(question)).content
+
+    async def custom_evaluator(func, config, example):
+        output = await func(**example.input_data)
+        return ExampleResult(
+            example_id=example.input_data["question"],
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output=output,
+            metrics={"accuracy": 1.0},
+            execution_time=0.0,
+            success=True,
+            error_message=None,
+            metadata={},
+        )
+
+    opt_func = OptimizedFunction(
+        func=agent,
+        configuration_space={"temperature": [i / 10 for i in range(6)]},
+        objectives=["accuracy"],
+        eval_dataset=_dataset(),
+        custom_evaluator=custom_evaluator,
+    )
+    result = opt_func.optimize_sync(algorithm="grid", progress_bar=False)
+
+    assert len(result.trials) == 6
+    assert result.stop_reason != "cost_limit"
+    assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" not in result.warning_codes
+    in_cost, out_cost = cost_from_tokens(PROMPT_TOKENS, COMPLETION_TOKENS, KNOWN_MODEL)
+    for trial in result.trials:
+        assert trial.metrics["total_cost"] == pytest.approx(2 * (in_cost + out_cost))

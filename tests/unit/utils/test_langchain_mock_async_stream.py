@@ -116,7 +116,11 @@ def mock_off() -> Any:
 @pytest.mark.asyncio
 async def test_ainvoke_wrapper_calls_original_when_mock_off() -> None:
     calls: list[tuple[Any, ...]] = []
-    sentinel = object()
+
+    class _Response:  # the provider response, which ainvoke now also captures (#2445)
+        pass
+
+    sentinel = _Response()
 
     async def original(self: Any, *args: Any, **kwargs: Any) -> Any:
         calls.append((self, args, kwargs))
@@ -126,6 +130,7 @@ async def test_ainvoke_wrapper_calls_original_when_mock_off() -> None:
     client = object()
     assert await wrapper(client, "hi", stop=["x"]) is sentinel
     assert calls == [(client, ("hi",), {"stop": ["x"]})]
+    assert "response_time_ms" in sentinel.response_metadata
 
 
 @pytest.mark.usefixtures("mock_off")

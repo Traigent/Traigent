@@ -8,7 +8,7 @@ that would otherwise be lost when functions return only strings.
 
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -386,13 +386,35 @@ def _mock_ai_message(provider: str, client: Any, *, chunk: bool = False) -> Any:
     return response
 
 
-def _create_ainvoke_wrapper(original_meth: Any, provider: str = "unknown") -> Any:
+def _create_ainvoke_wrapper(
+    original_meth: Any, provider: str = "unknown", *, instrumented: bool = False
+) -> Any:
+    """Mock ``ainvoke`` in mock mode (#2424); otherwise capture it the way the
+    patched ``invoke`` does (#2445).
+
+    ``abatch`` and other async entry points that go through ``ainvoke`` are
+    covered by the same wrapper.
+    """
+
     async def ainvoke_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         if _mock_enabled(provider):
             return _mock_ai_message(provider, self)
-        # Mock off: the original call, unchanged (no capture was ever
-        # attached to ainvoke, and adding one is out of scope for #2424).
-        return await original_meth(self, *args, **kwargs)
+
+        start_time = time.perf_counter()
+        if instrumented:
+            with instrumented_provider_call():
+                response = await original_meth(self, *args, **kwargs)
+        else:
+            response = await original_meth(self, *args, **kwargs)
+        response_time_ms = (time.perf_counter() - start_time) * 1000
+
+        if not hasattr(response, "response_metadata"):
+            response.response_metadata = {}
+        response.response_metadata["response_time_ms"] = response_time_ms
+        capture_observed_response(
+            response, provider=provider, requested_model=requested_model_of(self)
+        )
+        return response
 
     return ainvoke_wrapper
 
@@ -441,7 +463,7 @@ def _create_astream_wrapper(original_meth: Any, provider: str = "unknown") -> An
     return astream_wrapper
 
 
-_METHOD_WRAPPERS = {
+_METHOD_WRAPPERS: dict[str, Callable[..., Any]] = {
     "ainvoke": _create_ainvoke_wrapper,
     "stream": _create_stream_wrapper,
     "astream": _create_astream_wrapper,
@@ -625,7 +647,13 @@ def patch_langchain_for_metadata_capture() -> bool:
                 setattr(
                     ChatOpenAI,
                     meth_name,
-                    _METHOD_WRAPPERS[meth_name](original_meth, provider="openai"),
+                    _METHOD_WRAPPERS[meth_name](
+                        original_meth,
+                        provider="openai",
+                        # Mirrors invoke: the openai call LangChain makes
+                        # underneath must not be captured a second time.
+                        **({"instrumented": True} if meth_name == "ainvoke" else {}),
+                    ),
                 )
                 setattr(ChatOpenAI, flag, True)
                 logger.info(f"✅ Patched ChatOpenAI.{meth_name} for metadata capture")
