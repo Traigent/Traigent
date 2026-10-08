@@ -4,11 +4,14 @@ from datetime import UTC, datetime
 from email.utils import format_datetime
 import threading
 import time
+import errno
+import socket
 
 import pytest
 
 from traigent.connectors.http import (
     ConnectionCredentials,
+    CleanupDeadlineExceeded,
     DeadlineExceeded,
     HttpKernel,
     HttpResponse,
@@ -512,6 +515,210 @@ def test_http_kernel_cancellation_closes_streams():
     with pytest.raises(DeadlineExceeded):
         kernel.request("GET", "/")
     assert streams and streams[0].closed
+
+
+def test_http_kernel_timeout_cleanup_completes_within_budget():
+    httpx = pytest.importorskip("httpx")
+    workers = []
+    closed = []
+
+    class SlowClosingStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            await asyncio.sleep(10)
+            yield b"x"
+
+        async def aclose(self):
+            await asyncio.sleep(0.06)
+            closed.append("stream")
+
+    class SlowClosingTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            workers.append(threading.current_thread())
+            return httpx.Response(200, request=request, stream=SlowClosingStream())
+
+        async def aclose(self):
+            await asyncio.sleep(0.06)
+            closed.append("client")
+
+    kernel = HttpKernel(
+        "https://safe.example",
+        ConnectionCredentials("x"),
+        deadline=0.5,
+        _test_transport_factory=SlowClosingTransport,
+    )
+    started = time.monotonic()
+    with pytest.raises(DeadlineExceeded):
+        kernel.request("GET", "/")
+    elapsed = time.monotonic() - started
+    assert elapsed <= 0.5
+    assert closed == ["stream", "client"]
+    assert workers and not workers[0].is_alive()
+
+
+@pytest.mark.parametrize("successful_response", [False, True])
+def test_http_kernel_reports_unfinished_cleanup(successful_response):
+    httpx = pytest.importorskip("httpx")
+    release_cleanup = threading.Event()
+    cleanup_started = threading.Event()
+    cleanup_finished = threading.Event()
+    workers = []
+
+    class UnfinishedCleanupTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            workers.append(threading.current_thread())
+            if not successful_response:
+                await asyncio.sleep(10)
+            return httpx.Response(200, request=request)
+
+        async def aclose(self):
+            cleanup_started.set()
+            while not release_cleanup.is_set():
+                await asyncio.sleep(0.001)
+            cleanup_finished.set()
+
+    kernel = HttpKernel(
+        "https://safe.example",
+        ConnectionCredentials("x"),
+        deadline=0.1,
+        _test_transport_factory=UnfinishedCleanupTransport,
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises(CleanupDeadlineExceeded, match="cleanup deadline"):
+            kernel.request("GET", "/")
+        assert time.monotonic() - started <= 0.4
+        assert cleanup_started.is_set()
+        assert not cleanup_finished.is_set()
+        assert workers and workers[0].is_alive()
+    finally:
+        release_cleanup.set()
+        for worker in workers:
+            worker.join(timeout=1)
+    assert cleanup_finished.is_set()
+    assert all(not worker.is_alive() for worker in workers)
+
+
+def test_http_kernel_timeout_closes_real_socket_127_0_0_1():
+    httpx = pytest.importorskip("httpx")
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+    except OSError as error:
+        listener.close()
+        if error.errno in (errno.EPERM, errno.EACCES):
+            pytest.skip("unverified: sandbox disallows real 127.0.0.1 sockets")
+        raise
+    listener.settimeout(2)
+    port = listener.getsockname()[1]
+    disconnected = threading.Event()
+    server_errors = []
+    active_connections = []
+    workers = []
+
+    def serve():
+        try:
+            connection, _ = listener.accept()
+            with connection:
+                active_connections.append(connection)
+                connection.settimeout(2)
+                request = b""
+                while b"\r\n\r\n" not in request:
+                    chunk = connection.recv(4096)
+                    assert chunk, "client closed before sending complete headers"
+                    request += chunk
+                connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
+                assert connection.recv(1) == b""
+                active_connections.remove(connection)
+                disconnected.set()
+        except BaseException as error:
+            server_errors.append(error)
+
+    class LocalNetworkTransport(httpx.AsyncHTTPTransport):
+        async def handle_async_request(self, request):
+            workers.append(threading.current_thread())
+            # Keep the public HTTPS contract; only this private test transport
+            # maps the request to a real plaintext loopback HTTP server.
+            request.url = httpx.URL(f"http://127.0.0.1:{port}/")
+            return await super().handle_async_request(request)
+
+    server = threading.Thread(target=serve)
+    server.start()
+    kernel = HttpKernel(
+        "https://safe.example",
+        ConnectionCredentials("synthetic"),
+        deadline=0.6,
+        _test_transport_factory=LocalNetworkTransport,
+    )
+    try:
+        started = time.monotonic()
+        with pytest.raises(DeadlineExceeded):
+            kernel.request("GET", "/")
+        assert time.monotonic() - started <= 0.55
+        assert disconnected.wait(0.1), "server did not observe client socket EOF"
+        assert active_connections == []
+        assert workers and not workers[0].is_alive()
+    finally:
+        server.join(timeout=2.5)
+        listener.close()
+    assert not server.is_alive()
+    assert server_errors == []
+
+
+def test_http_kernel_cancel_races_loop_close(monkeypatch):
+    httpx = pytest.importorskip("httpx")
+    release_cleanup = threading.Event()
+    loop_closed = threading.Event()
+    workers = []
+    new_event_loop = asyncio.new_event_loop
+    caller = threading.current_thread()
+
+    def racing_event_loop():
+        loop = new_event_loop()
+        is_closed = loop.is_closed
+        close = loop.close
+
+        def racing_is_closed():
+            result = is_closed()
+            if threading.current_thread() is caller and not result:
+                release_cleanup.set()
+                # Force the worker to close between the check and scheduling
+                # unless the same lock protects both that check and close.
+                loop_closed.wait(0.05)
+            return result
+
+        def tracked_close():
+            close()
+            loop_closed.set()
+
+        monkeypatch.setattr(loop, "is_closed", racing_is_closed)
+        monkeypatch.setattr(loop, "close", tracked_close)
+        return loop
+
+    class RacingTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            workers.append(threading.current_thread())
+            await asyncio.sleep(10)
+            return httpx.Response(200, request=request)
+
+        async def aclose(self):
+            while not release_cleanup.is_set():
+                await asyncio.sleep(0.001)
+
+    monkeypatch.setattr(asyncio, "new_event_loop", racing_event_loop)
+    kernel = HttpKernel(
+        "https://safe.example",
+        ConnectionCredentials("x"),
+        deadline=0.1,
+        _test_transport_factory=RacingTransport,
+    )
+    try:
+        with pytest.raises(DeadlineExceeded):
+            kernel.request("GET", "/")
+        assert loop_closed.is_set()
+        assert workers and not workers[0].is_alive()
+    finally:
+        release_cleanup.set()
 
 
 def test_http_kernel_aclose_releases_pool():

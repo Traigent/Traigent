@@ -39,6 +39,10 @@ class DeadlineExceeded(TimeoutError):
     """Closed failure used when a connector call exceeds its total budget."""
 
 
+class CleanupDeadlineExceeded(DeadlineExceeded):
+    """The worker did not finish cleanup within the bounded shutdown grace."""
+
+
 class _RejectCookies(DefaultCookiePolicy):
     """Prevent bearer-authenticated connector sessions from accepting cookies."""
 
@@ -194,21 +198,29 @@ class HttpKernel:
     ) -> HttpResponse:
         """Execute one call in its own loop and bound caller-side shutdown.
 
-        ``asyncio.timeout`` protects the I/O coroutine; the future timeout also
-        covers worker startup and prevents a sync caller from waiting forever for
-        cancellation cleanup.
+        Reserve time inside the deadline for stream and client cleanup. The
+        caller also establishes loop closure and worker termination before
+        returning; unfinished cleanup raises a distinct bounded failure.
         """
         started_at = time.monotonic()
         deadline_at = started_at + self._deadline
+        io_deadline_at = deadline_at - min(0.2, self._deadline / 2)
+        shutdown_at = deadline_at + 0.25
         completed: Future[HttpResponse] = Future()
         finished = threading.Event()
         cancel_requested = threading.Event()
+        closing_client = threading.Event()
         state_lock = threading.Lock()
         state: dict[str, Any] = {"loop": None, "task": None}
 
         def cancel_task() -> None:
             task = state["task"]
-            if task is not None and not task.done():
+            if (
+                task is not None
+                and not task.done()
+                and not task.cancelling()
+                and not closing_client.is_set()
+            ):
                 task.cancel()
 
         def run_in_worker() -> None:
@@ -222,9 +234,12 @@ class HttpKernel:
                     follow_redirects=False,
                     transport=transport,
                 ) as client:
-                    return await self._request_async(
-                        client, method, path, headers, timeout, deadline_at
-                    )
+                    try:
+                        return await self._request_async(
+                            client, method, path, headers, timeout, io_deadline_at
+                        )
+                    finally:
+                        closing_client.set()
 
             task = loop.create_task(run_call())
             with state_lock:
@@ -239,8 +254,11 @@ class HttpKernel:
             else:
                 completed.set_result(response)
             finally:
-                loop.close()
-                finished.set()
+                with state_lock:
+                    try:
+                        loop.close()
+                    finally:
+                        finished.set()
 
         worker = threading.Thread(target=run_in_worker, daemon=True)
         worker.start()
@@ -252,10 +270,17 @@ class HttpKernel:
                 loop = state["loop"]
                 if loop is not None and not loop.is_closed():
                     loop.call_soon_threadsafe(cancel_task)
-            # Cleanup is bounded; a misbehaving private test double cannot hold
-            # a synchronous connector caller beyond the documented grace period.
-            finished.wait(timeout=max(0.0, deadline_at + 0.2 - time.monotonic()))
             raise DeadlineExceeded("connector request deadline exceeded") from error
+        finally:
+            if not finished.wait(timeout=max(0.0, shutdown_at - time.monotonic())):
+                raise CleanupDeadlineExceeded(
+                    "connector cleanup deadline exceeded; worker is unfinished"
+                )
+            worker.join(timeout=max(0.0, shutdown_at - time.monotonic()))
+            if worker.is_alive():
+                raise CleanupDeadlineExceeded(
+                    "connector cleanup deadline exceeded; worker is unfinished"
+                )
 
     async def aclose(self) -> None:
         """Idempotent lifecycle hook; calls do not retain clients or pools."""
