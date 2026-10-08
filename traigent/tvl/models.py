@@ -277,7 +277,11 @@ class ChanceConstraint:
 
     Attributes:
         name: Metric identifier to constrain.
-        threshold: Target value the metric must satisfy.
+        threshold: Allowed violation rate in [0, 1]; the promotion gate passes
+            the constraint when the upper confidence bound on the observed
+            violation rate is at or below it. ``from_dict`` (the spec and
+            discovery path) enforces the range; direct construction does not
+            (see ``SafetyConstraint.to_chance_constraint``).
         confidence: Confidence level for the constraint (0 < confidence <= 1).
     """
 
@@ -600,6 +604,22 @@ class ConvergenceCriteria:
         )
 
 
+def _optional_budget_int(data: dict[str, Any], key: str) -> int | None:
+    """Read an integer budget field without truncating a fraction.
+
+    ``tvl.schema.json`` types ``max_trials`` and ``max_wallclock_s`` as
+    integers. ``int()`` alone would turn 1.9 into 1 and report 0.5 as 0, and
+    it raises ``OverflowError`` on infinity. Integral floats such as 3.0 are
+    accepted, as JSON Schema does.
+    """
+    value = data.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
+        raise ValueError(f"exploration.budgets.{key} must be an integer, got {value!r}")
+    return int(value)
+
+
 @dataclass(slots=True)
 class ExplorationBudgets:
     """Hard limits on exploration from TVL 0.9.
@@ -617,14 +637,12 @@ class ExplorationBudgets:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ExplorationBudgets:
         """Create ExplorationBudgets from dict representation."""
-        max_trials = data.get("max_trials")
         max_spend = data.get("max_spend_usd")
-        max_wallclock = data.get("max_wallclock_s")
 
         return cls(
-            max_trials=int(max_trials) if max_trials is not None else None,
+            max_trials=_optional_budget_int(data, "max_trials"),
             max_spend_usd=float(max_spend) if max_spend is not None else None,
-            max_wallclock_s=int(max_wallclock) if max_wallclock is not None else None,
+            max_wallclock_s=_optional_budget_int(data, "max_wallclock_s"),
         )
 
     def __post_init__(self) -> None:
