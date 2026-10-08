@@ -65,13 +65,13 @@ from traigent.cloud.models import (
     TrialResultSubmission,
     TrialSuggestion,
 )
+
+# Import refactored sub-modules
+from traigent.cloud.privacy_operations import PrivacyOperations
 from traigent.cloud.session_budgets import (
     is_cost_budget_armed_session,
     remember_cost_budget_armed_session,
 )
-
-# Import refactored sub-modules
-from traigent.cloud.privacy_operations import PrivacyOperations
 from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.session_types import SessionCreationResult
 from traigent.cloud.subset_selection import SmartSubsetSelector
@@ -229,7 +229,8 @@ def _envelope_error_code(response: Any) -> str | None:
     """The standard error envelope's ``error_code``, if it is a plain token."""
     try:
         payload = response.json()
-    except ValueError:  # silent-ok: the HTTP status already reports the failure; an unreadable error body only means "no error code"
+    except ValueError:
+        # silent-ok: HTTP status reports failure; unreadable JSON has no error code.
         return None
     if not isinstance(payload, dict):
         return None
@@ -1774,6 +1775,7 @@ class BackendIntegratedClient:
         include_full_history: bool = False,
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
+        stop_reason: str | None = None,
     ) -> OptimizationFinalizationResponse:
         """Finalize optimization session and get results.
         Delegates to session_operations module. Phase 8: an optional
@@ -1785,6 +1787,7 @@ class BackendIntegratedClient:
             include_full_history,
             certified_selection=certified_selection,
             session_aggregation=session_aggregation,
+            **({"stop_reason": stop_reason} if stop_reason is not None else {}),
         )
 
     async def delete_session(self, session_id: str, cascade: bool = True) -> bool:
@@ -1798,6 +1801,7 @@ class BackendIntegratedClient:
         include_full_history: bool = False,
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
+        stop_reason: str | None = None,
     ) -> OptimizationFinalizationResponse | None:
         """Synchronous wrapper for finalize_session.
         Delegates to session_operations module."""
@@ -1806,6 +1810,7 @@ class BackendIntegratedClient:
             include_full_history,
             certified_selection=certified_selection,
             session_aggregation=session_aggregation,
+            **({"stop_reason": stop_reason} if stop_reason is not None else {}),
         )
 
     def delete_session_sync(self, session_id: str, cascade: bool = True) -> bool:

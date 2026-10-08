@@ -1230,6 +1230,7 @@ class SessionOperations:
         include_full_history: bool = False,
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
+        stop_reason: str | None = None,
     ) -> OptimizationFinalizationResponse:
         """Finalize optimization session and get results.
 
@@ -1312,6 +1313,7 @@ class SessionOperations:
                     mapping.experiment_run_id,
                     certified_selection=certified_selection,
                     session_aggregation=session_aggregation,
+                    **({"stop_reason": stop_reason} if stop_reason is not None else {}),
                 )
             except CloudServiceError:
                 raise
@@ -1540,6 +1542,7 @@ class SessionOperations:
         experiment_run_id: str | None,
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
+        stop_reason: str | None = None,
     ) -> dict[str, Any] | None:
         """Call backend session finalization endpoint.
 
@@ -1584,6 +1587,8 @@ class SessionOperations:
                 finalize_body: dict[str, Any] = {
                     "reason": "sdk_explicit_finalization",
                 }
+                if stop_reason is not None:
+                    finalize_body["stop_reason"] = stop_reason
                 if experiment_run_id is not None:
                     finalize_body["experiment_run_id"] = experiment_run_id
                 if certified_selection is not None:
@@ -1760,6 +1765,7 @@ class SessionOperations:
         include_full_history: bool = False,
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
+        stop_reason: str | None = None,
     ) -> OptimizationFinalizationResponse | None:
         """Synchronous wrapper for finalize_session."""
         import concurrent.futures
@@ -1777,6 +1783,11 @@ class SessionOperations:
                         include_full_history,
                         certified_selection=certified_selection,
                         session_aggregation=session_aggregation,
+                        **(
+                            {"stop_reason": stop_reason}
+                            if stop_reason is not None
+                            else {}
+                        ),
                     )
                 )
             finally:

@@ -37,6 +37,7 @@ from traigent.core.execution_policy_runtime import (
     SOURCE_EXPLICIT_LOCAL,
     SOURCE_LOCAL_FALLBACK,
     SOURCE_OFFLINE,
+    CloudBrainUnavailableError,
     backend_egress_disabled,
     exception_status,
     failure_reason_from_code,
@@ -1060,6 +1061,11 @@ class BackendSessionManager:
         call emits a single, prominent warning; subsequent calls are quiet so a
         long run doesn't spam one warning per trial.
         """
+        if policy_requires_cloud(policy_from_config(self._traigent_config)):
+            raise CloudBrainUnavailableError(
+                context,
+                "required cloud tracking did not acknowledge the operation",
+            )
         self._runtime_degraded = True
         self._fallback_reason = context
         # A runtime degradation carries no typed SessionCreationFailureReason.
@@ -2499,6 +2505,8 @@ class BackendSessionManager:
             and auth_manager.has_api_key()
         )
         if not has_api_key:
+            if policy_requires_cloud(policy_from_config(self._traigent_config)):
+                self._flag_backend_degraded("trial submission without credentials")
             logger.debug(
                 "Skipping backend trial submission for session %s trial %s (no API key)",
                 session_id,
@@ -2527,6 +2535,8 @@ class BackendSessionManager:
                 )
 
         if session_mapping is None:
+            if policy_requires_cloud(policy_from_config(self._traigent_config)):
+                self._flag_backend_degraded("trial submission without session mapping")
             logger.info(
                 "No backend session mapping for %s; assuming offline fallback. "
                 "Skipping remote submission for trial %s.",
@@ -2669,7 +2679,8 @@ class BackendSessionManager:
                 # layer already logged an INFO message; don't flag backend degraded
                 # and don't re-log here so the user isn't flooded with warnings for
                 # a known transient condition.  Recover via `traigent sync`.
-                pass
+                if policy_requires_cloud(policy_from_config(self._traigent_config)):
+                    self._flag_backend_degraded("trial submission")
             elif not submitted:
                 # False covers a real backend rejection (non-2xx that is not a
                 # transient not-found) or a network failure; degrade to local-only
@@ -2706,6 +2717,8 @@ class BackendSessionManager:
                     status,
                     sorted(metrics_payload.keys()),
                 )
+        except CloudBrainUnavailableError:
+            raise
         except Exception as exc:
             # A raised error here is a backend interaction failure; the run is
             # no longer cloud-tracked for this trial, so degrade to local-only
@@ -3097,6 +3110,7 @@ class BackendSessionManager:
         optimization_status: OptimizationStatus,
         certified_selection: dict[str, Any] | None = None,
         session_aggregation: dict[str, Any] | None = None,
+        stop_reason: str | None = None,
     ) -> dict[str, Any] | None:
         """Finalize backend session and return summary.
 
@@ -3152,6 +3166,11 @@ class BackendSessionManager:
                             final_status == "completed",
                             certified_selection=report,
                             session_aggregation=session_aggregation,
+                            **(
+                                {"stop_reason": stop_reason}
+                                if stop_reason is not None
+                                else {}
+                            ),
                         )
                     )
                 else:
@@ -3160,6 +3179,11 @@ class BackendSessionManager:
                         final_status == "completed",
                         certified_selection=report,
                         session_aggregation=session_aggregation,
+                        **(
+                            {"stop_reason": stop_reason}
+                            if stop_reason is not None
+                            else {}
+                        ),
                     )
 
                 if _finalize_acknowledged(result):

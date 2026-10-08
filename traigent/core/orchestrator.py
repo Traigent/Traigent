@@ -4,10 +4,9 @@
 
 from __future__ import annotations
 
-import dataclasses
-
 import asyncio
 import copy
+import dataclasses
 import inspect
 import math
 import os
@@ -4420,6 +4419,11 @@ class OptimizationOrchestrator:
                             self._status,
                             certified_selection=certified_selection,
                             session_aggregation=agg_payload,
+                            **(
+                                {"stop_reason": self._stop_reason}
+                                if self._stop_reason is not None
+                                else {}
+                            ),
                         )
                     finally:
                         self._session_finalized = True
@@ -4565,6 +4569,7 @@ class OptimizationOrchestrator:
             self.backend_session_manager.finalize_session(
                 session_id,
                 OptimizationStatus.FAILED,
+                stop_reason=terminal_reason,
             )
         except Exception as finalize_error:
             logger.warning(
