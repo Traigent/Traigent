@@ -285,13 +285,13 @@ def _typed_accuracy_equality(actual: Any, expected: Any) -> bool:
 
 def _accuracy_values_match(actual: Any, expected: Any) -> bool:
     """Return whether two accuracy values match under SDK exact-match semantics."""
-    original_actual = actual
     if isinstance(actual, str) and not isinstance(expected, str):
         actual, coerced = _coerce_string_to_expected_type(actual, expected)
         if coerced:
+            # Types only: the raw output is example content and does not
+            # belong in a routine console diagnostic (#2499).
             logger.warning(
-                "Coercing string output %r to %s for exact-match accuracy comparison",
-                original_actual,
+                "Coercing string output to %s for exact-match accuracy comparison",
                 type(expected).__name__,
             )
 
@@ -338,10 +338,8 @@ def _accuracy_values_match(actual: Any, expected: Any) -> bool:
         except ValueError:
             return False
         logger.warning(
-            "Coercing string output %r and expected %r to numeric for "
-            "exact-match accuracy comparison",
-            actual,
-            expected,
+            "Coercing string output and expected value to numeric for "
+            "exact-match accuracy comparison"
         )
         return math.isclose(
             actual_num,
