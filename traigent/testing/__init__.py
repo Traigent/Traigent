@@ -117,6 +117,19 @@ def enable_mock_mode_for_quickstart() -> None:
                 "and anthropic.messages.create(...) calls are not intercepted and "
                 "can hit the real provider API."
             )
+    # Install the LLM interceptors now, not lazily at the first
+    # LocalEvaluator construction (#2416): the caller asked for interception,
+    # so a litellm/LangChain call made before the first optimize run (a
+    # warm-up call, ExampleSynthesizer's callback) must be mocked too.
+    # Outside the lock: installing imports litellm, which can take seconds.
+    _install_mock_interceptors()
+
+
+def _install_mock_interceptors() -> None:
+    """Install the SDK's mock-aware LLM interceptors (idempotent)."""
+    from traigent.evaluators.local import _ensure_metadata_capture_patches
+
+    _ensure_metadata_capture_patches()
 
 
 def disable_mock_mode() -> None:
