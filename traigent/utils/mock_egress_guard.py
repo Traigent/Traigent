@@ -77,6 +77,9 @@ _BASE_URL_ENV_VARS: tuple[str, ...] = (
 _install_lock = threading.Lock()
 _installed = False
 _warned = False
+# Protections that could not be installed (e.g. a private httpx hook moved in a
+# newer release). Filled by install_mock_egress_guard(); see unavailable_protections().
+_unavailable: list[str] = []
 
 
 class MockEgressBlockedError(RuntimeError):
@@ -134,7 +137,8 @@ def _check_url(url: Any) -> None:
     global _warned
     message = (
         f"Traigent MOCK MODE blocked an outgoing request to model provider "
-        f"'{host}'. Mock mode never reaches a provider, but this call is not "
+        f"'{host}'. Mock mode blocks HTTP requests from httpx/httpx2 and requests "
+        f"to known model providers; this call is not "
         f"intercepted (raw openai/anthropic clients and LLM calls bound "
         f"before Traigent patched them are not mocked). Route the call through "
         f"`import litellm; litellm.completion(...)` or a LangChain chat "
@@ -144,6 +148,28 @@ def _check_url(url: Any) -> None:
         _warned = True
         logger.error(message)
     raise MockEgressBlockedError(message)
+
+
+def unavailable_protections() -> tuple[str, ...]:
+    """Names of guard protections that could not be installed in this process.
+
+    Empty when every hook was installed. Non-empty means some redirect hops (or
+    other paths) are NOT checked, and the guard's coverage is weaker than the
+    module docstring describes.
+    """
+    return tuple(_unavailable)
+
+
+def _mark_unavailable(client: str) -> None:
+    if client in _unavailable:
+        return
+    _unavailable.append(client)
+    logger.warning(
+        "redirect-hop protection unavailable for %s: the private httpx "
+        "_send_single_request hook is missing, so redirect hops are not checked "
+        "by the mock-mode egress guard",
+        client,
+    )
 
 
 def _wrap_httpx(httpx: Any) -> None:
@@ -163,6 +189,7 @@ def _wrap_httpx(httpx: Any) -> None:
 
     # ``send`` only sees the first URL; the redirect loop issues each hop
     # through ``_send_single_request``, so check there as well.
+    name = httpx.__name__
     if hasattr(httpx.Client, "_send_single_request"):
         original_single = httpx.Client._send_single_request
 
@@ -171,6 +198,8 @@ def _wrap_httpx(httpx: Any) -> None:
             return original_single(self, request)
 
         httpx.Client._send_single_request = send_single
+    else:
+        _mark_unavailable(f"{name}.Client")
     if hasattr(httpx.AsyncClient, "_send_single_request"):
         original_asingle = httpx.AsyncClient._send_single_request
 
@@ -179,6 +208,8 @@ def _wrap_httpx(httpx: Any) -> None:
             return await original_asingle(self, request)
 
         httpx.AsyncClient._send_single_request = asend_single
+    else:
+        _mark_unavailable(f"{name}.AsyncClient")
 
 
 def install_mock_egress_guard() -> bool:

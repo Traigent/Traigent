@@ -305,3 +305,28 @@ def test_quickstart_installs_guard_and_is_inert_before_mock_mode():
     assert out == "MockEgressBlockedError"
     first = _run_fresh("import traigent\n" + _PROBE, {})
     assert first == "ALLOWED"
+
+
+def test_missing_redirect_hook_is_surfaced_not_silent(monkeypatch, caplog):
+    """If httpx drops ``_send_single_request``, the gap must be visible."""
+    import logging
+
+    import httpx
+
+    from traigent.utils import mock_egress_guard as guard
+
+    monkeypatch.setattr(guard, "_installed", False)
+    monkeypatch.setattr(guard, "_unavailable", [])
+    monkeypatch.delattr(httpx.Client, "_send_single_request")
+
+    caplog.set_level(logging.WARNING, logger=guard.__name__)
+    guard.install_mock_egress_guard()
+
+    listing = guard.unavailable_protections()
+    assert "httpx.Client" in listing
+    assert "httpx.AsyncClient" not in listing
+    assert any(
+        "redirect-hop protection unavailable for httpx.Client" in r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.WARNING
+    )
