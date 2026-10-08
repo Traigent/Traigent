@@ -35,6 +35,7 @@ class _CaptureBucket:
 
     responses: list[Any] = field(default_factory=list)
     by_key: dict[str, Any] = field(default_factory=dict)
+    responses_by_key: dict[Any, list[Any]] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
     #: Provider/model versions observed from REAL provider responses in this
     #: trial (content identity v1, ``ObservedProviderVersionV1``), keyed by
@@ -86,6 +87,12 @@ def inside_instrumented_provider_call() -> bool:
     return _instrumented_call.get()
 
 
+_NO_CORRELATION = object()
+_correlation_key: ContextVar[Any] = ContextVar(
+    "traigent_example_capture_key", default=_NO_CORRELATION
+)
+
+
 class capture_scope:
     """Give the enclosing trial its own capture buffer (Traigent#2387).
 
@@ -133,6 +140,7 @@ class LangChainMetadataCapture:
         self._all_responses: list[Any] = []
         self._response_lock = threading.Lock()
         # Map correlation keys (e.g., example_id) to responses
+        self._responses_by_key: dict[Any, list[Any]] = {}
         self._by_key: dict[str, Any] = {}
         self._by_key_lock = threading.Lock()
         # Current correlation key in thread local
@@ -154,7 +162,11 @@ class LangChainMetadataCapture:
                 del self._storage.responses[:overflow]
             logger.debug("Captured LangChain response with metadata")
 
-        key = getattr(self._key_local, "current_key", None)
+        key = _correlation_key.get()
+        if key is _NO_CORRELATION:
+            key = getattr(self._key_local, "current_key", None)
+            if key is None:
+                key = _NO_CORRELATION
 
         # Route into the trial's own buffer when one is active (Traigent#2387).
         # Without a scope this falls back to the process-global list, which is
@@ -163,16 +175,18 @@ class LangChainMetadataCapture:
         if bucket is not None:
             with bucket.lock:
                 bucket.responses.append(response)
-                if key is not None:
+                if key is not _NO_CORRELATION:
                     bucket.by_key[key] = response
+                    bucket.responses_by_key.setdefault(key, []).append(response)
             return
 
         with self._response_lock:
             self._all_responses.append(response)
 
-        if key is not None:
+        if key is not _NO_CORRELATION:
             with self._by_key_lock:
                 self._by_key[key] = response
+                self._responses_by_key.setdefault(key, []).append(response)
 
     def get_last_response(self) -> Any | None:
         """Get and clear the last LangChain response."""
@@ -211,14 +225,27 @@ class LangChainMetadataCapture:
             with bucket.lock:
                 bucket.responses.clear()
                 bucket.by_key.clear()
+                bucket.responses_by_key.clear()
         else:
             with self._response_lock:
                 self._all_responses.clear()
             with self._by_key_lock:
                 self._by_key.clear()
+                self._responses_by_key.clear()
 
         if hasattr(self._key_local, "current_key"):
             self._key_local.current_key = None
+
+    def responses_by_key(self) -> dict[Any, list[Any]]:
+        """Snapshot every call per example before the evaluation buffer is drained."""
+        bucket = _capture_scope.get()
+        if bucket is not None:
+            with bucket.lock:
+                return {
+                    key: list(values) for key, values in bucket.responses_by_key.items()
+                }
+        with self._by_key_lock:
+            return {key: list(values) for key, values in self._responses_by_key.items()}
 
     # Key management
     def set_current_key(self, key: Any) -> None:
@@ -307,6 +334,11 @@ def get_captured_response_by_key(key: Any) -> Any | None:
     return _metadata_capture.get_by_key(key)
 
 
+def get_captured_responses_by_key() -> dict[Any, list[Any]]:
+    """Snapshot response lists grouped by their owning example."""
+    return _metadata_capture.responses_by_key()
+
+
 def clear_captured_responses() -> None:
     """Clear all captured responses."""
     _metadata_capture.clear()
@@ -325,11 +357,13 @@ def langchain_metadata_context():
 @contextmanager
 def capture_key(key: Any):
     """Context manager to associate subsequent captured responses with a key."""
+    token = _correlation_key.set(key)
     try:
         _metadata_capture.set_current_key(key)
         yield
     finally:
         _metadata_capture.clear_current_key()
+        _correlation_key.reset(token)
 
 
 def _mock_enabled(provider: str) -> bool:

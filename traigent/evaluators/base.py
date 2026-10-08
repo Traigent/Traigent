@@ -2726,7 +2726,10 @@ class BaseEvaluator(ABC):
         )
 
         try:
-            with self._example_trace_context(example_id, index, example) as span:
+            with (
+                self._example_trace_context(example_id, index, example) as span,
+                self._get_capture_key_context()(example_id),
+            ):
                 output, error = await self._execute_function(
                     func,
                     config,
@@ -3258,15 +3261,18 @@ class BaseEvaluator(ABC):
                     sample_lease, execution_budget_lease
                 )
                 try:
-                    return await self._execute_function(
-                        func,
-                        config,
-                        example.input_data,
-                        executor=None,
-                        worker_started_callback=cleanup_boundary.worker_started,
-                        worker_done_callback=cleanup_boundary.worker_done,
-                        bound_lane_wait=True,
-                    )
+                    with self._get_capture_key_context()(
+                        _example_correlation_key(example, idx)
+                    ):
+                        return await self._execute_function(
+                            func,
+                            config,
+                            example.input_data,
+                            executor=None,
+                            worker_started_callback=cleanup_boundary.worker_started,
+                            worker_done_callback=cleanup_boundary.worker_done,
+                            bound_lane_wait=True,
+                        )
                 except asyncio.CancelledError:
                     cleanup_boundary.cancel()
                     raise
