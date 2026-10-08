@@ -1822,9 +1822,14 @@ def test_health_callback_can_flush_after_batch_delivery_failure():
     callback_finished = threading.Event()
     callback_results: list[BatchFlushResult] = []
 
+    attempts = 0
+
     def sender(traces):
+        nonlocal attempts
         del traces
-        raise AuthenticationError("invalid credentials")
+        attempts += 1
+        if attempts == 1:
+            raise AuthenticationError("invalid credentials")
 
     def health_callback(event_type: str, payload: dict) -> None:
         del payload
@@ -1857,7 +1862,7 @@ def test_health_callback_can_flush_after_batch_delivery_failure():
     assert callback_results[0].items_pending == 0
 
 
-def test_sync_batch_transport_reports_batch_delivery_drops_in_health_snapshot():
+def test_sync_batch_transport_reports_retained_delivery_failure_in_health_snapshot():
     events: list[tuple[str, dict]] = []
     callback_finished = threading.Event()
 
@@ -1883,16 +1888,16 @@ def test_sync_batch_transport_reports_batch_delivery_drops_in_health_snapshot():
     result = transport.flush()
     stats = transport.get_stats()
 
-    assert result.items_dropped == 2
-    assert stats["dropped_by_reason"] == {"batch_delivery_failed": 2}
+    assert result.items_dropped == 0
+    assert result.items_pending == 2
+    assert stats["dropped_by_reason"] == {}
     assert callback_finished.wait(timeout=1.0)
     assert events == [
         (
             "batch_delivery_failed",
             {
-                "drop_reason": "batch_delivery_failed",
-                "dropped_items": 2,
-                "queue_depth": 0,
+                "dropped_items": 0,
+                "queue_depth": 2,
                 "message": "invalid credentials",
                 "item_count": 2,
                 "trace_ids": ["trace_one", "trace_two"],
@@ -1900,6 +1905,8 @@ def test_sync_batch_transport_reports_batch_delivery_drops_in_health_snapshot():
             },
         )
     ]
+    transport._sender = lambda _traces: None
+    transport.close()
 
 
 def test_observability_client_chunks_flushes_by_byte_limit():
@@ -2780,17 +2787,19 @@ class TestDirectClientCallsHonorContentMode:
         gate is one shared enforcement point, not two independent ones."""
         sent_batches: list[list[dict]] = []
         client = _make_recording_client(lambda traces: sent_batches.append(traces))
-        secret = "top-secret-value"
+        sample_content = (
+            "top-secret-value"  # pragma: allowlist secret (fictional redaction canary)
+        )
 
         @observe("decorated-call", client=client, content_mode=mode)
         def decorated(value):
             return {"answer": f"derived from {value}"}
 
-        decorated(secret)
+        decorated(sample_content)
 
         direct_trace_id = client.start_trace(
             "direct-call",
-            input_data={"args": [secret], "kwargs": {}},
+            input_data={"args": [sample_content], "kwargs": {}},
             content_mode=mode,
         )
         client.record_observation(
@@ -2798,13 +2807,13 @@ class TestDirectClientCallsHonorContentMode:
             name="direct-call",
             observation_type=ObservationType.SPAN,
             status="completed",
-            input_data={"args": [secret], "kwargs": {}},
-            output_data={"answer": f"derived from {secret}"},
+            input_data={"args": [sample_content], "kwargs": {}},
+            output_data={"answer": f"derived from {sample_content}"},
             content_mode=mode,
         )
         client.end_trace(
             direct_trace_id,
-            output_data={"answer": f"derived from {secret}"},
+            output_data={"answer": f"derived from {sample_content}"},
             content_mode=mode,
         )
 
@@ -4045,13 +4054,18 @@ def test_observability_retry_exhaustion_runs_real_retry_handler(monkeypatch):
         )
     )
 
-    events = client._transport._send_batch([("trace_retry_exhausted", {"id": "trace"})])
+    delivered, events = client._transport._send_batch(
+        [("trace_retry_exhausted", {"id": "trace"})]
+    )
     stats = client._transport.get_stats()
+    client._transport._sender = lambda _traces: None
     client.close()
 
+    assert not delivered
     assert attempts == 3
     assert stats["failed_batches"] == 1
-    assert stats["dropped_items"] == 1
+    assert stats["dropped_items"] == 0
+    assert stats["queue_depth"] == 1
     assert stats["errors"]
     assert events
 
@@ -5013,10 +5027,10 @@ class TestM5FullPipelineNumericExemption:
         client.start_trace(
             "m5-root-counterexamples-trace",
             metadata={
-                "passwd": "hunter2",
+                "passwd": "hunter2",  # pragma: allowlist secret (fictional redaction canary)
                 "jwt": "eyJhbGciOiJIUzI1NiJ9.secret.sig",
                 "bearer": "some-bearer-value",
-                "privateKey": "not-a-real-key-placeholder",
+                "privateKey": "not-a-real-key-placeholder",  # pragma: allowlist secret (fictional redaction canary)
                 "authStuff": "should also be masked",
             },
             content_mode="record",
@@ -5197,7 +5211,10 @@ class TestA4KeyBasedScrubbingCoverage:
         client.start_trace(
             "prompt-reference-secret-trace",
             prompt_reference=PromptReferenceDTO(
-                name="greeting", variables={"api_key": "sk-shouldnotship"}
+                name="greeting",
+                variables={
+                    "api_key": "sk-shouldnotship",  # pragma: allowlist secret (fictional redaction canary)
+                },
             ),
         )
         client.flush()
@@ -6413,9 +6430,8 @@ class TestFinding2RealTransportInterleavingRegression:
             index = next(call_index)
             if index == paused_call_index:
                 entered_pause.set()
-                assert proceed.wait(timeout=5.0), (
-                    "test never released the paused transport submission"
-                )
+                wait_message = "test never released the paused transport submission"
+                assert proceed.wait(timeout=5.0), wait_message
                 scrub_armed["on"] = True
             return real_prepare_payload(self, payload, state=state)
 
@@ -6450,9 +6466,8 @@ class TestFinding2RealTransportInterleavingRegression:
         )
         paused_thread.start()
 
-        assert entered_pause.wait(timeout=5.0), (
-            "paused submission never reached the transport prepare step"
-        )
+        wait_message = "paused submission never reached the transport prepare step"
+        assert entered_pause.wait(timeout=5.0), wait_message
 
         # Mutate the SAME trace from this (the main) thread while the
         # first observation's snapshot submission is paused: complete it,
@@ -6507,12 +6522,14 @@ class TestFinding2RealTransportInterleavingRegression:
 
         observations = final_payload.get("observations", [])
         observation_ids = {obs["id"] for obs in observations}
-        assert observation_ids == {first_observation_id}, (
+        observation_message = (
             f"expected only the frozen observation, got {observation_ids}"
         )
+        assert observation_ids == {first_observation_id}, observation_message
         matching = next(
             obs for obs in observations if obs["id"] == first_observation_id
         )
-        assert matching["status"] == "running", (
+        status_message = (
             f"expected the FROZEN pre-mutation status, got {matching['status']!r}"
         )
+        assert matching["status"] == "running", status_message
