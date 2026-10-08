@@ -932,10 +932,10 @@ def test_metric_limit_still_requires_non_cost_metrics():
         condition.should_stop([trial])
 
 
-def test_results_table_shows_unmeasured_cost_as_na():
+def test_results_table_shows_unmeasured_cost_as_unmeasured():
     from traigent.utils.results_table import _render_metric_cell
 
-    assert _render_metric_cell("cost", None) == "n/a"
-    assert _render_metric_cell("total_cost", None) == "n/a"
-    assert _render_metric_cell("cost", 0.0) != "n/a"
+    assert _render_metric_cell("cost", None) == "unmeasured"
+    assert _render_metric_cell("total_cost", None) == "unmeasured"
+    assert _render_metric_cell("cost", 0.0) != "unmeasured"
     assert _render_metric_cell("accuracy", None) == _render_metric_cell("accuracy", 0.0)

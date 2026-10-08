@@ -5155,6 +5155,49 @@ class OptimizationOrchestrator:
         elif status == TrialStatus.FAILED:
             self._notify_failed_trial(trial_result, optuna_trial_id)
 
+    def mark_max_trials_sdk_default(self) -> None:
+        """Record that ``max_trials`` is the SDK default, not the user's choice."""
+        self._max_trials_is_sdk_default = True
+
+    def _describe_stop(self) -> str | None:
+        """One sentence saying why this run was cut short, or None.
+
+        Recorded as ``metadata["stop_detail"]`` and printed under the results
+        table, so a run cut by a limit the user never set (the SDK default
+        ``max_trials``, or the unmeasured-cost safety limit) says so instead of
+        ending silently (Traigent#2518).
+        """
+        reason = self._stop_reason
+        trials = len(self._trials)
+        if reason == "max_trials_reached":
+            if getattr(self, "_max_trials_is_sdk_default", False):
+                return (
+                    f"Stopped at {trials} trials: the SDK default max_trials="
+                    f"{self.max_trials} applied because none was passed. Pass "
+                    "max_trials=... to run more."
+                )
+            return f"Stopped at {trials} trials: max_trials={self.max_trials} reached."
+        if reason == "cost_limit":
+            enforcer = getattr(self, "cost_enforcer", None)
+            if enforcer is not None and not enforcer.unknown_cost_cap_waived:
+                status = enforcer.get_status()
+                if status.unknown_cost_mode:
+                    return (
+                        f"Stopped at {trials} trials: cost is unmeasured for "
+                        f"{status.unmeasured_trial_count} of {status.trial_count} "
+                        "trials, so the cost limit cannot bound spend and the "
+                        f"default safety limit of "
+                        f"{enforcer.config.fallback_trial_limit} trials applied "
+                        "(TRAIGENT_FALLBACK_TRIAL_LIMIT). Pass max_trials=... to "
+                        "run more."
+                    )
+            return f"Stopped at {trials} trials: the cost limit was reached."
+        if reason == "max_samples_reached":
+            return f"Stopped at {trials} trials: max_total_examples reached."
+        if reason == "timeout":
+            return f"Stopped at {trials} trials: the timeout elapsed."
+        return None
+
     def waive_unknown_cost_trial_cap(self) -> None:
         """The user sized this run explicitly; see CostEnforcer (#2441)."""
         cost_enforcer = getattr(self, "cost_enforcer", None)
@@ -5331,6 +5374,10 @@ class OptimizationOrchestrator:
         # Only present for warm-started runs; absent otherwise.
         if self._warm_start_from:
             metadata["warm_start_from"] = self._warm_start_from
+
+        stop_detail = self._describe_stop()
+        if stop_detail:
+            metadata["stop_detail"] = stop_detail
 
         # Agent head generation read when this run's step started. A later
         # publish sends this value, not a fresh read, so a head that moved in

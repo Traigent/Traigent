@@ -169,7 +169,12 @@ class ParetoFrontCalculator:
                     if obj in trial.metrics:
                         point_objectives[obj] = trial.metrics[obj]
 
-                if point_objectives:  # Only include points with at least one objective
+                # A trial missing any configured objective (an unmeasured cost
+                # is the common case) cannot be placed on the front: being
+                # incomparable would leave it undominated, so it would sit on
+                # the front on the strength of a measurement it does not have
+                # (Traigent#2446).
+                if point_objectives and len(point_objectives) == len(set(objectives)):
                     points.append(
                         ParetoPoint(
                             config=trial.config,

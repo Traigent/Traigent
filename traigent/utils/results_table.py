@@ -104,6 +104,9 @@ class _Colors:
 # ---------------------------------------------------------------------------
 
 
+_UNMEASURED_CELL = "unmeasured"
+
+
 def _format_config_value(val: Any) -> str:
     if isinstance(val, bool):
         return "Yes" if val else "No"
@@ -129,7 +132,7 @@ def _format_percent_metric(val: float) -> str:
 
 
 def _render_metric_cell(metric: str, raw_value: Any) -> str:
-    """Format one table cell; an unmeasured cost reads "n/a", not "$0.00000".
+    """Format one table cell; an unmeasured cost reads "unmeasured", not "$0.00000".
 
     A trial with no captured LLM usage has an UNKNOWN cost (Traigent#2441), and
     printing it as zero makes it look like the cheapest configuration. Other
@@ -137,7 +140,7 @@ def _render_metric_cell(metric: str, raw_value: Any) -> str:
     """
     value = _coerce_float(raw_value)
     if value is None and "cost" in metric.lower():
-        return "n/a"
+        return _UNMEASURED_CELL
     return _format_metric_value(metric, value or 0.0)
 
 
@@ -520,7 +523,12 @@ def print_results_table(
     # Resolve objectives & metrics present in trial data
     objective_info = _get_objective_info(objectives)
     sample_metrics = trials[0].metrics
-    metric_info = [(n, o) for n, o in objective_info if n in sample_metrics]
+    # A declared cost objective keeps its column even when no trial measured it:
+    # dropping the column would hide the gap, and the cells then read
+    # "unmeasured" rather than a fabricated $0 (Traigent#2517).
+    metric_info = [
+        (n, o) for n, o in objective_info if n in sample_metrics or "cost" in n.lower()
+    ]
     metric_names = [n for n, _ in metric_info]
     param_names = list(config_space.keys())
 
@@ -648,6 +656,11 @@ def print_results_table(
         legend = [f"{C.GREEN}★{C.RESET} Overall Best"]
         legend.extend(f"{C.GREEN}{C.BOLD}{m}{C.RESET} = Best {m}" for m in metric_names)
         _safe_table_print(f"{C.DIM}Legend: {', '.join(legend)}{C.RESET}")
+
+    # A run cut short by a limit says which one (issue #2518).
+    stop_detail = (getattr(results, "metadata", None) or {}).get("stop_detail")
+    if isinstance(stop_detail, str) and stop_detail:
+        _safe_table_print(f"{C.YELLOW}⚠ {stop_detail}{C.RESET}")
 
     # Provenance caveat (issue #2024): a local-fallback run must say so next to
     # the number it produced, not only in a startup log line.

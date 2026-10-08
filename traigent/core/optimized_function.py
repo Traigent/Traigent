@@ -591,8 +591,8 @@ COST_OBJECTIVE_NO_USAGE_WARNING_CODE = "COST_OBJECTIVE_NO_USAGE_CAPTURED"
 
 _NO_USAGE_CAPTURED_MESSAGE = (
     "A cost objective was declared but no LLM usage was captured on any "
-    "trial: every trial recorded $0, so the cost column is UNMEASURED rather "
-    "than zero, and any cost ranking over these trials is meaningless. "
+    "trial: no trial has a measured cost, so the cost column is UNMEASURED "
+    "rather than zero, and any cost ranking over these trials is meaningless. "
     "Traigent captures usage from the response object the optimized function "
     "returns and from `litellm.completion` calls it intercepts; calls made "
     "through a client object the interceptor does not wrap (a provider SDK "
@@ -3766,6 +3766,8 @@ Remediation:
             or max_total_examples_value is not None
         ):
             orchestrator.waive_unknown_cost_trial_cap()
+        if used_implicit_default_max_trials:
+            orchestrator.mark_max_trials_sdk_default()
 
         # Phase 9: Run optimization and finalize
         from traigent.cloud.client import SessionContractError

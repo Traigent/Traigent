@@ -122,6 +122,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **An unmeasured cost is no longer stored, shown or ranked as $0 (#2517, #2518, #2446).**
+  When no LLM usage is captured for an example (for example a raw provider
+  client the interceptors do not wrap), the local lane used to estimate tokens
+  and record `cost: 0.0` as a measurement. The trial now omits `cost` /
+  `total_cost`, sets `cost_unmeasured: 1.0`, keeps the estimated tokens
+  labelled with `tokens_estimated`, and the results table prints `unmeasured`.
+  The Pareto front excludes a trial missing a configured objective and the batch
+  composite score no longer rescales over the objectives that remain. A run
+  stopped by the SDK default `max_trials` or the unmeasured-cost safety limit
+  records and prints why (`metadata["stop_detail"]`).
+
 - **`import traigent` no longer imports MLflow (#2436).** With MLflow installed, every
   `import traigent` (and every `@traigent.optimize` run, via
   `traigent/integrations/__init__.py` and

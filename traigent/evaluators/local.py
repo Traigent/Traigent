@@ -793,6 +793,10 @@ class LocalEvaluator(BaseEvaluator):
         example_result.metrics["input_tokens"] = example_metric.tokens.input_tokens
         example_result.metrics["output_tokens"] = example_metric.tokens.output_tokens
         example_result.metrics["total_tokens"] = example_metric.tokens.total_tokens
+        if example_metric.cost.unmeasured:
+            # No captured usage: leave the cost keys out. Unknown is not $0 and
+            # a downstream sum over example costs must not see a zero (#2517).
+            return
         example_result.metrics["input_cost"] = example_metric.cost.input_cost
         example_result.metrics["output_cost"] = example_metric.cost.output_cost
         example_result.metrics["total_cost"] = example_metric.cost.total_cost
@@ -1330,6 +1334,8 @@ class LocalEvaluator(BaseEvaluator):
         example_metric.custom_metrics["total_tokens"] = (
             example_metric.tokens.total_tokens
         )
+        if example_metric.cost.unmeasured:
+            return
         example_metric.custom_metrics["input_cost"] = example_metric.cost.input_cost
         example_metric.custom_metrics["output_cost"] = example_metric.cost.output_cost
         example_metric.custom_metrics["total_cost"] = example_metric.cost.total_cost
@@ -1518,6 +1524,8 @@ class LocalEvaluator(BaseEvaluator):
             if total_cost < 0:
                 logger.warning(f"Negative total_cost clamped: {total_cost} → 0.0")
             metrics.cost.total_cost = max(0.0, float(total_cost))
+            # The agent reported its own spend: a measurement, even if $0 (#2517).
+            metrics.cost.unmeasured = False
             if model_name:
                 from traigent.evaluators.metrics_tracker import (
                     _reconcile_reported_cost_with_tokens,
@@ -2047,7 +2055,7 @@ class LocalEvaluator(BaseEvaluator):
         )
 
         # If cost is in objectives but was computed as 0, use comprehensive value
-        if "cost" in self.metrics and "cost" in comprehensive_metrics:
+        if "cost" in self.metrics and comprehensive_metrics.get("cost") is not None:
             logger.debug(
                 f"LOCAL EVALUATOR DEBUG: aggregated cost="
                 f"{aggregated_metrics.get('cost', 'MISSING')}, "

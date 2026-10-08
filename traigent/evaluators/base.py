@@ -1823,9 +1823,13 @@ class BaseEvaluator(ABC):
                 metric_func = self._metric_registry[metric_name]
                 try:
                     # Call metric function with all available data
-                    metrics[metric_name] = metric_func(
+                    metric_value = metric_func(
                         outputs, expected_outputs, errors, **context
                     )
+                    if metric_value is None and metric_name == "cost":
+                        # Unknown cost stays unknown: no key, never 0.0 (#2517).
+                        continue
+                    metrics[metric_name] = metric_value
                 except Exception as e:
                     is_objective = metric_name in self.metrics
                     error_record = {
@@ -2097,8 +2101,12 @@ class BaseEvaluator(ABC):
         expected: list[Any],
         errors: list[str | None],
         **context,
-    ) -> float:
+    ) -> float | None:
         """Default cost metric - extracts average per-example cost from context.
+
+        Returns ``None`` when every measured example lacks a cost measurement
+        (no usage was captured): the cost is unknown and ``compute_metrics``
+        leaves the key out rather than reporting ``0.0`` (Traigent#2517).
 
         Averaged over every example with a recorded cost MEASUREMENT
         (``ExampleMetrics.measured``, Traigent#2160 sol re-review) -- NOT
@@ -2134,14 +2142,21 @@ class BaseEvaluator(ABC):
             if example_metrics:
                 total_cost = 0.0
                 count = 0
+                unmeasured_rows = 0
                 for metrics in example_metrics:
                     if (
                         metrics
                         and hasattr(metrics, "cost")
                         and getattr(metrics, "measured", True)
                     ):
+                        if getattr(metrics.cost, "unmeasured", False):
+                            # No captured usage: unknown, not $0 (#2517).
+                            unmeasured_rows += 1
+                            continue
                         total_cost += metrics.cost.total_cost
                         count += 1
+                if count == 0 and unmeasured_rows > 0:
+                    return None
                 return total_cost / count if count > 0 else 0.0
 
         # Fallback: look for cost in context directly
