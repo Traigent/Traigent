@@ -18,6 +18,7 @@ from traigent.utils.langchain_interceptor import (
     capture_observed_response,
     instrumented_provider_call,
 )
+from traigent.utils.mock_egress_guard import install_mock_egress_guard
 from traigent.utils.logging import configure_litellm_logging, get_logger
 
 logger = get_logger(__name__)
@@ -45,6 +46,11 @@ def patch_litellm_for_metadata_capture() -> bool:
         True if at least one function was patched, False otherwise.
     """
     patched_any = False
+
+    # Fail-closed backstop: in mock mode, refuse requests to model providers
+    # that bypass the wrappers below (raw provider clients, ``from litellm
+    # import completion`` bound before this patch).
+    install_mock_egress_guard()
 
     try:
         import litellm
