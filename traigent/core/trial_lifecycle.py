@@ -1131,6 +1131,7 @@ class TrialLifecycle:
             ),
             progress_state={"evaluated": 0, "total_examples": total_examples},
             optuna_trial_id=optuna_trial_id,
+            constraint_rejected=True,
         )
         result.error_message = str(error)
         metadata = dict(result.metadata or {})

@@ -14,6 +14,7 @@ Tests cover:
 
 from __future__ import annotations
 
+import logging
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1293,6 +1294,40 @@ class TestRunSequentialTrial:
         assert rejected_trial.status == TrialStatus.PRUNED
         assert rejected_trial.metadata["constraint_rejected"] is True
         assert rejected_trial.metadata["stop_reason"] == "trial_rejected_by_constraint"
+
+    @pytest.mark.asyncio
+    async def test_constraint_rejection_logs_skip_not_pruned_warning(self, caplog):
+        """#2513: a constraint-excluded config is an intended skip, not a warning."""
+        caplog.set_level(logging.INFO, logger="traigent.core.trial_result_factory")
+        orchestrator = MockOrchestrator()
+        orchestrator.max_trials = 10
+
+        def failing_constraint(config, metrics=None):
+            return False
+
+        failing_constraint.__tvl_constraint__ = {"id": "test", "message": "Excluded"}
+        orchestrator._constraints_pre_eval = [failing_constraint]
+        lifecycle = TrialLifecycle(orchestrator)
+
+        async def mock_func(input_data):
+            return "result"
+
+        await lifecycle.run_sequential_trial(
+            func=mock_func,
+            dataset=create_mock_dataset(),
+            session_id=None,
+            function_name="test_func",
+            trial_count=5,
+        )
+
+        factory_records = [
+            r for r in caplog.records if r.name == "traigent.core.trial_result_factory"
+        ]
+        assert not [r for r in factory_records if r.levelno >= logging.WARNING]
+        assert any(
+            "excluded by constraint" in r.getMessage() and r.levelno == logging.INFO
+            for r in factory_records
+        )
 
     @pytest.mark.asyncio
     async def test_constraint_rejection_decrements_optimizer_trial_count(self):

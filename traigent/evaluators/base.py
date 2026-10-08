@@ -289,8 +289,10 @@ def _accuracy_values_match(actual: Any, expected: Any) -> bool:
         actual, coerced = _coerce_string_to_expected_type(actual, expected)
         if coerced:
             # Types only: the raw output is example content and does not
-            # belong in a routine console diagnostic (#2499).
-            logger.warning(
+            # belong in a routine console diagnostic (#2499). DEBUG: this is
+            # the normal structured-output path and fires once per example,
+            # so at WARNING it buried real errors in run logs (#2513).
+            logger.debug(
                 "Coercing string output to %s for exact-match accuracy comparison",
                 type(expected).__name__,
             )
@@ -337,7 +339,7 @@ def _accuracy_values_match(actual: Any, expected: Any) -> bool:
             expected_num = float(expected.strip())
         except ValueError:
             return False
-        logger.warning(
+        logger.debug(
             "Coercing string output and expected value to numeric for "
             "exact-match accuracy comparison"
         )
