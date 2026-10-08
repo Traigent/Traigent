@@ -42,7 +42,6 @@ from traigent.core.trial_result_factory import (
 from traigent.core.types import TrialResult, TrialStatus
 from traigent.evaluators.base import Dataset
 from traigent.utils.error_handler import APIKeyError
-from traigent.utils.langchain_interceptor import capture_scope
 from traigent.utils.exceptions import (
     InsufficientFundsError,
     OptimizationError,
@@ -53,6 +52,7 @@ from traigent.utils.exceptions import (
     TVLConstraintError,
     VendorPauseError,
 )
+from traigent.utils.langchain_interceptor import capture_scope
 from traigent.utils.logging import get_logger
 
 from .tracing import record_trial_result, trial_span
@@ -1392,10 +1392,12 @@ class TrialLifecycle:
                     if trial_result.metadata
                     else 0
                 ),
+                # An unmeasured trial has no total_cost; upload it as unknown
+                # (null), never as a measured $0 (#2446).
                 cost_usd=(
-                    trial_result.metrics.get("total_cost", 0.0)
+                    trial_result.metrics.get("total_cost")
                     if trial_result.metrics
-                    else 0.0
+                    else None
                 ),
                 input_data={"config": trial_result.config},
                 output_data={"metrics": trial_result.metrics},

@@ -275,9 +275,9 @@ def max_tokens_constraint(config):
 
 ```python
 def cost_constraint(config, metrics=None):
-    if metrics and metrics.get("cost", 0) > 0.10:
-        return False
-    return True
+    cost = (metrics or {}).get("cost")
+    # An unmeasured cost is None: reject it rather than treat it as $0.
+    return cost is not None and cost <= 0.10
 
 @traigent.optimize(
     constraints=[cost_constraint],
@@ -614,7 +614,7 @@ def answer_question(question: str) -> str:
     },
     constraints=[
         lambda cfg: cfg["max_tokens"] <= 500 if cfg["model"] == "gpt-4" else True,
-        lambda cfg, metrics: metrics.get("cost", 0) <= 0.10 if metrics else True,
+        lambda cfg, metrics: metrics.get("cost") is not None and metrics["cost"] <= 0.10,
     ],
     evaluation={"eval_dataset": "support_tickets.jsonl"},
     parallel_config={"thread_workers": 4},

@@ -141,7 +141,8 @@ class SpanPayload:
     # Metrics
     input_tokens: int = 0
     output_tokens: int = 0
-    cost_usd: float = 0.0
+    #: ``None`` means the cost is unknown (no usage captured), not $0 (#2446).
+    cost_usd: float | None = 0.0
 
     # Data
     input_data: dict[str, Any] | None = None

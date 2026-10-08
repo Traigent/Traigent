@@ -113,11 +113,14 @@ warning names the coverage.
 The same holds for a `cost` objective: a trial with no measured example has
 no `cost` (or `None` under strict nulls), never `0.0`. The results table shows
 it as `n/a`. Weighted `best_config` selection counts a missing cost as the
-worst cost, so there an unmeasured trial does not win on cost. Other surfaces
-do not handle it yet: the Pareto front keeps unmeasured trials, the batch
-composite score ignores the missing cost, a constraint written as
-`metrics.get("cost", 0) <= limit` accepts them, and workflow spans upload
-`cost_usd: 0.0` ([#2446](https://github.com/Traigent/Traigent/issues/2446)).
+worst cost, so there an unmeasured trial does not win on cost. Workflow
+spans upload an unmeasured trial's `cost_usd` as `null`. A metrics constraint
+must check for the missing value itself: `metrics.get("cost", 0) <= limit`
+accepts an unmeasured trial, while
+`metrics.get("cost") is not None and metrics["cost"] <= limit` rejects it.
+Two surfaces do not handle it yet: the Pareto front keeps unmeasured trials,
+and the batch composite score ignores the missing cost
+([#2446](https://github.com/Traigent/Traigent/issues/2446)).
 A `metric_limit` on a cost metric leaves unmeasured trials out of its running
 total rather than failing the run. Two run-level warnings say what happened:
 

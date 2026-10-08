@@ -1485,3 +1485,44 @@ class TestCancelledErrorPropagation:
                 trial_number=0,
                 session_id=None,
             )
+
+
+# =============================================================================
+# Workflow span cost (#2446)
+# =============================================================================
+
+
+class TestWorkflowSpanCost:
+    """An unmeasured trial's span must carry an unknown cost, never $0."""
+
+    @staticmethod
+    def _collect(metrics: dict) -> object:
+        from datetime import UTC, datetime
+
+        orchestrator = MagicMock()
+        orchestrator._optimization_id = "opt-1"
+        lifecycle = TrialLifecycle(orchestrator)
+        trial = TrialResult(
+            trial_id="t1",
+            config={"model": "m"},
+            metrics=metrics,
+            status=TrialStatus.COMPLETED,
+            duration=1.0,
+            timestamp=datetime.now(UTC),
+        )
+        lifecycle._collect_workflow_span("t1", trial, 0.0, 1.0)
+        (call,) = orchestrator.collect_workflow_span.call_args_list
+        return call.args[0]
+
+    def test_unmeasured_trial_span_cost_is_null(self):
+        span = self._collect({"accuracy": 1.0})
+        assert span.cost_usd is None
+        assert span.to_dict()["cost_usd"] is None
+
+    def test_measured_trial_span_cost_is_the_trial_total(self):
+        span = self._collect({"accuracy": 1.0, "total_cost": 0.0042})
+        assert span.to_dict()["cost_usd"] == pytest.approx(0.0042)
+
+    def test_measured_free_trial_span_cost_stays_zero(self):
+        span = self._collect({"accuracy": 1.0, "total_cost": 0.0})
+        assert span.to_dict()["cost_usd"] == 0.0

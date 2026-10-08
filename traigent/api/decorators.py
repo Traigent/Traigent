@@ -32,7 +32,7 @@ Examples:
     ...     },
     ...     constraints=[
     ...         lambda config: config["temperature"] < 0.8 if config["model"] == "gpt-4" else True,
-    ...         lambda config, metrics: metrics.get("cost", 0) <= 0.10
+    ...         lambda config, metrics: metrics.get("cost") is not None and metrics["cost"] <= 0.10
     ...     ]
     ... )
     ... def process_ticket(ticket: str) -> str:
@@ -54,22 +54,15 @@ if TYPE_CHECKING:
     from traigent.api.constraints import BoolExpr, Constraint
     from traigent.api.safety import CompoundSafetyConstraint, SafetyConstraint
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    PrivateAttr,
-    field_validator,
-    model_validator,
-)
-
 # Aliased on purpose. This module imports Traigent's own ``ValidationError`` from
 # ``traigent.utils.exceptions`` below, which binds that name for the rest of the
 # file, so a bare ``except ValidationError`` here would never catch a pydantic
 # failure. There are currently zero ``except ValidationError`` sites in this
 # module, so the shadowing is a latent trap for future code rather than a live
 # bug; the alias keeps the pydantic class reachable under an unambiguous name.
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from pydantic import ValidationError as PydanticValidationError
+from pydantic import field_validator, model_validator
 
 from traigent.api.functions import _GLOBAL_CONFIG
 from traigent.api.parameter_ranges import (
@@ -106,8 +99,8 @@ from traigent.core.objectives import (
 from traigent.core.optimized_function import (
     _REMOVED_MOCK_PARAMETERS,
     OptimizedFunction,
-    _removed_mock_parameter_message,
     _reject_removed_strategy_preset,
+    _removed_mock_parameter_message,
 )
 from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -2798,7 +2791,7 @@ def optimize(  # NOSONAR(S107)
         ...     },
         ...     constraints=[
         ...         lambda cfg: cfg["max_tokens"] <= 500 if cfg["model"] == "gpt-4" else True,
-        ...         lambda cfg, metrics: metrics.get("cost", 0) <= 0.10
+        ...         lambda cfg, metrics: metrics.get("cost") is not None and metrics["cost"] <= 0.10
         ...     ]
         ... )
         ... def handle_ticket(ticket: str) -> str:
