@@ -93,8 +93,10 @@ export TRAIGENT_CUSTOM_MODEL_PRICING_JSON='{
 ```
 
 The key must be the model name Traigent prices. In the custom-evaluator lane
-that is the trial's `model` setting when the configuration has one, otherwise
-the model the response reports.
+each call is priced at the model its response reports, so a judge or router
+call on another model is charged at that model's rate. The trial's `model`
+setting is used when the response reports no model, or reports one Traigent
+cannot price.
 
 ## When nothing was captured
 

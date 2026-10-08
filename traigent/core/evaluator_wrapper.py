@@ -158,7 +158,18 @@ class CustomEvaluatorWrapper(BaseEvaluator):
     def _extract_model_from_response(
         self, response: Any, config: dict[str, Any]
     ) -> str | None:
-        """Extract model name from response or config.
+        """Pick the model one captured response is priced at.
+
+        The response's own model wins when it is priced: an example can make
+        calls on other models than the trial's (a judge or router on a cheaper
+        model), and pricing every call at ``config["model"]`` charged those at
+        the agent model's rate (#2443). ``LocalEvaluator`` already prices judge
+        calls by the model each response reports.
+
+        ``config["model"]`` stays the fallback, used when the response names no
+        model or names one Traigent cannot price (for example a gateway that
+        reports an internal alias while custom pricing is keyed on the
+        configured name).
 
         Args:
             response: The captured response object
@@ -167,13 +178,20 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         Returns:
             Model name or None
         """
-        model_name: str | None = config.get("model")
-        if model_name:
-            return model_name
+        config_model: str | None = config.get("model") or None
+        response_model = self._model_reported_by_response(response)
+        if response_model and response_model != config_model:
+            if not config_model or self._model_is_priced(response_model):
+                return response_model
+        return config_model or response_model
 
+    @staticmethod
+    def _model_reported_by_response(response: Any) -> str | None:
+        """The model a captured response says it came from, if any."""
         if not response:
             return None
 
+        model_name: str | None = None
         # Check for model in response metadata (LangChain pattern)
         if hasattr(response, "response_metadata") and isinstance(
             response.response_metadata, dict
@@ -190,7 +208,17 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         if not model_name and hasattr(response, "model_name"):
             model_name = cast(str | None, response.model_name)
 
-        return model_name
+        return model_name if isinstance(model_name, str) and model_name else None
+
+    @staticmethod
+    def _model_is_priced(model_name: str) -> bool:
+        """True when Traigent resolves a non-zero price for ``model_name``."""
+        try:
+            from traigent.utils.cost_calculator import model_has_nonzero_price_coverage
+
+            return model_has_nonzero_price_coverage(model_name)
+        except Exception:  # noqa: BLE001 - pricing lookup must not break capture
+            return False
 
     def _reconstruct_original_prompt(self, example: Any) -> list[dict[str, str]]:
         """Reconstruct original prompt from example input.

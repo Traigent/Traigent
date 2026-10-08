@@ -98,7 +98,7 @@ def _handler(*, usage: bool = True):
 
 def _sync_client(*, usage: bool = True) -> Any:
     return openai.OpenAI(
-        api_key="test-key",
+        api_key="test-key",  # pragma: allowlist secret
         base_url="https://gateway.invalid/v1",
         http_client=httpx.Client(transport=httpx.MockTransport(_handler(usage=usage))),
         max_retries=0,
@@ -107,7 +107,7 @@ def _sync_client(*, usage: bool = True) -> Any:
 
 def _async_client(*, usage: bool = True) -> Any:
     return openai.AsyncOpenAI(
-        api_key="test-key",
+        api_key="test-key",  # pragma: allowlist secret
         base_url="https://gateway.invalid/v1",
         http_client=httpx.AsyncClient(
             transport=httpx.MockTransport(_handler(usage=usage))
@@ -939,3 +939,80 @@ def test_results_table_shows_unmeasured_cost_as_na():
     assert _render_metric_cell("total_cost", None) == "n/a"
     assert _render_metric_cell("cost", 0.0) != "n/a"
     assert _render_metric_cell("accuracy", None) == _render_metric_cell("accuracy", 0.0)
+
+
+# --------------------------------------------------------------------------
+# Per-call model pricing (#2443)
+# --------------------------------------------------------------------------
+
+
+def _captured_completion(model: str | None) -> Any:
+    """Record one OpenAI-shaped response the way an instrumented wrapper does."""
+    from openai.types.chat import ChatCompletion
+
+    from traigent.utils.langchain_interceptor import capture_langchain_response
+
+    response = ChatCompletion.model_validate(_completion_body(model or "x"))
+    if model is None:
+        object.__setattr__(response, "model", "")
+    capture_langchain_response(response)
+    return response
+
+
+@pytest.mark.asyncio
+async def test_each_captured_call_is_priced_at_its_own_model():
+    # The agent runs gpt-4o; its judge runs gpt-4o-mini in the same example.
+    # Pricing both at config["model"] charged the judge at gpt-4o's rate.
+    agent_model, judge_model = "gpt-4o", KNOWN_MODEL
+    agent_cost = sum(cost_from_tokens(PROMPT_TOKENS, COMPLETION_TOKENS, agent_model))
+    judge_cost = sum(cost_from_tokens(PROMPT_TOKENS, COMPLETION_TOKENS, judge_model))
+    assert agent_cost != pytest.approx(judge_cost), "test premise: prices differ"
+
+    def agent(question: str) -> str:
+        _captured_completion(agent_model)
+        _captured_completion(judge_model)
+        return "ok"
+
+    clear_captured_responses()
+    result = await _evaluator().evaluate(agent, {"model": agent_model}, _dataset())
+
+    for row in result.example_results:
+        assert row.metrics["total_cost"] == pytest.approx(agent_cost + judge_cost), (
+            "a judge call on another model was priced at the trial's model (#2443)"
+        )
+    assert result.aggregated_metrics["total_cost"] == pytest.approx(
+        2 * (agent_cost + judge_cost)
+    )
+
+
+@pytest.mark.asyncio
+async def test_call_without_a_reported_model_falls_back_to_config_model():
+    agent_model = "gpt-4o"
+    agent_cost = sum(cost_from_tokens(PROMPT_TOKENS, COMPLETION_TOKENS, agent_model))
+
+    def agent(question: str) -> str:
+        _captured_completion(None)
+        return "ok"
+
+    clear_captured_responses()
+    result = await _evaluator().evaluate(agent, {"model": agent_model}, _dataset())
+
+    for row in result.example_results:
+        assert row.metrics["total_cost"] == pytest.approx(agent_cost)
+
+
+@pytest.mark.asyncio
+async def test_unpriced_reported_model_falls_back_to_priced_config_model(
+    alias_pricing,
+):
+    # A gateway that reports an internal name keeps the configured name's price.
+    def agent(question: str) -> str:
+        _captured_completion("acme-internal/unpriced-build-7")
+        return "ok"
+
+    clear_captured_responses()
+    result = await _evaluator().evaluate(agent, {"model": ALIAS_MODEL}, _dataset())
+
+    expected = PROMPT_TOKENS * ALIAS_IN + COMPLETION_TOKENS * ALIAS_OUT
+    for row in result.example_results:
+        assert row.metrics["total_cost"] == pytest.approx(expected)
