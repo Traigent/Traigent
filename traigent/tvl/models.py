@@ -292,10 +292,24 @@ class ChanceConstraint:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ChanceConstraint:
-        """Create ChanceConstraint from dict representation."""
+        """Create ChanceConstraint from dict representation.
+
+        Traigent#1616: a TVL spec's ``chance_constraints[].threshold`` is a
+        probability (``promotion_gate`` compares a Clopper-Pearson bound against
+        it), so a spec value outside [0, 1] is rejected here, mirroring the
+        canonical TVL lint ``invalid_chance_threshold``. The check sits on the
+        spec-parsing path only: ``SafetyConstraint.to_chance_constraint`` builds
+        instances directly from metric thresholds that are not bounded to [0, 1]
+        (see #2204), and that conversion is out of this fix's scope.
+        """
+        threshold = float(data["threshold"])
+        if not 0 <= threshold <= 1:
+            raise ValueError(
+                f"chance constraint threshold must be in [0, 1], got {threshold}"
+            )
         return cls(
             name=data["name"],
-            threshold=float(data["threshold"]),
+            threshold=threshold,
             confidence=float(data["confidence"]),
         )
 
@@ -607,11 +621,36 @@ class ExplorationBudgets:
         max_spend = data.get("max_spend_usd")
         max_wallclock = data.get("max_wallclock_s")
 
-        return cls(
+        budgets = cls(
             max_trials=int(max_trials) if max_trials is not None else None,
             max_spend_usd=float(max_spend) if max_spend is not None else None,
             max_wallclock_s=int(max_wallclock) if max_wallclock is not None else None,
         )
+        budgets.validate()
+        return budgets
+
+    def validate(self) -> None:
+        """Reject budgets the canonical TVL schema rejects.
+
+        Traigent#1616: mirrors ``tvl.schema.json`` ``exploration.budgets``
+        minimums (``max_trials >= 1``, ``max_spend_usd >= 0``,
+        ``max_wallclock_s >= 1``). A ``max_trials: 0`` budget can never run, so it
+        must fail at load time instead of flowing into the runtime overrides.
+        """
+        if self.max_trials is not None and self.max_trials < 1:
+            raise ValueError(
+                f"exploration.budgets.max_trials must be >= 1, got {self.max_trials}"
+            )
+        if self.max_spend_usd is not None and self.max_spend_usd < 0:
+            raise ValueError(
+                "exploration.budgets.max_spend_usd must be >= 0, "
+                f"got {self.max_spend_usd}"
+            )
+        if self.max_wallclock_s is not None and self.max_wallclock_s < 1:
+            raise ValueError(
+                "exploration.budgets.max_wallclock_s must be >= 1, "
+                f"got {self.max_wallclock_s}"
+            )
 
 
 # Type alias for objectives that can be either standard or banded
