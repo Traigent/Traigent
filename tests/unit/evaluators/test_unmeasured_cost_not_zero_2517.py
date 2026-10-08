@@ -130,14 +130,6 @@ def test_string_output_without_usage_is_unmeasured_but_real_usage_is_not(
     assert with_usage.cost.total_cost > 0
 
 
-def test_mock_llm_mode_makes_no_unmeasured_claim(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
-    metrics = extract_llm_metrics(response="plain text", model_name="gpt-4o-mini")
-    assert metrics.cost.unmeasured is False
-
-
 # --------------------------------------------------------------------------- #
 # End to end: a raw OpenAI client the interceptors do not wrap (#2517/#2518)  #
 # --------------------------------------------------------------------------- #

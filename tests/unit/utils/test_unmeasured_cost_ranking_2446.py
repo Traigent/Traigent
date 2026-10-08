@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 import pytest
 
 from traigent.api.types import TrialResult, TrialStatus
+from traigent.optimizers.batch_optimizers import UNMEASURED_COMPOSITE_SCORE
 from traigent.optimizers.registry import get_optimizer
 from traigent.utils.multi_objective import ParetoFrontCalculator
 
@@ -61,7 +62,7 @@ def test_batch_composite_score_never_rewards_a_missing_cost(kind: str) -> None:
     measured = optimizer._calculate_composite_score({"accuracy": 0.8, "cost": 0.05})
     unmeasured = optimizer._calculate_composite_score({"accuracy": 0.95})
 
-    assert measured > float("-inf")
-    # Not scored on quality alone: an unknown cost can never win.
-    assert unmeasured == float("-inf")
+    # Not scored on quality alone: an unknown cost can never win. The score is
+    # finite so it stays strict-JSON serializable.
+    assert unmeasured == UNMEASURED_COMPOSITE_SCORE
     assert unmeasured < measured

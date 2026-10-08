@@ -12,6 +12,7 @@ import asyncio
 import contextvars
 import math
 import numbers
+import sys
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -28,6 +29,11 @@ from traigent.utils.batch_processing import AdaptiveBatchSizer
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+#: Composite score for a trial missing a declared objective (an unmeasured
+#: cost). Finite on purpose: ``-inf`` is not valid strict JSON, so it could not
+#: be serialized with the trial. It ranks below any measured composite score.
+UNMEASURED_COMPOSITE_SCORE = -sys.float_info.max
 
 
 class TrialBatchEvaluator(Protocol):
@@ -375,12 +381,13 @@ class ParallelBatchOptimizer(BaseOptimizer):
         # A declared objective with no measurement (an unmeasured cost) makes
         # the composite unknowable: scalarizing over the remaining weights would
         # score the trial on quality alone with no cost penalty. Such a trial
-        # gets the failed-trial score so it can never be selected (Traigent#2446).
+        # gets the lowest finite score (strict JSON cannot carry -inf), so it
+        # ranks below every measured trial (Traigent#2446).
         if any(
             metrics.get(name) is None or not math.isfinite(metrics[name])
             for name in self.objectives
         ):
-            return float("-inf")
+            return UNMEASURED_COMPOSITE_SCORE
 
         return float(
             scalarize_objectives(
@@ -1099,12 +1106,13 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
         # A declared objective with no measurement (an unmeasured cost) makes
         # the composite unknowable: scalarizing over the remaining weights would
         # score the trial on quality alone with no cost penalty. Such a trial
-        # gets the failed-trial score so it can never be selected (Traigent#2446).
+        # gets the lowest finite score (strict JSON cannot carry -inf), so it
+        # ranks below every measured trial (Traigent#2446).
         if any(
             metrics.get(name) is None or not math.isfinite(metrics[name])
             for name in self.objectives
         ):
-            return float("-inf")
+            return UNMEASURED_COMPOSITE_SCORE
 
         return float(
             scalarize_objectives(

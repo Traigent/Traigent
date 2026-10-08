@@ -28,6 +28,23 @@ def coerce_finite_cost(value: Any) -> float | None:
     return cost if math.isfinite(cost) else None
 
 
+def is_cost_unmeasured(metrics: Any) -> bool:
+    """True when a metrics mapping flags its cost as unmeasured (Traigent#2517).
+
+    Upload and budget paths must omit the cost for such a trial; a default of
+    0.0 (or the score) would record an unknown cost as a measured one.
+    """
+    if not isinstance(metrics, Mapping):
+        return False
+    flag = metrics.get("cost_unmeasured")
+    return (
+        isinstance(flag, (int, float))
+        and not isinstance(flag, bool)
+        and math.isfinite(flag)
+        and flag > 0
+    )
+
+
 def is_finite_numeric_cost(value: Any) -> bool:
     """Return True only for finite JSON numeric cost values."""
 
