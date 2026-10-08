@@ -1,0 +1,187 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/connectors/v1/dataset_revision_summary.json",
+  "title": "Dataset Revision Summary",
+  "description": "Closed summary of one evaluation dataset revision bootstrapped from a connector, produced customer-side. Carries only counts, enums and opaque tokens; never item content, names or labels. Closed schema: any new field or enum value ships as a new schema_version published alongside this one; consumers dispatch on schema_version.",
+  "version": "1.0.0",
+  "definitions": {
+    "OpaqueToken": {
+      "type": "string",
+      "pattern": "^tk_[0-9a-hjkmnp-tv-z]{26}$",
+      "minLength": 29,
+      "maxLength": 29,
+      "description": "Opaque token: prefix tk_ plus 26 lowercase Crockford base32 characters (a random 128-bit value). Minted customer-side from a fresh random 128-bit value per connection; never derived from labels, names or platform identifiers."
+    },
+    "ConnectorKind": {
+      "type": "string",
+      "enum": [
+        "langfuse",
+        "bedrock",
+        "traigent_cloud",
+        "mlflow",
+        "wandb",
+        "langsmith",
+        "n8n",
+        "git_file"
+      ]
+    },
+    "SamplingPolicy": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "all",
+            "random",
+            "stratified",
+            "first_n"
+          ]
+        },
+        "sample_size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "seed": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "ScoreSemantics": {
+      "type": "object",
+      "properties": {
+        "score_token": {
+          "$ref": "#/definitions/OpaqueToken"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "numeric",
+            "boolean",
+            "categorical"
+          ]
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "higher_better",
+            "lower_better",
+            "none"
+          ]
+        }
+      },
+      "required": [
+        "score_token",
+        "type",
+        "direction"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "dataset_token": {
+      "$ref": "#/definitions/OpaqueToken"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "source_connector_kind": {
+      "$ref": "#/definitions/ConnectorKind"
+    },
+    "item_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "holdout_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "approved": {
+      "type": "boolean"
+    },
+    "approval_at": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 32,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$",
+          "description": "RFC 3339 UTC timestamp (trailing Z, no offsets)."
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Approval time; a timestamp when approved is true, null when false."
+    },
+    "sampling_policy": {
+      "$ref": "#/definitions/SamplingPolicy"
+    },
+    "score_semantics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ScoreSemantics"
+      },
+      "maxItems": 256
+    }
+  },
+  "required": [
+    "schema_version",
+    "dataset_token",
+    "revision",
+    "source_connector_kind",
+    "item_count",
+    "holdout_count",
+    "approved",
+    "sampling_policy",
+    "score_semantics",
+    "approval_at"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "approved": {
+            "const": true
+          }
+        },
+        "required": [
+          "approved"
+        ]
+      },
+      "then": {
+        "properties": {
+          "approval_at": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 32,
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$",
+            "description": "RFC 3339 UTC timestamp (trailing Z, no offsets)."
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "approval_at": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}

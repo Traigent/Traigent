@@ -476,3 +476,25 @@ class TestValidateConfigSpaceIsSideEffectFree:
             validate_config_space({"temperature": [0.0], "model": ["a", "b"]})
 
         assert record == []
+
+
+@pytest.mark.parametrize("value", [False, True])
+def test_positive_integer_validation_rejects_boolean_with_type_error(value):
+    result = Validators.validate_positive_int(value, "max_trials")
+    assert not result.is_valid
+    assert result.errors[0].error_code == "TYPE_ERROR"
+    assert result.errors[0].field == "max_trials"
+
+
+class _PositiveIntSubclass(int):
+    pass
+
+
+@pytest.mark.parametrize("value", [1, 10, _PositiveIntSubclass(2)])
+def test_positive_integer_validation_accepts_integer_values(value):
+    assert Validators.validate_positive_int(value, "max_trials").is_valid
+
+
+@pytest.mark.parametrize("value", [0, -1, 1.0, "1", None])
+def test_positive_integer_validation_keeps_existing_rejections(value):
+    assert not Validators.validate_positive_int(value, "max_trials").is_valid

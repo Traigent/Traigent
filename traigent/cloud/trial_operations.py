@@ -47,6 +47,20 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def resolve_privacy_enabled(client: Any) -> bool:
+    """Return the effective privacy-mode flag for a backend client or owner."""
+
+    client_attrs = getattr(client, "__dict__", {})
+    traigent_config = client_attrs.get("traigent_config") or client_attrs.get(
+        "_traigent_config"
+    )
+    if traigent_config is not None:
+        return bool(getattr(traigent_config, "privacy_enabled", False))
+    if "privacy_enabled" in client_attrs:
+        return bool(client_attrs["privacy_enabled"])
+    return False
+
+
 @dataclass(frozen=True)
 class TrialSlotResult:
     """Neutral result for a backend trial-slot request."""
@@ -142,15 +156,7 @@ class TrialOperations:
     def _is_privacy_enabled(self) -> bool:
         """Return the effective privacy-mode flag when this client carries one."""
 
-        client_attrs = getattr(self.client, "__dict__", {})
-        traigent_config = client_attrs.get("traigent_config") or client_attrs.get(
-            "_traigent_config"
-        )
-        if traigent_config is not None:
-            return bool(getattr(traigent_config, "privacy_enabled", False))
-        if "privacy_enabled" in client_attrs:
-            return bool(client_attrs["privacy_enabled"])
-        return False
+        return resolve_privacy_enabled(self.client)
 
     @staticmethod
     def _summarize_actor(info: dict[str, Any] | None) -> str:

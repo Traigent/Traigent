@@ -219,16 +219,6 @@ class TrialResultSubmission:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-# One wording for every client-side boolean-knob guard (#2502). The session
-# API rejects bool choices (#1488); the workaround must not be the
-# "true"/"false" strings, because "false" is truthy and `if config[k]:` would
-# then run the "on" arm for every trial.
-BOOLEAN_KNOB_ENCODING_ADVICE = (
-    "encode the knob as 0/1, or as two distinct strings such as 'on'/'off' "
-    "compared with == in your function. Do not use 'true'/'false': the string "
-    "'false' is truthy, so `if config[...]:` would always take the 'on' branch"
-)
-
 # Contract caps from TraigentSchema optimization_endpoints.json. `agent_key` stops
 # at the backend's agent-name storage limit rather than function_name's 512.
 NARRATIVE_MAX_AGENT_KEY = 255

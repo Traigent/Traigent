@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from traigent.cloud.client import CloudRemoteExecutionUnavailableError
-from traigent.cloud.models import BOOLEAN_KNOB_ENCODING_ADVICE
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
@@ -94,39 +93,6 @@ class TraigentCloudService:
         )
         if not request.configuration_space:
             raise ValidationException("configuration_space must not be empty")
-
-        # Detect boolean values before any network or compute work.
-        # bool is a subclass of int in Python; use type(v) is bool so that
-        # real ints/floats (including 0/1) are NOT mistakenly rejected.
-        # Catches booleans in ALL supported value shapes:
-        #   - scalar bool: {"flag": True}
-        #   - list/tuple of values: {"flag": [True, False]}
-        #   - typed param dict: {"flag": {"type": "categorical", "choices": [True, False]}}
-        def _cs_value_contains_bool(value: Any) -> bool:
-            if type(value) is bool:
-                return True
-            if isinstance(value, (list, tuple)):
-                return any(type(v) is bool for v in value)
-            if isinstance(value, dict):
-                for _key in ("choices", "values"):
-                    seq = value.get(_key)
-                    if isinstance(seq, (list, tuple)) and any(
-                        type(v) is bool for v in seq
-                    ):
-                        return True
-            return False
-
-        _bool_knobs = [
-            key
-            for key, value in request.configuration_space.items()
-            if _cs_value_contains_bool(value)
-        ]
-        if _bool_knobs:
-            _field_refs = ", ".join(f'"{k}"' for k in _bool_knobs)
-            raise ValidationException(
-                f"configuration_space[{_field_refs}]: boolean values are not "
-                f"supported by the cloud session API — {BOOLEAN_KNOB_ENCODING_ADVICE}"
-            )
 
         validate_or_raise(
             CoreValidators.validate_list(
