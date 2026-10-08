@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
@@ -83,6 +84,76 @@ def _read_all(
     raise ConformanceFailure("pagination_loop", "pagination did not terminate")
 
 
+def _freeze(
+    harness: ConnectorHarness, rows: Sequence[Any]
+) -> tuple[list[Any], list[tuple[str, str]]]:
+    """Deep copy and digest rows BEFORE they are handed to the connector."""
+    frozen = copy.deepcopy(list(rows))
+    return frozen, _snapshot(harness, frozen)
+
+
+def _unique(harness: ConnectorHarness, rows: Sequence[Any]) -> list[Any]:
+    seen: set[str] = set()
+    out = []
+    for row in rows:
+        if harness.row_key(row) not in seen:
+            seen.add(harness.row_key(row))
+            out.append(row)
+    return out
+
+
+def _input_intact(
+    harness: ConnectorHarness, rows: Sequence[Any], snapshot: list[tuple[str, str]]
+) -> None:
+    _check(
+        _snapshot(harness, rows) == snapshot,
+        "input_mutated",
+        "the connector modified rows handed to it",
+    )
+
+
+def _expect_committed(
+    harness: ConnectorHarness,
+    conn: Connection,
+    expected: Sequence[Any],
+    keys_reason: str,
+    message: str,
+) -> None:
+    """Wrong rows present -> ``keys_reason``; right rows, wrong content -> rows_mismatch."""
+    got = harness.committed(conn)
+    _check(
+        sorted(harness.row_key(r) for r in got)
+        == sorted(harness.row_key(r) for r in expected),
+        keys_reason,
+        message,
+    )
+    _check(
+        _snapshot(harness, got) == _snapshot(harness, expected),
+        "rows_mismatch",
+        "committed row content differs from the intended content",
+    )
+
+
+def _restart(harness: ConnectorHarness) -> ConnectorHarness:
+    """Crash for real: the old harness is dropped; a fresh one sees only
+    the persisted state the old one reports.
+    """
+    state = harness.persisted_state()
+    try:
+        json.dumps(state)
+    except (TypeError, ValueError):
+        raise ConformanceFailure(
+            "state_not_plain", "persisted state must be plain JSON data"
+        ) from None
+    fresh = harness.from_persisted(copy.deepcopy(state))
+    _check(
+        fresh is not harness,
+        "crash_not_real",
+        "from_persisted must build a new connector, not reuse the old one",
+    )
+    return fresh
+
+
 def case_lost_response(harness: ConnectorHarness) -> None:
     """(a) failure before apply, (b) applied then acknowledgement lost."""
     for fault, applied_before_retry in (
@@ -91,18 +162,22 @@ def case_lost_response(harness: ConnectorHarness) -> None:
     ):
         conn = harness.open_connection(f"lost-{fault}")
         rows = _rows(3, str(fault))
+        frozen, want = _freeze(harness, rows)
         key = f"idem-{fault}"
         harness.arm_fault(Fault(fault))
         _write_expecting_fault(harness, conn, rows, key)
-        expected_pre = _snapshot(harness, rows) if applied_before_retry else []
-        _check(
-            _snapshot(harness, harness.committed(conn)) == expected_pre,
+        _input_intact(harness, rows, want)
+        _expect_committed(
+            harness,
+            conn,
+            frozen if applied_before_retry else [],
             "fault_not_injected",
             "backend state after the fault does not match the injected fault",
         )
         _retry(harness, conn, rows, key)
+        _input_intact(harness, rows, want)
         _check(
-            _snapshot(harness, harness.committed(conn)) == _snapshot(harness, rows),
+            _snapshot(harness, harness.committed(conn)) == want,
             "rows_mismatch",
             "after retry the committed rows differ from the intended rows",
         )
@@ -113,19 +188,43 @@ def case_partial_batch(harness: ConnectorHarness) -> None:
     for size, applied in ((2, 1), (5, 3)):
         conn = harness.open_connection(f"partial-{size}")
         rows = _rows(size, f"p{size}")
+        frozen, want = _freeze(harness, rows)
         key = f"idem-partial-{size}"
         harness.arm_fault(Fault(FaultKind.PARTIAL, applied))
         _write_expecting_fault(harness, conn, rows, key)
-        _check(
-            len(harness.committed(conn)) == applied,
+        _input_intact(harness, rows, want)
+        _expect_committed(
+            harness,
+            conn,
+            frozen[:applied],
             "fault_not_injected",
             "backend did not commit exactly the injected prefix",
         )
         _retry(harness, conn, rows, key)
+        _input_intact(harness, rows, want)
         _check(
-            _snapshot(harness, harness.committed(conn)) == _snapshot(harness, rows),
+            _snapshot(harness, harness.committed(conn)) == want,
             "rows_mismatch",
             "retrying a partially applied batch must converge to each row once",
+        )
+
+
+def case_crash_write(harness: ConnectorHarness) -> None:
+    """Crash between apply and acknowledgement, then retry on a fresh connector."""
+    for fault in (Fault(FaultKind.LOST_ACK), Fault(FaultKind.PARTIAL, 1)):
+        conn = harness.open_connection(f"crashw-{fault.kind}")
+        rows = _rows(3, f"w{fault.kind}")
+        frozen, want = _freeze(harness, rows)
+        key = f"idem-crashw-{fault.kind}"
+        harness.arm_fault(fault)
+        _write_expecting_fault(harness, conn, rows, key)
+        _input_intact(harness, rows, want)
+        harness = _restart(harness)
+        _retry(harness, conn, rows, key)
+        _check(
+            _snapshot(harness, harness.committed(conn)) == want,
+            "rows_mismatch",
+            "retry after a crash must store the intended rows exactly once",
         )
 
 
@@ -133,29 +232,40 @@ def case_duplicate_rows(harness: ConnectorHarness) -> None:
     """Write-side duplicates: replayed idempotency key and repeats in one batch."""
     conn = harness.open_connection("dup")
     rows = _rows(3, "d")
+    frozen, want = _freeze(harness, rows)
     harness.write(conn, rows, "idem-dup")
     harness.write(conn, rows, "idem-dup")
+    _input_intact(harness, rows, want)
     _check(
-        _snapshot(harness, harness.committed(conn)) == _snapshot(harness, rows),
+        _snapshot(harness, harness.committed(conn)) == want,
         "rows_mismatch",
         "replaying an idempotency key must not duplicate rows",
     )
     conn2 = harness.open_connection("dup-batch")
     harness.write(conn2, rows + [rows[0]], "idem-dup-batch")
     _check(
-        _snapshot(harness, harness.committed(conn2)) == _snapshot(harness, rows),
+        _snapshot(harness, harness.committed(conn2)) == want,
         "rows_mismatch",
         "duplicate rows inside one batch must be stored once",
     )
+
+
+def _mutate_in_place(row: Any) -> None:
+    try:
+        row["value"] = "consumer-mutation"
+    except TypeError:
+        pass
 
 
 def case_overlapping_pages(harness: ConnectorHarness) -> None:
     """Read-side duplicates: overlapping pages may repeat rows, never lose or alter."""
     conn = harness.open_connection("overlap")
     rows = _rows(7, "o")
+    frozen, want = _freeze(harness, rows)
     harness.seed(conn, rows, 3, overlap=1)
     first: dict[str, str] = {}
-    for row in _read_all(harness, conn, None):
+    delivered = _read_all(harness, conn, None)
+    for row in delivered:
         key, digest = harness.row_key(row), _digest(row)
         _check(
             first.setdefault(key, digest) == digest,
@@ -163,24 +273,30 @@ def case_overlapping_pages(harness: ConnectorHarness) -> None:
             "a row repeated across pages must be identical",
         )
     _check(
-        sorted(first.items()) == _snapshot(harness, rows),
+        sorted(first.items()) == want,
         "rows_mismatch",
         "overlapping pages must still deliver every row, unaltered",
+    )
+    for row in delivered:  # a consumer editing what it received...
+        _mutate_in_place(row)
+    again = {harness.row_key(r): _digest(r) for r in _read_all(harness, conn, None)}
+    _check(
+        sorted(again.items()) == want,
+        "aliased_rows",
+        "returned rows must not alias the connector's own state",
     )
 
 
 def case_crash_resume(harness: ConnectorHarness) -> None:
     conn = harness.open_connection("resume")
     rows = _rows(7, "r")
+    frozen, want = _freeze(harness, rows)
     harness.seed(conn, rows, 3)
     first = harness.read_page(conn, None)
     checkpoint = first["next_cursor"]
     _check(checkpoint is not None, "harness_incomplete", "data must span two pages")
-    _check(
-        harness.crash() is True,
-        "crash_not_real",
-        "crash() must discard in-memory connector state",
-    )
+    head = list(first["items"])
+    harness = _restart(harness)  # old connector object is gone from here on
     try:
         rest = _read_all(harness, conn, checkpoint)
     except ConformanceFailure:
@@ -190,7 +306,7 @@ def case_crash_resume(harness: ConnectorHarness) -> None:
             "resume_failed", "resume from the persisted checkpoint raised"
         ) from None
     _check(
-        _ordered(harness, list(first["items"]) + rest) == _ordered(harness, rows),
+        _ordered(harness, head + rest) == _ordered(harness, frozen),
         "rows_mismatch",
         "resume must neither lose, repeat nor alter rows",
     )
@@ -199,6 +315,7 @@ def case_crash_resume(harness: ConnectorHarness) -> None:
 def case_expired_cursor(harness: ConnectorHarness) -> None:
     conn = harness.open_connection("expired")
     rows = _rows(6, "e")
+    frozen, want = _freeze(harness, rows)
     harness.seed(conn, rows, 2)
     cursor = harness.read_page(conn, None)["next_cursor"]
     _check(cursor is not None, "harness_incomplete", "data must span two pages")
@@ -212,7 +329,7 @@ def case_expired_cursor(harness: ConnectorHarness) -> None:
             "expiry_not_enforced", "an expired cursor must raise, not return data"
         )
     _check(
-        _ordered(harness, _read_all(harness, conn, None)) == _ordered(harness, rows),
+        _ordered(harness, _read_all(harness, conn, None)) == _ordered(harness, frozen),
         "rows_mismatch",
         "restarting after expiry must read every row unaltered",
     )
@@ -411,13 +528,24 @@ def case_connection_collision(harness: ConnectorHarness) -> None:
     c = harness.open_connection("idem-a")
     d = harness.open_connection("idem-b")
     rows_c, rows_d = _rows(2, "ic"), _rows(2, "id")
+    _, want_c = _freeze(harness, rows_c)
+    _, want_d = _freeze(harness, rows_d)
     harness.write(c, rows_c, "same-key")
     harness.write(d, rows_d, "same-key")
+    _input_intact(harness, rows_c, want_c)
+    _input_intact(harness, rows_d, want_d)
+    ids = lambda rows: sorted(harness.row_key(r) for r in rows)  # noqa: E731
     _check(
-        _snapshot(harness, harness.committed(c)) == _snapshot(harness, rows_c)
-        and _snapshot(harness, harness.committed(d)) == _snapshot(harness, rows_d),
+        ids(harness.committed(c)) == [k for k, _ in want_c]
+        and ids(harness.committed(d)) == [k for k, _ in want_d],
         "idem_collision",
         "identical idempotency keys on two connections collided",
+    )
+    _check(
+        _snapshot(harness, harness.committed(c)) == want_c
+        and _snapshot(harness, harness.committed(d)) == want_d,
+        "rows_mismatch",
+        "rows committed on a connection differ from the intended rows",
     )
     # Cross-connection data must not be visible.
     _check(
@@ -447,6 +575,7 @@ def case_connection_collision(harness: ConnectorHarness) -> None:
 CASES: dict[str, Case] = {
     "lost_response": case_lost_response,
     "crash_resume": case_crash_resume,
+    "crash_write": case_crash_write,
     "duplicate_rows": case_duplicate_rows,
     "overlapping_pages": case_overlapping_pages,
     "expired_cursor": case_expired_cursor,
@@ -468,6 +597,9 @@ class ConnectorConformanceSuite:
 
     def test_crash_resume(self) -> None:
         case_crash_resume(self.make_harness())
+
+    def test_crash_write(self) -> None:
+        case_crash_write(self.make_harness())
 
     def test_duplicate_rows(self) -> None:
         case_duplicate_rows(self.make_harness())

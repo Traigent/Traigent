@@ -14,7 +14,7 @@ Usage::
             return MyHarness()
 
 Run it with ``pytest -n 0``. Each ``test_*`` method of the suite is one stateful
-case (lost response, crash/resume, duplicate rows, overlapping pages, expired
+case (lost response, crash/resume, crash on write, duplicate rows, overlapping pages, expired
 cursor, partial batch, connection collision, content rejection). ``CASES`` maps case names to
 plain functions taking a harness, for use outside pytest. All canary strings
 are synthetic; failure messages never echo them.

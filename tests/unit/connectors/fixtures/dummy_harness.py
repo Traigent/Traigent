@@ -5,6 +5,7 @@ Each variant carries exactly one defect so the suite can be shown to catch it.
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -39,12 +40,12 @@ class DummyHarness(ConnectorHarness):
     def __init__(self) -> None:
         self._count = 0
         self._store: dict[str, list[Mapping[str, Any]]] = {}
-        self._applied: dict[tuple[str, str], int] = {}
+        self._applied: dict[str, int] = {}
         self._seeded: dict[str, tuple[list[Mapping[str, Any]], int, int]] = {}
         self._epoch = 0
         self._fault: Fault | None = None
         self._requests: list[str] = []
-        self._mem: dict[str, Any] = {}  # in-memory state; wiped by crash()
+        self._mem: dict[str, Any] = {}  # in-memory only: NOT in persisted_state()
 
     # -- connections -----------------------------------------------------
     def _credential(self, label: str) -> str:
@@ -63,7 +64,7 @@ class DummyHarness(ConnectorHarness):
         return conn
 
     def _store_id(self, connection: Connection) -> str:
-        return str(id(connection))
+        return connection.label
 
     def _log(self, connection: Connection) -> None:
         self._requests.append(connection.credential)
@@ -72,8 +73,8 @@ class DummyHarness(ConnectorHarness):
         return list(self._requests)
 
     # -- writes ----------------------------------------------------------
-    def _scope(self, connection: Connection, idem_key: str) -> tuple[str, str]:
-        return (self._store_id(connection), idem_key)
+    def _scope(self, connection: Connection, idem_key: str) -> str:
+        return f"{self._store_id(connection)}|{idem_key}"
 
     def _batch(self, rows: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
         seen: set[str] = set()
@@ -85,9 +86,12 @@ class DummyHarness(ConnectorHarness):
         return batch
 
     def _persist(self, row: Mapping[str, Any]) -> Mapping[str, Any]:
-        return row
+        return copy.deepcopy(dict(row))
 
-    def _record(self, scope: tuple[str, str], done: int, fault: Fault | None) -> None:
+    def _out(self, rows: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+        return copy.deepcopy(list(rows))
+
+    def _record(self, scope: str, done: int, fault: Fault | None) -> None:
         self._applied[scope] = done
 
     def write(self, connection, rows, idem_key):  # type: ignore[no-untyped-def]
@@ -110,7 +114,7 @@ class DummyHarness(ConnectorHarness):
         if fault is not None and fault.kind is FaultKind.LOST_ACK:
             raise TimeoutError("injected lost acknowledgement")
 
-    def _on_fail_before(self, scope: tuple[str, str], size: int) -> None:
+    def _on_fail_before(self, scope: str, size: int) -> None:
         return None
 
     def committed(self, connection):  # type: ignore[no-untyped-def]
@@ -122,7 +126,7 @@ class DummyHarness(ConnectorHarness):
     # -- reads -----------------------------------------------------------
     def seed(self, connection, rows, page_size, overlap=0):  # type: ignore[no-untyped-def]
         self._log(connection)
-        self._seeded[self._store_id(connection)] = (list(rows), page_size, overlap)
+        self._seeded[self._store_id(connection)] = (self._out(rows), page_size, overlap)
 
     def _issue(self, offset: int) -> str:
         return f"{self._epoch}:{offset}"
@@ -145,15 +149,29 @@ class DummyHarness(ConnectorHarness):
         start = 0 if cursor is None else self._resolve(cursor)
         end = start + size
         nxt = self._issue(self._next_offset(end, overlap)) if end < len(rows) else None
-        items = self._shape(rows[start:end], overlap, cursor is not None)
+        items = self._shape(self._out(rows[start:end]), overlap, cursor is not None)
         return {"items": items, "next_cursor": nxt}
 
     def expire_cursors(self) -> None:
         self._epoch += 1
 
-    def crash(self) -> bool:
-        self._mem.clear()
-        return True
+    def persisted_state(self) -> dict[str, Any]:
+        return copy.deepcopy(
+            {
+                "store": self._store,
+                "applied": self._applied,
+                "seeded": {k: list(v) for k, v in self._seeded.items()},
+                "epoch": self._epoch,
+            }
+        )
+
+    def from_persisted(self, state: dict[str, Any]) -> ConnectorHarness:
+        fresh = type(self)()
+        fresh._store = state["store"]
+        fresh._applied = state["applied"]
+        fresh._seeded = {k: tuple(v) for k, v in state["seeded"].items()}  # type: ignore[misc]
+        fresh._epoch = state["epoch"]
+        return fresh
 
     # -- privacy ---------------------------------------------------------
     def validate_summary(self, payload):  # type: ignore[no-untyped-def]
@@ -204,6 +222,21 @@ class SwallowedFaultHarness(DummyHarness):
         return None
 
 
+class MutatesInputHarness(DummyHarness):
+    """Edits the caller's rows in place and stores that same object."""
+
+    def _persist(self, row):  # type: ignore[no-untyped-def]
+        row["value"] = None  # type: ignore[index]
+        return row
+
+
+class AliasedReadHarness(DummyHarness):
+    """Hands out its own stored row objects instead of copies."""
+
+    def _out(self, rows):  # type: ignore[no-untyped-def]
+        return list(rows)
+
+
 class CorruptsOnWriteHarness(DummyHarness):
     """Keeps ids but drops values on write."""
 
@@ -219,15 +252,27 @@ class CorruptsOnReadHarness(DummyHarness):
         return [{**row, "value": None} for row in items]
 
 
-class NoOpCrashHarness(DummyHarness):
-    """crash() discards nothing."""
+class ReusesOldConnectorHarness(DummyHarness):
+    """from_persisted hands back the old object, so nothing is really lost."""
 
-    def crash(self) -> bool:
-        return False
+    def from_persisted(self, state):  # type: ignore[no-untyped-def]
+        return self
+
+
+class VolatileWriteProgressHarness(DummyHarness):
+    """Write progress (idempotency bookkeeping) lives only in memory."""
+
+    def persisted_state(self) -> dict[str, Any]:
+        state = super().persisted_state()
+        state["applied"] = {}
+        return state
 
 
 class InMemoryCursorHarness(DummyHarness):
-    """Cursors are handles into a table that lives only in process memory."""
+    """Cursors are handles into a table that lives only in process memory.
+
+    Its harness reports the true persisted state, so a real crash loses them.
+    """
 
     def _issue(self, offset: int) -> str:
         table = self._mem.setdefault("cursors", {})
@@ -292,7 +337,7 @@ class GlobalIdempotencyHarness(DummyHarness):
     """Idempotency keys are not scoped to a connection."""
 
     def _scope(self, connection, idem_key):  # type: ignore[no-untyped-def]
-        return ("global", idem_key)
+        return f"global|{idem_key}"
 
 
 class ForeignTokenAcceptedHarness(DummyHarness):

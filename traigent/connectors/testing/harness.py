@@ -104,10 +104,17 @@ class ConnectorHarness(ABC):
         """Invalidate every cursor issued so far."""
 
     @abstractmethod
-    def crash(self) -> bool:
-        """Simulate a process crash: destroy every in-memory connector object
-        (sessions, cursor tables, caches) and rebuild from persisted state only.
-        Return True only if in-memory state really was discarded.
+    def persisted_state(self) -> dict[str, Any]:
+        """Everything a new process would find after a crash: only what is
+        durable (disk, remote backend), as plain JSON data. Never include
+        in-memory objects such as cursor tables, sessions or caches.
+        """
+
+    @abstractmethod
+    def from_persisted(self, state: dict[str, Any]) -> ConnectorHarness:
+        """Build a NEW connector (new object) from ``state`` alone. The suite
+        drops the old harness and continues on the returned one, so anything
+        not in ``state`` is lost, exactly as in a real crash.
         """
 
     @abstractmethod
