@@ -116,3 +116,16 @@ def test_minimum_budgets_load(tmp_path: Path) -> None:
     assert artifact.exploration_budgets == ExplorationBudgets(
         max_trials=1, max_spend_usd=0.0, max_wallclock_s=1
     )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"max_trials": 0},
+        {"max_spend_usd": float("nan")},
+        {"max_wallclock_s": -1},
+    ],
+)
+def test_direct_construction_applies_the_same_bounds(kwargs: dict) -> None:
+    with pytest.raises(ValueError, match="exploration.budgets"):
+        ExplorationBudgets(**kwargs)

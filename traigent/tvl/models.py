@@ -621,15 +621,13 @@ class ExplorationBudgets:
         max_spend = data.get("max_spend_usd")
         max_wallclock = data.get("max_wallclock_s")
 
-        budgets = cls(
+        return cls(
             max_trials=int(max_trials) if max_trials is not None else None,
             max_spend_usd=float(max_spend) if max_spend is not None else None,
             max_wallclock_s=int(max_wallclock) if max_wallclock is not None else None,
         )
-        budgets.validate()
-        return budgets
 
-    def validate(self) -> None:
+    def __post_init__(self) -> None:
         """Reject budgets the canonical TVL schema rejects.
 
         Traigent#1616: mirrors ``tvl.schema.json`` ``exploration.budgets``
@@ -641,7 +639,8 @@ class ExplorationBudgets:
             raise ValueError(
                 f"exploration.budgets.max_trials must be >= 1, got {self.max_trials}"
             )
-        if self.max_spend_usd is not None and self.max_spend_usd < 0:
+        # ``not >=`` rather than ``<`` so NaN is rejected too.
+        if self.max_spend_usd is not None and not self.max_spend_usd >= 0:
             raise ValueError(
                 "exploration.budgets.max_spend_usd must be >= 0, "
                 f"got {self.max_spend_usd}"
