@@ -110,6 +110,34 @@ def test_non_runnable_budget_is_rejected(tmp_path: Path, body: str) -> None:
         load_tvl_spec(spec_path=_write(tmp_path, _budgets(body)))
 
 
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        # Canonical types these fields as integers. A fraction used to be
+        # truncated first, so 1.9 loaded as 1 and 0.5 was reported as "got 0".
+        ("    max_trials: 1.9", "max_trials must be an integer, got 1.9"),
+        ("    max_wallclock_s: 0.5", "max_wallclock_s must be an integer, got 0.5"),
+        ("    max_trials: true", "max_trials must be an integer, got True"),
+        # int(inf) raised OverflowError, which escaped the loader's wrapper.
+        ("    max_wallclock_s: .inf", "max_wallclock_s must be an integer, got inf"),
+    ],
+)
+def test_non_integer_budget_is_rejected_with_its_own_value(
+    tmp_path: Path, body: str, message: str
+) -> None:
+    with pytest.raises(TVLValidationError, match=message):
+        load_tvl_spec(spec_path=_write(tmp_path, _budgets(body)))
+
+
+def test_integral_float_budget_loads(tmp_path: Path) -> None:
+    # JSON Schema treats 3.0 as an integer, so canonical accepts it.
+    body = "    max_trials: 3.0\n    max_wallclock_s: 60.0"
+    artifact = load_tvl_spec(spec_path=_write(tmp_path, _budgets(body)))
+    assert artifact.exploration_budgets == ExplorationBudgets(
+        max_trials=3, max_wallclock_s=60
+    )
+
+
 def test_minimum_budgets_load(tmp_path: Path) -> None:
     body = "    max_trials: 1\n    max_spend_usd: 0\n    max_wallclock_s: 1"
     artifact = load_tvl_spec(spec_path=_write(tmp_path, _budgets(body)))

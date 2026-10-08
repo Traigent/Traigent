@@ -63,6 +63,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (and every `BaseEvaluator` subclass) now raises `TypeError` for either name,
   even when the value is `None`, instead of storing it in `evaluator.config`.
 
+### Fixed
+
+- **TVL specs with out-of-range chance thresholds or budgets now fail to load
+  (#1616).** `load_tvl_spec` raises `TVLValidationError` when a
+  `promotion_policy.chance_constraints[].threshold` is outside `[0, 1]`, or when
+  `exploration.budgets` has a `max_trials` or `max_wallclock_s` below 1 or not a
+  whole number, or a `max_spend_usd` below 0 or NaN. These are the canonical TVL
+  bounds. A threshold above 1 used to make the constraint always pass. The same
+  check applies to a `promotion_policy` returned by hybrid config-space
+  discovery. `max_spend_usd: 0` still loads, as the TVL schema allows, but a run
+  that takes its cost limit from the spec still fails the cost-limit check,
+  which needs a value above 0.
+
 ## [0.30.0] - 2026-09-26
 
 ### Added
