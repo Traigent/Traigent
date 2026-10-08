@@ -301,10 +301,12 @@ class ChanceConstraint:
         Traigent#1616: a TVL spec's ``chance_constraints[].threshold`` is a
         probability (``promotion_gate`` compares a Clopper-Pearson bound against
         it), so a spec value outside [0, 1] is rejected here, mirroring the
-        canonical TVL lint ``invalid_chance_threshold``. The check sits on the
-        spec-parsing path only: ``SafetyConstraint.to_chance_constraint`` builds
-        instances directly from metric thresholds that are not bounded to [0, 1]
-        (see #2204), and that conversion is out of this fix's scope.
+        canonical TVL lint ``invalid_chance_threshold``. The check covers every
+        dict that is parsed here, which means TVL specs and ``promotion_policy``
+        dicts returned by hybrid discovery. It is not in ``__post_init__``,
+        because ``SafetyConstraint.to_chance_constraint`` builds instances
+        directly from metric thresholds that are not bounded to [0, 1] (see
+        #2204), and that conversion is out of this fix's scope.
         """
         threshold = float(data["threshold"])
         if not 0 <= threshold <= 1:
