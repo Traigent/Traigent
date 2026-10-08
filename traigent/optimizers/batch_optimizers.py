@@ -372,9 +372,19 @@ class ParallelBatchOptimizer(BaseOptimizer):
         # composite instead of raising it (#1466).
         from traigent.utils.multi_objective import scalarize_objectives
 
+        # A declared objective with no measurement (an unmeasured cost) makes
+        # the composite unknowable: scalarizing over the remaining weights would
+        # score the trial on quality alone with no cost penalty. Such a trial
+        # gets the failed-trial score so it can never be selected (Traigent#2446).
+        if any(
+            metrics.get(name) is None or not math.isfinite(metrics[name])
+            for name in self.objectives
+        ):
+            return float("-inf")
+
         return float(
             scalarize_objectives(
-                {name: metrics[name] for name in self.objectives if name in metrics},
+                {name: metrics[name] for name in self.objectives},
                 self.objective_weights,
                 minimize_objectives=self._minimize_objectives,
                 objective_schema=self.objective_schema,
@@ -1086,9 +1096,19 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
         # composite instead of raising it (#1466).
         from traigent.utils.multi_objective import scalarize_objectives
 
+        # A declared objective with no measurement (an unmeasured cost) makes
+        # the composite unknowable: scalarizing over the remaining weights would
+        # score the trial on quality alone with no cost penalty. Such a trial
+        # gets the failed-trial score so it can never be selected (Traigent#2446).
+        if any(
+            metrics.get(name) is None or not math.isfinite(metrics[name])
+            for name in self.objectives
+        ):
+            return float("-inf")
+
         return float(
             scalarize_objectives(
-                {name: metrics[name] for name in self.objectives if name in metrics},
+                {name: metrics[name] for name in self.objectives},
                 self.objective_weights,
                 minimize_objectives=self._minimize_objectives,
                 objective_schema=self.objective_schema,

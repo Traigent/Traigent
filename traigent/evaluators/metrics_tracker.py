@@ -96,6 +96,10 @@ RESERVED_METRIC_KEYS: frozenset[str] = frozenset(
         # #1741). Reserved so a user tuple key cannot overwrite it and it is
         # never dropped under the measures ceiling.
         "cost_unpriced",
+        # True iff any measured example carried no captured usage, so the
+        # trial's cost is unknown rather than $0 (#2517). Reserved like
+        # ``cost_unpriced``.
+        "cost_unmeasured",
         # True iff any measured example's token counts were fabricated from
         # character length rather than captured usage (#2263). Reserved so a
         # user tuple key can never overwrite it and it is never dropped under
@@ -486,6 +490,13 @@ class CostMetrics:
     # module documents (#2274). Carry this flag, not the magnitude, wherever
     # that question is asked.
     cost_explicit: bool = False
+    # True when NO usage was captured for this example, so ``total_cost`` is the
+    # absence of a measurement, not a measured $0 (Traigent#2517). A zero here is
+    # a placeholder and must never be summed, averaged, ranked, displayed or
+    # persisted as spend. Distinct from ``unpriced`` (usage WAS captured but no
+    # price table covers the model) and from a genuinely free model (a real,
+    # measured 0.0 never sets this).
+    unmeasured: bool = False
 
     def __post_init__(self) -> None:
         # Ensure non-negative costs and handle None
@@ -559,6 +570,17 @@ class ExampleMetrics:
     # response shape none of the handlers recognize) -- never fabricated.
     # See :func:`finish_reason_is_truncated` for the truncation predicate.
     finish_reason: str | None = None
+
+    @property
+    def cost_measured(self) -> bool:
+        """True when this example's cost is a real measurement (Traigent#2517).
+
+        ``measured`` answers "was anything extracted"; this answers the narrower
+        "is ``cost.total_cost`` spend rather than a placeholder zero". Cost
+        aggregation, ranking and display must filter on this, never on the
+        magnitude of ``total_cost``.
+        """
+        return self.measured and not self.cost.unmeasured
 
 
 class MetricsTracker:
@@ -714,9 +736,12 @@ class MetricsTracker:
 
         response_times = [m.response.response_time_ms for m in measured_metrics]
 
-        input_costs = [m.cost.input_cost for m in measured_metrics]
-        output_costs = [m.cost.output_cost for m in measured_metrics]
-        total_costs = [m.cost.total_cost for m in measured_metrics]
+        # Cost statistics cover only examples whose cost was MEASURED; an
+        # example with no captured usage has no cost, not a $0 cost (#2517).
+        cost_measured_metrics = [m for m in measured_metrics if m.cost_measured]
+        input_costs = [m.cost.input_cost for m in cost_measured_metrics]
+        output_costs = [m.cost.output_cost for m in cost_measured_metrics]
+        total_costs = [m.cost.total_cost for m in cost_measured_metrics]
 
         # Calculate statistics for each metric
         aggregated = {
@@ -889,9 +914,16 @@ class MetricsTracker:
         # which examples "exist" in the trial.
         cost_per_example_mean = safe_get(aggregated, "total_cost", "mean")
         measured_metrics = [m for m in self.example_metrics if m.measured]
+        cost_measured_metrics = [m for m in measured_metrics if m.cost_measured]
         cost_total: float | None
-        if measured_metrics:
-            cost_total = sum(float(m.cost.total_cost) for m in measured_metrics)
+        if cost_measured_metrics:
+            cost_total = sum(float(m.cost.total_cost) for m in cost_measured_metrics)
+        elif measured_metrics:
+            # Rows were extracted but none carried captured usage: the trial's
+            # cost is UNKNOWN. It is left out of the formatted metrics below
+            # (``cost_unmeasured`` says why), never reported as 0.0 (#2517).
+            cost_total = None
+            cost_per_example_mean = None
         else:
             # Nothing measured -- either the tracker is empty, or every
             # tracked example errored before producing any output. Mirror
@@ -911,6 +943,12 @@ class MetricsTracker:
         # ``traigent.cloud.dtos.MeasuresDict._validate_dict``) -- so this is
         # 1.0/0.0, never a Python ``bool``.
         cost_unpriced = 1.0 if any(m.cost.unpriced for m in measured_metrics) else 0.0
+        # 1.0 when some measured example has NO cost measurement; the trial's
+        # cost total then covers only the examples that did (or is absent when
+        # none did). Numeric, never bool, like ``cost_unpriced`` (#2517).
+        cost_unmeasured = (
+            1.0 if any(not m.cost_measured for m in measured_metrics) else 0.0
+        )
 
         # True when ANY measured example's token counts were fabricated from
         # character length (``LocalEvaluator._estimate_string_tokens``, #2263)
@@ -950,6 +988,8 @@ class MetricsTracker:
             # True iff any measured example's cost is unknown spend, not
             # verified-free $0 (#1741). See comment above.
             "cost_unpriced": cost_unpriced,
+            # True iff any measured example has no cost measurement (#2517).
+            "cost_unmeasured": cost_unmeasured,
             # True iff any measured example's token counts are a length-derived
             # estimate, not captured usage (#2263). See comment above.
             "tokens_estimated": tokens_estimated,
@@ -1116,9 +1156,15 @@ class MetricsTracker:
             "output_tokens": [m.tokens.output_tokens for m in measured_metrics],
             "total_tokens": [m.tokens.total_tokens for m in measured_metrics],
             "response_time_ms": [m.response.response_time_ms for m in measured_metrics],
-            "input_cost": [m.cost.input_cost for m in measured_metrics],
-            "output_cost": [m.cost.output_cost for m in measured_metrics],
-            "total_cost": [m.cost.total_cost for m in measured_metrics],
+            "input_cost": [
+                m.cost.input_cost for m in measured_metrics if m.cost_measured
+            ],
+            "output_cost": [
+                m.cost.output_cost for m in measured_metrics if m.cost_measured
+            ],
+            "total_cost": [
+                m.cost.total_cost for m in measured_metrics if m.cost_measured
+            ],
         }
         # These built-in keys must always appear in the output (with a
         # zero-count describe structure if nothing was measured) even when
@@ -2427,11 +2473,12 @@ def extract_llm_metrics(
     # indistinguishable from a measurement once it lands on the trial). A run
     # that never gets here with real usage has an UNMEASURED cost column, not
     # a cheap one.
-    if (
+    usage_captured = (
         metrics.tokens.input_tokens > 0
         or metrics.tokens.output_tokens > 0
         or metrics.cost.total_cost > 0
-    ):
+    )
+    if usage_captured:
         from traigent.utils.cost_calculator import record_captured_usage
 
         record_captured_usage()
@@ -2448,6 +2495,20 @@ def extract_llm_metrics(
         prompt_length=prompt_length,
         response_length=response_length,
     )
+
+    from traigent.utils.env_config import is_mock_llm
+
+    # Nothing was captured and the length-based (privacy-mode) path priced
+    # nothing either: the cost is UNKNOWN, not $0 (Traigent#2517). Mock-LLM runs
+    # make no provider call, so their zero is simulated spend, not a gap.
+    if (
+        not usage_captured
+        and metrics.measured
+        and metrics.cost.total_cost <= 0
+        and not metrics.cost.cost_explicit
+        and not is_mock_llm()
+    ):
+        metrics.cost.unmeasured = True
 
     # Calculate derived metrics
     MetricsCalculator.calculate_tokens_per_second(metrics)
