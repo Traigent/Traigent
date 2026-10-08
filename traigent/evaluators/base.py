@@ -4361,6 +4361,10 @@ class SimpleScoringEvaluator(BaseEvaluator):
         example_metrics["input_cost"] = llm_metrics.get("input_cost", missing_default)
         example_metrics["output_cost"] = llm_metrics.get("output_cost", missing_default)
         example_metrics["total_cost"] = llm_metrics.get("total_cost", missing_default)
+        # Requested default cost is the measured per-example charge. Custom
+        # scorer/metric-function values, including explicit zero, stay intact.
+        if "cost" in self.metrics and "total_cost" in llm_metrics:
+            example_metrics.setdefault("cost", llm_metrics["total_cost"])
         example_metrics["cost_unpriced"] = (
             1.0 if llm_metrics.get("cost_unpriced", False) else 0.0
         )
