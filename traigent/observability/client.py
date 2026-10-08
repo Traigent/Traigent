@@ -810,6 +810,10 @@ class _BufferedPayload:
 class _SyncBatchTransport:
     """Thread-safe batch transport that avoids cross-thread asyncio coordination.
 
+    Failed snapshots remain in a bounded memory outbox for a later explicit
+    flush or submission after connectivity recovers. This transport does not
+    detect reconnects; exhausted attempts stop the current drain and its timer.
+
     ``health_callback`` receives snapshots after transport state has been
     updated and after transport locks have been released. A dedicated daemon
     dispatcher delivers snapshots in state-update order. Callback exceptions are
@@ -972,7 +976,11 @@ class _SyncBatchTransport:
         *,
         warn_on_deadline_expiry: bool | None = None,
     ) -> BatchFlushResult:
-        """Flush queued payloads, waiting no longer than ``timeout`` seconds."""
+        """Flush queued payloads, waiting no longer than ``timeout`` seconds.
+
+        Results retain cumulative failure/error history, even after a later
+        flush successfully delivers the previously retained snapshots.
+        """
         deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
         if warn_on_deadline_expiry is None:
             warn_on_deadline_expiry = timeout != 0
@@ -1162,20 +1170,28 @@ class _SyncBatchTransport:
                     continue
                 if deadline is None:
                     try:
-                        events.extend(self._send_batch(batch_items))
+                        delivered, batch_events = self._send_batch(batch_items)
+                        events.extend(batch_events)
                     finally:
                         self._complete_inflight_batch(len(batch_items))
+                    if not delivered:
+                        # Keep failed snapshots for a later caller-driven retry,
+                        # rather than retrying this outbox forever in this drain.
+                        return True
                 else:
-                    batch_events = self._send_batch_until(
+                    timed_result = self._send_batch_until(
                         batch_items, deadline, caller_released
                     )
-                    if batch_events is None:
+                    if timed_result is None:
                         if warn_on_deadline_expiry:
                             event = self._record_deadline_expiry(deadline)
                             if event is not None:
                                 events.append(event)
                         return False
-                    events.extend(batch_events)
+                    delivered, queued_events = timed_result
+                    events.extend(queued_events)
+                    if not delivered:
+                        return True
         finally:
             self._send_lock.release()
             caller_released.set()
@@ -1186,9 +1202,10 @@ class _SyncBatchTransport:
         batch_items: list[tuple[str, dict[str, Any]]],
         deadline: float,
         caller_released: threading.Event,
-    ) -> list[tuple[str, dict[str, Any]]] | None:
+    ) -> tuple[bool, list[tuple[str, dict[str, Any]]]] | None:
         completed = threading.Event()
         events: list[tuple[str, dict[str, Any]]] = []
+        delivered = False
 
         if not self._acquire_lock_until(deadline):
             return None
@@ -1198,8 +1215,10 @@ class _SyncBatchTransport:
             self._lock.release()
 
         def send() -> None:
+            nonlocal delivered
             try:
-                events.extend(self._send_batch(batch_items))
+                delivered, batch_events = self._send_batch(batch_items)
+                events.extend(batch_events)
             except Exception as exc:
                 # Flush and close are best effort; background sender failures must
                 # be visible in the result but must never escape user code.
@@ -1214,7 +1233,7 @@ class _SyncBatchTransport:
             daemon=True,
         ).start()
         if completed.wait(timeout=max(0.0, deadline - time.monotonic())):
-            return events
+            return delivered, events
 
         threading.Thread(
             target=self._emit_orphan_health_events,
@@ -1317,7 +1336,7 @@ class _SyncBatchTransport:
 
     def _send_batch(
         self, batch_items: list[tuple[str, dict[str, Any]]]
-    ) -> list[tuple[str, dict[str, Any]]]:
+    ) -> tuple[bool, list[tuple[str, dict[str, Any]]]]:
         events: list[tuple[str, dict[str, Any]]] = []
         payloads = [payload for _, payload in batch_items]
         result = self._retry_handler.execute_with_result(self._sender, payloads)
@@ -1329,20 +1348,38 @@ class _SyncBatchTransport:
             with self._lock:
                 self._stats["successful_batches"] += 1
                 self._stats["sent_items"] += len(payloads)
-            return events
+            return True, events
 
         with self._lock:
             self._stats["failed_batches"] += 1
-            self._stats["dropped_items"] += len(payloads)
-            self._dropped_by_reason["batch_delivery_failed"] = (
-                self._dropped_by_reason.get("batch_delivery_failed", 0) + len(payloads)
+            # The sender receives already prepared snapshots. Retain those exact
+            # payloads; do not re-redact them using mutable live trace state.
+            retained = OrderedDict(
+                (item_id, _BufferedPayload(payload, self._payload_json_size(payload)))
+                for item_id, payload in batch_items
+                if item_id not in self._buffer
             )
+            # Submissions made during the send are newer and must win on ID
+            # collisions. Old retained entries come first for bounded eviction.
+            retained.update(self._buffer)
+            self._buffer = retained
+            while len(self._buffer) > self.max_queue_size:
+                item_id, _ = self._buffer.popitem(last=False)
+                message = f"observability outbox full; evicted oldest item '{item_id}'"
+                events.append(
+                    self._record_drop_locked("outbox_full", message, item_id=item_id)
+                )
+                events.append(self._append_warning(message))
+                logger.warning(message)
+            # A failed-only outbox must not create an automatic retry storm.
+            # A later explicit flush, or fresh submission after reconnection,
+            # provides another bounded retry opportunity.
+            self._cancel_timer_locked()
             dropped_items = self._stats["dropped_items"]
             queue_depth = len(self._buffer)
             event = self._queue_health_event_locked(
                 "batch_delivery_failed",
                 {
-                    "drop_reason": "batch_delivery_failed",
                     "dropped_items": dropped_items,
                     "queue_depth": queue_depth,
                     "message": str(result.error or "batch delivery failed"),
@@ -1354,11 +1391,11 @@ class _SyncBatchTransport:
         self._append_error(str(result.error or "batch delivery failed"))
         events.append(event)
         logger.warning(
-            "Observability transport dropped %d payloads after retries: %s",
+            "Observability transport retained failed batch of %d payloads after retries: %s",
             len(payloads),
             result.error,
         )
-        return events
+        return False, events
 
     def _build_result(
         self,
