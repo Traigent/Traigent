@@ -176,6 +176,20 @@ def configure_ragas_defaults(
         )
 
 
+def _snapshot_ragas_defaults() -> RagasConfig:
+    """A copy of the defaults set through :func:`configure_ragas_defaults`."""
+    with _RAGAS_CONFIG_LOCK:
+        return RagasConfig(
+            column_map=(
+                dict(_GLOBAL_RAGAS_CONFIG.column_map)
+                if _GLOBAL_RAGAS_CONFIG.column_map
+                else None
+            ),
+            llm=_GLOBAL_RAGAS_CONFIG.llm,
+            embeddings=_GLOBAL_RAGAS_CONFIG.embeddings,
+        )
+
+
 def _ensure_ragas_available() -> None:
     if not RAGAS_AVAILABLE:
         message = "ragas is not installed. Install it with `pip install ragas` to enable ragas metrics."
@@ -414,16 +428,7 @@ def compute_ragas_metrics(
     _ensure_ragas_available()
 
     if config is None:
-        with _RAGAS_CONFIG_LOCK:
-            config = RagasConfig(
-                column_map=(
-                    dict(_GLOBAL_RAGAS_CONFIG.column_map)
-                    if _GLOBAL_RAGAS_CONFIG.column_map
-                    else None
-                ),
-                llm=_GLOBAL_RAGAS_CONFIG.llm,
-                embeddings=_GLOBAL_RAGAS_CONFIG.embeddings,
-            )
+        config = _snapshot_ragas_defaults()
 
     example_results = list(example_results)
     if (not example_results) and dataset_examples is not None:

@@ -461,6 +461,7 @@ try:  # pragma: no cover - import guard for optional dependency
         RAGAS_AVAILABLE,
         RagasConfig,
         RagasConfigurationError,
+        _snapshot_ragas_defaults,
         compute_ragas_metrics,
     )
 except ImportError:  # pragma: no cover - executed only when module missing
@@ -476,6 +477,9 @@ except ImportError:  # pragma: no cover - executed only when module missing
     RagasConfig = _FallbackRagasConfig  # type: ignore[misc, assignment]
     RagasConfigurationError = RuntimeError  # type: ignore[misc, assignment]
     compute_ragas_metrics = None  # type: ignore[assignment]
+
+    def _snapshot_ragas_defaults() -> RagasConfig:  # type: ignore[misc]
+        return RagasConfig()
 
 
 DATASET_ROOT_ENV = "TRAIGENT_DATASET_ROOT"
@@ -1633,15 +1637,22 @@ class BaseEvaluator(ABC):
         logger.debug(f"Registered custom metric: {name}")
 
     def _get_ragas_config(self) -> RagasConfig:
-        column_map = None
+        # Evaluator kwargs win field by field; configure_ragas_defaults()
+        # fills the gaps. The evaluator always passes an explicit config, so
+        # without this layering the public defaults never reached RAGAS under
+        # @traigent.optimize (#2473).
+        defaults = _snapshot_ragas_defaults()
+        column_map = defaults.column_map
         if self.config.get("ragas_column_map"):
             mapping = self.config["ragas_column_map"]
             if isinstance(mapping, Mapping):
                 column_map = mapping
+        llm = self.config.get("ragas_llm")
+        embeddings = self.config.get("ragas_embeddings")
         return RagasConfig(
             column_map=column_map,
-            llm=self.config.get("ragas_llm"),
-            embeddings=self.config.get("ragas_embeddings"),
+            llm=llm if llm is not None else defaults.llm,
+            embeddings=embeddings if embeddings is not None else defaults.embeddings,
         )
 
     def override_metric(self, name: str, func: Callable[..., Any]) -> None:
