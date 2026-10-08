@@ -99,11 +99,11 @@ async def test_with_usage_wrapped_structured_answer_is_compared_as_itself(
         wrapped.append(out)
         return out
 
-    token = trial_context.set({"trial_id": "t-2523"})
+    ctx_reset = trial_context.set({"trial_id": "t-2523"})
     try:
         result = await evaluator.evaluate(agent, {}, _triage_dataset())
     finally:
-        trial_context.reset(token)
+        trial_context.reset(ctx_reset)
 
     assert "__traigent_meta__" in wrapped[0]  # the wrapper really was in play
 

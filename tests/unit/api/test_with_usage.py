@@ -425,13 +425,13 @@ async def test_with_usage_structured_output_reports_cost_and_accuracy():
     def agent(_inp):
         return traigent.with_usage(dict(triage), total_cost=0.004, input_tokens=12)
 
-    token = trial_context.set({"trial_id": "t-2522"})
+    ctx_reset = trial_context.set({"trial_id": "t-2522"})
     try:
         result = await LocalEvaluator(metrics=["accuracy"], detailed=True).evaluate(
             agent, {}, dataset
         )
     finally:
-        trial_context.reset(token)
+        trial_context.reset(ctx_reset)
 
     assert result.metrics["accuracy"] == pytest.approx(1.0)
     [example] = result.example_results
