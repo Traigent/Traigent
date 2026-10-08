@@ -100,6 +100,8 @@ RESERVED_METRIC_KEYS: frozenset[str] = frozenset(
         # trial's cost is unknown rather than $0 (#2517). Reserved like
         # ``cost_unpriced``.
         "cost_unmeasured",
+        # Known-spend floor reported when ``cost_unmeasured`` (#2517).
+        "cost_lower_bound",
         # True iff any measured example's token counts were fabricated from
         # character length rather than captured usage (#2263). Reserved so a
         # user tuple key can never overwrite it and it is never dropped under
@@ -497,6 +499,11 @@ class CostMetrics:
     # price table covers the model) and from a genuinely free model (a real,
     # measured 0.0 never sets this).
     unmeasured: bool = False
+    # Spend that IS known even though ``unmeasured`` is True: a judge or
+    # evaluator call folded into an example whose own agent call reported no
+    # usage. It is never added to ``total_cost`` (that would present a partial
+    # total as complete); trial aggregation reports it as ``cost_lower_bound``.
+    known_cost: float = 0.0
 
     def __post_init__(self) -> None:
         # Ensure non-negative costs and handle None
@@ -918,9 +925,10 @@ class MetricsTracker:
         cost_total: float | None
         if cost_measured_metrics:
             cost_total = sum(float(m.cost.total_cost) for m in cost_measured_metrics)
-        elif measured_metrics:
-            # Rows were extracted but none carried captured usage: the trial's
-            # cost is UNKNOWN. It is left out of the formatted metrics below
+        elif self.example_metrics:
+            # Rows exist but none carries a cost measurement (no captured
+            # usage, or nothing was extracted at all): the trial's cost is
+            # UNKNOWN. It is left out of the formatted metrics below
             # (``cost_unmeasured`` says why), never reported as 0.0 (#2517).
             cost_total = None
             cost_per_example_mean = None
@@ -947,8 +955,19 @@ class MetricsTracker:
         # cost total then covers only the examples that did (or is absent when
         # none did). Numeric, never bool, like ``cost_unpriced`` (#2517).
         cost_unmeasured = (
-            1.0 if any(not m.cost_measured for m in measured_metrics) else 0.0
+            1.0
+            if (
+                any(not m.cost_measured for m in measured_metrics)
+                or (self.example_metrics and not cost_measured_metrics)
+            )
+            else 0.0
         )
+        # Known spend of a trial whose total is unknown or partial: what was
+        # measured plus judge/evaluator spend on unmeasured examples. A floor,
+        # never the cost.
+        cost_lower_bound = sum(
+            float(m.cost.total_cost) for m in cost_measured_metrics
+        ) + sum(float(m.cost.known_cost) for m in self.example_metrics)
 
         # True when ANY measured example's token counts were fabricated from
         # character length (``LocalEvaluator._estimate_string_tokens``, #2263)
@@ -990,6 +1009,10 @@ class MetricsTracker:
             "cost_unpriced": cost_unpriced,
             # True iff any measured example has no cost measurement (#2517).
             "cost_unmeasured": cost_unmeasured,
+            # Floor on the spend when the total is unknown/partial (#2517).
+            "cost_lower_bound": (
+                cost_lower_bound if cost_unmeasured and cost_lower_bound > 0 else None
+            ),
             # True iff any measured example's token counts are a length-derived
             # estimate, not captured usage (#2263). See comment above.
             "tokens_estimated": tokens_estimated,
@@ -2496,17 +2519,16 @@ def extract_llm_metrics(
         response_length=response_length,
     )
 
-    from traigent.utils.env_config import is_mock_llm
-
     # Nothing was captured and the length-based (privacy-mode) path priced
-    # nothing either: the cost is UNKNOWN, not $0 (Traigent#2517). Mock-LLM runs
-    # make no provider call, so their zero is simulated spend, not a gap.
+    # nothing either: the cost is UNKNOWN, not $0 (Traigent#2517). The global
+    # mock flag is not evidence that THIS call was simulated (a raw client can
+    # still execute), so it grants no exemption; a simulated call carries usage
+    # from the mock interceptor and is measured through ``usage_captured``.
     if (
         not usage_captured
         and metrics.measured
         and metrics.cost.total_cost <= 0
         and not metrics.cost.cost_explicit
-        and not is_mock_llm()
     ):
         metrics.cost.unmeasured = True
 

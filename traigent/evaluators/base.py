@@ -4204,6 +4204,11 @@ class SimpleScoringEvaluator(BaseEvaluator):
             "cost_unpriced": (
                 1.0 if getattr(metrics_obj.cost, "unpriced", False) else 0.0
             ),
+            # No captured usage: the cost is unknown, not $0 (#2517).
+            "cost_unmeasured": (
+                1.0 if getattr(metrics_obj.cost, "unmeasured", False) else 0.0
+            ),
+            "known_cost": getattr(metrics_obj.cost, "known_cost", 0.0),
             "response_time_ms": getattr(metrics_obj.response, "response_time_ms", 0),
             "tokens_per_second": getattr(metrics_obj.response, "tokens_per_second", 0),
             "model": model_name or "unknown",
@@ -4359,9 +4364,21 @@ class SimpleScoringEvaluator(BaseEvaluator):
         )
         missing_default = None if strict_nulls else 0.0
 
-        example_metrics["input_cost"] = llm_metrics.get("input_cost", missing_default)
-        example_metrics["output_cost"] = llm_metrics.get("output_cost", missing_default)
-        example_metrics["total_cost"] = llm_metrics.get("total_cost", missing_default)
+        if llm_metrics.get("cost_unmeasured"):
+            # Unknown cost: leave the cost keys out; never record 0.0 (#2517).
+            example_metrics["cost_unmeasured"] = 1.0
+            if llm_metrics.get("known_cost"):
+                example_metrics["known_cost"] = llm_metrics["known_cost"]
+        else:
+            example_metrics["input_cost"] = llm_metrics.get(
+                "input_cost", missing_default
+            )
+            example_metrics["output_cost"] = llm_metrics.get(
+                "output_cost", missing_default
+            )
+            example_metrics["total_cost"] = llm_metrics.get(
+                "total_cost", missing_default
+            )
         example_metrics["cost_unpriced"] = (
             1.0 if llm_metrics.get("cost_unpriced", False) else 0.0
         )
@@ -4447,12 +4464,36 @@ class SimpleScoringEvaluator(BaseEvaluator):
             aggregated[metric] = sum(metric_values) if metric_values else 0.0
 
         # Aggregate cost metrics (total, not average)
+        strict_nulls_cost = os.environ.get(
+            "TRAIGENT_STRICT_METRICS_NULLS", ""
+        ).lower() in ("true", "1", "yes")
         cost_metrics = ["input_cost", "output_cost", "total_cost"]
+        unmeasured_rows = any(
+            bool(m.get("cost_unmeasured", False)) for m in all_metrics if m
+        )
         for metric in cost_metrics:
             metric_values = [
                 m.get(metric, 0.0) for m in all_metrics if m and metric in m
             ]
-            aggregated[metric] = sum(metric_values) if metric_values else 0.0
+            if metric_values:
+                aggregated[metric] = sum(metric_values)
+            elif unmeasured_rows:
+                # Every row is unmeasured: the key stays out (None under
+                # strict nulls), never a fabricated 0.0 (#2517).
+                if strict_nulls_cost:
+                    aggregated[metric] = None
+            else:
+                aggregated[metric] = 0.0
+        aggregated["cost_unmeasured"] = 1.0 if unmeasured_rows else 0.0
+        if unmeasured_rows:
+            lower_bound = sum(
+                float(m.get("total_cost", 0.0) or 0.0)
+                + float(m.get("known_cost", 0.0) or 0.0)
+                for m in all_metrics
+                if m
+            )
+            if lower_bound > 0:
+                aggregated["cost_lower_bound"] = lower_bound
 
         # True iff ANY example's cost could not be priced -- unknown spend
         # recorded as $0, not verified-free $0 (#1597). Threaded through so

@@ -8,6 +8,7 @@ from typing import Any
 from traigent.utils.trial_costs import (
     coerce_finite_cost,
     extract_trial_cost_metric,
+    is_cost_unmeasured,
     is_finite_numeric_cost,
 )
 
@@ -75,6 +76,10 @@ def ensure_cost_metric_for_budgeted_completed_submission(
     if cost is not None:
         metrics["cost"] = cost
         return True
+
+    if is_cost_unmeasured(metrics):
+        # An unknown cost is never invented as $0 for budget accounting.
+        return False
 
     metrics["cost"] = 0.0
     if logger is not None:

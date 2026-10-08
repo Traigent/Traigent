@@ -1857,9 +1857,17 @@ class LocalEvaluator(BaseEvaluator):
         # docblock warns about.
         example_metric.measured = True
 
-        example_metric.cost.input_cost += eval_input_cost
-        example_metric.cost.output_cost += eval_output_cost
-        example_metric.cost.total_cost += eval_total_cost
+        agent_cost_unmeasured = example_metric.cost.unmeasured
+        if agent_cost_unmeasured:
+            # The agent's own cost is unknown, so the judge's spend is a known
+            # floor, not part of a total: adding it to ``total_cost`` would
+            # present a partial total as complete, and dropping it would hide
+            # real spend. Aggregation reports it as ``cost_lower_bound``.
+            example_metric.cost.known_cost += eval_total_cost
+        else:
+            example_metric.cost.input_cost += eval_input_cost
+            example_metric.cost.output_cost += eval_output_cost
+            example_metric.cost.total_cost += eval_total_cost
         example_metric.tokens.input_tokens += eval_input_tokens
         example_metric.tokens.output_tokens += eval_output_tokens
         example_metric.tokens.total_tokens += eval_tokens
@@ -1868,9 +1876,12 @@ class LocalEvaluator(BaseEvaluator):
         # `_process_single_output`, before metric functions ran) consistent
         # with the now-updated totals, and surface the judge's own share.
         example_metric.custom_metrics["evaluation_cost"] = eval_total_cost
-        example_metric.custom_metrics["input_cost"] = example_metric.cost.input_cost
-        example_metric.custom_metrics["output_cost"] = example_metric.cost.output_cost
-        example_metric.custom_metrics["total_cost"] = example_metric.cost.total_cost
+        if not agent_cost_unmeasured:
+            example_metric.custom_metrics["input_cost"] = example_metric.cost.input_cost
+            example_metric.custom_metrics["output_cost"] = (
+                example_metric.cost.output_cost
+            )
+            example_metric.custom_metrics["total_cost"] = example_metric.cost.total_cost
         example_metric.custom_metrics["input_tokens"] = (
             example_metric.tokens.input_tokens
         )
@@ -1882,9 +1893,10 @@ class LocalEvaluator(BaseEvaluator):
         )
 
         if example_result is not None:
-            example_result.metrics["input_cost"] = example_metric.cost.input_cost
-            example_result.metrics["output_cost"] = example_metric.cost.output_cost
-            example_result.metrics["total_cost"] = example_metric.cost.total_cost
+            if not agent_cost_unmeasured:
+                example_result.metrics["input_cost"] = example_metric.cost.input_cost
+                example_result.metrics["output_cost"] = example_metric.cost.output_cost
+                example_result.metrics["total_cost"] = example_metric.cost.total_cost
             example_result.metrics["input_tokens"] = example_metric.tokens.input_tokens
             example_result.metrics["output_tokens"] = (
                 example_metric.tokens.output_tokens

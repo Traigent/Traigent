@@ -5375,7 +5375,8 @@ class OptimizationOrchestrator:
         if self._warm_start_from:
             metadata["warm_start_from"] = self._warm_start_from
 
-        stop_detail = self._describe_stop()
+        describe_stop = getattr(self, "_describe_stop", None)
+        stop_detail = describe_stop() if callable(describe_stop) else None
         if stop_detail:
             metadata["stop_detail"] = stop_detail
 

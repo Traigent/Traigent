@@ -43,6 +43,7 @@ from ..storage.local_storage import (
 )
 from ..utils.exceptions import TraigentStorageError
 from ..utils.logging import get_logger
+from ..utils.trial_costs import is_cost_unmeasured
 
 logger = get_logger(__name__)
 
@@ -512,9 +513,13 @@ class SyncManager:
             fallback = measures.get("score")
             if not isinstance(fallback, (int, float)) or isinstance(fallback, bool):
                 fallback = 0.0
+            cost_unmeasured = is_cost_unmeasured(measures)
             for objective in objectives:
                 value = measures.get(objective)
                 if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    if cost_unmeasured and "cost" in objective.lower():
+                        # Unknown cost is omitted, never the score or 0.0.
+                        continue
                     measures[objective] = fallback
 
     def _convert_trials_to_configuration_runs(

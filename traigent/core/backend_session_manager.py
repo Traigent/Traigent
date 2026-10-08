@@ -70,6 +70,7 @@ from traigent.utils.logging import get_logger
 from traigent.utils.trial_costs import (
     TRIAL_COST_FIELDS,
     extract_trial_cost_metric,
+    is_cost_unmeasured,
     is_finite_numeric_cost,
 )
 
@@ -1044,6 +1045,9 @@ class BackendSessionManager:
             return
 
         if session_id not in self._session_cost_budget_armed:
+            return
+
+        if is_cost_unmeasured(metrics_payload):
             return
 
         metrics_payload["cost"] = 0.0

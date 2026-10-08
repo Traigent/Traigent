@@ -166,7 +166,7 @@ class ParetoFrontCalculator:
                 # Extract objective values
                 point_objectives = {}
                 for obj in objectives:
-                    if obj in trial.metrics:
+                    if trial.metrics.get(obj) is not None:
                         point_objectives[obj] = trial.metrics[obj]
 
                 # A trial missing any configured objective (an unmeasured cost

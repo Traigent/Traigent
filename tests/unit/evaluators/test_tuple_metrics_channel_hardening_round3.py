@@ -38,7 +38,9 @@ from traigent.knobs.telemetry import TOTAL_MEASURES_CEILING
 #: user keys may shrink.
 EXPECTED_NON_USER_KEYS = {
     "accuracy",
-    "cost",
+    # The plain-string agent reports no usage, so the trial carries no ``cost``
+    # (unknown, not $0) and says so with ``cost_unmeasured`` (#2517).
+    "cost_unmeasured",
     "duration",
     "examples_attempted",
     "input_tokens",

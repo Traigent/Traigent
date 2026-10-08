@@ -255,7 +255,7 @@ class TestLocalEvaluatorTokenEstimation:
 
     @pytest.mark.asyncio
     async def test_cost_metrics_initialization(self, evaluator, sample_dataset):
-        """Test that cost metrics are initialized to 0 for string outputs."""
+        """A string output with no captured usage has no cost, not a $0 cost."""
 
         async def string_function(text: str) -> str:
             return "output"
@@ -263,15 +263,11 @@ class TestLocalEvaluatorTokenEstimation:
         config = {}
         result = await evaluator.evaluate(string_function, config, sample_dataset)
 
-        # Cost metrics should exist and be 0
+        # Unknown cost is left out of the example metrics (#2517).
         for example_result in result.example_results:
-            assert "input_cost" in example_result.metrics
-            assert "output_cost" in example_result.metrics
-            assert "total_cost" in example_result.metrics
-
-            assert example_result.metrics["input_cost"] == 0.0
-            assert example_result.metrics["output_cost"] == 0.0
-            assert example_result.metrics["total_cost"] == 0.0
+            assert "input_cost" not in example_result.metrics
+            assert "output_cost" not in example_result.metrics
+            assert "total_cost" not in example_result.metrics
 
     @pytest.mark.asyncio
     async def test_execution_modes_token_handling(self, sample_dataset):

@@ -49,6 +49,7 @@ from threading import RLock
 from typing import TYPE_CHECKING
 
 from traigent.utils.env_config import (
+    is_mock_llm,
     is_strict_cost_accounting,
     is_truthy,
     strict_cost_accounting_origin,
@@ -1433,7 +1434,11 @@ Options:
             self._unmeasured_trial_count += 1
             self._handle_unknown_cost_locked(
                 trial_desc,
-                require_cost_tracking=require_cost_tracking,
+                # A COMPLETED mock-mode trial made no billable call, so its
+                # unmeasured cost warns (like the run-level no-usage guard)
+                # rather than failing. A failed trial still fails closed.
+                require_cost_tracking=require_cost_tracking
+                and (trial_failed or not is_mock_llm()),
                 include_limit_in_warning=include_limit_in_warning,
             )
             return
