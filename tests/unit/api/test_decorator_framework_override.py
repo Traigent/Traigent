@@ -346,3 +346,61 @@ def test_decorator_still_rejects_an_unregistered_bare_name() -> None:
         )
         def run(model: str = "a") -> str:
             return model
+
+
+def test_auto_override_applies_per_trial_for_sync_function(tmp_path, monkeypatch):
+    """#2420: a SYNC decorated function is evaluated in a ThreadPoolExecutor
+    worker. The override gate is a ContextVar set by ``override_context`` in
+    the caller, so the worker must run inside the caller's context
+    (``copy_context().run`` in ``_execute_sync_in_thread``); otherwise every
+    trial silently builds the hard-coded constructor values (0.27.0)."""
+    import traigent
+    from traigent.integrations.framework_override import (
+        apply_mock_overrides,
+        register_framework_mapping,
+    )
+
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
+
+    class FakeChat2420:
+        def __init__(self, model: str = "", temperature: float = 0.0) -> None:
+            self.model = model
+            self.temperature = temperature
+
+    register_framework_mapping(
+        "FakeChat2420", {"model": "model", "temperature": "temperature"}
+    )
+    apply_mock_overrides({"FakeChat2420": FakeChat2420})
+
+    dataset = tmp_path / "qa.jsonl"
+    dataset.write_text(
+        '{"input": {"question": "q1"}, "output": "a"}\n'
+        '{"input": {"question": "q2"}, "output": "a"}\n'
+    )
+    built: list[tuple[Any, Any, str, float]] = []
+
+    @optimize(
+        eval_dataset=str(dataset),
+        configuration_space={"model": ["m1", "m2"], "temperature": [0.0, 1.0]},
+        objectives=["accuracy"],
+        offline=True,
+        algorithm="grid",
+        max_trials=4,
+        auto_override_frameworks=True,
+        framework_targets=["FakeChat2420"],
+    )
+    def answer(question: str) -> str:
+        llm = FakeChat2420(model="hardcoded", temperature=0.5)
+        cfg = traigent.get_config()
+        built.append((cfg["model"], cfg["temperature"], llm.model, llm.temperature))
+        return "a"
+
+    answer.optimize_sync()
+
+    assert built, "the decorated function never ran"
+    for trial_model, trial_temp, built_model, built_temp in built:
+        assert (built_model, built_temp) == (trial_model, trial_temp)
+    assert len({(b[2], b[3]) for b in built}) == 4
