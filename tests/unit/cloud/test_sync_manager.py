@@ -22,10 +22,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 import requests
 
-from traigent.cloud.sync_manager import (
-    SyncManager,
-    build_experiment_url,
-)
+from traigent.cloud.sync_manager import SyncManager, build_experiment_url
 from traigent.config.types import TraigentConfig
 from traigent.storage.local_storage import OptimizationSession, TrialResult
 from traigent.utils.exceptions import TraigentStorageError
