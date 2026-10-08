@@ -37,6 +37,11 @@ logger = get_logger(__name__)
 UNMEASURED_COMPOSITE_SCORE = -sys.float_info.max
 
 
+def _finite_best_score(score: float) -> float:
+    """No eligible winner leaves ``-inf``; strict JSON cannot carry it."""
+    return score if math.isfinite(score) else UNMEASURED_COMPOSITE_SCORE
+
+
 def _objective_unmeasured(metrics: dict[str, Any], objectives: list[str]) -> bool:
     """True when a declared objective of this trial has no measurement.
 
@@ -284,7 +289,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
 
         return BatchResult(
             best_config=best_config or {},
-            best_score=best_score,
+            best_score=_finite_best_score(best_score),
             trials=completed_trials,
             duration=total_duration,
             convergence_info={
@@ -585,7 +590,9 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
 
         return BatchResult(
             best_config=best_trial.configuration if best_trial else {},
-            best_score=best_trial.score if best_trial else float("-inf"),
+            best_score=_finite_best_score(
+                best_trial.score if best_trial else float("-inf")
+            ),
             trials=all_trials,
             duration=total_duration,
             convergence_info={
@@ -1002,7 +1009,7 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
 
         return BatchResult(
             best_config=best_config or {},
-            best_score=best_score,
+            best_score=_finite_best_score(best_score),
             trials=trials,
             duration=total_duration,
             convergence_info={

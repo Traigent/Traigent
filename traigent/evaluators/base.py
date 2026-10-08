@@ -46,6 +46,7 @@ from traigent.utils.exceptions import TrialPrunedError, ValidationError
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.langchain_interceptor import get_captured_response_by_key
 from traigent.utils.logging import get_logger
+from traigent.utils.trial_costs import trial_cost_unknown
 
 if TYPE_CHECKING:
     from traigent.core.execution_budget import ExecutionBudget
@@ -4487,26 +4488,16 @@ class SimpleScoringEvaluator(BaseEvaluator):
             "TRAIGENT_STRICT_METRICS_NULLS", ""
         ).lower() in ("true", "1", "yes")
         cost_metrics = ["input_cost", "output_cost", "total_cost"]
-        flagged_rows = any(
-            bool(m.get("cost_unmeasured", False)) for m in all_metrics if m
-        )
-        # A row that carries no cost key at all (response not captured, or the
-        # example failed) has an unknown cost, exactly like a flagged one.
-        # Failed examples are excluded, as in the tracker: an error before any
-        # usage was recorded is not evidence the trial's spend is unknown.
+        # One shared classifier decides (traigent.utils.trial_costs): a flagged
+        # row, a successful row with no cost, or a trial where no row measured
+        # a cost (every example errored) all make the trial's cost unknown.
         if len(example_results) == len(all_metrics):
-            failed_flags = [
-                not getattr(r, "is_successful", True) for r in example_results
+            successes: list[bool] | None = [
+                bool(getattr(r, "is_successful", True)) for r in example_results
             ]
         else:
-            failed_flags = [False] * len(all_metrics)
-        uncaptured_rows = any(
-            m is not None
-            and not failed
-            and not any(metric in m for metric in cost_metrics)
-            for m, failed in zip(all_metrics, failed_flags, strict=True)
-        )
-        unmeasured_rows = flagged_rows or uncaptured_rows
+            successes = None
+        unmeasured_rows = trial_cost_unknown(all_metrics, successes)
         for metric in cost_metrics:
             metric_values = [
                 m.get(metric, 0.0) for m in all_metrics if m and metric in m
