@@ -54,10 +54,7 @@ from traigent.config.types import (
     validate_execution_mode,
 )
 from traigent.core.ci_approval import check_ci_approval
-from traigent.core.config_state_manager import (
-    ConfigStateManager,
-    OptimizationState,
-)
+from traigent.core.config_state_manager import ConfigStateManager, OptimizationState
 from traigent.core.cost_enforcement import is_cost_preapproved, normalize_cost_approved
 from traigent.core.execution_budget import ExecutionBudget
 from traigent.core.execution_policy_runtime import (
@@ -108,11 +105,6 @@ from traigent.integrations.framework_override import override_context
 from traigent.optimizers import get_optimizer
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.spec_loader import load_tvl_spec
-from traigent.utils.removed_params import (
-    REMOVED_MOCK_PARAMETERS,
-    reject_removed_mock_parameters,
-    removed_mock_parameter_message,
-)
 from traigent.utils.artifact_fingerprints import build_artifact_fingerprints
 from traigent.utils.cost_calculator import (
     UnknownModelError,
@@ -136,6 +128,11 @@ from traigent.utils.exceptions import (
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.incentives import show_upgrade_hint
 from traigent.utils.logging import get_logger
+from traigent.utils.removed_params import (
+    REMOVED_MOCK_PARAMETERS,
+    reject_removed_mock_parameters,
+    removed_mock_parameter_message,
+)
 from traigent.utils.validation import (
     validate_config_space,
     validate_dataset_path,
@@ -707,7 +704,8 @@ def _guard_cost_objective_without_usage(
     A run that captured no tokens on any trial records $0 everywhere. That $0
     is the absence of a measurement, not a cheap configuration, so stamping
     the run as strictly cost-accounted would make an unmeasured $0 look
-    audited. Under strict accounting this fails the run; otherwise it attaches
+    audited. Under strict accounting this fails the run, attaching the finished
+    result to the exception as ``.result``; otherwise it attaches
     ``COST_OBJECTIVE_NO_USAGE_CAPTURED`` so the caller can see the cost column
     is unmeasured.
 
@@ -726,11 +724,17 @@ def _guard_cost_objective_without_usage(
         return
 
     if is_strict_cost_accounting() and not is_mock_llm():
-        raise UnknownModelError(
+        error = UnknownModelError(
             _NO_USAGE_CAPTURED_MESSAGE
             + " Set TRAIGENT_STRICT_COST_ACCOUNTING=false to accept an "
-            "unmeasured $0 cost column."
+            "unmeasured $0 cost column. The completed trials are attached to "
+            "this exception as `.result`."
         )
+        # The trials already ran (and any provider spend is already incurred);
+        # keep them recoverable instead of discarding the finished result
+        # (#2421).
+        error.result = result  # type: ignore[attr-defined]
+        raise error
 
     warning_codes = getattr(result, "warning_codes", None)
     if isinstance(warning_codes, list):

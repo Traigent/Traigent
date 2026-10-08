@@ -423,6 +423,36 @@ async def test_cost_objective_with_no_usage_captured_fails_closed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_no_usage_failure_keeps_the_finished_result() -> None:
+    """#2421: every trial already ran (and spent) before the no-usage guard
+    fires, so the exception must carry the completed result."""
+
+    @optimize(
+        eval_dataset=[{"input": {"question": "q"}, "expected_output": "A"}],
+        objectives=["accuracy", "cost"],
+        configuration_space={"temperature": [0.1, 0.9]},
+        offline=True,
+        algorithm="grid",
+    )
+    def fn(question: str = "", temperature: float = 0.1, **_cfg):
+        return "A"
+
+    with (
+        warnings.catch_warnings(),
+        patch("traigent.core.optimized_function.is_mock_llm", return_value=False),
+    ):
+        warnings.simplefilter("ignore")
+        with pytest.raises(cost_calculator.UnknownModelError) as exc_info:
+            await fn.optimize(progress_bar=False)
+
+    result = getattr(exc_info.value, "result", None)
+    assert result is not None, "finished result discarded"
+    assert len(result.trials) == 2
+    assert result.best_config is not None
+    assert ".result" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
 async def test_cost_objective_with_no_usage_warns_when_not_strict(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
