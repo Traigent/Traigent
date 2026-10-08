@@ -103,6 +103,9 @@ def enable_mock_mode_for_quickstart() -> None:
                 "ENVIRONMENT!=production."
             )
         _enabled = True
+        from traigent.utils.mock_egress_guard import install_mock_egress_guard
+
+        install_mock_egress_guard()
         if not _activation_logged:
             _activation_logged = True
             _logger.warning(

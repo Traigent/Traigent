@@ -152,3 +152,156 @@ def test_guard_allows_local_and_non_provider_hosts_in_mock_mode(mock_mode, egres
         httpx.Client().get("http://127.0.0.1:9/x")
     with pytest.raises(httpx.ConnectError):
         httpx.Client().get("https://portal.traigent.ai/health")
+
+
+# --- install timing, redirect hops (local mock transports; no real network) ---
+
+_REDIRECT_TARGET = "https://api.openai.com/v1/models"
+
+
+def _redirect_handler(hits):
+    import httpx
+
+    def handler(request):
+        hits.append(str(request.url))
+        if request.url.host == "example.invalid":
+            return httpx.Response(307, headers={"location": _REDIRECT_TARGET})
+        return httpx.Response(200, json={"ok": True})
+
+    return handler
+
+
+def test_redirect_to_provider_blocked_sync_httpx(mock_mode):
+    import httpx
+
+    from traigent.utils.mock_egress_guard import (
+        MockEgressBlockedError,
+        install_mock_egress_guard,
+    )
+
+    install_mock_egress_guard()
+    hits: list[str] = []
+    client = httpx.Client(
+        transport=httpx.MockTransport(_redirect_handler(hits)), follow_redirects=True
+    )
+    with pytest.raises(MockEgressBlockedError):
+        client.get("https://example.invalid/start")
+    assert hits == ["https://example.invalid/start"]
+
+
+def test_redirect_to_provider_blocked_async_httpx(mock_mode):
+    import httpx
+
+    from traigent.utils.mock_egress_guard import (
+        MockEgressBlockedError,
+        install_mock_egress_guard,
+    )
+
+    install_mock_egress_guard()
+    hits: list[str] = []
+
+    async def go():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(_redirect_handler(hits)),
+            follow_redirects=True,
+        ) as client:
+            await client.get("https://example.invalid/start")
+
+    with pytest.raises(MockEgressBlockedError):
+        asyncio.run(go())
+    assert hits == ["https://example.invalid/start"]
+
+
+def test_redirect_to_provider_blocked_requests(mock_mode):
+    import requests
+    from requests.adapters import BaseAdapter
+
+    from traigent.utils.mock_egress_guard import (
+        MockEgressBlockedError,
+        install_mock_egress_guard,
+    )
+
+    install_mock_egress_guard()
+    hits: list[str] = []
+
+    class FakeAdapter(BaseAdapter):
+        def send(self, request, **kwargs):
+            hits.append(request.url)
+            resp = requests.Response()
+            resp.request = request
+            resp.url = request.url
+            resp.status_code = 307
+            resp.headers["location"] = _REDIRECT_TARGET
+            resp._content = b""
+            return resp
+
+        def close(self):
+            pass
+
+    session = requests.Session()
+    session.mount("https://", FakeAdapter())
+    with pytest.raises(MockEgressBlockedError):
+        session.get("https://example.invalid/start", allow_redirects=True)
+    assert hits == ["https://example.invalid/start"]
+
+
+def test_redirect_to_provider_allowed_when_mock_off(monkeypatch):
+    import httpx
+
+    from traigent.utils.mock_egress_guard import install_mock_egress_guard
+
+    monkeypatch.delenv("TRAIGENT_MOCK_LLM", raising=False)
+    install_mock_egress_guard()
+    hits: list[str] = []
+    client = httpx.Client(
+        transport=httpx.MockTransport(_redirect_handler(hits)), follow_redirects=True
+    )
+    assert client.get("https://example.invalid/start").status_code == 200
+    assert len(hits) == 2
+
+
+def _run_fresh(code: str, env_extra: dict[str, str]) -> str:
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, "ENVIRONMENT": "development", **env_extra}
+    env.pop("TRAIGENT_MOCK_LLM", None)
+    env.update(env_extra)
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert out.returncode == 0, out.stderr
+    return out.stdout.strip().splitlines()[-1]
+
+
+_PROBE = (
+    "import httpx\n"
+    "try:\n"
+    "    httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200)))"
+    ".get('https://api.openai.com/v1/models')\n"
+    "    print('ALLOWED')\n"
+    "except Exception as e:\n"
+    "    print(type(e).__name__)\n"
+)
+
+
+def test_fresh_import_traigent_installs_guard():
+    out = _run_fresh("import traigent\n" + _PROBE, {"TRAIGENT_MOCK_LLM": "true"})
+    assert out == "MockEgressBlockedError"
+
+
+def test_quickstart_installs_guard_and_is_inert_before_mock_mode():
+    out = _run_fresh(
+        "import traigent\n" + _PROBE + "import traigent.testing as t\n"
+        "t.enable_mock_mode_for_quickstart()\n" + _PROBE,
+        {},
+    )
+    assert out == "MockEgressBlockedError"
+    first = _run_fresh("import traigent\n" + _PROBE, {})
+    assert first == "ALLOWED"

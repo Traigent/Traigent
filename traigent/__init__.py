@@ -745,3 +745,18 @@ def __getattr__(name: str):
 
 # NOTE: Legacy builtins injection removed in v0.9.0
 # Use explicit imports: `import traigent`
+
+
+def _install_mock_egress_guard() -> None:
+    """Install the provider egress guard (inert unless mock mode is on)."""
+    try:
+        from traigent.utils.mock_egress_guard import install_mock_egress_guard
+
+        install_mock_egress_guard()
+    except Exception:  # pragma: no cover - never break import
+        logging.getLogger(__name__).debug(
+            "mock egress guard not installed", exc_info=True
+        )
+
+
+_install_mock_egress_guard()

@@ -3,12 +3,17 @@
 Mock mode intercepts LiteLLM and LangChain calls, but a call that bypasses
 those interceptors (a raw ``openai``/``anthropic`` client, or a function bound
 with ``from litellm import completion`` before the patch) would otherwise reach
-the real provider and be billed. While mock mode is on, this guard refuses any
-outgoing HTTP request whose host is a known model provider, or a custom
-``*_BASE_URL`` / ``*_API_BASE`` host the user configured for one.
+the real provider and be billed. While mock mode is on, this guard blocks HTTP
+requests from the common Python clients (httpx, requests) to known model
+providers, or to a custom ``*_BASE_URL`` / ``*_API_BASE`` host the user
+configured for one. Every redirect hop is checked, not only the first URL.
 
-The guard is installed once per process and checks mock mode on every request,
-so it is inert when mock mode is off.
+Limits: it does not block all egress. Other clients (aiohttp, urllib, raw
+sockets, non-Python subprocesses) are not covered.
+
+The guard is installed at ``import traigent`` and in
+``enable_mock_mode_for_quickstart()``. It is installed once per process and
+checks mock mode on every request, so it is inert when mock mode is off.
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Security FUNC-INTEGRATIONS SYNC-IntegrationHook
@@ -16,6 +21,7 @@ so it is inert when mock mode is off.
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import ipaddress
 import os
 import threading
@@ -155,6 +161,25 @@ def _wrap_httpx(httpx: Any) -> None:
     httpx.Client.send = send
     httpx.AsyncClient.send = asend
 
+    # ``send`` only sees the first URL; the redirect loop issues each hop
+    # through ``_send_single_request``, so check there as well.
+    if hasattr(httpx.Client, "_send_single_request"):
+        original_single = httpx.Client._send_single_request
+
+        def send_single(self: Any, request: Any) -> Any:
+            _check_url(request.url)
+            return original_single(self, request)
+
+        httpx.Client._send_single_request = send_single
+    if hasattr(httpx.AsyncClient, "_send_single_request"):
+        original_asingle = httpx.AsyncClient._send_single_request
+
+        async def asend_single(self: Any, request: Any) -> Any:
+            _check_url(request.url)
+            return await original_asingle(self, request)
+
+        httpx.AsyncClient._send_single_request = asend_single
+
 
 def install_mock_egress_guard() -> bool:
     """Install the guard on ``httpx`` (and vendored ``httpx2``) and ``requests``. Idempotent."""
@@ -162,6 +187,7 @@ def install_mock_egress_guard() -> bool:
     with _install_lock:
         if _installed:
             return False
+        # Only patch clients that are importable; nothing optional is forced in.
         # ``httpx2`` is the vendored copy some provider SDKs (anthropic) ship.
         patched_http = False
         for module_name in ("httpx", "httpx2"):
@@ -175,8 +201,12 @@ def install_mock_egress_guard() -> bool:
             return False
 
         try:
+            if importlib.util.find_spec("requests") is None:
+                raise ImportError("requests not installed")
             import requests
 
+            # ``Session.send`` is re-entered for every redirect hop, so each
+            # hop is checked.
             original_rsend = requests.Session.send
 
             def rsend(self: Any, request: Any, *args: Any, **kwargs: Any) -> Any:
