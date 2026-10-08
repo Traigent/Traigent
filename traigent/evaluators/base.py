@@ -1585,8 +1585,10 @@ class BaseEvaluator(ABC):
 
     @staticmethod
     def _execution_budget_cost(result: EvaluationResult) -> float | None:
-        """Return an observed evaluation cost, or ``None`` when it is unknown."""
-        for key in ("cost", "total_cost"):
+        """Return observed trial spend, with a legacy cost-only fallback."""
+        # A cost objective can be a per-example mean or a custom score;
+        # captured total_cost is the cumulative spend the budget consumes.
+        for key in ("total_cost", "cost"):
             value = result.aggregated_metrics.get(key)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 numeric = float(value)
