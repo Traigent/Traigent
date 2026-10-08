@@ -72,7 +72,9 @@ from traigent.api.parameter_ranges import (
     normalize_configuration_space,
 )
 from traigent.api.types import AgentDefinition
-from traigent.cloud.smart_pruning import SmartPruningOptions
+from traigent.cloud.smart_pruning import (
+    SmartPruningOptions,  # Public decorator option type.
+)
 from traigent.cloud.smart_pruning import (
     normalize_smart_pruning_options as _normalize_smart_pruning_options,
 )

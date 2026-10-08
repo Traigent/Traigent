@@ -66,9 +66,7 @@ def _assert_ok(result: subprocess.CompletedProcess[str]) -> str:
 
 
 def test_litellm_calls_are_mocked_right_after_enable() -> None:
-    out = _assert_ok(
-        _run(
-            """
+    _mock_script = """
             import asyncio
             import litellm
             from traigent.testing import enable_mock_mode_for_quickstart
@@ -82,8 +80,7 @@ def test_litellm_calls_are_mocked_right_after_enable() -> None:
             print("ASYNC", r.choices[0].message.content)
             print("SEEN", SEEN)
             """
-        )
-    )
+    out = _assert_ok(_run(_mock_script))
     assert "PATCHED True True" in out
     assert "SYNC This is a mock response for testing." in out
     assert "ASYNC This is a mock response for testing." in out
@@ -91,9 +88,7 @@ def test_litellm_calls_are_mocked_right_after_enable() -> None:
 
 
 def test_later_optimize_path_does_not_patch_twice() -> None:
-    out = _assert_ok(
-        _run(
-            """
+    _mock_script = """
             import litellm
             from traigent.testing import enable_mock_mode_for_quickstart
             enable_mock_mode_for_quickstart()
@@ -108,23 +103,19 @@ def test_later_optimize_path_does_not_patch_twice() -> None:
             print("REPATCHED", patch_litellm_for_metadata_capture())
             print("SAME", litellm.completion is first)
             """
-        )
-    )
+    out = _assert_ok(_run(_mock_script))
     assert "REPATCHED False" in out
     assert "SAME True" in out
 
 
 def test_import_traigent_alone_does_not_patch_litellm() -> None:
-    out = _assert_ok(
-        _run(
-            """
+    _mock_script = """
             import sys
             import traigent
             print("LOADED", "litellm" in sys.modules)
             import litellm
             print("PATCHED", getattr(litellm, "_traigent_patched_completion", False))
             """
-        )
-    )
+    out = _assert_ok(_run(_mock_script))
     assert "LOADED False" in out
     assert "PATCHED False" in out

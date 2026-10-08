@@ -986,9 +986,13 @@ async def test_each_captured_call_is_priced_at_its_own_model(clean_capture):
     result = await _evaluator().evaluate(agent, {"model": agent_model}, _dataset())
 
     for row in result.example_results:
-        assert row.metrics["total_cost"] == pytest.approx(agent_cost + judge_cost), (
+        _failure_detail = (
             "a judge call on another model was priced at the trial's model (#2443)"
         )
+        _actual_matches = row.metrics["total_cost"] == pytest.approx(
+            agent_cost + judge_cost
+        )
+        assert _actual_matches, _failure_detail
     assert result.aggregated_metrics["total_cost"] == pytest.approx(
         2 * (agent_cost + judge_cost)
     )
@@ -1048,9 +1052,13 @@ async def test_simple_scoring_lane_charges_every_captured_call(clean_capture):
 
     assert len(result.example_results) == 2
     for row in result.example_results:
-        assert row.metrics["total_cost"] == pytest.approx(agent_cost + judge_cost), (
+        _failure_detail = (
             "only the first captured call of the example was charged (#2444)"
         )
+        _actual_matches = row.metrics["total_cost"] == pytest.approx(
+            agent_cost + judge_cost
+        )
+        assert _actual_matches, _failure_detail
         assert row.metrics["total_tokens"] == 2 * (PROMPT_TOKENS + COMPLETION_TOKENS)
 
 

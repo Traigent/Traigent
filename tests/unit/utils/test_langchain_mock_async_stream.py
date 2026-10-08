@@ -97,9 +97,11 @@ def test_all_langchain_entry_points_are_mocked() -> None:
     mock_text = repr("This is a mock response for testing.")
     for provider in ("openai", "anthropic"):
         for method in ("invoke", "ainvoke", "stream", "astream"):
-            assert f"RESULT {provider} {method} {mock_text} 0" in result.stdout, (
-                combined
+            _failure_detail = combined
+            _actual_matches = (
+                f"RESULT {provider} {method} {mock_text} 0" in result.stdout
             )
+            assert _actual_matches, _failure_detail
     assert "SEEN []" in result.stdout, combined
 
 
