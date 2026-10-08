@@ -1213,6 +1213,77 @@ class TestParseSessionResponse:
         assert run_id is None
 
 
+# TraigentBackend #3735 / TraigentSchema #536 (session_create_response_schema.json):
+# the documented POST /api/v1/sessions shapes, hard-coded.
+_REAL_META = {
+    "experiment_id": "e-1",
+    "experiment_run_id": "r-1",
+    "total_configurations": 4,
+    "agent_id": None,
+}
+REAL_SCOPED_RESPONSE = {
+    "session_id": "s-1",
+    "status": "created",
+    "metadata": dict(_REAL_META),
+    "project_id": "p-1",
+    "tenant_id": "t-1",
+}
+REAL_LEGACY_SCOPED_RESPONSE = {
+    "success": True,
+    "message": "ok",
+    "session_id": "s-1",
+    "metadata": dict(_REAL_META),
+    "data": {"session_id": "s-1", "metadata": dict(_REAL_META)},
+    "project_id": "p-1",
+    "tenant_id": "t-1",
+}
+REAL_SCOPELESS_RESPONSE = {
+    "session_id": "s-1",
+    "status": "created",
+    "metadata": dict(_REAL_META),
+}
+
+
+class TestParseSessionResponseRealBackendShape:
+    """Pin ``_parse_session_response`` against the real backend response."""
+
+    @staticmethod
+    async def _parse(payload):
+        response = AsyncMock()
+        response.json = AsyncMock(return_value=payload)
+        return await ApiOperations(Mock())._parse_session_response(response)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "payload", [REAL_SCOPED_RESPONSE, REAL_LEGACY_SCOPED_RESPONSE]
+    )
+    async def test_top_level_scope_is_read(self, payload):
+        """Contract backend #3735 / schema #536: top-level project_id/tenant_id
+        (typed and legacy envelopes) land on the parsed result."""
+        result = await self._parse(payload)
+        assert tuple(result)[:3] == ("s-1", "e-1", "r-1")
+        assert result.project_id == "p-1"
+        assert result.tenant_id == "t-1"
+
+    @pytest.mark.asyncio
+    async def test_scopeless_response_leaves_scope_none(self):
+        """Contract backend #3735 / schema #536: omitted keys -> None."""
+        result = await self._parse(REAL_SCOPELESS_RESPONSE)
+        assert result.project_id is None
+        assert result.tenant_id is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("empty", ["", None, "  "])
+    async def test_empty_or_null_scope_is_none(self, empty):
+        """Contract backend #3735 / schema #536: empty/null ids normalize to
+        None so they can never reach the portal URL."""
+        result = await self._parse(
+            dict(REAL_SCOPED_RESPONSE, project_id=empty, tenant_id=empty)
+        )
+        assert result.project_id is None
+        assert result.tenant_id is None
+
+
 class TestUpdateConfigRunStatusSuccess:
     """Test update_config_run_status with successful responses."""
 
