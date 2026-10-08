@@ -542,79 +542,71 @@ class TrialOperations:
             headers = await self.client.auth_manager.augment_headers(
                 _JSON_CONTENT_TYPE_HEADER
             )
-            connector = self._create_localhost_connector()
-            async with aiohttp.ClientSession(
-                connector=connector, trust_env=True
-            ) as session:
-                api_base = (
-                    self.client.backend_config.api_base_url
-                    or BackendConfig.get_backend_api_url()
-                )
-                url = f"{api_base}/sessions/{session_id}/next-trial"
-                request_body = {"session_id": session_id, "previous_results": []}
-                async with session.post(
-                    url,
-                    json=request_body,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as response:
-                    if response.status in [200, 201]:
-                        data = await response.json()
-                        suggestion = (
-                            data.get("suggestion") if isinstance(data, dict) else None
+            session = await self.client._ensure_session()
+            api_base = (
+                self.client.backend_config.api_base_url
+                or BackendConfig.get_backend_api_url()
+            )
+            url = f"{api_base}/sessions/{session_id}/next-trial"
+            request_body = {"session_id": session_id, "previous_results": []}
+            async with session.post(
+                url,
+                json=request_body,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as response:
+                if response.status in [200, 201]:
+                    data = await response.json()
+                    suggestion = (
+                        data.get("suggestion") if isinstance(data, dict) else None
+                    )
+                    trial_id = (
+                        suggestion.get("trial_id")
+                        if isinstance(suggestion, dict)
+                        else None
+                    )
+                    if isinstance(trial_id, str) and trial_id:
+                        logger.debug(
+                            "Acquired backend trial slot %s for session %s",
+                            trial_id,
+                            session_id,
                         )
-                        trial_id = (
-                            suggestion.get("trial_id")
-                            if isinstance(suggestion, dict)
-                            else None
-                        )
-                        if isinstance(trial_id, str) and trial_id:
-                            logger.debug(
-                                "Acquired backend trial slot %s for session %s",
-                                trial_id,
-                                session_id,
-                            )
-                            return TrialSlotResult.acquired(trial_id)
-                        if (
-                            isinstance(data, dict)
-                            and data.get("should_continue") is False
-                        ):
-                            reason = data.get("stop_reason") or data.get("reason")
-                            logger.info(
-                                "Backend next-trial completed optimization for session %s "
-                                "(reason=%s)",
-                                session_id,
-                                reason,
-                            )
-                            return TrialSlotResult.complete(
-                                str(reason) if reason else None
-                            )
+                        return TrialSlotResult.acquired(trial_id)
+                    if isinstance(data, dict) and data.get("should_continue") is False:
+                        reason = data.get("stop_reason") or data.get("reason")
                         logger.info(
-                            "Backend next-trial returned no slot for session %s "
-                            "(should_continue=%s)",
+                            "Backend next-trial completed optimization for session %s "
+                            "(reason=%s)",
                             session_id,
-                            (
-                                data.get("should_continue")
-                                if isinstance(data, dict)
-                                else None
-                            ),
+                            reason,
                         )
-                        return TrialSlotResult.unavailable()
-                    if response.status == 403:
-                        error_msg = await response.text()
-                        self._log_ownership_forbidden(
-                            session_id,
-                            "Requesting trial slot",
-                            response.status,
-                            error_msg,
-                        )
-                        return TrialSlotResult.unavailable()
-                    logger.warning(
-                        "Failed to acquire trial slot for session %s: HTTP %s",
+                        return TrialSlotResult.complete(str(reason) if reason else None)
+                    logger.info(
+                        "Backend next-trial returned no slot for session %s "
+                        "(should_continue=%s)",
                         session_id,
-                        response.status,
+                        (
+                            data.get("should_continue")
+                            if isinstance(data, dict)
+                            else None
+                        ),
                     )
                     return TrialSlotResult.unavailable()
+                if response.status == 403:
+                    error_msg = await response.text()
+                    self._log_ownership_forbidden(
+                        session_id,
+                        "Requesting trial slot",
+                        response.status,
+                        error_msg,
+                    )
+                    return TrialSlotResult.unavailable()
+                logger.warning(
+                    "Failed to acquire trial slot for session %s: HTTP %s",
+                    session_id,
+                    response.status,
+                )
+                return TrialSlotResult.unavailable()
         except Exception as exc:
             if is_backend_offline():
                 logger.debug(
@@ -1046,8 +1038,6 @@ class TrialOperations:
                     error_message
                 )
 
-            connector = self._create_localhost_connector()
-
             logger.debug(f"📤 Submission data for trial {trial_id}:")
             logger.debug(f"   Has measures: {'measures' in result_data}")
             logger.debug(f"   Has summary_stats: {'summary_stats' in result_data}")
@@ -1064,51 +1054,48 @@ class TrialOperations:
                 _JSON_CONTENT_TYPE_HEADER
             )
 
-            async with aiohttp.ClientSession(
-                connector=connector,
-                trust_env=True,
-            ) as session:
-                api_base = (
-                    self.client.backend_config.api_base_url
-                    or BackendConfig.get_backend_api_url()
-                )
-                url = f"{api_base}/sessions/{session_id}/results"
+            session = await self.client._ensure_session()
+            api_base = (
+                self.client.backend_config.api_base_url
+                or BackendConfig.get_backend_api_url()
+            )
+            url = f"{api_base}/sessions/{session_id}/results"
 
-                async with session.post(
-                    url,
-                    json=self._sanitize_for_json(result_data),
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as response:
-                    if response.status in [200, 201]:
-                        return await self._handle_trial_success_response(
-                            response,
-                            session_id,
-                            trial_id,
-                            backend_status,
-                            result_data,
-                            clean_metrics,
-                        )
-                    elif response.status == 403:
-                        error_msg = await response.text()
-                        self._log_ownership_forbidden(
-                            session_id,
-                            "Submitting trial results",
-                            response.status,
-                            error_msg,
-                        )
-                        return False
-                    else:
-                        error_text = await response.text()
-                        error_result = self._handle_trial_error_response(
-                            response.status, trial_id, session_id, url, error_text
-                        )
-                        # Return None for transient session-not-found (400 +
-                        # "not found") so _log_trial_to_backend treats this as
-                        # a skipped upload
-                        # rather than a hard backend failure and does not flag
-                        # the backend as degraded (BE #1194 per-worker storage).
-                        return None if error_result is True else error_result
+            async with session.post(
+                url,
+                json=self._sanitize_for_json(result_data),
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as response:
+                if response.status in [200, 201]:
+                    return await self._handle_trial_success_response(
+                        response,
+                        session_id,
+                        trial_id,
+                        backend_status,
+                        result_data,
+                        clean_metrics,
+                    )
+                elif response.status == 403:
+                    error_msg = await response.text()
+                    self._log_ownership_forbidden(
+                        session_id,
+                        "Submitting trial results",
+                        response.status,
+                        error_msg,
+                    )
+                    return False
+                else:
+                    error_text = await response.text()
+                    error_result = self._handle_trial_error_response(
+                        response.status, trial_id, session_id, url, error_text
+                    )
+                    # Return None for transient session-not-found (400 +
+                    # "not found") so _log_trial_to_backend treats this as
+                    # a skipped upload
+                    # rather than a hard backend failure and does not flag
+                    # the backend as degraded (BE #1194 per-worker storage).
+                    return None if error_result is True else error_result
 
         except Exception as exc:
             if is_backend_offline():

@@ -303,7 +303,9 @@ class TestMeasuresDictValidationInSubmission:
             ),
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
-            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            ops.client._ensure_session = AsyncMock(
+                return_value=mock_session_ctx.__aenter__.return_value
+            )
             mock_aiohttp.ClientTimeout = Mock()
 
             result = await ops.submit_trial_result_via_session(
@@ -372,7 +374,9 @@ class TestMeasuresDictValidationInSubmission:
             ),
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
-            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            ops.client._ensure_session = AsyncMock(
+                return_value=mock_session_ctx.__aenter__.return_value
+            )
             mock_aiohttp.ClientTimeout = Mock()
 
             result = await ops.submit_trial_result_via_session(
@@ -541,7 +545,9 @@ class TestMeasuresDictValidationInSubmission:
             ),
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
-            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            ops.client._ensure_session = AsyncMock(
+                return_value=mock_session_ctx.__aenter__.return_value
+            )
             mock_aiohttp.ClientTimeout = Mock()
 
             with caplog.at_level(logging.WARNING):
@@ -851,6 +857,7 @@ class TestPrivacyConfigRedactionSubmission:
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
             mock_session = self._install_post_mock(mock_aiohttp)
+            ops.client._ensure_session = AsyncMock(return_value=mock_session)
 
             result = await ops.submit_trial_result_via_session(
                 session_id="test-session",
@@ -1096,9 +1103,9 @@ class TestOfflineModeReturnsNone:
                 side_effect=[False, True],
             ),
             patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
-            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+            patch("traigent.cloud.trial_operations.aiohttp"),
         ):
-            mock_aiohttp.ClientSession = Mock(
+            ops.client._ensure_session = AsyncMock(
                 side_effect=ConnectionError("simulated offline")
             )
             result = await ops.submit_trial_result_via_session(
@@ -1378,7 +1385,9 @@ class TestBudgetedSessionResultCostGuarantee:
             ),
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
-            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            ops.client._ensure_session = AsyncMock(
+                return_value=mock_session_ctx.__aenter__.return_value
+            )
             mock_aiohttp.ClientTimeout = Mock()
 
             result = await ops.submit_trial_result_via_session(
@@ -1413,7 +1422,9 @@ class TestBudgetedSessionResultCostGuarantee:
             ),
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
-            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            ops.client._ensure_session = AsyncMock(
+                return_value=mock_session_ctx.__aenter__.return_value
+            )
             mock_aiohttp.ClientTimeout = Mock()
 
             result = await ops.submit_trial_result_via_session(
@@ -1449,7 +1460,9 @@ class TestBudgetedSessionResultCostGuarantee:
             ),
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
-            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            ops.client._ensure_session = AsyncMock(
+                return_value=mock_session_ctx.__aenter__.return_value
+            )
             mock_aiohttp.ClientTimeout = Mock()
 
             result = await ops.submit_trial_result_via_session(
@@ -1484,7 +1497,9 @@ class TestBudgetedSessionResultCostGuarantee:
             ),
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
-            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            ops.client._ensure_session = AsyncMock(
+                return_value=mock_session_ctx.__aenter__.return_value
+            )
             mock_aiohttp.ClientTimeout = Mock()
 
             result = await ops.submit_trial_result_via_session(
@@ -1595,7 +1610,9 @@ class TestRequestTrialSlot:
             patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
-            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            ops.client._ensure_session = AsyncMock(
+                return_value=mock_session_ctx.__aenter__.return_value
+            )
             mock_aiohttp.ClientTimeout = Mock()
             slot = await ops.request_trial_slot("sess-1")
 
@@ -1625,7 +1642,9 @@ class TestRequestTrialSlot:
             patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
-            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            ops.client._ensure_session = AsyncMock(
+                return_value=mock_session_ctx.__aenter__.return_value
+            )
             mock_aiohttp.ClientTimeout = Mock()
             slot = await ops.request_trial_slot("sess-1")
 
@@ -1652,7 +1671,9 @@ class TestRequestTrialSlot:
             patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
-            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            ops.client._ensure_session = AsyncMock(
+                return_value=mock_session_ctx.__aenter__.return_value
+            )
             mock_aiohttp.ClientTimeout = Mock()
             slot = await ops.request_trial_slot("sess-1")
 
@@ -1676,7 +1697,9 @@ class TestRequestTrialSlot:
             patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
-            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            ops.client._ensure_session = AsyncMock(
+                return_value=mock_session_ctx.__aenter__.return_value
+            )
             mock_aiohttp.ClientTimeout = Mock()
             slot = await ops.request_trial_slot("sess-1")
 
@@ -1695,7 +1718,7 @@ class TestRequestTrialSlot:
             patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
-            mock_aiohttp.ClientSession = Mock(side_effect=ConnectionError("boom"))
+            ops.client._ensure_session = AsyncMock(side_effect=ConnectionError("boom"))
             mock_aiohttp.ClientTimeout = Mock()
             slot = await ops.request_trial_slot("sess-1")
 
@@ -1752,32 +1775,31 @@ class TestHandle400NotFound:
                 error_text=error_body,
             )
 
-        assert is_transient is True, (
+        assertion_message = (
             "_handle_trial_error_response must return True for session not-found"
         )
+        assert is_transient is True, assertion_message
 
         # Must log at INFO, not WARNING or ERROR
         info_records = [r for r in caplog.records if r.levelno == logging.INFO]
         warn_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
-        assert info_records, (
+        assertion_message = (
             "Expected at least one INFO log record for transient not-found"
         )
-        assert not warn_records, (
-            "No WARNING or ERROR log records should be emitted for a transient "
-            f"session-not-found 400; got: {[r.getMessage() for r in warn_records]}"
-        )
+        assert info_records, assertion_message
+        assertion_message = f"No WARNING or ERROR log records should be emitted for a transient session-not-found 400; got: {[r.getMessage() for r in warn_records]}"
+        assert not warn_records, assertion_message
 
         combined = " ".join(r.getMessage() for r in info_records)
         # Sync guidance must appear so users know how to recover
-        assert "sync" in combined, (
+        assertion_message = (
             "INFO log should include sync guidance for transient not-found"
         )
+        assert "sync" in combined, assertion_message
         # The parsed backend detail must appear in the log so the body is not
         # silently swallowed — this is the text extracted from the JSON "error" key.
-        assert "Session abc123 not found" in combined, (
-            "INFO log must include the backend detail from the response body; "
-            f"got: {combined!r}"
-        )
+        assertion_message = f"INFO log must include the backend detail from the response body; got: {combined!r}"
+        assert "Session abc123 not found" in combined, assertion_message
 
     def test_handle_trial_error_response_400_validation_logs_backend_reason(
         self, caplog: pytest.LogCaptureFixture
@@ -1836,9 +1858,10 @@ class TestHandle400NotFound:
                 error_text=error_body,
             )
 
-        assert not is_transient, (
+        assertion_message = (
             "'Trial not found in session' is not a transient session storage miss"
         )
+        assert not is_transient, assertion_message
 
         warn_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
         assert warn_records, "Expected WARNING log for non-session not-found 400"
@@ -1870,7 +1893,9 @@ class TestHandle400NotFound:
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
             caplog.at_level(logging.DEBUG, logger="traigent.cloud.trial_operations"),
         ):
-            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            ops.client._ensure_session = AsyncMock(
+                return_value=mock_session_ctx.__aenter__.return_value
+            )
             mock_aiohttp.ClientTimeout = Mock()
 
             result = await ops.submit_trial_result_via_session(
@@ -1882,14 +1907,13 @@ class TestHandle400NotFound:
             )
 
         # Must return None (transient/skipped), not False (hard failure)
-        assert result is None, (
+        assertion_message = (
             f"Expected None for 400 session-not-found (transient skip), got {result!r}"
         )
+        assert result is None, assertion_message
 
         # The backend detail from the response body must be visible in the log.
         # This is the key fix: the error is not silently swallowed.
         all_log_text = " ".join(r.getMessage() for r in caplog.records)
-        assert "Session sess_edge not found" in all_log_text, (
-            "Backend response body detail must appear in logs. "
-            f"All log text: {all_log_text!r}"
-        )
+        assertion_message = f"Backend response body detail must appear in logs. All log text: {all_log_text!r}"
+        assert "Session sess_edge not found" in all_log_text, assertion_message
