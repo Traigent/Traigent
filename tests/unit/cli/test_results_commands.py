@@ -29,6 +29,12 @@ from traigent.core.objectives import create_default_objectives
 from traigent.storage.local_storage import LocalStorageManager
 
 
+@pytest.fixture(autouse=True)
+def _isolated_results_folder(tmp_path, monkeypatch):
+    """Keep name resolution off the developer's real ~/.traigent store."""
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path / "isolated-results"))
+
+
 @pytest.fixture
 def runner():
     """Create CLI runner."""
@@ -254,7 +260,7 @@ class TestResultsShow:
 
             result = runner.invoke(cli, ["results", "show", "nonexistent"])
 
-            assert result.exit_code == 0  # CLI handles error gracefully
+            assert result.exit_code != 0  # not-found must be visible to scripts
             assert "not found" in result.output.lower()
 
 
@@ -400,6 +406,7 @@ class TestExportCommand:
                 ["export", "nonexistent", "-o", str(output_path)],
             )
 
+            assert result.exit_code != 0
             assert "not found" in result.output.lower()
 
 

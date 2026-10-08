@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -14,7 +15,13 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 from traigent import get_version_info
-from traigent.api.types import PresetSelection
+from traigent.api.types import (
+    OptimizationResult,
+    OptimizationStatus,
+    PresetSelection,
+    TrialResult,
+    TrialStatus,
+)
 from traigent.cli.auth_commands import auth
 from traigent.cli.certify_commands import certify
 from traigent.cli.hooks_commands import hooks
@@ -1063,7 +1070,7 @@ def _print_result_summary(result: Any) -> None:
     summary_table.add_column("Key", style="dim")
     summary_table.add_column("Value")
 
-    summary_table.add_row("Function", getattr(result, "function_name", "unknown"))
+    summary_table.add_row("Function", _result_function_name(result, "unknown"))
     summary_table.add_row("Algorithm", getattr(result, "algorithm", "unknown"))
     summary_table.add_row(_MSG_TOTAL_TRIALS, str(len(result.trials)))
     summary_table.add_row("Successful Trials", str(len(result.successful_trials or [])))
@@ -1376,6 +1383,122 @@ def _merge_result_infos(
     return merged
 
 
+_LOCAL_PREFIX = "local:"
+
+
+def _session_timestamp(value: str | None, fallback: datetime) -> datetime:
+    try:
+        return datetime.fromisoformat(value) if value else fallback
+    except ValueError:
+        return fallback
+
+
+def _session_to_optimization_result(
+    session: OptimizationSession, storage: LocalStorageManager
+) -> OptimizationResult:
+    """Rebuild a result from a v2 local session without inventing fields.
+
+    A trial's stored ``score`` is the session's primary-objective value, so it is
+    exposed under that objective's name, with the orientation the storage layer
+    already resolves for it.
+    """
+    config = session.optimization_config
+    objective = storage._resolve_primary_objective_name(config)
+    orientation = storage._resolve_primary_objective_orientation(config, objective)
+    created = _session_timestamp(session.created_at, datetime.now(UTC))
+    trials = [
+        TrialResult(
+            trial_id=str(trial.trial_id),
+            config=dict(trial.config or {}),
+            metrics={} if trial.score is None else {objective: trial.score},
+            status=(
+                TrialStatus.COMPLETED if trial.error is None else TrialStatus.FAILED
+            ),
+            duration=0.0,
+            timestamp=_session_timestamp(trial.timestamp, created),
+            error_message=trial.error,
+            metadata=dict(trial.metadata or {}),
+            score=trial.score,
+        )
+        for trial in (session.trials or [])
+    ]
+    try:
+        status = OptimizationStatus(session.status)
+    except ValueError:
+        status = OptimizationStatus.UNKNOWN
+    return OptimizationResult(
+        trials=trials,
+        best_config=cast("dict[str, Any] | None", session.best_config),
+        best_score=session.best_score,
+        optimization_id=session.session_id,
+        duration=0.0,
+        convergence_info={},
+        status=status,
+        objectives=[objective],
+        algorithm=_local_session_algorithm(session),
+        timestamp=_session_timestamp(session.updated_at, created),
+        metadata={
+            "function_name": session.function_name,
+            "source": "local_session",
+            **(
+                {"objective_orientations": {objective: orientation}}
+                if orientation in ("maximize", "minimize")
+                else {}
+            ),
+        },
+    )
+
+
+def _not_found_error(name: str, detail: str = "") -> click.ClickException:
+    return click.ClickException(
+        f"Result '{name}' not found{detail}. {_MSG_RESULTS_LIST_HINT}"
+    )
+
+
+def _load_result_by_name(name: str, storage_dir: str | None) -> OptimizationResult:
+    """Resolve any name ``results list`` prints (the one resolver for all commands).
+
+    Accepts a saved-result name, ``local:<session_id>``, a bare session id, or an
+    unambiguous prefix of a session id. Raises ``click.ClickException`` (non-zero
+    exit) when nothing matches or the prefix is ambiguous. Session ids are only
+    matched against the ids listed from the sessions directory, never joined into
+    a path, so a crafted name cannot read outside the results directory.
+    """
+    is_local = name.startswith(_LOCAL_PREFIX)
+    if not is_local:
+        try:
+            return PersistenceManager(storage_dir or ".traigent").load_result(name)
+        except FileNotFoundError:
+            pass
+        except PathTraversalError:
+            raise _not_found_error(name) from None
+        except Exception as exc:
+            raise click.ClickException(f"Error loading result '{name}': {exc}") from exc
+
+    wanted = name[len(_LOCAL_PREFIX) :] if is_local else name
+    storage = LocalStorageManager(storage_dir)
+    sessions = storage.list_sessions() if wanted else []
+    matches = [s for s in sessions if s.session_id == wanted] or [
+        s for s in sessions if s.session_id.startswith(wanted)
+    ]
+    if len(matches) > 1:
+        candidates = ", ".join(f"{_LOCAL_PREFIX}{s.session_id}" for s in matches)
+        raise click.ClickException(
+            f"'{name}' is ambiguous; it matches: {candidates}. "
+            "Use a longer prefix or the full name."
+        )
+    if not matches:
+        raise _not_found_error(name)
+    return _session_to_optimization_result(matches[0], storage)
+
+
+def _result_function_name(result: Any, fallback: str) -> str:
+    name = getattr(result, "function_name", None)
+    if not name:
+        name = (getattr(result, "metadata", None) or {}).get("function_name")
+    return str(name) if name else fallback
+
+
 @cli.group()
 def results() -> None:
     """Browse, compare, and manage optimization results.
@@ -1438,11 +1561,9 @@ def results_list(storage_dir: str | None) -> None:
 
 @results.command("show")
 @click.argument("result_name")
-@click.option(
-    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
-)
+@click.option("--storage-dir", "-d", default=None, help="Traigent storage directory")
 @click.option("--trials", "-t", is_flag=True, help="Show all trial details")
-def results_show(result_name: str, storage_dir: str, trials: bool) -> None:
+def results_show(result_name: str, storage_dir: str | None, trials: bool) -> None:
     """Show detailed view of a specific optimization run.
 
     Examples:
@@ -1451,10 +1572,8 @@ def results_show(result_name: str, storage_dir: str, trials: bool) -> None:
     """
     console.print(f"\n[bold blue]Optimization Result: {result_name}[/bold blue]\n")
 
+    result = _load_result_by_name(result_name, storage_dir)
     try:
-        persistence = PersistenceManager(storage_dir)
-        result = persistence.load_result(result_name)
-
         _print_result_summary(result)
         _print_config_json(result.best_config)
         _print_metrics_table(result.best_metrics)
@@ -1462,21 +1581,15 @@ def results_show(result_name: str, storage_dir: str, trials: bool) -> None:
 
         if trials:
             _print_trials_table(result.trials)
-
-    except FileNotFoundError:
-        console.print(f"[red]Result '{result_name}' not found[/red]")
-        console.print(_MSG_RESULTS_LIST_HINT)
     except Exception as e:
-        console.print(f"[red]Error loading result: {e}[/red]")
+        raise click.ClickException(f"Error showing result: {e}") from e
 
 
 @results.command("compare")
 @click.argument("result1")
 @click.argument("result2")
-@click.option(
-    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
-)
-def results_compare(result1: str, result2: str, storage_dir: str) -> None:
+@click.option("--storage-dir", "-d", default=None, help="Traigent storage directory")
+def results_compare(result1: str, result2: str, storage_dir: str | None) -> None:
     """Compare two optimization runs side-by-side.
 
     Examples:
@@ -1484,11 +1597,9 @@ def results_compare(result1: str, result2: str, storage_dir: str) -> None:
     """
     console.print(f"\n[bold blue]Comparing: {result1} vs {result2}[/bold blue]\n")
 
+    r1 = _load_result_by_name(result1, storage_dir)
+    r2 = _load_result_by_name(result2, storage_dir)
     try:
-        persistence = PersistenceManager(storage_dir)
-        r1 = persistence.load_result(result1)
-        r2 = persistence.load_result(result2)
-
         # Summary comparison table
         summary_table = _build_comparison_summary_table(r1, r2, result1, result2)
         console.print(summary_table)
@@ -1508,11 +1619,8 @@ def results_compare(result1: str, result2: str, storage_dir: str) -> None:
             console.print("\n[bold]Metrics Comparison[/bold]")
             console.print(metrics_table)
 
-    except FileNotFoundError as e:
-        console.print(f"[red]Result not found: {e}[/red]")
-        console.print(_MSG_RESULTS_LIST_HINT)
     except Exception as e:
-        console.print(f"[red]Error comparing results: {e}[/red]")
+        raise click.ClickException(f"Error comparing results: {e}") from e
 
 
 @results.command("rerank")
@@ -1523,13 +1631,11 @@ def results_compare(result1: str, result2: str, storage_dir: str) -> None:
     required=True,
     help="Objective weights as key=value pairs (e.g., accuracy=0.7,cost=0.3)",
 )
-@click.option(
-    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
-)
+@click.option("--storage-dir", "-d", default=None, help="Traigent storage directory")
 def results_rerank(
     result_name: str,
     weights: str,
-    storage_dir: str,
+    storage_dir: str | None,
 ) -> None:
     """Recalculate best config with different objective weights.
 
@@ -1553,10 +1659,8 @@ def results_rerank(
     for k, v in weight_dict.items():
         console.print(f"  {k}: {v:.2%}")
 
+    result = _load_result_by_name(result_name, storage_dir)
     try:
-        persistence = PersistenceManager(storage_dir)
-        result = persistence.load_result(result_name)
-
         if not result.trials:
             console.print("[yellow]No trials found in this result[/yellow]")
             return
@@ -1598,11 +1702,8 @@ def results_rerank(
             console.print("[dim]Original best config:[/dim]")
             console.print(json.dumps(result.best_config, indent=2))
 
-    except FileNotFoundError:
-        console.print(f"[red]Result '{result_name}' not found[/red]")
-        console.print(_MSG_RESULTS_LIST_HINT)
     except Exception as e:
-        console.print(f"[red]Error re-ranking: {e}[/red]")
+        raise click.ClickException(f"Error re-ranking: {e}") from e
 
 
 @cli.command()
@@ -1621,11 +1722,9 @@ def results_rerank(
     default="slim",
     help="Export format: slim (~1KB, git-friendly) or full (includes trials)",
 )
-@click.option(
-    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
-)
+@click.option("--storage-dir", "-d", default=None, help="Traigent storage directory")
 def export(
-    result_name: str, output: str | None, export_format: str, storage_dir: str
+    result_name: str, output: str | None, export_format: str, storage_dir: str | None
 ) -> None:
     """Export an optimization result to a portable config file.
 
@@ -1651,21 +1750,22 @@ def export(
         f"\n[bold blue]Exporting: {result_name} ({export_format} format)[/bold blue]\n"
     )
 
+    result = _load_result_by_name(result_name, storage_dir)
+    if not result.best_config:
+        raise click.ClickException(
+            f"No best configuration found in result '{result_name}'"
+        )
+
+    # Determine output path
+    if output is None:
+        default_name = result_name.replace(_LOCAL_PREFIX, "", 1)
+        output_path = Path("configs") / f"{default_name}.json"
+    else:
+        output_path = Path(output)
+    output_path = _resolve_user_cli_path(output_path, "Output file", for_write=True)
+    function_name = _result_function_name(result, result_name)
+
     try:
-        persistence = PersistenceManager(storage_dir)
-        result = persistence.load_result(result_name)
-
-        if not result.best_config:
-            console.print("[red]No best configuration found in this result[/red]")
-            return
-
-        # Determine output path
-        if output is None:
-            output_path = Path("configs") / f"{result_name}.json"
-        else:
-            output_path = Path(output)
-
-        output_path = output_path.expanduser()
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Build export data based on format
@@ -1674,7 +1774,7 @@ def export(
         if export_format == "slim":
             export_data: dict[str, Any] = {
                 "config": result.best_config,
-                "function_name": getattr(result, "function_name", result_name),
+                "function_name": function_name,
                 "exported_at": __import__("datetime").datetime.now().isoformat(),
                 "traigent_version": __version__,
             }
@@ -1687,7 +1787,7 @@ def export(
         else:  # full
             export_data = {
                 "config": result.best_config,
-                "function_name": getattr(result, "function_name", result_name),
+                "function_name": function_name,
                 "exported_at": __import__("datetime").datetime.now().isoformat(),
                 "traigent_version": __version__,
                 "trials": [
@@ -1711,7 +1811,7 @@ def export(
         safe_write_text(
             output_path,
             json.dumps(export_data, indent=2, default=str),
-            WORKSPACE_ROOT,
+            output_path.parent,
             encoding="utf-8",
         )
 
@@ -1729,18 +1829,13 @@ def export(
             f'[cyan]@traigent.optimize(load_from="{output_path}", ...)[/cyan]'
         )
 
-    except FileNotFoundError:
-        console.print(f"[red]Result '{result_name}' not found[/red]")
-        console.print("Use 'traigent results' to see available results")
     except Exception as e:
-        console.print(f"[red]Error exporting result: {e}[/red]")
+        raise click.ClickException(f"Error exporting result: {e}") from e
 
 
 @cli.command()
 @click.argument("result_name")
-@click.option(
-    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
-)
+@click.option("--storage-dir", "-d", default=None, help="Traigent storage directory")
 @click.option(
     "--plot-type",
     "-p",
@@ -1748,25 +1843,18 @@ def export(
     default="progress",
     help="Type of plot to generate",
 )
-def plot(result_name: str, storage_dir: str, plot_type: str) -> None:
+def plot(result_name: str, storage_dir: str | None, plot_type: str) -> None:
     """Generate plots for optimization results."""
     console.print(
         f"\n[bold blue]Generating {plot_type} plot for: {result_name}[/bold blue]\n"
     )
 
+    result = _load_result_by_name(result_name, storage_dir)
     try:
-        persistence = PersistenceManager(storage_dir)
-        result = persistence.load_result(result_name)
-
-        # Generate plot
         plot_output = create_quick_plot(result, plot_type)
         console.print(plot_output)
-
-    except FileNotFoundError:
-        console.print(f"[red]Result '{result_name}' not found[/red]")
-        console.print("Use 'traigent results' to see available results")
     except Exception as e:
-        console.print(f"[red]Error generating plot: {e}[/red]")
+        raise click.ClickException(f"Error generating plot: {e}") from e
 
 
 @cli.command()
