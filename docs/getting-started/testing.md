@@ -119,8 +119,11 @@ TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true python examples/core/rag-opti
 
 **Mock Mode Features:**
 - No API keys required when optimized functions use LiteLLM or LangChain.
-- Fast execution — LiteLLM and LangChain LLM calls are intercepted and replaced
-  with canned responses so those trials don't hit the provider network.
+- Fast execution — LiteLLM calls (`completion` / `acompletion`) and LangChain
+  `ChatOpenAI` / `ChatAnthropic` / Bedrock chat-model calls (`invoke`, `ainvoke`,
+  `stream`, `astream`) are intercepted and replaced with canned responses so
+  those trials don't hit the provider network (`batch` / `abatch` go through
+  `invoke` / `ainvoke`).
 - Raw SDK calls such as `openai.chat.completions.create(...)` and
   `anthropic.messages.create(...)` are not intercepted by mock mode.
 - Cost approval still runs in mock mode. Use `cost_approved=True` in code or

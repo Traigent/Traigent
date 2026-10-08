@@ -65,7 +65,7 @@ When `TRAIGENT_MOCK_LLM=true`:
 ### What Gets Mocked
 
 - LiteLLM completion calls (`litellm.completion(...)` / `litellm.acompletion(...)`) once the SDK has installed its interceptor: `enable_mock_mode_for_quickstart()` installs it when called; with only `TRAIGENT_MOCK_LLM=true` it is installed when the optimization/evaluation path starts
-- LangChain model invocations made via Traigent's framework integration layer (e.g. `ChatOpenAI`, `ChatAnthropic` when `traigent[integrations]` is installed)
+- LangChain chat-model calls on `ChatOpenAI`, `ChatAnthropic` and the Bedrock chat models (when `traigent[integrations]` is installed): `invoke`, `ainvoke`, `stream` and `astream` (`batch` / `abatch` go through `invoke` / `ainvoke`).
 
 **Important:** Raw `openai.chat.completions.create(...)` and `anthropic.messages.create(...)` calls made directly (outside the LiteLLM or LangChain integration layer) are **not** intercepted and will attempt to reach real provider APIs. Stub those calls explicitly (e.g. with `unittest.mock`) for a guaranteed $0 rehearsal.
 
