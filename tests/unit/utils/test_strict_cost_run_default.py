@@ -419,6 +419,9 @@ async def test_cost_objective_with_no_usage_captured_fails_closed() -> None:
     text = _error_chain_text(exc_info.value)
     assert "no LLM usage was captured" in text
     assert "TRAIGENT_STRICT_COST_ACCOUNTING=false" in text
+    # The advice must not tell a `from litellm import completion` user to do
+    # what they already do: that binding is not intercepted (#2515).
+    assert "`from litellm import completion` keeps the unpatched function" in text
     assert is_strict_cost_accounting() is False
 
 

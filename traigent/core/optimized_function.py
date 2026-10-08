@@ -596,7 +596,10 @@ _NO_USAGE_CAPTURED_MESSAGE = (
     "client you constructed yourself, an HTTP call, a framework that hides "
     "the response) are not captured. Return the provider response object "
     "from the optimized function, or route the call through "
-    "`litellm.completion`."
+    "`litellm.completion` called as a module attribute (`import litellm` then "
+    "`litellm.completion(...)`): a name bound with "
+    "`from litellm import completion` keeps the unpatched function and is "
+    "not intercepted."
 )
 
 
