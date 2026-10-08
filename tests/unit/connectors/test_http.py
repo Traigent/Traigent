@@ -1,17 +1,17 @@
 import asyncio
+import errno
+import socket
+import threading
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import format_datetime
-import threading
-import time
-import errno
-import socket
 
 import pytest
 
 from traigent.connectors.http import (
-    ConnectionCredentials,
     CleanupDeadlineExceeded,
+    ConnectionCredentials,
     DeadlineExceeded,
     HttpKernel,
     HttpResponse,
