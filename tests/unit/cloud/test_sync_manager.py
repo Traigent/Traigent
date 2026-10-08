@@ -334,17 +334,11 @@ class TestSyncManager:
 
         measures = results[0]["measures"]
         # Real accuracy from evaluator — must NOT be clobbered by composite score
-        assert measures["accuracy"] == 0.85, (
-            f"accuracy should be 0.85 (real metric), got {measures['accuracy']}"
-        )
+        assert measures["accuracy"] == 0.85, "Preserve the evaluator accuracy"
         # Latency should be synced as a first-class measure
-        assert measures["latency"] == 120.0, (
-            f"latency should be 120.0, got {measures.get('latency')}"
-        )
+        assert measures["latency"] == 120.0, "Include latency as a measure"
         # Composite score is preserved for backward compatibility
-        assert measures["score"] == 0.7, (
-            f"composite score should be 0.7, got {measures['score']}"
-        )
+        assert measures["score"] == 0.7, "Preserve the composite score"
 
     # Initialization Tests
 
@@ -1601,9 +1595,7 @@ class TestSyncManager:
         assert f"{base}/sessions" not in post_urls
         # No-duplicate guard: exactly ONE result POST (the remaining cfg_2).
         result_posts = [url for url in post_urls if url.endswith("/results")]
-        assert result_posts == [f"{base}/sessions/session-id/results"], (
-            "resume must POST only the not-yet-synced result, never re-post synced ones"
-        )
+        assert result_posts == [f"{base}/sessions/session-id/results"]
         # Finalized exactly once.
         finalize_posts = [url for url in post_urls if url.endswith("/finalize")]
         assert finalize_posts == [f"{base}/sessions/session-id/finalize"]
