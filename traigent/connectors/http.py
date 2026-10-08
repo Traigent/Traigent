@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import Future, TimeoutError as FutureTimeout
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from dataclasses import dataclass, field
 from datetime import UTC
@@ -11,9 +12,11 @@ import math
 import random
 import threading
 import time
-from typing import Any, Protocol
-from collections.abc import Callable, Coroutine, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 from urllib.parse import urljoin, urlsplit
+
+import httpx
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -36,12 +39,6 @@ class DeadlineExceeded(TimeoutError):
     """Closed failure used when a connector call exceeds its total budget."""
 
 
-class Transport(Protocol):
-    def send(
-        self, method: str, url: str, *, headers: Mapping[str, str], timeout: float
-    ) -> HttpResponse: ...
-
-
 class _RejectCookies(DefaultCookiePolicy):
     """Prevent bearer-authenticated connector sessions from accepting cookies."""
 
@@ -49,45 +46,39 @@ class _RejectCookies(DefaultCookiePolicy):
         return False
 
 
-class _HttpxTransport:
-    def __init__(self, transport: Any = None) -> None:
-        import httpx
+class _HeaderGuardTransport(httpx.AsyncBaseTransport):
+    """Final request boundary for connection authority and cookie isolation."""
 
-        if transport is not None and not isinstance(
-            transport, httpx.AsyncBaseTransport
-        ):
-            transport = _AsyncTransportAdapter(transport)
-        self._client = httpx.AsyncClient(
-            cookies=CookieJar(policy=_RejectCookies()),
-            follow_redirects=False,
-            transport=transport,
-        )
+    _STRIPPED_HEADERS = {
+        "cookie",
+        "host",
+        ":authority",
+        "forwarded",
+        "x-forwarded-host",
+        "x-original-host",
+    }
 
-    async def send(
-        self,
-        method: str,
-        url: str,
-        *,
-        headers: Mapping[str, str],
-        timeout: float,
-    ) -> HttpResponse:
-        async with self._client.stream(
-            method, url, headers=headers, timeout=timeout
-        ) as response:
-            chunks = [chunk async for chunk in response.aiter_bytes()]
-            return HttpResponse(
-                response.status_code, dict(response.headers), b"".join(chunks)
-            )
-
-
-class _AsyncTransportAdapter:
-    """Adapt legacy test doubles without putting production I/O on a sync client."""
-
-    def __init__(self, transport: Any) -> None:
+    def __init__(self, transport: httpx.AsyncBaseTransport) -> None:
         self._transport = transport
 
-    async def handle_async_request(self, request: Any) -> Any:
-        return await asyncio.to_thread(self._transport.handle_request, request)
+    @staticmethod
+    def _host_for(url: httpx.URL) -> str:
+        default_port = 443 if url.scheme == "https" else 80
+        return url.host if url.port in (None, default_port) else f"{url.host}:{url.port}"
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        for name in tuple(request.headers):
+            if name.lower() in self._STRIPPED_HEADERS:
+                del request.headers[name]
+        request.headers["Host"] = self._host_for(request.url)
+        response = await self._transport.handle_async_request(request)
+        for name in tuple(response.headers):
+            if name.lower() == "set-cookie":
+                del response.headers[name]
+        return response
+
+    async def aclose(self) -> None:
+        await self._transport.aclose()
 
 
 class HttpKernel:
@@ -96,7 +87,6 @@ class HttpKernel:
         base_url: str,
         credentials: ConnectionCredentials,
         *,
-        transport: Transport | None = None,
         deadline: float = 30.0,
         timeout: float = 10.0,
         max_retries: int = 2,
@@ -105,6 +95,7 @@ class HttpKernel:
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
+        _test_transport_factory: Callable[[], httpx.AsyncBaseTransport] | None = None,
     ) -> None:
         parsed = urlsplit(base_url)
         if (
@@ -139,7 +130,7 @@ class HttpKernel:
             base_port,
         )
         self._credentials = credentials
-        self._transport = self._new_transport(transport)
+        self._test_transport_factory = _test_transport_factory
         self._deadline = deadline
         self._timeout = timeout
         self._max_retries = max_retries
@@ -149,21 +140,20 @@ class HttpKernel:
         self._wall_clock = wall_clock
         self._sleep = sleep
 
-    @staticmethod
-    def _new_transport(
-        transport: Transport | Any | None,
-    ) -> Transport | _HttpxTransport:
-        if transport is None:
-            return _HttpxTransport()
-        try:
-            import httpx
-        except ImportError:
-            return transport
-        if isinstance(transport, (httpx.BaseTransport, httpx.AsyncBaseTransport)):
-            # Each kernel owns a client and a rejecting cookie jar, even when
-            # its low-level transport is shared by several connections.
-            return _HttpxTransport(transport)
-        return transport
+    def _new_transport(self) -> _HeaderGuardTransport:
+        """Create a fresh low-level transport inside the call's worker loop.
+
+        Production calls have no injection seam.  The private factory exists only
+        for socket-free unit tests and is deliberately invoked for every call.
+        """
+        transport = (
+            self._test_transport_factory()
+            if self._test_transport_factory is not None
+            else httpx.AsyncHTTPTransport(retries=0)
+        )
+        if not isinstance(transport, httpx.AsyncBaseTransport):
+            raise TypeError("test transport factory must return an async transport")
+        return _HeaderGuardTransport(transport)
 
     @staticmethod
     def _origin_for(parsed: Any) -> tuple[str, str, int]:
@@ -200,49 +190,97 @@ class HttpKernel:
         headers: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> HttpResponse:
-        return self._run_async(self._request_async(method, path, headers, timeout))
+        """Execute one call in its own loop and bound caller-side shutdown.
 
-    @staticmethod
-    def _run_async(coroutine: Coroutine[Any, Any, HttpResponse]) -> HttpResponse:
-        """Run the async kernel without ever nesting an event loop."""
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(coroutine)
+        ``asyncio.timeout`` protects the I/O coroutine; the future timeout also
+        covers worker startup and prevents a sync caller from waiting forever for
+        cancellation cleanup.
+        """
+        started_at = time.monotonic()
+        deadline_at = started_at + self._deadline
+        completed: Future[HttpResponse] = Future()
+        finished = threading.Event()
+        cancel_requested = threading.Event()
+        state_lock = threading.Lock()
+        state: dict[str, Any] = {"loop": None, "task": None}
 
-        result: list[HttpResponse] = []
-        error: list[BaseException] = []
+        def cancel_task() -> None:
+            task = state["task"]
+            if task is not None and not task.done():
+                task.cancel()
 
         def run_in_worker() -> None:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            async def run_call() -> HttpResponse:
+                transport = self._new_transport()
+                async with httpx.AsyncClient(
+                    cookies=CookieJar(policy=_RejectCookies()),
+                    follow_redirects=False,
+                    transport=transport,
+                ) as client:
+                    return await self._request_async(
+                        client, method, path, headers, timeout, deadline_at
+                    )
+
+            task = loop.create_task(run_call())
+            with state_lock:
+                state["loop"] = loop
+                state["task"] = task
+                if cancel_requested.is_set():
+                    loop.call_soon(task.cancel)
             try:
-                result.append(asyncio.run(coroutine))
-            except BaseException as caught:
-                error.append(caught)
+                response = loop.run_until_complete(task)
+            except BaseException as error:
+                completed.set_exception(error)
+            else:
+                completed.set_result(response)
+            finally:
+                loop.close()
+                finished.set()
 
         worker = threading.Thread(target=run_in_worker, daemon=True)
         worker.start()
-        worker.join()
-        if error:
-            raise error[0]
-        return result[0]
+        try:
+            return completed.result(timeout=max(0.0, deadline_at - time.monotonic()))
+        except FutureTimeout as error:
+            cancel_requested.set()
+            with state_lock:
+                loop = state["loop"]
+                if loop is not None and not loop.is_closed():
+                    loop.call_soon_threadsafe(cancel_task)
+            # Cleanup is bounded; a misbehaving private test double cannot hold
+            # a synchronous connector caller beyond the documented grace period.
+            finished.wait(timeout=max(0.0, deadline_at + 0.2 - time.monotonic()))
+            raise DeadlineExceeded("connector request deadline exceeded") from error
+
+    async def aclose(self) -> None:
+        """Idempotent lifecycle hook; calls do not retain clients or pools."""
 
     async def _request_async(
         self,
+        client: httpx.AsyncClient,
         method: str,
         path: str,
         headers: Mapping[str, str] | None,
         timeout: float | None,
+        deadline_at: float,
     ) -> HttpResponse:
         try:
-            return await asyncio.wait_for(
-                self._request_with_retries(method, path, headers, timeout),
-                timeout=self._deadline,
-            )
+            remaining = deadline_at - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError
+            async with asyncio.timeout(remaining):
+                return await self._request_with_retries(
+                    client, method, path, headers, timeout
+                )
         except TimeoutError as error:
             raise DeadlineExceeded("connector request deadline exceeded") from error
 
     async def _request_with_retries(
         self,
+        client: httpx.AsyncClient,
         method: str,
         path: str,
         headers: Mapping[str, str] | None,
@@ -275,20 +313,14 @@ class HttpKernel:
             if remaining <= 0:
                 raise DeadlineExceeded("connector request deadline exceeded")
             attempt_timeout = min(self._timeout, timeout or self._timeout, remaining)
-            if isinstance(self._transport, _HttpxTransport):
-                response = await self._transport.send(
-                    method,
-                    url,
-                    headers=request_headers,
-                    timeout=attempt_timeout,
-                )
-            else:
-                response = await asyncio.to_thread(
-                    self._transport.send,
-                    method,
-                    url,
-                    headers=request_headers,
-                    timeout=attempt_timeout,
+            async with client.stream(
+                method, url, headers=request_headers, timeout=attempt_timeout
+            ) as raw_response:
+                chunks = [chunk async for chunk in raw_response.aiter_bytes()]
+                response = HttpResponse(
+                    raw_response.status_code,
+                    dict(raw_response.headers),
+                    b"".join(chunks),
                 )
             if self._clock() > end:
                 raise DeadlineExceeded("connector request deadline exceeded")
