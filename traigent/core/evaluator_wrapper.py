@@ -28,6 +28,7 @@ from traigent.evaluators.base import (
     failed_row_metrics,
 )
 from traigent.identity.examples import result_identity_fields
+from traigent.utils.exceptions import EvaluationError
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.logging import get_logger
 
@@ -35,6 +36,20 @@ logger = get_logger(__name__)
 
 _LLM_TOKEN_METRICS = ("input_tokens", "output_tokens", "total_tokens")
 _LLM_COST_METRICS = ("input_cost", "output_cost", "total_cost")
+
+# Objectives the SDK measures itself (cost, tokens, latency) rather than the
+# custom evaluator. Their absence from ExampleResult.metrics is handled by the
+# measured-metric paths, not by the missing-objective guard below (#2422).
+_SDK_MEASURED_OBJECTIVES = frozenset(
+    {
+        *MEASURED_ONLY_METRICS,
+        *_LLM_TOKEN_METRICS,
+        *_LLM_COST_METRICS,
+        "latency",
+        "response_time_ms",
+        "execution_time_ms",
+    }
+)
 
 
 def _strict_metrics_nulls() -> bool:
@@ -400,6 +415,37 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             metadata=example.metadata.copy() if example.metadata else {},
         )
 
+    def _raise_for_objectives_never_reported(
+        self, example_results: list[ExampleResult]
+    ) -> None:
+        """Fail closed when no successful row reported an objective (#2422).
+
+        ``_aggregate_custom_metrics`` reads an absent key as 0.0, so an
+        evaluator that names its metric differently (``score`` instead of
+        ``accuracy``) scored every trial 0.0 with no signal, and the
+        run-level unmatched-objective guard (#1691) never fired because the
+        objective looked measured. A key absent from only some rows keeps the
+        historical 0.0; a run where every row failed is already failed.
+        """
+        successful = [r for r in example_results if r.success]
+        if not successful:
+            return
+        reported: set[str] = set()
+        for row in successful:
+            reported.update((row.metrics or {}).keys())
+        missing = [
+            metric
+            for metric in self.metrics
+            if metric not in _SDK_MEASURED_OBJECTIVES and metric not in reported
+        ]
+        if missing:
+            raise EvaluationError(
+                f"Objective(s) {missing} missing from every ExampleResult.metrics "
+                f"the custom_evaluator returned (keys returned: {sorted(reported)}). "
+                "Refusing to substitute a fabricated 0.0 score for an "
+                "optimization objective."
+            )
+
     def _aggregate_custom_metrics(
         self, all_metrics: list[dict[str, Any]]
     ) -> dict[str, float]:
@@ -723,6 +769,12 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         # End metrics tracking if it was started
         if self.capture_llm_metrics and self._metrics_available:
             self._metrics_tracker.end_tracking()
+
+        try:
+            self._raise_for_objectives_never_reported(example_results)
+        except EvaluationError:
+            self._abort_execution_budget_evaluation(execution_budget_lease)
+            raise
 
         # Aggregate metrics across all examples
         aggregated_metrics = self._aggregate_custom_metrics(all_metrics)
