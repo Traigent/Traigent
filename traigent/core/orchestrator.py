@@ -3722,6 +3722,13 @@ class OptimizationOrchestrator:
             remaining, remaining_samples, budget_stop = self._check_budget_limits(
                 trial_count
             )
+            if budget_stop in (
+                "max_trials_reached",
+                "max_samples_reached",
+            ) and self._stop_condition_manager.safety_constraint_violated(self._trials):
+                # The last trial's safety violation outranks the trial budget
+                # running out at the same time (#2481).
+                budget_stop = "safety_constraint"
             if self._apply_budget_stop(budget_stop):
                 break
 
