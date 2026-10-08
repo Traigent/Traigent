@@ -64,8 +64,10 @@ Coverage limits:
   unmeasured, not as `$0`.
 - **Responses without `usage`** (some gateways omit it) are not captured.
   They are reported as unmeasured.
-- `client.chat.completions.with_raw_response.create(...)` and the Responses
-  API (`client.responses.create`) are not captured.
+- `client.chat.completions.with_raw_response.create(...)`, structured-output
+  parsing (`client.chat.completions.parse(...)` and
+  `client.beta.chat.completions.parse(...)`) and the Responses API
+  (`client.responses.create`) are not captured.
 - When LangChain's `ChatOpenAI.invoke` or `litellm.completion` makes the
   OpenAI call for you, that wrapper records the usage and the underlying
   OpenAI call is not counted a second time.

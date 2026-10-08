@@ -4791,23 +4791,36 @@ class SimpleScoringEvaluator(BaseEvaluator):
         if not (self.capture_llm_metrics and self._metrics_available):
             return None
 
-        captured_responses = self._get_all_captured_responses()
+        captured_responses = [r for r in self._get_all_captured_responses() if r]
         if not captured_responses:
             return None
 
-        response = captured_responses[0]
-        if not response:
-            return None
+        from traigent.evaluators.metrics_tracker import pricing_model_for_response
 
         model_name = config.get("model")
         response_text = self._extract_response_text_from_output(output)
 
-        metrics_obj = self._extract_llm_metrics(
-            response=response,
-            model_name=model_name,
-            original_prompt=None,
-            response_text=response_text,
-        )
+        # Every call made while this example ran is charged, not only the
+        # first: a plan-then-answer agent or a judge call makes several, and
+        # pricing captured_responses[0] alone under-charged them (#2444).
+        # Each call is priced at the model it reports (#2443). Responses are
+        # cleared before each example, so these are all this example's.
+        metrics_obj = None
+        for position, response in enumerate(captured_responses):
+            call_metrics = self._extract_llm_metrics(
+                response=response,
+                model_name=pricing_model_for_response(response, model_name),
+                original_prompt=None,
+                # The answer text describes the first call only.
+                response_text=response_text if position == 0 else None,
+            )
+            if metrics_obj is None:
+                metrics_obj = call_metrics
+            elif self._call_has_llm_measurement(call_metrics):
+                if self._call_has_llm_measurement(metrics_obj):
+                    self._add_call_llm_metrics(metrics_obj, call_metrics)
+                else:
+                    metrics_obj = call_metrics
 
         llm_metrics = self._build_llm_metrics_dict(metrics_obj, model_name)
 
@@ -4818,6 +4831,32 @@ class SimpleScoringEvaluator(BaseEvaluator):
         )
 
         return llm_metrics
+
+    @staticmethod
+    def _call_has_llm_measurement(metrics: Any) -> bool:
+        """True when one call's extraction found real usage or a real charge."""
+        if metrics is None or getattr(metrics, "measured", True) is False:
+            return False
+        tokens = getattr(metrics, "tokens", None)
+        cost = getattr(metrics, "cost", None)
+        return bool(
+            getattr(tokens, "input_tokens", 0)
+            or getattr(tokens, "output_tokens", 0)
+            or getattr(cost, "total_cost", 0.0)
+            or getattr(cost, "cost_explicit", False)
+        )
+
+    @staticmethod
+    def _add_call_llm_metrics(total: Any, extra: Any) -> None:
+        """Fold one call's tokens, cost and latency into ``total`` in place."""
+        total.tokens.input_tokens += extra.tokens.input_tokens
+        total.tokens.output_tokens += extra.tokens.output_tokens
+        total.tokens.total_tokens += extra.tokens.total_tokens
+        total.cost.input_cost += extra.cost.input_cost
+        total.cost.output_cost += extra.cost.output_cost
+        total.cost.total_cost += extra.cost.total_cost
+        total.cost.unpriced = total.cost.unpriced or extra.cost.unpriced
+        total.response.response_time_ms += extra.response.response_time_ms
 
     def _compute_example_metrics(
         self,

@@ -946,6 +946,16 @@ def test_results_table_shows_unmeasured_cost_as_na():
 # --------------------------------------------------------------------------
 
 
+@pytest.fixture
+def clean_capture():
+    """Leave no captured response behind for later tests on this worker."""
+    clear_captured_responses()
+    try:
+        yield
+    finally:
+        clear_captured_responses()
+
+
 def _captured_completion(model: str | None) -> Any:
     """Record one OpenAI-shaped response the way an instrumented wrapper does."""
     from openai.types.chat import ChatCompletion
@@ -960,7 +970,7 @@ def _captured_completion(model: str | None) -> Any:
 
 
 @pytest.mark.asyncio
-async def test_each_captured_call_is_priced_at_its_own_model():
+async def test_each_captured_call_is_priced_at_its_own_model(clean_capture):
     # The agent runs gpt-4o; its judge runs gpt-4o-mini in the same example.
     # Pricing both at config["model"] charged the judge at gpt-4o's rate.
     agent_model, judge_model = "gpt-4o", KNOWN_MODEL
@@ -973,7 +983,6 @@ async def test_each_captured_call_is_priced_at_its_own_model():
         _captured_completion(judge_model)
         return "ok"
 
-    clear_captured_responses()
     result = await _evaluator().evaluate(agent, {"model": agent_model}, _dataset())
 
     for row in result.example_results:
@@ -986,7 +995,7 @@ async def test_each_captured_call_is_priced_at_its_own_model():
 
 
 @pytest.mark.asyncio
-async def test_call_without_a_reported_model_falls_back_to_config_model():
+async def test_call_without_a_reported_model_falls_back_to_config_model(clean_capture):
     agent_model = "gpt-4o"
     agent_cost = sum(cost_from_tokens(PROMPT_TOKENS, COMPLETION_TOKENS, agent_model))
 
@@ -994,7 +1003,6 @@ async def test_call_without_a_reported_model_falls_back_to_config_model():
         _captured_completion(None)
         return "ok"
 
-    clear_captured_responses()
     result = await _evaluator().evaluate(agent, {"model": agent_model}, _dataset())
 
     for row in result.example_results:
@@ -1003,16 +1011,44 @@ async def test_call_without_a_reported_model_falls_back_to_config_model():
 
 @pytest.mark.asyncio
 async def test_unpriced_reported_model_falls_back_to_priced_config_model(
-    alias_pricing,
+    alias_pricing, clean_capture
 ):
     # A gateway that reports an internal name keeps the configured name's price.
     def agent(question: str) -> str:
         _captured_completion("acme-internal/unpriced-build-7")
         return "ok"
 
-    clear_captured_responses()
     result = await _evaluator().evaluate(agent, {"model": ALIAS_MODEL}, _dataset())
 
     expected = PROMPT_TOKENS * ALIAS_IN + COMPLETION_TOKENS * ALIAS_OUT
     for row in result.example_results:
         assert row.metrics["total_cost"] == pytest.approx(expected)
+
+
+@pytest.mark.asyncio
+async def test_simple_scoring_lane_charges_every_captured_call(clean_capture):
+    # SimpleScoringEvaluator priced captured_responses[0] only, so an agent
+    # plus a judge call on another model was charged for the agent call alone
+    # (#2444 item 1), at the trial's model (#2443).
+    from traigent.evaluators.base import SimpleScoringEvaluator
+
+    agent_model, judge_model = "gpt-4o", KNOWN_MODEL
+    agent_cost = sum(cost_from_tokens(PROMPT_TOKENS, COMPLETION_TOKENS, agent_model))
+    judge_cost = sum(cost_from_tokens(PROMPT_TOKENS, COMPLETION_TOKENS, judge_model))
+
+    def agent(question: str) -> str:
+        _captured_completion(agent_model)
+        _captured_completion(judge_model)
+        return "ok"
+
+    evaluator = SimpleScoringEvaluator(
+        scoring_function=lambda output, expected: 1.0, metrics=["accuracy"]
+    )
+    result = await evaluator.evaluate(agent, {"model": agent_model}, _dataset())
+
+    assert len(result.example_results) == 2
+    for row in result.example_results:
+        assert row.metrics["total_cost"] == pytest.approx(agent_cost + judge_cost), (
+            "only the first captured call of the example was charged (#2444)"
+        )
+        assert row.metrics["total_tokens"] == 2 * (PROMPT_TOKENS + COMPLETION_TOKENS)

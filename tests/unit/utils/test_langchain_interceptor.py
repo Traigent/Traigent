@@ -1021,3 +1021,24 @@ class TestPatchLangChainBedrock:
         }
         captured = get_captured_response()
         assert captured is response
+
+
+def test_per_thread_last_response_history_is_bounded():
+    """``set_last_response`` appended to a per-thread list that only
+    ``get_last_response`` (one pop) or ``clear`` drained, so a long-lived
+    worker thread kept a reference to every response it saw (#2444)."""
+    from traigent.utils.langchain_interceptor import (
+        _LAST_RESPONSE_HISTORY_LIMIT,
+        LangChainMetadataCapture,
+    )
+
+    capture = LangChainMetadataCapture()
+    for i in range(_LAST_RESPONSE_HISTORY_LIMIT * 5):
+        capture.set_last_response(f"response-{i}")
+
+    assert len(capture._storage.responses) == _LAST_RESPONSE_HISTORY_LIMIT
+    # The most recent response is still the one handed back.
+    assert (
+        capture.get_last_response()
+        == f"response-{_LAST_RESPONSE_HISTORY_LIMIT * 5 - 1}"
+    )

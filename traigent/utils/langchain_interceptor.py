@@ -117,6 +117,12 @@ class capture_scope:
         self.__exit__(*exc_info)
 
 
+#: How many recent responses the per-thread ``get_last_response`` history
+#: keeps. Trial cost never reads it (it reads the capture scope), so this only
+#: bounds memory on long-lived worker threads (#2444).
+_LAST_RESPONSE_HISTORY_LIMIT = 64
+
+
 class LangChainMetadataCapture:
     """Thread-safe storage for LangChain response metadata."""
 
@@ -138,6 +144,14 @@ class LangChainMetadataCapture:
             if not hasattr(self._storage, "responses"):
                 self._storage.responses = []
             self._storage.responses.append(response)
+            # This per-thread list feeds only ``get_last_response`` (which pops
+            # one element) and is otherwise drained only by ``clear``; trial
+            # spend is read from the scoped bucket below. Unbounded, it held a
+            # reference to every response a long-lived worker thread ever saw
+            # (#2444), so keep only the most recent ones.
+            overflow = len(self._storage.responses) - _LAST_RESPONSE_HISTORY_LIMIT
+            if overflow > 0:
+                del self._storage.responses[:overflow]
             logger.debug("Captured LangChain response with metadata")
 
         key = getattr(self._key_local, "current_key", None)

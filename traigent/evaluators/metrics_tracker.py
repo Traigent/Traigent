@@ -1270,6 +1270,61 @@ class MetricsTracker:
 # Response Handler Hierarchy
 
 
+def _model_reported_by_response(response: Any) -> str | None:
+    """The model a captured response says it came from, if any."""
+    if not response:
+        return None
+    try:
+        model_name: Any = None
+        # LangChain pattern first, then direct attributes.
+        response_metadata = getattr(response, "response_metadata", None)
+        if isinstance(response_metadata, dict):
+            model_name = response_metadata.get("model") or response_metadata.get(
+                "model_name"
+            )
+        if not model_name:
+            model_name = getattr(response, "model", None)
+        if not model_name:
+            model_name = getattr(response, "model_name", None)
+    except Exception:  # noqa: BLE001 - a raising accessor means "no model"
+        return None
+    return model_name if isinstance(model_name, str) and model_name else None
+
+
+def _model_is_priced(model_name: str) -> bool:
+    """True when Traigent resolves a non-zero price for ``model_name``."""
+    try:
+        from traigent.utils.cost_calculator import model_has_nonzero_price_coverage
+
+        return model_has_nonzero_price_coverage(model_name)
+    except Exception:  # noqa: BLE001 - pricing lookup must not break capture
+        return False
+
+
+def pricing_model_for_response(response: Any, config_model: Any) -> str | None:
+    """Pick the model one captured response is priced at.
+
+    The response's own model wins when it is priced: an example can make calls
+    on other models than the trial's (a judge or router on a cheaper model),
+    and pricing every call at the configured model charged those at the agent
+    model's rate (#2443). ``LocalEvaluator`` already prices judge calls by the
+    model each response reports.
+
+    The configured model stays the fallback, used when the response names no
+    model or names one Traigent cannot price (for example a gateway that
+    reports an internal alias while custom pricing is keyed on the configured
+    name).
+    """
+    configured = (
+        config_model if isinstance(config_model, str) and config_model else None
+    )
+    response_model = _model_reported_by_response(response)
+    if response_model and response_model != configured:
+        if not configured or _model_is_priced(response_model):
+            return response_model
+    return configured or response_model
+
+
 class ResponseHandler(ABC):
     """Base class for handling different LLM provider response formats."""
 
