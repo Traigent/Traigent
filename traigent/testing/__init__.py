@@ -106,16 +106,21 @@ def enable_mock_mode_for_quickstart() -> None:
         if not _activation_logged:
             _activation_logged = True
             _logger.warning(
-                "[traigent.testing] mock mode is now ACTIVE — LLM calls will "
-                "be intercepted and return canned responses. This must NEVER "
+                "[traigent.testing] mock mode is now ACTIVE — LiteLLM and "
+                "LangChain LLM calls will be intercepted and return canned "
+                "responses. This must NEVER "
                 "run in production. Enabled via "
                 "traigent.testing.enable_mock_mode_for_quickstart()."
             )
-            _logger.info(
+            # WARNING, not INFO (#2418): this is the only runtime statement
+            # that raw-client calls go to the provider, and the COST WARNING
+            # is suppressed under mock, so it must show at the default level.
+            _logger.warning(
                 "[traigent.testing] mock interception scope: LiteLLM and "
                 "LangChain calls are mocked. Raw openai.chat.completions.create(...) "
                 "and anthropic.messages.create(...) calls are not intercepted and "
-                "can hit the real provider API."
+                "can hit the real provider API (a billed call if a provider key "
+                "is set)."
             )
     # Install the LLM interceptors now, not lazily at the first
     # LocalEvaluator construction (#2416): the caller asked for interception,

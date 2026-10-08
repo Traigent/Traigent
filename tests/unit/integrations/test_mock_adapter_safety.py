@@ -141,8 +141,15 @@ def test_activation_is_idempotent_and_logs_once(
         and "anthropic.messages.create" in r.getMessage()
     ]
     assert len(scope_notes) == 1, (
-        f"Expected exactly one mock interception scope INFO note, got "
-        f"{len(scope_notes)}"
+        f"Expected exactly one mock interception scope note, got {len(scope_notes)}"
+    )
+    # #2418: the scope caveat must be visible at the default log level, since
+    # the activation banner and the suppressed COST WARNING say nothing else.
+    assert scope_notes[0].levelno == logging.WARNING
+    # ...and the banner names what is intercepted instead of "LLM calls".
+    assert (
+        "LiteLLM and LangChain LLM calls will be intercepted"
+        in activation_warns[0].getMessage()
     )
 
 
