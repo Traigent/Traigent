@@ -332,10 +332,9 @@ async def test_response_without_usage_is_unmeasured_not_zero(openai_overrides):
 
 
 @pytest.mark.asyncio
-async def test_uncaptured_client_is_unmeasured_not_zero():
-    # No override active: nothing can be captured. The aggregate must say
-    # "unmeasured" rather than upload $0 / 0 tokens.
-    client = _sync_client()
+async def test_client_without_usage_is_unmeasured_not_zero():
+    # A response without usage must remain unmeasured rather than free.
+    client = _sync_client(usage=False)
     result = await _evaluator().evaluate(
         _sync_agent(client), {"model": KNOWN_MODEL}, _dataset()
     )
@@ -345,7 +344,7 @@ async def test_uncaptured_client_is_unmeasured_not_zero():
 @pytest.mark.asyncio
 async def test_strict_metrics_nulls_reports_unmeasured_as_none(monkeypatch):
     monkeypatch.setenv("TRAIGENT_STRICT_METRICS_NULLS", "true")
-    client = _sync_client()
+    client = _sync_client(usage=False)
     result = await _evaluator().evaluate(
         _sync_agent(client), {"model": KNOWN_MODEL}, _dataset()
     )
@@ -441,11 +440,11 @@ def test_optimize_with_openai_override_records_real_cost(monkeypatch, tmp_path):
     assert trial.metrics["total_cost"] == pytest.approx(2 * (in_cost + out_cost))
 
 
-def test_optimize_without_capture_does_not_upload_zero_cost(monkeypatch, tmp_path):
+def test_optimize_captures_raw_usage_without_framework_injection(monkeypatch, tmp_path):
     result = _optimize(monkeypatch, tmp_path, framework_targets=None)
     (trial,) = result.trials
-    assert trial.metrics.get("total_cost") is None
-    assert trial.metrics.get("total_tokens") is None
+    assert trial.metrics["total_cost"] > 0
+    assert trial.metrics["total_tokens"] == 2 * (PROMPT_TOKENS + COMPLETION_TOKENS)
 
 
 # --------------------------------------------------------------------------
@@ -1184,8 +1183,10 @@ def _default_measurement_evaluator(lane, *, custom_cost=None):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("lane", ["local", "simple"])
-async def test_uncaptured_raw_usage_is_unknown_in_default_lanes(lane, clean_capture):
-    client = _sync_client()
+async def test_raw_response_without_usage_is_unknown_in_default_lanes(
+    lane, clean_capture
+):
+    client = _sync_client(usage=False)
     try:
         result = await _default_measurement_evaluator(lane).evaluate(
             _sync_agent(client), {"model": KNOWN_MODEL}, _dataset()
@@ -1296,7 +1297,7 @@ async def test_free_call_plus_unpriced_call_is_unknown_not_free(lane, clean_capt
     assert result.aggregated_metrics["cost_unpriced"] == 1.0
 
 
-def test_default_optimize_keeps_uncaptured_provider_spend_unknown(
+def test_default_optimize_captures_provider_spend_without_framework_injection(
     monkeypatch, tmp_path, real_llm_path, clean_capture
 ):
     from traigent.core.optimized_function import OptimizedFunction
@@ -1328,7 +1329,547 @@ def test_default_optimize_keeps_uncaptured_provider_spend_unknown(
     assert provider_usage == [PROMPT_TOKENS + COMPLETION_TOKENS]
     (trial,) = result.trials
     assert trial.metrics["accuracy"] == 1.0
-    assert trial.metrics.get("cost") is None
-    assert trial.metrics.get("total_cost") is None
-    assert trial.metrics["cost_unpriced"] == 1.0
-    assert "COST_OBJECTIVE_NO_USAGE_CAPTURED" in result.warning_codes
+    assert trial.metrics["cost"] == sum(
+        cost_from_tokens(PROMPT_TOKENS, COMPLETION_TOKENS, KNOWN_MODEL)
+    )
+    assert trial.metrics["total_cost"] == trial.metrics["cost"]
+    assert trial.metrics["cost_unpriced"] == 0.0
+    assert "COST_OBJECTIVE_NO_USAGE_CAPTURED" not in result.warning_codes
+
+
+@pytest.mark.parametrize("async_client", [False, True])
+@pytest.mark.asyncio
+async def test_default_capture_scope_records_raw_nonstream_calls(async_client):
+    from traigent.utils.langchain_interceptor import capture_scope
+
+    client = _async_client() if async_client else _sync_client()
+    try:
+        async with capture_scope():
+            for _ in range(2):
+                response = client.chat.completions.create(
+                    model=KNOWN_MODEL,
+                    messages=[{"role": "user", "content": "unchanged request"}],
+                )
+                if async_client:
+                    response = await response
+                assert response.usage.prompt_tokens == PROMPT_TOKENS
+            captured = get_all_captured_responses()
+            assert len(captured) == 2
+            assert all(
+                r.usage.total_tokens == PROMPT_TOKENS + COMPLETION_TOKENS
+                for r in captured
+            )
+    finally:
+        if async_client:
+            await client.close()
+        else:
+            client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lane", ["local", "simple"])
+async def test_default_evaluator_uses_actual_raw_openai_usage(lane):
+
+    client = _sync_client()
+    try:
+        evaluator = _default_measurement_evaluator(lane)
+        result = await evaluator.evaluate(
+            _sync_agent(client), {"model": KNOWN_MODEL}, _dataset()
+        )
+        for row in result.example_results:
+            assert row.metrics["total_tokens"] == PROMPT_TOKENS + COMPLETION_TOKENS
+            assert row.metrics["cost"] == pytest.approx(
+                sum(cost_from_tokens(PROMPT_TOKENS, COMPLETION_TOKENS, KNOWN_MODEL))
+            )
+        assert result.aggregated_metrics["cost"] > 0
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("activate_inside_scope", [False, True])
+def test_capture_and_framework_override_restore_in_either_installation_order(
+    activate_inside_scope,
+):
+    from openai.resources.chat.completions import Completions
+
+    from traigent.utils.langchain_interceptor import capture_scope
+
+    original = Completions.create
+    manager = FrameworkOverrideManager()
+    client = _sync_client()
+    try:
+        if not activate_inside_scope:
+            manager.activate_overrides(["openai.OpenAI"])
+        with capture_scope():
+            if activate_inside_scope:
+                manager.activate_overrides(["openai.OpenAI"])
+            with ConfigurationContext({"model": KNOWN_MODEL}):
+                _sync_agent(client)("one call")
+            assert len(get_all_captured_responses()) == 1
+        manager.deactivate_overrides()
+        assert Completions.create is original
+    finally:
+        manager.deactivate_overrides()
+        client.close()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_raw_capture_scopes_keep_response_ownership():
+    import asyncio
+
+    from openai.resources.chat.completions import AsyncCompletions
+
+    from traigent.utils.langchain_interceptor import (
+        capture_key,
+        capture_scope,
+        get_captured_responses_by_key,
+    )
+
+    original = AsyncCompletions.create
+    ready = asyncio.Event()
+    entered = 0
+
+    async def run(key):
+        nonlocal entered
+        client = _async_client()
+        try:
+            async with capture_scope():
+                with capture_key(key):
+                    entered += 1
+                    if entered == 2:
+                        ready.set()
+                    await ready.wait()
+                    response = await client.chat.completions.create(
+                        model=KNOWN_MODEL, messages=[{"role": "user", "content": key}]
+                    )
+                    captured = get_all_captured_responses()
+                    assert len(captured) == 1 and captured[0] is response
+                    owned = get_captured_responses_by_key()
+                    assert list(owned) == [key]
+                    assert owned[key][0] is response
+                    return response
+        finally:
+            await client.close()
+
+    first, second = await asyncio.gather(run("first"), run("second"))
+    assert first is not second
+    assert AsyncCompletions.create is original
+
+
+@pytest.mark.asyncio
+async def test_cancelled_provider_call_restores_scoped_resource_method():
+    import asyncio
+
+    from openai.resources.chat.completions import AsyncCompletions
+
+    from traigent.utils.langchain_interceptor import capture_scope
+
+    original = AsyncCompletions.create
+    started = asyncio.Event()
+
+    async def delayed(request):
+        started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("cancelled request unexpectedly resumed")
+
+    client = openai.AsyncOpenAI(
+        api_key="test-key",  # pragma: allowlist secret
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(delayed)),
+        max_retries=0,
+    )
+
+    async def request():
+        async with capture_scope() as bucket:
+            try:
+                await client.chat.completions.create(
+                    model=KNOWN_MODEL, messages=[{"role": "user", "content": "cancel"}]
+                )
+            finally:
+                assert bucket.responses == []
+
+    task = asyncio.create_task(request())
+    try:
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert AsyncCompletions.create is original
+    finally:
+        await client.close()
+
+
+@pytest.mark.parametrize("response_model", [KNOWN_MODEL, "fictional-unpriced-model"])
+def test_default_public_run_without_size_uses_raw_usage_and_preserves_cost_safety(
+    response_model,
+    monkeypatch,
+    tmp_path,
+    real_llm_path,
+):
+    from traigent.config.context import get_config
+    from traigent.core.optimized_function import OptimizedFunction
+
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
+    monkeypatch.delenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", raising=False)
+    requests = []
+
+    def respond(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        return httpx.Response(200, json=_completion_body(response_model))
+
+    client = openai.OpenAI(
+        api_key="test-key",  # pragma: allowlist secret
+        http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+        max_retries=0,
+    )
+
+    def agent(question):
+        config = get_config()
+        temperature = config.get("temperature")
+        response = client.chat.completions.create(
+            model=response_model,
+            temperature=temperature,
+            messages=[{"role": "user", "content": question}],
+        )
+        return response.choices[0].message.content
+
+    optimized = OptimizedFunction(
+        func=agent,
+        configuration_space={"temperature": [i / 20 for i in range(12)]},
+        objectives=["accuracy", "cost"],
+        eval_dataset=_dataset(1),
+    )
+    try:
+        result = optimized.optimize_sync(algorithm="grid", progress_bar=False)
+    finally:
+        client.close()
+    assert len(requests) == len(result.trials)
+    assert all(
+        t.metrics["total_tokens"] == PROMPT_TOKENS + COMPLETION_TOKENS
+        for t in result.trials
+    )
+    assert all(r["model"] == response_model for r in requests)
+    assert len({r["temperature"] for r in requests}) == len(requests)
+    if response_model == KNOWN_MODEL:
+        # No explicit run size keeps the documented constructor default.
+        assert len(result.trials) == 10
+        assert result.stop_reason == "max_trials_reached"
+        assert all(t.metrics["total_cost"] > 0 for t in result.trials)
+        assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" not in result.warning_codes
+    else:
+        assert len(result.trials) == 10
+        assert all(t.metrics.get("cost") is None for t in result.trials)
+        assert all(t.metrics.get("total_cost") is None for t in result.trials)
+        assert all(t.metrics["cost_unpriced"] == 1 for t in result.trials)
+        assert "COST_UNMEASURED_TRIAL_LIMIT_REACHED" in result.warning_codes
+        assert result.stop_reason == "cost_limit"
+        warning = " ".join(result.warnings)
+        assert "Pricing is UNKNOWN" in warning
+        assert "unavailable" in warning
+        assert "report $0" not in warning
+        assert "recorded as $0" not in warning
+
+
+@pytest.mark.parametrize("activate_inside_scope", [False, True])
+def test_deactivate_framework_preserves_active_default_capture(activate_inside_scope):
+    from openai.resources.chat.completions import Completions
+
+    from traigent.utils.langchain_interceptor import capture_scope
+
+    original = Completions.create
+    manager = FrameworkOverrideManager()
+    client = _sync_client()
+    try:
+        if not activate_inside_scope:
+            manager.activate_overrides(["openai.OpenAI"])
+        with capture_scope():
+            if activate_inside_scope:
+                manager.activate_overrides(["openai.OpenAI"])
+            manager.deactivate_overrides()
+            _sync_agent(client)("after framework deactivation")
+            assert len(get_all_captured_responses()) == 1
+            with capture_scope():
+                _sync_agent(client)("nested active scope")
+                assert len(get_all_captured_responses()) == 1
+            _sync_agent(client)("outer scope still active")
+            assert len(get_all_captured_responses()) == 2
+        assert Completions.create is original
+    finally:
+        manager.deactivate_overrides()
+        client.close()
+
+
+@pytest.mark.asyncio
+async def test_framework_deactivation_keeps_other_concurrent_capture_alive():
+    import asyncio
+
+    from openai.resources.chat.completions import AsyncCompletions
+
+    from traigent.utils.langchain_interceptor import capture_key, capture_scope
+
+    original = AsyncCompletions.create
+    manager = FrameworkOverrideManager()
+    manager.activate_overrides(["openai.AsyncOpenAI"])
+    ready = asyncio.Event()
+    deactivated = asyncio.Event()
+    entered = 0
+
+    async def run(key):
+        nonlocal entered
+        client = _async_client()
+        try:
+            async with capture_scope():
+                with capture_key(key):
+                    entered += 1
+                    if entered == 2:
+                        ready.set()
+                    await deactivated.wait()
+                    response = await client.chat.completions.create(
+                        model=KNOWN_MODEL,
+                        messages=[{"role": "user", "content": key}],
+                    )
+                    assert get_all_captured_responses() == [response]
+                    return response
+        finally:
+            await client.close()
+
+    tasks = [asyncio.create_task(run(key)) for key in ("first", "second")]
+    try:
+        await ready.wait()
+        manager.deactivate_overrides()
+        deactivated.set()
+        first, second = await asyncio.gather(*tasks)
+        assert first is not second
+        assert AsyncCompletions.create is original
+    finally:
+        manager.deactivate_overrides()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def test_default_public_mixed_pricing_warning_preserves_unknown_cost(
+    monkeypatch,
+    tmp_path,
+    real_llm_path,
+):
+    from traigent.core.optimized_function import OptimizedFunction
+
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
+    calls = []
+
+    def respond(request):
+        model = KNOWN_MODEL if not calls else "fictional-unpriced-model"
+        calls.append(model)
+        return httpx.Response(200, json=_completion_body(model))
+
+    client = openai.OpenAI(
+        api_key="test-key",  # pragma: allowlist secret
+        http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+        max_retries=0,
+    )
+
+    def agent(question):
+        for _ in range(2):
+            response = client.chat.completions.create(
+                model="fictional-unpriced-model",
+                messages=[{"role": "user", "content": question}],
+            )
+        return response.choices[0].message.content
+
+    optimized = OptimizedFunction(
+        func=agent,
+        configuration_space={"temperature": [0.1]},
+        objectives=["accuracy", "cost"],
+        eval_dataset=_dataset(1),
+        max_trials=1,
+    )
+    try:
+        result = optimized.optimize_sync(algorithm="grid", progress_bar=False)
+    finally:
+        client.close()
+    assert calls == [KNOWN_MODEL, "fictional-unpriced-model"]
+    (trial,) = result.trials
+    measured_spend = sum(
+        cost_from_tokens(PROMPT_TOKENS, COMPLETION_TOKENS, KNOWN_MODEL)
+    )
+    assert trial.metrics["cost"] == pytest.approx(measured_spend)
+    assert trial.metrics["total_cost"] == pytest.approx(measured_spend)
+    assert trial.metrics["cost_unpriced"] == 1
+    warning = " ".join(result.warnings)
+    assert "Pricing is UNKNOWN" in warning
+    assert "monetary measurements remain unavailable" in warning
+    assert "only measured calls is a lower bound" in warning
+    assert "report $0" not in warning and "recorded as $0" not in warning
+
+
+def test_last_concurrent_scope_release_during_framework_restore_is_atomic(monkeypatch):
+    import threading
+
+    from openai.resources.chat.completions import AsyncCompletions, Completions
+
+    from traigent.utils import openai_interceptor
+    from traigent.utils.langchain_interceptor import capture_scope
+
+    original = Completions.create
+    async_original = AsyncCompletions.create
+    manager = FrameworkOverrideManager()
+    manager.activate_overrides(["openai.OpenAI", "openai.AsyncOpenAI"])
+    opened = threading.Event()
+    release = threading.Event()
+    closed = threading.Event()
+    failures = []
+
+    def lifetime():
+        try:
+            with capture_scope():
+                opened.set()
+                assert release.wait(5)
+        except BaseException as exc:
+            failures.append(exc)
+        finally:
+            closed.set()
+
+    worker = threading.Thread(target=lifetime)
+    worker.start()
+    restore = openai_interceptor.restore_openai_capture_original
+
+    def interposed(*args):
+        result = restore(*args)
+        if args[0] is Completions:
+            release.set()
+            assert closed.wait(5)
+        return result
+
+    try:
+        assert opened.wait(5)
+        monkeypatch.setattr(
+            openai_interceptor, "restore_openai_capture_original", interposed
+        )
+        manager.deactivate_overrides()
+        worker.join(5)
+        assert not worker.is_alive() and not failures
+        assert Completions.create is original
+        assert AsyncCompletions.create is async_original
+    finally:
+        release.set()
+        worker.join(5)
+        manager.deactivate_overrides()
+
+
+def test_new_scope_acquire_after_atomic_framework_restore_keeps_capture(monkeypatch):
+    import threading
+
+    from openai.resources.chat.completions import Completions
+
+    from traigent.utils import openai_interceptor
+    from traigent.utils.langchain_interceptor import capture_scope
+
+    original = Completions.create
+    manager = FrameworkOverrideManager()
+    manager.activate_overrides(["openai.OpenAI"])
+    start = threading.Event()
+    opened = threading.Event()
+    proceed = threading.Event()
+    failures = []
+    observed = []
+
+    def lifetime():
+        client = _sync_client()
+        try:
+            assert start.wait(5)
+            with capture_scope():
+                opened.set()
+                assert proceed.wait(5)
+                _sync_agent(client)("new concurrent capture")
+                observed.extend(get_all_captured_responses())
+        except BaseException as exc:
+            failures.append(exc)
+        finally:
+            client.close()
+
+    worker = threading.Thread(target=lifetime)
+    worker.start()
+    restore = openai_interceptor.restore_openai_capture_original
+
+    def interposed(*args):
+        result = restore(*args)
+        if args[0] is Completions:
+            start.set()
+            assert opened.wait(5)
+        return result
+
+    try:
+        monkeypatch.setattr(
+            openai_interceptor, "restore_openai_capture_original", interposed
+        )
+        manager.deactivate_overrides()
+        proceed.set()
+        worker.join(5)
+        assert not worker.is_alive() and not failures
+        assert len(observed) == 1
+        assert Completions.create is original
+    finally:
+        start.set()
+        proceed.set()
+        worker.join(5)
+        manager.deactivate_overrides()
+
+
+def test_capture_acquired_during_framework_activation_survives_deactivation(
+    monkeypatch,
+):
+    import threading
+
+    from openai.resources.chat.completions import Completions
+
+    from traigent.utils.langchain_interceptor import capture_scope
+
+    original = Completions.create
+    manager = FrameworkOverrideManager()
+    start = threading.Event()
+    opened = threading.Event()
+    proceed = threading.Event()
+    observed = []
+    failures = []
+
+    def lifetime():
+        client = _sync_client()
+        try:
+            assert start.wait(5)
+            with capture_scope():
+                opened.set()
+                assert proceed.wait(5)
+                _sync_agent(client)("after interleaved activation and deactivation")
+                observed.extend(get_all_captured_responses())
+        except BaseException as exc:
+            failures.append(exc)
+        finally:
+            client.close()
+
+    worker = threading.Thread(target=lifetime)
+    worker.start()
+    create_override = manager._create_override_method
+
+    def interposed(original_method, class_name, method_path):
+        wrapped = create_override(original_method, class_name, method_path)
+        if class_name == "openai.OpenAI" and method_path == "chat.completions.create":
+            start.set()
+            assert opened.wait(5)
+        return wrapped
+
+    try:
+        monkeypatch.setattr(manager, "_create_override_method", interposed)
+        manager.activate_overrides(["openai.OpenAI"])
+        manager.deactivate_overrides()
+        proceed.set()
+        worker.join(5)
+        assert not worker.is_alive() and not failures
+        assert len(observed) == 1
+        assert Completions.create is original
+    finally:
+        start.set()
+        proceed.set()
+        worker.join(5)
+        manager.deactivate_overrides()

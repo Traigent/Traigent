@@ -6,13 +6,14 @@ that would otherwise be lost when functions return only strings.
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Observability CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 
+import functools
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Coroutine, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ParamSpec, TypeVar
 
 from traigent.utils.logging import get_logger
 
@@ -93,6 +94,11 @@ _correlation_key: ContextVar[Any] = ContextVar(
 )
 
 
+def has_active_capture_scope() -> bool:
+    """Whether the current call belongs to an evaluation capture bucket."""
+    return _capture_scope.get() is not None
+
+
 class capture_scope:
     """Give the enclosing trial its own capture buffer (Traigent#2387).
 
@@ -112,16 +118,49 @@ class capture_scope:
     def __enter__(self) -> _CaptureBucket:
         bucket = _CaptureBucket()
         self._token = _capture_scope.set(bucket)
+        from traigent.utils.openai_interceptor import acquire_openai_capture
+
+        try:
+            acquire_openai_capture()
+        except BaseException:
+            _capture_scope.reset(self._token)
+            raise
         return bucket
 
     def __exit__(self, *exc_info: Any) -> None:
-        _capture_scope.reset(self._token)
+        from traigent.utils.openai_interceptor import release_openai_capture
+
+        try:
+            release_openai_capture()
+        finally:
+            _capture_scope.reset(self._token)
 
     async def __aenter__(self) -> _CaptureBucket:
         return self.__enter__()
 
     async def __aexit__(self, *exc_info: Any) -> None:
         self.__exit__(*exc_info)
+
+
+_EvaluationParams = ParamSpec("_EvaluationParams")
+_EvaluationResult = TypeVar("_EvaluationResult")
+
+
+def capture_evaluation(
+    evaluate: Callable[_EvaluationParams, Coroutine[Any, Any, _EvaluationResult]],
+) -> Callable[_EvaluationParams, Coroutine[Any, Any, _EvaluationResult]]:
+    """Open a direct evaluation scope, preserving a lifecycle-owned outer scope."""
+
+    @functools.wraps(evaluate)
+    async def run(
+        *args: _EvaluationParams.args, **kwargs: _EvaluationParams.kwargs
+    ) -> _EvaluationResult:
+        if has_active_capture_scope():
+            return await evaluate(*args, **kwargs)
+        async with capture_scope():
+            return await evaluate(*args, **kwargs)
+
+    return run
 
 
 #: How many recent responses the per-thread ``get_last_response`` history

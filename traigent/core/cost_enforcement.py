@@ -1349,8 +1349,8 @@ Options:
                 "TRAIGENT_CUSTOM_MODEL_PRICING_JSON or "
                 "TRAIGENT_CUSTOM_MODEL_PRICING_FILE, or set "
                 "TRAIGENT_STRICT_COST_ACCOUNTING=false (and "
-                "TRAIGENT_REQUIRE_COST_TRACKING=false) to accept $0 for "
-                "unpriced calls."
+                "TRAIGENT_REQUIRE_COST_TRACKING=false) to continue with "
+                "unavailable monetary cost for unpriced calls."
             )
 
         if not self._unknown_cost_mode:

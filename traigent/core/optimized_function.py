@@ -450,7 +450,7 @@ def _format_unpriced_model_warning(
 ) -> str:
     formatted = _format_model_id_list(model_ids)
     # When occurrence counts are available (the runtime path, #1597), make the
-    # warning quantitative and explicit that $0 means UNKNOWN spend — not
+    # warning quantitative and explicit that unavailable means UNKNOWN spend — not
     # verified-free — so a reported total_cost is understood as a lower bound.
     total_calls = sum(occurrences.get(m, 0) for m in model_ids) if occurrences else 0
     call_note = (
@@ -459,22 +459,22 @@ def _format_unpriced_model_warning(
         else ""
     )
     unknown_spend_note = (
-        " These are recorded as $0 because pricing is UNKNOWN, not because "
-        "usage was free — any reported total_cost is a lower bound on actual "
-        "spend."
+        " Pricing is UNKNOWN; these monetary measurements remain unavailable. "
+        "Any total containing only measured calls is a lower bound on actual "
+        "spend, and does not establish that unpriced usage was free."
         if total_calls
         else ""
     )
     if len(model_ids) == 1:
         return (
             f"Cost for {formatted} is unavailable{call_note} — results will "
-            f"report $0 for it.{unknown_spend_note} Set "
+            f"keep its monetary cost unavailable.{unknown_spend_note} Set "
             "TRAIGENT_CUSTOM_MODEL_PRICING_JSON, or contact "
             "Traigent to add coverage."
         )
     return (
         f"Costs for {formatted} are unavailable{call_note} — results will "
-        f"report $0 for them.{unknown_spend_note} Set "
+        f"keep their monetary costs unavailable.{unknown_spend_note} Set "
         "TRAIGENT_CUSTOM_MODEL_PRICING_JSON, or contact "
         "Traigent to add coverage."
     )
@@ -591,7 +591,8 @@ _NO_USAGE_CAPTURED_MESSAGE = (
     "trial: the cost column is UNMEASURED rather "
     "than zero, and any cost ranking over these trials is meaningless. "
     "Traigent captures usage from the response object the optimized function "
-    "returns and from `litellm.completion` calls it intercepts; calls made "
+    "returns, supported nonstream OpenAI chat calls within evaluation scopes, "
+    "and `litellm.completion` calls it intercepts; calls made "
     "through a client object the interceptor does not wrap (a provider SDK "
     "client you constructed yourself, an HTTP call, a framework that hides "
     "the response) are not captured. Return the provider response object "
@@ -686,8 +687,8 @@ def _warn_cost_objective_partial_coverage(
         f"{len(successful)} successful trials captured no LLM usage, so their "
         "cost is UNKNOWN, not $0. They are ranked with their cost objective "
         "at its worst value. Capture usage for every configuration (for a raw "
-        "OpenAI client, enable the openai.OpenAI override and make sure the "
-        "gateway returns `usage`) to compare them on cost."
+        "OpenAI chat client, make sure the nonstream response contains `usage`) "
+        "to compare them on cost."
     )
     warning_codes = getattr(result, "warning_codes", None)
     if isinstance(warning_codes, list):
@@ -704,10 +705,9 @@ def _guard_cost_objective_without_usage(
 ) -> None:
     """Fail (or warn) when a cost objective ran with no measured usage at all.
 
-    A run that captured no tokens on any trial records $0 everywhere. That $0
-    is the absence of a measurement, not a cheap configuration, so stamping
-    the run as strictly cost-accounted would make an unmeasured $0 look
-    audited. Under strict accounting this fails the run, attaching the finished
+    A run that captured no tokens cannot establish measured monetary cost.
+    Missing cost does not establish a cheap configuration, so stamping
+    the run as strictly cost-accounted would misrepresent its measurement. Under strict accounting this fails the run, attaching the finished
     result to the exception as ``.result``; otherwise it attaches
     ``COST_OBJECTIVE_NO_USAGE_CAPTURED`` so the caller can see the cost column
     is unmeasured.
@@ -730,7 +730,7 @@ def _guard_cost_objective_without_usage(
         error = UnknownModelError(
             _NO_USAGE_CAPTURED_MESSAGE
             + " Set TRAIGENT_STRICT_COST_ACCOUNTING=false to accept an "
-            "unmeasured $0 cost column. The completed trials are attached to "
+            "unavailable monetary cost. The completed trials are attached to "
             "this exception as `.result`."
         )
         # The trials already ran (and any provider spend is already incurred);
@@ -2970,13 +2970,13 @@ class OptimizedFunction(Generic[_P, _R]):
                 pass
 
     def _attach_unpriced_model_warning(self, result: OptimizationResult) -> None:
-        """Attach a user-visible warning for models that priced to $0 at runtime.
+        """Attach a user-visible warning for models without runtime monetary pricing.
 
         Closes the runtime half of the cost-coverage gap (#1407): the pre-run
         preflight only inspects config-space model ids, so a model HARD-CODED in
         the optimized function body is invisible to it. When such a model is
-        unpriced, the non-strict runtime cost path records $0 with only a buried
-        log. Here we lift the collected ids onto the result (``warnings`` /
+        unpriced, the non-strict runtime price lookup cannot establish its
+        monetary cost. Here we lift the collected ids onto the result (``warnings`` /
         ``warning_codes`` and ``metadata``) using the SAME remediation surface as
         the preflight, so the user can opt into custom pricing or acknowledge the
         gap. Strict accounting never reaches this surface — it fails closed
@@ -3003,17 +3003,16 @@ class OptimizedFunction(Generic[_P, _R]):
             result.warning_codes.append("UNPRICED_MODEL_RUNTIME")
         if isinstance(result.metadata, dict):
             result.metadata.setdefault("unpriced_models_runtime", list(unpriced))
-            # Quantified detail (#1597): how many calls per model recorded $0
-            # because pricing was UNKNOWN, not because usage was free — so any
-            # consumer of result.total_cost knows it is a lower bound, not
-            # verified spend, whenever this is non-empty.
+            # Quantified detail (#1597): calls per model with UNKNOWN pricing.
+            # Missing monetary measurements remain unavailable; totals of
+            # only measured calls cannot establish complete actual spend.
             result.metadata.setdefault(
                 "unpriced_models_runtime_call_counts", dict(occurrences)
             )
 
         warnings.warn(message, UserWarning, stacklevel=2)
         logger.warning(
-            "Models priced at $0 at runtime (real spend under-reported): %s. %s",
+            "Models without monetary pricing at runtime: %s. %s",
             ", ".join(unpriced),
             message,
         )

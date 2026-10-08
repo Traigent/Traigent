@@ -29,7 +29,11 @@ import pytest
 
 import traigent.utils.cost_calculator as cost_calculator
 from traigent.api.decorators import optimize
-from traigent.core.optimized_function import _objectives_include_cost
+from traigent.core.cost_enforcement import CostTrackingRequiredError
+from traigent.core.optimized_function import (
+    _guard_cost_objective_without_usage,
+    _objectives_include_cost,
+)
 from traigent.utils.env_config import (
     is_strict_cost_accounting,
     strict_cost_accounting_origin,
@@ -417,16 +421,20 @@ async def test_cost_objective_with_no_usage_captured_fails_closed() -> None:
             await fn.optimize(progress_bar=False)
 
     text = _error_chain_text(exc_info.value)
-    assert "no LLM usage was captured" in text
+    assert "Cost extraction failed" in text
+    assert "strict cost accounting is on" in text
+    assert "continue with unavailable monetary cost" in text
+    assert "to accept $0" not in text
     assert "TRAIGENT_STRICT_COST_ACCOUNTING=false" in text
-    # The advice must not tell a `from litellm import completion` user to do
-    # what they already do: that binding is not intercepted (#2515).
-    assert "`from litellm import completion` keeps the unpatched function" in text
+    cause = exc_info.value
+    while cause is not None and not isinstance(cause, CostTrackingRequiredError):
+        cause = cause.__cause__ or cause.__context__
+    assert isinstance(cause, CostTrackingRequiredError)
     assert is_strict_cost_accounting() is False
 
 
 @pytest.mark.asyncio
-async def test_no_usage_failure_keeps_the_finished_result() -> None:
+async def test_no_usage_failure_keeps_the_finished_result(monkeypatch) -> None:
     """#2421: every trial already ran (and spent) before the no-usage guard
     fires, so the exception must carry the completed result."""
 
@@ -440,19 +448,30 @@ async def test_no_usage_failure_keeps_the_finished_result() -> None:
     def fn(question: str = "", temperature: float = 0.1, **_cfg):
         return "A"
 
-    with (
-        warnings.catch_warnings(),
-        patch("traigent.core.optimized_function.is_mock_llm", return_value=False),
-    ):
+    # Complete real public trials under explicitly non-strict accounting,
+    # then exercise the post-run guard on that finished result. Strict
+    # runtime enforcement otherwise refuses before this post-run boundary.
+    monkeypatch.setenv("TRAIGENT_STRICT_COST_ACCOUNTING", "false")
+    with warnings.catch_warnings():
         warnings.simplefilter("ignore")
+        completed = await fn.optimize(progress_bar=False)
+    assert len(completed.trials) == 2
+    assert all(trial.metrics["cost"] is None for trial in completed.trials)
+    monkeypatch.setenv("TRAIGENT_STRICT_COST_ACCOUNTING", "true")
+    cost_calculator.reset_captured_usage()
+    assert cost_calculator.any_usage_captured() is False
+    with patch("traigent.core.optimized_function.is_mock_llm", return_value=False):
         with pytest.raises(cost_calculator.UnknownModelError) as exc_info:
-            await fn.optimize(progress_bar=False)
-
+            _guard_cost_objective_without_usage(completed, ["accuracy", "cost"])
     result = getattr(exc_info.value, "result", None)
-    assert result is not None, "finished result discarded"
+    assert result is completed, "finished result discarded or replaced"
     assert len(result.trials) == 2
     assert result.best_config is not None
     assert ".result" in str(exc_info.value)
+    assert "no LLM usage was captured" in str(exc_info.value)
+    assert "`from litellm import completion` keeps the unpatched function" in str(
+        exc_info.value
+    )
 
 
 @pytest.mark.asyncio
@@ -506,14 +525,14 @@ def test_cost_per_1k_counts_as_a_cost_objective() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mock_llm_run_warns_instead_of_failing_without_usage(
+async def test_mock_postrun_guard_warns_on_finished_non_strict_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A mock run has no spend to measure, so the guard warns rather than fails.
+    """A completed non-strict run reaches the mock post-run warning guard.
 
-    Strict is on (cost objective, env unset) and nothing is captured — the
-    real-run path would raise. The pre-run cost preflight already skips mock
-    mode for the same reason.
+    This tests the post-run boundary using real completed trials. It does
+    not exempt a public strict run from earlier missing-cost enforcement;
+    the separate mock-flag refusal control covers that boundary.
     """
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
 
@@ -526,12 +545,46 @@ async def test_mock_llm_run_warns_instead_of_failing_without_usage(
     def fn(question: str = "", temperature: float = 0.1, **_cfg):
         return "A"
 
+    monkeypatch.setenv("TRAIGENT_STRICT_COST_ACCOUNTING", "false")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         result = await fn.optimize(progress_bar=False)
-
     assert result.trials
-    pricing = result.metadata["pricing"]
-    assert pricing["strict_cost_accounting"] is True
-    assert pricing["usage_captured"] is False
+    assert result.metadata["pricing"]["strict_cost_accounting"] is False
+    assert result.metadata["pricing"]["usage_captured"] is False
+    result.warning_codes.remove("COST_OBJECTIVE_NO_USAGE_CAPTURED")
+    monkeypatch.setenv("TRAIGENT_STRICT_COST_ACCOUNTING", "true")
+    cost_calculator.reset_captured_usage()
+    assert cost_calculator.any_usage_captured() is False
+    _guard_cost_objective_without_usage(result, ["accuracy", "cost"])
     assert "COST_OBJECTIVE_NO_USAGE_CAPTURED" in result.warning_codes
+    assert is_strict_cost_accounting() is True
+
+
+@pytest.mark.asyncio
+async def test_mock_flag_preserves_public_strict_missing_cost_refusal(monkeypatch):
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    calls = []
+
+    @optimize(
+        eval_dataset=[{"input": {"question": "q"}, "expected_output": "A"}],
+        objectives=["accuracy", "cost"],
+        configuration_space={"temperature": [0.1, 0.9]},
+        offline=True,
+        algorithm="grid",
+    )
+    def fn(question="", **_cfg):
+        calls.append(question)
+        return "A"
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(Exception) as exc_info:
+            await fn.optimize(progress_bar=False)
+    cause = exc_info.value
+    while cause is not None and not isinstance(cause, CostTrackingRequiredError):
+        cause = cause.__cause__ or cause.__context__
+    assert isinstance(cause, CostTrackingRequiredError)
+    assert calls == ["q"]
+    assert "unavailable monetary cost" in _error_chain_text(exc_info.value)
+    assert is_strict_cost_accounting() is False

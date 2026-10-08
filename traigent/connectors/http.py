@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import Future, TimeoutError as FutureTimeout
-from http.cookiejar import CookieJar, DefaultCookiePolicy
-from dataclasses import dataclass, field
-from datetime import UTC
-from email.utils import parsedate_to_datetime
 import math
 import random
 import threading
 import time
-from typing import Any
 from collections.abc import Callable, Mapping
+from concurrent.futures import Future
+from concurrent.futures import TimeoutError as FutureTimeout
+from dataclasses import dataclass, field
+from datetime import UTC
+from email.utils import parsedate_to_datetime
+from http.cookiejar import CookieJar, DefaultCookiePolicy
+from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 import httpx

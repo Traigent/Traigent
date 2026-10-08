@@ -30,6 +30,7 @@ from traigent.evaluators.base import (
 from traigent.identity.examples import result_identity_fields
 from traigent.utils.exceptions import EvaluationError
 from traigent.utils.function_identity import is_coroutine_callable
+from traigent.utils.langchain_interceptor import capture_evaluation
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -578,6 +579,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             f"Original error: {error}"
         ) from error
 
+    @capture_evaluation
     async def evaluate(
         self,
         func: Callable[..., Any],

@@ -378,6 +378,13 @@ class FrameworkOverrideManager(BaseOverrideManager):
         def finish(response: Any, call_kwargs: dict[str, Any]) -> Any:
             if not capture_usage:
                 return response
+            if hasattr(original_method, "_traigent_capture_original"):
+                from traigent.utils.langchain_interceptor import (
+                    has_active_capture_scope,
+                )
+
+                if has_active_capture_scope():
+                    return response
             if inspect.isawaitable(response):
                 # ``AsyncCompletions.create`` is a plain function (wrapped by
                 # the SDK's ``required_args``) that returns a coroutine, so
@@ -808,7 +815,11 @@ class FrameworkOverrideManager(BaseOverrideManager):
             original_method,
         ) in self._original_methods.items():
             try:
-                setattr(obj, method_name, original_method)
+                from traigent.utils.openai_interceptor import (
+                    restore_openai_capture_original,
+                )
+
+                restore_openai_capture_original(obj, method_name, original_method)
             except (AttributeError, TypeError):
                 # Ignore if object no longer exists or method can't be restored
                 logger.debug(

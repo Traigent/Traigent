@@ -45,7 +45,10 @@ from traigent.utils.exceptions import ConfigurationError, EvaluationError
 from traigent.utils.exceptions import TraigentError as CoreTraigentError
 from traigent.utils.exceptions import TrialPrunedError, ValidationError
 from traigent.utils.function_identity import is_coroutine_callable
-from traigent.utils.langchain_interceptor import get_captured_response_by_key
+from traigent.utils.langchain_interceptor import (
+    capture_evaluation,
+    get_captured_response_by_key,
+)
 from traigent.utils.logging import get_logger
 from traigent.utils.removed_params import reject_removed_mock_parameters
 
@@ -4532,6 +4535,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
             for name in ragas_metric_names:
                 aggregated_metrics.setdefault(name, 0.0)
 
+    @capture_evaluation
     async def evaluate(
         self,
         func: Callable[..., Any],
