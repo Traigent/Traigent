@@ -658,7 +658,9 @@ class TestAutoFinalizationDetection:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch.object(
+            client, "_ensure_session", AsyncMock(return_value=mock_session)
+        ):
             # Submit trial results
             result = await client._trial_ops.submit_trial_result_via_session(
                 session_id=session_id,
@@ -698,7 +700,9 @@ class TestAutoFinalizationDetection:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch.object(
+            client, "_ensure_session", AsyncMock(return_value=mock_session)
+        ):
             # Submit trial results
             result = await client._trial_ops.submit_trial_result_via_session(
                 session_id=session_id,
@@ -735,7 +739,9 @@ class TestAutoFinalizationDetection:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch.object(
+            client, "_ensure_session", AsyncMock(return_value=mock_session)
+        ):
             # Submit trial results
             result = await client._trial_ops.submit_trial_result_via_session(
                 session_id=session_id,

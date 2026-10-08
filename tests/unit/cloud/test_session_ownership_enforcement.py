@@ -68,11 +68,8 @@ async def test_trial_operations_register_forbidden_logs(caplog, monkeypatch):
     session = AsyncMock()
     session.post = Mock(return_value=response_cm)
 
-    session_cm = AsyncMock()
-    session_cm.__aenter__.return_value = session
-
-    with patch(
-        "traigent.cloud.trial_operations.aiohttp.ClientSession", return_value=session_cm
+    with patch.object(
+        client, "_ensure_session", AsyncMock(return_value=session), create=True
     ):
         with caplog.at_level(logging.ERROR):
             success = await trial_ops.register_trial_start(

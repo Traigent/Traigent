@@ -616,6 +616,7 @@ class TestMeasuresDictValidationInSubmission:
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
             mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            ops.client._ensure_session = AsyncMock(return_value=mock_session)
             mock_aiohttp.ClientTimeout = Mock()
 
             result = await ops.submit_summary_stats(
@@ -744,6 +745,7 @@ class TestPrivacyConfigRedactionSubmission:
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
             mock_session = self._install_post_mock(mock_aiohttp)
+            ops.client._ensure_session = AsyncMock(return_value=mock_session)
 
             result = await ops.submit_summary_stats(
                 session_id="test-session",
@@ -788,6 +790,7 @@ class TestPrivacyConfigRedactionSubmission:
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
             mock_session = self._install_post_mock(mock_aiohttp)
+            ops.client._ensure_session = AsyncMock(return_value=mock_session)
 
             result = await ops.submit_summary_stats(
                 session_id="test-session",
@@ -824,6 +827,7 @@ class TestPrivacyConfigRedactionSubmission:
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
             mock_session = self._install_post_mock(mock_aiohttp)
+            ops.client._ensure_session = AsyncMock(return_value=mock_session)
 
             result = await ops.register_trial_start(
                 session_id="test-session",
@@ -942,6 +946,7 @@ class TestWeightedScoreUpdates:
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
             mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            ops.client._ensure_session = AsyncMock(return_value=mock_session)
             mock_aiohttp.ClientTimeout = Mock()
 
             result = await ops.update_trial_weighted_scores(
@@ -1063,9 +1068,9 @@ class TestOfflineModeReturnsNone:
                 side_effect=[False, True],
             ),
             patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
-            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+            patch("traigent.cloud.trial_operations.aiohttp"),
         ):
-            mock_aiohttp.ClientSession = Mock(
+            ops.client._ensure_session = AsyncMock(
                 side_effect=ConnectionError("simulated offline")
             )
             result = await ops.register_trial_start("sess-1", "trial-1", {"k": "v"})
@@ -1128,9 +1133,9 @@ class TestOfflineModeReturnsNone:
                 side_effect=[False, True],
             ),
             patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
-            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+            patch("traigent.cloud.trial_operations.aiohttp"),
         ):
-            mock_aiohttp.ClientSession = Mock(
+            ops.client._ensure_session = AsyncMock(
                 side_effect=ConnectionError("simulated offline")
             )
             result = await ops.submit_summary_stats(
@@ -1532,6 +1537,7 @@ class TestBudgetedSessionResultCostGuarantee:
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
             mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            ops.client._ensure_session = AsyncMock(return_value=mock_session)
             mock_aiohttp.ClientTimeout = Mock()
 
             result = await ops.register_trial_start(
@@ -1565,6 +1571,7 @@ class TestBudgetedSessionResultCostGuarantee:
             patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
         ):
             mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            ops.client._ensure_session = AsyncMock(return_value=mock_session)
             mock_aiohttp.ClientTimeout = Mock()
 
             result = await ops.submit_summary_stats(

@@ -3,7 +3,9 @@
 import asyncio
 import json
 import statistics
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -69,13 +71,13 @@ async def trial_server():
         connections.add(request.transport)
         requests.append(
             {
-                "action": request.match_info["action"],
+                "action": request.match_info.get("action", "summary-stats"),
                 "body": await request.json(),
                 "context": request.headers.get("traceparent"),
                 "request_number": request.headers.get("X-Test-Request"),
             }
         )
-        if request.match_info["action"] == "next-trial":
+        if request.match_info.get("action") == "next-trial":
             return web.json_response(
                 {"suggestion": {"trial_id": f"trial-{len(requests)}"}},
                 headers=(
@@ -88,6 +90,7 @@ async def trial_server():
 
     application = web.Application()
     application.router.add_post("/sessions/{session_id}/{action}", handle)
+    application.router.add_put("/configuration-runs/{trial_id}/summary-stats", handle)
     runner = web.AppRunner(application)
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0)
@@ -226,3 +229,156 @@ async def test_closed_connections_and_sessions_recover_without_losing_ownership(
         assert replacement.closed
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_remaining_async_trial_producers_share_pool_and_fresh_headers(
+    trial_server,
+):
+    origin, requests, connections = trial_server
+    client = _LocalTrialClient(origin)
+    try:
+        for index in range(4):
+            trial_id = f"trial-{index}"
+            assert (
+                await client._trial_ops.register_trial_start(
+                    "local-session", trial_id, {"temperature": 0.1}
+                )
+                is True
+            )
+            assert (
+                await client._trial_ops.submit_summary_stats(
+                    "local-session",
+                    trial_id,
+                    {"temperature": 0.1},
+                    {"metrics": {"accuracy": {"mean": 1.0}}, "total_examples": 1},
+                )
+                is True
+            )
+            assert (
+                await client._trial_ops.update_trial_weighted_scores(
+                    trial_id, 0.75, {"accuracy": [0.0, 1.0]}, {"accuracy": 1.0}
+                )
+                is True
+            )
+        assert len(requests) == 12
+        assert len(connections) == 1
+        assert client._session is not None and not client._session.closed
+        assert [r["context"] for r in requests] == [
+            f"request-context-{i}" for i in range(1, 13)
+        ]
+        for index in range(4):
+            registration, summary, weighted = requests[index * 3 : index * 3 + 3]
+            assert registration["body"]["status"] == "RUNNING"
+            assert summary["body"]["metrics"] == {"accuracy": 1.0}
+            assert weighted["body"]["summary_stats"]["weighted_score"] == 0.75
+    finally:
+        session = client._session
+        await client.close()
+        if session is not None:
+            assert session.closed
+
+
+@pytest.fixture
+def threaded_trial_server():
+    connections = set()
+    requests = []
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_POST(self):
+            connections.add(self.connection)
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            requests.append(body)
+            result = (
+                {"suggestion": {"trial_id": f"trial-{len(requests)}"}}
+                if self.path.endswith("next-trial")
+                else {"continue_optimization": True}
+            )
+            encoded = json.dumps(result).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", requests, connections
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_sync_registration_does_not_replace_or_close_parent_loop_pool(
+    threaded_trial_server, monkeypatch
+):
+    import aiohttp
+
+    origin, requests, connections = threaded_trial_server
+    created = []
+    original_session = aiohttp.ClientSession
+
+    def track_session(*args, **kwargs):
+        session = original_session(*args, **kwargs)
+        created.append(session)
+        return session
+
+    monkeypatch.setattr(aiohttp, "ClientSession", track_session)
+    client = _LocalTrialClient(origin)
+    try:
+        assert (await client.request_trial_slot("local-session")).trial_id == "trial-1"
+        pooled = client._session
+        for index in range(2):
+            assert (
+                client._trial_ops.register_trial_start_sync(
+                    "local-session", f"sync-{index}", {}
+                )
+                is True
+            )
+            assert client._session is pooled and not pooled.closed
+            assert created[-1].closed
+        assert (await client.request_trial_slot("local-session")).trial_id == "trial-4"
+        assert client._session is pooled
+        assert len(requests) == 4
+        assert len(connections) == 3
+        assert len(created) == 3
+    finally:
+        await client.close()
+    assert all(session.closed for session in created)
+
+
+def test_sync_registration_without_running_loop_closes_each_transient_session(
+    threaded_trial_server, monkeypatch
+):
+    import aiohttp
+
+    origin, requests, connections = threaded_trial_server
+    created = []
+    original_session = aiohttp.ClientSession
+
+    def track_session(*args, **kwargs):
+        session = original_session(*args, **kwargs)
+        created.append(session)
+        return session
+
+    monkeypatch.setattr(aiohttp, "ClientSession", track_session)
+    client = _LocalTrialClient(origin)
+    for index in range(2):
+        assert (
+            client._trial_ops.register_trial_start_sync(
+                "local-session", f"sync-{index}", {}
+            )
+            is True
+        )
+        assert client._session is None
+        assert created[-1].closed
+    assert len(requests) == len(connections) == len(created) == 2
