@@ -81,14 +81,16 @@ def test_a_measured_zero_cost_stays_zero() -> None:
     assert formatted["cost_unmeasured"] == 0.0
 
 
-def test_mixed_trial_sums_only_the_measured_cost_and_is_flagged() -> None:
+def test_mixed_trial_claims_no_total_and_keeps_only_a_lower_bound() -> None:
     tracker = MetricsTracker()
     tracker.start_tracking()
     tracker.add_example_metrics(_example(unmeasured=False, cost=0.002))
     tracker.add_example_metrics(_example(unmeasured=True))
     formatted = tracker.format_for_backend()
 
-    assert formatted["cost"] == pytest.approx(0.002)
+    # A partial sum is a floor, not the trial's cost (review of be90d866).
+    assert formatted["cost"] is None
+    assert formatted["cost_lower_bound"] == pytest.approx(0.002)
     assert formatted["cost_unmeasured"] == 1.0
 
 

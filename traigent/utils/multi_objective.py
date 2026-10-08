@@ -13,6 +13,10 @@ from typing import Any
 from ..api.types import TrialResult, TrialStatus
 from ..core.objective_directions import resolve_objective_orientation
 from ..core.objectives import ObjectiveSchema
+from .trial_costs import is_cost_unmeasured
+
+# Metric names that carry a trial's cost (mirrors evaluators.base.MEASURED_ONLY_METRICS).
+_COST_OBJECTIVE_NAMES = frozenset({"cost", "input_cost", "output_cost", "total_cost"})
 
 _COMPLETED_STATUS_TOKENS = {
     TrialStatus.COMPLETED.value.lower(),
@@ -165,7 +169,12 @@ class ParetoFrontCalculator:
             if _is_completed_status(getattr(trial, "status", None)) and trial.metrics:
                 # Extract objective values
                 point_objectives = {}
+                cost_flagged = is_cost_unmeasured(trial.metrics)
                 for obj in objectives:
+                    if cost_flagged and obj in _COST_OBJECTIVE_NAMES:
+                        # Flagged unmeasured: a number next to the flag is a
+                        # floor or a stray zero, never a ranking value (#2517).
+                        continue
                     if trial.metrics.get(obj) is not None:
                         point_objectives[obj] = trial.metrics[obj]
 

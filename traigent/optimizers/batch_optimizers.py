@@ -20,13 +20,14 @@ from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
 from traigent.api.types import TrialResult
-from traigent.evaluators.base import Dataset, EvaluationResult
+from traigent.evaluators.base import MEASURED_ONLY_METRICS, Dataset, EvaluationResult
 from traigent.invokers.base import BaseInvoker, InvocationResult
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.random import RandomSearchOptimizer
 from traigent.optimizers.results import BatchResult, BatchTrial
 from traigent.utils.batch_processing import AdaptiveBatchSizer
 from traigent.utils.logging import get_logger
+from traigent.utils.trial_costs import is_cost_unmeasured
 
 logger = get_logger(__name__)
 
@@ -34,6 +35,27 @@ logger = get_logger(__name__)
 #: cost). Finite on purpose: ``-inf`` is not valid strict JSON, so it could not
 #: be serialized with the trial. It ranks below any measured composite score.
 UNMEASURED_COMPOSITE_SCORE = -sys.float_info.max
+
+
+def _objective_unmeasured(metrics: dict[str, Any], objectives: list[str]) -> bool:
+    """True when a declared objective of this trial has no measurement.
+
+    Covers empty metrics, a missing / non-finite objective, and a cost
+    objective whose trial is flagged ``cost_unmeasured`` (#2517, #2446).
+    Such a trial is ineligible for best-config selection.
+    """
+    if not metrics:
+        return True
+    if any(
+        metrics.get(name) is None
+        or isinstance(metrics[name], bool)
+        or not math.isfinite(metrics[name])
+        for name in objectives
+    ):
+        return True
+    return is_cost_unmeasured(metrics) and any(
+        name in MEASURED_ONLY_METRICS for name in objectives
+    )
 
 
 class TrialBatchEvaluator(Protocol):
@@ -209,8 +231,10 @@ class ParallelBatchOptimizer(BaseOptimizer):
                         # must not defer early stopping. Previously min_delta was
                         # declared in BatchConfig but never read, so any epsilon
                         # gain reset the counter.
+                        eligible = not trial.metadata.get("objective_unmeasured")
                         if (
-                            trial.score
+                            eligible
+                            and trial.score
                             > best_score + self.batch_config.early_stopping_min_delta
                         ):
                             trials_without_improvement = 0
@@ -219,7 +243,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
 
                         # Best-result tracking stays exact: even a sub-delta gain
                         # is still the best config seen so far.
-                        if trial.score > best_score:
+                        if eligible and trial.score > best_score:
                             best_score = trial.score
                             best_config = config
                             logger.info(
@@ -328,6 +352,9 @@ class ParallelBatchOptimizer(BaseOptimizer):
 
             # Calculate composite score
             score = self._calculate_composite_score(evaluation_result.metrics or {})
+            objective_unmeasured = self._objective_unmeasured(
+                evaluation_result.metrics or {}
+            )
 
             # Update adaptive batch sizing
             successful_count = evaluation_result.successful_examples
@@ -356,6 +383,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
                     "batch_size": batch_size,
                     "throughput": throughput,
                     "error_rate": error_rate,
+                    **({"objective_unmeasured": True} if objective_unmeasured else {}),
                 },
             )
 
@@ -368,25 +396,22 @@ class ParallelBatchOptimizer(BaseOptimizer):
                 metadata={"error": str(e), "failed": True},
             )
 
+    def _objective_unmeasured(self, metrics: dict[str, Any]) -> bool:
+        """See module-level ``_objective_unmeasured``."""
+        return _objective_unmeasured(metrics, list(self.objectives))
+
     def _calculate_composite_score(self, metrics: dict[str, float]) -> float:
         """Calculate composite score from multiple metrics using weighted scalarization."""
-        if not metrics:
-            return 0.0
-
-        # Use scalarize_objectives for weighted scoring, honoring objective
-        # orientation so minimize objectives (cost/latency/error) lower the
-        # composite instead of raising it (#1466).
+        # An objective with no measurement (an unmeasured cost, or no metrics
+        # at all) makes the composite unknowable: scalarizing over the
+        # remaining weights would score the trial on quality alone with no
+        # cost penalty. The finite sentinel exists only because strict JSON
+        # cannot carry -inf; the trial is also flagged
+        # ``objective_unmeasured`` so selection never treats it as a candidate
+        # (Traigent#2446, #2517).
         from traigent.utils.multi_objective import scalarize_objectives
 
-        # A declared objective with no measurement (an unmeasured cost) makes
-        # the composite unknowable: scalarizing over the remaining weights would
-        # score the trial on quality alone with no cost penalty. Such a trial
-        # gets the lowest finite score (strict JSON cannot carry -inf), so it
-        # ranks below every measured trial (Traigent#2446).
-        if any(
-            metrics.get(name) is None or not math.isfinite(metrics[name])
-            for name in self.objectives
-        ):
+        if self._objective_unmeasured(metrics):
             return UNMEASURED_COMPOSITE_SCORE
 
         return float(
@@ -628,6 +653,8 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
             if composed is None:
                 metrics = evaluation_result.metrics or {}
                 missing = [o for o in self.objectives if o not in metrics]
+                if not missing and is_cost_unmeasured(metrics):
+                    missing = [o for o in self.objectives if o in MEASURED_ONLY_METRICS]
                 logger.warning(
                     "Multi-objective trial %s rejected: metric-incomplete or "
                     "non-finite objectives (missing=%s) — a partial trial must "
@@ -685,6 +712,12 @@ class MultiObjectiveBatchOptimizer(BaseOptimizer):
         so the metric-incomplete trial entered the frontier and, inserted
         first, could even be SELECTED by ``max()`` (NaN keeps first place).
         """
+        if is_cost_unmeasured(metrics) and any(
+            name in MEASURED_ONLY_METRICS for name in self.objectives
+        ):
+            # A flagged cost is unknown even when a number sits next to the
+            # flag: the trial must not enter the frontier (#2517).
+            return None
         for objective in self.objectives:
             value = metrics.get(objective)
             if value is None or not math.isfinite(value):
@@ -954,7 +987,10 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
             trials.append(trial)
 
             # Update best result
-            if trial.score > best_score:
+            if (
+                not trial.metadata.get("objective_unmeasured")
+                and trial.score > best_score
+            ):
                 best_score = trial.score
                 best_config = config
                 logger.info(f"Trial {trial_idx}: New best score {best_score:.4f}")
@@ -1051,6 +1087,9 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
 
             # Calculate score
             score = self._calculate_composite_score(evaluation_result.metrics or {})
+            objective_unmeasured = self._objective_unmeasured(
+                evaluation_result.metrics or {}
+            )
 
             return BatchTrial(
                 configuration=config,
@@ -1063,6 +1102,7 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
                     "error_rate": error_rate,
                     "avg_batch_duration": avg_batch_duration,
                     "trial_index": trial_idx,
+                    **({"objective_unmeasured": True} if objective_unmeasured else {}),
                 },
             )
 
@@ -1093,25 +1133,17 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
             if len(self.performance_history) > 100:
                 self.performance_history = self.performance_history[-100:]
 
+    def _objective_unmeasured(self, metrics: dict[str, Any]) -> bool:
+        """See module-level ``_objective_unmeasured``."""
+        return _objective_unmeasured(metrics, list(self.objectives))
+
     def _calculate_composite_score(self, metrics: dict[str, float]) -> float:
         """Calculate composite score from multiple metrics using weighted scalarization."""
-        if not metrics:
-            return 0.0
-
-        # Use scalarize_objectives for weighted scoring, honoring objective
-        # orientation so minimize objectives (cost/latency/error) lower the
-        # composite instead of raising it (#1466).
+        # See ParallelBatchOptimizer: an unmeasured objective gets the finite
+        # sentinel AND is flagged ineligible for best-config selection.
         from traigent.utils.multi_objective import scalarize_objectives
 
-        # A declared objective with no measurement (an unmeasured cost) makes
-        # the composite unknowable: scalarizing over the remaining weights would
-        # score the trial on quality alone with no cost penalty. Such a trial
-        # gets the lowest finite score (strict JSON cannot carry -inf), so it
-        # ranks below every measured trial (Traigent#2446).
-        if any(
-            metrics.get(name) is None or not math.isfinite(metrics[name])
-            for name in self.objectives
-        ):
+        if self._objective_unmeasured(metrics):
             return UNMEASURED_COMPOSITE_SCORE
 
         return float(

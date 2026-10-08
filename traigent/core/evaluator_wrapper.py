@@ -30,11 +30,16 @@ from traigent.evaluators.base import (
 from traigent.identity.examples import result_identity_fields
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.logging import get_logger
+from traigent.utils.trial_costs import is_cost_unmeasured
 
 logger = get_logger(__name__)
 
 _LLM_TOKEN_METRICS = ("input_tokens", "output_tokens", "total_tokens")
 _LLM_COST_METRICS = ("input_cost", "output_cost", "total_cost")
+
+
+def _truthy_flag(value: Any) -> bool:
+    return bool(is_cost_unmeasured({"cost_unmeasured": value}))
 
 
 def _strict_metrics_nulls() -> bool:
@@ -352,15 +357,19 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             example_result.metrics["total_tokens"] = safe_get_nested_attr(
                 llm_metrics, "tokens.total_tokens", 0
             )
-            example_result.metrics["input_cost"] = safe_get_nested_attr(
-                llm_metrics, "cost.input_cost", 0.0
-            )
-            example_result.metrics["output_cost"] = safe_get_nested_attr(
-                llm_metrics, "cost.output_cost", 0.0
-            )
-            example_result.metrics["total_cost"] = safe_get_nested_attr(
-                llm_metrics, "cost.total_cost", 0.0
-            )
+            if safe_get_nested_attr(llm_metrics, "cost.unmeasured", False):
+                # Unknown cost: leave the cost keys out, flag it (#2517).
+                example_result.metrics["cost_unmeasured"] = 1.0
+            else:
+                example_result.metrics["input_cost"] = safe_get_nested_attr(
+                    llm_metrics, "cost.input_cost", 0.0
+                )
+                example_result.metrics["output_cost"] = safe_get_nested_attr(
+                    llm_metrics, "cost.output_cost", 0.0
+                )
+                example_result.metrics["total_cost"] = safe_get_nested_attr(
+                    llm_metrics, "cost.total_cost", 0.0
+                )
 
             response_time_ms = safe_get_nested_attr(
                 llm_metrics, "response.response_time_ms", 0
@@ -467,7 +476,14 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         the weighted sum), and single-objective ranking treats the trial as
         ineligible.
         """
+        trial_unmeasured = _truthy_flag(aggregated.get("cost_unmeasured"))
         for metric in MEASURED_ONLY_METRICS & set(self.metrics):
+            if trial_unmeasured:
+                if _strict_metrics_nulls():
+                    aggregated[metric] = None
+                else:
+                    aggregated.pop(metric, None)
+                continue
             if any(
                 row and _measured_number(row.get(metric)) is not None
                 for row in all_metrics
@@ -514,6 +530,16 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 aggregated[metric] = sum(metric_values)
             elif strict_nulls:
                 aggregated[metric] = None
+
+        if any(row and is_cost_unmeasured(row) for row in all_metrics):
+            # Some row has an unknown cost: the sum would be a floor, not the
+            # trial's cost, so no cost total is claimed (#2517).
+            aggregated["cost_unmeasured"] = 1.0
+            for metric in _LLM_COST_METRICS:
+                if strict_nulls:
+                    aggregated[metric] = None
+                else:
+                    aggregated.pop(metric, None)
 
         measured_rows = sum(
             1
