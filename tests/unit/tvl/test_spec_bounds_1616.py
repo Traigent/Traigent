@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from traigent.tvl.models import ChanceConstraint, ExplorationBudgets
+from traigent.tvl.models import ChanceConstraint, ExplorationBudgets, PromotionPolicy
 from traigent.tvl.spec_loader import load_tvl_spec
 from traigent.utils.exceptions import TVLValidationError
 
@@ -84,6 +84,21 @@ def test_chance_threshold_inside_unit_interval_loads(
     assert artifact.promotion_policy is not None
     [cc] = artifact.promotion_policy.chance_constraints
     assert cc.threshold == threshold
+
+
+def test_discovered_policy_dict_with_metric_threshold_is_rejected() -> None:
+    # Hybrid discovery hands a raw promotion_policy dict to
+    # PromotionPolicy.from_dict (core/optimized_function.py). A metric-style
+    # threshold used to load and then pass the gate on every candidate.
+    policy = {
+        "dominance": "epsilon_pareto",
+        "alpha": 0.05,
+        "chance_constraints": [
+            {"name": "latency", "threshold": 500, "confidence": 0.95}
+        ],
+    }
+    with pytest.raises(ValueError, match="threshold must be in"):
+        PromotionPolicy.from_dict(policy)
 
 
 def test_chance_threshold_nan_is_rejected() -> None:
