@@ -962,6 +962,13 @@ class MetricsTracker:
             )
             else 0.0
         )
+        if cost_unmeasured:
+            # A partial sum (one measured-free row + one unknown row) is a
+            # floor, not a total: claiming it as ``cost`` would let the trial
+            # rank as cheaper than a fully measured one (#2517). It is
+            # reported only as ``cost_lower_bound``.
+            cost_total = None
+            cost_per_example_mean = None
         # Known spend of a trial whose total is unknown or partial: what was
         # measured plus judge/evaluator spend on unmeasured examples. A floor,
         # never the cost.

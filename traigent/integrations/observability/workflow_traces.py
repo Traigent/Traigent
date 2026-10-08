@@ -141,7 +141,8 @@ class SpanPayload:
     # Metrics
     input_tokens: int = 0
     output_tokens: int = 0
-    cost_usd: float = 0.0
+    # None = unmeasured cost: omitted from the payload, never sent as 0.0.
+    cost_usd: float | None = 0.0
 
     # Data
     input_data: dict[str, Any] | None = None
@@ -162,8 +163,9 @@ class SpanPayload:
             "status": self.status,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
-            "cost_usd": self.cost_usd,
         }
+        if self.cost_usd is not None:
+            result["cost_usd"] = self.cost_usd
 
         # Add optional fields only if present
         if self.parent_span_id:

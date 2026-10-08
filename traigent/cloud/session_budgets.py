@@ -72,14 +72,15 @@ def ensure_cost_metric_for_budgeted_completed_submission(
     if is_finite_numeric_cost(metrics.get("cost")):
         return False
 
+    if is_cost_unmeasured(metrics):
+        # An unknown cost is never invented for budget accounting: neither as
+        # $0 nor from telemetry/metadata that carries a zero for it (#2517).
+        return False
+
     cost = extract_trial_cost_metric(metrics, *telemetry_sources)
     if cost is not None:
         metrics["cost"] = cost
         return True
-
-    if is_cost_unmeasured(metrics):
-        # An unknown cost is never invented as $0 for budget accounting.
-        return False
 
     metrics["cost"] = 0.0
     if logger is not None:

@@ -1030,6 +1030,12 @@ class BackendSessionManager:
         if is_finite_numeric_cost(metrics_payload.get("cost")):
             return
 
+        if is_cost_unmeasured(metrics_payload) or is_cost_unmeasured(
+            getattr(trial_result, "metrics", None)
+        ):
+            # Flagged unknown: telemetry/metadata zeros must not become cost.
+            return
+
         attr_costs = {
             field: getattr(trial_result, field, None) for field in TRIAL_COST_FIELDS
         }
@@ -1045,9 +1051,6 @@ class BackendSessionManager:
             return
 
         if session_id not in self._session_cost_budget_armed:
-            return
-
-        if is_cost_unmeasured(metrics_payload):
             return
 
         metrics_payload["cost"] = 0.0

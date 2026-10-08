@@ -54,6 +54,7 @@ from traigent.utils.exceptions import (
     VendorPauseError,
 )
 from traigent.utils.logging import get_logger
+from traigent.utils.trial_costs import is_cost_unmeasured
 
 from .tracing import record_trial_result, trial_span
 
@@ -90,6 +91,24 @@ def _privacy_cost(metrics: dict[str, Any]) -> int | float:
     if type(value) is int or (type(value) is float and math.isfinite(value)):
         return value
     return 0.0
+
+
+def _span_cost(
+    span_metrics: dict[str, Any] | None,
+    privacy_enabled: bool,
+    unmeasured: bool = False,
+) -> int | float | None:
+    """Workflow-span cost: None (omitted from the payload) when unmeasured.
+
+    A trial flagged ``cost_unmeasured`` has no cost; the span must not upload
+    it as 0.0 (#2517).
+    """
+
+    if unmeasured or is_cost_unmeasured(span_metrics):
+        return None
+    if privacy_enabled:
+        return _privacy_cost(span_metrics or {})
+    return span_metrics.get("total_cost", 0.0) if span_metrics else 0.0
 
 
 def _resolve_primary_objective(orchestrator: Any) -> str | None:
@@ -1404,6 +1423,7 @@ class TrialLifecycle:
             span_config = trial_result.config
             span_error = trial_result.error_message
             span_metrics = trial_result.metrics
+            cost_unmeasured_span = is_cost_unmeasured(span_metrics)
             input_tokens = (
                 trial_result.metadata.get("input_tokens", 0)
                 if trial_result.metadata
@@ -1461,9 +1481,9 @@ class TrialLifecycle:
                 error_message=span_error,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
-                cost_usd=_privacy_cost(span_metrics)
-                if privacy_enabled
-                else (span_metrics.get("total_cost", 0.0) if span_metrics else 0.0),
+                cost_usd=_span_cost(
+                    span_metrics, privacy_enabled, cost_unmeasured_span
+                ),
                 input_data={"config": span_config},
                 output_data={"metrics": span_metrics},
                 metadata=span_metadata,
