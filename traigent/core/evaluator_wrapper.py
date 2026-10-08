@@ -30,7 +30,7 @@ from traigent.evaluators.base import (
 from traigent.identity.examples import result_identity_fields
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.logging import get_logger
-from traigent.utils.trial_costs import is_cost_unmeasured
+from traigent.utils.trial_costs import is_cost_unmeasured, trial_cost_unknown
 
 logger = get_logger(__name__)
 
@@ -531,9 +531,15 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             elif strict_nulls:
                 aggregated[metric] = None
 
-        if any(row and is_cost_unmeasured(row) for row in all_metrics):
-            # Some row has an unknown cost: the sum would be a floor, not the
-            # trial's cost, so no cost total is claimed (#2517).
+        if trial_cost_unknown(
+            all_metrics,
+            [bool(getattr(r, "success", True)) for r in example_results]
+            if len(example_results) == len(all_metrics)
+            else None,
+        ):
+            # A flagged row, a successful row with no captured cost, or no
+            # measured row at all: the sum would be a floor (or nothing), not
+            # the trial's cost, so no cost total is claimed (#2517).
             aggregated["cost_unmeasured"] = 1.0
             for metric in _LLM_COST_METRICS:
                 if strict_nulls:

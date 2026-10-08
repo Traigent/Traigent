@@ -1162,7 +1162,12 @@ class LocalEvaluator(BaseEvaluator):
         payload_metrics = dict(example_metric.custom_metrics)
         total_cost_value = example_metric.cost.total_cost
 
-        if total_cost_value is not None:
+        if example_metric.cost.unmeasured:
+            # Unknown cost: no $0 in the progress payload (#2517).
+            payload_metrics.pop("total_cost", None)
+            payload_metrics.pop("cost", None)
+            payload_metrics["cost_unmeasured"] = 1.0
+        elif total_cost_value is not None:
             payload_metrics.setdefault("total_cost", float(total_cost_value))
             payload_metrics.setdefault("cost", float(total_cost_value))
 
