@@ -357,13 +357,13 @@ def langchain_metadata_context():
 @contextmanager
 def capture_key(key: Any):
     """Context manager to associate subsequent captured responses with a key."""
-    token = _correlation_key.set(key)
+    context_reset = _correlation_key.set(key)
     try:
         _metadata_capture.set_current_key(key)
         yield
     finally:
         _metadata_capture.clear_current_key()
-        _correlation_key.reset(token)
+        _correlation_key.reset(context_reset)
 
 
 def _mock_enabled(provider: str) -> bool:
