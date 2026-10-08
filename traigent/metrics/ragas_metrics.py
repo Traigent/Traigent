@@ -323,15 +323,24 @@ def _prepare_samples(
         if response is None:
             continue
 
-        reference = result.expected_output
-        if reference is None:
-            continue
+        # A mapped "reference" column is read from the row like the other
+        # mappable columns; expected_output is the reference only when the
+        # column is unmapped. A missing reference drops the row only for
+        # metrics that require it, via the required-columns check below
+        # (#2472).
+        if config.column_map and "reference" in config.column_map:
+            reference = _extract_candidate(
+                [*metadata_sources, *input_sources],
+                _determine_column_keys(config.column_map, "reference"),
+            )
+        else:
+            reference = result.expected_output
 
         user_input_keys = _determine_column_keys(config.column_map, "user_input")
         user_input = _extract_candidate(input_sources, user_input_keys)
         if user_input is None and hasattr(result, "input_data"):
             user_input = str(result.input_data)
-        if user_input is None:
+        if user_input is None and reference is not None:
             user_input = str(reference)
 
         contexts_keys = _determine_column_keys(config.column_map, "retrieved_contexts")
