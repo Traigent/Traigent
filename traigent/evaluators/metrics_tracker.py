@@ -1318,7 +1318,11 @@ def pricing_model_for_response(response: Any, config_model: Any) -> str | None:
     configured = (
         config_model if isinstance(config_model, str) and config_model else None
     )
-    response_model = _model_reported_by_response(response)
+    # Preserve metadata-first pricing precedence, then reuse the established
+    # inference for supported legacy LangChain llm_output/dictionary shapes.
+    response_model = _model_reported_by_response(
+        response
+    ) or _infer_model_name_from_response(response)
     if response_model and response_model != configured:
         if not configured or _model_is_priced(response_model):
             return response_model
