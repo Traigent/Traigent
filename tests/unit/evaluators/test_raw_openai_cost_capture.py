@@ -1158,3 +1158,177 @@ def test_async_langchain_agent_is_not_cut_at_the_fallback_limit(
     in_cost, out_cost = cost_from_tokens(PROMPT_TOKENS, COMPLETION_TOKENS, KNOWN_MODEL)
     for trial in result.trials:
         assert trial.metrics["total_cost"] == pytest.approx(2 * (in_cost + out_cost))
+
+
+# Missing usage must remain unknown in the default evaluator lanes (#2517).
+def _default_measurement_evaluator(lane, *, custom_cost=None):
+    from traigent.evaluators.base import SimpleScoringEvaluator
+    from traigent.evaluators.local import LocalEvaluator
+
+    if lane == "local":
+        kwargs = (
+            {}
+            if custom_cost is None
+            else {"metric_functions": {"cost": lambda output, expected: custom_cost}}
+        )
+        return LocalEvaluator(metrics=["accuracy", "cost"], detailed=True, **kwargs)
+
+    def score(output, expected):
+        values = {"accuracy": float(output == expected)}
+        if custom_cost is not None:
+            values["cost"] = custom_cost
+        return values
+
+    return SimpleScoringEvaluator(metrics=["accuracy", "cost"], scoring_function=score)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lane", ["local", "simple"])
+async def test_uncaptured_raw_usage_is_unknown_in_default_lanes(lane, clean_capture):
+    client = _sync_client()
+    try:
+        result = await _default_measurement_evaluator(lane).evaluate(
+            _sync_agent(client), {"model": KNOWN_MODEL}, _dataset()
+        )
+        assert not get_all_captured_responses()
+        assert result.aggregated_metrics.get("cost") is None
+        assert result.aggregated_metrics.get("total_cost") is None
+        assert result.aggregated_metrics["accuracy"] == 1.0
+        for row in result.example_results:
+            assert row.metrics.get("cost") is None
+            assert row.metrics.get("total_cost") is None
+    finally:
+        client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lane", ["local", "simple"])
+@pytest.mark.parametrize("custom_cost", [0.0, 0.25])
+async def test_explicit_custom_cost_stays_authoritative_without_usage(
+    lane, custom_cost, clean_capture
+):
+    result = await _default_measurement_evaluator(
+        lane, custom_cost=custom_cost
+    ).evaluate(lambda question: "ok", {"model": KNOWN_MODEL}, _dataset())
+    assert result.aggregated_metrics["cost"] == custom_cost
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lane", ["local", "simple"])
+async def test_unpriced_captured_usage_has_unknown_cost_in_default_lanes(
+    lane, clean_capture
+):
+    def agent(question):
+        _captured_completion("fictional/unpriced-model")
+        return "ok"
+
+    result = await _default_measurement_evaluator(lane).evaluate(
+        agent, {"model": "fictional/unpriced-model"}, _dataset()
+    )
+    assert result.aggregated_metrics["cost_unpriced"] == 1.0
+    assert result.aggregated_metrics.get("cost") is None
+    assert result.aggregated_metrics.get("total_cost") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lane", ["local", "simple"])
+async def test_measured_calls_preserve_real_cost_in_default_lanes(lane, clean_capture):
+    def agent(question):
+        _captured_completion(KNOWN_MODEL)
+        return "ok"
+
+    result = await _default_measurement_evaluator(lane).evaluate(
+        agent, {"model": KNOWN_MODEL}, _dataset()
+    )
+    charge = sum(cost_from_tokens(PROMPT_TOKENS, COMPLETION_TOKENS, KNOWN_MODEL))
+    expected = 2 * charge if lane == "local" else charge
+    assert result.aggregated_metrics["cost"] == pytest.approx(expected)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lane", ["local", "simple"])
+async def test_provider_reported_zero_stays_a_real_measurement(lane, clean_capture):
+    def agent(question):
+        response = _captured_completion(KNOWN_MODEL)
+        object.__setattr__(response.usage, "cost", 0.0)
+        return "ok"
+
+    result = await _default_measurement_evaluator(lane).evaluate(
+        agent, {"model": KNOWN_MODEL}, _dataset()
+    )
+    assert result.aggregated_metrics["cost"] == 0.0
+    assert all(row.metrics["total_cost"] == 0.0 for row in result.example_results)
+    assert result.aggregated_metrics["cost_unpriced"] == 0.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lane", ["local", "simple"])
+async def test_custom_zero_objective_does_not_replace_real_captured_spend(
+    lane, clean_capture
+):
+    def agent(question):
+        _captured_completion(KNOWN_MODEL)
+        return "ok"
+
+    result = await _default_measurement_evaluator(lane, custom_cost=0.0).evaluate(
+        agent, {"model": KNOWN_MODEL}, _dataset()
+    )
+    assert result.aggregated_metrics["cost"] == 0.0
+    expected = sum(cost_from_tokens(PROMPT_TOKENS, COMPLETION_TOKENS, KNOWN_MODEL))
+    assert sum(
+        row.metrics["total_cost"] for row in result.example_results
+    ) == pytest.approx(2 * expected)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lane", ["local", "simple"])
+async def test_free_call_plus_unpriced_call_is_unknown_not_free(lane, clean_capture):
+    def agent(question):
+        response = _captured_completion(KNOWN_MODEL)
+        object.__setattr__(response.usage, "cost", 0.0)
+        _captured_completion("fictional/unpriced-model")
+        return "ok"
+
+    result = await _default_measurement_evaluator(lane).evaluate(
+        agent, {"model": "fictional/unpriced-model"}, _dataset()
+    )
+    assert result.aggregated_metrics["cost"] is None
+    assert result.aggregated_metrics["cost_unpriced"] == 1.0
+
+
+def test_default_optimize_keeps_uncaptured_provider_spend_unknown(
+    monkeypatch, tmp_path, real_llm_path, clean_capture
+):
+    from traigent.core.optimized_function import OptimizedFunction
+
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
+    client = _sync_client()
+    provider_usage = []
+
+    def agent(question):
+        response = client.chat.completions.create(
+            model=KNOWN_MODEL, messages=[{"role": "user", "content": question}]
+        )
+        provider_usage.append(response.usage.total_tokens)
+        return response.choices[0].message.content
+
+    optimized = OptimizedFunction(
+        func=agent,
+        configuration_space={"model": [KNOWN_MODEL]},
+        objectives=["accuracy", "cost"],
+        eval_dataset=_dataset(1),
+        max_trials=1,
+    )
+    try:
+        result = optimized.optimize_sync(
+            algorithm="grid", max_trials=1, progress_bar=False
+        )
+    finally:
+        client.close()
+    assert provider_usage == [PROMPT_TOKENS + COMPLETION_TOKENS]
+    (trial,) = result.trials
+    assert trial.metrics["accuracy"] == 1.0
+    assert trial.metrics.get("cost") is None
+    assert trial.metrics.get("total_cost") is None
+    assert trial.metrics["cost_unpriced"] == 1.0
+    assert "COST_OBJECTIVE_NO_USAGE_CAPTURED" in result.warning_codes

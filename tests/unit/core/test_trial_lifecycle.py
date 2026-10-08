@@ -1531,11 +1531,13 @@ class TestWorkflowSpanCost:
     """An unmeasured trial's span must carry an unknown cost, never $0."""
 
     @staticmethod
-    def _collect(metrics: dict) -> object:
+    def _collect(metrics: dict, privacy_enabled: bool = False) -> object:
         from datetime import UTC, datetime
+        from types import SimpleNamespace
 
         orchestrator = MagicMock()
         orchestrator._optimization_id = "opt-1"
+        orchestrator.traigent_config = SimpleNamespace(privacy_enabled=privacy_enabled)
         lifecycle = TrialLifecycle(orchestrator)
         trial = TrialResult(
             trial_id="t1",
@@ -1561,3 +1563,29 @@ class TestWorkflowSpanCost:
     def test_measured_free_trial_span_cost_stays_zero(self):
         span = self._collect({"accuracy": 1.0, "total_cost": 0.0})
         assert span.to_dict()["cost_usd"] == 0.0
+
+
+@pytest.mark.parametrize("privacy_enabled", [False, True])
+@pytest.mark.parametrize(
+    "metrics,expected",
+    [
+        ({}, None),
+        ({"total_cost": None}, None),
+        ({"total_cost": 0.0}, 0.0),
+        ({"total_cost": 0.0042}, 0.0042),
+    ],
+)
+def test_workflow_span_cost_preserves_measurement_with_privacy(
+    privacy_enabled, metrics, expected
+):
+    span = TestWorkflowSpanCost._collect(metrics, privacy_enabled=privacy_enabled)
+    assert span.to_dict()["cost_usd"] == expected
+
+
+def test_private_workflow_span_cost_never_leaks_invalid_value():
+    span = TestWorkflowSpanCost._collect(
+        {"total_cost": "COST-REDACTION-CANARY"}, privacy_enabled=True
+    )
+    wire = span.to_dict()
+    assert wire["cost_usd"] is None
+    assert "COST-REDACTION-CANARY" not in str(wire)

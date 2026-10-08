@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 from traigent.config.types import resolve_execution_mode
 from traigent.evaluators.base import (
+    MEASURED_ONLY_METRICS,
     BaseEvaluator,
     Dataset,
     EvaluationResult,
@@ -32,6 +33,7 @@ from traigent.evaluators.metrics_tracker import (
     MetricsTracker,
     compute_empty_output_rate,
     compute_truncated_output_rate,
+    cost_is_measured,
     enforce_user_metric_ceiling,
     extract_llm_metrics,
     pricing_model_for_response,
@@ -785,9 +787,15 @@ class LocalEvaluator(BaseEvaluator):
         example_result.metrics["input_tokens"] = example_metric.tokens.input_tokens
         example_result.metrics["output_tokens"] = example_metric.tokens.output_tokens
         example_result.metrics["total_tokens"] = example_metric.tokens.total_tokens
-        example_result.metrics["input_cost"] = example_metric.cost.input_cost
-        example_result.metrics["output_cost"] = example_metric.cost.output_cost
-        example_result.metrics["total_cost"] = example_metric.cost.total_cost
+        measured_cost = cost_is_measured(example_metric)
+        for key in ("input_cost", "output_cost", "total_cost"):
+            example_result.metrics[key] = (
+                getattr(example_metric.cost, key) if measured_cost else None
+            )
+        if "cost" not in self.metric_functions:
+            example_result.metrics["cost"] = (
+                example_metric.cost.total_cost if measured_cost else None
+            )
 
     def _objective_returned_none_error(
         self,
@@ -1150,11 +1158,12 @@ class LocalEvaluator(BaseEvaluator):
             Payload dictionary for progress callback
         """
         payload_metrics = dict(example_metric.custom_metrics)
-        total_cost_value = example_metric.cost.total_cost
+        total_cost_value = (
+            example_metric.cost.total_cost if cost_is_measured(example_metric) else None
+        )
 
-        if total_cost_value is not None:
-            payload_metrics.setdefault("total_cost", float(total_cost_value))
-            payload_metrics.setdefault("cost", float(total_cost_value))
+        payload_metrics.setdefault("total_cost", total_cost_value)
+        payload_metrics.setdefault("cost", total_cost_value)
 
         if self.detailed and example_result is not None:
             for key, value in example_result.metrics.items():
@@ -1558,6 +1567,7 @@ class LocalEvaluator(BaseEvaluator):
             if total_cost < 0:
                 logger.warning(f"Negative total_cost clamped: {total_cost} → 0.0")
             metrics.cost.total_cost = max(0.0, float(total_cost))
+            metrics.cost.cost_explicit = True
             if model_name:
                 from traigent.evaluators.metrics_tracker import (
                     _reconcile_reported_cost_with_tokens,
@@ -2076,7 +2086,7 @@ class LocalEvaluator(BaseEvaluator):
 
     def _merge_comprehensive_metrics(
         self,
-        aggregated_metrics: dict[str, float],
+        aggregated_metrics: dict[str, float | None],
         comprehensive_metrics: dict[str, Any],
         *,
         preserve_authoritative_accuracy: bool,
@@ -2092,24 +2102,11 @@ class LocalEvaluator(BaseEvaluator):
             f"{comprehensive_metrics.get('cost', 'MISSING')}"
         )
 
-        # If cost is in objectives but was computed as 0, use comprehensive value
-        if "cost" in self.metrics and "cost" in comprehensive_metrics:
-            logger.debug(
-                f"LOCAL EVALUATOR DEBUG: aggregated cost="
-                f"{aggregated_metrics.get('cost', 'MISSING')}, "
-                f"comprehensive cost={comprehensive_metrics['cost']}"
-            )
-            aggregated_cost = float(aggregated_metrics.get("cost", 0.0) or 0.0)
-            comprehensive_cost = float(comprehensive_metrics["cost"])
-            if math.isclose(aggregated_cost, 0.0, abs_tol=1e-9) and not math.isclose(
-                comprehensive_cost, 0.0, abs_tol=1e-9
-            ):
-                logger.info(
-                    f"🔍 LOCAL EVALUATOR: Overriding cost metric: "
-                    f"{aggregated_cost} -> {comprehensive_cost}"
-                )
-
         for key, value in comprehensive_metrics.items():
+            if key in MEASURED_ONLY_METRICS:
+                if key not in self.metric_functions:
+                    aggregated_metrics[key] = value
+                continue
             if value is None:
                 continue
             if (
@@ -2656,7 +2653,7 @@ class LocalEvaluator(BaseEvaluator):
         expected_outputs: list[Any],
         errors: list[str | None],
         **context: Any,
-    ) -> dict[str, float]:
+    ) -> dict[str, float | None]:
         """Compute evaluation metrics.
 
         Args:
@@ -2668,7 +2665,4 @@ class LocalEvaluator(BaseEvaluator):
             Dictionary of metric name to value
         """
         # Use the base class implementation which now includes all default metrics
-        return cast(
-            dict[str, float],
-            super().compute_metrics(outputs, expected_outputs, errors, **context),
-        )
+        return super().compute_metrics(outputs, expected_outputs, errors, **context)

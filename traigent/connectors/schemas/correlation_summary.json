@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/connectors/v1/correlation_summary.json",
+  "title": "Correlation Summary",
+  "description": "Closed summary of linking connector observations to optimization trials, produced customer-side. Code identity (function reference, repo-relative file path) is permitted; repository URLs and data identifiers are not. Closed schema: any new field or enum value ships as a new schema_version published alongside this one; consumers dispatch on schema_version.",
+  "version": "1.0.0",
+  "definitions": {
+    "OpaqueToken": {
+      "type": "string",
+      "pattern": "^tk_[0-9a-hjkmnp-tv-z]{26}$",
+      "minLength": 29,
+      "maxLength": 29,
+      "description": "Opaque token: prefix tk_ plus 26 lowercase Crockford base32 characters (a random 128-bit value). Minted customer-side from a fresh random 128-bit value per connection; never derived from labels, names or platform identifiers."
+    },
+    "TierCounts": {
+      "type": "object",
+      "properties": {
+        "exact": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "commit_name": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "name_only": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deployment": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ambiguous": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "exact",
+        "commit_name",
+        "name_only",
+        "deployment",
+        "ambiguous"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "run_token": {
+      "$ref": "#/definitions/OpaqueToken"
+    },
+    "trials_total": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "trials_linked": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "trials_unknown": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "tier_counts": {
+      "$ref": "#/definitions/TierCounts"
+    },
+    "agent_function_ref": {
+      "type": "string",
+      "maxLength": 512,
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?::(?:<locals>|[A-Za-z_][A-Za-z0-9_]*)(?:\\.(?:<locals>|[A-Za-z_][A-Za-z0-9_]*))*)?$",
+      "description": "Code identifier of the agent function: module[:qualname]. Module is dotted Python identifiers; qualname is dotted identifiers with optional <locals> segments. Code identity, not content."
+    },
+    "agent_file_path": {
+      "type": "string",
+      "maxLength": 512,
+      "pattern": "^(?:(?!\\.{1,2}/)[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\\.(?:py|ts|tsx|js|jsx|mjs|cjs|json|yaml|yml)$",
+      "description": "Repository-relative POSIX source-file path: segments of letters, digits, '_', '.', '-' separated by '/'; no '.' or '..' segment; must end in .py, .ts, .tsx, .js, .jsx, .mjs, .cjs, .json, .yaml or .yml."
+    }
+  },
+  "required": [
+    "schema_version",
+    "run_token",
+    "trials_total",
+    "trials_linked",
+    "trials_unknown",
+    "tier_counts"
+  ],
+  "additionalProperties": false
+}

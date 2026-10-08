@@ -561,6 +561,24 @@ class ExampleMetrics:
     finish_reason: str | None = None
 
 
+def cost_is_measured(metrics: ExampleMetrics) -> bool:
+    """Distinguish a real charge or priced usage from default zero cost.
+
+    Explicit charges include provider/agent-reported zero. Positive charges
+    remain real spend even when another call in the row could not be priced.
+    Character-length token estimates never establish a cost measurement.
+    """
+    if not metrics.measured:
+        return False
+    if metrics.cost.cost_explicit or metrics.cost.total_cost > 0:
+        return True
+    return (
+        not metrics.cost.unpriced
+        and not metrics.tokens.estimated
+        and metrics.tokens.total_tokens > 0
+    )
+
+
 class MetricsTracker:
     """Tracks and aggregates metrics across multiple evaluations."""
 
@@ -887,22 +905,21 @@ class MetricsTracker:
         # consistent with `aggregate_metrics`'s mean/median/std (which DOES
         # depend on the denominator) rather than silently disagreeing about
         # which examples "exist" in the trial.
-        cost_per_example_mean = safe_get(aggregated, "total_cost", "mean")
         measured_metrics = [m for m in self.example_metrics if m.measured]
-        cost_total: float | None
-        if measured_metrics:
-            cost_total = sum(float(m.cost.total_cost) for m in measured_metrics)
-        else:
-            # Nothing measured -- either the tracker is empty, or every
-            # tracked example errored before producing any output. Mirror
-            # the mean's null/zero default so the strict-nulls contract
-            # (None) and the normal contract (0.0) are preserved.
-            cost_total = cost_per_example_mean
+        priced_metrics = [m for m in measured_metrics if cost_is_measured(m)]
+        cost_total = (
+            sum(float(m.cost.total_cost) for m in priced_metrics)
+            if priced_metrics
+            else None
+        )
+        cost_per_example_mean = (
+            cost_total / len(priced_metrics) if cost_total is not None else None
+        )
 
-        # True when ANY measured example's cost could not be priced
-        # (``ExampleMetrics.cost.unpriced``, #1597) -- the trial's ``cost``
-        # total above is a real sum, but part of it may be an unknown-spend
-        # $0 rather than verified-free $0. Threaded through so per-trial
+        # True when ANY measured example has unknown cost, either because
+        # pricing is unavailable or because no usage/charge was captured.
+        # The total above includes only known charges and can therefore be
+        # a lower bound on actual spend. Threaded through so per-trial
         # consumers (trial summary table, ``result.trials[i]``, Pareto/
         # cost-objective logic) can tell the two apart instead of only
         # seeing a bare $0 (#1741, follow-up to #1597/#1407).
@@ -910,7 +927,11 @@ class MetricsTracker:
         # as numeric (bool is rejected for JSON Schema parity, see
         # ``traigent.cloud.dtos.MeasuresDict._validate_dict``) -- so this is
         # 1.0/0.0, never a Python ``bool``.
-        cost_unpriced = 1.0 if any(m.cost.unpriced for m in measured_metrics) else 0.0
+        cost_unpriced = (
+            1.0
+            if any(m.cost.unpriced or not cost_is_measured(m) for m in measured_metrics)
+            else 0.0
+        )
 
         # True when ANY measured example's token counts were fabricated from
         # character length (``LocalEvaluator._estimate_string_tokens``, #2263)

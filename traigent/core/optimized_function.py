@@ -588,7 +588,7 @@ COST_OBJECTIVE_NO_USAGE_WARNING_CODE = "COST_OBJECTIVE_NO_USAGE_CAPTURED"
 
 _NO_USAGE_CAPTURED_MESSAGE = (
     "A cost objective was declared but no LLM usage was captured on any "
-    "trial: every trial recorded $0, so the cost column is UNMEASURED rather "
+    "trial: the cost column is UNMEASURED rather "
     "than zero, and any cost ranking over these trials is meaningless. "
     "Traigent captures usage from the response object the optimized function "
     "returns and from `litellm.completion` calls it intercepts; calls made "

@@ -448,7 +448,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
 
     def _aggregate_custom_metrics(
         self, all_metrics: list[dict[str, Any]]
-    ) -> dict[str, float]:
+    ) -> dict[str, float | None]:
         """Aggregate custom metrics across all examples.
 
         Args:
@@ -474,8 +474,8 @@ class CustomEvaluatorWrapper(BaseEvaluator):
     ) -> None:
         """Keep a requested cost metric UNKNOWN when nothing measured it.
 
-        ``aggregate_measured_metric`` keeps the historical ``0.0`` for a cost
-        metric no row reported. With LLM capture on, that 0.0 used to reach
+        ``aggregate_measured_metric`` previously kept ``0.0`` for a cost
+        metric no row reported; it now preserves unknown cost as ``None``. With LLM capture on, that 0.0 used to reach
         the trial as its cost objective (and, via the ``cost`` fallback in
         ``extract_cost_from_results``, as ``total_cost``), so an unmeasured
         configuration looked free and could win a cost ranking against a
@@ -782,9 +782,9 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         # Add LLM metrics aggregation if captured
         if self.capture_llm_metrics and self._metrics_available:
             llm_agg = self._aggregate_llm_metrics(all_metrics, example_results)
-            # None only appears under TRAIGENT_STRICT_METRICS_NULLS, whose
-            # contract is exactly "None instead of 0.0 for a missing metric".
-            aggregated_metrics.update(cast(dict[str, float], llm_agg))
+            # Missing captured cost stays nullable; resolve requested cost
+            # objectives according to the measurement policy below.
+            aggregated_metrics.update(llm_agg)
             self._resolve_unmeasured_cost_objectives(aggregated_metrics, all_metrics)
 
         # Log results

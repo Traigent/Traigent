@@ -31,6 +31,7 @@ from traigent.evaluators.dataset_registry import (
 from traigent.evaluators.metrics_tracker import (
     USER_METRIC_KEY_PATTERN,
     aggregate_user_custom_metrics,
+    cost_is_measured,
     enforce_user_metric_ceiling,
     extract_llm_metrics,
     is_reserved_metric_key,
@@ -111,14 +112,16 @@ def _measured_value(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def aggregate_measured_metric(metric: str, all_metrics: list[dict[str, Any]]) -> float:
+def aggregate_measured_metric(
+    metric: str, all_metrics: list[dict[str, Any]]
+) -> float | None:
     """Mean of a cost metric over the rows that actually measured it.
 
     With partial coverage the mean of the measured rows is the estimate and a
     warning names the coverage. It does not raise: a failed trial has no cost,
     and under strict cost accounting the run-level spend check would then abort
     the whole run over one failed example. No coverage at all keeps the
-    historical 0.0 and is left to the run-level no-usage handling.
+    unknown value (None), never a fabricated zero.
     """
     measured = [
         number
@@ -126,7 +129,7 @@ def aggregate_measured_metric(metric: str, all_metrics: list[dict[str, Any]]) ->
         if row and (number := _measured_value(row.get(metric))) is not None
     ]
     if not measured:
-        return 0.0
+        return None
     if len(measured) < len(all_metrics):
         message = (
             f"'{metric}' was measured for only {len(measured)} of "
@@ -1200,7 +1203,7 @@ class EvaluationResult:
 
     config: dict[str, Any]
     example_results: list[Any] = field(default_factory=list)
-    aggregated_metrics: dict[str, float] = field(default_factory=dict)
+    aggregated_metrics: dict[str, float | None] = field(default_factory=dict)
     total_examples: int = 0
     successful_examples: int = 0
     duration: float = 0.0
@@ -1217,7 +1220,7 @@ class EvaluationResult:
     execution_budget: dict[str, object] | None = None
 
     # Legacy fields for backward compatibility
-    metrics: dict[str, float] | None = None
+    metrics: dict[str, float | None] | None = None
     outputs: list[Any] | None = None
     errors: list[str | None] | None = None
 
@@ -1756,7 +1759,7 @@ class BaseEvaluator(ABC):
         expected_outputs: list[Any],
         errors: list[str | None],
         **context: Any,
-    ) -> dict[str, float]:
+    ) -> dict[str, float | None]:
         """Compute evaluation metrics using the metric registry.
 
         Args:
@@ -1787,7 +1790,7 @@ class BaseEvaluator(ABC):
                 fabricated 0.0 for an optimization objective would silently
                 corrupt the search, so the trial fails closed instead.
         """
-        metrics: dict[str, float] = {}
+        metrics: dict[str, float | None] = {}
         metric_names = context.pop("metrics_override", None) or self.metrics
         metric_errors: list[dict[str, Any]] | None = context.pop("metric_errors", None)
 
@@ -4188,22 +4191,31 @@ class SimpleScoringEvaluator(BaseEvaluator):
         Returns:
             Dictionary of LLM metrics
         """
+        measured_cost = cost_is_measured(metrics_obj)
         return {
             "total_tokens": getattr(metrics_obj.tokens, "total_tokens", 0),
             "prompt_tokens": getattr(metrics_obj.tokens, "prompt_tokens", 0),
             "completion_tokens": getattr(metrics_obj.tokens, "completion_tokens", 0),
-            "total_cost": getattr(metrics_obj.cost, "total_cost", 0.0),
-            "input_cost": getattr(metrics_obj.cost, "input_cost", 0.0),
-            "output_cost": getattr(metrics_obj.cost, "output_cost", 0.0),
-            # True when this example's cost could not be priced -- unknown
-            # spend recorded as $0, not verified-free $0 (#1597). Threaded
+            "total_cost": (
+                getattr(metrics_obj.cost, "total_cost", 0.0) if measured_cost else None
+            ),
+            "input_cost": (
+                getattr(metrics_obj.cost, "input_cost", 0.0) if measured_cost else None
+            ),
+            "output_cost": (
+                getattr(metrics_obj.cost, "output_cost", 0.0) if measured_cost else None
+            ),
+            # True when this example's cost is unknown, from missing usage
+            # or missing pricing, rather than verified-free (#1597). Threaded
             # through so per-trial aggregation can distinguish the two
             # (#1741, follow-up to #1597/#1407).
             # Numeric flag (1.0/0.0), never a Python bool: the wire-format
             # ``MeasuresDict`` rejects bool measures for JSON Schema parity
             # (``traigent.cloud.dtos.MeasuresDict._validate_dict``).
             "cost_unpriced": (
-                1.0 if getattr(metrics_obj.cost, "unpriced", False) else 0.0
+                1.0
+                if getattr(metrics_obj.cost, "unpriced", False) or not measured_cost
+                else 0.0
             ),
             "response_time_ms": getattr(metrics_obj.response, "response_time_ms", 0),
             "tokens_per_second": getattr(metrics_obj.response, "tokens_per_second", 0),
@@ -4403,7 +4415,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
 
     def _aggregate_custom_metrics(
         self, all_metrics: list[dict[str, Any]]
-    ) -> dict[str, float]:
+    ) -> dict[str, float | None]:
         """Aggregate custom metrics across all examples.
 
         Args:
@@ -4431,7 +4443,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
         self,
         all_metrics: list[dict[str, Any]],
         example_results: list[Any],
-    ) -> dict[str, float]:
+    ) -> dict[str, float | None]:
         """Aggregate LLM metrics across all examples.
 
         Args:
@@ -4451,19 +4463,20 @@ class SimpleScoringEvaluator(BaseEvaluator):
             ]
             aggregated[metric] = sum(metric_values) if metric_values else 0.0
 
-        # Aggregate cost metrics (total, not average)
+        # Unknown cost stays absent from the sum; no observations is unknown.
         cost_metrics = ["input_cost", "output_cost", "total_cost"]
         for metric in cost_metrics:
             metric_values = [
-                m.get(metric, 0.0) for m in all_metrics if m and metric in m
+                value
+                for m in all_metrics
+                if m and (value := _measured_value(m.get(metric))) is not None
             ]
-            aggregated[metric] = sum(metric_values) if metric_values else 0.0
+            aggregated[metric] = sum(metric_values) if metric_values else None
 
-        # True iff ANY example's cost could not be priced -- unknown spend
-        # recorded as $0, not verified-free $0 (#1597). Threaded through so
-        # per-trial consumers (trial summary table, ``result.trials[i]``,
-        # Pareto/cost-objective logic) can distinguish unknown spend from
-        # verified-free instead of only seeing a bare $0 (#1741).
+        # True iff ANY example carries unknown cost. Null means unavailable;
+        # a positive sum with unknown calls is a lower bound on actual spend.
+        # Threaded through so trial summaries and cost objectives distinguish
+        # unknown spend from verified-free charges (#1597/#1741).
         aggregated["cost_unpriced"] = (
             1.0
             if any(bool(m.get("cost_unpriced", False)) for m in all_metrics if m)
@@ -4850,7 +4863,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
         logger.debug(
             f"Captured LLM metrics for example {example_index}: "
             f"tokens={llm_metrics['total_tokens']}, "
-            f"cost=${llm_metrics['total_cost']:.8f}"
+            f"cost={llm_metrics['total_cost']}"
         )
 
         return llm_metrics
@@ -4879,6 +4892,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
         total.cost.output_cost += extra.cost.output_cost
         total.cost.total_cost += extra.cost.total_cost
         total.cost.unpriced = total.cost.unpriced or extra.cost.unpriced
+        total.cost.cost_explicit = total.cost.cost_explicit and extra.cost.cost_explicit
         total.response.response_time_ms += extra.response.response_time_ms
 
     def _compute_example_metrics(

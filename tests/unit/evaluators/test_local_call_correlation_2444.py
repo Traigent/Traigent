@@ -91,7 +91,7 @@ async def test_an_example_without_calls_does_not_borrow_its_neighbours_usage():
         Dataset([EvaluationExample({"q": q}, "ok") for q in ("a", "b")]),
     )
     assert result.example_results[0].metrics["total_tokens"] < 30
-    assert result.example_results[0].metrics["total_cost"] == 0.0
+    assert result.example_results[0].metrics["total_cost"] is None
     assert result.example_results[1].metrics["total_tokens"] == 30
 
 

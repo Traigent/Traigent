@@ -316,6 +316,7 @@ traigent = [
     "skills/**/*.md",
     "playbook/schemas/*.json",
     "observability/otel/*.json",
+    "connectors/schemas/*.json",
 ]
 traigent_validation = ["py.typed"]
 

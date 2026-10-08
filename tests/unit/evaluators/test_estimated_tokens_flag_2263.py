@@ -184,5 +184,5 @@ async def test_local_evaluator_evaluate_flags_string_length_fallback_end_to_end(
 
     assert result.metrics["tokens_estimated"] == 1.0
     assert result.metrics["total_tokens"] > 0.0
-    # The estimate is never priced: cost stays exactly $0, not a guessed spend.
-    assert result.metrics["cost"] == 0.0
+    # The estimate is never priced: cost stays unknown, not a guessed spend.
+    assert result.metrics["cost"] is None
