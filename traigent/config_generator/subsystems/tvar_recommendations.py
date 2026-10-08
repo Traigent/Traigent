@@ -247,8 +247,9 @@ _ENTRY_REQUIRED_CAPABILITIES: Mapping[str, frozenset[str]] = {
 
 _SQL_SIGNAL_PATTERNS: tuple[re.Pattern[str], ...] = (
     # An identifier or string naming SQL: generate_sql, text2sql, sqlite3,
-    # sqlalchemy, mysql, postgresql, "sql" ...
-    re.compile(r"sql", re.IGNORECASE),
+    # sqlalchemy, mysql, postgresql, "sql" ... but not "NoSQL", which names
+    # the absence of a SQL schema.
+    re.compile(r"(?<!no)sql", re.IGNORECASE),
     # A SQL statement in a string literal.
     re.compile(r"\bSELECT\b[^\n]{0,200}?\bFROM\b"),
     re.compile(r"\bCREATE\s+TABLE\b|\bFOREIGN\s+KEY\b", re.IGNORECASE),

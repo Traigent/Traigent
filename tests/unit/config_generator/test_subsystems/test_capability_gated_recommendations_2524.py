@@ -92,7 +92,12 @@ def test_sql_signal_detected(source: str) -> None:
 
 @pytest.mark.parametrize(
     "source",
-    ["", HUMANEVAL_AGENT, "def select_best(items):\n    return items[0]\n"],
+    [
+        "",
+        HUMANEVAL_AGENT,
+        "def select_best(items):\n    return items[0]\n",
+        "from pymongo import MongoClient  # a NoSQL document store\n",
+    ],
 )
 def test_no_sql_signal(source: str) -> None:
     assert detect_capability_signals(source) == frozenset()
