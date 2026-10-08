@@ -33,6 +33,10 @@ _READY_MADE_RECS = {
 
 _CODE_GEN_STRUCTURAL_RECS = _READY_MADE_RECS - {"retrieval_k"}
 
+# The SQL-specific catalog knobs are gated on a declared or detected "sql"
+# capability (Traigent#2524); these tests describe a SQL-writing agent.
+_SQL = frozenset({"sql"})
+
 _CATALOG_ENTRY_KINDS = {
     "rag.retrieval_k.v1": "cardinality",
     "code_gen.schema_context.v1": "topology",
@@ -182,7 +186,7 @@ class TestGenerateRecommendations:
 
         rag_recs = generate_recommendations([], classification=rag_classification)
         code_gen_recs = generate_recommendations(
-            [], classification=code_gen_classification
+            [], classification=code_gen_classification, capability_signals=_SQL
         )
         recs_by_name = {r.name: r for r in [*rag_recs, *code_gen_recs]}
 
@@ -208,7 +212,7 @@ class TestGenerateRecommendations:
         code_gen_names = {
             r.name
             for r in generate_recommendations(
-                [], classification=code_gen_classification
+                [], classification=code_gen_classification, capability_signals=_SQL
             )
         }
 
@@ -225,7 +229,9 @@ class TestGenerateRecommendations:
         )
         recs = [
             *generate_recommendations([], classification=rag_classification),
-            *generate_recommendations([], classification=code_gen_classification),
+            *generate_recommendations(
+                [], classification=code_gen_classification, capability_signals=_SQL
+            ),
         ]
         recs_by_name = {r.name: r for r in recs}
 
@@ -283,7 +289,7 @@ class TestGenerateRecommendations:
         assert [
             rec.name
             for rec in generate_recommendations(
-                [], classification=code_gen_classification
+                [], classification=code_gen_classification, capability_signals=_SQL
             )
         ] == [
             "prompting_strategy",
@@ -328,6 +334,7 @@ class TestValueHintAugmentation:
         recs = generate_recommendations(
             [],
             classification=_classification("code_gen"),
+            capability_signals=_SQL,
             recommendation_bundle=bundle,
         )
         rec = next(rec for rec in recs if rec.name == "schema_context")
@@ -365,6 +372,7 @@ class TestValueHintAugmentation:
         recs = generate_recommendations(
             [],
             classification=classification,
+            capability_signals=_SQL,
             recommendation_bundle=server_bundle,
         )
         rec = next(rec for rec in recs if rec.name == "schema_context")
@@ -477,7 +485,9 @@ class TestCLIJsonRecommendationStability:
         )
         rec = next(
             r
-            for r in generate_recommendations([], classification=classification)
+            for r in generate_recommendations(
+                [], classification=classification, capability_signals=_SQL
+            )
             if r.name == "schema_context"
         )
         assert rec.evidence_refs
@@ -546,6 +556,7 @@ class TestCLIJsonRecommendationStability:
             for r in generate_recommendations(
                 [],
                 classification=_classification("code_gen"),
+                capability_signals=_SQL,
                 recommendation_bundle=bundle,
             )
             if r.name == "schema_context"
