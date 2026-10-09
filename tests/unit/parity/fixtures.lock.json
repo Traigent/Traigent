@@ -1,0 +1,10 @@
+{
+  "schemaRepo": "Traigent/TraigentSchema",
+  "schemaRef": "fb77186e622080a51a597064e3f357f8d7b1c1fb",
+  "fixtures": {
+    "optimizer.grid-enumeration.v1": {
+      "path": "optimizer/grid-enumeration.v1.json",
+      "sha256": "209b8ed6df3cf7c075f8374ad0e570ba64db804ddc1010913934c6369b31c4e0"
+    }
+  }
+}
