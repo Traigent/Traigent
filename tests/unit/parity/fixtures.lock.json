@@ -5,6 +5,11 @@
     "optimizer.grid-enumeration.v1": {
       "path": "optimizer/grid-enumeration.v1.json",
       "sha256": "209b8ed6df3cf7c075f8374ad0e570ba64db804ddc1010913934c6369b31c4e0"
+    },
+    "multi-objective.normalization-selection.v1": {
+      "path": "multi-objective/normalization-selection.v1.json",
+      "sha256": "6c19bed3a40791eb24ac057d2dd8cff525dab4b7dbb3386efa93c8d99763afc9",
+      "schemaRef": "75915ea1d1b38471fb08a6cd90cc26af29397881"
     }
   }
 }

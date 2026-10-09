@@ -67,7 +67,7 @@ def test_lock_pins_schema_ref_and_repo() -> None:
     lock = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
     assert lock["schemaRepo"] == "Traigent/TraigentSchema"
     assert len(lock["schemaRef"]) == 40
-    assert set(lock["fixtures"]) == {FIXTURE_ID}
+    assert FIXTURE_ID in lock["fixtures"]
 
 
 def test_missing_fixture_fails_not_skips(tmp_path: Path) -> None:
