@@ -8,6 +8,7 @@ aligned with TVL 0.9 (Tuned Variables Language) specification.
 
 from __future__ import annotations
 
+import math
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -134,8 +135,29 @@ class HybridExecuteResponse:
             error=data.get("error"),
         )
 
+    def get_reported_total_cost(self) -> float | None:
+        """Total cost the wire response actually reported, else ``None``.
+
+        ``None`` means the service omitted (or sent a non-numeric) cost: that
+        is "not reported", which is different from a reported ``0.0``.
+        """
+        metrics = self.operational_metrics or {}
+        for key in ("total_cost_usd", "cost_usd"):
+            value = metrics.get(key)
+            if (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+            ):
+                return float(value)
+        return None
+
     def get_total_cost(self) -> float:
-        """Extract total cost from operational metrics."""
+        """Extract total cost from operational metrics (0.0 when not reported).
+
+        Prefer :meth:`get_reported_total_cost` where "not reported" must stay
+        distinct from a measured zero.
+        """
         return self.operational_metrics.get(
             "total_cost_usd", self.operational_metrics.get("cost_usd", 0.0)
         )
