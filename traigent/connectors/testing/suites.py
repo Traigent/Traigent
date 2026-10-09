@@ -1,4 +1,8 @@
-"""Stateful conformance cases, as plain functions and as a pytest-collectable class."""
+"""Stateful conformance cases, as plain functions and as a pytest-collectable class.
+
+The restart cases ("crash_resume", "crash_write") simulate a restart in-process
+from state the harness reports; they do not verify durability.
+"""
 
 from __future__ import annotations
 
@@ -135,8 +139,11 @@ def _expect_committed(
 
 
 def _restart(harness: ConnectorHarness) -> ConnectorHarness:
-    """Crash for real: the old harness is dropped; a fresh one sees only
-    the persisted state the old one reports.
+    """Simulated restart, in-process: the old harness object is dropped and a
+    fresh one is built from only the state the old one reports.
+
+    The reported state is self-attested. This does not crash a process or
+    inspect the backing store, so it cannot show the state was really persisted.
     """
     state = harness.persisted_state()
     try:
@@ -210,7 +217,8 @@ def case_partial_batch(harness: ConnectorHarness) -> None:
 
 
 def case_crash_write(harness: ConnectorHarness) -> None:
-    """Crash between apply and acknowledgement, then retry on a fresh connector."""
+    """Simulated restart between apply and acknowledgement, then retry on a
+    connector rebuilt from the state the harness reports (self-attested)."""
     for fault in (Fault(FaultKind.LOST_ACK), Fault(FaultKind.PARTIAL, 1)):
         conn = harness.open_connection(f"crashw-{fault.kind}")
         rows = _rows(3, f"w{fault.kind}")
@@ -224,7 +232,7 @@ def case_crash_write(harness: ConnectorHarness) -> None:
         _check(
             _snapshot(harness, harness.committed(conn)) == want,
             "rows_mismatch",
-            "retry after a crash must store the intended rows exactly once",
+            "retry after a simulated restart must store the intended rows exactly once",
         )
 
 
@@ -288,6 +296,11 @@ def case_overlapping_pages(harness: ConnectorHarness) -> None:
 
 
 def case_crash_resume(harness: ConnectorHarness) -> None:
+    """Resume paging from a checkpoint after a simulated in-process restart.
+
+    Checks resume through the state the harness reports; durability itself is
+    not verified.
+    """
     conn = harness.open_connection("resume")
     rows = _rows(7, "r")
     frozen, want = _freeze(harness, rows)
@@ -296,14 +309,14 @@ def case_crash_resume(harness: ConnectorHarness) -> None:
     checkpoint = first["next_cursor"]
     _check(checkpoint is not None, "harness_incomplete", "data must span two pages")
     head = list(first["items"])
-    harness = _restart(harness)  # old connector object is gone from here on
+    harness = _restart(harness)  # old harness object is dropped from here on
     try:
         rest = _read_all(harness, conn, checkpoint)
     except ConformanceFailure:
         raise
     except Exception:
         raise ConformanceFailure(
-            "resume_failed", "resume from the persisted checkpoint raised"
+            "resume_failed", "resume from the checkpoint after restart raised"
         ) from None
     _check(
         _ordered(harness, head + rest) == _ordered(harness, frozen),
@@ -586,7 +599,12 @@ CASES: dict[str, Case] = {
 
 
 class ConnectorConformanceSuite:
-    """Subclass (named ``Test...``) and override ``make_harness`` to run all cases."""
+    """Subclass (named ``Test...``) and override ``make_harness`` to run all cases.
+
+    Limits: the restart cases are in-process simulations that trust the state
+    the harness reports; durability is self-attested, not verified here (see
+    ``traigent.connectors.testing``).
+    """
 
     @staticmethod
     def make_harness() -> ConnectorHarness:

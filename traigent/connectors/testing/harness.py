@@ -50,9 +50,11 @@ class Connection:
 class ConnectorHarness(ABC):
     """Adapter between the suites and one connector over a fake backend.
 
-    The fake backend must (a) really inject the requested faults, (b) really
-    commit state that ``committed`` reports, and (c) record the credential of
-    every request the connector makes (``request_credentials``). Rows are
+    The fake backend must (a) really inject the requested faults, (b) hold the
+    state that ``committed`` reports, and (c) record the credential of
+    every request the connector makes (``request_credentials``). The suites
+    take (b) and ``persisted_state`` on trust: they cannot check that either
+    reflects what reached durable storage. Rows are
     mappings with an ``"id"`` key unless ``row_key`` is overridden; the suites
     compare full row content, not just ids. ``validate_summary`` and
     ``serialize_summary`` MUST be the connector's own privacy gate and
@@ -77,7 +79,10 @@ class ConnectorHarness(ABC):
 
     @abstractmethod
     def committed(self, connection: Connection) -> list[Mapping[str, Any]]:
-        """Rows the backend durably holds for this connection."""
+        """Rows the harness reports the backend as holding for this connection.
+
+        Self-attested: the suites cannot verify these rows reached durable storage.
+        """
 
     @abstractmethod
     def seed(
@@ -105,16 +110,21 @@ class ConnectorHarness(ABC):
 
     @abstractmethod
     def persisted_state(self) -> dict[str, Any]:
-        """Everything a new process would find after a crash: only what is
-        durable (disk, remote backend), as plain JSON data. Never include
-        in-memory objects such as cursor tables, sessions or caches.
+        """What this harness declares a new process would find after a crash:
+        only what is durable (disk, remote backend), as plain JSON data. Never
+        include in-memory objects such as cursor tables, sessions or caches.
+
+        Self-attested: the suites trust this report and do not inspect the
+        backing store, so they cannot detect state declared durable that was
+        never persisted.
         """
 
     @abstractmethod
     def from_persisted(self, state: dict[str, Any]) -> ConnectorHarness:
         """Build a NEW connector (new object) from ``state`` alone. The suite
-        drops the old harness and continues on the returned one, so anything
-        not in ``state`` is lost, exactly as in a real crash.
+        drops the old harness object and continues on the returned one, so
+        anything not in ``state`` is lost to the continued run. This simulates
+        a restart in-process; it is not an out-of-process crash.
         """
 
     @abstractmethod

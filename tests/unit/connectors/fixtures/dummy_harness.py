@@ -26,7 +26,8 @@ from .dummy import Connector
 
 
 class DummyHarness(ConnectorHarness):
-    """Correct behaviour: idempotent keyed writes, durable cursors, per-connection state.
+    """Correct behaviour: idempotent keyed writes, cursors that survive the simulated
+    restart, per-connection state.
 
     The dummy connector has no privacy gate of its own, so its gate and
     serializer are the SDK's. A real connector must supply its own.
@@ -253,7 +254,7 @@ class CorruptsOnReadHarness(DummyHarness):
 
 
 class ReusesOldConnectorHarness(DummyHarness):
-    """from_persisted hands back the old object, so nothing is really lost."""
+    """from_persisted hands back the old object: the simulated restart loses nothing."""
 
     def from_persisted(self, state):  # type: ignore[no-untyped-def]
         return self
@@ -271,7 +272,7 @@ class VolatileWriteProgressHarness(DummyHarness):
 class InMemoryCursorHarness(DummyHarness):
     """Cursors are handles into a table that lives only in process memory.
 
-    Its harness reports the true persisted state, so a real crash loses them.
+    Its harness reports the state truthfully, so the simulated restart loses them.
     """
 
     def _issue(self, offset: int) -> str:

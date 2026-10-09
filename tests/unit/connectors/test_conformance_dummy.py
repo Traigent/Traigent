@@ -31,7 +31,8 @@ def run_all(harness_cls):
 # Each broken variant carries one defect and must fail exactly these cases,
 # each for the pinned reason, and no others.
 EXPECTED = {
-    # crash/resume: the suite owns the crash (fresh connector from persisted state)
+    # crash/resume: the suite owns the simulated restart (fresh connector built
+    # from the state the harness reports; durability itself is self-attested)
     fx.ReusesOldConnectorHarness: {
         "crash_resume": "crash_not_real",
         "crash_write": "crash_not_real",
