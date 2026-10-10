@@ -10,6 +10,11 @@
       "path": "multi-objective/normalization-selection.v1.json",
       "sha256": "6c19bed3a40791eb24ac057d2dd8cff525dab4b7dbb3386efa93c8d99763afc9",
       "schemaRef": "75915ea1d1b38471fb08a6cd90cc26af29397881"
+    },
+    "optimize.stop-limits.v1": {
+      "path": "optimize/stop-limits.v1.json",
+      "sha256": "eaa8eb9f181fc0942fb1a01d571cc4bcdd83e7cb2f5489d05ce7323b619d141f",
+      "schemaRef": "012f237d881c7a9a1b0d5793da6738dae9e36155"
     }
   }
 }
