@@ -528,9 +528,9 @@ class TestCostTrackingEdgeCases:
 @pytest.mark.asyncio
 async def test_cost_from_token_counts_anthropic_alias_fields(monkeypatch):
     """Ensure cost uses token-count fallback for Anthropic alias fields via litellm per-token rates."""
-    from traigent.evaluators.metrics_tracker import extract_llm_metrics
-
     import litellm
+
+    from traigent.evaluators.metrics_tracker import extract_llm_metrics
 
     # Pin the catalog entry so the test does not depend on which models the
     # installed litellm release still ships (1.104.0 dropped this one).
