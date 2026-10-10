@@ -907,15 +907,14 @@ class TrialOperations:
             return True
 
         # A non-transient 4xx is a PERMANENT rejection. Label it explicitly so it
-        # is not mistaken for a transient backend outage; the run continues but is
-        # tracked LOCALLY ONLY.
+        # is not mistaken for a transient backend outage. The session manager
+        # decides whether execution policy permits local fallback.
         if isinstance(status, int) and 400 <= status < 500:
             logger.error(
                 "\u274c Trial submission REJECTED by the backend: HTTP %s \u2014 %s. "
                 "This is a PERMANENT error, NOT a transient outage. "
-                "The run will be tracked LOCALLY ONLY "
-                "(source='local_fallback'); fix the request to track it on the "
-                "backend.  Trial %s  Session %s  URL %s",
+                "Fix the rejected request to track this trial on the backend. "
+                "Trial %s  Session %s  URL %s",
                 status,
                 detail or "(no response body)",
                 trial_id,
