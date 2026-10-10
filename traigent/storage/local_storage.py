@@ -711,6 +711,14 @@ class LocalStorageManager:
 
     def load_session(self, session_id: str) -> OptimizationSession | None:
         """Load a session from storage."""
+        if (
+            not session_id
+            or session_id in {".", ".."}
+            or ".." in session_id
+            or any(ch in session_id for ch in ("/", "\\", "\x00"))
+        ):
+            logger.warning("Refusing to load session with unsafe id")
+            return None
         session_file = validate_path(
             self.storage_path / "sessions" / f"{session_id}.json",
             self.storage_path,

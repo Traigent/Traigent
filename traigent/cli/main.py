@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, cast
 
 import click
@@ -1449,6 +1449,18 @@ def _session_to_optimization_result(
     )
 
 
+def _is_safe_component(value: str) -> bool:
+    """True when ``value`` is a single, harmless path component."""
+    return (
+        bool(value)
+        and value not in {".", ".."}
+        and ".." not in value
+        and not any(ch in value for ch in ("/", "\\", "\x00"))
+        and not Path(value).is_absolute()
+        and not PureWindowsPath(value).is_absolute()
+    )
+
+
 def _not_found_error(name: str, detail: str = "") -> click.ClickException:
     return click.ClickException(
         f"Result '{name}' not found{detail}. {_MSG_RESULTS_LIST_HINT}"
@@ -1464,20 +1476,30 @@ def _load_result_by_name(name: str, storage_dir: str | None) -> OptimizationResu
     matched against the ids listed from the sessions directory, never joined into
     a path, so a crafted name cannot read outside the results directory.
     """
+    if "\x00" in name:
+        raise _not_found_error(name.replace("\x00", ""))
     is_local = name.startswith(_LOCAL_PREFIX)
-    if not is_local:
+    wanted = name[len(_LOCAL_PREFIX) :] if is_local else name
+    if not _is_safe_component(wanted):
+        raise _not_found_error(name)
+
+    def _load_legacy() -> OptimizationResult | None:
         try:
             return PersistenceManager(storage_dir or ".traigent").load_result(name)
         except FileNotFoundError:
-            pass
+            return None
         except PathTraversalError:
             raise _not_found_error(name) from None
         except Exception as exc:
             raise click.ClickException(f"Error loading result '{name}': {exc}") from exc
 
-    wanted = name[len(_LOCAL_PREFIX) :] if is_local else name
+    if not is_local:
+        legacy = _load_legacy()
+        if legacy is not None:
+            return legacy
+
     storage = LocalStorageManager(storage_dir)
-    sessions = storage.list_sessions() if wanted else []
+    sessions = [s for s in storage.list_sessions() if _is_safe_component(s.session_id)]
     matches = [s for s in sessions if s.session_id == wanted] or [
         s for s in sessions if s.session_id.startswith(wanted)
     ]
@@ -1488,6 +1510,11 @@ def _load_result_by_name(name: str, storage_dir: str | None) -> OptimizationResu
             "Use a longer prefix or the full name."
         )
     if not matches:
+        if is_local:
+            # Compatibility: a saved result literally named ``local:<x>``.
+            legacy = _load_legacy()
+            if legacy is not None:
+                return legacy
         raise _not_found_error(name)
     return _session_to_optimization_result(matches[0], storage)
 
@@ -1758,7 +1785,19 @@ def export(
 
     # Determine output path
     if output is None:
-        default_name = result_name.replace(_LOCAL_PREFIX, "", 1)
+        default_name = result_name.removeprefix(_LOCAL_PREFIX)
+        if not _is_safe_component(default_name):
+            raise click.ClickException(
+                f"Cannot derive a default output file from '{result_name}'; "
+                "pass --output explicitly."
+            )
+        configs_dir = Path("configs").resolve()
+        output_path = configs_dir / f"{default_name}.json"
+        if output_path.resolve().parent != configs_dir:
+            raise click.ClickException(
+                f"Default output for '{result_name}' would leave configs/; "
+                "pass --output explicitly."
+            )
         output_path = Path("configs") / f"{default_name}.json"
     else:
         output_path = Path(output)

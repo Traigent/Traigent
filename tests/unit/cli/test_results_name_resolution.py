@@ -186,3 +186,116 @@ class TestPathHandling:
             assert result.exit_code != 0, (ident, result.output)
             assert "Best Configuration" not in result.output
             assert "Summary" not in result.output
+
+
+class TestUnsafeNamesAndDefaultDestination:
+    @pytest.mark.parametrize(
+        "ident",
+        [
+            "../victim",
+            "local:../victim",
+            "a/b",
+            "local:a/b",
+            "/etc/passwd",
+            "local:",
+            "..",
+            "a\\b",
+        ],
+    )
+    def test_unsafe_names_exit_nonzero_and_write_nothing(
+        self,
+        runner: CliRunner,
+        store: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        ident: str,
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(cli, ["export", ident, "-d", str(store)])
+        assert result.exit_code != 0, result.output
+        assert not (tmp_path / "victim.json").exists()
+        assert not (tmp_path / "configs").exists()
+
+    def test_nul_in_name_exits_nonzero(
+        self, runner: CliRunner, store: Path, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(cli, ["export", "local:a\x00b", "-d", str(store)])
+        assert result.exit_code != 0
+        assert not (tmp_path / "configs").exists()
+
+    def test_stored_session_id_with_dotdot_is_not_resolved(
+        self,
+        runner: CliRunner,
+        store: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        sessions = store / "sessions"
+        src = next(sessions.glob("*.json"))
+        data = json.loads(src.read_text())
+        data["session_id"] = "../victim"
+        (sessions / "evil.json").write_text(json.dumps(data))
+        monkeypatch.chdir(tmp_path)
+        for ident in ("local:../victim", "local:../vic"):
+            result = runner.invoke(cli, ["export", ident, "-d", str(store)])
+            assert result.exit_code != 0, (ident, result.output)
+        assert not (tmp_path / "victim.json").exists()
+        assert not (tmp_path / "configs" / "..").is_symlink()
+
+    def test_default_destination_stays_in_configs(
+        self,
+        runner: CliRunner,
+        store: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        name = _printed_names(runner, store)[0]
+        result = runner.invoke(cli, ["export", name, "-d", str(store)])
+        assert result.exit_code == 0, result.output
+        written = list(tmp_path.rglob("*.json"))
+        written = [p for p in written if store not in p.parents]
+        assert [p.parent for p in written] == [(tmp_path / "configs").resolve()]
+
+    def test_explicit_output_path_is_unchanged(
+        self, runner: CliRunner, store: Path, tmp_path: Path
+    ) -> None:
+        name = _printed_names(runner, store)[0]
+        out = tmp_path / "nested" / "custom.json"
+        result = runner.invoke(cli, ["export", name, "-d", str(store), "-o", str(out)])
+        assert result.exit_code == 0, result.output
+        assert out.exists()
+
+
+class TestLegacyLocalPrefixedName:
+    def test_saved_result_literally_named_local_prefix_still_loads(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        from traigent.api.types import OptimizationResult, OptimizationStatus
+        from traigent.utils.persistence import PersistenceManager
+
+        legacy_dir = tmp_path / "legacy"
+        PersistenceManager(str(legacy_dir)).save_result(
+            OptimizationResult(
+                trials=[],
+                best_config={"temperature": 0.3},
+                best_score=0.8,
+                optimization_id="legacy-1",
+                duration=0.0,
+                convergence_info={},
+                status=OptimizationStatus.COMPLETED,
+                objectives=["accuracy"],
+                algorithm="random",
+                timestamp=__import__("datetime").datetime.now(),
+                metadata={"function_name": "legacy_fn"},
+            ),
+            "local:manual",
+        )
+        out = tmp_path / "legacy_out.json"
+        result = runner.invoke(
+            cli,
+            ["export", "local:manual", "-d", str(legacy_dir), "-o", str(out)],
+        )
+        assert result.exit_code == 0, result.output
+        assert json.loads(out.read_text())["config"] == {"temperature": 0.3}
