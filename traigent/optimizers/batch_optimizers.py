@@ -362,7 +362,7 @@ class ParallelBatchOptimizer(BaseOptimizer):
                 metadata={"error": str(e), "failed": True},
             )
 
-    def _calculate_composite_score(self, metrics: dict[str, float]) -> float:
+    def _calculate_composite_score(self, metrics: dict[str, float | None]) -> float:
         """Calculate composite score from multiple metrics using weighted scalarization."""
         if not metrics:
             return 0.0
@@ -374,7 +374,11 @@ class ParallelBatchOptimizer(BaseOptimizer):
 
         return float(
             scalarize_objectives(
-                {name: metrics[name] for name in self.objectives if name in metrics},
+                {
+                    name: value
+                    for name in self.objectives
+                    if (value := metrics.get(name)) is not None
+                },
                 self.objective_weights,
                 minimize_objectives=self._minimize_objectives,
                 objective_schema=self.objective_schema,
@@ -1076,7 +1080,7 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
             if len(self.performance_history) > 100:
                 self.performance_history = self.performance_history[-100:]
 
-    def _calculate_composite_score(self, metrics: dict[str, float]) -> float:
+    def _calculate_composite_score(self, metrics: dict[str, float | None]) -> float:
         """Calculate composite score from multiple metrics using weighted scalarization."""
         if not metrics:
             return 0.0
@@ -1088,7 +1092,11 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
 
         return float(
             scalarize_objectives(
-                {name: metrics[name] for name in self.objectives if name in metrics},
+                {
+                    name: value
+                    for name in self.objectives
+                    if (value := metrics.get(name)) is not None
+                },
                 self.objective_weights,
                 minimize_objectives=self._minimize_objectives,
                 objective_schema=self.objective_schema,

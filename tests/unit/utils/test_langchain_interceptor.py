@@ -99,6 +99,20 @@ def _make_fake_langchain_modules() -> dict[str, Any]:
     }
 
 
+@pytest.fixture
+def mock_mode_off() -> Any:
+    """Exercise the real (non-mock) wrapper path.
+
+    The suite-wide conftest turns ``TRAIGENT_MOCK_LLM`` on, and since #2424
+    the stream wrappers short-circuit under mock mode.
+    """
+    with patch(
+        "traigent.integrations.utils.mock_adapter.MockAdapter.is_mock_enabled",
+        return_value=False,
+    ):
+        yield
+
+
 class TestLangChainMetadataCapture:
     """Tests for LangChainMetadataCapture class."""
 
@@ -503,6 +517,7 @@ class TestCaptureKeyContext:
         assert result is response2
 
 
+@pytest.mark.usefixtures("mock_mode_off")
 class TestStreamWrapper:
     """Tests for _create_stream_wrapper function."""
 
@@ -610,6 +625,7 @@ class TestStreamWrapper:
         assert "response_time_ms" in mock_chunk.response_metadata
 
 
+@pytest.mark.usefixtures("mock_mode_off")
 class TestAstreamWrapper:
     """Tests for _create_astream_wrapper function."""
 
@@ -821,6 +837,7 @@ class TestPatchLangChainForMetadataCapture:
         captured = get_captured_response()
         assert captured is response
 
+    @pytest.mark.usefixtures("mock_mode_off")
     def test_stream_wrapper_with_none_last_chunk(self) -> None:
         """Test stream wrapper when last chunk is None."""
 
@@ -841,6 +858,7 @@ class TestPatchLangChainForMetadataCapture:
         # Captured will be None since last chunk is None
         assert captured is None
 
+    @pytest.mark.usefixtures("mock_mode_off")
     @pytest.mark.asyncio
     async def test_astream_wrapper_with_none_last_chunk(self) -> None:
         """Test async stream wrapper when last chunk is None."""
@@ -1003,3 +1021,24 @@ class TestPatchLangChainBedrock:
         }
         captured = get_captured_response()
         assert captured is response
+
+
+def test_per_thread_last_response_history_is_bounded():
+    """``set_last_response`` appended to a per-thread list that only
+    ``get_last_response`` (one pop) or ``clear`` drained, so a long-lived
+    worker thread kept a reference to every response it saw (#2444)."""
+    from traigent.utils.langchain_interceptor import (
+        _LAST_RESPONSE_HISTORY_LIMIT,
+        LangChainMetadataCapture,
+    )
+
+    capture = LangChainMetadataCapture()
+    for i in range(_LAST_RESPONSE_HISTORY_LIMIT * 5):
+        capture.set_last_response(f"response-{i}")
+
+    assert len(capture._storage.responses) == _LAST_RESPONSE_HISTORY_LIMIT
+    # The most recent response is still the one handed back.
+    assert (
+        capture.get_last_response()
+        == f"response-{_LAST_RESPONSE_HISTORY_LIMIT * 5 - 1}"
+    )

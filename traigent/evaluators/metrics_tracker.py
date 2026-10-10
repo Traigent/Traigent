@@ -561,6 +561,24 @@ class ExampleMetrics:
     finish_reason: str | None = None
 
 
+def cost_is_measured(metrics: ExampleMetrics) -> bool:
+    """Distinguish a real charge or priced usage from default zero cost.
+
+    Explicit charges include provider/agent-reported zero. Positive charges
+    remain real spend even when another call in the row could not be priced.
+    Character-length token estimates never establish a cost measurement.
+    """
+    if not metrics.measured:
+        return False
+    if metrics.cost.cost_explicit or metrics.cost.total_cost > 0:
+        return True
+    return (
+        not metrics.cost.unpriced
+        and not metrics.tokens.estimated
+        and metrics.tokens.total_tokens > 0
+    )
+
+
 class MetricsTracker:
     """Tracks and aggregates metrics across multiple evaluations."""
 
@@ -887,22 +905,21 @@ class MetricsTracker:
         # consistent with `aggregate_metrics`'s mean/median/std (which DOES
         # depend on the denominator) rather than silently disagreeing about
         # which examples "exist" in the trial.
-        cost_per_example_mean = safe_get(aggregated, "total_cost", "mean")
         measured_metrics = [m for m in self.example_metrics if m.measured]
-        cost_total: float | None
-        if measured_metrics:
-            cost_total = sum(float(m.cost.total_cost) for m in measured_metrics)
-        else:
-            # Nothing measured -- either the tracker is empty, or every
-            # tracked example errored before producing any output. Mirror
-            # the mean's null/zero default so the strict-nulls contract
-            # (None) and the normal contract (0.0) are preserved.
-            cost_total = cost_per_example_mean
+        priced_metrics = [m for m in measured_metrics if cost_is_measured(m)]
+        cost_total = (
+            sum(float(m.cost.total_cost) for m in priced_metrics)
+            if priced_metrics
+            else None
+        )
+        cost_per_example_mean = (
+            cost_total / len(priced_metrics) if cost_total is not None else None
+        )
 
-        # True when ANY measured example's cost could not be priced
-        # (``ExampleMetrics.cost.unpriced``, #1597) -- the trial's ``cost``
-        # total above is a real sum, but part of it may be an unknown-spend
-        # $0 rather than verified-free $0. Threaded through so per-trial
+        # True when ANY measured example has unknown cost, either because
+        # pricing is unavailable or because no usage/charge was captured.
+        # The total above includes only known charges and can therefore be
+        # a lower bound on actual spend. Threaded through so per-trial
         # consumers (trial summary table, ``result.trials[i]``, Pareto/
         # cost-objective logic) can tell the two apart instead of only
         # seeing a bare $0 (#1741, follow-up to #1597/#1407).
@@ -910,7 +927,11 @@ class MetricsTracker:
         # as numeric (bool is rejected for JSON Schema parity, see
         # ``traigent.cloud.dtos.MeasuresDict._validate_dict``) -- so this is
         # 1.0/0.0, never a Python ``bool``.
-        cost_unpriced = 1.0 if any(m.cost.unpriced for m in measured_metrics) else 0.0
+        cost_unpriced = (
+            1.0
+            if any(m.cost.unpriced or not cost_is_measured(m) for m in measured_metrics)
+            else 0.0
+        )
 
         # True when ANY measured example's token counts were fabricated from
         # character length (``LocalEvaluator._estimate_string_tokens``, #2263)
@@ -1268,6 +1289,65 @@ class MetricsTracker:
 
 
 # Response Handler Hierarchy
+
+
+def _model_reported_by_response(response: Any) -> str | None:
+    """The model a captured response says it came from, if any."""
+    if not response:
+        return None
+    try:
+        model_name: Any = None
+        # LangChain pattern first, then direct attributes.
+        response_metadata = getattr(response, "response_metadata", None)
+        if isinstance(response_metadata, dict):
+            model_name = response_metadata.get("model") or response_metadata.get(
+                "model_name"
+            )
+        if not model_name:
+            model_name = getattr(response, "model", None)
+        if not model_name:
+            model_name = getattr(response, "model_name", None)
+    except Exception:  # noqa: BLE001 - a raising accessor means "no model"
+        return None
+    return model_name if isinstance(model_name, str) and model_name else None
+
+
+def _model_is_priced(model_name: str) -> bool:
+    """True when Traigent resolves a non-zero price for ``model_name``."""
+    try:
+        from traigent.utils.cost_calculator import model_has_nonzero_price_coverage
+
+        return model_has_nonzero_price_coverage(model_name)
+    except Exception:  # noqa: BLE001 - pricing lookup must not break capture
+        return False
+
+
+def pricing_model_for_response(response: Any, config_model: Any) -> str | None:
+    """Pick the model one captured response is priced at.
+
+    The response's own model wins when it is priced: an example can make calls
+    on other models than the trial's (a judge or router on a cheaper model),
+    and pricing every call at the configured model charged those at the agent
+    model's rate (#2443). ``LocalEvaluator`` already prices judge calls by the
+    model each response reports.
+
+    The configured model stays the fallback, used when the response names no
+    model or names one Traigent cannot price (for example a gateway that
+    reports an internal alias while custom pricing is keyed on the configured
+    name).
+    """
+    configured = (
+        config_model if isinstance(config_model, str) and config_model else None
+    )
+    # Preserve metadata-first pricing precedence, then reuse the established
+    # inference for supported legacy LangChain llm_output/dictionary shapes.
+    response_model = _model_reported_by_response(
+        response
+    ) or _infer_model_name_from_response(response)
+    if response_model and response_model != configured:
+        if not configured or _model_is_priced(response_model):
+            return response_model
+    return configured or response_model
 
 
 class ResponseHandler(ABC):

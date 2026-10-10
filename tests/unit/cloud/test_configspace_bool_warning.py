@@ -35,7 +35,7 @@ def _bool_config_warnings(caplog):
     ]
 
 
-def test_boolean_choice_list_warns_once_with_field_and_workaround(caplog):
+def test_boolean_choice_list_preserves_choices_without_rejection_warning(caplog):
     config_space = {
         "include_schema": [True, False],
         "model": ["cheap", "strong"],
@@ -47,12 +47,7 @@ def test_boolean_choice_list_warns_once_with_field_and_workaround(caplog):
         normalized = _typed_configuration_space(config_space)
 
     warnings = _bool_config_warnings(caplog)
-    assert len(warnings) == 1
-    warning = warnings[0]
-    assert "include_schema" in warning
-    assert "#1488" in warning
-    assert "strings" in warning
-    assert "0/1" in warning
+    assert warnings == []
     assert normalized["include_schema"] == {
         "type": "categorical",
         "choices": [True, False],
@@ -78,7 +73,7 @@ def test_non_boolean_configuration_space_does_not_warn(caplog):
     assert _bool_config_warnings(caplog) == []
 
 
-def test_scalar_bool_and_typed_categorical_bool_are_detected(caplog):
+def test_scalar_bool_and_typed_categorical_bool_are_preserved(caplog):
     config_space = {
         "enabled": True,
         "include_schema": {"type": "categorical", "choices": [True, False]},
@@ -89,15 +84,12 @@ def test_scalar_bool_and_typed_categorical_bool_are_detected(caplog):
         normalized = _typed_configuration_space(config_space)
 
     warnings = _bool_config_warnings(caplog)
-    assert len(warnings) == 1
-    warning = warnings[0]
-    assert "enabled" in warning
-    assert "include_schema" in warning
+    assert warnings == []
     assert normalized["enabled"] == {"type": "categorical", "choices": [True]}
     assert normalized["include_schema"] is config_space["include_schema"]
 
 
-def test_values_key_in_typed_categorical_bool_is_detected(caplog):
+def test_unknown_typed_fields_still_pass_to_backend_validation(caplog):
     config_space = {
         "use_context": {"type": "categorical", "values": [True, False]},
     }
@@ -106,12 +98,11 @@ def test_values_key_in_typed_categorical_bool_is_detected(caplog):
         normalized = _typed_configuration_space(config_space)
 
     warnings = _bool_config_warnings(caplog)
-    assert len(warnings) == 1
-    assert "use_context" in warnings[0]
+    assert warnings == []
     assert normalized["use_context"] is config_space["use_context"]
 
 
-def test_explicit_legacy_payload_warns_once_without_changing_search_space(
+def test_explicit_legacy_payload_preserves_search_space_without_stale_warning(
     monkeypatch, caplog
 ):
     monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "legacy")
@@ -126,6 +117,5 @@ def test_explicit_legacy_payload_warns_once_without_changing_search_space(
         )
 
     warnings = _bool_config_warnings(caplog)
-    assert len(warnings) == 1
-    assert "include_schema" in warnings[0]
+    assert warnings == []
     assert payload["search_space"] is config_space

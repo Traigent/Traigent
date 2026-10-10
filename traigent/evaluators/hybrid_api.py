@@ -856,7 +856,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         evaluation_result = EvaluationResult(
             config=config,
             example_results=example_results,
-            aggregated_metrics=aggregated_metrics,
+            aggregated_metrics={**aggregated_metrics},
             total_examples=len(example_results),
             successful_examples=sum(1 for r in example_results if r.success),
             duration=duration,

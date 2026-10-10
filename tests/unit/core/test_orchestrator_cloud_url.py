@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from traigent.cloud.api_operations import ApiOperations
-
 from traigent.config.backend_config import BackendConfig
 from traigent.core.orchestrator import OptimizationOrchestrator
 

@@ -41,11 +41,12 @@ CANONICAL_OBJECTIVE_ORIENTATIONS = MappingProxyType(_CANONICAL_OBJECTIVE_ORIENTA
 def _missing_orientation_error(name: str) -> ValueError:
     return ValueError(
         f"Objective {name!r} has no declared orientation, and Traigent does not "
-        "infer directions for custom metric names. Declare it explicitly, for "
-        "example:\n\n"
+        "infer directions for custom metric names. Declare it explicitly: use "
+        "'maximize' if higher values are better, 'minimize' if lower values "
+        "are better, for example:\n\n"
         "from traigent.core.objectives import create_default_objectives\n"
         f"objectives = create_default_objectives([{name!r}], "
-        f"orientations={{{name!r}: 'minimize'}})"
+        f"orientations={{{name!r}: '<maximize|minimize>'}})"
     )
 
 

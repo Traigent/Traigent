@@ -287,7 +287,9 @@ class TestUpdateUsageStats:
         self, manager: IncentiveManager, mock_sessions: list[OptimizationSession]
     ) -> None:
         """Test update_usage_stats updates total session count."""
-        with patch.object(manager.storage, "list_sessions", return_value=mock_sessions):
+        with patch.object(
+            manager.storage, "session_summaries", return_value=mock_sessions
+        ):
             manager.update_usage_stats()
 
         assert manager._state["total_sessions"] == 5
@@ -296,7 +298,9 @@ class TestUpdateUsageStats:
         self, manager: IncentiveManager, mock_sessions: list[OptimizationSession]
     ) -> None:
         """Test update_usage_stats updates completed session count."""
-        with patch.object(manager.storage, "list_sessions", return_value=mock_sessions):
+        with patch.object(
+            manager.storage, "session_summaries", return_value=mock_sessions
+        ):
             manager.update_usage_stats()
 
         assert manager._state["completed_sessions"] == 3
@@ -305,7 +309,9 @@ class TestUpdateUsageStats:
         self, manager: IncentiveManager, mock_sessions: list[OptimizationSession]
     ) -> None:
         """Test update_usage_stats updates total trial count."""
-        with patch.object(manager.storage, "list_sessions", return_value=mock_sessions):
+        with patch.object(
+            manager.storage, "session_summaries", return_value=mock_sessions
+        ):
             manager.update_usage_stats()
 
         # Sum of completed_trials: 0 + 10 + 20 + 30 + 40 = 100
@@ -315,7 +321,9 @@ class TestUpdateUsageStats:
         self, manager: IncentiveManager, mock_sessions: list[OptimizationSession]
     ) -> None:
         """Test update_usage_stats saves state to disk."""
-        with patch.object(manager.storage, "list_sessions", return_value=mock_sessions):
+        with patch.object(
+            manager.storage, "session_summaries", return_value=mock_sessions
+        ):
             manager.update_usage_stats()
 
         # Verify state was saved
@@ -327,7 +335,7 @@ class TestUpdateUsageStats:
         self, manager: IncentiveManager
     ) -> None:
         """Test update_usage_stats with no sessions."""
-        with patch.object(manager.storage, "list_sessions", return_value=[]):
+        with patch.object(manager.storage, "session_summaries", return_value=[]):
             manager.update_usage_stats()
 
         assert manager._state["total_sessions"] == 0
@@ -338,7 +346,9 @@ class TestUpdateUsageStats:
         self, manager: IncentiveManager, mock_sessions: list[OptimizationSession]
     ) -> None:
         """Test update_usage_stats triggers analytics submission when enabled."""
-        with patch.object(manager.storage, "list_sessions", return_value=mock_sessions):
+        with patch.object(
+            manager.storage, "session_summaries", return_value=mock_sessions
+        ):
             with patch(
                 "traigent.utils.incentives.collect_and_submit_analytics"
             ) as mock_analytics:
@@ -351,7 +361,9 @@ class TestUpdateUsageStats:
         self, manager: IncentiveManager, mock_sessions: list[OptimizationSession]
     ) -> None:
         """Test update_usage_stats handles analytics submission failures gracefully."""
-        with patch.object(manager.storage, "list_sessions", return_value=mock_sessions):
+        with patch.object(
+            manager.storage, "session_summaries", return_value=mock_sessions
+        ):
             with patch(
                 "traigent.utils.incentives.collect_and_submit_analytics",
                 side_effect=Exception("Analytics error"),
@@ -373,7 +385,9 @@ class TestUpdateUsageStats:
             )
         ]
 
-        with patch.object(manager.storage, "list_sessions", return_value=mock_sessions):
+        with patch.object(
+            manager.storage, "session_summaries", return_value=mock_sessions
+        ):
             with patch.object(manager, "_check_achievements") as mock_check:
                 manager.update_usage_stats()
 
@@ -1481,3 +1495,119 @@ class TestEdgeCases:
         # Last write should win
         manager3 = IncentiveManager(edge_analytics_config)
         assert manager3._state["total_sessions"] == 20
+
+
+class TestUsageStatsDoNotRescanHistory:
+    """#2457: show_upgrade_hint runs after every local-mode run; it must not
+    re-parse every stored session each time."""
+
+    def test_unchanged_sessions_are_not_reparsed(self, tmp_path: Path) -> None:
+        from traigent.storage.local_storage import LocalStorageManager
+
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.LOCAL.value,
+            enable_usage_analytics=False,
+            local_storage_path=str(tmp_path),
+        )
+        manager = IncentiveManager(config)
+        storage = manager.storage
+        ids = []
+        for i in range(6):
+            sid = storage.create_session(f"fn{i}", {"a": 1})
+            for t in range(i):
+                storage.add_trial_result(sid, {"m": t}, 0.5)
+            storage.finalize_session(
+                sid,
+                (
+                    OptimizationStatus.COMPLETED.value
+                    if i % 2 == 0
+                    else OptimizationStatus.FAILED.value
+                ),
+            )
+            ids.append(sid)
+
+        expected = storage.list_sessions()
+        loads = {"n": 0}
+        real_load = LocalStorageManager.load_session
+
+        def counting_load(self, session_id):
+            loads["n"] += 1
+            return real_load(self, session_id)
+
+        with patch.object(LocalStorageManager, "load_session", counting_load):
+            manager.update_usage_stats()
+            first = loads["n"]
+            manager.update_usage_stats()
+            second = loads["n"] - first
+
+            storage.add_trial_result(ids[0], {"m": 99}, 0.9)
+            storage.delete_session(ids[1])
+            loads["n"] = 0
+            manager.update_usage_stats()
+            third = loads["n"]
+
+        assert first == 6
+        assert second == 0, "unchanged sessions were re-parsed"
+        assert third == 1, "only the modified session should be re-parsed"
+
+        # Counters still match a full list_sessions() scan.
+        after = storage.list_sessions()
+        assert manager._state["total_sessions"] == len(after) == len(expected) - 1
+        assert manager._state["total_trials"] == sum(s.completed_trials for s in after)
+        assert manager._state["completed_sessions"] == sum(
+            s.status == OptimizationStatus.COMPLETED.value for s in after
+        )
+
+
+@pytest.mark.parametrize(
+    "cached_status,cached_count",
+    [("completed", True), (12, 2), ("completed", -1), ("completed", "2")],
+)
+def test_session_summary_rebuilds_invalid_cache_values(
+    tmp_path, cached_status, cached_count
+):
+    import json
+
+    from traigent.storage.local_storage import LocalStorageManager
+
+    storage = LocalStorageManager(str(tmp_path))
+    session_id = storage.create_session("test")
+    storage.add_trial_result(session_id, {}, 1.0)
+    storage.finalize_session(session_id)
+    session_file = tmp_path / "sessions" / f"{session_id}.json"
+    stat = session_file.stat()
+    index_file = tmp_path / "cache" / storage._SESSION_INDEX_NAME
+    index_file.write_text(
+        json.dumps(
+            {session_id: [stat.st_mtime_ns, stat.st_size, cached_status, cached_count]}
+        )
+    )
+    summaries = storage.session_summaries()
+    assert summaries[0].status == "completed"
+    assert type(summaries[0].completed_trials) is int
+    assert summaries[0].completed_trials == 1
+
+
+def test_nested_summary_writers_use_unique_temporary_paths(tmp_path, monkeypatch):
+    import os
+
+    from traigent.storage.local_storage import LocalStorageManager
+
+    storage = LocalStorageManager(str(tmp_path))
+    storage.create_session("first")
+    sources = []
+    replace = os.replace
+
+    def interleave(source, destination):
+        if str(destination) != str(tmp_path / "cache" / storage._SESSION_INDEX_NAME):
+            return replace(source, destination)
+        sources.append(str(source))
+        if len(sources) == 1:
+            storage.create_session("second")
+            storage.session_summaries()
+        replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", interleave)
+    storage.session_summaries()
+    assert len(sources) == 2
+    assert len(set(sources)) == 2

@@ -4,10 +4,9 @@
 
 from __future__ import annotations
 
-import dataclasses
-
 import asyncio
 import copy
+import dataclasses
 import inspect
 import math
 import os
@@ -128,9 +127,7 @@ from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.interactive_optimizer import CloudBrainOptimizationComplete
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
-from traigent.utils.env_config import (  # noqa: F401
-    is_backend_offline as is_backend_offline,
-)
+from traigent.utils.env_config import is_backend_offline  # noqa: F401
 from traigent.utils.exceptions import (
     ConfigurationError,
     OptimizationError,
@@ -174,6 +171,10 @@ _EMPTY_SMART_RUN_OWNED_STOP_REASONS = frozenset(
     }
 )
 _OBJECTIVE_UNMATCHED_WARNING_CODE = "OBJECTIVE_UNMATCHED"
+# Issue #2477 (sibling of #1691): trials executed, every one failed, and no
+# owned stop cause explains it. Labelled FAILED rather than raised, so the
+# CLOUD_REQUIRED-only scoping of the #1703 raise still holds.
+_ALL_TRIALS_FAILED_WARNING_CODE = "ALL_TRIALS_FAILED"
 # Issue #1832: a declared, weighted, matched objective whose value is uniformly
 # constant across the ranking-eligible trials cannot influence ``best_config`` —
 # its weight is a silent no-op (e.g. cost/latency = 0 on a no-LLM-scored or
@@ -3719,6 +3720,13 @@ class OptimizationOrchestrator:
             remaining, remaining_samples, budget_stop = self._check_budget_limits(
                 trial_count
             )
+            if budget_stop in (
+                "max_trials_reached",
+                "max_samples_reached",
+            ) and self._stop_condition_manager.safety_constraint_violated(self._trials):
+                # The last trial's safety violation outranks the trial budget
+                # running out at the same time (#2481).
+                budget_stop = "safety_constraint"
             if self._apply_budget_stop(budget_stop):
                 break
 
@@ -5468,6 +5476,26 @@ class OptimizationOrchestrator:
             if result_status == OptimizationStatus.COMPLETED:
                 result_status = OptimizationStatus.FAILED
                 self._status = result_status
+
+        failed_trials = [t for t in self._trials if t.status == TrialStatus.FAILED]
+        if (
+            result_status == OptimizationStatus.COMPLETED
+            and failed_trials
+            and not any(t.is_successful for t in self._trials)
+            and self._stop_reason not in _EMPTY_SMART_RUN_OWNED_STOP_REASONS
+        ):
+            first_error = next(
+                (t.error_message for t in failed_trials if t.error_message), None
+            )
+            all_failed_warning = (
+                f"All {len(failed_trials)} executed trial(s) failed; no "
+                "configuration produced a result."
+                + (f" First trial error: {first_error}" if first_error else "")
+            )
+            result_warnings.append(all_failed_warning)
+            result_warning_codes.append(_ALL_TRIALS_FAILED_WARNING_CODE)
+            result_status = OptimizationStatus.FAILED
+            self._status = result_status
 
         # Issue #1832 (sibling of #1691): warn when a declared, weighted,
         # matched objective is uniformly constant across the ranking-eligible

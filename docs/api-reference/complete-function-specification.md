@@ -403,7 +403,7 @@ def my_agent(query: str) -> str:
     return call_llm(query, model=config["model"], temperature=config["temperature"])
 ```
 
-> **Note:** `traigent.get_trial_config()` is deprecated. Use `traigent.get_config()` instead, which works in all contexts.
+> **Note:** `traigent.get_trial_config()` returns the same per-trial config but raises outside an active trial. Prefer `traigent.get_config()`, which works in all contexts. The deprecated accessor is `traigent.get_current_config()`.
 
 ### `traigent.configure()`
 

@@ -385,8 +385,8 @@ def unmeasured_cost_stop_message(
         "(max_total_examples caps the total examples and also counts as your "
         "explicit consent, but does not raise max_trials, which defaults to "
         "10.) To get cost measured instead, "
-        f"{capture} -- synchronous LangChain ChatOpenAI/ChatAnthropic "
-        ".invoke (async .ainvoke/.abatch are not captured yet), "
+        f"{capture} -- LangChain ChatOpenAI/ChatAnthropic "
+        ".invoke/.ainvoke/.batch/.abatch, "
         "non-streaming litellm.completion/acompletion, or a raw "
         "openai.OpenAI/AsyncOpenAI client with enable_openai_optimization() "
         "or framework_targets=['openai.OpenAI', 'openai.AsyncOpenAI'] (see "
@@ -1349,8 +1349,8 @@ Options:
                 "TRAIGENT_CUSTOM_MODEL_PRICING_JSON or "
                 "TRAIGENT_CUSTOM_MODEL_PRICING_FILE, or set "
                 "TRAIGENT_STRICT_COST_ACCOUNTING=false (and "
-                "TRAIGENT_REQUIRE_COST_TRACKING=false) to accept $0 for "
-                "unpriced calls."
+                "TRAIGENT_REQUIRE_COST_TRACKING=false) to continue with "
+                "unavailable monetary cost for unpriced calls."
             )
 
         if not self._unknown_cost_mode:

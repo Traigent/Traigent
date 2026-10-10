@@ -24,8 +24,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from traigent.api.types import ExampleResult
-from traigent.utils.removed_params import reject_removed_mock_parameters
-from traigent.identity.examples import result_identity_fields
 from traigent.evaluators.dataset_registry import (
     DatasetRegistryEntry,
     resolve_dataset_reference,
@@ -33,19 +31,26 @@ from traigent.evaluators.dataset_registry import (
 from traigent.evaluators.metrics_tracker import (
     USER_METRIC_KEY_PATTERN,
     aggregate_user_custom_metrics,
+    cost_is_measured,
     enforce_user_metric_ceiling,
     extract_llm_metrics,
     is_reserved_metric_key,
 )
+from traigent.identity.examples import result_identity_fields
 from traigent.utils.env_config import is_truthy
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
+from traigent.utils.error_handler import provider_credential_error
 from traigent.utils.exceptions import ConfigurationError, EvaluationError
 from traigent.utils.exceptions import TraigentError as CoreTraigentError
 from traigent.utils.exceptions import TrialPrunedError, ValidationError
 from traigent.utils.function_identity import is_coroutine_callable
-from traigent.utils.langchain_interceptor import get_captured_response_by_key
+from traigent.utils.langchain_interceptor import (
+    capture_evaluation,
+    get_captured_response_by_key,
+)
 from traigent.utils.logging import get_logger
+from traigent.utils.removed_params import reject_removed_mock_parameters
 
 if TYPE_CHECKING:
     from traigent.core.execution_budget import ExecutionBudget
@@ -110,14 +115,16 @@ def _measured_value(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def aggregate_measured_metric(metric: str, all_metrics: list[dict[str, Any]]) -> float:
+def aggregate_measured_metric(
+    metric: str, all_metrics: list[dict[str, Any]]
+) -> float | None:
     """Mean of a cost metric over the rows that actually measured it.
 
     With partial coverage the mean of the measured rows is the estimate and a
     warning names the coverage. It does not raise: a failed trial has no cost,
     and under strict cost accounting the run-level spend check would then abort
     the whole run over one failed example. No coverage at all keeps the
-    historical 0.0 and is left to the run-level no-usage handling.
+    unknown value (None), never a fabricated zero.
     """
     measured = [
         number
@@ -125,7 +132,7 @@ def aggregate_measured_metric(metric: str, all_metrics: list[dict[str, Any]]) ->
         if row and (number := _measured_value(row.get(metric))) is not None
     ]
     if not measured:
-        return 0.0
+        return None
     if len(measured) < len(all_metrics):
         message = (
             f"'{metric}' was measured for only {len(measured)} of "
@@ -284,13 +291,15 @@ def _typed_accuracy_equality(actual: Any, expected: Any) -> bool:
 
 def _accuracy_values_match(actual: Any, expected: Any) -> bool:
     """Return whether two accuracy values match under SDK exact-match semantics."""
-    original_actual = actual
     if isinstance(actual, str) and not isinstance(expected, str):
         actual, coerced = _coerce_string_to_expected_type(actual, expected)
         if coerced:
-            logger.warning(
-                "Coercing string output %r to %s for exact-match accuracy comparison",
-                original_actual,
+            # Types only: the raw output is example content and does not
+            # belong in a routine console diagnostic (#2499). DEBUG: this is
+            # the normal structured-output path and fires once per example,
+            # so at WARNING it buried real errors in run logs (#2513).
+            logger.debug(
+                "Coercing string output to %s for exact-match accuracy comparison",
                 type(expected).__name__,
             )
 
@@ -336,11 +345,9 @@ def _accuracy_values_match(actual: Any, expected: Any) -> bool:
             expected_num = float(expected.strip())
         except ValueError:
             return False
-        logger.warning(
-            "Coercing string output %r and expected %r to numeric for "
-            "exact-match accuracy comparison",
-            actual,
-            expected,
+        logger.debug(
+            "Coercing string output and expected value to numeric for "
+            "exact-match accuracy comparison"
         )
         return math.isclose(
             actual_num,
@@ -460,6 +467,7 @@ try:  # pragma: no cover - import guard for optional dependency
         RAGAS_AVAILABLE,
         RagasConfig,
         RagasConfigurationError,
+        _snapshot_ragas_defaults,
         compute_ragas_metrics,
     )
 except ImportError:  # pragma: no cover - executed only when module missing
@@ -475,6 +483,9 @@ except ImportError:  # pragma: no cover - executed only when module missing
     RagasConfig = _FallbackRagasConfig  # type: ignore[misc, assignment]
     RagasConfigurationError = RuntimeError  # type: ignore[misc, assignment]
     compute_ragas_metrics = None  # type: ignore[assignment]
+
+    def _snapshot_ragas_defaults() -> RagasConfig:  # type: ignore[misc]
+        return RagasConfig()
 
 
 DATASET_ROOT_ENV = "TRAIGENT_DATASET_ROOT"
@@ -1195,7 +1206,7 @@ class EvaluationResult:
 
     config: dict[str, Any]
     example_results: list[Any] = field(default_factory=list)
-    aggregated_metrics: dict[str, float] = field(default_factory=dict)
+    aggregated_metrics: dict[str, float | None] = field(default_factory=dict)
     total_examples: int = 0
     successful_examples: int = 0
     duration: float = 0.0
@@ -1212,7 +1223,7 @@ class EvaluationResult:
     execution_budget: dict[str, object] | None = None
 
     # Legacy fields for backward compatibility
-    metrics: dict[str, float] | None = None
+    metrics: dict[str, float | None] | None = None
     outputs: list[Any] | None = None
     errors: list[str | None] | None = None
 
@@ -1580,8 +1591,10 @@ class BaseEvaluator(ABC):
 
     @staticmethod
     def _execution_budget_cost(result: EvaluationResult) -> float | None:
-        """Return an observed evaluation cost, or ``None`` when it is unknown."""
-        for key in ("cost", "total_cost"):
+        """Return observed trial spend, with a legacy cost-only fallback."""
+        # A cost objective can be a per-example mean or a custom score;
+        # captured total_cost is the cumulative spend the budget consumes.
+        for key in ("total_cost", "cost"):
             value = result.aggregated_metrics.get(key)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 numeric = float(value)
@@ -1632,15 +1645,22 @@ class BaseEvaluator(ABC):
         logger.debug(f"Registered custom metric: {name}")
 
     def _get_ragas_config(self) -> RagasConfig:
-        column_map = None
+        # Evaluator kwargs win field by field; configure_ragas_defaults()
+        # fills the gaps. The evaluator always passes an explicit config, so
+        # without this layering the public defaults never reached RAGAS under
+        # @traigent.optimize (#2473).
+        defaults = _snapshot_ragas_defaults()
+        column_map = defaults.column_map
         if self.config.get("ragas_column_map"):
             mapping = self.config["ragas_column_map"]
             if isinstance(mapping, Mapping):
                 column_map = mapping
+        llm = self.config.get("ragas_llm")
+        embeddings = self.config.get("ragas_embeddings")
         return RagasConfig(
             column_map=column_map,
-            llm=self.config.get("ragas_llm"),
-            embeddings=self.config.get("ragas_embeddings"),
+            llm=llm if llm is not None else defaults.llm,
+            embeddings=embeddings if embeddings is not None else defaults.embeddings,
         )
 
     def override_metric(self, name: str, func: Callable[..., Any]) -> None:
@@ -1742,7 +1762,7 @@ class BaseEvaluator(ABC):
         expected_outputs: list[Any],
         errors: list[str | None],
         **context: Any,
-    ) -> dict[str, float]:
+    ) -> dict[str, float | None]:
         """Compute evaluation metrics using the metric registry.
 
         Args:
@@ -1773,7 +1793,7 @@ class BaseEvaluator(ABC):
                 fabricated 0.0 for an optimization objective would silently
                 corrupt the search, so the trial fails closed instead.
         """
-        metrics: dict[str, float] = {}
+        metrics: dict[str, float | None] = {}
         metric_names = context.pop("metrics_override", None) or self.metrics
         metric_errors: list[dict[str, Any]] | None = context.pop("metric_errors", None)
 
@@ -2615,13 +2635,9 @@ class BaseEvaluator(ABC):
         Raises:
             APIKeyError: If the error appears to be API key related
         """
-        api_key_tokens = ("api key", "api_key", "authentication", "openai_api_key")
-        if any(token in str(error).lower() for token in api_key_tokens):
-            raise APIKeyError(
-                f"API key error detected. Set the required API key environment "
-                f"variable or use TRAIGENT_MOCK_LLM=true for testing. "
-                f"Original error: {error}"
-            ) from error
+        credential_error = provider_credential_error(error)
+        if credential_error is not None:
+            raise credential_error from error
 
     async def _execute_function(
         self,
@@ -2718,7 +2734,10 @@ class BaseEvaluator(ABC):
         )
 
         try:
-            with self._example_trace_context(example_id, index, example) as span:
+            with (
+                self._example_trace_context(example_id, index, example) as span,
+                self._get_capture_key_context()(example_id),
+            ):
                 output, error = await self._execute_function(
                     func,
                     config,
@@ -3250,15 +3269,18 @@ class BaseEvaluator(ABC):
                     sample_lease, execution_budget_lease
                 )
                 try:
-                    return await self._execute_function(
-                        func,
-                        config,
-                        example.input_data,
-                        executor=None,
-                        worker_started_callback=cleanup_boundary.worker_started,
-                        worker_done_callback=cleanup_boundary.worker_done,
-                        bound_lane_wait=True,
-                    )
+                    with self._get_capture_key_context()(
+                        _example_correlation_key(example, idx)
+                    ):
+                        return await self._execute_function(
+                            func,
+                            config,
+                            example.input_data,
+                            executor=None,
+                            worker_started_callback=cleanup_boundary.worker_started,
+                            worker_done_callback=cleanup_boundary.worker_done,
+                            bound_lane_wait=True,
+                        )
                 except asyncio.CancelledError:
                     cleanup_boundary.cancel()
                     raise
@@ -4172,22 +4194,31 @@ class SimpleScoringEvaluator(BaseEvaluator):
         Returns:
             Dictionary of LLM metrics
         """
+        measured_cost = cost_is_measured(metrics_obj)
         return {
             "total_tokens": getattr(metrics_obj.tokens, "total_tokens", 0),
             "prompt_tokens": getattr(metrics_obj.tokens, "prompt_tokens", 0),
             "completion_tokens": getattr(metrics_obj.tokens, "completion_tokens", 0),
-            "total_cost": getattr(metrics_obj.cost, "total_cost", 0.0),
-            "input_cost": getattr(metrics_obj.cost, "input_cost", 0.0),
-            "output_cost": getattr(metrics_obj.cost, "output_cost", 0.0),
-            # True when this example's cost could not be priced -- unknown
-            # spend recorded as $0, not verified-free $0 (#1597). Threaded
+            "total_cost": (
+                getattr(metrics_obj.cost, "total_cost", 0.0) if measured_cost else None
+            ),
+            "input_cost": (
+                getattr(metrics_obj.cost, "input_cost", 0.0) if measured_cost else None
+            ),
+            "output_cost": (
+                getattr(metrics_obj.cost, "output_cost", 0.0) if measured_cost else None
+            ),
+            # True when this example's cost is unknown, from missing usage
+            # or missing pricing, rather than verified-free (#1597). Threaded
             # through so per-trial aggregation can distinguish the two
             # (#1741, follow-up to #1597/#1407).
             # Numeric flag (1.0/0.0), never a Python bool: the wire-format
             # ``MeasuresDict`` rejects bool measures for JSON Schema parity
             # (``traigent.cloud.dtos.MeasuresDict._validate_dict``).
             "cost_unpriced": (
-                1.0 if getattr(metrics_obj.cost, "unpriced", False) else 0.0
+                1.0
+                if getattr(metrics_obj.cost, "unpriced", False) or not measured_cost
+                else 0.0
             ),
             "response_time_ms": getattr(metrics_obj.response, "response_time_ms", 0),
             "tokens_per_second": getattr(metrics_obj.response, "tokens_per_second", 0),
@@ -4347,6 +4378,10 @@ class SimpleScoringEvaluator(BaseEvaluator):
         example_metrics["input_cost"] = llm_metrics.get("input_cost", missing_default)
         example_metrics["output_cost"] = llm_metrics.get("output_cost", missing_default)
         example_metrics["total_cost"] = llm_metrics.get("total_cost", missing_default)
+        # Requested default cost is the measured per-example charge. Custom
+        # scorer/metric-function values, including explicit zero, stay intact.
+        if "cost" in self.metrics and "total_cost" in llm_metrics:
+            example_metrics.setdefault("cost", llm_metrics["total_cost"])
         example_metrics["cost_unpriced"] = (
             1.0 if llm_metrics.get("cost_unpriced", False) else 0.0
         )
@@ -4383,7 +4418,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
 
     def _aggregate_custom_metrics(
         self, all_metrics: list[dict[str, Any]]
-    ) -> dict[str, float]:
+    ) -> dict[str, float | None]:
         """Aggregate custom metrics across all examples.
 
         Args:
@@ -4411,7 +4446,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
         self,
         all_metrics: list[dict[str, Any]],
         example_results: list[Any],
-    ) -> dict[str, float]:
+    ) -> dict[str, float | None]:
         """Aggregate LLM metrics across all examples.
 
         Args:
@@ -4431,19 +4466,20 @@ class SimpleScoringEvaluator(BaseEvaluator):
             ]
             aggregated[metric] = sum(metric_values) if metric_values else 0.0
 
-        # Aggregate cost metrics (total, not average)
+        # Unknown cost stays absent from the sum; no observations is unknown.
         cost_metrics = ["input_cost", "output_cost", "total_cost"]
         for metric in cost_metrics:
             metric_values = [
-                m.get(metric, 0.0) for m in all_metrics if m and metric in m
+                value
+                for m in all_metrics
+                if m and (value := _measured_value(m.get(metric))) is not None
             ]
-            aggregated[metric] = sum(metric_values) if metric_values else 0.0
+            aggregated[metric] = sum(metric_values) if metric_values else None
 
-        # True iff ANY example's cost could not be priced -- unknown spend
-        # recorded as $0, not verified-free $0 (#1597). Threaded through so
-        # per-trial consumers (trial summary table, ``result.trials[i]``,
-        # Pareto/cost-objective logic) can distinguish unknown spend from
-        # verified-free instead of only seeing a bare $0 (#1741).
+        # True iff ANY example carries unknown cost. Null means unavailable;
+        # a positive sum with unknown calls is a lower bound on actual spend.
+        # Threaded through so trial summaries and cost objectives distinguish
+        # unknown spend from verified-free charges (#1597/#1741).
         aggregated["cost_unpriced"] = (
             1.0
             if any(bool(m.get("cost_unpriced", False)) for m in all_metrics if m)
@@ -4499,6 +4535,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
             for name in ragas_metric_names:
                 aggregated_metrics.setdefault(name, 0.0)
 
+    @capture_evaluation
     async def evaluate(
         self,
         func: Callable[..., Any],
@@ -4794,33 +4831,73 @@ class SimpleScoringEvaluator(BaseEvaluator):
         if not (self.capture_llm_metrics and self._metrics_available):
             return None
 
-        captured_responses = self._get_all_captured_responses()
+        captured_responses = [r for r in self._get_all_captured_responses() if r]
         if not captured_responses:
             return None
 
-        response = captured_responses[0]
-        if not response:
-            return None
+        from traigent.evaluators.metrics_tracker import pricing_model_for_response
 
         model_name = config.get("model")
         response_text = self._extract_response_text_from_output(output)
 
-        metrics_obj = self._extract_llm_metrics(
-            response=response,
-            model_name=model_name,
-            original_prompt=None,
-            response_text=response_text,
-        )
+        # Every call made while this example ran is charged, not only the
+        # first: a plan-then-answer agent or a judge call makes several, and
+        # pricing captured_responses[0] alone under-charged them (#2444).
+        # Each call is priced at the model it reports (#2443). Responses are
+        # cleared before each example, so these are all this example's.
+        metrics_obj = None
+        for position, response in enumerate(captured_responses):
+            call_metrics = self._extract_llm_metrics(
+                response=response,
+                model_name=pricing_model_for_response(response, model_name),
+                original_prompt=None,
+                # The answer text describes the first call only.
+                response_text=response_text if position == 0 else None,
+            )
+            if metrics_obj is None:
+                metrics_obj = call_metrics
+            elif self._call_has_llm_measurement(call_metrics):
+                if self._call_has_llm_measurement(metrics_obj):
+                    self._add_call_llm_metrics(metrics_obj, call_metrics)
+                else:
+                    metrics_obj = call_metrics
 
         llm_metrics = self._build_llm_metrics_dict(metrics_obj, model_name)
 
         logger.debug(
             f"Captured LLM metrics for example {example_index}: "
             f"tokens={llm_metrics['total_tokens']}, "
-            f"cost=${llm_metrics['total_cost']:.8f}"
+            f"cost={llm_metrics['total_cost']}"
         )
 
         return llm_metrics
+
+    @staticmethod
+    def _call_has_llm_measurement(metrics: Any) -> bool:
+        """True when one call's extraction found real usage or a real charge."""
+        if metrics is None or getattr(metrics, "measured", True) is False:
+            return False
+        tokens = getattr(metrics, "tokens", None)
+        cost = getattr(metrics, "cost", None)
+        return bool(
+            getattr(tokens, "input_tokens", 0)
+            or getattr(tokens, "output_tokens", 0)
+            or getattr(cost, "total_cost", 0.0)
+            or getattr(cost, "cost_explicit", False)
+        )
+
+    @staticmethod
+    def _add_call_llm_metrics(total: Any, extra: Any) -> None:
+        """Fold one call's tokens, cost and latency into ``total`` in place."""
+        total.tokens.input_tokens += extra.tokens.input_tokens
+        total.tokens.output_tokens += extra.tokens.output_tokens
+        total.tokens.total_tokens += extra.tokens.total_tokens
+        total.cost.input_cost += extra.cost.input_cost
+        total.cost.output_cost += extra.cost.output_cost
+        total.cost.total_cost += extra.cost.total_cost
+        total.cost.unpriced = total.cost.unpriced or extra.cost.unpriced
+        total.cost.cost_explicit = total.cost.cost_explicit and extra.cost.cost_explicit
+        total.response.response_time_ms += extra.response.response_time_ms
 
     def _compute_example_metrics(
         self,

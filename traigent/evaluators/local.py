@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 from traigent.config.types import resolve_execution_mode
 from traigent.evaluators.base import (
+    MEASURED_ONLY_METRICS,
     BaseEvaluator,
     Dataset,
     EvaluationResult,
@@ -32,8 +33,10 @@ from traigent.evaluators.metrics_tracker import (
     MetricsTracker,
     compute_empty_output_rate,
     compute_truncated_output_rate,
+    cost_is_measured,
     enforce_user_metric_ceiling,
     extract_llm_metrics,
+    pricing_model_for_response,
 )
 from traigent.utils.exceptions import EvaluationError
 from traigent.utils.langchain_interceptor import (
@@ -41,6 +44,7 @@ from traigent.utils.langchain_interceptor import (
     clear_captured_responses,
     get_all_captured_responses,
     get_captured_response_by_key,
+    get_captured_responses_by_key,
     patch_langchain_for_metadata_capture,
 )
 from traigent.utils.litellm_interceptor import patch_litellm_for_metadata_capture
@@ -645,14 +649,15 @@ class LocalEvaluator(BaseEvaluator):
         example_index: int,
         dataset: Dataset,
         all_captured_responses: list[Any],
+        *,
+        responses_by_key: dict[Any, list[Any]] | None = None,
     ) -> Any:
         """Determine the best source for extracting LLM metrics.
 
-        Priority:
-        1. If output is a dict with 'raw_response', prefer it (SDK object)
-        2. Else use captured LangChain response by correlation key
-        3. Else use captured response by index (with multi-call handling)
-        4. Else fall back to output itself
+        Evaluation uses the captured calls belonging to this example. When
+        there are none, use an explicit raw_response or the output itself.
+        Direct helper callers without a snapshot retain the last-response
+        correlation API; no path infers ownership from response positions.
 
         When there are multiple LLM calls per example (e.g., main response + judge),
         this method handles the mismatch by computing aggregate metrics.
@@ -666,6 +671,19 @@ class LocalEvaluator(BaseEvaluator):
         Returns:
             The best source object for metrics extraction
         """
+        if responses_by_key is not None:
+            key = _example_correlation_key(
+                dataset.examples[example_index], example_index
+            )
+            responses = responses_by_key.get(key, [])
+            if responses:
+                return _AggregatedResponses(responses)
+            # No captured calls belong to this row. Never borrow a neighbour's
+            # response or infer an equal split from the batch call count.
+            if isinstance(output, dict) and output.get("raw_response") is not None:
+                return output["raw_response"]
+            return output
+
         # Prefer raw_response from dict output
         if isinstance(output, dict) and output.get("raw_response") is not None:
             return output["raw_response"]
@@ -680,30 +698,6 @@ class LocalEvaluator(BaseEvaluator):
         by_key = get_captured_response_by_key(ex_key)
         if by_key is not None:
             return by_key
-
-        # Handle case where there are more captured responses than outputs
-        # (multiple LLM calls per example, e.g., main response + judge scoring)
-        num_outputs = len(dataset.examples)
-        num_responses = len(all_captured_responses)
-
-        if num_responses > num_outputs and num_outputs > 0:
-            # Calculate how many responses per output (e.g., 2 for main + judge)
-            responses_per_output = num_responses // num_outputs
-            if responses_per_output >= 1:
-                # Get the slice of responses for this example
-                start_idx = example_index * responses_per_output
-                end_idx = start_idx + responses_per_output
-                # Return aggregated metrics wrapper if we have multiple
-                if end_idx <= num_responses and responses_per_output > 1:
-                    return _AggregatedResponses(
-                        all_captured_responses[start_idx:end_idx]
-                    )
-                elif start_idx < num_responses:
-                    return all_captured_responses[start_idx]
-
-        # Fall back to index-based or output itself
-        if example_index < len(all_captured_responses):
-            return all_captured_responses[example_index]
 
         return output
 
@@ -793,9 +787,15 @@ class LocalEvaluator(BaseEvaluator):
         example_result.metrics["input_tokens"] = example_metric.tokens.input_tokens
         example_result.metrics["output_tokens"] = example_metric.tokens.output_tokens
         example_result.metrics["total_tokens"] = example_metric.tokens.total_tokens
-        example_result.metrics["input_cost"] = example_metric.cost.input_cost
-        example_result.metrics["output_cost"] = example_metric.cost.output_cost
-        example_result.metrics["total_cost"] = example_metric.cost.total_cost
+        measured_cost = cost_is_measured(example_metric)
+        for key in ("input_cost", "output_cost", "total_cost"):
+            example_result.metrics[key] = (
+                getattr(example_metric.cost, key) if measured_cost else None
+            )
+        if "cost" not in self.metric_functions:
+            example_result.metrics["cost"] = (
+                example_metric.cost.total_cost if measured_cost else None
+            )
 
     def _objective_returned_none_error(
         self,
@@ -1158,11 +1158,12 @@ class LocalEvaluator(BaseEvaluator):
             Payload dictionary for progress callback
         """
         payload_metrics = dict(example_metric.custom_metrics)
-        total_cost_value = example_metric.cost.total_cost
+        total_cost_value = (
+            example_metric.cost.total_cost if cost_is_measured(example_metric) else None
+        )
 
-        if total_cost_value is not None:
-            payload_metrics.setdefault("total_cost", float(total_cost_value))
-            payload_metrics.setdefault("cost", float(total_cost_value))
+        payload_metrics.setdefault("total_cost", total_cost_value)
+        payload_metrics.setdefault("cost", total_cost_value)
 
         if self.detailed and example_result is not None:
             for key, value in example_result.metrics.items():
@@ -1184,6 +1185,8 @@ class LocalEvaluator(BaseEvaluator):
         config: dict[str, Any],
         dataset: Dataset,
         all_captured_responses: list[Any],
+        *,
+        responses_by_key: dict[Any, list[Any]] | None = None,
     ) -> ExampleMetrics:
         """Extract LLM metrics for a single output.
 
@@ -1199,7 +1202,8 @@ class LocalEvaluator(BaseEvaluator):
         """
         example_metric = ExampleMetrics()
 
-        if output is None:
+        key = _example_correlation_key(dataset.examples[index], index)
+        if output is None and not (responses_by_key or {}).get(key):
             # The decorated function raised before producing any output at
             # all (or a custom evaluator explicitly returned no output) --
             # nothing was ever extracted, so every field below stays a
@@ -1249,8 +1253,53 @@ class LocalEvaluator(BaseEvaluator):
 
         # Get best metrics source using helper
         metrics_source = self._get_metrics_source(
-            output, index, dataset, all_captured_responses
+            output,
+            index,
+            dataset,
+            all_captured_responses,
+            responses_by_key=responses_by_key,
         )
+
+        if (
+            isinstance(metrics_source, _AggregatedResponses)
+            and responses_by_key is not None
+        ):
+            total: ExampleMetrics | None = None
+            for response in metrics_source._responses:
+                call = extract_llm_metrics(
+                    response=response,
+                    model_name=pricing_model_for_response(response, model_name),
+                    original_prompt=None,
+                    response_text=None,
+                )
+                if total is None:
+                    total = call
+                else:
+                    total.tokens.input_tokens += call.tokens.input_tokens
+                    total.tokens.output_tokens += call.tokens.output_tokens
+                    total.tokens.total_tokens += call.tokens.total_tokens
+                    total.cost.input_cost += call.cost.input_cost
+                    total.cost.output_cost += call.cost.output_cost
+                    total.cost.total_cost += call.cost.total_cost
+                    total.cost.unpriced = total.cost.unpriced or call.cost.unpriced
+                    total.cost.cost_estimated = (
+                        total.cost.cost_estimated or call.cost.cost_estimated
+                    )
+                    total.cost.cost_explicit = (
+                        total.cost.cost_explicit and call.cost.cost_explicit
+                    )
+                    total.tokens.estimated = (
+                        total.tokens.estimated or call.tokens.estimated
+                    )
+                    total.measured = total.measured or call.measured
+                    total.response.response_time_ms += call.response.response_time_ms
+            assert total is not None
+            total.response.tokens_per_second = (
+                total.tokens.total_tokens / (total.response.response_time_ms / 1000)
+                if total.response.response_time_ms > 0
+                else None
+            )
+            return total
 
         # Pass lengths to extract_llm_metrics for privacy mode
         extracted_metrics = extract_llm_metrics(
@@ -1518,6 +1567,7 @@ class LocalEvaluator(BaseEvaluator):
             if total_cost < 0:
                 logger.warning(f"Negative total_cost clamped: {total_cost} → 0.0")
             metrics.cost.total_cost = max(0.0, float(total_cost))
+            metrics.cost.cost_explicit = True
             if model_name:
                 from traigent.evaluators.metrics_tracker import (
                     _reconcile_reported_cost_with_tokens,
@@ -1555,6 +1605,7 @@ class LocalEvaluator(BaseEvaluator):
         progress_callback: Callable[[int, dict[str, Any]], Any] | None,
         *,
         metric_errors: list[dict[str, Any]] | None = None,
+        responses_by_key: dict[Any, list[Any]] | None = None,
     ) -> ExampleMetrics:
         """Process metrics for a single output.
 
@@ -1598,7 +1649,12 @@ class LocalEvaluator(BaseEvaluator):
 
         # Extract LLM metrics
         example_metric = self._extract_llm_metrics_for_output(
-            output, index, config, dataset, all_captured_responses
+            output,
+            index,
+            config,
+            dataset,
+            all_captured_responses,
+            responses_by_key=responses_by_key,
         )
 
         model_name = config.get("model") or config.get("model_name")
@@ -2030,7 +2086,7 @@ class LocalEvaluator(BaseEvaluator):
 
     def _merge_comprehensive_metrics(
         self,
-        aggregated_metrics: dict[str, float],
+        aggregated_metrics: dict[str, float | None],
         comprehensive_metrics: dict[str, Any],
         *,
         preserve_authoritative_accuracy: bool,
@@ -2046,24 +2102,11 @@ class LocalEvaluator(BaseEvaluator):
             f"{comprehensive_metrics.get('cost', 'MISSING')}"
         )
 
-        # If cost is in objectives but was computed as 0, use comprehensive value
-        if "cost" in self.metrics and "cost" in comprehensive_metrics:
-            logger.debug(
-                f"LOCAL EVALUATOR DEBUG: aggregated cost="
-                f"{aggregated_metrics.get('cost', 'MISSING')}, "
-                f"comprehensive cost={comprehensive_metrics['cost']}"
-            )
-            aggregated_cost = float(aggregated_metrics.get("cost", 0.0) or 0.0)
-            comprehensive_cost = float(comprehensive_metrics["cost"])
-            if math.isclose(aggregated_cost, 0.0, abs_tol=1e-9) and not math.isclose(
-                comprehensive_cost, 0.0, abs_tol=1e-9
-            ):
-                logger.info(
-                    f"🔍 LOCAL EVALUATOR: Overriding cost metric: "
-                    f"{aggregated_cost} -> {comprehensive_cost}"
-                )
-
         for key, value in comprehensive_metrics.items():
+            if key in MEASURED_ONLY_METRICS:
+                if key not in self.metric_functions:
+                    aggregated_metrics[key] = value
+                continue
             if value is None:
                 continue
             if (
@@ -2301,6 +2344,22 @@ class LocalEvaluator(BaseEvaluator):
 
         # Get all captured LangChain responses before clearing
         all_captured_responses = get_all_captured_responses()
+        responses_by_key = get_captured_responses_by_key()
+        expected_keys = [
+            _example_correlation_key(dataset.examples[i], i)
+            for i in range(len(outputs))
+        ]
+        if (
+            len(set(expected_keys)) != len(expected_keys)
+            or not responses_by_key.keys() <= set(expected_keys)
+            or sum(len(values) for values in responses_by_key.values())
+            != len(all_captured_responses)
+        ):
+            self._abort_execution_budget_evaluation(execution_budget_lease)
+            raise EvaluationError(
+                "Captured provider calls have invalid example correlation; refusing "
+                "to infer an equal split or attribute another example's spend."
+            )
         logger.debug(
             f"Got {len(all_captured_responses)} captured LangChain responses for {len(outputs)} outputs"
         )
@@ -2329,6 +2388,7 @@ class LocalEvaluator(BaseEvaluator):
                     all_captured_responses=all_captured_responses,
                     progress_callback=progress_callback,
                     metric_errors=metric_errors,
+                    responses_by_key=responses_by_key,
                 ),
                 sample_lease,
                 execution_budget_lease,
@@ -2593,7 +2653,7 @@ class LocalEvaluator(BaseEvaluator):
         expected_outputs: list[Any],
         errors: list[str | None],
         **context: Any,
-    ) -> dict[str, float]:
+    ) -> dict[str, float | None]:
         """Compute evaluation metrics.
 
         Args:
@@ -2605,7 +2665,4 @@ class LocalEvaluator(BaseEvaluator):
             Dictionary of metric name to value
         """
         # Use the base class implementation which now includes all default metrics
-        return cast(
-            dict[str, float],
-            super().compute_metrics(outputs, expected_outputs, errors, **context),
-        )
+        return super().compute_metrics(outputs, expected_outputs, errors, **context)

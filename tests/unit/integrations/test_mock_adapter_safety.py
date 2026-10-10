@@ -58,10 +58,8 @@ def test_env_var_does_not_enable_in_code_flag(
     but that path is gated by environment, not by this flag."""
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
 
-    assert traigent_testing.is_mock_mode_enabled() is False, (
-        "enable_mock_mode_for_quickstart() is the only way to flip the "
-        "in-code flag — env var must not touch it."
-    )
+    _failure_detail = "enable_mock_mode_for_quickstart() is the only way to flip the in-code flag — env var must not touch it."
+    assert traigent_testing.is_mock_mode_enabled() is False, _failure_detail
 
 
 def test_env_var_works_in_dev_blocks_in_prod(
@@ -107,10 +105,8 @@ def test_in_code_api_enables_mock_for_every_interceptor() -> None:
     assert traigent_testing.is_mock_mode_enabled() is True
     assert is_mock_llm() is True
     for provider in ("openai", "anthropic", "litellm", "azure_openai", "gemini"):
-        assert MockAdapter.is_mock_enabled(provider) is True, (
-            f"Provider {provider} did not see mock mode after explicit "
-            "API call — interceptor sites are not centralized."
-        )
+        _failure_detail = f"Provider {provider} did not see mock mode after explicit API call — interceptor sites are not centralized."
+        assert MockAdapter.is_mock_enabled(provider) is True, _failure_detail
 
 
 def test_activation_is_idempotent_and_logs_once(
@@ -128,10 +124,8 @@ def test_activation_is_idempotent_and_logs_once(
     activation_warns = [
         r for r in caplog.records if "mock mode is now ACTIVE" in r.getMessage()
     ]
-    assert len(activation_warns) == 1, (
-        f"Expected exactly one mandatory activation WARN, got "
-        f"{len(activation_warns)} — log spam will hide the signal"
-    )
+    _failure_detail = f"Expected exactly one mandatory activation WARN, got {len(activation_warns)} — log spam will hide the signal"
+    assert len(activation_warns) == 1, _failure_detail
     scope_notes = [
         r
         for r in caplog.records
@@ -140,9 +134,17 @@ def test_activation_is_idempotent_and_logs_once(
         and "openai.chat.completions.create" in r.getMessage()
         and "anthropic.messages.create" in r.getMessage()
     ]
-    assert len(scope_notes) == 1, (
-        f"Expected exactly one mock interception scope INFO note, got "
-        f"{len(scope_notes)}"
+    _failure_detail = (
+        f"Expected exactly one mock interception scope note, got {len(scope_notes)}"
+    )
+    assert len(scope_notes) == 1, _failure_detail
+    # #2418: the scope caveat must be visible at the default log level, since
+    # the activation banner and the suppressed COST WARNING say nothing else.
+    assert scope_notes[0].levelno == logging.WARNING
+    # ...and the banner names what is intercepted instead of "LLM calls".
+    assert (
+        "LiteLLM and LangChain LLM calls will be intercepted"
+        in activation_warns[0].getMessage()
     )
 
 
@@ -158,9 +160,8 @@ def test_in_code_api_is_blocked_in_production(
     with pytest.raises(RuntimeError, match="production"):
         traigent_testing.enable_mock_mode_for_quickstart()
 
-    assert traigent_testing.is_mock_mode_enabled() is False, (
-        "Mock mode must NOT be enabled when the in-code API was rejected"
-    )
+    _failure_detail = "Mock mode must NOT be enabled when the in-code API was rejected"
+    assert traigent_testing.is_mock_mode_enabled() is False, _failure_detail
 
 
 def test_dotenv_late_load_does_not_bypass_prod_guard(

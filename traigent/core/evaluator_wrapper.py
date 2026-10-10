@@ -28,13 +28,29 @@ from traigent.evaluators.base import (
     failed_row_metrics,
 )
 from traigent.identity.examples import result_identity_fields
+from traigent.utils.exceptions import EvaluationError
 from traigent.utils.function_identity import is_coroutine_callable
+from traigent.utils.langchain_interceptor import capture_evaluation
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 _LLM_TOKEN_METRICS = ("input_tokens", "output_tokens", "total_tokens")
 _LLM_COST_METRICS = ("input_cost", "output_cost", "total_cost")
+
+# Objectives the SDK measures itself (cost, tokens, latency) rather than the
+# custom evaluator. Their absence from ExampleResult.metrics is handled by the
+# measured-metric paths, not by the missing-objective guard below (#2422).
+_SDK_MEASURED_OBJECTIVES = frozenset(
+    {
+        *MEASURED_ONLY_METRICS,
+        *_LLM_TOKEN_METRICS,
+        *_LLM_COST_METRICS,
+        "latency",
+        "response_time_ms",
+        "execution_time_ms",
+    }
+)
 
 
 def _strict_metrics_nulls() -> bool:
@@ -158,39 +174,13 @@ class CustomEvaluatorWrapper(BaseEvaluator):
     def _extract_model_from_response(
         self, response: Any, config: dict[str, Any]
     ) -> str | None:
-        """Extract model name from response or config.
+        """Pick the model one captured response is priced at (#2443).
 
-        Args:
-            response: The captured response object
-            config: Configuration dictionary
-
-        Returns:
-            Model name or None
+        See :func:`traigent.evaluators.metrics_tracker.pricing_model_for_response`.
         """
-        model_name: str | None = config.get("model")
-        if model_name:
-            return model_name
+        from traigent.evaluators.metrics_tracker import pricing_model_for_response
 
-        if not response:
-            return None
-
-        # Check for model in response metadata (LangChain pattern)
-        if hasattr(response, "response_metadata") and isinstance(
-            response.response_metadata, dict
-        ):
-            model_name = response.response_metadata.get("model")
-            if not model_name:
-                model_name = response.response_metadata.get("model_name")
-
-        # Check for model attribute directly
-        if not model_name and hasattr(response, "model"):
-            model_name = cast(str | None, response.model)
-
-        # Check for model_name attribute
-        if not model_name and hasattr(response, "model_name"):
-            model_name = cast(str | None, response.model_name)
-
-        return model_name
+        return pricing_model_for_response(response, config.get("model"))
 
     def _reconstruct_original_prompt(self, example: Any) -> list[dict[str, str]]:
         """Reconstruct original prompt from example input.
@@ -426,9 +416,40 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             metadata=example.metadata.copy() if example.metadata else {},
         )
 
+    def _raise_for_objectives_never_reported(
+        self, example_results: list[ExampleResult]
+    ) -> None:
+        """Fail closed when no successful row reported an objective (#2422).
+
+        ``_aggregate_custom_metrics`` reads an absent key as 0.0, so an
+        evaluator that names its metric differently (``score`` instead of
+        ``accuracy``) scored every trial 0.0 with no signal, and the
+        run-level unmatched-objective guard (#1691) never fired because the
+        objective looked measured. A key absent from only some rows keeps the
+        historical 0.0; a run where every row failed is already failed.
+        """
+        successful = [r for r in example_results if r.success]
+        if not successful:
+            return
+        reported: set[str] = set()
+        for row in successful:
+            reported.update((row.metrics or {}).keys())
+        missing = [
+            metric
+            for metric in self.metrics
+            if metric not in _SDK_MEASURED_OBJECTIVES and metric not in reported
+        ]
+        if missing:
+            raise EvaluationError(
+                f"Objective(s) {missing} missing from every ExampleResult.metrics "
+                f"the custom_evaluator returned (keys returned: {sorted(reported)}). "
+                "Refusing to substitute a fabricated 0.0 score for an "
+                "optimization objective."
+            )
+
     def _aggregate_custom_metrics(
         self, all_metrics: list[dict[str, Any]]
-    ) -> dict[str, float]:
+    ) -> dict[str, float | None]:
         """Aggregate custom metrics across all examples.
 
         Args:
@@ -454,8 +475,8 @@ class CustomEvaluatorWrapper(BaseEvaluator):
     ) -> None:
         """Keep a requested cost metric UNKNOWN when nothing measured it.
 
-        ``aggregate_measured_metric`` keeps the historical ``0.0`` for a cost
-        metric no row reported. With LLM capture on, that 0.0 used to reach
+        ``aggregate_measured_metric`` previously kept ``0.0`` for a cost
+        metric no row reported; it now preserves unknown cost as ``None``. With LLM capture on, that 0.0 used to reach
         the trial as its cost objective (and, via the ``cost`` fallback in
         ``extract_cost_from_results``, as ``total_cost``), so an unmeasured
         configuration looked free and could win a cost ranking against a
@@ -558,6 +579,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             f"Original error: {error}"
         ) from error
 
+    @capture_evaluation
     async def evaluate(
         self,
         func: Callable[..., Any],
@@ -750,15 +772,21 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         if self.capture_llm_metrics and self._metrics_available:
             self._metrics_tracker.end_tracking()
 
+        try:
+            self._raise_for_objectives_never_reported(example_results)
+        except EvaluationError:
+            self._abort_execution_budget_evaluation(execution_budget_lease)
+            raise
+
         # Aggregate metrics across all examples
         aggregated_metrics = self._aggregate_custom_metrics(all_metrics)
 
         # Add LLM metrics aggregation if captured
         if self.capture_llm_metrics and self._metrics_available:
             llm_agg = self._aggregate_llm_metrics(all_metrics, example_results)
-            # None only appears under TRAIGENT_STRICT_METRICS_NULLS, whose
-            # contract is exactly "None instead of 0.0 for a missing metric".
-            aggregated_metrics.update(cast(dict[str, float], llm_agg))
+            # Missing captured cost stays nullable; resolve requested cost
+            # objectives according to the measurement policy below.
+            aggregated_metrics.update(llm_agg)
             self._resolve_unmeasured_cost_objectives(aggregated_metrics, all_metrics)
 
         # Log results

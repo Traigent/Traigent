@@ -32,7 +32,7 @@ Examples:
     ...     },
     ...     constraints=[
     ...         lambda config: config["temperature"] < 0.8 if config["model"] == "gpt-4" else True,
-    ...         lambda config, metrics: metrics.get("cost", 0) <= 0.10
+    ...         lambda config, metrics: metrics.get("cost") is not None and metrics["cost"] <= 0.10
     ...     ]
     ... )
     ... def process_ticket(ticket: str) -> str:
@@ -54,22 +54,15 @@ if TYPE_CHECKING:
     from traigent.api.constraints import BoolExpr, Constraint
     from traigent.api.safety import CompoundSafetyConstraint, SafetyConstraint
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    PrivateAttr,
-    field_validator,
-    model_validator,
-)
-
 # Aliased on purpose. This module imports Traigent's own ``ValidationError`` from
 # ``traigent.utils.exceptions`` below, which binds that name for the rest of the
 # file, so a bare ``except ValidationError`` here would never catch a pydantic
 # failure. There are currently zero ``except ValidationError`` sites in this
 # module, so the shadowing is a latent trap for future code rather than a live
 # bug; the alias keeps the pydantic class reachable under an unambiguous name.
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from pydantic import ValidationError as PydanticValidationError
+from pydantic import field_validator, model_validator
 
 from traigent.api.functions import _GLOBAL_CONFIG
 from traigent.api.parameter_ranges import (
@@ -79,7 +72,9 @@ from traigent.api.parameter_ranges import (
     normalize_configuration_space,
 )
 from traigent.api.types import AgentDefinition
-from traigent.cloud.smart_pruning import SmartPruningOptions
+from traigent.cloud.smart_pruning import (
+    SmartPruningOptions,  # Public decorator option type.
+)
 from traigent.cloud.smart_pruning import (
     normalize_smart_pruning_options as _normalize_smart_pruning_options,
 )
@@ -106,8 +101,8 @@ from traigent.core.objectives import (
 from traigent.core.optimized_function import (
     _REMOVED_MOCK_PARAMETERS,
     OptimizedFunction,
-    _removed_mock_parameter_message,
     _reject_removed_strategy_preset,
+    _removed_mock_parameter_message,
 )
 from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -780,8 +775,10 @@ def _warn_context_mode_param_shadowing(
        trial runs identically.
 
     Both emit a loud warning so the no-op is not silent. It is advisory (never
-    raises): a function that reads ``get_config()``/``current_config`` is detected
-    and skipped. When the source is unintrospectable (lambda / C-extension /
+    raises): a function that reads ``get_config()``/``get_trial_config()``/
+    ``current_config`` is detected and skipped (substring scan: an aliased import
+    such as ``from traigent import get_trial_config as gtc`` is not recognised).
+    When the source is unintrospectable (lambda / C-extension /
     notebook), the naive-default case is skipped rather than warned to avoid false
     positives (best-effort — noted limitation).
     """
@@ -821,7 +818,13 @@ def _warn_context_mode_param_shadowing(
     source_available = True
     try:
         source = inspect.getsource(func)
-        reads_config = "get_config" in source or "current_config" in source
+        # Public in-trial accessors: get_config(), get_trial_config() (#2476),
+        # get_current_config() / .current_config (matched by "current_config").
+        # Substring match, so an aliased import (``as gtc``) is not recognised.
+        reads_config = any(
+            accessor in source
+            for accessor in ("get_config", "get_trial_config", "current_config")
+        )
     except (OSError, TypeError):  # pragma: no cover - source unavailable
         source_available = False
 
@@ -840,9 +843,10 @@ def _warn_context_mode_param_shadowing(
             f"@traigent.optimize: the tuned variable(s) {shadowed} are declared as "
             f"parameters of '{func_name}', but injection_mode is CONTEXT (the default), "
             f"which does NOT override function parameters. Unless the body reads "
-            f"traigent.get_config(), every trial will run with the signature defaults "
-            f"and the optimization will silently sweep nothing (a false-positive 'best "
-            f"config'). To actually vary {shadowed}: read them via traigent.get_config() "
+            f"traigent.get_config() or traigent.get_trial_config(), every trial will "
+            f"run with the signature defaults and the optimization will silently sweep "
+            f"nothing (a false-positive 'best config'). To actually vary {shadowed}: "
+            f"read them via traigent.get_config() or traigent.get_trial_config() "
             f'inside the function, or use injection_mode="seamless" (zero code change) / '
             f'injection_mode="parameter".'
         )
@@ -851,9 +855,10 @@ def _warn_context_mode_param_shadowing(
         return
 
     # Phantom best_config (issue #1372 sibling): the tuned knobs are NEITHER
-    # function parameters NOR read via traigent.get_config()/current_config, yet
-    # a non-empty configuration_space was provided under CONTEXT mode. In CONTEXT
-    # mode the per-trial config is delivered ONLY through traigent.get_config();
+    # function parameters NOR read via get_config()/get_trial_config()/
+    # current_config, yet a non-empty configuration_space was provided under
+    # CONTEXT mode. In CONTEXT mode the per-trial config is delivered only
+    # through those accessors;
     # a body that never reads it runs every trial identically, so the optimizer
     # reports a confident "best config" for a sweep that never varied anything.
     # Only warn when we could actually confirm the body reads no config — if the
@@ -864,12 +869,13 @@ def _warn_context_mode_param_shadowing(
     message = (
         f"@traigent.optimize: injection_mode is CONTEXT (the default) and a "
         f"configuration_space was provided ({all_knobs}), but '{func_name}' neither "
-        f"reads traigent.get_config() nor accepts the tuned variable(s) as parameters. "
-        f"In CONTEXT mode the per-trial config is delivered ONLY via "
-        f"traigent.get_config(); since the body never reads it, every trial runs "
-        f"identically and the optimizer will report a confident 'best config' for a "
-        f"sweep that never varied anything (a phantom best_config). To actually apply "
-        f"the config: read the knob(s) via traigent.get_config() inside the function, "
+        f"reads traigent.get_config() / traigent.get_trial_config() nor accepts the "
+        f"tuned variable(s) as parameters. In CONTEXT mode the per-trial config is "
+        f"delivered only through those accessors; since the body never reads it, "
+        f"every trial runs identically and the optimizer will report a confident "
+        f"'best config' for a sweep that never varied anything (a phantom "
+        f"best_config). To actually apply the config: read the knob(s) via "
+        f"traigent.get_config() or traigent.get_trial_config() inside the function, "
         f'or use injection_mode="seamless" (zero code change) / '
         f'injection_mode="parameter".'
     )
@@ -2619,7 +2625,7 @@ def optimize(  # NOSONAR(S107)
             statistically violated, the run halts with
             ``OptimizationResult.stop_reason == "safety_constraint"``. Below the
             evidence floor, or when satisfied, the run continues normally. See
-            traigent-smartopt#26.
+            ``traigent.api.safety`` for the available metrics.
 
         TVL integration:
             tvl_spec: Path to a TVL spec. When provided (and ``tvl`` opts allow it)
@@ -2798,7 +2804,7 @@ def optimize(  # NOSONAR(S107)
         ...     },
         ...     constraints=[
         ...         lambda cfg: cfg["max_tokens"] <= 500 if cfg["model"] == "gpt-4" else True,
-        ...         lambda cfg, metrics: metrics.get("cost", 0) <= 0.10
+        ...         lambda cfg, metrics: metrics.get("cost") is not None and metrics["cost"] <= 0.10
         ...     ]
         ... )
         ... def handle_ticket(ticket: str) -> str:

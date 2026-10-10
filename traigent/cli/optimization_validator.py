@@ -12,11 +12,11 @@ from rich.console import Console
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.cli.validation_types import OptimizedFunction, ValidationResult
 from traigent.config.types import resolve_execution_policy
+from traigent.core.objective_directions import resolve_objective_orientation
 from traigent.evaluators.local import LocalEvaluator
 from traigent.utils.env_config import is_mock_llm
 from traigent.utils.logging import get_logger
 from traigent.utils.multi_objective import ParetoFrontCalculator, ParetoPoint
-from traigent.core.objective_directions import resolve_objective_orientation
 
 logger = get_logger(__name__)
 console = Console()
@@ -193,7 +193,9 @@ class OptimizationValidator:
                 raise RuntimeError("No successful optimization trials") from None
 
             # Use best_metrics property instead of best_trial
-            optimized_metrics = result.best_metrics
+            optimized_metrics = self._filter_metrics_to_objectives(
+                result.best_metrics, func_info, is_mock_llm()
+            )
             optimized_config = result.best_config
 
             logger.info(f"Optimized metrics for {func_info.name}: {optimized_metrics}")
@@ -248,34 +250,37 @@ class OptimizationValidator:
 
     def _filter_metrics_to_objectives(
         self,
-        metrics: dict[str, float],
+        metrics: dict[str, float | None],
         func_info: OptimizedFunction,
         is_mock_mode: bool,
     ) -> dict[str, float]:
         """Filter metrics to only include requested objectives."""
+        available_metrics = {
+            name: value for name, value in metrics.items() if value is not None
+        }
         if not func_info.objectives:
-            return metrics
+            return available_metrics
 
         if is_mock_mode:
             # In mock mode, silently return available objectives
             return {
-                obj: metrics.get(obj, 0.0)
+                obj: available_metrics[obj]
                 for obj in func_info.objectives
-                if obj in metrics
+                if obj in available_metrics
             }
 
         # In real mode, warn about missing objectives
         filtered: dict[str, float] = {}
         for objective in func_info.objectives:
-            if objective in metrics:
-                filtered[objective] = metrics[objective]
+            if objective in available_metrics:
+                filtered[objective] = available_metrics[objective]
             else:
                 logger.warning(
                     "Objective '%s' not present in evaluation metrics for %s",
                     objective,
                     func_info.name,
                 )
-        return filtered if filtered else metrics
+        return filtered if filtered else available_metrics
 
     async def _evaluate_configuration(
         self,
