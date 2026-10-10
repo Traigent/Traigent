@@ -20,7 +20,7 @@ def test_mcp_serve_without_extra_prints_install_hint(monkeypatch) -> None:
     real_import = builtins.__import__
 
     def guarded_import(name, *args, **kwargs):
-        if name == "mcp.server.fastmcp":
+        if name == "mcp" or name.startswith("mcp."):
             raise ImportError("mcp missing")
         return real_import(name, *args, **kwargs)
 

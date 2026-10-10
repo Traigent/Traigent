@@ -73,12 +73,14 @@ def create_server() -> Any:
     ``traigent-analytics-mcp --help`` and import-time checks still work in
     environments that have not installed ``traigent[mcp]``.
     """
+    from traigent.mcp._compat import mcp_server_class
+
     try:
-        from mcp.server.fastmcp import FastMCP
+        server_class = mcp_server_class()
     except ImportError as exc:  # pragma: no cover - covered by CLI/entrypoint test
         raise RuntimeError(_MCP_INSTALL_MESSAGE) from exc
 
-    server = FastMCP(
+    server = server_class(
         "traigent-analytics",
         instructions=(
             "Agent-facing Traigent analytics MCP. Tools read optimization "
