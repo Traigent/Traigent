@@ -24,8 +24,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from traigent.api.types import ExampleResult
-from traigent.utils.removed_params import reject_removed_mock_parameters
-from traigent.identity.examples import result_identity_fields
 from traigent.evaluators.dataset_registry import (
     DatasetRegistryEntry,
     resolve_dataset_reference,
@@ -37,6 +35,7 @@ from traigent.evaluators.metrics_tracker import (
     extract_llm_metrics,
     is_reserved_metric_key,
 )
+from traigent.identity.examples import result_identity_fields
 from traigent.utils.env_config import is_truthy
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
@@ -46,6 +45,7 @@ from traigent.utils.exceptions import TrialPrunedError, ValidationError
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.langchain_interceptor import get_captured_response_by_key
 from traigent.utils.logging import get_logger
+from traigent.utils.removed_params import reject_removed_mock_parameters
 
 if TYPE_CHECKING:
     from traigent.core.execution_budget import ExecutionBudget
@@ -367,6 +367,9 @@ def _accuracy_values_match(actual: Any, expected: Any) -> bool:
     return _typed_accuracy_equality(actual, expected)
 
 
+_TRAIGENT_META_KEY = "__traigent_meta__"
+
+
 def _normalize_output_for_accuracy_comparison(
     raw_output: Any, expected: Any = None
 ) -> Any:
@@ -424,13 +427,36 @@ def _normalize_output_for_accuracy_comparison(
     broken.
     """
     output, _ = BaseEvaluator._unpack_user_metrics(raw_output)
-    if (
-        isinstance(output, CollectionsMapping)
-        and "text" in output
-        and not isinstance(expected, CollectionsMapping)
-    ):
+    if not isinstance(output, CollectionsMapping) or "text" not in output:
+        return output
+    # ``with_usage()`` marks its wrapper with the reserved ``__traigent_meta__``
+    # key and carries the real output, of any type, under ``text``
+    # (Traigent#2522). That marker makes it a wrapper whatever the expected
+    # shape, so a structured answer wrapped by ``with_usage()`` is compared as
+    # itself against a structured gold value (Traigent#2523).
+    if _TRAIGENT_META_KEY in output:
+        return output["text"]
+    if not isinstance(expected, CollectionsMapping):
         return output["text"]
     return output
+
+
+def _accuracy_value_for_example(actual: Any, expected: Any) -> float | None:
+    """Per-example built-in accuracy, using the same comparison as the aggregate.
+
+    The per-example paths used to unwrap every dict as a ``{"text": ...}``
+    wrapper before comparing, so a correct structured answer such as
+    ``{"category": "billing", "urgency": "high"}`` against the same structured
+    gold became ``None`` (tracker path) or ``0.0`` (detailed path), while the
+    aggregate -- which goes through :func:`_accuracy_matches_after_unwrap` --
+    scored it 1.0 (Traigent#2523). Routing every site through one comparator
+    keeps per-example evidence and the aggregate from disagreeing.
+
+    Returns ``None`` when there is no gold value or no output to compare.
+    """
+    if expected is None or actual is None:
+        return None
+    return 1.0 if _accuracy_matches_after_unwrap(actual, expected) else 0.0
 
 
 def _accuracy_matches_after_unwrap(actual: Any, expected: Any) -> bool:
