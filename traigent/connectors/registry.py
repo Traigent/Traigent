@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from importlib.metadata import entry_points
 from typing import Any, cast
 
-
 ENTRY_POINT_GROUP = "traigent.connectors"
 
 

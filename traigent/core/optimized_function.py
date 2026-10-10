@@ -55,8 +55,10 @@ from traigent.config.types import (
 )
 from traigent.core.ci_approval import check_ci_approval
 from traigent.core.config_state_manager import (
-    ConfigStateManager,
-    OptimizationState,
+    ConfigStateManager,  # Per-function configuration manager.
+)
+from traigent.core.config_state_manager import (
+    OptimizationState,  # Lifecycle state owned by that manager.
 )
 from traigent.core.cost_enforcement import is_cost_preapproved, normalize_cost_approved
 from traigent.core.execution_budget import ExecutionBudget
@@ -108,11 +110,6 @@ from traigent.integrations.framework_override import override_context
 from traigent.optimizers import get_optimizer
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.spec_loader import load_tvl_spec
-from traigent.utils.removed_params import (
-    REMOVED_MOCK_PARAMETERS,
-    reject_removed_mock_parameters,
-    removed_mock_parameter_message,
-)
 from traigent.utils.artifact_fingerprints import build_artifact_fingerprints
 from traigent.utils.cost_calculator import (
     UnknownModelError,
@@ -136,6 +133,11 @@ from traigent.utils.exceptions import (
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.incentives import show_upgrade_hint
 from traigent.utils.logging import get_logger
+from traigent.utils.removed_params import (
+    REMOVED_MOCK_PARAMETERS,
+    reject_removed_mock_parameters,
+    removed_mock_parameter_message,
+)
 from traigent.utils.validation import (
     validate_config_space,
     validate_dataset_path,
@@ -3195,6 +3197,11 @@ class OptimizedFunction(Generic[_P, _R]):
             optimizer_kwargs.pop("invocations_per_example", None)
             if max_trials:
                 optimizer_kwargs["max_trials"] = max_trials
+            # Forward the declared schema exactly as the local path does: from
+            # names alone the base optimizer cannot orient a custom objective
+            # and refuses to build (#2514).
+            if self.objective_schema is not None:
+                optimizer_kwargs["objective_schema"] = self.objective_schema
 
             optimizer = InteractiveOptimizer(
                 effective_config_space,

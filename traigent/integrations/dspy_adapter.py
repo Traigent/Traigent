@@ -16,6 +16,7 @@ Example:
 
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -78,7 +79,7 @@ class DSPyPromptOptimizer:
         method: Literal["mipro", "bootstrap"] = "mipro",
         *,
         teacher_model: str | None = None,
-        auto_setting: Literal["light", "medium", "heavy"] = "medium",
+        auto_setting: Literal["light", "medium", "heavy"] | None = "medium",
     ):
         """Initialize the DSPy prompt optimizer.
 
@@ -89,6 +90,8 @@ class DSPyPromptOptimizer:
                           If not specified, uses the default DSPy LM.
             auto_setting: Auto setting for MIPRO - "light", "medium", or "heavy"
                          Controls the thoroughness of instruction optimization.
+                         ``None`` disables the preset and uses
+                         ``num_candidates`` from ``optimize_prompt``.
 
         Raises:
             ImportError: If DSPy is not installed
@@ -126,8 +129,12 @@ class DSPyPromptOptimizer:
             metric: Evaluation metric function(example, prediction) -> float
             max_bootstrapped_demos: Maximum bootstrapped demonstrations (bootstrap only)
             max_labeled_demos: Maximum labeled demonstrations (bootstrap only)
-            num_candidates: Number of candidate prompts to evaluate (mipro only)
+            num_candidates: Number of candidate prompts to evaluate (mipro
+                only, and only when ``auto_setting`` is ``None``; an auto
+                preset chooses its own candidate count)
             requires_permission_to_run: Whether to require user confirmation
+                (forwarded to ``MIPROv2.compile`` where the installed DSPy
+                supports it)
 
         Returns:
             PromptOptimizationResult containing the optimized module and metadata
@@ -187,15 +194,48 @@ class DSPyPromptOptimizer:
         module: Any,
         trainset: list[Any],
         teacher: Any | None,
+        **compile_kwargs: Any,
     ) -> Any:
         """Compile module with optional teacher context.
 
         Helper to reduce repetition when compiling with/without teacher model.
+        Extra keyword arguments are forwarded to ``optimizer.compile()``.
         """
         if teacher:
             with dspy.context(lm=teacher):
-                return optimizer.compile(module, trainset=trainset)
-        return optimizer.compile(module, trainset=trainset)
+                return optimizer.compile(module, trainset=trainset, **compile_kwargs)
+        return optimizer.compile(module, trainset=trainset, **compile_kwargs)
+
+    @staticmethod
+    def _mipro_permission_kwargs(requires_permission_to_run: bool) -> dict[str, Any]:
+        """Build the ``requires_permission_to_run`` kwarg for ``MIPROv2.compile``.
+
+        DSPy accepts this argument only in ``compile()`` (never the
+        constructor, #2419), and its contract depends on the installed line,
+        read from the parameter's declared default rather than a version
+        string:
+
+        * default ``True`` (DSPy 2.6.x): pass the caller's value, so the
+          default ``False`` skips DSPy's 20 s stdin confirmation wait;
+        * default ``None`` (DSPy 3.x, deprecated): omit it unless the caller
+          asked for ``True`` (``False`` only logs a deprecation warning
+          there; ``True`` makes DSPy raise its own explanatory error);
+        * parameter absent: omit it.
+        """
+        try:
+            params = inspect.signature(dspy.MIPROv2.compile).parameters
+        except (TypeError, ValueError):
+            return {}
+        param = params.get("requires_permission_to_run")
+        if param is None:
+            return {}
+        if param.default is None:
+            return (
+                {"requires_permission_to_run": True}
+                if requires_permission_to_run
+                else {}
+            )
+        return {"requires_permission_to_run": requires_permission_to_run}
 
     def _run_mipro(
         self,
@@ -206,15 +246,28 @@ class DSPyPromptOptimizer:
         requires_permission_to_run: bool,
         teacher: Any | None,
     ) -> tuple[Any, dict[str, Any]]:
-        """Run MIPROv2 optimization."""
-        optimizer = dspy.MIPROv2(
-            metric=metric,
-            auto=self.auto_setting,
-            num_candidates=num_candidates,
-            requires_permission_to_run=requires_permission_to_run,
-        )
+        """Run MIPROv2 optimization.
 
-        optimized = self._compile_with_teacher(optimizer, module, trainset, teacher)
+        DSPy rejects ``num_candidates``/``num_trials`` together with ``auto``
+        (the auto preset sets them), so ``num_candidates`` is only forwarded
+        when ``auto_setting`` is ``None``.
+        """
+        compile_kwargs = self._mipro_permission_kwargs(requires_permission_to_run)
+        if self.auto_setting is None:
+            optimizer = dspy.MIPROv2(
+                metric=metric, auto=None, num_candidates=num_candidates
+            )
+            compile_kwargs["num_trials"] = max(1, int(1.5 * num_candidates))
+            # DSPy holds out 80% of the trainset as the valset; its default
+            # minibatch_size (35) must not exceed that.
+            if int(len(trainset) * 0.8) < 35:
+                compile_kwargs["minibatch"] = False
+        else:
+            optimizer = dspy.MIPROv2(metric=metric, auto=self.auto_setting)
+
+        optimized = self._compile_with_teacher(
+            optimizer, module, trainset, teacher, **compile_kwargs
+        )
         best_score = self._compute_best_score(optimized, trainset, metric)
 
         return optimized, {

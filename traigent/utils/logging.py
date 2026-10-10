@@ -128,5 +128,34 @@ def get_logger(name: str) -> logging.Logger:
 # Create default logger
 logger = get_logger(__name__)
 
+
+def apply_env_logging_level() -> None:
+    """Apply ``TRAIGENT_LOG_LEVEL`` to the ``traigent`` logger tree at import.
+
+    ``TRAIGENT_LOG_LEVEL`` is the documented switch for SDK diagnostics, but
+    before this hook it was read only inside :func:`setup_logging`, which the
+    ``@traigent.optimize`` / ``optimize_sync()`` path never calls (#2413).
+    When the variable is set, configure the ``traigent`` logger only (scoped,
+    ``propagate = False``) so the host's ROOT logger is never touched. When it
+    is unset this is a no-op and default output is unchanged. An invalid value
+    is reported with a warning instead of making ``import traigent`` fail.
+    """
+
+    env_level = os.environ.get("TRAIGENT_LOG_LEVEL", "").strip()
+    if not env_level:
+        return
+    if not isinstance(getattr(logging, env_level.upper(), None), int):
+        import warnings
+
+        warnings.warn(
+            f"Ignoring invalid TRAIGENT_LOG_LEVEL={env_level!r}; expected one of "
+            "DEBUG, INFO, WARNING, ERROR, CRITICAL.",
+            stacklevel=2,
+        )
+        return
+    setup_logging(env_level, logger_name="traigent")
+
+
 # Configure third-party loggers early without importing optional dependencies.
 configure_litellm_logging()
+apply_env_logging_level()

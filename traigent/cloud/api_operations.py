@@ -29,8 +29,8 @@ from traigent.cloud.models import (
     SessionCreationRequest,
     SessionCreationResponse,
     TrialResultSubmission,
-    session_dataset_identity_to_wire,
     session_content_identity_to_wire,
+    session_dataset_identity_to_wire,
     session_identity_v2_to_wire,
     session_narrative_to_wire,
     session_task_type_to_wire,
@@ -257,52 +257,6 @@ def map_status_to_wire(status: str, *, endpoint: str = "experiment_run") -> str:
     return mapped
 
 
-def _choice_sequence_contains_bool(values: Any) -> bool:
-    """Return True when a categorical choice container contains a bool."""
-
-    if not isinstance(values, (list, tuple)):
-        return False
-    return any(isinstance(value, bool) for value in values)
-
-
-def _configuration_space_entry_uses_bool(entry: Any) -> bool:
-    """Detect bool-valued knobs without changing their wire representation."""
-
-    # bool is a subclass of int, so detect it before any numeric handling.
-    if isinstance(entry, bool):
-        return True
-    if isinstance(entry, (list, tuple)):
-        return _choice_sequence_contains_bool(entry)
-    if isinstance(entry, dict):
-        return _choice_sequence_contains_bool(
-            entry.get("choices")
-        ) or _choice_sequence_contains_bool(entry.get("values"))
-    return False
-
-
-def _warn_boolean_config_values(space: Any) -> None:
-    """Warn when configuration_space contains bools the cloud API rejects."""
-
-    if not isinstance(space, dict):
-        return
-
-    offending_parameters = [
-        str(name)
-        for name, entry in space.items()
-        if _configuration_space_entry_uses_bool(entry)
-    ]
-    if not offending_parameters:
-        return
-
-    logger.warning(
-        "configuration_space parameter(s) %s use boolean values, which the "
-        "cloud session API does not accept and will reject with a generic "
-        "HTTP 400. Encode boolean knobs as strings (e.g. ['with','without']) "
-        "or integers (0/1) and map back at the call site. See issue #1488.",
-        offending_parameters,
-    )
-
-
 def _typed_configuration_space(space: Any) -> Any:
     """Normalize shorthand configuration space to the typed wire contract.
 
@@ -315,7 +269,6 @@ def _typed_configuration_space(space: Any) -> Any:
     """
     if not isinstance(space, dict):
         return space
-    _warn_boolean_config_values(space)
     normalized: dict[str, Any] = {}
     for name, entry in space.items():
         if isinstance(entry, (list, tuple)):
@@ -564,7 +517,6 @@ class ApiOperations:
                 legacy_payload = self._build_legacy_session_payload(
                     session_request,
                     max_trials_value,
-                    warn_boolean_config_values=False,
                 )
                 try:
                     return await self._post_session_creation(
@@ -780,16 +732,11 @@ class ApiOperations:
         self,
         session_request: SessionCreationRequest,
         max_trials: int,
-        *,
-        warn_boolean_config_values: bool = True,
     ) -> dict[str, Any]:
         """The pre-Phase-8 legacy shape (problem_statement/search_space) —
         non-governed compatibility only."""
         metadata = session_request.metadata or {}
         evaluation_set = metadata.get("evaluation_set", "default")
-        if warn_boolean_config_values:
-            _warn_boolean_config_values(session_request.configuration_space)
-
         typed_objectives = normalize_typed_objectives(session_request.objectives)
         first_objective = typed_objectives[0]
         if not isinstance(first_objective, dict):
