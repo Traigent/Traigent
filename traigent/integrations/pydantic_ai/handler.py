@@ -21,6 +21,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from collections.abc import AsyncIterator, Iterator
@@ -218,17 +219,24 @@ class PydanticAIHandler:
         end_time = time.time()
         try:
             usage = result.usage()
-            estimated_cost = self._estimate_cost(
-                getattr(usage, "input_tokens", 0) or 0,
-                getattr(usage, "output_tokens", 0) or 0,
-            )
+            input_tokens = self._usage_counter(usage, "input_tokens")
+            output_tokens = self._usage_counter(usage, "output_tokens")
+            if input_tokens is None or output_tokens is None:
+                # ``usage()`` returned nothing, or without its token counters:
+                # the spend is unknown. A missing counter is not zero tokens, so
+                # it must not price as a measured $0 (Traigent#2517).
+                estimated_cost = None
+                input_tokens = input_tokens or 0
+                output_tokens = output_tokens or 0
+            else:
+                estimated_cost = self._estimate_cost(input_tokens, output_tokens)
             metrics = AgentRunMetrics(
                 model=self._model_name,
                 start_time=start_time,
                 end_time=end_time,
                 request_count=getattr(usage, "requests", 0) or 0,
-                input_tokens=getattr(usage, "input_tokens", 0) or 0,
-                output_tokens=getattr(usage, "output_tokens", 0) or 0,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 total_tokens=getattr(usage, "total_tokens", 0) or 0,
                 cost=estimated_cost if estimated_cost is not None else 0.0,
                 cost_unmeasured=estimated_cost is None,
@@ -247,6 +255,23 @@ class PydanticAIHandler:
 
         with self._lock:
             self._runs.append(metrics)
+
+    @staticmethod
+    def _usage_counter(usage: Any, name: str) -> int | float | None:
+        """Return a reported, non-negative token counter, else ``None``.
+
+        ``None`` means "not reported" (usage missing, attribute absent or
+        ``None``, or not a finite non-negative number): the caller must treat
+        the cost as unmeasured rather than as zero tokens.
+        """
+        value = getattr(usage, name, None)
+        if value is None or isinstance(value, bool):
+            return None
+        if not isinstance(value, (int, float)):
+            return None
+        if not math.isfinite(value) or value < 0:
+            return None
+        return value
 
     def _record_error(self, start_time: float) -> None:
         """Record a failed run: no usage was reported, and none is invented."""

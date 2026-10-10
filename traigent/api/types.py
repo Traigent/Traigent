@@ -1627,13 +1627,35 @@ class OptimizationResult:
 
     def _cost_unmeasured_trial_count(self) -> int:
         """Count trials whose cost is flagged unmeasured (Traigent#2517)."""
-        from traigent.utils.trial_costs import is_cost_unmeasured  # noqa: PLC0415
+        return sum(1 for trial in self.trials if self._trial_cost_unmeasured(trial))
 
-        return sum(
-            1
-            for trial in self.trials
-            if is_cost_unmeasured(getattr(trial, "metrics", None))
+    def _trial_cost_unmeasured(self, trial: TrialResult) -> bool:
+        """True when a trial's cost is flagged, or work ran and none was recorded.
+
+        A failed, pruned or cancelled trial that attempted examples but carries
+        no cost telemetry at all (the factory only records ``total_cost`` when
+        the progress state reported one) spent an unknown amount: counting it
+        as $0 would put a fabricated zero into the run total and the cost per
+        configuration (Traigent#2517).
+        """
+        from traigent.utils.trial_costs import (  # noqa: PLC0415
+            extract_trial_cost_metric,
+            is_cost_unmeasured,
         )
+
+        metrics = getattr(trial, "metrics", None)
+        if is_cost_unmeasured(metrics):
+            return True
+        if trial.status not in (
+            TrialStatus.FAILED,
+            TrialStatus.PRUNED,
+            TrialStatus.CANCELLED,
+        ):
+            return False
+        attempted = self._extract_examples_attempted(trial)
+        if not attempted or attempted <= 0:
+            return False
+        return extract_trial_cost_metric(metrics, trial.metadata) is None
 
     def _resolve_initial_duration(self) -> float:
         """Safely coerce the experiment duration to float."""

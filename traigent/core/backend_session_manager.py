@@ -1053,9 +1053,13 @@ class BackendSessionManager:
         if session_id not in self._session_cost_budget_armed:
             return
 
-        metrics_payload["cost"] = 0.0
+        # No cost and no flag: the spend is unknown, never a measured $0.
+        metrics_payload["cost_unmeasured"] = 1.0
         if not self._cost_budget_zero_backfill_logged:
-            logger.debug("no cost telemetry; backfilling 0.0 for budget accounting")
+            logger.debug(
+                "no cost telemetry; submitting budgeted trial as "
+                "cost_unmeasured (not $0)"
+            )
             self._cost_budget_zero_backfill_logged = True
 
     def _flag_backend_degraded(

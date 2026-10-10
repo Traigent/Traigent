@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import threading
 import time
@@ -117,6 +118,29 @@ def _to_float(value: Any) -> float:
         return float(value) if value is not None else 0.0
     except (TypeError, ValueError):
         return 0.0
+
+
+def _reported_cost(value: Any) -> float | None:
+    """Return a cost Langfuse actually reported, else ``None``.
+
+    Only a finite, non-negative number (or a decimal string of one: v2 returns
+    costs as strings) is a reported cost. ``None``, an empty or non-numeric
+    string, a boolean, a negative and NaN/Inf are *not reported*: they are an
+    unknown cost, never a measured ``0.0`` (Traigent#2517).
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+    try:
+        cost = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(cost) or cost < 0:
+        return None
+    return cost
 
 
 def _to_int(value: Any) -> int:
@@ -1145,13 +1169,17 @@ class LangfuseClient:
         )
 
         # Extract cost (v1: calculatedTotalCost number; v2: totalCost string)
-        cost = _to_float(obs_data.get("calculatedTotalCost")) or _to_float(
-            obs_data.get("totalCost")
-        )
-        cost_reported = (
-            obs_data.get("calculatedTotalCost") is not None
-            or obs_data.get("totalCost") is not None
-        )
+        reported_costs = [
+            reported
+            for reported in (
+                _reported_cost(obs_data.get("calculatedTotalCost")),
+                _reported_cost(obs_data.get("totalCost")),
+            )
+            if reported is not None
+        ]
+        cost_reported = bool(reported_costs)
+        # First non-zero reported cost wins; a reported 0.0 stays a measured 0.0.
+        cost = next((c for c in reported_costs if c), 0.0)
 
         # Calculate latency from timestamps
         latency_ms = 0.0

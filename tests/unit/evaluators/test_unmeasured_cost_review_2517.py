@@ -50,14 +50,18 @@ def test_budgeted_submission_does_not_backfill_zero_for_unmeasured_cost() -> Non
     assert "cost" not in metrics
 
 
-def test_budgeted_submission_still_backfills_zero_when_not_flagged() -> None:
+def test_budgeted_submission_flags_instead_of_backfilling_zero_when_not_flagged() -> (
+    None
+):
+    """No cost and no flag is an unknown cost, not a free trial (round 7)."""
     client = SimpleNamespace()
     client._cost_budget_armed_sessions = {"s1"}
     metrics: dict[str, Any] = {"accuracy": 1.0}
     ensure_cost_metric_for_budgeted_completed_submission(
         client=client, session_id="s1", metrics=metrics, status="COMPLETED"
     )
-    assert metrics["cost"] == 0.0
+    assert "cost" not in metrics
+    assert metrics["cost_unmeasured"] == 1.0
 
 
 def test_backend_session_manager_does_not_backfill_zero_for_unmeasured_cost() -> None:
