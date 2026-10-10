@@ -209,6 +209,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   stopped by the SDK default `max_trials` or the unmeasured-cost safety limit
   records and prints why (`metadata["stop_detail"]`).
 
+- **A hybrid service that reports no cost is unmeasured, not $0 (#2517).**
+  `TraigentService` no longer sends `cost_usd: 0.0` for an execute handler that
+  returned no cost: the per-item field is omitted, and a batch where any handler
+  (or a handler that raised) reported none sends `operational_metrics.cost_unmeasured`
+  next to the priced lower bound it must still send as `total_cost_usd`.
+  `HybridAPIEvaluator` treats that flag, an omitted or negative cost, and a
+  failed row with no reported cost as unknown: the trial carries `cost_unmeasured`
+  and no cost total, a per-item `metrics.cost_unmeasured` from the service can no
+  longer overwrite that verdict, and the optimization logger, outcome matrix and
+  workflow spans write `null`/omit the cost instead of `0.0`. Run summaries
+  (`get_summary()`, `experiment_stats`) withhold `total_cost` when a trial is
+  unmeasured and report `cost_unmeasured_trials` / `cost_lower_bound`.
+
 - **`import traigent` no longer imports MLflow (#2436).** With MLflow installed, every
   `import traigent` (and every `@traigent.optimize` run, via
   `traigent/integrations/__init__.py` and

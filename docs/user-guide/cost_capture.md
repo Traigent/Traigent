@@ -115,8 +115,12 @@ missing cost as the worst cost, the Pareto front leaves out a trial that is
 missing a configured objective, and the batch composite score gives such a
 trial the failed-trial score instead of scoring it on quality alone. A
 constraint written as `metrics.get("cost", 0) <= limit` still accepts unmeasured
-trials, and workflow spans still upload `cost_usd: 0.0`
-([#2446](https://github.com/Traigent/Traigent/issues/2446), items 3 and 4).
+trials ([#2446](https://github.com/Traigent/Traigent/issues/2446), item 3);
+write `metrics.get("cost") is not None and metrics["cost"] <= limit` instead.
+Workflow spans omit `cost_usd` for an unmeasured trial and for a failed or
+pruned trial that recorded no cost, and run summaries (`get_summary()`,
+`experiment_stats`) withhold `total_cost` and report `cost_unmeasured_trials`
+and `cost_lower_bound` when any trial's cost is unmeasured.
 
 A run that stops before the grid is exhausted records why in
 `result.metadata["stop_detail"]` and prints it under the results table: the SDK

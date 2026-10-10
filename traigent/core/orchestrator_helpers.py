@@ -399,7 +399,12 @@ def extract_cost_from_results(
         example_rows = []
         example_ok = []
         for example in eval_result.example_results:
-            example_rows.append(getattr(example, "metrics", None) or {})
+            row_metrics = getattr(example, "metrics", None) or {}
+            if getattr(example, "cost_unmeasured", None) is True:
+                # A row object that disowns its own cost (HybridExampleResult)
+                # is unmeasured whatever its metrics dict happens to carry.
+                row_metrics = {**row_metrics, "cost_unmeasured": 1.0}
+            example_rows.append(row_metrics)
             example_ok.append(bool(getattr(example, "success", True)))
             metrics = getattr(example, "metrics", {}) or {}
             cost_value = None

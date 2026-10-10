@@ -37,6 +37,7 @@ from __future__ import annotations
 import contextvars
 import hashlib
 import json
+import math
 import os
 import threading
 from collections.abc import Callable, Generator
@@ -115,6 +116,21 @@ class SpanType(StrEnum):
 # =============================================================================
 # Data Models / DTOs
 # =============================================================================
+
+
+def _optional_span_cost(value: Any) -> float | None:
+    """A span attribute as a cost, or ``None`` when it carries no finite number.
+
+    An absent (or non-numeric) ``llm.cost_usd`` is "no cost reported", which
+    is not a measured $0 (Traigent#2517); the span omits it.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        cost = float(value)
+    except (TypeError, ValueError):
+        return None
+    return cost if math.isfinite(cost) and cost >= 0 else None
 
 
 @dataclass
@@ -1136,7 +1152,9 @@ if OTEL_AVAILABLE:
                 decision_reason=attributes.get("decision.reason"),
                 input_tokens=int(attributes.get("llm.input_tokens", 0)),
                 output_tokens=int(attributes.get("llm.output_tokens", 0)),
-                cost_usd=float(attributes.get("llm.cost_usd", 0.0)),
+                # No ``llm.cost_usd`` attribute means the span reported no
+                # cost: omitted from the payload, never a measured $0 (#2517).
+                cost_usd=_optional_span_cost(attributes.get("llm.cost_usd")),
                 metadata={
                     k: v
                     for k, v in attributes.items()
@@ -1470,7 +1488,7 @@ class WorkflowTracesTracker:
         error_message: str | None = None,
         input_tokens: int = 0,
         output_tokens: int = 0,
-        cost_usd: float = 0.0,
+        cost_usd: float | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Manually add a span to the current trial trace.
@@ -1487,7 +1505,9 @@ class WorkflowTracesTracker:
             error_message: Error message if failed
             input_tokens: Number of input tokens
             output_tokens: Number of output tokens
-            cost_usd: Cost in USD
+            cost_usd: Cost in USD. ``None`` (the default) means the caller
+                reported no cost: it is omitted from the payload rather than
+                uploaded as a measured ``0.0``.
             metadata: Additional metadata
         """
         if not self._current_trace_id or not self._current_config_run_id:

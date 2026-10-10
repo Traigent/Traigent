@@ -13,6 +13,7 @@ from traigent.utils.cost_calculator import UnknownModelError, get_model_token_pr
 from traigent.utils.env_config import is_mock_llm
 from traigent.utils.exceptions import CostLimitExceeded
 from traigent.utils.logging import get_logger
+from traigent.utils.trial_costs import is_cost_unmeasured
 
 logger = get_logger(__name__)
 
@@ -348,6 +349,11 @@ class CostEstimator:
         """
         # Try metrics first
         metrics = trial_result.metrics or {}
+        if is_cost_unmeasured(metrics):
+            # Flagged unknown: a number elsewhere on the trial (metadata, a
+            # telemetry zero) is not a measurement, and enforcement must see
+            # the unknown, not a $0 debit (#2517).
+            return None
         for key in ("total_cost", "cost"):
             if key in metrics:
                 try:

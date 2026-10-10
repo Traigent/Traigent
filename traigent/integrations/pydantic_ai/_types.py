@@ -25,6 +25,10 @@ class AgentRunMetrics:
     output_tokens: int = 0
     total_tokens: int = 0
     cost: float = 0.0
+    #: True when no cost could be established for this run (usage was not
+    #: extractable, the run failed, or the estimate failed): ``cost`` is then a
+    #: placeholder 0.0, not a measured $0 (Traigent#2517).
+    cost_unmeasured: bool = False
     tool_calls: int = 0
 
     @property
@@ -47,7 +51,13 @@ class PydanticAIHandlerMetrics:
 
     @property
     def total_cost(self) -> float:
+        """Sum of the runs' priced costs: a floor when ``cost_unmeasured``."""
         return sum(r.cost for r in self.runs)
+
+    @property
+    def cost_unmeasured(self) -> bool:
+        """True when some run's cost is unknown (Traigent#2517)."""
+        return any(r.cost_unmeasured for r in self.runs)
 
     @property
     def total_latency_ms(self) -> float:
@@ -86,8 +96,7 @@ class PydanticAIHandlerMetrics:
         Returns:
             Dict with numeric metric values.
         """
-        return {
-            f"{prefix}total_cost": self.total_cost,
+        measures: dict[str, float | int] = {
             f"{prefix}total_latency_ms": self.total_latency_ms,
             f"{prefix}total_input_tokens": self.total_input_tokens,
             f"{prefix}total_output_tokens": self.total_output_tokens,
@@ -96,3 +105,9 @@ class PydanticAIHandlerMetrics:
             f"{prefix}tool_call_count": self.tool_call_count,
             f"{prefix}run_count": self.run_count,
         }
+        if self.cost_unmeasured:
+            # Some run's spend is unknown: no total is claimed (#2517).
+            measures[f"{prefix}cost_unmeasured"] = 1.0
+        else:
+            measures[f"{prefix}total_cost"] = self.total_cost
+        return measures

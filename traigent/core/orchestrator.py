@@ -123,7 +123,7 @@ from traigent.core.stop_condition_manager import StopConditionManager
 from traigent.core.trial_lifecycle import TrialLifecycle
 from traigent.core.utils import extract_examples_attempted
 from traigent.core.workflow_trace_manager import WorkflowTraceManager
-from traigent.evaluators.base import BaseEvaluator, Dataset
+from traigent.evaluators.base import MEASURED_ONLY_METRICS, BaseEvaluator, Dataset
 from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.optimizers.interactive_optimizer import CloudBrainOptimizationComplete
@@ -148,6 +148,7 @@ from traigent.utils.objectives import (
     is_minimization_objective,
 )
 from traigent.utils.optimization_logger import OptimizationLogger
+from traigent.utils.trial_costs import is_cost_unmeasured
 
 from .tracing import optimization_session_span, record_optimization_complete
 
@@ -5129,10 +5130,52 @@ class OptimizationOrchestrator:
             return False
 
         metrics = trial_result.metrics or {}
+        if self._cost_objective_unmeasured(metrics):
+            # The trial's cost objective is UNKNOWN. Telling the optimizer 0.0
+            # would teach its sampler that this configuration is free (#2517);
+            # an unknown objective value is reported as no result instead, the
+            # same way the ranking and Pareto code leave such a trial out.
+            reporter = getattr(self.optimizer, "report_trial_failure", None)
+            if callable(reporter):
+                reporter(
+                    optuna_trial_id,
+                    "cost objective unmeasured: no cost was captured for this trial",
+                )
+                return True
+            return False
         values = self._extract_objective_values(metrics)
         payload: float | list[float] = values if len(values) > 1 else values[0]
         self.optimizer.report_trial_result(optuna_trial_id, payload)
         return True
+
+    def _cost_objective_unmeasured(self, metrics: dict[str, Any]) -> bool:
+        """True when a declared cost objective has no measured value (#2517).
+
+        A trial flagged ``cost_unmeasured``, or one that carries no cost under a
+        declared cost objective, has an unknown cost objective: it must not be
+        reported to the optimizer as a measured value.
+        """
+        objectives = [
+            name
+            for name in (getattr(self.optimizer, "objectives", None) or [])
+            if isinstance(name, str) and name in MEASURED_ONLY_METRICS
+        ]
+        if not objectives:
+            return False
+        if is_cost_unmeasured(metrics):
+            return True
+        for name in objectives:
+            value = metrics.get(name)
+            if value is None and name == "cost":
+                value = metrics.get("total_cost")
+            if value is None or isinstance(value, bool):
+                return True
+            try:
+                if not math.isfinite(float(value)):
+                    return True
+            except (TypeError, ValueError):
+                return True
+        return False
 
     def _notify_failed_trial(
         self, trial_result: TrialResult, optuna_trial_id: int

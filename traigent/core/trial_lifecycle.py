@@ -84,13 +84,13 @@ def _privacy_metrics(metrics: dict[str, Any]) -> dict[str, int | float | bool]:
     return projected
 
 
-def _privacy_cost(metrics: dict[str, Any]) -> int | float:
-    """Return a finite numeric cost, or the inert wire default."""
+def _privacy_cost(metrics: dict[str, Any]) -> int | float | None:
+    """Return a finite numeric cost, or ``None`` when the trial carries none."""
 
-    value = metrics.get("total_cost", 0.0)
+    value = metrics.get("total_cost")
     if type(value) is int or (type(value) is float and math.isfinite(value)):
         return value
-    return 0.0
+    return None
 
 
 def _span_cost(
@@ -98,17 +98,24 @@ def _span_cost(
     privacy_enabled: bool,
     unmeasured: bool = False,
 ) -> int | float | None:
-    """Workflow-span cost: None (omitted from the payload) when unmeasured.
+    """Workflow-span cost: None (omitted from the payload) when there is none.
 
-    A trial flagged ``cost_unmeasured`` has no cost; the span must not upload
-    it as 0.0 (#2517).
+    A trial flagged ``cost_unmeasured`` has no cost, and neither does a failed or
+    pruned trial whose metrics never recorded a ``total_cost``: the span must
+    not upload either as 0.0 (#2517, #2446). A recorded ``total_cost`` -- a
+    measured zero included -- is kept as is.
     """
 
     if unmeasured or is_cost_unmeasured(span_metrics):
         return None
     if privacy_enabled:
         return _privacy_cost(span_metrics or {})
-    return span_metrics.get("total_cost", 0.0) if span_metrics else 0.0
+    value = (span_metrics or {}).get("total_cost")
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and math.isfinite(value):
+        return value
+    return None
 
 
 def _resolve_primary_objective(orchestrator: Any) -> str | None:

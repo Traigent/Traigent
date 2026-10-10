@@ -218,6 +218,10 @@ class PydanticAIHandler:
         end_time = time.time()
         try:
             usage = result.usage()
+            estimated_cost = self._estimate_cost(
+                getattr(usage, "input_tokens", 0) or 0,
+                getattr(usage, "output_tokens", 0) or 0,
+            )
             metrics = AgentRunMetrics(
                 model=self._model_name,
                 start_time=start_time,
@@ -226,36 +230,40 @@ class PydanticAIHandler:
                 input_tokens=getattr(usage, "input_tokens", 0) or 0,
                 output_tokens=getattr(usage, "output_tokens", 0) or 0,
                 total_tokens=getattr(usage, "total_tokens", 0) or 0,
-                cost=self._estimate_cost(
-                    getattr(usage, "input_tokens", 0) or 0,
-                    getattr(usage, "output_tokens", 0) or 0,
-                ),
+                cost=estimated_cost if estimated_cost is not None else 0.0,
+                cost_unmeasured=estimated_cost is None,
             )
         except Exception:
             logger.warning(
                 "Failed to extract usage from PydanticAI result", exc_info=True
             )
+            # No usage could be read: the run's spend is unknown, not $0.
             metrics = AgentRunMetrics(
                 model=self._model_name,
                 start_time=start_time,
                 end_time=end_time,
+                cost_unmeasured=True,
             )
 
         with self._lock:
             self._runs.append(metrics)
 
     def _record_error(self, start_time: float) -> None:
-        """Record a failed run with zero usage."""
+        """Record a failed run: no usage was reported, and none is invented."""
         metrics = AgentRunMetrics(
             model=self._model_name,
             start_time=start_time,
             end_time=time.time(),
+            cost_unmeasured=True,
         )
         with self._lock:
             self._runs.append(metrics)
 
-    def _estimate_cost(self, input_tokens: int, output_tokens: int) -> float:
-        """Estimate cost using the canonical cost_from_tokens path."""
+    def _estimate_cost(self, input_tokens: int, output_tokens: int) -> float | None:
+        """Estimate cost using the canonical cost_from_tokens path.
+
+        ``None`` means the estimate failed: the cost is unknown, never $0.
+        """
         if input_tokens == 0 and output_tokens == 0:
             return 0.0
         strict_cost_accounting = self._strict_cost_accounting
@@ -275,7 +283,7 @@ class PydanticAIHandler:
             logger.debug(
                 "Cost estimation failed for model %s", self._model_name, exc_info=True
             )
-            return 0.0
+            return None
 
     @staticmethod
     def _extract_model_name(agent: Any) -> str:
