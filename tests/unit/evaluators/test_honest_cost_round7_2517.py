@@ -228,8 +228,13 @@ def test_pruned_trial_with_attempted_work_and_no_telemetry_is_unmeasured() -> No
     assert _result([pruned]).get_summary()["total_cost"] is None
 
 
-def test_failed_trial_that_attempted_nothing_is_not_unmeasured() -> None:
-    result = _result([_failed(None), _failed({"evaluated": 0}, trial_id="g")])
+def test_failed_trial_with_no_telemetry_is_unmeasured_but_zero_attempts_is_not() -> (
+    None
+):
+    # Missing attempt telemetry is unknown, not zero (round 8).
+    assert _result([_failed(None)]).get_summary()["total_cost"] is None
+
+    result = _result([_failed({"evaluated": 0}, trial_id="g")])
 
     assert result.get_summary()["total_cost"] == 0.0
     assert result.experiment_stats.total_cost == 0.0
