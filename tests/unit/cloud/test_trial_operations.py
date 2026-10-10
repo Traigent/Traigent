@@ -1392,7 +1392,8 @@ class TestBudgetedSessionResultCostGuarantee:
         assert result is True
         payload = mock_session.post.call_args.kwargs["json"]
         # No cost and no flag is an unknown cost: flagged, never a $0 (#2517).
-        assert "cost" not in payload["metrics"]
+        # budget-armed backend needs a number: lower bound 0.0 + the flag
+        assert payload["metrics"]["cost"] == 0.0
         assert payload["metrics"]["cost_unmeasured"] == 1.0
 
     @pytest.mark.asyncio
@@ -1565,7 +1566,8 @@ class TestBudgetedSessionResultCostGuarantee:
         assert result is True
         payload = mock_session.post.call_args.kwargs["json"]
         # No cost and no flag is an unknown cost: flagged, never a $0 (#2517).
-        assert "cost" not in payload["metrics"]
+        # budget-armed backend needs a number: lower bound 0.0 + the flag
+        assert payload["metrics"]["cost"] == 0.0
         assert payload["metrics"]["cost_unmeasured"] == 1.0
 
 
