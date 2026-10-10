@@ -1371,7 +1371,7 @@ def _mk_submission_client(*, armed_sessions: set[str] | None = None):
 
 class TestBudgetedSessionResultCostGuarantee:
     @pytest.mark.asyncio
-    async def test_budgeted_completed_submission_backfills_zero_cost(self) -> None:
+    async def test_budgeted_completed_submission_flags_unmeasured_cost(self) -> None:
         mock_client = _mk_submission_client(armed_sessions={"session_123"})
         ops = TrialOperations(mock_client)
         ops._handle_trial_success_response = AsyncMock(return_value=True)
@@ -1405,7 +1405,9 @@ class TestBudgetedSessionResultCostGuarantee:
 
         assert result is True
         payload = mock_session.post.call_args.kwargs["json"]
-        assert payload["metrics"]["cost"] == 0.0
+        # No cost and no flag is an unknown cost: flagged, never a $0 (#2517).
+        assert "cost" not in payload["metrics"]
+        assert payload["metrics"]["cost_unmeasured"] == 1.0
 
     @pytest.mark.asyncio
     async def test_budgeted_completed_submission_promotes_metadata_cost(self) -> None:
@@ -1552,7 +1554,7 @@ class TestBudgetedSessionResultCostGuarantee:
         assert payload["metrics"] == {}
 
     @pytest.mark.asyncio
-    async def test_budgeted_summary_stats_completed_backfills_cost(self) -> None:
+    async def test_budgeted_summary_stats_completed_flags_unmeasured_cost(self) -> None:
         mock_client = _mk_submission_client(armed_sessions={"session_123"})
         ops = TrialOperations(mock_client)
         mock_response = Mock()
@@ -1584,7 +1586,9 @@ class TestBudgetedSessionResultCostGuarantee:
 
         assert result is True
         payload = mock_session.post.call_args.kwargs["json"]
-        assert payload["metrics"]["cost"] == 0.0
+        # No cost and no flag is an unknown cost: flagged, never a $0 (#2517).
+        assert "cost" not in payload["metrics"]
+        assert payload["metrics"]["cost_unmeasured"] == 1.0
 
 
 class TestRequestTrialSlot:

@@ -348,7 +348,9 @@ async def _assert_unmeasured_through_the_pipeline(run: Run, tmp_path: Path) -> N
         objective_order=["accuracy", "cost"],
         objective_orientations={"accuracy": "maximize", "cost": "minimize"},
     )
-    assert selection.best_config != {"p": 1}, "unmeasured trial won selection"
+    # The measured control must be the winner. ``None`` (no eligible trial)
+    # would also be "not the unmeasured one" and so hide a regression.
+    assert selection.best_config == {"p": 2}, selection.best_config
 
 
 def _unmeasured_rows(run: Run) -> list[Any]:

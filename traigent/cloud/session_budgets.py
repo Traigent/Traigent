@@ -60,7 +60,12 @@ def ensure_cost_metric_for_budgeted_completed_submission(
     telemetry_sources: tuple[Any, ...] = (),
     logger: Any | None = None,
 ) -> bool:
-    """Guarantee metrics.cost for completed submissions on budgeted sessions.
+    """Resolve metrics.cost for completed submissions on budgeted sessions.
+
+    A cost found in telemetry is copied into ``metrics["cost"]``. When no cost
+    is available and none is flagged, the trial's spend is unknown, so the
+    mapping gets ``cost_unmeasured = 1.0`` and no ``cost``: a zero is never
+    invented for budget accounting (Traigent#2517).
 
     Returns True when the metrics mapping was mutated.
     """
@@ -82,7 +87,12 @@ def ensure_cost_metric_for_budgeted_completed_submission(
         metrics["cost"] = cost
         return True
 
-    metrics["cost"] = 0.0
+    # No cost and no flag: nothing measured this trial's spend, so it is
+    # unknown. Submitting ``cost=0.0`` would tell the budget ledger it was
+    # free (#2517); say so with the flag instead and leave ``cost`` absent.
+    metrics["cost_unmeasured"] = 1.0
     if logger is not None:
-        logger.debug("no cost telemetry; backfilling 0.0 for budget accounting")
+        logger.debug(
+            "no cost telemetry; submitting budgeted trial as cost_unmeasured (not $0)"
+        )
     return True
