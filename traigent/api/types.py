@@ -1672,13 +1672,14 @@ class OptimizationResult:
         return sum(1 for trial in self.trials if self._trial_cost_unmeasured(trial))
 
     def _trial_cost_unmeasured(self, trial: TrialResult) -> bool:
-        """True when a trial's cost is flagged, or work ran and none was recorded.
+        """True when a trial's cost is flagged, or it ran and none was recorded.
 
-        A failed, pruned or cancelled trial that attempted examples but carries
-        no cost telemetry at all (the factory only records ``total_cost`` when
-        the progress state reported one) spent an unknown amount: counting it
-        as $0 would put a fabricated zero into the run total and the cost per
-        configuration (Traigent#2517).
+        A completed, failed, pruned or cancelled trial that carries no cost
+        telemetry at all (the factory only records ``total_cost`` when the
+        progress state reported one; ``capture_llm_metrics=False`` records
+        none) spent an unknown amount unless zero attempts were explicitly
+        recorded: counting it as $0 would put a fabricated zero into the run
+        total and the cost per configuration (Traigent#2517).
         """
         from traigent.utils.trial_costs import (  # noqa: PLC0415
             extract_trial_cost_metric,
@@ -1689,15 +1690,36 @@ class OptimizationResult:
         if is_cost_unmeasured(metrics):
             return True
         if trial.status not in (
+            TrialStatus.COMPLETED,
             TrialStatus.FAILED,
             TrialStatus.PRUNED,
             TrialStatus.CANCELLED,
         ):
             return False
-        attempted = self._extract_examples_attempted(trial)
-        if not attempted or attempted <= 0:
+        if self._trial_recorded_zero_attempts(trial):
+            # Explicitly recorded zero attempts: no work ran, so no spend.
             return False
-        return extract_trial_cost_metric(metrics, trial.metadata) is None
+        # Missing attempt telemetry is unknown, not zero: a terminal trial
+        # with no cost metric at all spent an unknown amount.
+        return (
+            extract_trial_cost_metric(metrics, trial.metadata) is None
+            and self._extract_trial_cost(trial) is None
+            and self._extract_summary_cost(trial) is None
+        )
+
+    @staticmethod
+    def _trial_recorded_zero_attempts(trial: TrialResult) -> bool:
+        """True only when telemetry explicitly recorded zero attempted examples."""
+        metadata = getattr(trial, "metadata", None)
+        if not isinstance(metadata, dict):
+            return False
+        recorded = metadata.get("examples_attempted")
+        if recorded is None or isinstance(recorded, bool):
+            return False
+        try:
+            return int(recorded) == 0
+        except (TypeError, ValueError):
+            return False
 
     def _resolve_initial_duration(self) -> float:
         """Safely coerce the experiment duration to float."""
