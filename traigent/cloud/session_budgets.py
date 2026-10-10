@@ -10,6 +10,7 @@ from traigent.utils.trial_costs import (
     extract_trial_cost_metric,
     is_cost_unmeasured,
     is_finite_numeric_cost,
+    known_spend_lower_bound,
 )
 
 
@@ -64,8 +65,11 @@ def ensure_cost_metric_for_budgeted_completed_submission(
 
     A cost found in telemetry is copied into ``metrics["cost"]``. When no cost
     is available and none is flagged, the trial's spend is unknown, so the
-    mapping gets ``cost_unmeasured = 1.0`` and no ``cost``: a zero is never
-    invented for budget accounting (Traigent#2517).
+    mapping gets ``cost_unmeasured = 1.0``. The backend refuses a completed
+    trial on a budget-armed session without a numeric ``metrics.cost``, so a
+    flagged trial carries ``cost`` = the spend actually reported (a lower
+    bound; ``0.0`` when nothing was reported) together with the flag. The flag,
+    never the number, is the signal (owner decision A, honest-cost).
 
     Returns True when the metrics mapping was mutated.
     """
@@ -78,9 +82,10 @@ def ensure_cost_metric_for_budgeted_completed_submission(
         return False
 
     if is_cost_unmeasured(metrics):
-        # An unknown cost is never invented for budget accounting: neither as
-        # $0 nor from telemetry/metadata that carries a zero for it (#2517).
-        return False
+        # Unknown spend: send the reported lower bound WITH the flag; the
+        # flag survives, the number is never presented alone (#2517).
+        metrics["cost"] = known_spend_lower_bound(metrics, *telemetry_sources)
+        return True
 
     cost = extract_trial_cost_metric(metrics, *telemetry_sources)
     if cost is not None:
@@ -88,9 +93,10 @@ def ensure_cost_metric_for_budgeted_completed_submission(
         return True
 
     # No cost and no flag: nothing measured this trial's spend, so it is
-    # unknown. Submitting ``cost=0.0`` would tell the budget ledger it was
-    # free (#2517); say so with the flag instead and leave ``cost`` absent.
+    # unknown. Say so with the flag; ``cost`` (required by the backend on a
+    # budget-armed session) is the reported lower bound, 0.0 here.
     metrics["cost_unmeasured"] = 1.0
+    metrics["cost"] = known_spend_lower_bound(metrics, *telemetry_sources)
     if logger is not None:
         logger.debug(
             "no cost telemetry; submitting budgeted trial as cost_unmeasured (not $0)"

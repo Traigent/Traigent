@@ -15,6 +15,7 @@ __all__ = [
     "extract_trial_cost_metric",
     "is_cost_unmeasured",
     "is_finite_numeric_cost",
+    "known_spend_lower_bound",
     "row_has_measured_cost",
     "trial_cost_unknown",
 ]
@@ -141,3 +142,20 @@ def extract_trial_cost_metric(*sources: Any) -> float | None:
             if cost is not None:
                 return cost
     return None
+
+
+def known_spend_lower_bound(*sources: Any) -> float:
+    """Spend actually reported in the sources, ignoring any unmeasured flag.
+
+    For a trial flagged ``cost_unmeasured`` the number is only a lower bound
+    (the reported part of the spend); ``0.0`` when nothing was reported. It is
+    never a measurement: callers that send it must send the flag with it.
+    """
+
+    for source in sources:
+        for cost_mapping in _iter_cost_mappings(source):
+            costs = extract_trial_cost_fields(cost_mapping)
+            cost = coerce_finite_cost(costs.get("cost"))
+            if cost is not None and cost >= 0:
+                return cost
+    return 0.0

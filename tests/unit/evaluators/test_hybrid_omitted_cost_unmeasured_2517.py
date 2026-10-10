@@ -255,8 +255,10 @@ async def test_omitted_cost_is_not_backfilled_at_budget_submission() -> None:
         client=client, session_id="s1", metrics=metrics, status="COMPLETED"
     )
 
-    assert mutated is False
-    assert "cost" not in metrics
+    assert mutated is True
+    assert (
+        metrics["cost"] == 0.0 and metrics["cost_unmeasured"] == 1.0
+    )  # lower bound + flag
 
 
 @pytest.mark.asyncio

@@ -71,6 +71,7 @@ from traigent.utils.logging import get_logger
 from traigent.utils.trial_costs import (
     TRIAL_COST_FIELDS,
     extract_trial_cost_metric,
+    known_spend_lower_bound,
     is_cost_unmeasured,
     is_finite_numeric_cost,
 )
@@ -1049,7 +1050,17 @@ class BackendSessionManager:
         if is_cost_unmeasured(metrics_payload) or is_cost_unmeasured(
             getattr(trial_result, "metrics", None)
         ):
-            # Flagged unknown: telemetry/metadata zeros must not become cost.
+            # Flagged unknown. A budget-armed session needs a numeric cost, so
+            # send the reported lower bound WITH the flag (the flag is the
+            # signal); elsewhere cost stays omitted.
+            if session_id in self._session_cost_budget_armed:
+                metrics_payload["cost_unmeasured"] = 1.0
+                metrics_payload["cost"] = known_spend_lower_bound(
+                    metrics_payload,
+                    getattr(trial_result, "metrics", None),
+                    getattr(trial_result, "metadata", None),
+                    metadata,
+                )
             return
 
         attr_costs = {
@@ -1071,6 +1082,7 @@ class BackendSessionManager:
 
         # No cost and no flag: the spend is unknown, never a measured $0.
         metrics_payload["cost_unmeasured"] = 1.0
+        metrics_payload["cost"] = 0.0  # lower bound: nothing reported
         if not self._cost_budget_zero_backfill_logged:
             logger.debug(
                 "no cost telemetry; submitting budgeted trial as "

@@ -106,7 +106,8 @@ async def _submit_through_public_path(
 async def test_public_submit_without_cost_or_flag_does_not_send_zero() -> None:
     posted = await _submit_through_public_path({"accuracy": 1.0})
 
-    assert "cost" not in posted, posted
+    # lower bound (nothing reported) travels WITH the flag; the flag is the signal
+    assert posted["cost"] == 0.0, posted
     assert posted["cost_unmeasured"] == 1.0
 
 
@@ -164,7 +165,9 @@ def test_backend_session_manager_flags_instead_of_backfilling_zero() -> None:
         session_id="s1", trial_result=trial, metrics_payload=payload, metadata={}
     )
 
-    assert "cost" not in payload
+    assert (
+        payload["cost"] == 0.0 and payload["cost_unmeasured"] == 1.0
+    )  # lower bound + flag
     assert payload["cost_unmeasured"] == 1.0
 
 
