@@ -38,6 +38,7 @@ from traigent.utils.removed_params import (
 )
 from traigent.utils.secure_path import (
     PathTraversalError,
+    resolve_path_components,
     safe_open,
     safe_write_text,
     validate_path,
@@ -1449,16 +1450,34 @@ def _session_to_optimization_result(
     )
 
 
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{i}" for i in range(1, 10)}
+    | {f"LPT{i}" for i in range(1, 10)}
+)
+
+
 def _is_safe_component(value: str) -> bool:
-    """True when ``value`` is a single, harmless path component."""
-    return (
-        bool(value)
-        and value not in {".", ".."}
-        and ".." not in value
-        and not any(ch in value for ch in ("/", "\\", "\x00"))
-        and not Path(value).is_absolute()
-        and not PureWindowsPath(value).is_absolute()
-    )
+    """True when ``value`` is a single, harmless path component on any OS.
+
+    Rejects drive-relative and drive-qualified names (``C:victim``), UNC and
+    separator-bearing values, traversal markers, trailing dots/spaces and
+    Windows reserved device names, using Windows path semantics so the check
+    is the same on every platform.
+    """
+    if (
+        not value
+        or value in {".", ".."}
+        or ".." in value
+        or any(ch in value for ch in ("/", "\\", "\x00", ":"))
+        or value != value.rstrip(". ")
+        or Path(value).is_absolute()
+    ):
+        return False
+    windows_path = PureWindowsPath(value)
+    if windows_path.is_absolute() or windows_path.drive or windows_path.anchor:
+        return False
+    return value.split(".", 1)[0].strip().upper() not in _WINDOWS_RESERVED_NAMES
 
 
 def _not_found_error(name: str, detail: str = "") -> click.ClickException:
@@ -1500,9 +1519,15 @@ def _load_result_by_name(name: str, storage_dir: str | None) -> OptimizationResu
 
     storage = LocalStorageManager(storage_dir)
     sessions = [s for s in storage.list_sessions() if _is_safe_component(s.session_id)]
-    matches = [s for s in sessions if s.session_id == wanted] or [
-        s for s in sessions if s.session_id.startswith(wanted)
-    ]
+    matches = [s for s in sessions if s.session_id == wanted]
+    if not matches and is_local:
+        # An exact legacy result named ``local:<x>`` wins over a session-id
+        # prefix match.
+        legacy = _load_legacy()
+        if legacy is not None:
+            return legacy
+    if not matches:
+        matches = [s for s in sessions if s.session_id.startswith(wanted)]
     if len(matches) > 1:
         candidates = ", ".join(f"{_LOCAL_PREFIX}{s.session_id}" for s in matches)
         raise click.ClickException(
@@ -1510,11 +1535,6 @@ def _load_result_by_name(name: str, storage_dir: str | None) -> OptimizationResu
             "Use a longer prefix or the full name."
         )
     if not matches:
-        if is_local:
-            # Compatibility: a saved result literally named ``local:<x>``.
-            legacy = _load_legacy()
-            if legacy is not None:
-                return legacy
         raise _not_found_error(name)
     return _session_to_optimization_result(matches[0], storage)
 
@@ -1791,14 +1811,14 @@ def export(
                 f"Cannot derive a default output file from '{result_name}'; "
                 "pass --output explicitly."
             )
-        configs_dir = Path("configs").resolve()
-        output_path = configs_dir / f"{default_name}.json"
-        if output_path.resolve().parent != configs_dir:
+        try:
+            # Computed once: this exact path is checked and then written.
+            output_path = resolve_path_components("configs", f"{default_name}.json")
+        except PathTraversalError:
             raise click.ClickException(
                 f"Default output for '{result_name}' would leave configs/; "
                 "pass --output explicitly."
-            )
-        output_path = Path("configs") / f"{default_name}.json"
+            ) from None
     else:
         output_path = Path(output)
     output_path = _resolve_user_cli_path(output_path, "Output file", for_write=True)

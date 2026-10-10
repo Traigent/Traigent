@@ -200,6 +200,12 @@ class TestUnsafeNamesAndDefaultDestination:
             "local:",
             "..",
             "a\\b",
+            "C:victim",
+            "C:",
+            "c:\\x",
+            "\\\\server\\share\\x",
+            "con",
+            "nul.json",
         ],
     )
     def test_unsafe_names_exit_nonzero_and_write_nothing(
@@ -241,7 +247,8 @@ class TestUnsafeNamesAndDefaultDestination:
             result = runner.invoke(cli, ["export", ident, "-d", str(store)])
             assert result.exit_code != 0, (ident, result.output)
         assert not (tmp_path / "victim.json").exists()
-        assert not (tmp_path / "configs" / "..").is_symlink()
+        assert not (tmp_path / "configs").exists()
+        assert not list(tmp_path.glob("victim*"))
 
     def test_default_destination_stays_in_configs(
         self,
@@ -266,6 +273,52 @@ class TestUnsafeNamesAndDefaultDestination:
         result = runner.invoke(cli, ["export", name, "-d", str(store), "-o", str(out)])
         assert result.exit_code == 0, result.output
         assert out.exists()
+
+
+WINDOWS_UNSAFE_NAMES = [
+    "C:victim",
+    "C:",
+    "c:\\x",
+    "\\\\server\\share\\x",
+    "con",
+    "nul.json",
+    "COM1",
+    "name.",
+    "name ",
+]
+
+
+class TestWindowsUnsafeComponents:
+    @pytest.mark.parametrize("value", WINDOWS_UNSAFE_NAMES)
+    def test_rejected_as_component(self, value: str) -> None:
+        from traigent.cli.main import _is_safe_component
+
+        assert _is_safe_component(value) is False
+
+    def test_ordinary_ids_still_accepted(self) -> None:
+        from traigent.cli.main import _is_safe_component
+
+        assert _is_safe_component("session_1234-abc") is True
+
+    @pytest.mark.parametrize("value", WINDOWS_UNSAFE_NAMES)
+    def test_stored_session_id_is_not_resolved_or_written(
+        self,
+        runner: CliRunner,
+        store: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        value: str,
+    ) -> None:
+        sessions = store / "sessions"
+        src = next(sessions.glob("*.json"))
+        data = json.loads(src.read_text())
+        data["session_id"] = value
+        (sessions / "planted.json").write_text(json.dumps(data))
+        monkeypatch.chdir(tmp_path)
+        for ident in (value, f"local:{value}"):
+            result = runner.invoke(cli, ["export", ident, "-d", str(store)])
+            assert result.exit_code != 0, (ident, result.output)
+        assert not (tmp_path / "configs").exists()
 
 
 class TestLegacyLocalPrefixedName:
@@ -299,3 +352,35 @@ class TestLegacyLocalPrefixedName:
         )
         assert result.exit_code == 0, result.output
         assert json.loads(out.read_text())["config"] == {"temperature": 0.3}
+
+    def test_exact_legacy_name_wins_over_session_id_prefix(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        from traigent.api.types import OptimizationResult, OptimizationStatus
+        from traigent.utils.persistence import PersistenceManager
+
+        store = tmp_path / "mixed"
+        session_id = _make_session(store, "session_fn", [0.5])
+        prefix = session_id[:6]
+        PersistenceManager(str(store)).save_result(
+            OptimizationResult(
+                trials=[],
+                best_config={"temperature": 0.3},
+                best_score=0.8,
+                optimization_id="legacy-2",
+                duration=0.0,
+                convergence_info={},
+                status=OptimizationStatus.COMPLETED,
+                objectives=["accuracy"],
+                algorithm="random",
+                timestamp=__import__("datetime").datetime.now(),
+                metadata={"function_name": "legacy_fn"},
+            ),
+            f"local:{prefix}",
+        )
+        out = tmp_path / "mixed_out.json"
+        result = runner.invoke(
+            cli, ["export", f"local:{prefix}", "-d", str(store), "-o", str(out)]
+        )
+        assert result.exit_code == 0, result.output
+        assert json.loads(out.read_text())["function_name"] == "legacy_fn"
