@@ -277,7 +277,11 @@ class ChanceConstraint:
 
     Attributes:
         name: Metric identifier to constrain.
-        threshold: Target value the metric must satisfy.
+        threshold: Allowed violation rate in [0, 1]; the promotion gate passes
+            the constraint when the upper confidence bound on the observed
+            violation rate is at or below it. ``from_dict`` (the spec and
+            discovery path) enforces the range; direct construction does not
+            (see ``SafetyConstraint.to_chance_constraint``).
         confidence: Confidence level for the constraint (0 < confidence <= 1).
     """
 
@@ -292,10 +296,26 @@ class ChanceConstraint:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ChanceConstraint:
-        """Create ChanceConstraint from dict representation."""
+        """Create ChanceConstraint from dict representation.
+
+        Traigent#1616: a TVL spec's ``chance_constraints[].threshold`` is a
+        probability (``promotion_gate`` compares a Clopper-Pearson bound against
+        it), so a spec value outside [0, 1] is rejected here, mirroring the
+        canonical TVL lint ``invalid_chance_threshold``. The check covers every
+        dict that is parsed here, which means TVL specs and ``promotion_policy``
+        dicts returned by hybrid discovery. It is not in ``__post_init__``,
+        because ``SafetyConstraint.to_chance_constraint`` builds instances
+        directly from metric thresholds that are not bounded to [0, 1] (see
+        #2204), and that conversion is out of this fix's scope.
+        """
+        threshold = float(data["threshold"])
+        if not 0 <= threshold <= 1:
+            raise ValueError(
+                f"chance constraint threshold must be in [0, 1], got {threshold}"
+            )
         return cls(
             name=data["name"],
-            threshold=float(data["threshold"]),
+            threshold=threshold,
             confidence=float(data["confidence"]),
         )
 
@@ -586,6 +606,22 @@ class ConvergenceCriteria:
         )
 
 
+def _optional_budget_int(data: dict[str, Any], key: str) -> int | None:
+    """Read an integer budget field without truncating a fraction.
+
+    ``tvl.schema.json`` types ``max_trials`` and ``max_wallclock_s`` as
+    integers. ``int()`` alone would turn 1.9 into 1 and report 0.5 as 0, and
+    it raises ``OverflowError`` on infinity. Integral floats such as 3.0 are
+    accepted, as JSON Schema does.
+    """
+    value = data.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
+        raise ValueError(f"exploration.budgets.{key} must be an integer, got {value!r}")
+    return int(value)
+
+
 @dataclass(slots=True)
 class ExplorationBudgets:
     """Hard limits on exploration from TVL 0.9.
@@ -603,15 +639,37 @@ class ExplorationBudgets:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ExplorationBudgets:
         """Create ExplorationBudgets from dict representation."""
-        max_trials = data.get("max_trials")
         max_spend = data.get("max_spend_usd")
-        max_wallclock = data.get("max_wallclock_s")
 
         return cls(
-            max_trials=int(max_trials) if max_trials is not None else None,
+            max_trials=_optional_budget_int(data, "max_trials"),
             max_spend_usd=float(max_spend) if max_spend is not None else None,
-            max_wallclock_s=int(max_wallclock) if max_wallclock is not None else None,
+            max_wallclock_s=_optional_budget_int(data, "max_wallclock_s"),
         )
+
+    def __post_init__(self) -> None:
+        """Reject budgets the canonical TVL schema rejects.
+
+        Traigent#1616: mirrors ``tvl.schema.json`` ``exploration.budgets``
+        minimums (``max_trials >= 1``, ``max_spend_usd >= 0``,
+        ``max_wallclock_s >= 1``). A ``max_trials: 0`` budget can never run, so it
+        must fail at load time instead of flowing into the runtime overrides.
+        """
+        if self.max_trials is not None and self.max_trials < 1:
+            raise ValueError(
+                f"exploration.budgets.max_trials must be >= 1, got {self.max_trials}"
+            )
+        # ``not >=`` rather than ``<`` so NaN is rejected too.
+        if self.max_spend_usd is not None and not self.max_spend_usd >= 0:
+            raise ValueError(
+                "exploration.budgets.max_spend_usd must be >= 0, "
+                f"got {self.max_spend_usd}"
+            )
+        if self.max_wallclock_s is not None and self.max_wallclock_s < 1:
+            raise ValueError(
+                "exploration.budgets.max_wallclock_s must be >= 1, "
+                f"got {self.max_wallclock_s}"
+            )
 
 
 # Type alias for objectives that can be either standard or banded
