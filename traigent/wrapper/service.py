@@ -907,12 +907,34 @@ class TraigentService:
         return str(uuid.uuid4()), inp
 
     @staticmethod
+    def _reported_cost(value: Any) -> float | None:
+        """Return a handler's reported cost, or ``None`` when it reported none.
+
+        "The handler did not say" is not a measured $0 (Traigent#2517): only a
+        finite, non-negative number is a reported cost. ``None``, a missing
+        key, booleans, non-numbers, NaN/Inf and negatives are all "not
+        reported". A reported ``0`` is a measured zero and is kept.
+        """
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            cost = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(cost) or cost < 0:
+            return None
+        return cost
+
+    @staticmethod
     def _unpack_execute_result(result: Any) -> dict[str, Any]:
-        """Normalize a single execute-handler result into a flat dict."""
+        """Normalize a single execute-handler result into a flat dict.
+
+        ``cost_usd`` is ``None`` when the handler did not report one.
+        """
         if not isinstance(result, dict):
             return {
                 "output": result,
-                "cost_usd": 0.0,
+                "cost_usd": None,
                 "latency_ms": None,
                 "metrics": {},
             }
@@ -921,10 +943,34 @@ class TraigentService:
         )
         return {
             "output": result.get("output", result),
-            "cost_usd": float(result.get("cost_usd", 0.0) or 0.0),
+            "cost_usd": TraigentService._reported_cost(result.get("cost_usd")),
             "latency_ms": result.get("latency_ms"),
             "metrics": metrics,
         }
+
+    @staticmethod
+    def _build_operational_metrics(
+        *, priced_cost: float, cost_complete: bool, latency_ms: float
+    ) -> dict[str, Any]:
+        """Aggregate operational metrics for an execute response.
+
+        ``total_cost_usd`` is a required number in the hybrid-mode contract, so
+        it is always present. It is a *total* only when every executed example
+        reported a cost. Otherwise it is the priced lower bound and the
+        response says so with ``cost_unmeasured`` (a documented-extensible
+        custom operational metric): a consumer that honours the flag treats the
+        number as "at least", never as the spend. The contract has no
+        first-class way to say "unknown total"; until it does, the flag is
+        the signal.
+        """
+        metrics: dict[str, Any] = {
+            "total_cost_usd": priced_cost,
+            "cost_usd": priced_cost,
+            "latency_ms": latency_ms,
+        }
+        if not cost_complete:
+            metrics["cost_unmeasured"] = 1.0
+        return metrics
 
     async def handle_execute(
         self,
@@ -977,7 +1023,12 @@ class TraigentService:
 
         start_time = time.time()
         outputs: list[dict[str, Any]] = []
-        total_cost = 0.0
+        # Sum of the costs handlers actually reported, and whether every
+        # executed example reported one. An example that did not (or that
+        # raised before it could) leaves the batch's spend unknown: the sum
+        # is then only a lower bound, never claimed as the total (#2517).
+        priced_cost = 0.0
+        cost_complete = True
         all_quality_metrics: list[dict[str, float]] = []
         failed_example_ids: list[str] = []
 
@@ -989,15 +1040,21 @@ class TraigentService:
                     result = await result
 
                 unpacked = self._unpack_execute_result(result)
-                total_cost += unpacked["cost_usd"]
+                if unpacked["cost_usd"] is None:
+                    cost_complete = False
+                else:
+                    priced_cost += unpacked["cost_usd"]
                 if unpacked["metrics"]:
                     all_quality_metrics.append(unpacked["metrics"])
 
                 output_item: dict[str, Any] = {
                     "example_id": example_id,
                     "output": unpacked["output"],
-                    "cost_usd": unpacked["cost_usd"],
                 }
+                # ``cost_usd`` is optional per output item: omit it rather than
+                # send a fabricated 0.0 for a handler that reported nothing.
+                if unpacked["cost_usd"] is not None:
+                    output_item["cost_usd"] = unpacked["cost_usd"]
                 if isinstance(unpacked["latency_ms"], (int, float)):
                     output_item["latency_ms"] = float(unpacked["latency_ms"])
                 if unpacked["metrics"]:
@@ -1011,6 +1068,9 @@ class TraigentService:
             except Exception as e:
                 logger.error(f"Execute failed for {example_id}: {e}")
                 failed_example_ids.append(example_id)
+                # A handler that raised may have spent before it did: a
+                # failure alone does not establish zero cost.
+                cost_complete = False
                 outputs.append({"example_id": example_id, "error": str(e)})
 
         elapsed_ms = (time.time() - start_time) * 1000
@@ -1022,11 +1082,11 @@ class TraigentService:
             "execution_id": execution_id,
             "status": status,
             "outputs": outputs,
-            "operational_metrics": {
-                "total_cost_usd": total_cost,
-                "cost_usd": total_cost,
-                "latency_ms": elapsed_ms,
-            },
+            "operational_metrics": self._build_operational_metrics(
+                priced_cost=priced_cost,
+                cost_complete=cost_complete,
+                latency_ms=elapsed_ms,
+            ),
         }
 
         if failed_example_ids:

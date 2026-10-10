@@ -289,16 +289,22 @@ async def test_one_priced_batch_and_one_omitted_batch_is_unmeasured() -> None:
 
 
 @pytest.mark.asyncio
-async def test_failed_batch_without_cost_does_not_poison_a_priced_trial() -> None:
+async def test_failed_batch_without_cost_leaves_a_priced_trial_unmeasured() -> None:
+    """A failed batch that reported no cost does NOT establish zero spend.
+
+    Round 5 encoded the opposite ("an error before any usage is not evidence
+    that the rest of the spend is unknown"): the failed row's flag was dropped,
+    so a mixed trial claimed its priced rows' $0.25 as the trial total and could
+    outrank a fully measured $0.50 trial. A remote service only *reports*
+    spend; silence after an error is an unknown, not a zero. The mixed trial is
+    now unmeasured: it claims no total, and ranking/budgets treat it as such.
+    """
     failed = _wire({}, n=1, status="failed")
     failed["error"] = {"code": "boom", "message": "agent crashed"}
 
     result = await _run_batches([_wire({"total_cost_usd": 0.25}, n=1), failed])
-    agg = result.aggregated_metrics
 
-    assert not agg.get("cost_unmeasured")
-    assert agg["cost"] == pytest.approx(0.25)
-    assert agg["total_cost"] == pytest.approx(0.25)
+    _assert_unmeasured(result.aggregated_metrics)
 
 
 @pytest.mark.asyncio

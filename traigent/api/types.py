@@ -698,13 +698,20 @@ class ExperimentStats:
     """Aggregated statistics for a complete optimization experiment."""
 
     total_duration: float
-    total_cost: float
+    #: Spend over the whole experiment. ``None`` when any trial's cost is
+    #: unmeasured (``cost_unmeasured_trials > 0``): the known spend is then
+    #: only a lower bound, reported as ``cost_lower_bound``, never a total.
+    total_cost: float | None
     unique_configurations: int
     trial_counts: dict[str, int]
     average_trial_duration: float | None = None
     cost_per_configuration: float | None = None
     success_rate: float | None = None
     error_message: str | None = None
+    #: Number of trials flagged ``cost_unmeasured`` (Traigent#2517).
+    cost_unmeasured_trials: int = 0
+    #: Known spend when ``total_cost`` is withheld for unmeasured trials.
+    cost_lower_bound: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return stats as a plain dictionary for logging/reporting."""
@@ -718,6 +725,8 @@ class ExperimentStats:
             "cost_per_configuration": self.cost_per_configuration,
             "success_rate": self.success_rate,
             "error_message": self.error_message,
+            "cost_unmeasured_trials": self.cost_unmeasured_trials,
+            "cost_lower_bound": self.cost_lower_bound,
         }
 
 
@@ -1574,10 +1583,19 @@ class OptimizationResult:
             )
 
             unique_configuration_count = len(aggregation.unique_configs)
-            total_cost = self._resolve_total_cost(aggregation.computed_total_cost)
+            known_cost = self._resolve_total_cost(aggregation.computed_total_cost)
+            unmeasured_trials = self._cost_unmeasured_trial_count()
+            total_cost: float | None = known_cost
+            cost_lower_bound: float | None = None
+            if unmeasured_trials:
+                # Some trial's cost is unknown: the known spend is a floor, not
+                # the experiment's cost, and "cost per configuration" would
+                # divide a floor (or a fabricated 0.0) by the configs (#2517).
+                total_cost = None
+                cost_lower_bound = known_cost if known_cost > 0 else None
             cost_per_configuration = (
                 total_cost / unique_configuration_count
-                if unique_configuration_count
+                if total_cost is not None and unique_configuration_count
                 else None
             )
 
@@ -1585,12 +1603,14 @@ class OptimizationResult:
 
             return ExperimentStats(
                 total_duration=float(total_duration),
-                total_cost=float(total_cost),
+                total_cost=float(total_cost) if total_cost is not None else None,
                 unique_configurations=unique_configuration_count,
                 trial_counts=trial_counts,
                 average_trial_duration=average_trial_duration,
                 cost_per_configuration=cost_per_configuration,
                 success_rate=success_rate,
+                cost_unmeasured_trials=unmeasured_trials,
+                cost_lower_bound=cost_lower_bound,
             )
         except (TypeError, ValueError, AttributeError) as exc:
             fallback_counts = base_counts.copy()
@@ -1604,6 +1624,16 @@ class OptimizationResult:
                 success_rate=None,
                 error_message=str(exc),
             )
+
+    def _cost_unmeasured_trial_count(self) -> int:
+        """Count trials whose cost is flagged unmeasured (Traigent#2517)."""
+        from traigent.utils.trial_costs import is_cost_unmeasured  # noqa: PLC0415
+
+        return sum(
+            1
+            for trial in self.trials
+            if is_cost_unmeasured(getattr(trial, "metrics", None))
+        )
 
     def _resolve_initial_duration(self) -> float:
         """Safely coerce the experiment duration to float."""
@@ -2527,6 +2557,7 @@ class OptimizationResult:
             trials_per_model,
         ) = self._aggregate_summary_data()
 
+        unmeasured_trials = self._cost_unmeasured_trial_count()
         summary = {
             "total_trials": total_trials,
             "completed_trials": status_counter.get(TrialStatus.COMPLETED, 0),
@@ -2534,12 +2565,18 @@ class OptimizationResult:
             "failed_trials": status_counter.get(TrialStatus.FAILED, 0),
             "cancelled_trials": status_counter.get(TrialStatus.CANCELLED, 0),
             "total_duration": total_duration,
-            "total_cost": total_cost,
+            # Withheld (None) when any trial's cost is unmeasured: the sum of
+            # the trials that did report a cost is a floor, not the run's cost
+            # (Traigent#2517); the floor is reported as ``cost_lower_bound``.
+            "total_cost": None if unmeasured_trials else total_cost,
             "total_examples_attempted": total_examples,
             "non_failed_trials": total_trials
             - status_counter.get(TrialStatus.FAILED, 0),
             "trials_per_model": dict(trials_per_model),
         }
+        if unmeasured_trials:
+            summary["cost_unmeasured_trials"] = unmeasured_trials
+            summary["cost_lower_bound"] = total_cost if total_cost > 0 else None
 
         # Include best configuration information if available
         summary["best_config"] = self.best_config

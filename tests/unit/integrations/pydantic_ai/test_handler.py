@@ -336,10 +336,14 @@ class TestPydanticAIHandler:
         side_effect=RuntimeError("cost calc failed"),
     )
     def test_estimate_cost_handles_failure(self, _mock) -> None:
-        """_estimate_cost returns 0.0 when cost_from_tokens raises."""
+        """A failed estimate is unknown (None), never a measured $0 (#2517).
+
+        Previously this returned 0.0, which the run recorded as a measured
+        cost of zero and summed into ``total_cost``.
+        """
         handler = self._make_handler()
         cost = handler._estimate_cost(100, 50)
-        assert cost == 0.0
+        assert cost is None
 
     def test_strict_mode_is_latched_at_handler_init(self) -> None:
         """Strict flag changes after init do not alter existing handler behavior."""

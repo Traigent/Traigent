@@ -44,6 +44,11 @@ def is_cost_unmeasured(metrics: Any) -> bool:
     if not isinstance(metrics, Mapping):
         return False
     flag = metrics.get("cost_unmeasured")
+    if flag is True:
+        # Row dataclasses (``HybridExampleResult``) serialize the flag as a
+        # bool. An explicit ``True`` is the same claim as ``1.0``: a flag that
+        # disowns a cost must never be ignored for being the wrong type.
+        return True
     return (
         isinstance(flag, (int, float))
         and not isinstance(flag, bool)

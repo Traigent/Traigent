@@ -126,9 +126,25 @@ class HybridExampleResult:
 #: from trial-level totals a few lines below, so a per-example payload key of
 #: the same name would silently change what the number MEANS -- a per-example
 #: mean presented where a trial total is expected.
+#:
+#: ``cost_unmeasured`` is reserved for a stronger reason (#2517): it is Traigent's
+#: own verdict that a trial's cost is not a measurement. A value the service puts
+#: under that key -- ``0`` on every row is enough -- must never average into, or
+#: overwrite, the flag Traigent computed from what the service actually reported;
+#: that would turn an unknown cost back into a ranked, budgeted $0.
 _TRAIGENT_COMPUTED_METRIC_KEYS: frozenset[str] = frozenset(
-    {"success_rate", "cost", "total_cost", "latency", "response_time_ms"}
+    {
+        "success_rate",
+        "cost",
+        "total_cost",
+        "latency",
+        "response_time_ms",
+        "cost_unmeasured",
+    }
 )
+
+
+_COST_UNMEASURED_KEY = "cost_unmeasured"
 
 
 class HybridAPIEvaluator(BaseEvaluator):
@@ -473,6 +489,10 @@ class HybridAPIEvaluator(BaseEvaluator):
         """
         item_cost = output_item.get("cost_usd")
         if is_finite_numeric_cost(item_cost):
+            if float(item_cost) < 0:
+                # A negative cost is not spend: it must not enter the sums as
+                # a measurement (and must not net out a priced row).
+                return 0.0, True
             return float(item_cost), False
         if fallback_cost is None:
             return 0.0, True
@@ -482,20 +502,23 @@ class HybridAPIEvaluator(BaseEvaluator):
     def _results_cost_unknown(results: list[HybridExampleResult]) -> bool:
         """True when the trial's cost is unknown (shared classifier, #2517).
 
-        A successful row whose wire cost was omitted is flagged unmeasured. A
-        *failed* row with nothing reported carries no cost key at all: the
-        classifier skips it (an error before any usage is not evidence that
-        the rest of the spend is unknown) and, when no row measured a cost
-        (every example errored), calls the trial unknown rather than $0.
+        A row is measured only when the wire reported a cost for it. Every other
+        row -- successful or failed -- keeps its explicit ``cost_unmeasured``
+        flag, so one such row makes the trial's cost unknown. A failure alone
+        does not establish zero spend: the remote service may have spent before
+        it errored, and a mixed trial must not claim the priced rows' sum as the
+        trial's cost (it would then outrank a fully measured trial).
+
+        The local lane may skip a failed row without a cost because it measures
+        spend by observing calls; a hybrid service only *reports* spend, so
+        silence from it is an unknown, not a zero.
         """
         rows: list[dict[str, float]] = []
         for r in results:
-            if not r.cost_unmeasured:
-                rows.append({"cost": r.cost_usd})
-            elif r.success:
-                rows.append({"cost_unmeasured": 1.0})
+            if r.cost_unmeasured:
+                rows.append({_COST_UNMEASURED_KEY: 1.0})
             else:
-                rows.append({})
+                rows.append({"cost": r.cost_usd})
         return trial_cost_unknown(rows, [r.success for r in results])
 
     @staticmethod
@@ -661,6 +684,11 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         normalized: dict[str, float] = {}
         for key, value in metrics.items():
+            # The unmeasured-cost verdict is Traigent's, never the service's
+            # (#2517): a per-example value for it is ignored, not carried into
+            # the row metrics that downstream flag readers consult.
+            if key == _COST_UNMEASURED_KEY:
+                continue
             if isinstance(value, bool):
                 continue
             if isinstance(value, (int, float)):
@@ -869,8 +897,9 @@ class HybridAPIEvaluator(BaseEvaluator):
             if sample_lease:
                 sample_lease.mark_completed(len(batch_results))
 
-            # Track cost
-            batch_cost = sum(r.cost_usd for r in batch_results)
+            # Track cost: only rows the wire priced add to the running total;
+            # an unmeasured row's 0.0 is a placeholder, not spend (#2517).
+            batch_cost = sum(r.cost_usd for r in batch_results if not r.cost_unmeasured)
             total_cost += batch_cost
 
             # Progress callback
@@ -1261,12 +1290,12 @@ class HybridAPIEvaluator(BaseEvaluator):
                 # Log raw per-example result for observability
                 logger.info(
                     "Hybrid example result: example_id=%s, "
-                    "output_id=%s, accuracy=%s, cost=%.6f, "
+                    "output_id=%s, accuracy=%s, cost=%s, "
                     "latency=%.0fms, error=%s",
                     example_id,
                     output_item.get("output_id") if output_item is not None else None,
                     per_example_metrics.get("accuracy"),
-                    cost,
+                    "unmeasured" if cost_unmeasured else f"{cost:.6f}",
                     latency,
                     eval_error or execute_error,
                 )
@@ -1560,12 +1589,10 @@ class HybridAPIEvaluator(BaseEvaluator):
             "success_rate": sum(1 for r in results if r.success) / len(results),
         }
 
-        if self._results_cost_unknown(results):
-            # The wire omitted cost: no cost total is claimed, and the trial
-            # is flagged so ranking and budgets treat it as unmeasured.
-            aggregated.pop("cost", None)
-            aggregated.pop("total_cost", None)
-            aggregated["cost_unmeasured"] = 1.0
+        # Decided from the rows' own flags, not from anything the service put
+        # in a metrics payload; applied after aggregation (below) so nothing
+        # aggregated can overwrite it (#2517).
+        cost_unknown = self._results_cost_unknown(results)
 
         # Aggregate per-example metrics
         metric_sums: dict[str, float] = {}
@@ -1633,6 +1660,15 @@ class HybridAPIEvaluator(BaseEvaluator):
             metric_counts,
             primary_objective=primary_objective,
         )
+
+        # Authoritative cost verdict, last: an unknown cost claims no total and
+        # carries the flag; a known one never carries a stray flag.
+        if cost_unknown:
+            aggregated.pop("cost", None)
+            aggregated.pop("total_cost", None)
+            aggregated[_COST_UNMEASURED_KEY] = 1.0
+        else:
+            aggregated.pop(_COST_UNMEASURED_KEY, None)
         return aggregated, comparability
 
     def _compute_aggregated_metrics(
