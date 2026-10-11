@@ -522,6 +522,39 @@ def test_create_session_no_api_key_runs_local_without_raising(monkeypatch):
     assert result.degraded is False  # no key = intentional local, not degraded
 
 
+def test_create_session_quota_refusal_reports_quota_not_unreachable(
+    monkeypatch, caplog
+):
+    """#2550: a 429 quota_exceeded refusal is a quota limit, not 'unreachable'."""
+    client = FakeClient()
+    ops = SessionOperations(client)
+
+    exc = CloudServiceError("Session creation failed: HTTP 429: quota_exceeded")
+    exc.session_creation_failure = SessionCreationFailureDetail.from_http_response(
+        429,
+        '{"error_code": "quota_exceeded", "message": "customer text here"}',
+    )
+
+    async def create_via_api(_request):
+        raise exc
+
+    monkeypatch.setattr(ops.client, "_create_traigent_session_via_api", create_via_api)
+
+    with caplog.at_level(logging.WARNING, logger="traigent.cloud.session_operations"):
+        result = ops.create_session("demo-function", {"model": ["gpt-4o"]})
+
+    assert result.backend_connected is False
+    assert result.failure_reason == SessionCreationFailureReason.SESSION_FAILED
+    assert result.degraded is True
+    assert "quota" in (result.failure_detail or "").lower()
+    assert "quota_exceeded" in (result.failure_detail or "")
+    assert "customer text" not in (result.failure_detail or "")
+    text = " ".join(r.getMessage() for r in caplog.records).lower()
+    assert "quota" in text
+    assert "unreachable" not in text
+    assert "customer text" not in text
+
+
 def test_create_session_backend_unreachable_flags_degraded_and_warns(
     monkeypatch, caplog
 ):

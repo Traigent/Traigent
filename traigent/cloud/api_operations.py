@@ -550,6 +550,12 @@ class ApiOperations:
                     session_request
                 ):
                     raise
+                # A quota/limit refusal is a definitive answer from a reachable
+                # backend: the legacy contract would be refused the same way, so
+                # do not retry it (#2550).
+                typed_failure = getattr(typed_exc, "session_creation_failure", None)
+                if getattr(typed_failure, "is_quota_refusal", False):
+                    raise
                 logger.warning(
                     "Typed session create failed; retrying once with the "
                     "legacy contract (non-governed session, "
@@ -597,6 +603,12 @@ class ApiOperations:
             raise
         except CloudServiceError as e:
             if getattr(e, "typed_legacy_session_create_400", False):
+                raise
+            # Keep a quota refusal intact (with its structured detail) so the
+            # caller can tell it from a connectivity failure (#2550).
+            if getattr(
+                getattr(e, "session_creation_failure", None), "is_quota_refusal", False
+            ):
                 raise
             self._handle_generic_session_exception(e)
         except aiohttp.ClientConnectorError as e:

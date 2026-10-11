@@ -464,6 +464,45 @@ class SessionOperations:
                 storage_e,
             )
 
+    def _quota_refusal_fallback(
+        self,
+        exc: Exception,
+        function_name: str,
+        search_space: dict[str, Any],
+        optimization_goal: str,
+        local_record_metadata: dict[str, Any] | None,
+    ) -> SessionCreationResult | None:
+        """Fallback result for a backend quota/limit refusal, else ``None``.
+
+        The backend was reachable and refused on plan limits (#2550). Reporting
+        that as "backend unreachable" sends users to debug their network. The
+        run still degrades to LOCAL (flagged ``degraded``) exactly as before, but
+        the warning and detail name the quota refusal using only the HTTP status
+        and the closed error code (no backend/customer text).
+        """
+        failure_response = _get_session_creation_failure_detail(exc)
+        if failure_response is None or not failure_response.is_quota_refusal:
+            return None
+        summary = failure_response.quota_summary()
+        logger.warning(
+            "Managed session creation refused: plan quota/limit reached (%s) for "
+            "'%s'; degrading to LOCAL execution — results are NOT tracked on the "
+            "backend. Review plan limits or upgrade in the Traigent portal "
+            "(Billing).",
+            summary,
+            function_name,
+        )
+        fallback_id = self._create_local_fallback_session(
+            function_name, search_space, optimization_goal, local_record_metadata
+        )
+        return SessionCreationResult.fallback(
+            session_id=fallback_id,
+            reason=SessionCreationFailureReason.SESSION_FAILED,
+            detail=f"Quota limit reached ({summary})",
+            failure_response=failure_response,
+            degraded=True,
+        )
+
     def _auth_fallback_result(
         self,
         exc: Exception,
@@ -896,6 +935,15 @@ class SessionOperations:
                 await self._reset_client_session("create_session fallback")
                 if _must_fail_loud(e):
                     raise
+                quota_result = self._quota_refusal_fallback(
+                    e,
+                    function_name,
+                    search_space,
+                    optimization_goal,
+                    local_record_metadata,
+                )
+                if quota_result is not None:
+                    return quota_result
                 # A configured key intended a managed/cloud run, but the backend
                 # was unreachable. We degrade to LOCAL execution for resilience —
                 # but this is a DOWNGRADE (managed search/tracking is lost), so
@@ -985,6 +1033,15 @@ class SessionOperations:
         except (TimeoutError, CloudServiceError, OSError) as exc:
             if _must_fail_loud(exc):
                 raise
+            quota_result = self._quota_refusal_fallback(
+                exc,
+                function_name,
+                search_space,
+                optimization_goal,
+                local_record_metadata,
+            )
+            if quota_result is not None:
+                return quota_result
             # Backend unreachable on the outer path — same downgrade semantics as
             # the inner sibling: WARN + flag degraded so the local run is never
             # mistaken for a managed one.

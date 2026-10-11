@@ -31,6 +31,7 @@ class SessionCreationFailureClassification(Enum):
     NETWORK = "network"
     KEY_NOT_FOUND = "key-not-found"
     BACKEND_UNREACHABLE = "backend-unreachable"
+    QUOTA_EXCEEDED = "quota-exceeded"
     UNKNOWN = "unknown"
 
 
@@ -85,6 +86,33 @@ class SessionCreationFailureDetail:
             raw_body=raw_body,
             backend_url=backend_url,
         )
+
+    @property
+    def is_quota_refusal(self) -> bool:
+        """True when the backend refused because a plan quota/limit was hit.
+
+        A quota refusal is a definitive, reachable-backend answer (typically
+        HTTP 429 or 402 with the closed ``quota_exceeded`` error code), never a
+        connectivity failure. Classification uses only the status and the
+        backend's closed ``error_code`` (message text is consulted only when the
+        backend sent no code).
+        """
+
+        code = (self.error_code or "").lower()
+        if code:
+            return "quota" in code
+        return (
+            self.status_code in (402, 429) and "quota" in (self.message or "").lower()
+        )
+
+    def quota_summary(self) -> str:
+        """Content-free quota-refusal summary: status and closed error code only."""
+
+        parts = []
+        if self.status_code is not None:
+            parts.append(f"HTTP {self.status_code}")
+        parts.append(self.error_code or "quota_exceeded")
+        return " | ".join(parts)
 
     def one_line_summary(self) -> str:
         """Return a compact summary suitable for exception/log details."""

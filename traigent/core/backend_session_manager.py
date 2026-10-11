@@ -451,6 +451,8 @@ def _classify_session_creation_failure(
         return SessionCreationFailureClassification.NETWORK
 
     if reason == SessionCreationFailureReason.SESSION_FAILED:
+        if detail and detail.is_quota_refusal:
+            return SessionCreationFailureClassification.QUOTA_EXCEEDED
         if detail and detail.status_code and 400 <= detail.status_code < 500:
             return SessionCreationFailureClassification.UNKNOWN
         return SessionCreationFailureClassification.BACKEND_UNREACHABLE
@@ -613,6 +615,12 @@ def _format_untracked_warning_block(
     elif classification == SessionCreationFailureClassification.KEY_NOT_FOUND:
         lines.append(
             "Remedy: configure a valid Traigent API key or run `traigent auth login`."
+        )
+    elif classification == SessionCreationFailureClassification.QUOTA_EXCEEDED:
+        lines.append(
+            "Remedy: a plan quota/limit was reached (the backend is reachable). "
+            "Review usage and upgrade in the Traigent portal (Billing), or reduce "
+            "the requested trials/samples."
         )
     elif classification == SessionCreationFailureClassification.BACKEND_UNREACHABLE:
         lines.append(

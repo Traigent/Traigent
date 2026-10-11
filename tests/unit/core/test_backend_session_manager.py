@@ -4341,3 +4341,32 @@ class TestComputePortalName:
         assert metadata["portal_name"] == live_name
         assert metadata["agent_key"] == "stable-agent"
         assert client.create_session.call_args[1]["agent_key"] == "stable-agent"
+
+
+def test_classify_quota_refusal_is_not_backend_unreachable():
+    """#2550: a quota refusal classifies as QUOTA_EXCEEDED, never unreachable."""
+    from traigent.core.backend_session_manager import (
+        _classify_session_creation_failure,
+    )
+    from traigent.core.session_types import (
+        SessionCreationFailureClassification,
+        SessionCreationFailureDetail,
+        SessionCreationFailureReason,
+    )
+
+    quota = SessionCreationFailureDetail.from_http_response(
+        429, '{"error_code": "quota_exceeded"}'
+    )
+    assert (
+        _classify_session_creation_failure(
+            SessionCreationFailureReason.SESSION_FAILED, quota
+        )
+        == SessionCreationFailureClassification.QUOTA_EXCEEDED
+    )
+    down = SessionCreationFailureDetail.from_http_response(503, "")
+    assert (
+        _classify_session_creation_failure(
+            SessionCreationFailureReason.SESSION_FAILED, down
+        )
+        == SessionCreationFailureClassification.BACKEND_UNREACHABLE
+    )
