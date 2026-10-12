@@ -332,9 +332,12 @@ async def _assert_unmeasured_through_the_pipeline(run: Run, tmp_path: Path) -> N
     assert run.trial.metrics["cost_unmeasured"] == 1.0
     _assert_never_a_number(run.trial.metrics, "trial.metrics")
     # session budget submission
-    # the backend needs a numeric cost: lower bound (0.0, nothing reported) + flag
+    # the backend needs a numeric cost: the reported spend as a lower bound
+    # (0.0 when nothing was reported) + flag
     assert run.budget_mutated is True
-    assert run.budget_metrics["cost"] == 0.0
+    reported_floor = run.aggregated.get("cost_lower_bound") or 0.0
+    assert run.trial.metrics.get("cost_lower_bound") == (reported_floor or None)
+    assert run.budget_metrics["cost"] == pytest.approx(reported_floor)
     assert run.budget_metrics["cost_unmeasured"] == 1.0
     # ranking: neither the Pareto front nor best-config selection picks it
     measured = await _measured_trial(tmp_path)
@@ -514,9 +517,12 @@ async def test_isolated_external_per_item_flag_cannot_overwrite_the_computed_fla
     _assert_never_a_number(run.aggregated, "aggregated_metrics")
     assert run.trial.metrics["cost_unmeasured"] == 1.0
     # ...so the budgeted submission does not invent a zero
-    # the backend needs a numeric cost: lower bound (0.0, nothing reported) + flag
+    # the backend needs a numeric cost: the reported spend as a lower bound
+    # (0.0 when nothing was reported) + flag
     assert run.budget_mutated is True
-    assert run.budget_metrics["cost"] == 0.0
+    reported_floor = run.aggregated.get("cost_lower_bound") or 0.0
+    assert run.trial.metrics.get("cost_lower_bound") == (reported_floor or None)
+    assert run.budget_metrics["cost"] == pytest.approx(reported_floor)
     assert run.budget_metrics["cost_unmeasured"] == 1.0
     assert all(row["cost_usd"] is None for row in run.logged_rows)
 

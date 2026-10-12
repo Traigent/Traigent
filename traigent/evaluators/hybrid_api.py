@@ -1745,6 +1745,14 @@ class HybridAPIEvaluator(BaseEvaluator):
             aggregated.pop("cost", None)
             aggregated.pop("total_cost", None)
             aggregated[_COST_UNMEASURED_KEY] = 1.0
+            # The independently reported per-example costs are a valid floor
+            # (never a measured total): keep them so budgeted submission sends
+            # the reported spend with the flag instead of 0.0.
+            reported_floor = sum(
+                r.cost_usd for r in results if not r.cost_unmeasured and r.cost_usd > 0
+            )
+            if reported_floor > 0:
+                aggregated["cost_lower_bound"] = reported_floor
         else:
             aggregated.pop(_COST_UNMEASURED_KEY, None)
         return aggregated, comparability
