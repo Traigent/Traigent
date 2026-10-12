@@ -18,6 +18,7 @@ from traigent.admin.dtos import (
     TenantMembershipStatus,
     TenantSSOConfigDTO,
 )
+from traigent.core.session_types import safe_http_error_summary
 from traigent.security.tenant import TenantStatus, TenantTier
 from traigent.utils.env_config import raise_if_backend_offline
 from traigent.utils.exceptions import (
@@ -244,26 +245,21 @@ class EnterpriseAdminClient:
                 body = response.read().decode("utf-8") if response else ""
                 parsed = json.loads(body) if body else {}
                 if status_code in {401, 403}:
-                    raise AuthenticationError("Authentication failed")
-                if status_code >= 400:
-                    raise ClientError(
-                        parsed.get("message") or "Enterprise admin request failed"
+                    raise AuthenticationError(
+                        safe_http_error_summary(status_code, body)
                     )
+                if status_code >= 400:
+                    raise ClientError(safe_http_error_summary(status_code, body))
                 return parsed
         except error.HTTPError as exc:
             try:
                 body = exc.read().decode("utf-8") if exc.fp else ""
-                parsed = json.loads(body) if body else {}
             finally:
                 exc.close()
+            summary = safe_http_error_summary(exc.code, body)
             if exc.code in {401, 403}:
-                raise AuthenticationError(
-                    parsed.get("message") or "Authentication failed"
-                ) from exc
-            raise ClientError(
-                parsed.get("message")
-                or f"Enterprise admin request failed with status {exc.code}"
-            ) from exc
+                raise AuthenticationError(summary) from exc
+            raise ClientError(summary) from exc
         except error.URLError as exc:
             raise TraigentConnectionError(str(exc.reason)) from exc
 

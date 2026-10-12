@@ -12,7 +12,7 @@ import copy
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -92,7 +92,9 @@ class TrialSubmissionResult:
 
     submitted: bool = False
     permanent_rejection: bool = False
-    reason: str | None = None
+    # Backend details.reason: kept readable for callers, but excluded from
+    # repr/str so customer-influenced backend text never reaches logs.
+    reason: str | None = field(default=None, repr=False)
 
     def __bool__(self) -> bool:
         return self.submitted
