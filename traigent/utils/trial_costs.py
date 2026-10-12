@@ -153,12 +153,13 @@ def known_spend_lower_bound(*sources: Any) -> float:
 
     Every mapping in every source is scanned (not just the first usable one),
     so a ``0`` in one place can never mask spend reported in another. An
-    explicit ``cost_lower_bound`` outranks a plain ``cost``/``total_cost``: when
-    any source carries one, the largest such bound is returned. Otherwise the
-    largest reported non-negative cost is returned. The maximum (not the sum)
-    is used because the same spend is routinely echoed at several nesting
-    levels (``metrics``, ``metadata``, ``summary_stats``); summing would double
-    count it, while a maximum is still a valid floor.
+    explicit ``cost_lower_bound`` never lowers a larger reported
+    ``cost``/``total_cost``: the largest of all bounds and reported
+    non-negative costs is returned. The maximum (not the sum) is used because
+    the same spend is routinely echoed at several nesting levels (``metrics``,
+    ``metadata``, ``summary_stats``); summing would double count it, while a
+    maximum is still a valid floor. Producers must therefore sum independent
+    components (e.g. per-example costs) themselves before emitting one value.
     """
 
     bounds: list[float] = []
@@ -172,8 +173,5 @@ def known_spend_lower_bound(*sources: Any) -> float:
             cost = coerce_finite_cost(costs.get("cost"))
             if cost is not None and cost >= 0:
                 costs_seen.append(cost)
-    if bounds:
-        return max(bounds)
-    if costs_seen:
-        return max(costs_seen)
-    return 0.0
+    candidates = bounds + costs_seen
+    return max(candidates) if candidates else 0.0

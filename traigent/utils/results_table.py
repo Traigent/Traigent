@@ -328,10 +328,11 @@ def _find_best_trial(
         value = _coerce_float(getattr(trial, "metrics", {}).get(primary_metric))
         return missing if value is None else value
 
-    return chooser(
-        eligible_trials,
-        key=primary_score,
-    )
+    rankable = [t for t in eligible_trials if not _cost_flagged(t, primary_metric)]
+    if not rankable:
+        # Every candidate's primary cost is unmeasured: no measured winner.
+        return None
+    return chooser(rankable, key=primary_score)
 
 
 def _has_positive_quality_metric(trial: Any) -> bool:
@@ -431,6 +432,8 @@ def _find_best_trial_index(
     primary_metric = metric_names[0] if metric_names else None
     for index, trial in enumerate(trials):
         if getattr(trial, "config", {}) != best_config:
+            continue
+        if primary_metric is not None and _cost_flagged(trial, primary_metric):
             continue
         if best_score is None or primary_metric is None:
             return index
@@ -672,6 +675,13 @@ def print_results_table(
             f"{C.YELLOW}⚠ All trials failed — no examples succeeded. "
             f"Inspect per-example errors in "
             f".traigent/optimization_logs/experiments/.../runs/{C.RESET}"
+        )
+    elif best_trial_index is None and any(
+        _cost_flagged(t, m) for t in trials for m in metric_names
+    ):
+        _safe_table_print(
+            f"{C.YELLOW}⚠ No measured winner — every candidate's cost is "
+            f"unmeasured, so no trial is starred.{C.RESET}"
         )
     else:
         legend = [f"{C.GREEN}★{C.RESET} Overall Best"]

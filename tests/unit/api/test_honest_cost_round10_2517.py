@@ -251,3 +251,46 @@ def test_summary_stats_cost_describe_is_null_when_no_cost_sample() -> None:
     metrics = tracker.format_as_summary_stats()["metrics"]
     assert metrics["total_cost"] is None
     assert metrics["cost_unmeasured"] == 1.0
+
+
+# --- round 11 -------------------------------------------------------------------
+
+
+def test_table_all_flagged_cost_has_no_overall_best() -> None:
+    out = _table(
+        [
+            _trial("a", cost=0.0, cost_unmeasured=1.0),
+            _trial("b", cost=0.0, cost_unmeasured=1.0, cost_lower_bound=0.3),
+        ]
+    )
+    assert "★" not in out
+    assert "Overall Best" not in out
+    assert "No measured winner" in out
+
+
+def test_known_spend_bound_does_not_lower_larger_reported_cost() -> None:
+    assert known_spend_lower_bound({"cost_lower_bound": 0.20, "cost": 0.40}) == 0.40
+    assert known_spend_lower_bound({"cost_lower_bound": 0.50, "cost": 0.40}) == 0.50
+
+
+def test_hybrid_mixed_batch_keeps_reported_floor_with_flag() -> None:
+    from traigent.evaluators.hybrid_api import (  # noqa: PLC0415
+        HybridAPIEvaluator,
+        HybridExampleResult,
+    )
+
+    results = [
+        HybridExampleResult(example_id="a", cost_usd=0.40, metrics={"accuracy": 1.0}),
+        HybridExampleResult(
+            example_id="b",
+            cost_usd=0.0,
+            cost_unmeasured=True,
+            metrics={"accuracy": 1.0},
+        ),
+    ]
+    ev = HybridAPIEvaluator.__new__(HybridAPIEvaluator)
+    agg, _ = ev._compute_aggregated_metrics_with_comparability(results, 0.40)
+    assert agg["cost_unmeasured"] == 1.0
+    assert "cost" not in agg and "total_cost" not in agg
+    assert agg["cost_lower_bound"] == pytest.approx(0.40)
+    assert known_spend_lower_bound(agg) == pytest.approx(0.40)
