@@ -6,6 +6,7 @@
 # Framework integrations
 langchain>=0.0.200
 langchain-core>=1.2.28
+langgraph-sdk>=0.4.4,<0.5
 langchain-community>=0.3.27
 langchain-anthropic>=0.2.0
 langchain-openai>=1.1.14
