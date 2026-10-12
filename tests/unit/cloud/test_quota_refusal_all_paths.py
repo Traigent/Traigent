@@ -167,6 +167,19 @@ class TestClassifierCoversAllowlist:
         )
         assert not detail.is_quota_refusal
 
+    def test_quota_substring_on_503_is_not_quota(self):
+        detail = SessionCreationFailureDetail.from_http_response(
+            503, _body("quota_service_unavailable")
+        )
+        assert not detail.is_quota_refusal
+
+    def test_quota_substring_on_429_is_quota_rendered_unknown(self):
+        detail = SessionCreationFailureDetail.from_http_response(
+            429, _body("quota_whatever")
+        )
+        assert detail.is_quota_refusal
+        assert detail.safe_quota_error_code == "unknown"
+
 
 @pytest.mark.backend_online
 class TestNormalPathNewCodes:

@@ -113,10 +113,13 @@ class SessionCreationFailureDetail:
 
         code = (self.error_code or "").strip().lower()
         if code:
-            # Every declared code is recognized (#2550); an undeclared
-            # quota-shaped code is still treated as a refusal and rendered as
-            # "unknown" so its backend text is never echoed.
-            return code in QUOTA_ERROR_CODES or "quota" in code
+            # Every declared code is recognized (#2550). An undeclared code that
+            # merely contains "quota" counts as a refusal only on HTTP 402/429
+            # (rendered as "unknown" so its backend text is never echoed); on any
+            # other status it follows the normal connectivity path.
+            return code in QUOTA_ERROR_CODES or (
+                self.status_code in (402, 429) and "quota" in code
+            )
         return (
             self.status_code in (402, 429) and "quota" in (self.message or "").lower()
         )
