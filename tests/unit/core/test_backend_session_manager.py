@@ -4370,3 +4370,131 @@ def test_classify_quota_refusal_is_not_backend_unreachable():
         )
         == SessionCreationFailureClassification.BACKEND_UNREACHABLE
     )
+
+
+class TestQuotaRefusalThroughManager:
+    """#2550: quota stops the run through the real SessionOperations + manager."""
+
+    @staticmethod
+    def _manager(traigent_config, objective_schema, mock_optimizer, create_via_api):
+        from traigent.cloud.session_operations import SessionOperations
+        from traigent.config.types import resolve_execution_policy
+        from tests.unit.cloud.test_session_operations_validation import FakeClient
+
+        client = FakeClient()
+        client._create_traigent_session_via_api = create_via_api
+        ops = SessionOperations(client)
+        traigent_config.execution_mode = "hybrid"
+        traigent_config.execution_policy = resolve_execution_policy(algorithm="auto")
+        backend = Mock()
+        backend.create_session = ops.create_session
+        return BackendSessionManager(
+            backend_client=backend,
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+    @staticmethod
+    def _create(manager, mock_dataset):
+        def func(x):
+            return x
+
+        func.__name__ = "test_func"
+        return manager.create_session(
+            func=func,
+            dataset=mock_dataset,
+            function_descriptor=resolve_function_descriptor(func),
+            max_trials=5,
+            start_time=1.0,
+        )
+
+    @pytest.mark.backend_online
+    def test_quota_refusal_stops_run_with_safe_error(
+        self, traigent_config, objective_schema, mock_optimizer, mock_dataset, caplog
+    ):
+        from traigent.cloud.client import CloudServiceError, SessionQuotaRefusedError
+        from traigent.cloud.session_types import SessionCreationFailureDetail
+
+        exc = CloudServiceError("boom customer text here")
+        exc.session_creation_failure = SessionCreationFailureDetail.from_http_response(
+            429, '{"error_code": "quota_exceeded", "message": "customer text here"}'
+        )
+
+        async def create_via_api(_request):
+            raise exc
+
+        manager = self._manager(
+            traigent_config, objective_schema, mock_optimizer, create_via_api
+        )
+        with caplog.at_level(logging.DEBUG):
+            with pytest.raises(SessionQuotaRefusedError) as info:
+                self._create(manager, mock_dataset)
+
+        blob = (
+            str(info.value).lower()
+            + " ".join(r.getMessage() for r in caplog.records).lower()
+        )
+        assert "quota" in blob and "http 429" in blob and "billing" in blob
+        assert "customer text" not in blob
+        assert "degrading to local" not in blob
+        assert "unreachable" not in blob
+
+    @pytest.mark.backend_online
+    def test_503_still_takes_connectivity_path(
+        self, traigent_config, objective_schema, mock_optimizer, mock_dataset, caplog
+    ):
+        from traigent.cloud.client import CloudServiceError
+
+        async def create_via_api(_request):
+            raise CloudServiceError("503 Service Unavailable: backend down")
+
+        manager = self._manager(
+            traigent_config, objective_schema, mock_optimizer, create_via_api
+        )
+        with caplog.at_level(logging.WARNING):
+            ctx = self._create(manager, mock_dataset)
+        assert ctx.session_id is not None
+        assert any("degrading to LOCAL" in r.getMessage() for r in caplog.records)
+
+    def test_quota_formatters_never_emit_backend_text(self):
+        from traigent.core.backend_session_manager import (
+            _format_untracked_warning_block,
+        )
+        from traigent.core.execution_policy_runtime import (
+            fallback_reason_from_session_result,
+            session_failure_is_connectivity,
+            session_failure_is_session_create_400,
+        )
+        from traigent.core.session_types import (
+            SessionCreationFailureClassification,
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+
+        detail = SessionCreationFailureDetail.from_http_response(
+            429, '{"error_code": "quota_exceeded", "message": "customer text here"}'
+        )
+        result = SessionCreationResult.fallback(
+            session_id="local_x",
+            reason=SessionCreationFailureReason.SESSION_FAILED,
+            detail="d",
+            failure_response=detail,
+            typed_legacy_session_create_400=True,
+        )
+        block = _format_untracked_warning_block(
+            result, SessionCreationFailureClassification.QUOTA_EXCEEDED, aborting=True
+        )
+        blob = (
+            block
+            + detail.one_line_summary()
+            + (fallback_reason_from_session_result(result))
+        )
+        assert "customer text" not in blob
+        assert "quota_exceeded" in blob
+        assert not session_failure_is_connectivity(result)
+        assert not session_failure_is_session_create_400(result)

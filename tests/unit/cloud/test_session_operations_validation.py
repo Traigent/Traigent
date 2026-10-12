@@ -522,16 +522,19 @@ def test_create_session_no_api_key_runs_local_without_raising(monkeypatch):
     assert result.degraded is False  # no key = intentional local, not degraded
 
 
-def test_create_session_quota_refusal_reports_quota_not_unreachable(
-    monkeypatch, caplog
+@pytest.mark.parametrize("status", [429, 402])
+def test_create_session_quota_refusal_stops_with_safe_typed_error(
+    monkeypatch, caplog, status
 ):
-    """#2550: a 429 quota_exceeded refusal is a quota limit, not 'unreachable'."""
+    """#2550: a quota refusal stops the run with a typed, content-free error."""
+    from traigent.cloud.client import SessionQuotaRefusedError
+
     client = FakeClient()
     ops = SessionOperations(client)
 
-    exc = CloudServiceError("Session creation failed: HTTP 429: quota_exceeded")
+    exc = CloudServiceError("Session creation failed: customer text here")
     exc.session_creation_failure = SessionCreationFailureDetail.from_http_response(
-        429,
+        status,
         '{"error_code": "quota_exceeded", "message": "customer text here"}',
     )
 
@@ -540,19 +543,41 @@ def test_create_session_quota_refusal_reports_quota_not_unreachable(
 
     monkeypatch.setattr(ops.client, "_create_traigent_session_via_api", create_via_api)
 
-    with caplog.at_level(logging.WARNING, logger="traigent.cloud.session_operations"):
-        result = ops.create_session("demo-function", {"model": ["gpt-4o"]})
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(SessionQuotaRefusedError) as info:
+            ops.create_session("demo-function", {"model": ["gpt-4o"]})
 
-    assert result.backend_connected is False
-    assert result.failure_reason == SessionCreationFailureReason.SESSION_FAILED
-    assert result.degraded is True
-    assert "quota" in (result.failure_detail or "").lower()
-    assert "quota_exceeded" in (result.failure_detail or "")
-    assert "customer text" not in (result.failure_detail or "")
-    text = " ".join(r.getMessage() for r in caplog.records).lower()
-    assert "quota" in text
-    assert "unreachable" not in text
+    assert isinstance(info.value, CloudServiceError)
+    text = str(info.value).lower()
+    assert "quota" in text and f"http {status}" in text and "quota_exceeded" in text
+    assert "billing" in text and "unreachable" not in text
     assert "customer text" not in text
+    assert info.value.__cause__ is None and info.value.__suppress_context__
+    assert info.value.session_creation_failure.message is None
+    assert info.value.session_creation_failure.raw_body is None
+    assert (
+        "degrading to local"
+        not in " ".join(r.getMessage() for r in caplog.records).lower()
+    )
+
+
+def test_create_session_quota_unknown_error_code_rendered_unknown(monkeypatch):
+    from traigent.cloud.client import SessionQuotaRefusedError
+
+    ops = SessionOperations(FakeClient())
+    exc = CloudServiceError("x")
+    exc.session_creation_failure = SessionCreationFailureDetail.from_http_response(
+        429, '{"error_code": "quota_Alice_has_diabetes"}'
+    )
+
+    async def create_via_api(_request):
+        raise exc
+
+    monkeypatch.setattr(ops.client, "_create_traigent_session_via_api", create_via_api)
+    with pytest.raises(SessionQuotaRefusedError) as info:
+        ops.create_session("demo-function", {"model": ["gpt-4o"]})
+    assert "error_code=unknown" in str(info.value)
+    assert "Alice" not in str(info.value)
 
 
 def test_create_session_backend_unreachable_flags_degraded_and_warns(

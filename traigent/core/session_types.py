@@ -12,6 +12,19 @@ from enum import Enum
 from typing import Any
 
 
+# Closed vocabulary of quota/limit error codes safe to render. Anything else
+# (including backend-invented strings) is shown as "unknown" so a quota
+# diagnostic can never carry backend or customer text (#2550).
+QUOTA_ERROR_CODES = frozenset(
+    {
+        "quota_exceeded",
+        "quota_limit_exceeded",
+        "plan_limit_exceeded",
+        "usage_limit_exceeded",
+    }
+)
+
+
 class SessionCreationFailureReason(Enum):
     """Why backend session creation failed."""
 
@@ -105,18 +118,28 @@ class SessionCreationFailureDetail:
             self.status_code in (402, 429) and "quota" in (self.message or "").lower()
         )
 
+    @property
+    def safe_quota_error_code(self) -> str:
+        """The error code if it is in the closed quota vocabulary, else 'unknown'."""
+
+        code = (self.error_code or "").strip().lower()
+        return code if code in QUOTA_ERROR_CODES else "unknown"
+
     def quota_summary(self) -> str:
         """Content-free quota-refusal summary: status and closed error code only."""
 
         parts = []
         if self.status_code is not None:
             parts.append(f"HTTP {self.status_code}")
-        parts.append(self.error_code or "quota_exceeded")
+        parts.append(self.safe_quota_error_code)
         return " | ".join(parts)
 
     def one_line_summary(self) -> str:
         """Return a compact summary suitable for exception/log details."""
 
+        if self.is_quota_refusal:
+            # Never echo the backend message or raw body on the quota path.
+            return self.quota_summary()
         parts: list[str] = []
         if self.status_code is not None:
             parts.append(f"HTTP {self.status_code}")

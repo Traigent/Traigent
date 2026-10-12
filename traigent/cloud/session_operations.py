@@ -20,6 +20,7 @@ from traigent.cloud.client import (
     CloudEgressBlockedError,
     CloudServiceError,
     SessionContractError,
+    SessionQuotaRefusedError,
     raise_if_cloud_egress_disabled,
 )
 from traigent.cloud.models import (
@@ -464,44 +465,28 @@ class SessionOperations:
                 storage_e,
             )
 
-    def _quota_refusal_fallback(
-        self,
-        exc: Exception,
-        function_name: str,
-        search_space: dict[str, Any],
-        optimization_goal: str,
-        local_record_metadata: dict[str, Any] | None,
-    ) -> SessionCreationResult | None:
-        """Fallback result for a backend quota/limit refusal, else ``None``.
+    @staticmethod
+    def _raise_if_quota_refusal(exc: Exception) -> None:
+        """Stop the run on a backend quota/limit refusal (#2550).
 
-        The backend was reachable and refused on plan limits (#2550). Reporting
-        that as "backend unreachable" sends users to debug their network. The
-        run still degrades to LOCAL (flagged ``degraded``) exactly as before, but
-        the warning and detail name the quota refusal using only the HTTP status
-        and the closed error code (no backend/customer text).
+        The backend was reachable and refused on plan limits, so this is not a
+        connectivity failure and must not degrade to LOCAL. Re-raised as a typed
+        error carrying only the HTTP status and a closed error code (never the
+        backend message or raw body), with a sanitized detail attached.
         """
+        if isinstance(exc, SessionQuotaRefusedError):
+            raise exc
         failure_response = _get_session_creation_failure_detail(exc)
         if failure_response is None or not failure_response.is_quota_refusal:
-            return None
-        summary = failure_response.quota_summary()
-        logger.warning(
-            "Managed session creation refused: plan quota/limit reached (%s) for "
-            "'%s'; degrading to LOCAL execution — results are NOT tracked on the "
-            "backend. Review plan limits or upgrade in the Traigent portal "
-            "(Billing).",
-            summary,
-            function_name,
+            return
+        safe = SessionQuotaRefusedError(
+            failure_response.status_code, failure_response.safe_quota_error_code
         )
-        fallback_id = self._create_local_fallback_session(
-            function_name, search_space, optimization_goal, local_record_metadata
+        safe.session_creation_failure = SessionCreationFailureDetail(
+            status_code=failure_response.status_code,
+            error_code=failure_response.safe_quota_error_code,
         )
-        return SessionCreationResult.fallback(
-            session_id=fallback_id,
-            reason=SessionCreationFailureReason.SESSION_FAILED,
-            detail=f"Quota limit reached ({summary})",
-            failure_response=failure_response,
-            degraded=True,
-        )
+        raise safe from None
 
     def _auth_fallback_result(
         self,
@@ -643,7 +628,12 @@ class SessionOperations:
                     intends_cloud_egress and _is_definitive_auth_rejection(exc)
                 )
             return governed or isinstance(
-                exc, (CloudEgressBlockedError, SessionContractError)
+                exc,
+                (
+                    CloudEgressBlockedError,
+                    SessionContractError,
+                    SessionQuotaRefusedError,
+                ),
             )
 
         if is_backend_offline():
@@ -935,15 +925,7 @@ class SessionOperations:
                 await self._reset_client_session("create_session fallback")
                 if _must_fail_loud(e):
                     raise
-                quota_result = self._quota_refusal_fallback(
-                    e,
-                    function_name,
-                    search_space,
-                    optimization_goal,
-                    local_record_metadata,
-                )
-                if quota_result is not None:
-                    return quota_result
+                self._raise_if_quota_refusal(e)
                 # A configured key intended a managed/cloud run, but the backend
                 # was unreachable. We degrade to LOCAL execution for resilience —
                 # but this is a DOWNGRADE (managed search/tracking is lost), so
@@ -1033,15 +1015,7 @@ class SessionOperations:
         except (TimeoutError, CloudServiceError, OSError) as exc:
             if _must_fail_loud(exc):
                 raise
-            quota_result = self._quota_refusal_fallback(
-                exc,
-                function_name,
-                search_space,
-                optimization_goal,
-                local_record_metadata,
-            )
-            if quota_result is not None:
-                return quota_result
+            self._raise_if_quota_refusal(exc)
             # Backend unreachable on the outer path — same downgrade semantics as
             # the inner sibling: WARN + flag degraded so the local run is never
             # mistaken for a managed one.

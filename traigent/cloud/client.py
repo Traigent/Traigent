@@ -2615,6 +2615,28 @@ class SessionContractError(CloudServiceError):
     degrading a contract refusal would launder strict mode (RFC 0001 P7)."""
 
 
+class SessionQuotaRefusedError(CloudServiceError):
+    """Session create was refused because a plan quota/limit was reached.
+
+    A definitive answer from a reachable backend (HTTP 429/402 with a closed
+    quota error code): NEVER a connectivity failure and NEVER absorbed into the
+    local-fallback path. The message carries only the HTTP status, a closed
+    error code and the remedy; backend message text and raw bodies are dropped.
+    """
+
+    def __init__(self, status_code: int | None, error_code: str) -> None:
+        status = f"HTTP {status_code}" if status_code is not None else "HTTP status n/a"
+        super().__init__(
+            f"Plan quota/limit reached ({status}, error_code={error_code}). "
+            "Session creation was refused by the Traigent backend; the run was "
+            "stopped. Upgrade your plan in the Traigent portal (Billing)."
+        )
+        self.status_code = status_code
+        self.error_code = error_code
+        # Sanitized detail (status + closed code only); set by the raiser.
+        self.session_creation_failure: Any = None
+
+
 class RunIdMissingError(SessionContractError):
     """require_run_id is set, but no authoritative experiment_run_id exists.
 

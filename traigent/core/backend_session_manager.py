@@ -559,15 +559,19 @@ def _format_untracked_warning_block(
         lines.append(f"HTTP status: {detail.status_code}")
     if detail and detail.backend_url:
         lines.append(f"Backend URL: {detail.backend_url}")
-    if detail and detail.error_code:
+    quota_refusal = bool(detail and detail.is_quota_refusal)
+    if quota_refusal and detail:
+        # Quota path: closed error code only, never backend message/raw body.
+        lines.append(f"Backend error_code: {detail.safe_quota_error_code}")
+    elif detail and detail.error_code:
         lines.append(f"Backend error_code: {detail.error_code}")
-    if detail and detail.message:
+    if detail and detail.message and not quota_refusal:
         lines.append(f"Backend message: {detail.message}")
     if detail and detail.missing_permissions:
         permissions = ", ".join(f"`{p}`" for p in detail.missing_permissions)
         lines.append(f"Missing permissions: {permissions}")
 
-    raw_reason = _format_raw_reason(result)
+    raw_reason = None if quota_refusal else _format_raw_reason(result)
     if raw_reason:
         lines.append(f"Raw reason: {raw_reason}")
 
