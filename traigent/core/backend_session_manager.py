@@ -566,12 +566,13 @@ def _format_untracked_warning_block(
         # Closed vocabulary only; the backend message/raw body is never printed.
         lines.append(f"Backend error_code: {detail.safe_error_code}")
     if detail and detail.missing_permissions:
-        permissions = ", ".join(f"`{p}`" for p in detail.safe_missing_permissions)
-        omitted = detail.omitted_permission_count
-        if omitted:
-            suffix = f"{omitted} entr{'y' if omitted == 1 else 'ies'} omitted"
-            permissions = f"{permissions}; {suffix}" if permissions else suffix
-        lines.append(f"Missing permissions: {permissions}")
+        # Count only: permission strings from the backend are never printed
+        # (they can echo customer identifiers). The full list stays on the
+        # failure detail for programmatic callers.
+        lines.append(
+            f"Missing permissions: {len(detail.missing_permissions)} "
+            "(see the Traigent portal for your role)"
+        )
 
     raw_reason = None if quota_refusal else _format_raw_reason(result)
     if raw_reason:

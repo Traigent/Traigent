@@ -4517,11 +4517,13 @@ class OptimizationOrchestrator:
                 logger.warning(
                     "⚠️  Optimization %s finished in LOCAL-ONLY mode "
                     "(source='local_fallback'): "
-                    "your config was rejected by the backend: %s. Results "
-                    "were computed and stored locally and are NOT on the cloud "
-                    "backend; metadata includes persistence_reason='rejected'.",
+                    "the backend rejected persistence of this run's config. "
+                    "Results were computed and stored locally and are NOT on the "
+                    "cloud backend; metadata includes persistence_reason='rejected'. "
+                    "The rejection detail is not logged; read "
+                    "result.metadata['persistence_rejection_reason'] on the "
+                    "customer side.",
                     self._optimization_id,
-                    rejection_reason,
                 )
             else:
                 logger.warning(

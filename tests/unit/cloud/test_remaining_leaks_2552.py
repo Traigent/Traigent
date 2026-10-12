@@ -130,10 +130,10 @@ def _failure(missing):
     ), detail
 
 
-def test_missing_permissions_allowlist_omits_free_text():
+def test_missing_permissions_prints_count_only_never_names():
     from traigent.core.backend_session_manager import _classify_session_creation_failure
 
-    result, detail = _failure(["sessions:create", CANARY])
+    result, detail = _failure(["customer:secret_contract", CANARY])
     block = _format_untracked_warning_block(
         result,
         _classify_session_creation_failure(
@@ -141,9 +141,12 @@ def test_missing_permissions_allowlist_omits_free_text():
         ),
         aborting=False,
     )
-    assert "`sessions:create`" in block
+    assert "Missing permissions: 2 (see the Traigent portal for your role)" in block
     assert CANARY not in block.lower()
-    assert "1 entry omitted" in block
+    assert "customer:secret_contract" not in block
+    assert "secret_contract" not in block
+    # The full list stays on the object for programmatic callers.
+    assert detail.missing_permissions == ("customer:secret_contract", CANARY)
 
 
 def test_detail_and_result_repr_str_exclude_text():

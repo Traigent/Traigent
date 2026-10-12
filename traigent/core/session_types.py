@@ -7,7 +7,6 @@ depend on it even when the optional cloud package is unavailable.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -45,11 +44,6 @@ SAFE_HTTP_ERROR_CODES = QUOTA_ERROR_CODES | frozenset(
         "unauthorized",
         "validation_error",
     }
-)
-
-
-SAFE_PERMISSION_PATTERN = re.compile(
-    r"[a-z][a-z0-9_-]{0,63}[:.][a-z0-9_*-]{1,64}(?:[:.][a-z0-9_*-]{1,64}){0,2}"
 )
 
 
@@ -120,20 +114,6 @@ class SessionCreationFailureDetail:
         )
 
     __str__ = __repr__
-
-    @property
-    def safe_missing_permissions(self) -> tuple[str, ...]:
-        """Missing permissions that look like permission identifiers only."""
-
-        return tuple(
-            p for p in self.missing_permissions if SAFE_PERMISSION_PATTERN.fullmatch(p)
-        )
-
-    @property
-    def omitted_permission_count(self) -> int:
-        """How many reported permission entries were not identifier-shaped."""
-
-        return len(self.missing_permissions) - len(self.safe_missing_permissions)
 
     @classmethod
     def from_http_response(

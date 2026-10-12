@@ -2454,7 +2454,10 @@ class TestHandleSessionCreationResult:
         message = str(exc_info.value)
         assert "missing-permission" in message
         assert "insufficient_permissions" in message
-        assert "experiment.write" in message
+        assert (
+            "Missing permissions: 1 (see the Traigent portal for your role)" in message
+        )
+        assert "experiment.write" not in message
         assert "Aborting before trials or LLM calls" in message
         assert "TRAIGENT_ALLOW_UNTRACKED=1" in message
 
@@ -2504,6 +2507,57 @@ class TestHandleSessionCreationResult:
         mock_backend_client.request_trial_slot.assert_not_called()
         assert not backend_session_manager.backend_tracking_enabled
 
+    def test_missing_permission_canary_prints_count_not_names(
+        self, traigent_config, objective_schema, mock_optimizer, caplog
+    ):
+        """Canary (#2552): backend permission strings are never printed.
+
+        Both an identifier-shaped name and free text must stay out of the
+        raised message and every log record; only the count is shown.
+        """
+        import logging
+
+        from traigent.cloud.session_types import (
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+        from traigent.utils.exceptions import ConfigurationError
+
+        manager = BackendSessionManager(
+            backend_client=Mock(),
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.AUTH,
+            detail="Authentication failed (403)",
+            failure_response=SessionCreationFailureDetail.from_http_response(
+                403,
+                '{"success":false,"error_code":"INSUFFICIENT_PERMISSIONS",'
+                '"message":"customer text here",'
+                '"details":{"missing_permissions":'
+                '["customer:secret_contract","customer text here"]}}',
+            ),
+        )
+
+        with caplog.at_level(logging.DEBUG):
+            with pytest.raises(ConfigurationError) as exc_info:
+                manager.handle_session_creation_result(result)
+
+        message = str(exc_info.value)
+        assert "Missing permissions: 2 (see the Traigent portal for your role)" in (
+            message
+        )
+        for text in ("customer:secret_contract", "customer text here"):
+            assert text not in message
+            assert all(text not in rec.getMessage() for rec in caplog.records)
+
     def test_auth_failure_allows_local_only_with_explicit_opt_in(
         self, traigent_config, objective_schema, mock_optimizer, caplog, monkeypatch
     ):
@@ -2547,7 +2601,11 @@ class TestHandleSessionCreationResult:
         assert session_id == "local_test"
         assert not manager.backend_tracking_enabled
         assert any("missing-permission" in msg for msg in caplog.messages)
-        assert any("experiment.write" in msg for msg in caplog.messages)
+        assert any(
+            "Missing permissions: 1 (see the Traigent portal for your role)" in msg
+            for msg in caplog.messages
+        )
+        assert not any("experiment.write" in msg for msg in caplog.messages)
         assert any("Continuing local-only" in msg for msg in caplog.messages)
 
     def test_connection_failure_warns_and_continues_local(
