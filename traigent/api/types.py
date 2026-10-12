@@ -1829,7 +1829,7 @@ class OptimizationResult:
             definition_name, orientation = (
                 OptimizationResult._definition_name_and_orientation(definition)
             )
-            if definition_name != name:
+            if not (definition_name == name):
                 continue
             if orientation == "band":
                 raise ValueError(

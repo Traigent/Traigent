@@ -1055,3 +1055,95 @@ class TestToDataFrame:
         )
         assert_frame_equal(df, expected, check_dtype=True)
         assert list(df.index) == [0, 1]
+
+
+# --------------------------------------------------------------------------
+# Review round 1 additions
+# --------------------------------------------------------------------------
+
+
+class _FoldedName(str):
+    """str whose ``__eq__`` casefolds while ``__ne__`` stays case-sensitive."""
+
+    def __eq__(self, other: object) -> bool:
+        return str(self).casefold() == str(other).casefold()
+
+    def __hash__(self) -> int:
+        return hash(str(self).casefold())
+
+
+class _AttrDict(dict):
+    """Empty dict definition carrying name/orientation as attributes."""
+
+    name = "my_custom"
+    orientation = "minimize"
+
+
+class TestReviewRound1:
+    def test_schema_name_matching_uses_eq_not_ne(self):
+        res = _result(
+            [],
+            metadata={
+                "objective_schema": {
+                    "objectives": [
+                        {"name": _FoldedName("ACCURACY"), "orientation": "minimize"}
+                    ]
+                }
+            },
+        )
+        assert res._objective_orientation("accuracy") == "minimize"
+
+    def test_dict_subclass_definition_falls_back_to_attributes(self):
+        res = _result([], metadata={"objective_schema": {"objectives": [_AttrDict()]}})
+        assert res._objective_orientation("my_custom") == "minimize"
+
+    def test_dict_subclass_keys_override_attributes(self):
+        definition = _AttrDict(name="other", orientation="maximize")
+        res = _result([], metadata={"objective_schema": {"objectives": [definition]}})
+        assert res._objective_orientation("other") == "maximize"
+        with pytest.raises(ValueError, match="no declared orientation"):
+            res._objective_orientation("my_custom")
+
+    def test_best_metrics_preserves_raw_key_order(self):
+        metrics = {"zeta": 1.0, "alpha": 2.0, "mid": 3.0}
+        # no objectives, config match
+        res = _result([_trial("1", {"a": 1}, dict(metrics))], best_config={"a": 1})
+        res.best_score = 1.0
+        assert list(res.best_metrics) == ["zeta", "alpha", "mid"]
+        # no objectives, fallback to first trial with metrics
+        res = _result([_trial("1", {"a": 2}, dict(metrics))], best_config={"a": 1})
+        res.best_score = 1.0
+        assert list(res.best_metrics) == ["zeta", "alpha", "mid"]
+        # objectives, config match
+        res = _result(
+            [_trial("1", {"a": 1}, dict(metrics))],
+            best_config={"a": 1},
+            best_score=1.0,
+            objectives=["alpha"],
+        )
+        assert list(res.best_metrics) == ["zeta", "alpha", "mid"]
+        # objectives, best_trial_id and last resort
+        for md in ({"best_trial_id": "1"}, {}):
+            res = _result(
+                [_trial("1", {"a": 2}, dict(metrics))],
+                best_config={"a": 1},
+                best_score=1.0,
+                objectives=["alpha"],
+                metadata=md,
+            )
+            assert list(res.best_metrics) == ["zeta", "alpha", "mid"]
+
+    def test_stamped_ids_helper_guards(self):
+        res = _result([], metadata={})
+        res.metadata = None  # type: ignore[assignment]
+        assert res._stamped_winning_trial_ids() is None
+        res.metadata = {"session_summary": "garbage"}
+        assert res._stamped_winning_trial_ids() is None
+        res.metadata = {"session_summary": {"winning_trial_ids": [1, "b"]}}
+        assert res._stamped_winning_trial_ids() == {"1", "b"}
+
+    def test_opaque_helper_json_success_returns_same_object(self):
+        from traigent.api.types import _json_safe_opaque_value  # noqa: PLC0415
+
+        payload = {"a": [1, 2]}
+        assert _json_safe_opaque_value(payload) is payload
