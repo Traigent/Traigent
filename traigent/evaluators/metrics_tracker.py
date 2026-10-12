@@ -1259,6 +1259,26 @@ class MetricsTracker:
             },
         }
 
+        # Completeness of the cost aggregates above. ``total_cost`` etc. are
+        # describe() over the examples that HAD a cost measurement; an example
+        # with none contributes nothing, so a zero-count (or partial) describe
+        # is not a $0 trial. Say so with the same flag/floor vocabulary the
+        # per-trial formatter uses, so the submission path can send the flag
+        # (and the reported lower bound) instead of the placeholder zero means
+        # (#2517).
+        cost_measured_metrics = [m for m in measured_metrics if m.cost_measured]
+        if any(not m.cost_measured for m in measured_metrics) or not (
+            cost_measured_metrics
+        ):
+            # Scalars inside ``metrics``: the summary_stats schema allows a
+            # number next to the describe() dicts, but no extra top-level keys.
+            summary_metrics["cost_unmeasured"] = 1.0
+            lower_bound = sum(
+                float(m.cost.total_cost) for m in cost_measured_metrics
+            ) + sum(float(m.cost.known_cost) for m in all_metrics)
+            if lower_bound > 0:
+                summary_metrics["cost_lower_bound"] = lower_bound
+
         return summary_stats
 
     def _empty_summary_stats(self) -> dict[str, Any]:

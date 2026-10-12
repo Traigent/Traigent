@@ -1429,6 +1429,22 @@ class OptimizationResult:
                 return dict(trial.metrics)
         return {}
 
+    @staticmethod
+    def _cost_flagged_for_objective(trial: TrialResult, objective: str) -> bool:
+        """True when ``objective`` is a cost objective and the trial's cost is flagged.
+
+        A number next to ``cost_unmeasured`` is a floor or a stray zero, never a
+        ranking value (Traigent#2517); same convention as the Pareto front.
+        """
+        from traigent.utils.multi_objective import (  # noqa: PLC0415
+            _COST_OBJECTIVE_NAMES,
+        )
+        from traigent.utils.trial_costs import is_cost_unmeasured  # noqa: PLC0415
+
+        return objective in _COST_OBJECTIVE_NAMES and is_cost_unmeasured(
+            getattr(trial, "metrics", None)
+        )
+
     def _calculate_objective_ranges(self) -> dict[str, tuple[float, float]]:
         """Calculate min/max ranges for each objective across ranking-eligible
         (falling back to all successful) trials — see ``_ranking_source_trials``
@@ -1442,6 +1458,8 @@ class OptimizationResult:
         for obj in self.objectives:
             values = []
             for trial in self._ranking_source_trials:
+                if self._cost_flagged_for_objective(trial, obj):
+                    continue
                 if trial.metrics and obj in trial.metrics:
                     value = trial.metrics[obj]
                     if value is not None:
@@ -2097,6 +2115,11 @@ class OptimizationResult:
 
         for trial in self._ranking_source_trials:
             if not trial.metrics:
+                continue
+            if any(self._cost_flagged_for_objective(trial, o) for o in self.objectives):
+                # Excluded from the ranking (as on the Pareto front): its cost
+                # objective has no measured value, so it cannot beat a trial
+                # that does (Traigent#2517).
                 continue
 
             normalized = self._normalize_trial_metrics(

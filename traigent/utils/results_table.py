@@ -131,7 +131,16 @@ def _format_percent_metric(val: float) -> str:
     return f"{val:.1%}"
 
 
-def _render_metric_cell(metric: str, raw_value: Any) -> str:
+def _cost_flagged(trial: Any, metric: str) -> bool:
+    """True when ``metric`` is a cost metric and the trial flags its cost unmeasured."""
+    if "cost" not in metric.lower():
+        return False
+    from traigent.utils.trial_costs import is_cost_unmeasured  # noqa: PLC0415
+
+    return is_cost_unmeasured(getattr(trial, "metrics", None))
+
+
+def _render_metric_cell(metric: str, raw_value: Any, trial: Any = None) -> str:
     """Format one table cell; an unmeasured cost reads "unmeasured", not "$0.00000".
 
     A trial with no captured LLM usage has an UNKNOWN cost (Traigent#2441), and
@@ -139,6 +148,14 @@ def _render_metric_cell(metric: str, raw_value: Any) -> str:
     metrics keep the historical 0.0 rendering for a missing value.
     """
     value = _coerce_float(raw_value)
+    if trial is not None and _cost_flagged(trial, metric):
+        # Flagged: the number (if any) is a floor or a stray zero. Show the
+        # known spend as a lower bound, else "unmeasured" -- never "$0.00000".
+        metrics = getattr(trial, "metrics", None) or {}
+        bound = _coerce_float(metrics.get("cost_lower_bound"))
+        if bound is not None and bound > 0:
+            return f"\u2265 {_format_metric_value(metric, bound)}"
+        return _UNMEASURED_CELL
     if value is None and "cost" in metric.lower():
         return _UNMEASURED_CELL
     return _format_metric_value(metric, value or 0.0)
@@ -238,6 +255,8 @@ def _find_best_per_objective(
         for i, trial in enumerate(trials):
             if not _trial_is_best_candidate(trial):
                 continue
+            if _cost_flagged(trial, metric_name):
+                continue
             val = _coerce_float(
                 _get_metric_value(trial, metric_name, i, metric_overrides)
             )
@@ -304,6 +323,8 @@ def _find_best_trial(
     missing = float("inf") if is_minimize else float("-inf")
 
     def primary_score(trial: Any) -> float:
+        if _cost_flagged(trial, primary_metric):
+            return missing
         value = _coerce_float(getattr(trial, "metrics", {}).get(primary_metric))
         return missing if value is None else value
 
@@ -559,7 +580,7 @@ def print_results_table(
         max_len = max(
             len(
                 _render_metric_cell(
-                    metric, _get_metric_value(t, metric, i, metric_overrides)
+                    metric, _get_metric_value(t, metric, i, metric_overrides), t
                 )
             )
             for i, t in enumerate(trials)
@@ -626,7 +647,7 @@ def print_results_table(
 
         for metric in metric_names:
             raw_metric_val = _get_metric_value(trial, metric, i, metric_overrides)
-            formatted = _render_metric_cell(metric, raw_metric_val)
+            formatted = _render_metric_cell(metric, raw_metric_val, trial)
             if not all_failed and i in best_per_objective.get(metric, set()):
                 cell = f"{C.GREEN}{C.BOLD}{formatted:^{col_widths[metric]}}{C.RESET}"
             else:

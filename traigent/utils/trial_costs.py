@@ -150,12 +150,30 @@ def known_spend_lower_bound(*sources: Any) -> float:
     For a trial flagged ``cost_unmeasured`` the number is only a lower bound
     (the reported part of the spend); ``0.0`` when nothing was reported. It is
     never a measurement: callers that send it must send the flag with it.
+
+    Every mapping in every source is scanned (not just the first usable one),
+    so a ``0`` in one place can never mask spend reported in another. An
+    explicit ``cost_lower_bound`` outranks a plain ``cost``/``total_cost``: when
+    any source carries one, the largest such bound is returned. Otherwise the
+    largest reported non-negative cost is returned. The maximum (not the sum)
+    is used because the same spend is routinely echoed at several nesting
+    levels (``metrics``, ``metadata``, ``summary_stats``); summing would double
+    count it, while a maximum is still a valid floor.
     """
 
+    bounds: list[float] = []
+    costs_seen: list[float] = []
     for source in sources:
         for cost_mapping in _iter_cost_mappings(source):
+            bound = coerce_finite_cost(cost_mapping.get("cost_lower_bound"))
+            if bound is not None and bound >= 0:
+                bounds.append(bound)
             costs = extract_trial_cost_fields(cost_mapping)
             cost = coerce_finite_cost(costs.get("cost"))
             if cost is not None and cost >= 0:
-                return cost
+                costs_seen.append(cost)
+    if bounds:
+        return max(bounds)
+    if costs_seen:
+        return max(costs_seen)
     return 0.0
