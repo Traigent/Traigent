@@ -8,6 +8,7 @@ Inspired by DeepEval's approach to local JSON file storage.
 import json
 import math
 import os
+import stat
 import time
 from collections.abc import Mapping
 from contextlib import contextmanager
@@ -824,15 +825,44 @@ class LocalStorageManager:
             logger.error(f"Refusing to delete session with unsafe id: {e}")
             return False
 
-        if session_file.exists():
-            try:
-                session_file.unlink()
-                logger.info(f"Deleted session {session_id}")
-                return True
-            except Exception as e:
-                logger.error(f"Failed to delete session {session_id}: {e}")
-                return False
+        try:
+            deleted = self._unlink_session_file(session_file)
+        except Exception as e:
+            logger.error(f"Failed to delete session {session_id}: {e}")
+            return False
+        if deleted:
+            logger.info(f"Deleted session {session_id}")
+        return deleted
 
+    @staticmethod
+    def _unlink_session_file(session_file: Path) -> bool:
+        """Delete one session record, never following a swapped parent dir.
+
+        On POSIX the sessions directory is opened once with ``O_NOFOLLOW`` and
+        the leaf is checked and unlinked relative to that descriptor, so a
+        concurrent replacement of the directory by a symlink cannot redirect
+        the delete. Returns False when the record does not exist.
+        """
+        if os.unlink in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW"):
+            fd = os.open(
+                str(session_file.parent),
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+            )
+            try:
+                try:
+                    mode = os.lstat(session_file.name, dir_fd=fd).st_mode
+                except FileNotFoundError:
+                    return False
+                if not stat.S_ISREG(mode):
+                    raise ValueError("refusing to delete a non-regular session file")
+                os.unlink(session_file.name, dir_fd=fd)
+                return True
+            finally:
+                os.close(fd)
+        # Windows (no dir_fd support): fall back to the already-validated path.
+        if session_file.exists():
+            session_file.unlink()
+            return True
         return False
 
     def export_session(

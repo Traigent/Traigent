@@ -1181,3 +1181,27 @@ def test_all_parseable_trial_uses_parsed_indices():
 def test_trailing_newline_id_does_not_parse():
     out = _measures([_ex("example_2\n", a=1.0)])
     assert [m["example_id"] for m in out] == ["example_0"]
+
+
+def test_post_upload_record_load_failure_does_not_mask_upload(sync_manager, caplog):
+    """A record that goes bad mid-upload must not turn a good upload into a raise."""
+    from traigent.utils.exceptions import TraigentStorageError
+
+    sid = _make_completed_session(sync_manager.storage)
+    _stub_backend_success(sync_manager)
+    real_load = sync_manager.storage.load_session
+    calls = {"n": 0}
+
+    def flaky_load(session_id):
+        calls["n"] += 1
+        if calls["n"] > 1:  # first load feeds the upload; later ones are bookkeeping
+            raise TraigentStorageError("SECRET-RECORD-CONTENT mismatched")
+        return real_load(session_id)
+
+    sync_manager.storage.load_session = flaky_load
+
+    result = sync_manager.sync_session_to_cloud(sid)
+
+    assert result["status"] == "success"
+    assert "bookkeeping_warning" in result
+    assert "SECRET-RECORD-CONTENT" not in caplog.text

@@ -1141,7 +1141,21 @@ class SyncManager:
             "last_error": "; ".join(sync_result.get("errors", [])) or None,
         }
         prior_attempts = 0
-        existing = self.storage.load_session(session_id)
+        try:
+            existing = self.storage.load_session(session_id)
+        except Exception as exc:
+            # The upload already happened; a record that became unreadable or
+            # mismatched mid-upload must not mask its outcome. Log the error
+            # type only (no record contents) and flag it on the result.
+            logger.warning(
+                "Failed to read local record for session %s after sync (%s)",
+                session_id,
+                type(exc).__name__,
+            )
+            sync_result["bookkeeping_warning"] = (
+                "local sync state could not be recorded: record unreadable"
+            )
+            return
         prior_sync_state = getattr(existing, "sync_state", None)
         if isinstance(prior_sync_state, dict):
             try:
@@ -1155,6 +1169,9 @@ class SyncManager:
         except Exception as exc:  # pragma: no cover - bookkeeping must not break sync
             logger.warning(
                 "Failed to persist sync_state for session %s: %s", session_id, exc
+            )
+            sync_result["bookkeeping_warning"] = (
+                "local sync state could not be recorded: update failed"
             )
 
     def sync_all_sessions(
