@@ -924,7 +924,9 @@ class TestBackendSessionManagerTrialSubmission:
                 "metrics"
             ]
         )
-        assert "cost" not in metrics_payload
+        # Owner decision A: budget-armed sessions require a number, so send the
+        # reported lower bound (0.0 here) together with cost_unmeasured = 1.0.
+        assert metrics_payload["cost"] == 0.0
         assert metrics_payload["cost_unmeasured"] == 1.0
         assert "submitting budgeted trial as cost_unmeasured" in caplog.text
 

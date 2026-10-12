@@ -400,7 +400,10 @@ class TestSessionCreation:
         )
 
         submitted_payload = mock_session.post.call_args.kwargs["json"]
-        assert "cost" not in submitted_payload["metrics"]
+        # Owner decision A: a budget-armed session demands a number, so the
+        # reported spend (a lower bound, 0.0 when nothing was reported) is sent
+        # WITH cost_unmeasured = 1.0; the flag is the signal, never the number.
+        assert submitted_payload["metrics"]["cost"] == 0.0
         assert submitted_payload["metrics"]["cost_unmeasured"] == 1.0
 
 
