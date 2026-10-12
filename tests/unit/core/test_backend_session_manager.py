@@ -2453,7 +2453,7 @@ class TestHandleSessionCreationResult:
         assert not manager.backend_tracking_enabled
         message = str(exc_info.value)
         assert "missing-permission" in message
-        assert "INSUFFICIENT_PERMISSIONS" in message
+        assert "insufficient_permissions" in message
         assert "experiment.write" in message
         assert "Aborting before trials or LLM calls" in message
         assert "TRAIGENT_ALLOW_UNTRACKED=1" in message
@@ -2587,10 +2587,10 @@ class TestHandleSessionCreationResult:
         assert any("backend-unreachable" in msg for msg in caplog.messages)
         assert any("Continuing local-only" in msg for msg in caplog.messages)
 
-    def test_unknown_4xx_warning_includes_raw_reason(
+    def test_unknown_4xx_warning_omits_backend_body(
         self, traigent_config, objective_schema, mock_optimizer, caplog
     ):
-        """Unknown 4xx responses are classified without dropping the raw body."""
+        """Unknown 4xx responses are classified; the raw body is never printed (#2552)."""
         import logging
 
         from traigent.cloud.session_types import (
@@ -2625,7 +2625,8 @@ class TestHandleSessionCreationResult:
 
         assert session_id == "local_test"
         assert any("Classification: unknown" in msg for msg in caplog.messages)
-        assert any(
+        assert any("HTTP status: 400" in msg for msg in caplog.messages)
+        assert not any(
             "Bad request from session endpoint" in msg for msg in caplog.messages
         )
 

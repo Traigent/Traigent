@@ -499,10 +499,9 @@ def _classify_session_creation_failure(
 
 
 def _format_raw_reason(result: SessionCreationResult) -> str | None:
-    detail = result.failure_response
+    # failure_detail is SDK-composed (status + closed code); the backend raw
+    # body is never printed (#2552).
     raw_reason = result.failure_detail
-    if detail and detail.raw_body:
-        raw_reason = detail.raw_body
     if not raw_reason:
         return None
     return cast(str, raw_reason.replace("\n", "\\n")[:500])
@@ -564,9 +563,8 @@ def _format_untracked_warning_block(
         # Quota path: closed error code only, never backend message/raw body.
         lines.append(f"Backend error_code: {detail.safe_quota_error_code}")
     elif detail and detail.error_code:
-        lines.append(f"Backend error_code: {detail.error_code}")
-    if detail and detail.message and not quota_refusal:
-        lines.append(f"Backend message: {detail.message}")
+        # Closed vocabulary only; the backend message/raw body is never printed.
+        lines.append(f"Backend error_code: {detail.safe_error_code}")
     if detail and detail.missing_permissions:
         permissions = ", ".join(f"`{p}`" for p in detail.missing_permissions)
         lines.append(f"Missing permissions: {permissions}")

@@ -34,6 +34,7 @@ SAFE_HTTP_ERROR_CODES = QUOTA_ERROR_CODES | frozenset(
         "bad_request",
         "conflict",
         "forbidden",
+        "insufficient_permissions",
         "internal_error",
         "invalid_request",
         "not_found",
@@ -185,26 +186,26 @@ class SessionCreationFailureDetail:
         parts.append(self.safe_quota_error_code)
         return " | ".join(parts)
 
-    def one_line_summary(self) -> str:
-        """Return a compact summary suitable for exception/log details."""
+    @property
+    def safe_error_code(self) -> str:
+        """The error code if it is in the closed vocabulary, else 'unknown'."""
 
-        if self.is_quota_refusal:
-            # Never echo the backend message or raw body on the quota path.
-            return self.quota_summary()
+        code = (self.error_code or "").strip().lower()
+        return code if code in SAFE_HTTP_ERROR_CODES else "unknown"
+
+    def one_line_summary(self) -> str:
+        """Return a content-free summary: HTTP status and closed error code only.
+
+        Never includes the backend message, raw body or any other backend text
+        (it can echo customer content, #2552). ``message``/``raw_body`` stay on
+        the detail for classification only.
+        """
+
         parts: list[str] = []
         if self.status_code is not None:
             parts.append(f"HTTP {self.status_code}")
-        if self.error_code:
-            parts.append(self.error_code)
-        if self.message:
-            parts.append(self.message)
-        if self.missing_permissions:
-            parts.append(
-                "missing_permissions=" + ",".join(sorted(set(self.missing_permissions)))
-            )
-        if not parts and self.raw_body:
-            parts.append(self.raw_body[:200])
-        return " | ".join(parts) or "unknown"
+        parts.append(self.safe_error_code)
+        return " | ".join(parts)
 
 
 class SessionCreationHTTPError(Exception):
