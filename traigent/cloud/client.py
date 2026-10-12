@@ -33,7 +33,10 @@ else:  # pragma: no cover - minimal environments without aiohttp
     _REAL_AIOHTTP_CLIENT_SESSION = None
 
 from traigent.config.backend_config import BackendConfig
-from traigent.core.session_types import SessionCreationFailureDetail
+from traigent.core.session_types import (
+    SessionCreationFailureDetail,
+    safe_http_error_summary,
+)
 from traigent.evaluators.base import Dataset
 from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
@@ -1139,7 +1142,7 @@ class TraigentCloudClient(BaseTraigentClient):
         summary_owner = self._summarize_actor(owner_info)
         summary_current = self._summarize_actor(current_actor)
 
-        excerpt = self._first_error_line(error_text)
+        excerpt = safe_http_error_summary(status, error_text)
 
         message = (
             f"{action} failed for session '{session_id}': HTTP {status} Forbidden. "
@@ -1153,22 +1156,6 @@ class TraigentCloudClient(BaseTraigentClient):
             message = f"{message} Backend response: {excerpt}"
 
         raise CloudServiceError(message)
-
-    @staticmethod
-    def _first_error_line(error_text: str | None) -> str:
-        """Return a trimmed first line for diagnostics without raising errors."""
-
-        if not error_text:
-            return ""
-
-        lines = error_text.strip().splitlines()
-        if not lines:
-            return ""
-
-        excerpt = lines[0].strip()
-        if len(excerpt) > 200:
-            return f"{excerpt[:197]}..."
-        return excerpt
 
     async def optimize_function(
         self,
@@ -1239,7 +1226,9 @@ class TraigentCloudClient(BaseTraigentClient):
                         )
                     else:
                         error_text = await response.text()
-                        raise CloudServiceError(f"HTTP {response.status}: {error_text}")
+                        raise CloudServiceError(
+                            safe_http_error_summary(response.status, error_text)
+                        )
 
             except aiohttp.ClientError as e:
                 # Convert to retryable network error
@@ -1527,7 +1516,7 @@ class TraigentCloudClient(BaseTraigentClient):
                 return None  # Signal retry
 
             raise CloudServiceError(
-                f"Service status check failed: HTTP {status_code} {error_text}"
+                f"Service status check failed: {safe_http_error_summary(status_code, error_text)}"
             )
 
     # Standard interface implementation (BaseTraigentClient)
@@ -1615,10 +1604,9 @@ class TraigentCloudClient(BaseTraigentClient):
 
                 error_text = await response.text()
                 logger.warning(
-                    "Failed to delete session %s: status=%s body=%s",
+                    "Failed to delete session %s: %s",
                     session_id,
-                    response.status,
-                    error_text[:200],
+                    safe_http_error_summary(response.status, error_text),
                 )
                 return False
 
@@ -1668,8 +1656,8 @@ class TraigentCloudClient(BaseTraigentClient):
                 if response.status != 200:
                     error_text = await response.text()
                     raise CloudServiceError(
-                        f"Failed to list sessions: status={response.status} "
-                        f"body={error_text[:200]}"
+                        f"Failed to list sessions: "
+                        f"{safe_http_error_summary(response.status, error_text)}"
                     )
                 data = await response.json()
         except aiohttp.ClientError as exc:
@@ -1850,7 +1838,7 @@ class TraigentCloudClient(BaseTraigentClient):
                 else:
                     error_text = await response.text()
                     raise CloudServiceError(
-                        f"Failed to get next trial: HTTP {response.status}: {error_text}"
+                        f"Failed to get next trial: {safe_http_error_summary(response.status, error_text)}"
                     )
 
         except aiohttp.ClientError as e:
@@ -1933,7 +1921,7 @@ class TraigentCloudClient(BaseTraigentClient):
                 elif response.status not in [200, 201, 204]:
                     error_text = await response.text()
                     raise CloudServiceError(
-                        f"Failed to submit result: HTTP {response.status}: {error_text}"
+                        f"Failed to submit result: {safe_http_error_summary(response.status, error_text)}"
                     )
 
         except aiohttp.ClientError as e:
@@ -1988,7 +1976,7 @@ class TraigentCloudClient(BaseTraigentClient):
                 else:
                     error_text = await response.text()
                     raise CloudServiceError(
-                        f"Failed to finalize session: HTTP {response.status}: {error_text}"
+                        f"Failed to finalize session: {safe_http_error_summary(response.status, error_text)}"
                     )
 
         except aiohttp.ClientError as e:
@@ -2328,7 +2316,7 @@ class TraigentCloudClient(BaseTraigentClient):
                 else:
                     error_text = await response.text()
                     raise CloudServiceError(
-                        f"Failed to start agent optimization: HTTP {response.status}: {error_text}"
+                        f"Failed to start agent optimization: {safe_http_error_summary(response.status, error_text)}"
                     )
 
         except AuthenticationError:
@@ -2405,7 +2393,7 @@ class TraigentCloudClient(BaseTraigentClient):
                 else:
                     error_text = await response.text()
                     raise CloudServiceError(
-                        f"Failed to execute agent: HTTP {response.status}: {error_text}"
+                        f"Failed to execute agent: {safe_http_error_summary(response.status, error_text)}"
                     )
 
         except CloudServiceError:
@@ -2450,7 +2438,7 @@ class TraigentCloudClient(BaseTraigentClient):
                 else:
                     error_text = await response.text()
                     raise CloudServiceError(
-                        f"Failed to get optimization status: HTTP {response.status}: {error_text}"
+                        f"Failed to get optimization status: {safe_http_error_summary(response.status, error_text)}"
                     )
 
         except aiohttp.ClientError as e:
@@ -2494,7 +2482,7 @@ class TraigentCloudClient(BaseTraigentClient):
                 else:
                     error_text = await response.text()
                     raise CloudServiceError(
-                        f"Failed to cancel optimization: HTTP {response.status}: {error_text}"
+                        f"Failed to cancel optimization: {safe_http_error_summary(response.status, error_text)}"
                     )
 
         except aiohttp.ClientError as e:

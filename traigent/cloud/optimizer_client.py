@@ -12,6 +12,7 @@ import backoff
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.cloud.url_security import validate_cloud_base_url
+from traigent.core.session_types import safe_http_error_summary
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +207,7 @@ class OptimizerDirectClient:
             ) as response:
                 if response.status == 403:
                     error_text = await response.text()
-                    excerpt = self._first_error_line(error_text)
+                    excerpt = safe_http_error_summary(response.status, error_text)
                     raise ValueError(
                         f"Requesting next configuration for session {session_id} returned 403 Forbidden. "
                         "Hybrid optimizer endpoints now require an owner or admin token. "
@@ -240,7 +241,7 @@ class OptimizerDirectClient:
             ) as response:
                 if response.status == 403:
                     error_text = await response.text()
-                    excerpt = self._first_error_line(error_text)
+                    excerpt = safe_http_error_summary(response.status, error_text)
                     raise ValueError(
                         f"Fetching session status for {session_id} returned 403 Forbidden. "
                         "Use the session owner's token or an admin role when polling status. "
@@ -407,7 +408,7 @@ class OptimizerDirectClient:
             ) as response:
                 if response.status == 403:
                     error_text = await response.text()
-                    excerpt = self._first_error_line(error_text)
+                    excerpt = safe_http_error_summary(response.status, error_text)
                     raise ValueError(
                         f"Submitting metrics for session {session_id} returned 403 Forbidden. "
                         "Ensure the optimizer token belongs to the session owner or has admin scope. "
@@ -447,7 +448,7 @@ class OptimizerDirectClient:
             ) as response:
                 if response.status == 403:
                     error_text = await response.text()
-                    excerpt = self._first_error_line(error_text)
+                    excerpt = safe_http_error_summary(response.status, error_text)
                     raise ValueError(
                         f"Submitting metric batch for session {session_id} returned 403 Forbidden. "
                         "Provide session-owner credentials or admin privileges. "
@@ -465,22 +466,6 @@ class OptimizerDirectClient:
                 raise ValueError("Session ID mismatch or access denied") from e
             else:
                 raise
-
-    @staticmethod
-    def _first_error_line(error_text: str | None) -> str:
-        """Return a safe, trimmed first line of an error response."""
-
-        if not error_text:
-            return ""
-
-        lines = error_text.strip().splitlines()
-        if not lines:
-            return ""
-
-        excerpt = lines[0].strip()
-        if len(excerpt) > 200:
-            return f"{excerpt[:197]}..."
-        return excerpt
 
     async def _periodic_flush(self) -> None:
         """Background task to periodically flush metrics."""

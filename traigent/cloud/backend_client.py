@@ -74,6 +74,7 @@ from traigent.cloud.session_budgets import (
 from traigent.cloud.privacy_operations import PrivacyOperations
 from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.session_types import SessionCreationResult
+from traigent.core.session_types import safe_http_error_summary
 from traigent.cloud.subset_selection import SmartSubsetSelector
 from traigent.cloud.trial_operations import (
     TrialOperations,
@@ -281,7 +282,7 @@ def _raise_for_transient_backend_response(response: Any, operation: str) -> None
 
     response_text = getattr(response, "text", "")
     raise _SyncBackendTransientError(
-        f"{operation} returned transient HTTP {status_code}: {str(response_text)[:200]}",
+        f"{operation} returned transient {safe_http_error_summary(status_code, str(response_text))}",
         status_code=status_code,
         retry_after=_parse_retry_after(getattr(response, "headers", None)),
     )
@@ -1243,8 +1244,8 @@ class BackendIntegratedClient:
                     if response.status >= 400:
                         error_text = await response.text()
                         raise CloudServiceError(
-                            "Interaction policy request failed with HTTP "
-                            f"{response.status}: {error_text[:200]}"
+                            "Interaction policy request failed: "
+                            f"{safe_http_error_summary(response.status, error_text)}"
                         )
 
                     try:
@@ -2073,8 +2074,8 @@ class BackendIntegratedClient:
         response = _run_sync_backend_request_with_retry("Agent-head fetch", _get_head)
         if response.status_code >= 400:
             raise CloudServiceError(
-                f"Agent-head fetch rejected with HTTP {response.status_code}: "
-                f"{response.text[:200]}"
+                f"Agent-head fetch rejected: "
+                f"{safe_http_error_summary(response.status_code, response.text)}"
             )
         generation = self._extract_backend_data(response).get("generation")
         if isinstance(generation, bool) or not isinstance(generation, int):
@@ -2162,8 +2163,8 @@ class BackendIntegratedClient:
                 raise stale
         if response.status_code >= 400:
             raise CloudServiceError(
-                f"Best-config publish rejected with HTTP {response.status_code}: "
-                f"{response.text[:200]}"
+                f"Best-config publish rejected: "
+                f"{safe_http_error_summary(response.status_code, response.text)}"
             )
         return self._extract_backend_data(response)
 
@@ -2227,8 +2228,8 @@ class BackendIntegratedClient:
             return None
         if response.status_code >= 400:
             raise CloudServiceError(
-                f"Best-config fetch rejected with HTTP {response.status_code}: "
-                f"{response.text[:200]}"
+                f"Best-config fetch rejected: "
+                f"{safe_http_error_summary(response.status_code, response.text)}"
             )
         return self._extract_backend_data(response)
 
@@ -2384,10 +2385,9 @@ class BackendIntegratedClient:
 
         if response.status_code >= 400:
             logger.debug(
-                "Example feature upload rejected for run %s: HTTP %s %s",
+                "Example feature upload rejected for run %s: %s",
                 experiment_run_id,
-                response.status_code,
-                response.text[:200],
+                safe_http_error_summary(response.status_code, response.text),
             )
             return False
 

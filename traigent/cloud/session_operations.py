@@ -39,6 +39,7 @@ from traigent.cloud.session_types import (
 )
 from traigent.cloud.smart_pruning import normalize_smart_pruning_options
 from traigent.config.backend_config import BackendConfig
+from traigent.core.session_types import safe_http_error_summary
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
@@ -321,7 +322,7 @@ class SessionOperations:
                 fingerprint = {}
 
         summary = self._summarize_actor(fingerprint)
-        excerpt = self._first_error_line(error_text)
+        excerpt = safe_http_error_summary(status, error_text)
 
         message = (
             f"{action} for session '{session_id}' failed: HTTP {status} Forbidden. "
@@ -333,22 +334,6 @@ class SessionOperations:
             message = f"{message} Backend response: {excerpt}"
 
         raise CloudServiceError(message)
-
-    @staticmethod
-    def _first_error_line(error_text: str | None) -> str:
-        """Return a safe, truncated first line for backend error messages."""
-
-        if not error_text:
-            return ""
-
-        lines = error_text.strip().splitlines()
-        if not lines:
-            return ""
-
-        excerpt = lines[0].strip()
-        if len(excerpt) > 200:
-            return f"{excerpt[:197]}..."
-        return excerpt
 
     def _create_local_fallback_session(
         self,
@@ -1694,7 +1679,7 @@ class SessionOperations:
                     else:
                         error_text = await response.text()
                         logger.debug(
-                            f"Backend finalization endpoint returned HTTP {response.status}: {error_text}"
+                            f"Backend finalization endpoint returned {safe_http_error_summary(response.status, error_text)}"
                         )
                         return None
         except Exception as e:
@@ -1786,10 +1771,9 @@ class SessionOperations:
 
                 error_text = await response.text()
                 logger.warning(
-                    "Failed to delete session %s: status=%s body=%s",
+                    "Failed to delete session %s: %s",
                     session_id,
-                    response.status,
-                    error_text[:200],
+                    safe_http_error_summary(response.status, error_text),
                 )
                 return False
 

@@ -25,6 +25,51 @@ QUOTA_ERROR_CODES = frozenset(
 )
 
 
+# Closed vocabulary of generic backend error codes that may appear in an SDK
+# error message. Anything else is rendered as "unknown" so backend-invented
+# text (which can echo customer content) never reaches an exception or a log
+# (#2552).
+SAFE_HTTP_ERROR_CODES = QUOTA_ERROR_CODES | frozenset(
+    {
+        "bad_request",
+        "conflict",
+        "forbidden",
+        "internal_error",
+        "invalid_request",
+        "not_found",
+        "rate_limited",
+        "service_unavailable",
+        "session_not_found",
+        "unauthorized",
+        "validation_error",
+    }
+)
+
+
+def safe_http_error_summary(status_code: int | None, raw_body: str | None) -> str:
+    """Content-free summary of a backend HTTP error: status and closed code only.
+
+    Never includes the backend message or body text. The error code is shown
+    only when it is in ``SAFE_HTTP_ERROR_CODES``; otherwise ``unknown``.
+    """
+
+    code = "unknown"
+    if raw_body:
+        try:
+            parsed = json.loads(raw_body)
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict):
+            raw = parsed.get("error_code") or parsed.get("code")
+            if isinstance(raw, str) and raw.strip().lower() in SAFE_HTTP_ERROR_CODES:
+                code = raw.strip().lower()
+    parts = []
+    if status_code is not None:
+        parts.append(f"HTTP {status_code}")
+    parts.append(code)
+    return " | ".join(parts)
+
+
 class SessionCreationFailureReason(Enum):
     """Why backend session creation failed."""
 
