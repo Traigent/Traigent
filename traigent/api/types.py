@@ -1381,38 +1381,57 @@ class OptimizationResult:
         if aggregated_metrics is not None:
             return aggregated_metrics
         if not self.objectives:
-            for trial in self.trials:
-                if (
-                    trial.metrics
-                    and trial.is_successful
-                    and self.best_config
-                    and trial.config == self.best_config
-                ):
-                    return dict(trial.metrics)
-            for trial in self.trials:
-                if trial.metrics:
-                    return dict(trial.metrics)
-            return {}
+            return self._best_metrics_without_objectives()
+        return self._best_metrics_with_objectives()
+
+    def _first_trial_metrics(
+        self, predicate: Callable[[TrialResult], Any]
+    ) -> dict[str, float] | None:
+        """Copy of the first matching trial's metrics, or ``None``."""
+        for trial in self.trials:
+            if predicate(trial):
+                return dict(trial.metrics)
+        return None
+
+    def _best_metrics_without_objectives(self) -> dict[str, float]:
+        matched = self._first_trial_metrics(
+            lambda trial: (
+                trial.metrics
+                and trial.is_successful
+                and self.best_config
+                and trial.config == self.best_config
+            )
+        )
+        if matched is not None:
+            return matched
+        fallback = self._first_trial_metrics(lambda trial: trial.metrics)
+        return fallback if fallback is not None else {}
+
+    def _best_metrics_with_objectives(self) -> dict[str, float]:
         # F-C fix: match the trial whose config equals best_config so that
         # best_metrics is always consistent with the actual winning trial, not
         # the highest-scoring trial (which differs for minimize-primary or
         # multi-objective runs).
         if self.best_config:
-            for trial in self.trials:
-                if trial.metrics and trial.config == self.best_config:
-                    return dict(trial.metrics)
+            matched = self._first_trial_metrics(
+                lambda trial: trial.metrics and trial.config == self.best_config
+            )
+            if matched is not None:
+                return matched
         # Fall back to best_trial_id stored in metadata (set by result_selection)
         # when no config match is found (aggregated configs, degenerate configs).
         best_trial_id = self.metadata.get("best_trial_id") if self.metadata else None
         if best_trial_id:
-            for trial in self.trials:
-                if trial.trial_id == best_trial_id and trial.metrics:
-                    return dict(trial.metrics)
+            by_id = self._first_trial_metrics(
+                lambda trial: trial.trial_id == best_trial_id and trial.metrics
+            )
+            if by_id is not None:
+                return by_id
         # Last resort: return any successful trial's metrics.
-        for trial in self.trials:
-            if trial.metrics and trial.is_successful:
-                return dict(trial.metrics)
-        return {}
+        last_resort = self._first_trial_metrics(
+            lambda trial: trial.metrics and trial.is_successful
+        )
+        return last_resort if last_resort is not None else {}
 
     def _calculate_objective_ranges(self) -> dict[str, tuple[float, float]]:
         """Calculate min/max ranges for each objective across ranking-eligible
@@ -2260,45 +2279,47 @@ class OptimizationResult:
         """Convert results to pandas DataFrame."""
         import pandas as pd  # noqa: PLC0415
 
-        data = []
-        for trial in self.trials:
-            row = {
-                "trial_id": trial.trial_id,
-                "status": trial.status.value,
-                "duration": trial.duration,
-                "timestamp": trial.timestamp,
-                **trial.config,
-                **trial.metrics,
-            }
-            avg_response_time = self._compute_average_response_time(trial.metadata)
-            avg_response_time_ms = self._compute_average_response_time_ms(
-                trial.metadata
-            )
-            row["avg_response_time"] = (
-                float(avg_response_time) if avg_response_time is not None else None
-            )
-            row["avg_response_time_ms"] = (
-                float(avg_response_time_ms)
-                if avg_response_time_ms is not None
-                else None
-            )
-            metadata = trial.metadata or {}
-            if "successful_examples" in metadata:
-                row["successful_examples"] = metadata.get("successful_examples")
-            if "examples_attempted" in metadata:
-                row["examples_attempted"] = metadata.get("examples_attempted")
-            if "successful_examples" in metadata and "examples_attempted" in metadata:
-                row["example_success_summary"] = (
-                    f"{metadata.get('successful_examples')}/"
-                    f"{metadata.get('examples_attempted')} examples succeeded"
-                )
-            if "total_example_cost" in metadata:
-                row["total_cost"] = metadata.get("total_example_cost")
-            elif "total_cost" not in row:
-                # Fall back to metrics if already present
-                row["total_cost"] = metadata.get("total_cost")
-            data.append(row)
+        data = [self._trial_dataframe_row(trial) for trial in self.trials]
         return pd.DataFrame(data)
+
+    def _trial_dataframe_row(self, trial: TrialResult) -> dict[str, Any]:
+        """One ``to_dataframe`` row; key insertion order defines column order."""
+        row = {
+            "trial_id": trial.trial_id,
+            "status": trial.status.value,
+            "duration": trial.duration,
+            "timestamp": trial.timestamp,
+            **trial.config,
+            **trial.metrics,
+        }
+        avg_response_time = self._compute_average_response_time(trial.metadata)
+        avg_response_time_ms = self._compute_average_response_time_ms(trial.metadata)
+        row["avg_response_time"] = (
+            float(avg_response_time) if avg_response_time is not None else None
+        )
+        row["avg_response_time_ms"] = (
+            float(avg_response_time_ms) if avg_response_time_ms is not None else None
+        )
+        self._add_example_columns(row, trial.metadata or {})
+        return row
+
+    @staticmethod
+    def _add_example_columns(row: dict[str, Any], metadata: dict[str, Any]) -> None:
+        """Add example-count and cost columns derived from trial metadata."""
+        if "successful_examples" in metadata:
+            row["successful_examples"] = metadata.get("successful_examples")
+        if "examples_attempted" in metadata:
+            row["examples_attempted"] = metadata.get("examples_attempted")
+        if "successful_examples" in metadata and "examples_attempted" in metadata:
+            row["example_success_summary"] = (
+                f"{metadata.get('successful_examples')}/"
+                f"{metadata.get('examples_attempted')} examples succeeded"
+            )
+        if "total_example_cost" in metadata:
+            row["total_cost"] = metadata.get("total_example_cost")
+        elif "total_cost" not in row:
+            # Fall back to metrics if already present
+            row["total_cost"] = metadata.get("total_cost")
 
     @staticmethod
     def _initialize_aggregation_group(config: dict[str, Any]) -> dict[str, Any]:
