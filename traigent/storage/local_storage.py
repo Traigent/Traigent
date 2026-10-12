@@ -388,6 +388,17 @@ class LocalStorageManager:
             existing = self.load_session(session_id)
             if existing is not None:
                 return session_id
+            # None means "missing" only if no file is there. A file that could
+            # not be trusted (corrupt, unreadable) must never be overwritten.
+            try:
+                untrusted = self._session_file_path(session_id).exists()
+            except Exception:
+                untrusted = False  # unsafe id: _save_session refuses it below
+            if untrusted:
+                raise TraigentStorageError(
+                    f"Refusing to overwrite existing session file {session_id!r} "
+                    "that could not be loaded"
+                )
         else:
             safe_function = sanitize_identifier(function_name)
             session_id = f"{timestamp.strftime('%Y%m%d_%H%M%S_%f')}_{safe_function}_{uuid4().hex[:8]}"
@@ -719,11 +730,11 @@ class LocalStorageManager:
         ):
             logger.warning("Refusing to load session with unsafe id")
             return None
-        session_file = validate_path(
-            self.storage_path / "sessions" / f"{session_id}.json",
-            self.storage_path,
-            must_exist=False,
-        )
+        try:
+            session_file = self._session_file_path(session_id)
+        except Exception:
+            logger.warning("Refusing to load session with unsafe id")
+            return None
 
         if not session_file.exists():
             return None
@@ -736,10 +747,10 @@ class LocalStorageManager:
             # could steer later writes (update/finalize) to another path.
             embedded_id = data.get("session_id")
             if embedded_id is not None and embedded_id != session_id:
-                logger.warning(
-                    "Refusing to load session whose embedded id differs from its file"
+                raise TraigentStorageError(
+                    f"Refusing to load session {session_id!r}: its embedded id "
+                    "differs from its file name"
                 )
-                return None
 
             # Convert trial data back to TrialResult objects. Drop unknown keys
             # so a file written by a newer SDK (with extra fields) still loads.
@@ -771,6 +782,8 @@ class LocalStorageManager:
 
             return session
 
+        except TraigentStorageError:
+            raise
         except Exception as e:
             logger.error(f"Failed to load session {session_id}: {e}")
             return None
@@ -792,7 +805,10 @@ class LocalStorageManager:
             return sessions
 
         for session_file in sessions_dir.glob("*.json"):
-            session = self.load_session(session_file.stem)
+            try:
+                session = self.load_session(session_file.stem)
+            except TraigentStorageError:
+                continue  # a rejected record is skipped, not listed
             if session and (status is None or session.status == status):
                 sessions.append(session)
 
@@ -802,11 +818,11 @@ class LocalStorageManager:
 
     def delete_session(self, session_id: str) -> bool:
         """Delete a session from storage."""
-        session_file = validate_path(
-            self.storage_path / "sessions" / f"{session_id}.json",
-            self.storage_path,
-            must_exist=False,
-        )
+        try:
+            session_file = self._session_file_path(session_id)
+        except Exception as e:
+            logger.error(f"Refusing to delete session with unsafe id: {e}")
+            return False
 
         if session_file.exists():
             try:
