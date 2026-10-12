@@ -1750,25 +1750,11 @@ class OptimizationResult:
     def _objective_orientation(self, name: str) -> Literal["maximize", "minimize"]:
         """Resolve one objective from persisted declarations or exact defaults."""
         metadata = self.metadata or {}
-        schema = metadata.get("objective_schema")
-        definitions: Any = []
-        if isinstance(schema, dict):
-            definitions = schema.get("objectives", [])
-        else:
-            definitions = getattr(schema, "objectives", [])
-        for definition in definitions or []:
-            definition_name = getattr(definition, "name", None)
-            orientation = getattr(definition, "orientation", None)
-            if isinstance(definition, dict):
-                definition_name = definition.get("name", definition_name)
-                orientation = definition.get("orientation", orientation)
-            if definition_name == name:
-                if orientation == "band":
-                    raise ValueError(
-                        f"Objective {name!r} is target-banded and has no scalar "
-                        "maximize/minimize direction."
-                    )
-                return validate_objective_orientation(name, str(orientation))
+        schema_orientation = self._schema_declared_orientation(
+            metadata.get("objective_schema"), name
+        )
+        if schema_orientation is not None:
+            return schema_orientation
 
         persisted = metadata.get("objective_orientations")
         if isinstance(persisted, dict) and name in persisted:
@@ -1778,6 +1764,40 @@ class OptimizationResult:
             return validate_objective_orientation(name, str(declared))
 
         return resolve_objective_orientation(name)
+
+    @staticmethod
+    def _schema_declared_orientation(
+        schema: Any, name: str
+    ) -> Literal["maximize", "minimize"] | None:
+        """Orientation declared for ``name`` in an objective schema, if any."""
+        definitions: Any = []
+        if isinstance(schema, dict):
+            definitions = schema.get("objectives", [])
+        else:
+            definitions = getattr(schema, "objectives", [])
+        for definition in definitions or []:
+            definition_name, orientation = (
+                OptimizationResult._definition_name_and_orientation(definition)
+            )
+            if definition_name != name:
+                continue
+            if orientation == "band":
+                raise ValueError(
+                    f"Objective {name!r} is target-banded and has no scalar "
+                    "maximize/minimize direction."
+                )
+            return validate_objective_orientation(name, str(orientation))
+        return None
+
+    @staticmethod
+    def _definition_name_and_orientation(definition: Any) -> tuple[Any, Any]:
+        """Read ``(name, orientation)`` from a dict or attribute-style definition."""
+        definition_name = getattr(definition, "name", None)
+        orientation = getattr(definition, "orientation", None)
+        if isinstance(definition, dict):
+            definition_name = definition.get("name", definition_name)
+            orientation = definition.get("orientation", orientation)
+        return definition_name, orientation
 
     def _auto_detect_minimize_objectives(self) -> list[str]:
         """Resolve minimize objectives from exact SDK-owned metric defaults."""
