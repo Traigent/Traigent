@@ -512,6 +512,9 @@ class CostMetrics:
         self.total_cost = self.input_cost + self.output_cost
 
 
+_COST_DESCRIBE_KEYS = ("input_cost", "output_cost", "total_cost")
+
+
 @dataclass
 class ExampleMetrics:
     """Complete metrics for a single example evaluation."""
@@ -1267,6 +1270,12 @@ class MetricsTracker:
         # (and the reported lower bound) instead of the placeholder zero means
         # (#2517).
         cost_measured_metrics = [m for m in measured_metrics if m.cost_measured]
+        if not cost_measured_metrics:
+            # No cost sample at all: describe([]) would post zero means for a
+            # cost nobody measured. The schema allows null here (#2517).
+            for cost_key in _COST_DESCRIBE_KEYS:
+                if cost_key in summary_metrics:
+                    summary_metrics[cost_key] = None
         if any(not m.cost_measured for m in measured_metrics) or not (
             cost_measured_metrics
         ):
@@ -1301,7 +1310,8 @@ class MetricsTracker:
                 "output_tokens": empty_describe.copy(),
                 "total_tokens": empty_describe.copy(),
                 "response_time_ms": empty_describe.copy(),
-                "total_cost": empty_describe.copy(),
+                # Nothing ran: no cost sample exists, so no zero mean (#2517).
+                "total_cost": None,
             },
             "execution_time": 0.0,
             "total_examples": 0,

@@ -184,3 +184,70 @@ def test_table_renders_lower_bound_as_floor() -> None:
         ]
     )
     assert "≥ $0.40000" in out
+
+
+# --- 4. terminal best_config selection (result_selection) ----------------------
+
+from traigent.core.result_selection import select_best_configuration  # noqa: E402
+
+
+def _select(trials, primary="cost", **kwargs):
+    return select_best_configuration(
+        trials,
+        primary_objective=primary,
+        config_space_keys=["id"],
+        aggregate_configs=False,
+        comparability_mode="legacy",
+        **kwargs,
+    )
+
+
+def test_terminal_selection_flagged_zero_cost_does_not_win() -> None:
+    measured = _trial("measured", cost=0.40)
+    flagged = _trial("flagged", cost=0.0, cost_unmeasured=1.0)
+    res = _select([flagged, measured])
+    assert res.best_trial_id == "measured"
+
+
+def test_terminal_selection_all_flagged_cost_has_no_winner() -> None:
+    res = _select([_trial("a", cost=0.0, cost_unmeasured=1.0)])
+    assert res.best_config is None
+
+
+def test_cost_secondary_tiebreak_ignores_flagged_zero() -> None:
+    flagged = _trial("a_flagged", accuracy=0.9, cost=0.0, cost_unmeasured=1.0)
+    measured = _trial("b_measured", accuracy=0.9, cost=0.4)
+    res = _select(
+        [flagged, measured],
+        primary="accuracy",
+        objective_order=["accuracy", "cost"],
+        objective_orientations={"accuracy": "maximize", "cost": "minimize"},
+    )
+    assert res.best_trial_id == "b_measured"
+
+
+def test_aggregated_mean_omits_flagged_cost() -> None:
+    from traigent.core.result_selection import _aggregate_trials, _compute_mean_metrics
+
+    agg = _aggregate_trials(
+        [
+            _trial("a", accuracy=0.9, cost=0.0, cost_unmeasured=1.0),
+            _trial("b", accuracy=0.9, cost=0.4),
+        ],
+        {"id"},
+    )
+    # distinct configs -> two entries; the flagged one carries no cost mean
+    means = [_compute_mean_metrics(e) for e in agg.values()]
+    assert any("cost" not in m for m in means)
+    assert all(m.get("cost") != 0.0 for m in means)
+
+
+# --- 5. summary_stats cost describe carries no zero means ----------------------
+
+
+def test_summary_stats_cost_describe_is_null_when_no_cost_sample() -> None:
+    tracker = MetricsTracker()
+    tracker.add_example_metrics(ExampleMetrics(cost=CostMetrics(unmeasured=True)))
+    metrics = tracker.format_as_summary_stats()["metrics"]
+    assert metrics["total_cost"] is None
+    assert metrics["cost_unmeasured"] == 1.0

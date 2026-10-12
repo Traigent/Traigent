@@ -197,6 +197,10 @@ class TestMetricsTracker:
         ]
         for metric in expected_metrics:
             assert metric in empty_stats["metrics"]
+            if metric == "total_cost":
+                # Nothing ran, so no cost sample: null, not a zero mean (#2517).
+                assert empty_stats["metrics"][metric] is None
+                continue
             # Check each metric has pandas.describe() format with 0 values
             stats = empty_stats["metrics"][metric]
             assert stats["count"] == 0
