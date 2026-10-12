@@ -8,9 +8,8 @@ import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, Mock
-
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
@@ -83,6 +82,7 @@ def test_egress_sanitizer_bounds_caller_supplied_payload():
         "primary_objective": "accuracy secret text",
         "sdk_version": "bad version",
         "metrics": {"accuracy raw example text": 0.5, "accuracy": 0.9},
+        # pragma: allowlist nextline secret
         "samples_per_config": {"SENTINEL prompt": 3, "a1b2c3d4e5f60718": 3},
         "statistical_significance": {
             "accuracy\n": {"raw_prompt": "SECRET"},
@@ -104,6 +104,7 @@ def test_egress_sanitizer_bounds_caller_supplied_payload():
     assert out["primary_objective"] is None
     assert out["sdk_version"] is None
     assert set(out["metrics"]) == {"accuracy"}
+    # pragma: allowlist nextline secret
     assert set(out["samples_per_config"]) == {"a1b2c3d4e5f60718"}
     assert set(out["statistical_significance"]) == {"accuracy"}
     # best_weighted_config config values are the documented exception (kept).
@@ -1822,6 +1823,7 @@ class TestBuildSessionAggregationPayload:
         result.metadata = {
             "session_summary": {
                 "metrics": {sentinel: 0.5, "accuracy": 0.95},
+                # pragma: allowlist nextline secret
                 "samples_per_config": {sentinel: 3, "a1b2c3d4e5f60718": 3},
             },
             "statistical_significance": {
@@ -1843,6 +1845,7 @@ class TestBuildSessionAggregationPayload:
         assert payload is not None
         # Clean keys survive; the sentinel key is dropped from every map.
         assert "accuracy" in payload["metrics"]
+        # pragma: allowlist nextline secret
         assert "a1b2c3d4e5f60718" in payload["samples_per_config"]
         assert set(payload["statistical_significance"]) == {"accuracy"}
         assert sentinel not in json.dumps(payload)
@@ -1870,6 +1873,7 @@ class TestBuildSessionAggregationPayload:
                 "selection_mode": sentinel,
                 "primary_objective": sentinel,
                 "metrics": {"accuracy": 0.95},
+                # pragma: allowlist nextline secret
                 "samples_per_config": {"a1b2c3d4e5f60718": 5},
             },
         }
@@ -2244,6 +2248,7 @@ class TestSessionAggregationSelectionReceipt:
                 "selection_mode": "aggregated_mean",
                 "primary_objective": "accuracy",
                 "metrics": {"accuracy": 0.95},
+                # pragma: allowlist nextline secret
                 "samples_per_config": {"a1b2c3d4e5f60718": 5},
             },
         }
