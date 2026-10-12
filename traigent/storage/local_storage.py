@@ -26,7 +26,7 @@ from ..utils.exceptions import TraigentStorageError
 from ..utils.function_identity import sanitize_identifier
 from ..utils.logging import get_logger
 from ..utils.objectives import is_minimization_objective
-from ..utils.secure_path import safe_open, validate_path
+from ..utils.secure_path import resolve_path_components, safe_open, validate_path
 
 logger = get_logger(__name__)
 
@@ -732,6 +732,15 @@ class LocalStorageManager:
             with safe_open(session_file, self.storage_path, mode="r") as f:
                 data = json.load(f)
 
+            # The file name is the identity. An embedded id that disagrees
+            # could steer later writes (update/finalize) to another path.
+            embedded_id = data.get("session_id")
+            if embedded_id is not None and embedded_id != session_id:
+                logger.warning(
+                    "Refusing to load session whose embedded id differs from its file"
+                )
+                return None
+
             # Convert trial data back to TrialResult objects. Drop unknown keys
             # so a file written by a newer SDK (with extra fields) still loads.
             trials = []
@@ -923,17 +932,30 @@ class LocalStorageManager:
             "updated_at": session.updated_at,
         }
 
+    def _session_file_path(self, session_id: Any) -> Path:
+        """Resolve ``sessions/<session_id>.json``, confined to ``sessions/``."""
+        if (
+            not isinstance(session_id, str)
+            or ".." in session_id
+            or "\x00" in session_id
+        ):
+            raise ValueError("session id is not a single safe name")
+        return resolve_path_components(
+            self.storage_path / "sessions", f"{session_id}.json"
+        )
+
     def _save_session(self, session: OptimizationSession) -> None:
         """Save session to JSON file atomically.
 
         Uses temp file + rename pattern to prevent data corruption
         if the process crashes during write.
         """
-        session_file = validate_path(
-            self.storage_path / "sessions" / f"{session.session_id}.json",
-            self.storage_path,
-            must_exist=False,
-        )
+        try:
+            session_file = self._session_file_path(session.session_id)
+        except Exception as e:
+            raise TraigentStorageError(
+                f"Refusing to save session with unsafe id: {e}"
+            ) from e
 
         try:
             # Convert to dict for JSON serialization

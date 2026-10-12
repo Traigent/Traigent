@@ -283,6 +283,9 @@ WINDOWS_UNSAFE_NAMES = [
     "con",
     "nul.json",
     "COM1",
+    "COM\u00b9",
+    "LPT\u00b2",
+    "com\u00b3.txt",
     "name.",
     "name ",
 ]

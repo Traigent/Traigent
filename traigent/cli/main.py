@@ -1454,6 +1454,8 @@ _WINDOWS_RESERVED_NAMES = frozenset(
     {"CON", "PRN", "AUX", "NUL"}
     | {f"COM{i}" for i in range(1, 10)}
     | {f"LPT{i}" for i in range(1, 10)}
+    # Microsoft also reserves the superscript-digit variants.
+    | {f"{dev}{sup}" for dev in ("COM", "LPT") for sup in "\u00b9\u00b2\u00b3"}
 )
 
 
