@@ -255,6 +255,11 @@ def _json_safe_trial_value(
     if isinstance(value, (str, int, float, bool)):
         return value
 
+    return _json_safe_opaque_value(value)
+
+
+def _json_safe_opaque_value(value: Any) -> Any:
+    """Last-resort conversion: numpy-style ``item()``, JSON passthrough, ``str``."""
     if hasattr(value, "item") and callable(value.item):
         try:
             return value.item()
