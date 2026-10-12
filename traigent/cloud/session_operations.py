@@ -923,9 +923,9 @@ class SessionOperations:
 
             except (TimeoutError, CloudServiceError, OSError) as e:
                 await self._reset_client_session("create_session fallback")
+                self._raise_if_quota_refusal(e)
                 if _must_fail_loud(e):
                     raise
-                self._raise_if_quota_refusal(e)
                 # A configured key intended a managed/cloud run, but the backend
                 # was unreachable. We degrade to LOCAL execution for resilience —
                 # but this is a DOWNGRADE (managed search/tracking is lost), so
@@ -1013,9 +1013,9 @@ class SessionOperations:
             )
 
         except (TimeoutError, CloudServiceError, OSError) as exc:
+            self._raise_if_quota_refusal(exc)
             if _must_fail_loud(exc):
                 raise
-            self._raise_if_quota_refusal(exc)
             # Backend unreachable on the outer path — same downgrade semantics as
             # the inner sibling: WARN + flag degraded so the local run is never
             # mistaken for a managed one.
@@ -1123,8 +1123,21 @@ class SessionOperations:
                     await self._reset_client_session(
                         "create_hybrid_session non-201 response"
                     )
+                    detail = SessionCreationFailureDetail.from_http_response(
+                        response.status, error_text
+                    )
+                    if detail.is_quota_refusal:
+                        safe = SessionQuotaRefusedError(
+                            response.status, detail.safe_quota_error_code
+                        )
+                        safe.session_creation_failure = SessionCreationFailureDetail(
+                            status_code=response.status,
+                            error_code=detail.safe_quota_error_code,
+                        )
+                        raise safe
+                    # Status only: never embed the backend body (customer text).
                     raise CloudServiceError(
-                        f"Failed to create hybrid session: {error_text}"
+                        f"Failed to create hybrid session: HTTP {response.status}"
                     )
 
                 data = await response.json()

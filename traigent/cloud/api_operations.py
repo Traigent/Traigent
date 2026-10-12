@@ -1069,7 +1069,12 @@ class ApiOperations:
             cast(Any, service_exc).session_creation_failure = detail
             raise service_exc from structured_cause
 
-        logger.debug("Backend session error: %s - %s", status_code, error_msg[:200])
+        # Never log the backend message/body: it can carry customer text.
+        logger.debug(
+            "Backend session error: HTTP %s (%s)",
+            status_code,
+            detail.safe_quota_error_code if detail.is_quota_refusal else "n/a",
+        )
         service_exc = CloudServiceError(
             f"Session creation failed: HTTP {status_code}: {detail.one_line_summary()}"
         )
