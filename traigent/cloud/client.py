@@ -33,6 +33,7 @@ else:  # pragma: no cover - minimal environments without aiohttp
     _REAL_AIOHTTP_CLIENT_SESSION = None
 
 from traigent.config.backend_config import BackendConfig
+from traigent.core.session_types import SessionCreationFailureDetail
 from traigent.evaluators.base import Dataset
 from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
@@ -1781,8 +1782,21 @@ class TraigentCloudClient(BaseTraigentClient):
                     return result
                 else:
                     error_text = await response.text()
+                    detail = SessionCreationFailureDetail.from_http_response(
+                        response.status, error_text
+                    )
+                    if detail.is_quota_refusal:
+                        safe = SessionQuotaRefusedError(
+                            response.status, detail.safe_quota_error_code
+                        )
+                        safe.session_creation_failure = SessionCreationFailureDetail(
+                            status_code=response.status,
+                            error_code=detail.safe_quota_error_code,
+                        )
+                        raise safe from None
+                    # Status only: never embed the backend body (customer text).
                     raise CloudServiceError(
-                        f"Failed to create session: HTTP {response.status}: {error_text}"
+                        f"Failed to create session: HTTP {response.status}"
                     )
 
         except aiohttp.ClientError as e:

@@ -131,3 +131,158 @@ class TestGovernedSession:
                     "fn", {"a": [1, 2]}, promotion_policy={"min_trials": 1}
                 )
         assert info.value is exc
+
+
+ALLOWLISTED_CODES = [
+    "quota_exceeded",
+    "quota_limit_exceeded",
+    "plan_limit_exceeded",
+    "usage_limit_exceeded",
+]
+
+
+def _body(code: str) -> str:
+    return f'{{"error_code": "{code}", "message": "customer text here"}}'
+
+
+class TestClassifierCoversAllowlist:
+    @pytest.mark.parametrize("code", ALLOWLISTED_CODES)
+    @pytest.mark.parametrize("status", [429, 402])
+    def test_every_allowlisted_code_is_quota(self, code, status):
+        detail = SessionCreationFailureDetail.from_http_response(status, _body(code))
+        assert detail.is_quota_refusal
+        assert detail.safe_quota_error_code == code
+        _assert_clean(detail.one_line_summary())
+
+    def test_unlisted_quota_shaped_code_is_quota_rendered_unknown(self):
+        detail = SessionCreationFailureDetail.from_http_response(
+            429, _body("some_quota_thing")
+        )
+        assert detail.is_quota_refusal
+        assert detail.safe_quota_error_code == "unknown"
+
+    def test_unrelated_code_is_not_quota(self):
+        detail = SessionCreationFailureDetail.from_http_response(
+            429, _body("rate_limited")
+        )
+        assert not detail.is_quota_refusal
+
+
+@pytest.mark.backend_online
+class TestNormalPathNewCodes:
+    @pytest.mark.parametrize("code", ["plan_limit_exceeded", "usage_limit_exceeded"])
+    def test_typed_error_no_fallback_no_text(self, code, caplog):
+        exc = CloudServiceError("boom customer text here")
+        exc.session_creation_failure = SessionCreationFailureDetail.from_http_response(
+            429, _body(code)
+        )
+        ops = TestGovernedSession._ops(exc)
+        with caplog.at_level(logging.DEBUG):
+            with patch(
+                "traigent.cloud.session_operations.is_backend_offline",
+                return_value=False,
+            ):
+                with pytest.raises(SessionQuotaRefusedError) as info:
+                    ops.create_session("fn", {"a": [1, 2]})
+        assert info.value.error_code == code
+        _assert_clean(str(info.value))
+        _assert_clean(" ".join(r.getMessage() for r in caplog.records))
+
+    @pytest.mark.parametrize("code", ["plan_limit_exceeded", "usage_limit_exceeded"])
+    def test_api_handler_no_text(self, code, caplog):
+        ops = ApiOperations(Mock())
+        with caplog.at_level(logging.DEBUG):
+            with pytest.raises(CloudServiceError) as info:
+                ops._handle_session_error(429, _body(code))
+        _assert_clean(str(info.value))
+        _assert_clean(" ".join(r.getMessage() for r in caplog.records))
+        assert code in " ".join(r.getMessage() for r in caplog.records)
+
+
+class _Resp:
+    def __init__(self, status: int, text: str) -> None:
+        self.status = status
+        self._text = text
+
+    async def text(self) -> str:
+        return self._text
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+@pytest.mark.backend_online
+class TestInteractivePath:
+    @staticmethod
+    def _client(status: int, body: str):
+        from traigent.cloud.client import TraigentCloudClient
+
+        client = TraigentCloudClient.__new__(TraigentCloudClient)
+        session = Mock()
+        session.post = Mock(return_value=_Resp(status, body))
+        client._aio_session = session
+        client.no_egress = False
+        client.api_base_url = "http://x"
+        client._get_headers = AsyncMock(return_value={})
+        client._serialize_session_request = Mock(return_value={})
+        return client
+
+    @staticmethod
+    def _request():
+        from traigent.cloud.models import SessionCreationRequest
+
+        return SessionCreationRequest(
+            function_name="fn",
+            configuration_space={"a": [1]},
+            objectives=["accuracy"],
+            dataset_metadata={"size": 1},
+            max_trials=1,
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("code", ALLOWLISTED_CODES)
+    async def test_client_429_typed_and_clean(self, code):
+        client = self._client(429, _body(code))
+        with pytest.raises(SessionQuotaRefusedError) as info:
+            await client.create_optimization_session(self._request())
+        assert info.value.error_code == code
+        _assert_clean(str(info.value))
+
+    @pytest.mark.asyncio
+    async def test_client_non_quota_status_only(self):
+        client = self._client(500, "customer text here")
+        with pytest.raises(CloudServiceError) as info:
+            await client.create_optimization_session(self._request())
+        _assert_clean(str(info.value))
+        assert "500" in str(info.value)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("code", ALLOWLISTED_CODES)
+    async def test_interactive_optimizer_logs_and_raises_clean(self, code, caplog):
+        from traigent.optimizers.interactive_optimizer import (
+            InteractiveOptimizer,
+            RemoteGuidanceService,
+        )
+
+        client = self._client(429, _body(code))
+        service = Mock(spec=RemoteGuidanceService)
+
+        async def _create(req):
+            return await client.create_optimization_session(req)
+
+        service.create_session = _create
+        optimizer = InteractiveOptimizer(
+            config_space={"a": [1]},
+            objectives=["accuracy"],
+            remote_service=service,
+            dataset_metadata={"size": 1},
+        )
+        with caplog.at_level(logging.DEBUG):
+            with pytest.raises(SessionQuotaRefusedError) as info:
+                await optimizer.initialize_session("fn", 1)
+        assert info.value.error_code == code
+        _assert_clean(str(info.value))
+        _assert_clean(" ".join(r.getMessage() for r in caplog.records))

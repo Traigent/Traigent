@@ -111,9 +111,12 @@ class SessionCreationFailureDetail:
         backend sent no code).
         """
 
-        code = (self.error_code or "").lower()
+        code = (self.error_code or "").strip().lower()
         if code:
-            return "quota" in code
+            # Every declared code is recognized (#2550); an undeclared
+            # quota-shaped code is still treated as a refusal and rendered as
+            # "unknown" so its backend text is never echoed.
+            return code in QUOTA_ERROR_CODES or "quota" in code
         return (
             self.status_code in (402, 429) and "quota" in (self.message or "").lower()
         )
