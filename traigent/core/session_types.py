@@ -7,7 +7,8 @@ depend on it even when the optional cloud package is unavailable.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
@@ -44,6 +45,11 @@ SAFE_HTTP_ERROR_CODES = QUOTA_ERROR_CODES | frozenset(
         "unauthorized",
         "validation_error",
     }
+)
+
+
+SAFE_PERMISSION_PATTERN = re.compile(
+    r"[a-z][a-z0-9_-]{0,63}[:.][a-z0-9_*-]{1,64}(?:[:.][a-z0-9_*-]{1,64}){0,2}"
 )
 
 
@@ -99,11 +105,35 @@ class SessionCreationFailureDetail:
     """Structured backend response details for failed session creation."""
 
     status_code: int | None = None
-    error_code: str | None = None
-    message: str | None = None
-    missing_permissions: tuple[str, ...] = ()
-    raw_body: str | None = None
+    error_code: str | None = field(default=None, repr=False)
+    message: str | None = field(default=None, repr=False)
+    missing_permissions: tuple[str, ...] = field(default=(), repr=False)
+    raw_body: str | None = field(default=None, repr=False)
     backend_url: str | None = None
+
+    def __repr__(self) -> str:
+        # Content-free: backend message, raw body, free-form code and permission
+        # strings can echo customer text (#2552).
+        return (
+            f"SessionCreationFailureDetail(status_code={self.status_code!r}, "
+            f"error_code={self.safe_error_code!r})"
+        )
+
+    __str__ = __repr__
+
+    @property
+    def safe_missing_permissions(self) -> tuple[str, ...]:
+        """Missing permissions that look like permission identifiers only."""
+
+        return tuple(
+            p for p in self.missing_permissions if SAFE_PERMISSION_PATTERN.fullmatch(p)
+        )
+
+    @property
+    def omitted_permission_count(self) -> int:
+        """How many reported permission entries were not identifier-shaped."""
+
+        return len(self.missing_permissions) - len(self.safe_missing_permissions)
 
     @classmethod
     def from_http_response(

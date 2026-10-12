@@ -2024,11 +2024,11 @@ class BackendIntegratedClient:
         expected = body.get("expected_generation")
         if isinstance(expected, bool) or not isinstance(expected, int):
             expected = expected_head_generation
-        message = body.get("message")
+        # Fixed SDK-authored message (constructor default); the backend message
+        # can echo customer text and is never forwarded (#2552).
         return CloudBestConfigStaleHeadError(
             current_generation=current,
             expected_generation=expected,
-            message=message if isinstance(message, str) and message else None,
             agent_id=agent_id,
             environment=environment,
         )

@@ -906,7 +906,9 @@ class TrialOperations:
                 session_id,
                 url,
             )
-            return TrialSubmissionResult.rejected(reason or detail or None)
+            # ``details.reason`` is the documented caller contract; never fall back to
+            # the backend message/error/body (customer text can be echoed there).
+            return TrialSubmissionResult.rejected(reason or None)
         logger.warning(
             "\u274c Failed to submit trial result: %s",
             safe_http_error_summary(status, error_text),

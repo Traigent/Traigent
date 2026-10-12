@@ -15,6 +15,7 @@ from urllib.parse import quote
 from traigent.cloud.url_security import validate_cloud_base_url
 from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.config.backend_config import BackendConfig
+from traigent.core.session_types import safe_http_error_summary
 from traigent.config.project import read_optional_project_env
 from traigent.config.tenant import TENANT_ENV_VAR, TENANT_HEADER_NAME, read_optional_env
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -179,11 +180,10 @@ class BenchmarkClient:
                 return parsed
         except error.HTTPError as e:
             body = e.read().decode("utf-8", errors="replace") if e.fp else ""
+            summary = safe_http_error_summary(e.code, body)
             if e.code == 401:
-                raise AuthenticationError(
-                    f"Authentication failed ({e.code}): {body}"
-                ) from e
-            raise ClientError(f"Benchmark generation failed ({e.code}): {body}") from e
+                raise AuthenticationError(f"Authentication failed ({summary})") from e
+            raise ClientError(f"Benchmark generation failed ({summary})") from e
         except error.URLError as e:
             raise TraigentConnectionError(
                 f"Cannot reach backend at {self.config.backend_origin}: {e.reason}"

@@ -1194,7 +1194,10 @@ class SessionOperations:
                 await self._reset_client_session(
                     "get_hybrid_session_status unexpected response"
                 )
-                raise CloudServiceError(f"Failed to get session status: {error_text}")
+                raise CloudServiceError(
+                    "Failed to get session status: "
+                    f"{safe_http_error_summary(response.status, error_text)}"
+                )
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("get_hybrid_session_status network error")
@@ -1246,7 +1249,10 @@ class SessionOperations:
                 await self._reset_client_session(
                     "finalize_hybrid_session unexpected response"
                 )
-                raise CloudServiceError(f"Failed to finalize session: {error_text}")
+                raise CloudServiceError(
+                    "Failed to finalize session: "
+                    f"{safe_http_error_summary(response.status, error_text)}"
+                )
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("finalize_hybrid_session network error")

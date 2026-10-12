@@ -3182,8 +3182,36 @@ class TestRuntimeDegradationSourceMarker:
 
         combined = " ".join(record.getMessage() for record in caplog.records)
         assert "REJECTED" in combined
-        assert reason in combined
+        # The reason is the caller contract (attributes above); logs never carry it.
+        assert reason not in combined
         assert "unavailable during trial submission" not in combined
+
+    @pytest.mark.asyncio
+    async def test_rejection_logs_exclude_backend_reason_2552(
+        self,
+        backend_session_manager,
+        mock_trial_result,
+        mock_backend_client,
+        caplog,
+        monkeypatch,
+    ):
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+        backend_session_manager._backend_tracking_enabled = True
+        mock_backend_client.request_trial_slot = AsyncMock(
+            return_value="trial_backend_minted_1"
+        )
+        mock_backend_client._submit_trial_result_via_session = AsyncMock(
+            return_value=TrialSubmissionResult.rejected("customer text here")
+        )
+        with caplog.at_level(logging.DEBUG):
+            await backend_session_manager.submit_trial(
+                trial_result=mock_trial_result, session_id="test-session-id"
+            )
+        assert "REJECTED" in " ".join(r.getMessage() for r in caplog.records)
+        assert "customer text here" not in " ".join(
+            r.getMessage() for r in caplog.records
+        )
 
 
 class TestIssue1373SilentAuthPathSurfacing:
