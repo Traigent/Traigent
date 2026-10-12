@@ -59,7 +59,7 @@ def test_admin_auth_error_carries_no_backend_text(code: int) -> None:
     ):
         client._request_json_sync("GET", "/api/v1/admin/x")
     assert CANARY not in str(excinfo.value)
-    assert f"HTTP {code}" in str(excinfo.value)
+    assert str(excinfo.value) == f"Authentication failed (HTTP {code} | unauthorized)"
 
 
 def test_admin_server_error_carries_no_backend_text() -> None:
@@ -75,4 +75,4 @@ def test_admin_server_error_carries_no_backend_text() -> None:
     ):
         client._request_json_sync("GET", "/api/v1/admin/x")
     assert CANARY not in str(excinfo.value)
-    assert "HTTP 500" in str(excinfo.value)
+    assert str(excinfo.value) == "Admin request failed (HTTP 500 | unknown)"

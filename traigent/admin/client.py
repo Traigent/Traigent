@@ -246,10 +246,16 @@ class EnterpriseAdminClient:
                 parsed = json.loads(body) if body else {}
                 if status_code in {401, 403}:
                     raise AuthenticationError(
-                        safe_http_error_summary(status_code, body)
+                        "Authentication failed ("
+                        + safe_http_error_summary(status_code, body)
+                        + ")"
                     )
                 if status_code >= 400:
-                    raise ClientError(safe_http_error_summary(status_code, body))
+                    raise ClientError(
+                        "Admin request failed ("
+                        + safe_http_error_summary(status_code, body)
+                        + ")"
+                    )
                 return parsed
         except error.HTTPError as exc:
             try:
@@ -258,8 +264,10 @@ class EnterpriseAdminClient:
                 exc.close()
             summary = safe_http_error_summary(exc.code, body)
             if exc.code in {401, 403}:
-                raise AuthenticationError(summary) from exc
-            raise ClientError(summary) from exc
+                raise AuthenticationError(
+                    "Authentication failed (" + summary + ")"
+                ) from exc
+            raise ClientError("Admin request failed (" + summary + ")") from exc
         except error.URLError as exc:
             raise TraigentConnectionError(str(exc.reason)) from exc
 
