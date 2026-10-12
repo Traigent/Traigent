@@ -1272,54 +1272,85 @@ class OptimizationResult:
         """
         if not self._is_aggregated_run() or not self.best_config:
             return None
-        # Prefer the authoritative winner replicate ids stamped by result
-        # selection (#1854): grouping is keyed by the config PROJECTED onto
-        # config_space_keys while best_config keeps the first trial's FULL
-        # config, so full-dict equality silently drops replicates whose aux
-        # keys differ. Config equality remains only as a fallback for older
-        # persisted results that predate the stamp.
-        winning_ids: set[str] | None = None
+        replicates = self._winning_replicates()
+        if not replicates:
+            return None
+        mean_metrics = self._mean_numeric_metrics(replicates)
+        if mean_metrics is None:
+            return None
+        return self._pin_primary_to_best_score(mean_metrics)
+
+    def _stamped_winning_trial_ids(self) -> set[str] | None:
+        """Winner replicate ids stamped by result selection (#1854), if any."""
         metadata = self.metadata
-        if isinstance(metadata, dict):
-            summary = metadata.get("session_summary")
-            if isinstance(summary, dict):
-                stamped = summary.get("winning_trial_ids")
-                if isinstance(stamped, list) and stamped:
-                    winning_ids = {str(trial_id) for trial_id in stamped}
+        if not isinstance(metadata, dict):
+            return None
+        summary = metadata.get("session_summary")
+        if not isinstance(summary, dict):
+            return None
+        stamped = summary.get("winning_trial_ids")
+        if isinstance(stamped, list) and stamped:
+            return {str(trial_id) for trial_id in stamped}
+        return None
+
+    def _winning_replicates(self) -> list[TrialResult]:
+        """Successful, metric-bearing trials belonging to the winning config.
+
+        Prefer the authoritative winner replicate ids stamped by result
+        selection (#1854): grouping is keyed by the config PROJECTED onto
+        config_space_keys while best_config keeps the first trial's FULL
+        config, so full-dict equality silently drops replicates whose aux
+        keys differ. Config equality remains only as a fallback for older
+        persisted results that predate the stamp.
+        """
+        winning_ids = self._stamped_winning_trial_ids()
         if winning_ids is not None:
-            replicates = [
+            return [
                 trial
                 for trial in self.trials
                 if trial.is_successful
                 and trial.metrics
                 and str(trial.trial_id) in winning_ids
             ]
-        else:
-            replicates = [
-                trial
-                for trial in self.trials
-                if trial.is_successful
-                and trial.metrics
-                and trial.config == self.best_config
-            ]
-        if not replicates:
-            return None
+        return [
+            trial
+            for trial in self.trials
+            if trial.is_successful
+            and trial.metrics
+            and trial.config == self.best_config
+        ]
+
+    @staticmethod
+    def _is_mean_eligible_metric(name: str, value: Any) -> bool:
+        """Numeric (non-bool) metrics other than ``examples_attempted``."""
+        if name == "examples_attempted":
+            return False
+        if isinstance(value, bool):
+            return False
+        return isinstance(value, (int, float))
+
+    @staticmethod
+    def _mean_numeric_metrics(
+        replicates: list[TrialResult],
+    ) -> dict[str, float] | None:
+        """Per-metric mean over replicates, in first-seen metric order."""
         numeric_sums: dict[str, float] = {}
         numeric_counts: dict[str, int] = {}
         for trial in replicates:
             for name, value in trial.metrics.items():
-                if name == "examples_attempted":
-                    continue
-                if isinstance(value, bool):
-                    continue
-                if isinstance(value, (int, float)):
+                if OptimizationResult._is_mean_eligible_metric(name, value):
                     numeric_sums[name] = numeric_sums.get(name, 0.0) + float(value)
                     numeric_counts[name] = numeric_counts.get(name, 0) + 1
         if not numeric_sums:
             return None
-        mean_metrics: dict[str, float] = {
+        return {
             name: total / numeric_counts[name] for name, total in numeric_sums.items()
         }
+
+    def _pin_primary_to_best_score(
+        self, mean_metrics: dict[str, float]
+    ) -> dict[str, float]:
+        """Pin the primary objective to ``best_score`` (immune to summation drift)."""
         primary = self.objectives[0] if self.objectives else None
         if (
             primary is not None
