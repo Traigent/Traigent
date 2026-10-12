@@ -46,6 +46,7 @@ from traigent.config.types import _warn_deprecated_once
 from traigent.core.session_types import (
     SessionCreationFailureDetail,
     SessionCreationHTTPError,
+    safe_http_error_summary,
 )
 from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
@@ -550,6 +551,12 @@ class ApiOperations:
                     session_request
                 ):
                     raise
+                # A quota/limit refusal is a definitive answer from a reachable
+                # backend: the legacy contract would be refused the same way, so
+                # do not retry it (#2550).
+                typed_failure = getattr(typed_exc, "session_creation_failure", None)
+                if getattr(typed_failure, "is_quota_refusal", False):
+                    raise
                 logger.warning(
                     "Typed session create failed; retrying once with the "
                     "legacy contract (non-governed session, "
@@ -597,6 +604,12 @@ class ApiOperations:
             raise
         except CloudServiceError as e:
             if getattr(e, "typed_legacy_session_create_400", False):
+                raise
+            # Keep a quota refusal intact (with its structured detail) so the
+            # caller can tell it from a connectivity failure (#2550).
+            if getattr(
+                getattr(e, "session_creation_failure", None), "is_quota_refusal", False
+            ):
                 raise
             self._handle_generic_session_exception(e)
         except aiohttp.ClientConnectorError as e:
@@ -1018,12 +1031,10 @@ class ApiOperations:
 
                     error_msg = await response.text()
                     logger.debug(
-                        "Intermediate report rejected for session %s trial %s: "
-                        "HTTP %s %s",
+                        "Intermediate report rejected for session %s trial %s: %s",
                         session_id,
                         trial_id,
-                        response.status,
-                        error_msg[:300],
+                        safe_http_error_summary(response.status, error_msg),
                     )
                     return {"prune": False, "prune_reason": None}
         except aiohttp.ClientError as exc:
@@ -1057,7 +1068,12 @@ class ApiOperations:
             cast(Any, service_exc).session_creation_failure = detail
             raise service_exc from structured_cause
 
-        logger.debug("Backend session error: %s - %s", status_code, error_msg[:200])
+        # Never log the backend message/body: it can carry customer text.
+        logger.debug(
+            "Backend session error: HTTP %s (%s)",
+            status_code,
+            detail.safe_quota_error_code if detail.is_quota_refusal else "n/a",
+        )
         service_exc = CloudServiceError(
             f"Session creation failed: HTTP {status_code}: {detail.one_line_summary()}"
         )
@@ -1154,7 +1170,7 @@ class ApiOperations:
                     else:
                         error_msg = await response.text()
                         logger.debug(
-                            f"Failed to update config run status: {response.status} - {error_msg[:100]}"
+                            f"Failed to update config run status: {safe_http_error_summary(response.status, error_msg)}"
                         )
                         return False
 
@@ -1336,7 +1352,7 @@ class ApiOperations:
                     else:
                         error_msg = await response.text()
                         logger.debug(
-                            f"Failed to update config run measures: {response.status} - {error_msg[:100]}"
+                            f"Failed to update config run measures: {safe_http_error_summary(response.status, error_msg)}"
                         )
                         return False
 
@@ -1407,7 +1423,8 @@ class ApiOperations:
                     else:
                         error_text = await response.text()
                         logger.warning(
-                            f"Failed to update experiment run status (HTTP {response.status}): {error_text}"
+                            f"Failed to update experiment run status: "
+                            f"{safe_http_error_summary(response.status, error_text)}"
                         )
         except Exception as e:
             logger.warning(f"Error updating experiment run status: {e}")

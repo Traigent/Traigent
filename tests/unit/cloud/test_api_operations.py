@@ -394,6 +394,47 @@ class TestCreateTraigentSessionViaApi:
                 await self.ops.create_traigent_session_via_api(request)
 
 
+class TestQuotaRefusalSessionCreate:
+    """#2550: a quota refusal must not trigger the legacy retry or be re-wrapped."""
+
+    @pytest.mark.asyncio
+    async def test_quota_refusal_skips_legacy_retry_and_keeps_detail(self, monkeypatch):
+        from traigent.cloud.client import CloudServiceError
+        from traigent.cloud.session_types import SessionCreationFailureDetail
+
+        monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "auto")
+        client = Mock()
+        client.auth_manager.augment_headers = AsyncMock(return_value={})
+        ops = ApiOperations(client)
+        request = SessionCreationRequest(
+            function_name="test_func",
+            configuration_space={"param": [1, 2, 3]},
+            objectives=["maximize"],
+            max_trials=10,
+        )
+        quota_exc = CloudServiceError("Session creation failed: HTTP 429")
+        quota_exc.session_creation_failure = (
+            SessionCreationFailureDetail.from_http_response(
+                429, '{"error_code": "quota_exceeded"}'
+            )
+        )
+        post = AsyncMock(side_effect=quota_exc)
+        with (
+            patch(
+                "traigent.cloud.api_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.api_operations.AIOHTTP_AVAILABLE", True),
+            patch.object(ops, "_post_session_creation", new=post),
+            patch.object(ops, "_is_governed_request", return_value=False),
+        ):
+            with pytest.raises(CloudServiceError) as info:
+                await ops.create_traigent_session_via_api(request)
+
+        assert info.value is quota_exc
+        assert post.await_count == 1  # no legacy-contract retry
+
+
 class TestResolveMaxTrials:
     """Test _resolve_max_trials method."""
 

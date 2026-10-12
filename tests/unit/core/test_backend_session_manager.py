@@ -2453,8 +2453,11 @@ class TestHandleSessionCreationResult:
         assert not manager.backend_tracking_enabled
         message = str(exc_info.value)
         assert "missing-permission" in message
-        assert "INSUFFICIENT_PERMISSIONS" in message
-        assert "experiment.write" in message
+        assert "insufficient_permissions" in message
+        assert (
+            "Missing permissions: 1 (see the Traigent portal for your role)" in message
+        )
+        assert "experiment.write" not in message
         assert "Aborting before trials or LLM calls" in message
         assert "TRAIGENT_ALLOW_UNTRACKED=1" in message
 
@@ -2504,6 +2507,57 @@ class TestHandleSessionCreationResult:
         mock_backend_client.request_trial_slot.assert_not_called()
         assert not backend_session_manager.backend_tracking_enabled
 
+    def test_missing_permission_canary_prints_count_not_names(
+        self, traigent_config, objective_schema, mock_optimizer, caplog
+    ):
+        """Canary (#2552): backend permission strings are never printed.
+
+        Both an identifier-shaped name and free text must stay out of the
+        raised message and every log record; only the count is shown.
+        """
+        import logging
+
+        from traigent.cloud.session_types import (
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+        from traigent.utils.exceptions import ConfigurationError
+
+        manager = BackendSessionManager(
+            backend_client=Mock(),
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+        result = SessionCreationResult.fallback(
+            session_id="local_test",
+            reason=SessionCreationFailureReason.AUTH,
+            detail="Authentication failed (403)",
+            failure_response=SessionCreationFailureDetail.from_http_response(
+                403,
+                '{"success":false,"error_code":"INSUFFICIENT_PERMISSIONS",'
+                '"message":"customer text here",'
+                '"details":{"missing_permissions":'
+                '["customer:secret_contract","customer text here"]}}',
+            ),
+        )
+
+        with caplog.at_level(logging.DEBUG):
+            with pytest.raises(ConfigurationError) as exc_info:
+                manager.handle_session_creation_result(result)
+
+        message = str(exc_info.value)
+        assert "Missing permissions: 2 (see the Traigent portal for your role)" in (
+            message
+        )
+        for text in ("customer:secret_contract", "customer text here"):
+            assert text not in message
+            assert all(text not in rec.getMessage() for rec in caplog.records)
+
     def test_auth_failure_allows_local_only_with_explicit_opt_in(
         self, traigent_config, objective_schema, mock_optimizer, caplog, monkeypatch
     ):
@@ -2547,7 +2601,11 @@ class TestHandleSessionCreationResult:
         assert session_id == "local_test"
         assert not manager.backend_tracking_enabled
         assert any("missing-permission" in msg for msg in caplog.messages)
-        assert any("experiment.write" in msg for msg in caplog.messages)
+        assert any(
+            "Missing permissions: 1 (see the Traigent portal for your role)" in msg
+            for msg in caplog.messages
+        )
+        assert not any("experiment.write" in msg for msg in caplog.messages)
         assert any("Continuing local-only" in msg for msg in caplog.messages)
 
     def test_connection_failure_warns_and_continues_local(
@@ -2587,10 +2645,10 @@ class TestHandleSessionCreationResult:
         assert any("backend-unreachable" in msg for msg in caplog.messages)
         assert any("Continuing local-only" in msg for msg in caplog.messages)
 
-    def test_unknown_4xx_warning_includes_raw_reason(
+    def test_unknown_4xx_warning_omits_backend_body(
         self, traigent_config, objective_schema, mock_optimizer, caplog
     ):
-        """Unknown 4xx responses are classified without dropping the raw body."""
+        """Unknown 4xx responses are classified; the raw body is never printed (#2552)."""
         import logging
 
         from traigent.cloud.session_types import (
@@ -2625,7 +2683,8 @@ class TestHandleSessionCreationResult:
 
         assert session_id == "local_test"
         assert any("Classification: unknown" in msg for msg in caplog.messages)
-        assert any(
+        assert any("HTTP status: 400" in msg for msg in caplog.messages)
+        assert not any(
             "Bad request from session endpoint" in msg for msg in caplog.messages
         )
 
@@ -3181,8 +3240,36 @@ class TestRuntimeDegradationSourceMarker:
 
         combined = " ".join(record.getMessage() for record in caplog.records)
         assert "REJECTED" in combined
-        assert reason in combined
+        # The reason is the caller contract (attributes above); logs never carry it.
+        assert reason not in combined
         assert "unavailable during trial submission" not in combined
+
+    @pytest.mark.asyncio
+    async def test_rejection_logs_exclude_backend_reason_2552(
+        self,
+        backend_session_manager,
+        mock_trial_result,
+        mock_backend_client,
+        caplog,
+        monkeypatch,
+    ):
+        monkeypatch.delenv("TRAIGENT_OFFLINE", raising=False)
+        monkeypatch.delenv("TRAIGENT_OFFLINE_MODE", raising=False)
+        backend_session_manager._backend_tracking_enabled = True
+        mock_backend_client.request_trial_slot = AsyncMock(
+            return_value="trial_backend_minted_1"
+        )
+        mock_backend_client._submit_trial_result_via_session = AsyncMock(
+            return_value=TrialSubmissionResult.rejected("customer text here")
+        )
+        with caplog.at_level(logging.DEBUG):
+            await backend_session_manager.submit_trial(
+                trial_result=mock_trial_result, session_id="test-session-id"
+            )
+        assert "REJECTED" in " ".join(r.getMessage() for r in caplog.records)
+        assert "customer text here" not in " ".join(
+            r.getMessage() for r in caplog.records
+        )
 
 
 class TestIssue1373SilentAuthPathSurfacing:
@@ -4341,3 +4428,160 @@ class TestComputePortalName:
         assert metadata["portal_name"] == live_name
         assert metadata["agent_key"] == "stable-agent"
         assert client.create_session.call_args[1]["agent_key"] == "stable-agent"
+
+
+def test_classify_quota_refusal_is_not_backend_unreachable():
+    """#2550: a quota refusal classifies as QUOTA_EXCEEDED, never unreachable."""
+    from traigent.core.backend_session_manager import (
+        _classify_session_creation_failure,
+    )
+    from traigent.core.session_types import (
+        SessionCreationFailureClassification,
+        SessionCreationFailureDetail,
+        SessionCreationFailureReason,
+    )
+
+    quota = SessionCreationFailureDetail.from_http_response(
+        429, '{"error_code": "quota_exceeded"}'
+    )
+    assert (
+        _classify_session_creation_failure(
+            SessionCreationFailureReason.SESSION_FAILED, quota
+        )
+        == SessionCreationFailureClassification.QUOTA_EXCEEDED
+    )
+    down = SessionCreationFailureDetail.from_http_response(503, "")
+    assert (
+        _classify_session_creation_failure(
+            SessionCreationFailureReason.SESSION_FAILED, down
+        )
+        == SessionCreationFailureClassification.BACKEND_UNREACHABLE
+    )
+
+
+class TestQuotaRefusalThroughManager:
+    """#2550: quota stops the run through the real SessionOperations + manager."""
+
+    @staticmethod
+    def _manager(traigent_config, objective_schema, mock_optimizer, create_via_api):
+        from traigent.cloud.session_operations import SessionOperations
+        from traigent.config.types import resolve_execution_policy
+        from tests.unit.cloud.test_session_operations_validation import FakeClient
+
+        client = FakeClient()
+        client._create_traigent_session_via_api = create_via_api
+        ops = SessionOperations(client)
+        traigent_config.execution_mode = "hybrid"
+        traigent_config.execution_policy = resolve_execution_policy(algorithm="auto")
+        backend = Mock()
+        backend.create_session = ops.create_session
+        return BackendSessionManager(
+            backend_client=backend,
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+    @staticmethod
+    def _create(manager, mock_dataset):
+        def func(x):
+            return x
+
+        func.__name__ = "test_func"
+        return manager.create_session(
+            func=func,
+            dataset=mock_dataset,
+            function_descriptor=resolve_function_descriptor(func),
+            max_trials=5,
+            start_time=1.0,
+        )
+
+    @pytest.mark.backend_online
+    def test_quota_refusal_stops_run_with_safe_error(
+        self, traigent_config, objective_schema, mock_optimizer, mock_dataset, caplog
+    ):
+        from traigent.cloud.client import CloudServiceError, SessionQuotaRefusedError
+        from traigent.cloud.session_types import SessionCreationFailureDetail
+
+        exc = CloudServiceError("boom customer text here")
+        exc.session_creation_failure = SessionCreationFailureDetail.from_http_response(
+            429, '{"error_code": "quota_exceeded", "message": "customer text here"}'
+        )
+
+        async def create_via_api(_request):
+            raise exc
+
+        manager = self._manager(
+            traigent_config, objective_schema, mock_optimizer, create_via_api
+        )
+        with caplog.at_level(logging.DEBUG):
+            with pytest.raises(SessionQuotaRefusedError) as info:
+                self._create(manager, mock_dataset)
+
+        blob = (
+            str(info.value).lower()
+            + " ".join(r.getMessage() for r in caplog.records).lower()
+        )
+        assert "quota" in blob and "http 429" in blob and "billing" in blob
+        assert "customer text" not in blob
+        assert "degrading to local" not in blob
+        assert "unreachable" not in blob
+
+    @pytest.mark.backend_online
+    def test_503_still_takes_connectivity_path(
+        self, traigent_config, objective_schema, mock_optimizer, mock_dataset, caplog
+    ):
+        from traigent.cloud.client import CloudServiceError
+
+        async def create_via_api(_request):
+            raise CloudServiceError("503 Service Unavailable: backend down")
+
+        manager = self._manager(
+            traigent_config, objective_schema, mock_optimizer, create_via_api
+        )
+        with caplog.at_level(logging.WARNING):
+            ctx = self._create(manager, mock_dataset)
+        assert ctx.session_id is not None
+        assert any("degrading to LOCAL" in r.getMessage() for r in caplog.records)
+
+    def test_quota_formatters_never_emit_backend_text(self):
+        from traigent.core.backend_session_manager import (
+            _format_untracked_warning_block,
+        )
+        from traigent.core.execution_policy_runtime import (
+            fallback_reason_from_session_result,
+            session_failure_is_connectivity,
+            session_failure_is_session_create_400,
+        )
+        from traigent.core.session_types import (
+            SessionCreationFailureClassification,
+            SessionCreationFailureDetail,
+            SessionCreationFailureReason,
+            SessionCreationResult,
+        )
+
+        detail = SessionCreationFailureDetail.from_http_response(
+            429, '{"error_code": "quota_exceeded", "message": "customer text here"}'
+        )
+        result = SessionCreationResult.fallback(
+            session_id="local_x",
+            reason=SessionCreationFailureReason.SESSION_FAILED,
+            detail="d",
+            failure_response=detail,
+            typed_legacy_session_create_400=True,
+        )
+        block = _format_untracked_warning_block(
+            result, SessionCreationFailureClassification.QUOTA_EXCEEDED, aborting=True
+        )
+        blob = (
+            block
+            + detail.one_line_summary()
+            + (fallback_reason_from_session_result(result))
+        )
+        assert "customer text" not in blob
+        assert "quota_exceeded" in blob
+        assert not session_failure_is_connectivity(result)
+        assert not session_failure_is_session_create_400(result)

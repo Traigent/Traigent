@@ -12,7 +12,7 @@ import copy
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -27,6 +27,7 @@ from traigent.cloud.session_budgets import (
 )
 from traigent.cloud.validators import validate_configuration_run_submission
 from traigent.config.backend_config import BackendConfig
+from traigent.core.session_types import safe_http_error_summary
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.logging import get_logger
 
@@ -91,7 +92,9 @@ class TrialSubmissionResult:
 
     submitted: bool = False
     permanent_rejection: bool = False
-    reason: str | None = None
+    # Backend details.reason: kept readable for callers, but excluded from
+    # repr/str so customer-influenced backend text never reaches logs.
+    reason: str | None = field(default=None, repr=False)
 
     def __bool__(self) -> bool:
         return self.submitted
@@ -199,22 +202,6 @@ class TrialOperations:
             status,
             summary,
         )
-
-    @staticmethod
-    def _first_error_line(error_text: str | None) -> str:
-        """Return a safe, trimmed first line of an error payload for logging."""
-
-        if not error_text:
-            return ""
-
-        lines = error_text.strip().splitlines()
-        if not lines:
-            return ""
-
-        excerpt = lines[0].strip()
-        if len(excerpt) > 200:
-            return f"{excerpt[:197]}..."
-        return excerpt
 
     @staticmethod
     def _sanitize_for_json(value: Any) -> Any:
@@ -902,7 +889,7 @@ class TrialOperations:
                 "Backend detail: %s",
                 session_id,
                 trial_id,
-                detail or error_text or "(no body)",
+                safe_http_error_summary(status, error_text),
             )
             return True
 
@@ -911,22 +898,22 @@ class TrialOperations:
         # tracked LOCALLY ONLY.
         if isinstance(status, int) and 400 <= status < 500:
             logger.error(
-                "\u274c Trial submission REJECTED by the backend: HTTP %s \u2014 %s. "
+                "\u274c Trial submission REJECTED by the backend: %s. "
                 "This is a PERMANENT error, NOT a transient outage. "
                 "The run will be tracked LOCALLY ONLY "
                 "(source='local_fallback'); fix the request to track it on the "
                 "backend.  Trial %s  Session %s  URL %s",
-                status,
-                detail or "(no response body)",
+                safe_http_error_summary(status, error_text),
                 trial_id,
                 session_id,
                 url,
             )
-            return TrialSubmissionResult.rejected(reason or detail or None)
+            # ``details.reason`` is the documented caller contract; never fall back to
+            # the backend message/error/body (customer text can be echoed there).
+            return TrialSubmissionResult.rejected(reason or None)
         logger.warning(
-            "\u274c Failed to submit trial result: HTTP %s \u2014 %s",
-            status,
-            detail or "(no response body)",
+            "\u274c Failed to submit trial result: %s",
+            safe_http_error_summary(status, error_text),
         )
         logger.warning(
             "   Trial ID: %s  Session ID: %s  URL: %s", trial_id, session_id, url
