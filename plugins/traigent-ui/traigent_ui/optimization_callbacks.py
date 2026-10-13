@@ -17,10 +17,26 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from traigent.api.types import ExampleResult, OptimizationResult, TrialResult
 from traigent.utils.callbacks import OptimizationCallback, ProgressInfo
+from traigent.utils.secure_path import PathTraversalError, validate_path
+
+
+def _contained_log_dir(base_dir: Path, *components: str) -> Path:
+    """Resolve ``base_dir/<components...>`` and require it to stay inside ``base_dir``.
+
+    ``run_id`` / ``problem_id`` are identifiers supplied by the caller, not
+    paths. Absolute values, ``..`` traversal and symlinks that escape the log
+    root are rejected (fail closed) with :class:`PathTraversalError`.
+    """
+    for component in components:
+        if not isinstance(component, str) or not component or "\x00" in component:
+            raise PathTraversalError(
+                f"Invalid log path component: {component!r} is not an accepted name"
+            )
+    return validate_path(Path(*components), allowed_base=base_dir)
 
 
 class DeferredLoggingCallback(OptimizationCallback):
@@ -33,8 +49,8 @@ class DeferredLoggingCallback(OptimizationCallback):
     def __init__(
         self,
         run_id: str,
-        problem_id: Optional[str] = None,
-        base_dir: Optional[Path] = None,
+        problem_id: str | None = None,
+        base_dir: Path | None = None,
     ):
         """Initialize the deferred logging callback."""
         self.run_id = run_id
@@ -50,7 +66,7 @@ class DeferredLoggingCallback(OptimizationCallback):
         self.start_time = None
 
     def on_optimization_start(
-        self, config_space: Dict[str, Any], objectives: List[str], algorithm: str
+        self, config_space: dict[str, Any], objectives: list[str], algorithm: str
     ) -> None:
         """Called when optimization starts."""
         print("\n[DeferredLoggingCallback] Optimization started")
@@ -63,7 +79,7 @@ class DeferredLoggingCallback(OptimizationCallback):
             "status": "started",
         }
 
-    def on_trial_start(self, trial_number: int, config: Dict[str, Any]) -> None:
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
         """Called when a trial starts."""
         pass  # We'll log on completion
 
@@ -134,7 +150,7 @@ class InvocationLoggingCallback(OptimizationCallback):
     including inputs, outputs, configurations, timing, and metrics.
     """
 
-    def __init__(self, run_id: str, base_dir: Optional[Path] = None):
+    def __init__(self, run_id: str, base_dir: Path | None = None):
         """
         Initialize the logging callback.
 
@@ -144,7 +160,8 @@ class InvocationLoggingCallback(OptimizationCallback):
         """
         self.run_id = run_id
         self.base_dir = base_dir or Path(__file__).parent / "optimization_logs"
-        self.log_dir = self.base_dir / run_id
+        # Fail closed: run_id must not steer the log directory outside base_dir.
+        self.log_dir = _contained_log_dir(self.base_dir, run_id)
 
         # Create directories with better error handling
         try:
@@ -178,7 +195,7 @@ class InvocationLoggingCallback(OptimizationCallback):
         self.config_performance = {}  # Track performance by config
 
     def on_optimization_start(
-        self, config_space: Dict[str, Any], objectives: List[str], algorithm: str
+        self, config_space: dict[str, Any], objectives: list[str], algorithm: str
     ) -> None:
         """Called when optimization starts."""
         print("\n[CALLBACK] InvocationLoggingCallback.on_optimization_start called!")
@@ -225,7 +242,7 @@ class InvocationLoggingCallback(OptimizationCallback):
 
             traceback.print_exc()
 
-    def on_trial_start(self, trial_number: int, config: Dict[str, Any]) -> None:
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
         """Called when a trial starts."""
         self.trial_count = trial_number
         # Log trial start (optional)
@@ -368,13 +385,13 @@ class InvocationLoggingCallback(OptimizationCallback):
         if trial.metrics:
             self.all_metrics.append(trial.metrics)
 
-    def _config_to_key(self, config: Dict[str, Any]) -> str:
+    def _config_to_key(self, config: dict[str, Any]) -> str:
         """Convert config dict to a hashable key."""
         items = sorted(config.items())
         return json.dumps(items)
 
     def _update_metrics_file(
-        self, progress: Optional[ProgressInfo], final: bool = False
+        self, progress: ProgressInfo | None, final: bool = False
     ) -> None:
         """Update the metrics analysis file."""
         metrics_data = {
@@ -441,7 +458,7 @@ class InvocationLoggingCallback(OptimizationCallback):
         with open(self.metrics_file, "w") as f:
             json.dump(metrics_data, f, indent=2)
 
-    def _calculate_std(self, values: List[float]) -> float:
+    def _calculate_std(self, values: list[float]) -> float:
         """Calculate standard deviation."""
         if len(values) < 2:
             return 0.0
@@ -461,7 +478,7 @@ class EnhancedDeferredLoggingCallback(OptimizationCallback):
     - Deferred file writing for Streamlit compatibility
     """
 
-    def __init__(self, run_id: str, problem_id: str, base_dir: Optional[Path] = None):
+    def __init__(self, run_id: str, problem_id: str, base_dir: Path | None = None):
         """Initialize the enhanced logging callback."""
         self.run_id = run_id
         self.problem_id = problem_id
@@ -488,7 +505,7 @@ class EnhancedDeferredLoggingCallback(OptimizationCallback):
         self.invocation_count = 0
 
     def on_optimization_start(
-        self, config_space: Dict[str, Any], objectives: List[str], algorithm: str
+        self, config_space: dict[str, Any], objectives: list[str], algorithm: str
     ) -> None:
         """Called when optimization starts."""
         print(f"\n[EnhancedLogging] Optimization started for {self.problem_id}")
@@ -501,7 +518,7 @@ class EnhancedDeferredLoggingCallback(OptimizationCallback):
             "status": "started",
         }
 
-    def on_trial_start(self, trial_number: int, config: Dict[str, Any]) -> None:
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
         """Called when a trial starts."""
         pass  # We'll log on completion
 
@@ -586,7 +603,7 @@ class EnhancedDeferredLoggingCallback(OptimizationCallback):
 
     def _extract_llm_invocation_data(
         self, trial: TrialResult, example_result: ExampleResult
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Extract detailed LLM invocation data from an example result."""
         self.invocation_count += 1
 
@@ -635,7 +652,7 @@ class EnhancedDeferredLoggingCallback(OptimizationCallback):
 
         return invocation
 
-    def _safe_get(self, data: Dict[str, Any], key: str, default: Any = None) -> Any:
+    def _safe_get(self, data: dict[str, Any], key: str, default: Any = None) -> Any:
         """Safely get a value from a dictionary."""
         try:
             return data.get(key, default) if isinstance(data, dict) else default
@@ -679,7 +696,7 @@ class EnhancedDeferredLoggingCallback(OptimizationCallback):
                 "_type": type(data).__name__,
             }
 
-    def _extract_token_usage(self, example_result: ExampleResult) -> Dict[str, Any]:
+    def _extract_token_usage(self, example_result: ExampleResult) -> dict[str, Any]:
         """Extract token usage information if available."""
         token_usage = {"tokens_in": None, "tokens_out": None, "total_tokens": None}
 
@@ -731,8 +748,8 @@ class EnhancedDeferredLoggingCallback(OptimizationCallback):
         return token_usage
 
     def _estimate_cost(
-        self, config: Dict[str, Any], example_result: ExampleResult
-    ) -> Dict[str, Any]:
+        self, config: dict[str, Any], example_result: ExampleResult
+    ) -> dict[str, Any]:
         """Estimate the cost of the LLM invocation."""
         cost_info = {
             "estimated_cost": None,
@@ -780,7 +797,7 @@ class EnhancedDeferredLoggingCallback(OptimizationCallback):
 
         return cost_info
 
-    def _update_usage_summary(self, invocation_data: Dict[str, Any]) -> None:
+    def _update_usage_summary(self, invocation_data: dict[str, Any]) -> None:
         """Update the overall usage summary."""
         try:
             summary = self.log_data["llm_usage_summary"]
@@ -861,11 +878,13 @@ class ComprehensiveTrialLoggingCallback(OptimizationCallback):
     - Safe logging that handles missing data gracefully
     """
 
-    def __init__(self, run_id: str, problem_id: str, base_dir: Optional[Path] = None):
+    def __init__(self, run_id: str, problem_id: str, base_dir: Path | None = None):
         """Initialize the comprehensive trial logging callback."""
         self.run_id = run_id
         self.problem_id = problem_id
         self.base_dir = base_dir or Path(__file__).parent / "optimization_logs"
+        # Fail closed: problem_id/run_id must not steer writes outside base_dir.
+        self.log_dir = _contained_log_dir(self.base_dir, problem_id, run_id)
 
         # Initialize accumulated data
         self.log_data = {
@@ -886,7 +905,7 @@ class ComprehensiveTrialLoggingCallback(OptimizationCallback):
         self.invocation_count = 0
 
     def on_optimization_start(
-        self, config_space: Dict[str, Any], objectives: List[str], algorithm: str
+        self, config_space: dict[str, Any], objectives: list[str], algorithm: str
     ) -> None:
         """Called when optimization starts."""
         print(f"\n[ComprehensiveLogging] Optimization started for {self.problem_id}")
@@ -899,7 +918,7 @@ class ComprehensiveTrialLoggingCallback(OptimizationCallback):
             "status": "started",
         }
 
-    def on_trial_start(self, trial_number: int, config: Dict[str, Any]) -> None:
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
         """Called when a trial starts."""
         print(
             f"[ComprehensiveLogging] Trial {trial_number} starting with config: {config}"
@@ -1006,7 +1025,7 @@ class ComprehensiveTrialLoggingCallback(OptimizationCallback):
         # Save logs
         self._save_comprehensive_logs()
 
-    def _extract_trial_invocations(self, trial: TrialResult) -> List[Dict[str, Any]]:
+    def _extract_trial_invocations(self, trial: TrialResult) -> list[dict[str, Any]]:
         """Extract all available invocation data from a trial using multiple strategies."""
         invocations = []
 
@@ -1057,7 +1076,7 @@ class ComprehensiveTrialLoggingCallback(OptimizationCallback):
 
     def _extract_from_example_result(
         self, trial: TrialResult, example_result: ExampleResult, index: int
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Extract detailed invocation data from an ExampleResult."""
         self.invocation_count += 1
 
@@ -1119,7 +1138,7 @@ class ComprehensiveTrialLoggingCallback(OptimizationCallback):
 
         return invocation
 
-    def _extract_from_trial_metadata(self, trial: TrialResult) -> Dict[str, Any]:
+    def _extract_from_trial_metadata(self, trial: TrialResult) -> dict[str, Any]:
         """Extract invocation data from trial metadata."""
         self.invocation_count += 1
 
@@ -1164,7 +1183,7 @@ class ComprehensiveTrialLoggingCallback(OptimizationCallback):
 
         return invocation
 
-    def _create_synthetic_invocation(self, trial: TrialResult) -> Dict[str, Any]:
+    def _create_synthetic_invocation(self, trial: TrialResult) -> dict[str, Any]:
         """Create a synthetic invocation record from basic trial data."""
         self.invocation_count += 1
 
@@ -1235,7 +1254,7 @@ class ComprehensiveTrialLoggingCallback(OptimizationCallback):
 
     def _extract_token_usage_from_example(
         self, example_result: ExampleResult
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Extract token usage from ExampleResult metadata."""
         token_usage = {"tokens_in": None, "tokens_out": None, "total_tokens": None}
 
@@ -1276,8 +1295,8 @@ class ComprehensiveTrialLoggingCallback(OptimizationCallback):
         return token_usage
 
     def _extract_token_usage_from_metadata(
-        self, metadata: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, metadata: dict[str, Any]
+    ) -> dict[str, Any]:
         """Extract token usage from trial metadata."""
         token_usage = {"tokens_in": None, "tokens_out": None, "total_tokens": None}
 
@@ -1305,8 +1324,8 @@ class ComprehensiveTrialLoggingCallback(OptimizationCallback):
         return token_usage
 
     def _estimate_cost_from_config_and_tokens(
-        self, config: Dict[str, Any], example_result: ExampleResult
-    ) -> Dict[str, Any]:
+        self, config: dict[str, Any], example_result: ExampleResult
+    ) -> dict[str, Any]:
         """Estimate cost from config and token usage."""
         cost_info = {
             "estimated_cost": None,
@@ -1324,8 +1343,8 @@ class ComprehensiveTrialLoggingCallback(OptimizationCallback):
         return cost_info
 
     def _estimate_cost_from_metadata(
-        self, config: Dict[str, Any], metadata: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, config: dict[str, Any], metadata: dict[str, Any]
+    ) -> dict[str, Any]:
         """Estimate cost from config and metadata."""
         cost_info = {
             "estimated_cost": None,
@@ -1343,8 +1362,8 @@ class ComprehensiveTrialLoggingCallback(OptimizationCallback):
         return cost_info
 
     def _calculate_cost_from_tokens(
-        self, model: str, token_usage: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, model: str, token_usage: dict[str, Any]
+    ) -> dict[str, Any]:
         """Calculate cost from model and token usage."""
         cost_info = {}
 
@@ -1378,8 +1397,8 @@ class ComprehensiveTrialLoggingCallback(OptimizationCallback):
         return cost_info
 
     def _extract_token_usage_from_metrics(
-        self, metrics: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, metrics: dict[str, Any]
+    ) -> dict[str, Any]:
         """Try to extract token usage from trial metrics."""
         token_usage = {"tokens_in": None, "tokens_out": None, "total_tokens": None}
 
@@ -1412,8 +1431,8 @@ class ComprehensiveTrialLoggingCallback(OptimizationCallback):
         return token_usage
 
     def _estimate_cost_from_trial_data(
-        self, config: Dict[str, Any], metrics: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, config: dict[str, Any], metrics: dict[str, Any]
+    ) -> dict[str, Any]:
         """Estimate cost from trial config and metrics."""
         cost_info = {
             "estimated_cost": None,
@@ -1431,8 +1450,8 @@ class ComprehensiveTrialLoggingCallback(OptimizationCallback):
         return cost_info
 
     def _calculate_trial_summary(
-        self, invocations: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        self, invocations: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """Calculate usage summary for a single trial."""
         summary = {
             "total_invocations": len(invocations),
@@ -1465,7 +1484,7 @@ class ComprehensiveTrialLoggingCallback(OptimizationCallback):
 
         return summary
 
-    def _update_global_usage_summary(self, invocation: Dict[str, Any]) -> None:
+    def _update_global_usage_summary(self, invocation: dict[str, Any]) -> None:
         """Update the global usage summary."""
         try:
             summary = self.log_data["llm_usage_summary"]
@@ -1493,7 +1512,7 @@ class ComprehensiveTrialLoggingCallback(OptimizationCallback):
                 f"[ComprehensiveLogging] Warning: Failed to update usage summary: {e}"
             )
 
-    def _safe_get(self, data: Dict[str, Any], key: str, default: Any = None) -> Any:
+    def _safe_get(self, data: dict[str, Any], key: str, default: Any = None) -> Any:
         """Safely get a value from a dictionary."""
         try:
             return data.get(key, default) if isinstance(data, dict) else default
@@ -1540,8 +1559,9 @@ class ComprehensiveTrialLoggingCallback(OptimizationCallback):
     def _save_comprehensive_logs(self):
         """Save accumulated logs to disk with problem_id/run_id structure."""
         try:
-            # Create log directory with problem_id/run_id structure
-            log_dir = self.base_dir / self.problem_id / self.run_id
+            # Create log directory with problem_id/run_id structure (validated
+            # to stay under base_dir in __init__)
+            log_dir = self.log_dir
             log_dir.mkdir(parents=True, exist_ok=True)
 
             # Save comprehensive main log file
@@ -1595,14 +1615,14 @@ class StreamlitProgressCallback(OptimizationCallback):
         self.start_time = None
 
     def on_optimization_start(
-        self, config_space: Dict[str, Any], objectives: List[str], algorithm: str
+        self, config_space: dict[str, Any], objectives: list[str], algorithm: str
     ) -> None:
         """Called when optimization starts."""
         self.start_time = time.time()
         self.status_text.text(f"Starting {algorithm} optimization...")
         self.progress_bar.progress(0.0)
 
-    def on_trial_start(self, trial_number: int, config: Dict[str, Any]) -> None:
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
         """Called when a trial starts."""
         model = config.get("model", "unknown")
         self.status_text.text(f"Testing configuration {trial_number}: {model}")
