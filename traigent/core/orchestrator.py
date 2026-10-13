@@ -60,6 +60,7 @@ from traigent.core.cost_enforcement import (
     CostEnforcer,
     CostEnforcerConfig,
     Permit,
+    _spend_reached_limit,
     normalize_cost_approved,
     normalize_estimated_calls_per_example,
     resolve_fallback_trial_limit,
@@ -4547,12 +4548,21 @@ class OptimizationOrchestrator:
                     self._optimization_id,
                 )
 
+        self._log_completion_cost(result)
+
+    def _log_completion_cost(self, result: OptimizationResult) -> None:
+        """Log the completion line; a floor is printed as a minimum, not exact."""
         cost_status = self.cost_enforcer.get_status()
+        cost_text = (
+            f"at least ${cost_status.accumulated_cost_usd:.4f} (some cost unmeasured)"
+            if cost_status.unmeasured_trial_count > 0
+            else f"${cost_status.accumulated_cost_usd:.4f}"
+        )
         logger.info(
             f"Optimization {self._optimization_id} completed: "
             f"{len(self._trials)} trials, best score: "
             f"{'N/A' if result.best_score is None else f'{result.best_score:.4f}'}, "
-            f"total cost: ${cost_status.accumulated_cost_usd:.4f}"
+            f"total cost: {cost_text}"
         )
 
     def _finalize_failed_backend_session(
@@ -5237,6 +5247,17 @@ class OptimizationOrchestrator:
             enforcer = getattr(self, "cost_enforcer", None)
             if enforcer is not None and not enforcer.unknown_cost_cap_waived:
                 status = enforcer.get_status()
+                if status.unknown_cost_mode and _spend_reached_limit(
+                    status.accumulated_cost_usd, status.limit_usd
+                ):
+                    return (
+                        f"Stopped at {trials} trials: the cost limit "
+                        f"(${status.limit_usd:.2f}) was reached by known spend "
+                        f"of at least ${status.accumulated_cost_usd:.2f} (a "
+                        f"minimum: cost is unmeasured for "
+                        f"{status.unmeasured_trial_count} of "
+                        f"{status.trial_count} trials)."
+                    )
                 if status.unknown_cost_mode:
                     return (
                         f"Stopped at {trials} trials: cost is unmeasured for "
