@@ -70,6 +70,11 @@ def _run(
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
     monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path / "results"))
+    # The "default cap" cases require that no run cost limit is named. An
+    # earlier test in the same process may have leaked one into os.environ
+    # (tests/unit/identity/no_grant_snapshot.py used setdefault), which would
+    # replace the 2.0 default cap, so the ambient value is removed here.
+    monkeypatch.delenv("TRAIGENT_RUN_COST_LIMIT", raising=False)
 
     space = case_input["configurationSpace"]
     assert list(space) == ["variant"]
