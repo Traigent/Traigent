@@ -46,6 +46,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from traigent.utils.env_config import (
@@ -977,6 +978,8 @@ Options:
         permit: Permit,
         trial_failed: bool = False,
         trial_id: str | None = None,
+        cost_unmeasured: bool = False,
+        unmeasured_examples: Sequence[str] | None = None,
     ) -> None:
         """Track actual cost after each trial (thread-safe).
 
@@ -993,6 +996,11 @@ Options:
             permit: The Permit object returned by acquire_permit.
             trial_failed: Whether the trial failed/was cancelled (still counts).
             trial_id: Optional trial identifier for logging.
+            cost_unmeasured: True when ``cost`` is only the known spend floor of
+                a trial whose cost was partly unmeasured. The floor is charged,
+                the trial is counted as unmeasured, and strict mode raises.
+            unmeasured_examples: Up to a few example ids whose usage was
+                missing, named in the strict error / warning (ids only).
 
         Raises:
             CostTrackingRequiredError: If cost is None and
@@ -1018,6 +1026,8 @@ Options:
                 permit=permit,
                 trial_failed=trial_failed,
                 trial_id=trial_id,
+                cost_unmeasured=cost_unmeasured,
+                unmeasured_examples=unmeasured_examples,
                 require_cost_tracking=require_cost_tracking,
                 caller="track_cost",
                 include_limit_in_warning=True,
@@ -1191,6 +1201,8 @@ Options:
         permit: Permit,
         trial_failed: bool = False,
         trial_id: str | None = None,
+        cost_unmeasured: bool = False,
+        unmeasured_examples: Sequence[str] | None = None,
     ) -> None:
         """Async version of track_cost.
 
@@ -1207,6 +1219,11 @@ Options:
             permit: The Permit object returned by acquire_permit_async.
             trial_failed: Whether the trial failed/was cancelled.
             trial_id: Optional trial identifier for logging.
+            cost_unmeasured: True when ``cost`` is only the known spend floor of
+                a trial whose cost was partly unmeasured. The floor is charged,
+                the trial is counted as unmeasured, and strict mode raises.
+            unmeasured_examples: Up to a few example ids whose usage was
+                missing, named in the strict error / warning (ids only).
 
         Raises:
             CostTrackingRequiredError: If cost is None and
@@ -1234,6 +1251,8 @@ Options:
                 permit=permit,
                 trial_failed=trial_failed,
                 trial_id=trial_id,
+                cost_unmeasured=cost_unmeasured,
+                unmeasured_examples=unmeasured_examples,
                 require_cost_tracking=require_cost_tracking,
                 caller="track_cost_async",
                 include_limit_in_warning=False,
@@ -1338,19 +1357,33 @@ Options:
         *,
         require_cost_tracking: bool,
         include_limit_in_warning: bool,
+        unmeasured_examples: Sequence[str] | None = None,
     ) -> None:
         """Handle unknown cost under the lock, including strict-mode failure."""
+        examples_text = ""
+        if unmeasured_examples:
+            examples_text = (
+                " Examples whose usage was missing: "
+                + ", ".join(str(e) for e in list(unmeasured_examples)[:5])
+                + "."
+            )
         if require_cost_tracking:
             raise CostTrackingRequiredError(
                 f"Cost extraction failed for {trial_desc} and "
                 f"{self._require_cost_tracking_reason}. An unpriced call is "
                 "not recorded as $0, because the optimizer would rank it "
-                "cheapest. Provide per-token pricing with "
+                f"cheapest.{examples_text} To fix it: wrap a path that makes "
+                "no model call in traigent.with_usage(value, total_cost=0); "
+                "for an unpriced model, provide per-token pricing with "
                 "TRAIGENT_CUSTOM_MODEL_PRICING_JSON or "
-                "TRAIGENT_CUSTOM_MODEL_PRICING_FILE, or set "
+                "TRAIGENT_CUSTOM_MODEL_PRICING_FILE; or set "
                 "TRAIGENT_STRICT_COST_ACCOUNTING=false (and "
                 "TRAIGENT_REQUIRE_COST_TRACKING=false) to accept $0 for "
                 "unpriced calls."
+            )
+        if examples_text:
+            logger.warning(
+                "Cost partly unmeasured for %s.%s", trial_desc, examples_text
             )
 
         if not self._unknown_cost_mode:
@@ -1399,6 +1432,8 @@ Options:
         permit: Permit,
         trial_failed: bool,
         trial_id: str | None,
+        cost_unmeasured: bool = False,
+        unmeasured_examples: Sequence[str] | None = None,
         require_cost_tracking: bool,
         caller: str,
         include_limit_in_warning: bool,
@@ -1429,12 +1464,19 @@ Options:
             )
 
         # Handle unknown cost with optional strict mode
-        if cost is None:
+        if cost is None or cost_unmeasured:
+            if cost is not None:
+                # Partly measured: charge the spend that WAS seen so budgets
+                # keep their protection, but never feed a floor into the
+                # per-trial estimate.
+                self._accumulated_cost += cost
+                self._check_thresholds()
             self._unmeasured_trial_count += 1
             self._handle_unknown_cost_locked(
                 trial_desc,
                 require_cost_tracking=require_cost_tracking,
                 include_limit_in_warning=include_limit_in_warning,
+                unmeasured_examples=unmeasured_examples,
             )
             return
 

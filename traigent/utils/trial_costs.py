@@ -19,6 +19,7 @@ __all__ = [
     "lift_flagged_cost_to_floor",
     "row_has_measured_cost",
     "trial_cost_unknown",
+    "unmeasured_example_ids",
 ]
 
 # Keys under which a per-example result row may carry a measured cost.
@@ -125,6 +126,40 @@ def trial_cost_unknown(
         elif ok:
             return True
     return measured == 0
+
+
+def unmeasured_example_ids(example_results: Any, limit: int = 5) -> list[str]:
+    """Ids (or ``#index``) of the examples whose usage was not captured.
+
+    Uses the same per-row rule as :func:`trial_cost_unknown`: a row flagged
+    ``cost_unmeasured``, or a successful row with no measured cost. Only the
+    example id or position is returned, never example content. At most
+    ``limit`` entries; ``[]`` when the rows are not readable.
+    """
+    if not isinstance(example_results, Sequence) or isinstance(
+        example_results, (str, bytes, bytearray)
+    ):
+        return []
+    found: list[str] = []
+    for index, row in enumerate(example_results):
+        if isinstance(row, Mapping):
+            metrics, example_id, ok = (
+                row.get("metrics"),
+                row.get("example_id"),
+                row.get("success", True),
+            )
+        else:
+            metrics = getattr(row, "metrics", None)
+            example_id = getattr(row, "example_id", None)
+            ok = getattr(row, "success", True)
+        if not isinstance(metrics, Mapping):
+            continue
+        flagged = is_cost_unmeasured(metrics)
+        if flagged or (bool(ok) and not row_has_measured_cost(metrics)):
+            found.append(str(example_id) if example_id else f"#{index}")
+            if len(found) >= limit:
+                break
+    return found
 
 
 def extract_trial_cost_metric(*sources: Any) -> float | None:

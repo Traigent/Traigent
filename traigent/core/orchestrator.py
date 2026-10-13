@@ -147,7 +147,7 @@ from traigent.utils.objectives import (
     is_minimization_objective,
 )
 from traigent.utils.optimization_logger import OptimizationLogger
-from traigent.utils.trial_costs import is_cost_unmeasured
+from traigent.utils.trial_costs import is_cost_unmeasured, unmeasured_example_ids
 
 from .tracing import optimization_session_span, record_optimization_complete
 
@@ -2108,6 +2108,12 @@ class OptimizationOrchestrator:
         """
         effective_permit = permit or Permit(id=0, amount=0.0, active=True)
         trial_cost = self._extract_trial_cost(trial_result)
+        flagged = is_cost_unmeasured(trial_result.metrics)
+        missing_examples = (
+            unmeasured_example_ids((trial_result.metadata or {}).get("example_results"))
+            if flagged
+            else []
+        )
 
         if self.cost_enforcer is not None:
             if trial_result.status == TrialStatus.CANCELLED:
@@ -2117,6 +2123,8 @@ class OptimizationOrchestrator:
                         permit=effective_permit,
                         trial_failed=True,
                         trial_id=trial_result.trial_id,
+                        cost_unmeasured=flagged,
+                        unmeasured_examples=missing_examples,
                     )
             else:
                 await self.cost_enforcer.track_cost_async(
@@ -2124,6 +2132,8 @@ class OptimizationOrchestrator:
                     permit=effective_permit,
                     trial_failed=trial_result.status == TrialStatus.FAILED,
                     trial_id=trial_result.trial_id,
+                    cost_unmeasured=flagged,
+                    unmeasured_examples=missing_examples,
                 )
 
         if (budget := getattr(self, "execution_budget", None)) is not None:
