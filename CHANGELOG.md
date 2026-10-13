@@ -78,6 +78,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   per-token prices through `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` /
   `TRAIGENT_CUSTOM_MODEL_PRICING_FILE`; set
   `TRAIGENT_STRICT_COST_ACCOUNTING=false` only to accept $0 for unpriced calls.
+  A trial whose cost is only partly measured (some example reported no usage)
+  stops the run the same way, and the error names up to 5 such examples. Fix it
+  by wrapping a path that makes no model call in
+  `traigent.with_usage(value, total_cost=0)`, adding a price for an unpriced
+  model (`TRAIGENT_CUSTOM_MODEL_PRICING_JSON` / `_FILE`), or setting
+  `TRAIGENT_STRICT_COST_ACCOUNTING=false`. Without a cost objective the run
+  continues with a warning.
   Spend that was reported for a trial flagged `cost_unmeasured` (its
   `cost_lower_bound`) is charged to `cost_limit`, `ExecutionBudget` and the
   cost enforcer as a minimum; the trial keeps its `cost_unmeasured` flag and its
