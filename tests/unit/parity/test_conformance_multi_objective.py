@@ -144,7 +144,9 @@ def test_best_config_via_public_optimize(
             input_data=example.input_data,
             expected_output=example.expected_output,
             actual_output="ok",
-            metrics=dict(metrics_by_trial[config["trial"]]),
+            # The run limit set above is explicit, so a completed trial must
+            # report a cost; fixture metrics carry none, so report zero spend.
+            metrics={"cost": 0.0, **metrics_by_trial[config["trial"]]},
             execution_time=0.001,
             success=True,
         )
