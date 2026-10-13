@@ -194,9 +194,9 @@ class TestSequentialCostEnforcement:
     def test_sequential_trials_with_varying_costs(
         self, cost_enforcer: CostEnforcer
     ) -> None:
-        """Test sequential trials with varying costs updates EMA correctly."""
-        # Start with estimated cost of 0.10
-        assert abs(cost_enforcer._estimated_cost - 0.10) < FLOAT_TOLERANCE
+        """Test sequential trials with varying costs track the observed mean."""
+        # No estimate exists before the first trial completes
+        assert cost_enforcer._estimated_cost == 0.0
 
         # Track some costs that differ from estimate
         costs = [0.05, 0.05, 0.05]  # Actual costs are lower than estimate
@@ -206,8 +206,8 @@ class TestSequentialCostEnforcement:
             assert permit.is_granted
             cost_enforcer.track_cost(cost, permit=permit)
 
-        # EMA should have moved towards actual costs
-        assert cost_enforcer._estimated_cost < 0.10
+        # The estimate is the arithmetic mean of the observed costs
+        assert abs(cost_enforcer._estimated_cost - 0.05) < FLOAT_TOLERANCE
         assert cost_enforcer._trial_count == 3
 
 

@@ -849,14 +849,17 @@ class OptimizationOrchestrator:
                     else float(validate_cost_limit(cost_limit))
                 ),
                 approved=cost_approved,
+                # An explicit cap refuses a completed trial that reports no
+                # cost (stop-rules parity); the default cap does not.
+                limit_explicit=cost_limit is not None,
                 # The default unknown-cost trial cap honours its env override
                 # on this path too; it used to fall back to 10 here.
                 fallback_trial_limit=resolve_fallback_trial_limit(),
             )
         self.cost_enforcer = CostEnforcer(config=cost_config)
-        # Declared calls-per-example lever (issue #1750): scales the EMA seed
-        # so a multi-call agent's early trials don't read as guaranteed
-        # divergence against a single-call warm-start. Resolved once here
+        # Declared calls-per-example lever (issue #1750): scales the rough
+        # pre-trial figure used by the informational remaining-cost estimate
+        # (it does not seed the in-run mean estimate). Resolved once here
         # (whether cost_config came from the block above or from env-loaded
         # defaults inside CostEnforcer) and reused for the pre-run estimator.
         self._estimated_calls_per_example = normalize_estimated_calls_per_example(
@@ -3626,8 +3629,11 @@ class OptimizationOrchestrator:
             est_next_batch = est_per_trial * self._effective_batch_size(
                 remaining_trials
             )
+            # Tolerate float rounding so a budget that exactly funds the next
+            # batch (e.g. 0.30 - 0.20 = 0.0999... vs a 0.10 mean cost) is not
+            # blocked by representation error.
             if not math.isinf(snapshot.remaining_cost) and (
-                snapshot.remaining_cost < est_next_batch
+                snapshot.remaining_cost < est_next_batch - 1e-9
             ):
                 blocked_dimension = "cost"
 

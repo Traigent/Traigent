@@ -220,6 +220,12 @@ def _setup_permit_state(
         # Foreign permit not present in the enforcer registry.
         return Permit(id=999_999, amount=ESTIMATED_COST_PER_TRIAL, active=True), True
 
+    if budget_state == "over_limit":
+        # The first trial always starts (no estimate before a trial completes);
+        # hold it in flight so the next reservation exceeds the limit.
+        assert enforcer.acquire_permit().is_granted
+        enforcer.assert_invariants()
+
     permit = enforcer.acquire_permit()
     enforcer.assert_invariants()
 

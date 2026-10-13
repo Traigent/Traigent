@@ -460,7 +460,7 @@ class TestParallelBudgetBoundaries:
 
     @pytest.mark.asyncio
     async def test_parallel_ema_updates_affect_future_permits(self) -> None:
-        """Test that EMA updates from completed trials affect future permits."""
+        """Test that the mean of completed-trial costs sets future reservations."""
         enforcer = CostEnforcer(
             CostEnforcerConfig(
                 limit=1.0,
@@ -468,17 +468,20 @@ class TestParallelBudgetBoundaries:
             )
         )
 
-        # First batch: track lower costs to update EMA
-        initial_estimate = enforcer._estimated_cost
-        assert abs(initial_estimate - 0.10) < FLOAT_TOLERANCE
+        # No estimate exists before the first trial completes; 0.10 is only
+        # the rough configured figure.
+        rough_figure = 0.10
+        assert enforcer._estimated_cost == 0.0
+
+        # First batch: track lower costs to establish the mean
 
         for _ in range(3):
             permit = await enforcer.acquire_permit_async()
             if permit.is_granted:
                 await enforcer.track_cost_async(0.05, permit=permit)
 
-        # EMA should have decreased
-        assert enforcer._estimated_cost < initial_estimate
+        # The estimate is the mean of the observed costs
+        assert abs(enforcer._estimated_cost - 0.05) < FLOAT_TOLERANCE
 
         # Second batch should reserve less per permit
         permits: list[Permit] = []
@@ -487,7 +490,7 @@ class TestParallelBudgetBoundaries:
             if permit.is_granted:
                 permits.append(permit)
                 # Each permit should reserve less than original estimate
-                assert permit.amount < initial_estimate
+                assert permit.amount < rough_figure
 
         for permit in permits:
             await enforcer.release_permit_async(permit)

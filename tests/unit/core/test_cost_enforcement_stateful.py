@@ -385,6 +385,9 @@ class TestDeniedPermitProperties:
             CostEnforcerConfig(limit=0.01, estimated_cost_per_trial=0.1)
         )
 
+        # The first trial always starts (no estimate yet); the next reservation
+        # of 0.1 exceeds the 0.01 limit and is denied.
+        assert enforcer.acquire_permit().is_granted
         permit = enforcer.acquire_permit()
 
         # Denied permit properties
@@ -400,6 +403,8 @@ class TestDeniedPermitProperties:
             CostEnforcerConfig(limit=0.01, estimated_cost_per_trial=0.1)
         )
 
+        # First trial always starts; hold it in flight so the next is denied.
+        assert enforcer.acquire_permit().is_granted
         initial_in_flight = enforcer._in_flight_count
         initial_reserved = enforcer._reserved_cost
 

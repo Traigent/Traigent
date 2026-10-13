@@ -6,8 +6,10 @@ and stop conditions to avoid double counting.
 
 Adaptive Cost Estimation:
     The module uses adaptive cost estimation based on observed trial costs:
-    - Initial estimates use configured estimated_cost_per_trial
-    - After trials complete, estimates update via exponential moving average (EMA)
+    - There is no per-trial estimate before the first trial completes, so the
+      first trial is always admitted
+    - After trials complete, the estimate is the arithmetic mean of the observed
+      costs of the completed trials
     - Confidence levels indicate reliability of estimates (0.0-1.0)
     - Divergence warnings are estimate-accuracy signals only; they do not
       override permit admission or enforce the run budget
@@ -21,7 +23,7 @@ Environment Variables:
         (default: false)
     TRAIGENT_COST_DIVERGENCE_THRESHOLD: Log warning if actual/estimated ratio exceeds
         this value (default: 2.0, meaning 2x divergence triggers warning).
-        This is a per-trial actual-vs-EMA estimate check, not a budget guardrail.
+        This is a per-trial actual-vs-mean estimate check, not a budget guardrail.
 
 Note:
     ``TRAIGENT_MOCK_LLM`` is intentionally NOT consulted here. Sprint 2-B
@@ -197,8 +199,12 @@ class Permit:
 
     @property
     def is_granted(self) -> bool:
-        """Check if this permit was granted (not denied)."""
-        return self.amount > 0.0 and self.id >= 0
+        """Check if this permit was granted (not denied).
+
+        A granted permit may reserve 0.0 USD (a mean cost of zero), so grant
+        is decided by the id alone: denied permits carry id -1.
+        """
+        return self.id >= 0
 
 
 class OptimizationAborted(Exception):
@@ -218,9 +224,16 @@ class CostEnforcerConfig:
         approved: Whether to skip the approval prompt.
         warning_threshold: Fraction of limit at which to emit warnings.
         fallback_trial_limit: If cost cannot be determined, limit by trial count.
-        estimated_cost_per_trial: Initial estimate for per-trial cost reservation.
-            Used for in-flight budget reservation in parallel execution; actual
-            trial cost may exceed the reservation before later admissions stop.
+        estimated_cost_per_trial: Rough per-trial figure used only for the
+            informational ``estimate_remaining_cost`` and for reserving
+            in-flight budget for trials dispatched concurrently before any
+            trial has completed. It is NOT an estimate: the in-run admission
+            estimate is the mean of observed completed-trial costs and is
+            absent until the first trial completes.
+        limit_explicit: True when the caller set the cost limit explicitly
+            (rather than inheriting the default cap). With an explicit limit a
+            completed trial that reports no cost is refused instead of being
+            run under the unknown-cost trial-count fallback.
     """
 
     limit: float = DEFAULT_COST_LIMIT_USD
@@ -228,6 +241,7 @@ class CostEnforcerConfig:
     warning_threshold: float = 0.5
     fallback_trial_limit: int = DEFAULT_FALLBACK_TRIAL_LIMIT
     estimated_cost_per_trial: float = 0.05  # $0.05 default estimate
+    limit_explicit: bool = False
 
     def __post_init__(self) -> None:
         self.limit = validate_cost_limit(self.limit)
@@ -483,7 +497,11 @@ class CostEnforcer:
         self._in_flight_count: int = 0
         self._reserved_cost: float = 0.0
         self._cost_samples: list[float] = []  # Track actual costs for estimation
-        self._estimated_cost: float = self.config.estimated_cost_per_trial
+        # Admission estimate: arithmetic mean of observed completed-trial
+        # costs; 0.0 means "no estimate yet" (nothing has completed).
+        self._estimated_cost: float = 0.0
+        self._observed_cost_sum: float = 0.0
+        self._observed_cost_count: int = 0
         self._cold_start_warning_emitted: bool = False
 
         # Permit tracking for single-release semantics (Phase 1)
@@ -574,15 +592,15 @@ class CostEnforcer:
             self._sync_used = True
 
     def seed_estimated_cost_per_trial(self, calls_per_example: int) -> None:
-        """Scale the per-trial EMA seed by a declared calls-per-example multiplier.
+        """Scale the rough per-trial figure by calls-per-example.
 
         Intended to be called once, at construction time, before any trial has
-        been tracked. Without this, the EMA warm-starts at a single-call
-        estimate (default $0.05) and every early trial of a multi-call agent
-        (self-consistency voting, repair passes, model cascades) diverges from
-        it by roughly the same multiplier — a structurally guaranteed false
-        positive from ``_check_cost_divergence``, not a real anomaly
-        (issue #1750).
+        been tracked. This scales ``config.estimated_cost_per_trial``, the
+        figure used for the informational ``estimate_remaining_cost`` and the
+        concurrent in-flight reservation before any trial completes
+        (issue #1750). It does not seed the admission estimate: that is the
+        arithmetic mean of observed completed-trial costs and does not exist
+        before the first trial completes.
 
         Args:
             calls_per_example: Expected LLM calls per evaluated example. Values
@@ -592,7 +610,6 @@ class CostEnforcer:
             return
         with self._lock:
             self.config.estimated_cost_per_trial *= calls_per_example
-            self._estimated_cost = self.config.estimated_cost_per_trial
 
     def update_limit(self, new_limit: float) -> None:
         """Update the cost limit with synchronization.
@@ -1025,11 +1042,12 @@ Options:
             )
 
     def _update_cost_estimate(self, actual_cost: float) -> None:
-        """Update the cost estimate using exponential moving average.
+        """Update the cost estimate to the mean of observed trial costs.
 
-        Called with lock held. Uses EMA with alpha=0.3 to balance responsiveness
-        with stability. Also maintains a sample buffer for more accurate estimates.
-        Logs warning if actual cost diverges significantly from estimate.
+        Called with lock held. The estimate is the arithmetic mean of every
+        observed completed-trial cost. Also maintains a sample buffer used for
+        confidence. Logs warning if actual cost diverges significantly from
+        the estimate.
 
         Args:
             actual_cost: The actual cost observed for a trial.
@@ -1042,15 +1060,16 @@ Options:
         if len(self._cost_samples) > 10:
             self._cost_samples.pop(0)
 
-        # Use exponential moving average for estimation
-        alpha = 0.3  # Weight for new observations
-        self._estimated_cost = alpha * actual_cost + (1 - alpha) * self._estimated_cost
+        # Arithmetic mean over all observed completed-trial costs.
+        self._observed_cost_sum += actual_cost
+        self._observed_cost_count += 1
+        self._estimated_cost = self._observed_cost_sum / self._observed_cost_count
 
     def _check_cost_divergence(self, actual_cost: float) -> None:
         """Check if actual cost diverges significantly from estimate.
 
         Called with lock held. Logs warning or info based on the ratio between
-        the latest trial's actual cost and the current per-trial EMA estimate.
+        the latest trial's actual cost and the current per-trial mean estimate.
         Configured via TRAIGENT_COST_DIVERGENCE_THRESHOLD (default 2.0).
         This is an estimate-accuracy signal only: it does not abort execution,
         revoke permits, or enforce the approved run budget.
@@ -1126,7 +1145,8 @@ Options:
         """Estimate cost for remaining trials with confidence.
 
         Uses adaptive estimation based on observed trial costs:
-        - Before 3 trials: Uses initial estimate
+        - Before 3 trials: Uses the observed mean, or the configured rough
+          per-trial figure when no trial has completed
         - After 3+ trials: Uses rolling average with confidence-based margin
 
         Args:
@@ -1142,7 +1162,12 @@ Options:
 
             if samples_used < 3:
                 # Use initial estimate with low confidence
-                estimated = self._estimated_cost * remaining_trials * safety_margin
+                per_trial = (
+                    self._estimated_cost
+                    if self._observed_cost_count > 0
+                    else self.config.estimated_cost_per_trial
+                )
+                estimated = per_trial * remaining_trials * safety_margin
                 return CostEstimate(
                     estimated_remaining_cost=estimated,
                     confidence=confidence,
@@ -1258,11 +1283,25 @@ Options:
             return permit
 
         # Admission is checked at trial granularity using the current estimated
-        # reservation plus any already-reserved in-flight cost.
-        reserved_amount = self._estimated_cost
+        # reservation plus any already-reserved in-flight cost. The estimate is
+        # the mean of observed completed-trial costs. Before the first trial
+        # completes there is no estimate, so a trial that starts with nothing in
+        # flight is always admitted. Further trials dispatched concurrently
+        # before any completion reserve the rough configured figure, so a
+        # parallel batch stays bounded by the cap; that figure is a reservation
+        # guard only and is never used as an estimate for a sequential trial.
         total_committed = self._accumulated_cost + self._reserved_cost
-        if total_committed + reserved_amount > self.config.limit:
-            return Permit(id=-1, amount=0.0, active=False)  # Denied
+        if self._observed_cost_count > 0:
+            reserved_amount = self._estimated_cost
+            if total_committed + reserved_amount > self.config.limit:
+                return Permit(id=-1, amount=0.0, active=False)  # Denied
+        else:
+            reserved_amount = self.config.estimated_cost_per_trial
+            if (
+                self._in_flight_count > 0
+                and total_committed + reserved_amount > self.config.limit
+            ):
+                return Permit(id=-1, amount=0.0, active=False)  # Denied
 
         # Reserve budget for this trial
         self._in_flight_count += 1
@@ -1338,8 +1377,17 @@ Options:
         *,
         require_cost_tracking: bool,
         include_limit_in_warning: bool,
+        trial_failed: bool = False,
     ) -> None:
         """Handle unknown cost under the lock, including strict-mode failure."""
+        if self.config.limit_explicit and not trial_failed:
+            raise CostTrackingRequiredError(
+                f"Cost limit ${self.config.limit:.2f} is set but {trial_desc} "
+                "completed without a reported cost, so the cap cannot be "
+                "enforced. The run is refused instead of running unbounded. "
+                "Report a cost for each trial (cost metric or priced LLM "
+                "usage), or remove the explicit cost limit."
+            )
         if require_cost_tracking:
             raise CostTrackingRequiredError(
                 f"Cost extraction failed for {trial_desc} and "
@@ -1389,7 +1437,9 @@ Options:
                 self._accumulated_cost,
             )
 
-        self._update_cost_estimate(cost)
+        if not trial_failed:
+            # The pre-trial estimate is the mean over completed trials only.
+            self._update_cost_estimate(cost)
         self._check_thresholds()
 
     def _track_cost_locked(
@@ -1435,6 +1485,7 @@ Options:
                 trial_desc,
                 require_cost_tracking=require_cost_tracking,
                 include_limit_in_warning=include_limit_in_warning,
+                trial_failed=trial_failed,
             )
             return
 
@@ -1485,7 +1536,14 @@ Options:
                 warning_threshold_reached=pct >= self.config.warning_threshold,
                 in_flight_count=self._in_flight_count,
                 reserved_cost_usd=self._reserved_cost,
-                estimated_cost_per_trial=self._estimated_cost,
+                # Mean of observed completed-trial costs; before any trial
+                # completes, the rough configured figure so shared-budget
+                # admission gates still reserve for a whole parallel batch.
+                estimated_cost_per_trial=(
+                    self._estimated_cost
+                    if self._observed_cost_count > 0
+                    else self.config.estimated_cost_per_trial
+                ),
                 cost_confidence=self.get_cost_confidence(),
                 unmeasured_trial_count=self._unmeasured_trial_count,
             )
@@ -1504,7 +1562,9 @@ Options:
             self._in_flight_count = 0
             self._reserved_cost = 0.0
             self._cost_samples = []
-            self._estimated_cost = self.config.estimated_cost_per_trial
+            self._estimated_cost = 0.0
+            self._observed_cost_sum = 0.0
+            self._observed_cost_count = 0
             self._cold_start_warning_emitted = False
             # Clear active permits registry (Phase 4 fix)
             self._active_permits.clear()
