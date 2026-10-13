@@ -30,7 +30,11 @@ from traigent.evaluators.base import (
 from traigent.identity.examples import result_identity_fields
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.logging import get_logger
-from traigent.utils.trial_costs import is_cost_unmeasured, trial_cost_unknown
+from traigent.utils.trial_costs import (
+    is_cost_unmeasured,
+    known_spend_lower_bound,
+    trial_cost_unknown,
+)
 
 logger = get_logger(__name__)
 
@@ -541,6 +545,13 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             # measured row at all: the sum would be a floor (or nothing), not
             # the trial's cost, so no cost total is claimed (#2517).
             aggregated["cost_unmeasured"] = 1.0
+            # The spend rows did report is a valid floor (never a total): keep
+            # it so budgeted submission sends it with the flag, not 0.0.
+            reported_floor = sum(
+                known_spend_lower_bound(row) for row in all_metrics if row
+            )
+            if reported_floor > 0:
+                aggregated["cost_lower_bound"] = reported_floor
             for metric in _LLM_COST_METRICS:
                 if strict_nulls:
                     aggregated[metric] = None

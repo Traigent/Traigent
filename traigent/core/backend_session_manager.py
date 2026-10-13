@@ -70,7 +70,7 @@ from traigent.utils.logging import get_logger
 from traigent.utils.trial_costs import (
     TRIAL_COST_FIELDS,
     extract_trial_cost_metric,
-    known_spend_lower_bound,
+    lift_flagged_cost_to_floor,
     is_cost_unmeasured,
     is_finite_numeric_cost,
 )
@@ -1028,23 +1028,24 @@ class BackendSessionManager:
         if trial_result.status != TrialStatus.COMPLETED:
             return
 
-        if is_finite_numeric_cost(metrics_payload.get("cost")):
-            return
-
         if is_cost_unmeasured(metrics_payload) or is_cost_unmeasured(
             getattr(trial_result, "metrics", None)
         ):
             # Flagged unknown. A budget-armed session needs a numeric cost, so
             # send the reported lower bound WITH the flag (the flag is the
-            # signal); elsewhere cost stays omitted.
+            # signal); a flagged ``cost`` of 0 never overrides reported spend.
+            # Elsewhere cost stays omitted.
             if session_id in self._session_cost_budget_armed:
                 metrics_payload["cost_unmeasured"] = 1.0
-                metrics_payload["cost"] = known_spend_lower_bound(
+                lift_flagged_cost_to_floor(
                     metrics_payload,
                     getattr(trial_result, "metrics", None),
                     getattr(trial_result, "metadata", None),
                     metadata,
                 )
+            return
+
+        if is_finite_numeric_cost(metrics_payload.get("cost")):
             return
 
         attr_costs = {

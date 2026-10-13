@@ -131,6 +131,17 @@ def _optional_span_cost(value: Any) -> float | None:
     return cost if math.isfinite(cost) and cost >= 0 else None
 
 
+#: Reserved span ``metadata`` key (the schema's open object) marking a span whose
+#: ``cost_usd`` is only the reported floor. Never written at the top level.
+SPAN_COST_UNMEASURED_KEY = "traigent.cost_unmeasured"
+
+
+def unmeasured_span_floor(lower_bound: float | None) -> float:
+    """The ``cost_usd`` an unmeasured span sends: the reported floor, else 0.0."""
+    bound = _optional_span_cost(lower_bound)
+    return bound if bound is not None else 0.0
+
+
 @dataclass
 class SpanPayload:
     """Span data payload for backend ingestion.
@@ -157,8 +168,12 @@ class SpanPayload:
     # Metrics
     input_tokens: int = 0
     output_tokens: int = 0
-    # None = unmeasured cost: omitted from the payload, never sent as 0.0.
+    # None = unmeasured cost. The wire contract requires a number, so an
+    # unmeasured span sends the reported floor (``cost_lower_bound``; 0.0 when
+    # nothing was reported) as ``cost_usd`` plus the reserved metadata flag
+    # below -- the flag, never the number, says it is not a measurement.
     cost_usd: float | None = 0.0
+    cost_lower_bound: float | None = None
 
     # Data
     input_data: dict[str, Any] | None = None
@@ -180,8 +195,12 @@ class SpanPayload:
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
         }
+        metadata = dict(self.metadata) if self.metadata else {}
         if self.cost_usd is not None:
             result["cost_usd"] = self.cost_usd
+        else:
+            result["cost_usd"] = unmeasured_span_floor(self.cost_lower_bound)
+            metadata[SPAN_COST_UNMEASURED_KEY] = True
 
         # Add optional fields only if present
         if self.parent_span_id:
@@ -198,8 +217,8 @@ class SpanPayload:
             result["input_data"] = self.input_data
         if self.output_data:
             result["output_data"] = self.output_data
-        if self.metadata:
-            result["metadata"] = self.metadata
+        if metadata:
+            result["metadata"] = metadata
 
         return result
 
