@@ -238,6 +238,33 @@ def _get_objective_info(objectives: Any) -> list[tuple[str, str]]:
     return []
 
 
+def _cost_in_play(metric_names: list[str]) -> bool:
+    """True when any objective in play is a cost metric (core selection's rule)."""
+    from traigent.utils.multi_objective import (  # noqa: PLC0415
+        _COST_OBJECTIVE_NAMES,
+    )
+
+    return any(name in _COST_OBJECTIVE_NAMES for name in metric_names)
+
+
+def _trial_rankable(trial: Any, metric_names: list[str]) -> bool:
+    """Mirror ``result_selection``: with a cost objective in play, a trial whose
+    cost is flagged unmeasured is excluded from any overall-best choice."""
+    if not _cost_in_play(metric_names):
+        return True
+    from traigent.utils.trial_costs import is_cost_unmeasured  # noqa: PLC0415
+
+    return not is_cost_unmeasured(getattr(trial, "metrics", None))
+
+
+def _all_eligible_cost_unmeasured(trials: list, metric_names: list[str]) -> bool:
+    """True when there are eligible trials and each is excluded for unmeasured cost."""
+    eligible = [t for t in trials if _trial_is_best_candidate(t)]
+    return bool(eligible) and not any(
+        _trial_rankable(t, metric_names) for t in eligible
+    )
+
+
 def _find_best_per_objective(
     trials: list,
     metric_info: list[tuple[str, str]],
@@ -302,7 +329,11 @@ def _find_best_trial(
 ) -> Any:
     """Find the best trial by weighted scores or the primary displayed metric."""
     if weighted_scores:
-        return max(weighted_scores, key=lambda item: item[1])[0]
+        weighted_scores = [
+            item for item in weighted_scores if _trial_rankable(item[0], metric_names)
+        ]
+        if weighted_scores:
+            return max(weighted_scores, key=lambda item: item[1])[0]
 
     eligible_trials = [trial for trial in trials if _trial_is_best_candidate(trial)]
     if not eligible_trials:
@@ -328,9 +359,9 @@ def _find_best_trial(
         value = _coerce_float(getattr(trial, "metrics", {}).get(primary_metric))
         return missing if value is None else value
 
-    rankable = [t for t in eligible_trials if not _cost_flagged(t, primary_metric)]
+    rankable = [t for t in eligible_trials if _trial_rankable(t, metric_names)]
     if not rankable:
-        # Every candidate's primary cost is unmeasured: no measured winner.
+        # Every candidate's cost is unmeasured: no measured winner.
         return None
     return chooser(rankable, key=primary_score)
 
@@ -403,7 +434,7 @@ def _find_best_trial_index(
         results, "best_trial_id", None
     )
     best_index = _find_trial_index_by_id(trials, best_trial_id)
-    if best_index is not None:
+    if best_index is not None and _trial_rankable(trials[best_index], metric_names):
         return best_index
 
     try:
@@ -433,7 +464,7 @@ def _find_best_trial_index(
     for index, trial in enumerate(trials):
         if getattr(trial, "config", {}) != best_config:
             continue
-        if primary_metric is not None and _cost_flagged(trial, primary_metric):
+        if not _trial_rankable(trial, metric_names):
             continue
         if best_score is None or primary_metric is None:
             return index
@@ -676,12 +707,17 @@ def print_results_table(
             f"Inspect per-example errors in "
             f".traigent/optimization_logs/experiments/.../runs/{C.RESET}"
         )
-    elif best_trial_index is None and any(
-        _cost_flagged(t, m) for t in trials for m in metric_names
+    elif best_trial_index is None and _all_eligible_cost_unmeasured(
+        trials, metric_names
     ):
         _safe_table_print(
             f"{C.YELLOW}⚠ No measured winner — every candidate's cost is "
             f"unmeasured, so no trial is starred.{C.RESET}"
+        )
+    elif best_trial_index is None:
+        _safe_table_print(
+            f"{C.YELLOW}⚠ No overall best could be determined, so no trial "
+            f"is starred.{C.RESET}"
         )
     else:
         legend = [f"{C.GREEN}★{C.RESET} Overall Best"]
