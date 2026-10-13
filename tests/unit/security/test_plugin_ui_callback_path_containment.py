@@ -107,3 +107,72 @@ def test_comprehensive_callback_writes_inside_base(callbacks, tmp_path):
     assert cb.log_dir == log_dir
     assert (log_dir / "optimization_log.json").is_file()
     assert (log_dir / "llm_usage_summary.json").is_file()
+
+
+# --- DeferredLoggingCallback / EnhancedDeferredLoggingCallback ------------
+
+ID_PAIR_CLASSES = ["DeferredLoggingCallback", "EnhancedDeferredLoggingCallback"]
+ESCAPING_PAIRS = [
+    ("../escape", "run"),
+    ("problem", "../../escape"),
+    ("a/../../escape", "run"),
+    ("ABS", "run"),
+    ("problem", "ABS"),
+    ("problem", ""),
+]
+
+
+@pytest.mark.parametrize("cls_name", ID_PAIR_CLASSES)
+@pytest.mark.parametrize(("problem_id", "run_id"), ESCAPING_PAIRS)
+def test_deferred_callbacks_reject_ids_escaping_base(
+    callbacks, tmp_path, cls_name, problem_id, run_id
+):
+    with pytest.raises(PathTraversalError):
+        getattr(callbacks, cls_name)(
+            run_id=_abs(run_id, tmp_path),
+            problem_id=_abs(problem_id, tmp_path),
+            base_dir=tmp_path / "nest" / "logs",
+        )
+    assert not (tmp_path / "escape").exists()
+    assert not (tmp_path / "nest" / "escape").exists()
+    assert not (tmp_path / "abs-escape").exists()
+
+
+@pytest.mark.parametrize("cls_name", ID_PAIR_CLASSES)
+def test_deferred_callbacks_reject_symlink_escape(callbacks, tmp_path, cls_name):
+    base = tmp_path / "logs"
+    base.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (base / "link").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(PathTraversalError):
+        getattr(callbacks, cls_name)(run_id="run", problem_id="link", base_dir=base)
+    assert list(outside.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("cls_name", "save"),
+    [
+        ("DeferredLoggingCallback", "_save_logs"),
+        ("EnhancedDeferredLoggingCallback", "_save_enhanced_logs"),
+    ],
+)
+def test_deferred_callbacks_write_inside_base(callbacks, tmp_path, cls_name, save):
+    base = tmp_path / "logs"
+    cb = getattr(callbacks, cls_name)(
+        run_id="run_1", problem_id="problem_a", base_dir=base
+    )
+    getattr(cb, save)()
+    log_dir = (base / "problem_a" / "run_1").resolve()
+    assert cb.log_dir == log_dir
+    assert (log_dir / "optimization_log.json").is_file()
+
+
+def test_deferred_callback_none_problem_id_still_works(callbacks, tmp_path):
+    base = tmp_path / "logs"
+    cb = callbacks.DeferredLoggingCallback(run_id="run_1", base_dir=base)
+    assert cb.problem_id == "unknown_problem"
+    cb._save_logs()
+    log_dir = (base / "unknown_problem" / "run_1").resolve()
+    assert cb.log_dir == log_dir
+    assert (log_dir / "optimization_log.json").is_file()

@@ -56,6 +56,8 @@ class DeferredLoggingCallback(OptimizationCallback):
         self.run_id = run_id
         self.problem_id = problem_id or "unknown_problem"
         self.base_dir = base_dir or Path(__file__).parent / "optimization_logs"
+        # Fail closed: problem_id/run_id must not steer writes outside base_dir.
+        self.log_dir = _contained_log_dir(self.base_dir, self.problem_id, run_id)
         self.log_data = {
             "run_id": run_id,
             "problem_id": self.problem_id,
@@ -119,7 +121,7 @@ class DeferredLoggingCallback(OptimizationCallback):
         """Save accumulated logs to disk with problem_id/run_id structure."""
         try:
             # Create log directory with problem_id/run_id structure
-            log_dir = self.base_dir / self.problem_id / self.run_id
+            log_dir = self.log_dir
             log_dir.mkdir(parents=True, exist_ok=True)
 
             # Save main log file
@@ -483,6 +485,8 @@ class EnhancedDeferredLoggingCallback(OptimizationCallback):
         self.run_id = run_id
         self.problem_id = problem_id
         self.base_dir = base_dir or Path(__file__).parent / "optimization_logs"
+        # Fail closed: problem_id/run_id must not steer writes outside base_dir.
+        self.log_dir = _contained_log_dir(self.base_dir, problem_id, run_id)
 
         # Initialize accumulated data
         self.log_data = {
@@ -827,7 +831,7 @@ class EnhancedDeferredLoggingCallback(OptimizationCallback):
         """Save accumulated logs to disk with problem_id/run_id structure."""
         try:
             # Create log directory with problem_id/run_id structure
-            log_dir = self.base_dir / self.problem_id / self.run_id
+            log_dir = self.log_dir
             log_dir.mkdir(parents=True, exist_ok=True)
 
             # Save comprehensive log file
