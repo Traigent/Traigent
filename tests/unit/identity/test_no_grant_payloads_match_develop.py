@@ -47,11 +47,6 @@ def test_no_grant_payloads_are_identical_to_develop(monkeypatch) -> None:
         "_resolve_signal_key",
         lambda: outcome_signals._cached_key_pair("no-grant-snapshot-fixed-key"),
     )
-    # build_snapshot() uses os.environ.setdefault for these two; setting them
-    # here through monkeypatch makes that a no-op and restores them at teardown
-    # (otherwise a 100 USD run cost limit leaks into every later test).
-    monkeypatch.setenv("TRAIGENT_COST_APPROVED", "true")
-    monkeypatch.setenv("TRAIGENT_RUN_COST_LIMIT", "100.0")
     clear_content_identity_keys()
     assert get_content_identity_keys() is None
     expected = json.loads(GOLDEN.read_text(encoding="utf-8"))
