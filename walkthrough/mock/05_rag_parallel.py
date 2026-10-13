@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.helpers import build_results_table_callback, print_optimization_config
 from utils.mock_answers import (
     DEFAULT_MOCK_MODEL,
+    MOCK_TASK_TOKENS,
     RAG_ANSWERS,
     configure_mock_notice,
     get_mock_accuracy,
@@ -71,7 +72,7 @@ def semantic_similarity_score(
     injection_mode="context",  # default, added explicitly for clarity
     offline=True,
 )
-def rag_qa(question: str) -> str:
+def rag_qa(question: str) -> str | dict:
     """RAG question answering with configurable retrieval."""
     config = traigent.get_config()
     model = config.get("model", DEFAULT_MOCK_MODEL)
@@ -84,13 +85,20 @@ def rag_qa(question: str) -> str:
         print(f"  RAG: k={k}, method={method}")
 
     answer = RAG_ANSWERS.get(normalize_text(question), "Unknown")
-    if answer == "Unknown":
-        return answer
-    if method == "keyword" and k < 3:
-        return "Limited context answer"
-    if k < 3:
-        return answer.split(".")[0]
-    return answer
+    if answer != "Unknown":
+        if method == "keyword" and k < 3:
+            answer = "Limited context answer"
+        elif k < 3:
+            answer = answer.split(".")[0]
+    # Report simulated per-call usage so the `cost` objective is real data
+    # (an unpriced call is refused by honest cost accounting). The SDK treats
+    # it like real spend; this example declares no budget.
+    return traigent.with_usage(
+        answer,
+        total_cost=get_mock_cost(model, "rag_qa", dataset_size=1),
+        input_tokens=MOCK_TASK_TOKENS["rag_qa"]["input"],
+        output_tokens=MOCK_TASK_TOKENS["rag_qa"]["output"],
+    )
 
 
 async def main() -> None:

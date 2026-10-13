@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.helpers import build_results_table_callback, print_optimization_config
 from utils.mock_answers import (
     DEFAULT_MOCK_MODEL,
+    MOCK_TASK_TOKENS,
     configure_mock_notice,
     get_mock_accuracy,
     get_mock_cost,
@@ -84,7 +85,7 @@ def _suppress_code_gen_warning() -> None:
     injection_mode="context",  # default, added explicitly for clarity
     offline=True,
 )
-def generate_code(task: str) -> str:
+def generate_code(task: str) -> str | dict:
     """Generate code with configurable style."""
     config = traigent.get_config()
     model = config.get("model", DEFAULT_MOCK_MODEL)
@@ -100,17 +101,27 @@ def generate_code(task: str) -> str:
         print(f"  Generating {style} code...")
 
     if style == "verbose":
-        return '''def calculate_sum(numbers):
+        code = '''def calculate_sum(numbers):
     """Calculate the sum of a list."""
     total = 0
     for n in numbers:
         total += n
     return total'''
     elif style == "documented":
-        return """def calculate_sum(numbers):
+        code = """def calculate_sum(numbers):
     # Sum all numbers
     return sum(numbers)"""
-    return "def calculate_sum(nums): return sum(nums)"
+    else:
+        code = "def calculate_sum(nums): return sum(nums)"
+    # Report simulated per-call usage so the `cost` objective is real data
+    # (an unpriced call is refused by honest cost accounting). The SDK treats
+    # it like real spend; this example declares no budget.
+    return traigent.with_usage(
+        code,
+        total_cost=get_mock_cost(model, "code_generation", dataset_size=1),
+        input_tokens=MOCK_TASK_TOKENS["code_generation"]["input"],
+        output_tokens=MOCK_TASK_TOKENS["code_generation"]["output"],
+    )
 
 
 async def main() -> None:

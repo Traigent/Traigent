@@ -32,6 +32,7 @@ except ImportError:
     import traigent
 
 from traigent.api.decorators import EvaluationOptions, ExecutionOptions  # noqa: E402
+from traigent.utils.cost_calculator import cost_from_tokens  # noqa: E402
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -90,14 +91,28 @@ def _mock_answer_for_config(question: str, config) -> str:
     execution=ExecutionOptions(offline=True),
     max_trials=5,  # Limit trials for quick demo
 )
-def simple_qa_agent(question: str) -> str:
+def simple_qa_agent(question: str) -> str | dict:
     """Simple Q&A agent with Tuned Variables.
 
     In mock mode, this returns a simulated response.
     With real API keys, it calls the actual LLM.
     """
     if os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
-        return _mock_answer_for_config(question, traigent.get_config())
+        config = traigent.get_config()
+        answer = _mock_answer_for_config(question, config)
+        # Report simulated usage so the `cost` objective is real data (an
+        # unpriced call is refused by honest cost accounting); priced at the
+        # tuned model's list price. The SDK treats it like real spend.
+        model = str(_config_value(config, "model", "gpt-3.5-turbo"))
+        input_tokens = max(1, len(question) // 4)
+        output_tokens = max(1, len(answer) // 4)
+        input_cost, output_cost = cost_from_tokens(input_tokens, output_tokens, model)
+        return traigent.with_usage(
+            answer,
+            total_cost=input_cost + output_cost,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
 
     from langchain_openai import ChatOpenAI
 

@@ -33,7 +33,10 @@ from traigent.core.objectives import create_default_objectives
 
 try:
     from langchain_openai import ChatOpenAI  # type: ignore
+
+    _USING_FALLBACK_LLM = False
 except Exception:
+    _USING_FALLBACK_LLM = True
 
     class _Resp:
         def __init__(self, content: str):
@@ -75,6 +78,30 @@ except Exception:
             self.content = content
 
 
+def _fallback_usage(text: str, prompt: str) -> str | dict:
+    """Price the offline stand-in LLM so the `cost` objective is real data.
+
+    The stand-in ``ChatOpenAI`` above makes no provider call, so nothing
+    reports usage and honest cost accounting would refuse the run. Report
+    token-derived usage at the tuned model's list price. With the real
+    ``langchain_openai`` client, usage is captured automatically instead.
+    """
+    if not _USING_FALLBACK_LLM:
+        return text
+    from traigent.utils.cost_calculator import cost_from_tokens
+
+    model = str((traigent.get_config() or {}).get("model", "gpt-3.5-turbo"))
+    input_tokens = max(1, len(prompt) // 4)
+    output_tokens = max(1, len(text) // 4)
+    input_cost, output_cost = cost_from_tokens(input_tokens, output_tokens, model)
+    return traigent.with_usage(
+        text,
+        total_cost=input_cost + output_cost,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
+
+
 DATASET_FILE = os.path.join(os.path.dirname(__file__), "faq_pairs.jsonl")
 
 
@@ -104,9 +131,15 @@ def _ensure_dataset():
 _ensure_dataset()
 
 
+def _output_text(output):
+    """Unwrap the usage envelope that ``traigent.with_usage`` adds in a trial."""
+    return output.get("text") if isinstance(output, dict) else output
+
+
 def _contains_accuracy(
     output: str | None, expected: str | None, llm_metrics=None
 ) -> float:
+    output = _output_text(output)
     if not output or not expected:
         return 0.0
     return 1.0 if expected.lower() in output.lower() else 0.0
@@ -127,11 +160,11 @@ def _contains_accuracy(
     offline=True,
     max_trials=10,
 )
-def faq_answer(question: str) -> str:
+def faq_answer(question: str) -> str | dict:
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.0, max_tokens=150)
     prompt = f"Answer this customer FAQ briefly and precisely: {question}"
     resp = llm.invoke([HumanMessage(content=prompt)])
-    return getattr(resp, "content", str(resp))
+    return _fallback_usage(getattr(resp, "content", str(resp)), prompt)
 
 
 if __name__ == "__main__":

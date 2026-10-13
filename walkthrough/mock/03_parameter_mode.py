@@ -12,6 +12,7 @@ from utils.helpers import build_results_table_callback, print_optimization_confi
 from utils.mock_answers import (
     ANSWERS,
     DEFAULT_MOCK_MODEL,
+    MOCK_TASK_TOKENS,
     configure_mock_notice,
     get_mock_accuracy,
     get_mock_cost,
@@ -67,7 +68,7 @@ def results_match_score(
     configuration_space=CONFIG_SPACE,
     offline=True,
 )
-def answer_with_control(question: str, config: dict) -> str:
+def answer_with_control(question: str, config: dict) -> str | dict:
     """Function with explicit configuration parameter."""
     model = config.get("model", DEFAULT_MOCK_MODEL)
     temperature = config.get("temperature", 0.5)
@@ -78,7 +79,16 @@ def answer_with_control(question: str, config: dict) -> str:
     if SHOW_DETAIL_LOGS:
         print(f"  Using: {model}, temp={temperature}, tokens={max_tokens}")
 
-    return ANSWERS.get(normalize_text(question), "I don't know")
+    answer = ANSWERS.get(normalize_text(question), "I don't know")
+    # Report simulated per-call usage so the `cost` objective is real data
+    # (an unpriced call is refused by honest cost accounting). The SDK treats
+    # it like real spend; this example declares no budget.
+    return traigent.with_usage(
+        answer,
+        total_cost=get_mock_cost(model, "simple_qa", dataset_size=1),
+        input_tokens=MOCK_TASK_TOKENS["simple_qa"]["input"],
+        output_tokens=MOCK_TASK_TOKENS["simple_qa"]["output"],
+    )
 
 
 async def main() -> None:
