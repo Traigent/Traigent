@@ -36,6 +36,15 @@ from traigent.utils.cost_calculator import cost_from_tokens  # noqa: E402
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
+SIMULATED_COST_NOTICE = (
+    "NOTE: costs below are SIMULATED estimates for the offline stand-in model "
+    "(estimated tokens at list price), not provider-reported spend."
+)
+
+
+def _mock_mode_active() -> bool:
+    return os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes")
+
 
 # Path to dataset (relative to this file)
 DATASET_PATH = (
@@ -97,7 +106,7 @@ def simple_qa_agent(question: str) -> str | dict:
     In mock mode, this returns a simulated response.
     With real API keys, it calls the actual LLM.
     """
-    if os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
+    if _mock_mode_active():
         config = traigent.get_config()
         answer = _mock_answer_for_config(question, config)
         # Report simulated usage so the `cost` objective is real data (an
@@ -134,6 +143,10 @@ async def main():
     print(f"Dataset: {DATASET_PATH}")
     print(f"Mock mode: {os.environ.get('TRAIGENT_MOCK_LLM', 'false')}")
     print()
+
+    if _mock_mode_active():
+        print(SIMULATED_COST_NOTICE)
+        print()
 
     # Run optimization
     print("Starting optimization...")

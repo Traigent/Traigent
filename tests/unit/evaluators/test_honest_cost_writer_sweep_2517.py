@@ -352,7 +352,19 @@ def test_enforcement_sees_unknown_not_a_metadata_number_for_a_flagged_trial() ->
     trial = _trial("a", {"accuracy": 1.0, "cost_unmeasured": 1.0})
     trial.metadata = {"total_example_cost": 0.0, "cost": 0.0}
 
+    # Nothing reported: still unknown, a metadata zero is not a measurement.
     assert CostEstimator.extract_trial_cost(trial) is None
+
+
+def test_enforcement_charges_the_known_floor_of_a_flagged_trial() -> None:
+    """Budgets charge the reported spend floor; the flag stays on the trial."""
+    trial = _trial(
+        "a", {"accuracy": 1.0, "cost_unmeasured": 1.0, "cost_lower_bound": 1.9}
+    )
+    trial.metadata = {"total_example_cost": 0.0, "cost": 0.0}
+
+    assert CostEstimator.extract_trial_cost(trial) == 1.9
+    assert trial.metrics["cost_unmeasured"] == 1.0
 
 
 def test_enforcement_still_reads_a_measured_cost_and_a_measured_zero() -> None:
