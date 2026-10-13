@@ -710,7 +710,9 @@ async def test_registered_trace_search_schema_lists_only_bounded_filters() -> No
     from traigent.analytics_mcp.server import create_server
 
     tools = {tool.name: tool for tool in await create_server().list_tools()}
-    schema = tools["observability_search_traces"].inputSchema
+    schema = tools["observability_search_traces"].model_dump(by_alias=True)[
+        "inputSchema"
+    ]
     properties = schema["properties"]
 
     assert {"model", "tags", "outcome_kind", "has_outcome"}.issubset(properties)
