@@ -186,11 +186,20 @@ def lift_flagged_cost_to_floor(metrics: dict[str, Any], *sources: Any) -> bool:
     when nothing was reported), sent together with the flag. An existing
     ``cost`` (a flagged ``0`` included) never lowers the reported spend: the
     value becomes ``known_spend_lower_bound(metrics, *sources)``, which already
-    counts ``metrics["cost"]``. Returns True when ``metrics["cost"]`` changed.
+    counts ``metrics["cost"]``. A non-numeric original (e.g. the string
+    ``"0.4"``) is replaced by the floor. Returns True when ``metrics["cost"]``
+    changed.
     """
 
     floor = known_spend_lower_bound(metrics, *sources)
-    current = coerce_finite_cost(metrics.get("cost"))
+    original = metrics.get("cost")
+    # Only a finite *numeric* original may be returned unchanged: a numeric
+    # string ("0.4") would otherwise survive as a string cost.
+    current = (
+        coerce_finite_cost(original)
+        if isinstance(original, (int, float)) and not isinstance(original, bool)
+        else None
+    )
     if current is not None and current >= floor:
         return False
     metrics["cost"] = floor

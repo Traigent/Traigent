@@ -50,6 +50,10 @@ def code_evaluator(
             config.get("model", DEFAULT_MOCK_MODEL) if config else DEFAULT_MOCK_MODEL
         )
         return get_mock_accuracy(model, "code_generation")
+    # Unwrap the traigent.with_usage envelope like the other scorers.
+    if isinstance(output, dict):
+        output = output.get("text")
+    output = output or ""
     score = 0.0
     if "def " in output:
         score += 0.4
