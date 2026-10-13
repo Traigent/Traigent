@@ -158,8 +158,15 @@ class TestSequentialCostEnforcement:
         assert cost_enforcer._trial_count == len(costs)
         assert cost_enforcer._in_flight_count == 0
 
-    def test_unknown_cost_triggers_fallback(self, cost_enforcer: CostEnforcer) -> None:
-        """Verify None cost triggers unknown cost mode fallback."""
+    def test_unknown_cost_triggers_fallback(self) -> None:
+        """Verify None cost triggers unknown cost mode fallback (default cap)."""
+        cost_enforcer = CostEnforcer(
+            CostEnforcerConfig(
+                limit=0.50,
+                estimated_cost_per_trial=0.10,
+                limit_explicit=False,
+            )
+        )
         permit = cost_enforcer.acquire_permit()
         assert permit.is_granted
 

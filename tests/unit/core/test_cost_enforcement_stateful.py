@@ -52,6 +52,7 @@ class CostEnforcerStateMachine(RuleBasedStateMachine):
         # Real enforcer under test - low limit to trigger denials frequently
         self.enforcer = CostEnforcer(
             CostEnforcerConfig(
+                limit_explicit=False,
                 limit=1.0,
                 estimated_cost_per_trial=0.1,
             )

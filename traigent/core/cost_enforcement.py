@@ -116,6 +116,11 @@ def resolve_fallback_trial_limit() -> int:
     return parsed
 
 
+def run_cost_limit_env_is_set() -> bool:
+    """True when TRAIGENT_RUN_COST_LIMIT is set to a non-empty value."""
+    return bool((os.getenv("TRAIGENT_RUN_COST_LIMIT") or "").strip())
+
+
 def normalize_cost_approved(value: object) -> bool:
     """Return True only for the runtime parameter value ``True``."""
     if value is True:
@@ -230,10 +235,11 @@ class CostEnforcerConfig:
             trial has completed. It is NOT an estimate: the in-run admission
             estimate is the mean of observed completed-trial costs and is
             absent until the first trial completes.
-        limit_explicit: True when the caller set the cost limit explicitly
-            (rather than inheriting the default cap). With an explicit limit a
-            completed trial that reports no cost is refused instead of being
-            run under the unknown-cost trial-count fallback.
+        limit_explicit: True (the default, fail closed) when the config names
+            a cost limit. A completed trial that reports no cost is then
+            refused instead of being run under the unknown-cost trial-count
+            fallback. Only a cap inherited as DEFAULT_COST_LIMIT_USD, with no
+            limit given anywhere, sets this False.
     """
 
     limit: float = DEFAULT_COST_LIMIT_USD
@@ -241,7 +247,7 @@ class CostEnforcerConfig:
     warning_threshold: float = 0.5
     fallback_trial_limit: int = DEFAULT_FALLBACK_TRIAL_LIMIT
     estimated_cost_per_trial: float = 0.05  # $0.05 default estimate
-    limit_explicit: bool = False
+    limit_explicit: bool = True
 
     def __post_init__(self) -> None:
         self.limit = validate_cost_limit(self.limit)
@@ -683,6 +689,9 @@ class CostEnforcer:
 
         return CostEnforcerConfig(
             limit=limit_from_env(),
+            # A limit named in the environment is explicit; only the inherited
+            # default cap keeps the unknown-cost fallback.
+            limit_explicit=run_cost_limit_env_is_set(),
             approved=os.getenv("TRAIGENT_COST_APPROVED", "false").lower() == "true",
             warning_threshold=safe_float("TRAIGENT_COST_WARNING_THRESHOLD", 0.5),
             fallback_trial_limit=resolve_fallback_trial_limit(),
@@ -1380,14 +1389,6 @@ Options:
         trial_failed: bool = False,
     ) -> None:
         """Handle unknown cost under the lock, including strict-mode failure."""
-        if self.config.limit_explicit and not trial_failed:
-            raise CostTrackingRequiredError(
-                f"Cost limit ${self.config.limit:.2f} is set but {trial_desc} "
-                "completed without a reported cost, so the cap cannot be "
-                "enforced. The run is refused instead of running unbounded. "
-                "Report a cost for each trial (cost metric or priced LLM "
-                "usage), or remove the explicit cost limit."
-            )
         if require_cost_tracking:
             raise CostTrackingRequiredError(
                 f"Cost extraction failed for {trial_desc} and "
@@ -1401,6 +1402,14 @@ Options:
                 "unpriced calls."
             )
 
+        if self.config.limit_explicit and not trial_failed:
+            raise CostTrackingRequiredError(
+                f"Cost limit ${self.config.limit:.2f} is set but {trial_desc} "
+                "completed without a reported cost, so the cap cannot be "
+                "enforced. The run is refused instead of running unbounded. "
+                "Report a cost for each trial (cost metric or priced LLM "
+                "usage), or remove the explicit cost limit."
+            )
         if not self._unknown_cost_mode:
             if include_limit_in_warning:
                 logger.warning(

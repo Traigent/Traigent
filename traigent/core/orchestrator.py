@@ -63,6 +63,7 @@ from traigent.core.cost_enforcement import (
     normalize_cost_approved,
     normalize_estimated_calls_per_example,
     resolve_fallback_trial_limit,
+    run_cost_limit_env_is_set,
     validate_cost_limit,
 )
 from traigent.core.cost_estimator import CostEstimator
@@ -849,9 +850,11 @@ class OptimizationOrchestrator:
                     else float(validate_cost_limit(cost_limit))
                 ),
                 approved=cost_approved,
-                # An explicit cap refuses a completed trial that reports no
-                # cost (stop-rules parity); the default cap does not.
-                limit_explicit=cost_limit is not None,
+                # A named cap refuses a completed trial that reports no cost
+                # (stop-rules parity). Only the inherited default cap (no
+                # cost_limit and no TRAIGENT_RUN_COST_LIMIT) keeps the
+                # unknown-cost fallback.
+                limit_explicit=(cost_limit is not None or run_cost_limit_env_is_set()),
                 # The default unknown-cost trial cap honours its env override
                 # on this path too; it used to fall back to 10 here.
                 fallback_trial_limit=resolve_fallback_trial_limit(),

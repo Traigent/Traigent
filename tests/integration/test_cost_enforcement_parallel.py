@@ -525,6 +525,7 @@ class TestParallelUnknownCostCTD:
                     limit=1.0,
                     estimated_cost_per_trial=0.10,
                     fallback_trial_limit=10,
+                    limit_explicit=False,
                 )
             )
 

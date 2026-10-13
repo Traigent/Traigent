@@ -196,6 +196,7 @@ def _is_valid_case(case: CTDCase) -> bool:
 
 def _setup_budget_state(budget_state: str) -> CostEnforcerConfig:
     return CostEnforcerConfig(
+        limit_explicit=False,
         limit=BUDGET_LIMITS[budget_state],
         estimated_cost_per_trial=ESTIMATED_COST_PER_TRIAL,
         fallback_trial_limit=6,

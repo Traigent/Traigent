@@ -389,7 +389,7 @@ class TestCostEnforcerUnknownCost:
 
     def test_unknown_cost_triggers_fallback(self) -> None:
         """None cost triggers fallback to trial count mode."""
-        config = CostEnforcerConfig(fallback_trial_limit=5)
+        config = CostEnforcerConfig(limit_explicit=False, fallback_trial_limit=5)
         enforcer = CostEnforcer(config=config)
 
         enforcer.track_cost(None, permit=_create_mock_permit())
@@ -399,7 +399,7 @@ class TestCostEnforcerUnknownCost:
 
     def test_fallback_uses_trial_limit(self) -> None:
         """Fallback mode uses trial count limit."""
-        config = CostEnforcerConfig(fallback_trial_limit=3)
+        config = CostEnforcerConfig(limit_explicit=False, fallback_trial_limit=3)
         enforcer = CostEnforcer(config=config)
 
         enforcer.track_cost(None, permit=_create_mock_permit())  # Trigger fallback
@@ -411,7 +411,7 @@ class TestCostEnforcerUnknownCost:
 
     def test_fallback_permit_check(self) -> None:
         """Permit check works in fallback mode."""
-        config = CostEnforcerConfig(fallback_trial_limit=2)
+        config = CostEnforcerConfig(limit_explicit=False, fallback_trial_limit=2)
         enforcer = CostEnforcer(config=config)
 
         permit = enforcer.acquire_permit()
@@ -441,7 +441,9 @@ class TestCostEnforcerUnknownCost:
         with patch.dict(
             os.environ, {"TRAIGENT_STRICT_COST_ACCOUNTING": "false"}, clear=False
         ):
-            enforcer = CostEnforcer(CostEnforcerConfig(fallback_trial_limit=5))
+            enforcer = CostEnforcer(
+                CostEnforcerConfig(limit_explicit=False, fallback_trial_limit=5)
+            )
 
         with patch.dict(
             os.environ, {"TRAIGENT_STRICT_COST_ACCOUNTING": "true"}, clear=False
@@ -489,6 +491,7 @@ class TestCostEnforcerUnknownCostCTD:
         ):
             enforcer = CostEnforcer(
                 CostEnforcerConfig(
+                    limit_explicit=False,
                     limit=1.0,
                     estimated_cost_per_trial=0.2,
                     fallback_trial_limit=5,
@@ -541,6 +544,7 @@ class TestCostEnforcerUnknownCostCTD:
         ):
             enforcer = CostEnforcer(
                 CostEnforcerConfig(
+                    limit_explicit=False,
                     limit=1.0,
                     estimated_cost_per_trial=0.2,
                     fallback_trial_limit=5,
@@ -1089,7 +1093,9 @@ class TestCostEnforcerInFlightReservation:
 
     def test_unknown_cost_mode_uses_trial_count_reservation(self) -> None:
         """In unknown cost mode, permits use trial count including in-flight."""
-        config = CostEnforcerConfig(limit=10.0, fallback_trial_limit=3)
+        config = CostEnforcerConfig(
+            limit_explicit=False, limit=10.0, fallback_trial_limit=3
+        )
         enforcer = CostEnforcer(config=config)
 
         # Trigger unknown cost mode
@@ -1946,7 +1952,9 @@ class TestCostEnforcerEdgeCases:
         self, caplog
     ) -> None:
         """Repeated unknown costs should trigger a one-time cold-start warning."""
-        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
+        enforcer = CostEnforcer(
+            config=CostEnforcerConfig(limit_explicit=False, limit=10.0)
+        )
 
         with caplog.at_level("WARNING"):
             for idx in range(EMA_COLD_START_WARNING_TRIALS):
@@ -1983,3 +1991,48 @@ class TestCostEnforcerEdgeCases:
         # Track cost on already-released permit - should still track cost
         await enforcer.track_cost_async(0.1, permit=permit)
         assert enforcer.accumulated_cost == 0.1
+
+
+class TestLimitExplicitFailsClosed:
+    """A named cost limit refuses a cost-less completed trial (fail closed);
+    only the inherited default cap keeps the unknown-cost fallback."""
+
+    @staticmethod
+    def _complete_without_cost(enforcer: CostEnforcer) -> None:
+        permit = enforcer.acquire_permit()
+        assert permit.is_granted
+        enforcer.track_cost(None, permit=permit)
+
+    def test_dataclass_default_is_explicit(self) -> None:
+        assert CostEnforcerConfig(limit=1.0).limit_explicit is True
+
+    def test_direct_config_with_limit_refuses_costless_trial(self) -> None:
+        enforcer = CostEnforcer(CostEnforcerConfig(limit=1.0))
+        with pytest.raises(CostTrackingRequiredError):
+            self._complete_without_cost(enforcer)
+
+    def test_env_limit_refuses_costless_trial(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_RUN_COST_LIMIT", "3.0")
+        enforcer = CostEnforcer()
+        assert enforcer.config.limit_explicit is True
+        with pytest.raises(CostTrackingRequiredError):
+            self._complete_without_cost(enforcer)
+
+    def test_default_cap_without_any_limit_uses_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("TRAIGENT_RUN_COST_LIMIT", raising=False)
+        monkeypatch.delenv("TRAIGENT_REQUIRE_COST_TRACKING", raising=False)
+        monkeypatch.delenv("TRAIGENT_STRICT_COST_ACCOUNTING", raising=False)
+        enforcer = CostEnforcer()
+        assert enforcer.config.limit_explicit is False
+        self._complete_without_cost(enforcer)
+        assert enforcer.get_status().unknown_cost_mode is True
+
+    def test_empty_env_limit_is_not_explicit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_RUN_COST_LIMIT", "  ")
+        assert CostEnforcer().config.limit_explicit is False
