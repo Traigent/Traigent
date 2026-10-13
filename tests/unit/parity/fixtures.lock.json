@@ -19,7 +19,7 @@
     "optimize.stop-rules.v1": {
       "path": "optimize/stop-rules.v1.json",
       "sha256": "04750221ebe23e3208e7f8b0c82eae80f4f828420479fe84164aa16f3e1b7c97",
-      "schemaRef": "PENDING-MERGE-SHA-OF-TRAIGENTSCHEMA-547"
+      "schemaRef": "e3447085884e832334a00baab33369844218ae93"
     }
   }
 }
