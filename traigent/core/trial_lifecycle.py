@@ -54,7 +54,7 @@ from traigent.utils.exceptions import (
 )
 from traigent.utils.langchain_interceptor import capture_scope
 from traigent.utils.logging import get_logger
-from traigent.utils.trial_costs import is_cost_unmeasured
+from traigent.utils.trial_costs import is_cost_unmeasured, known_spend_lower_bound
 
 from .tracing import record_trial_result, trial_span
 
@@ -1494,6 +1494,13 @@ class TrialLifecycle:
                 input_data={"config": span_config},
                 output_data={"metrics": span_metrics},
                 metadata=span_metadata,
+                # An unmeasured span still reports the spend that was seen, as
+                # a floor next to the reserved flag (owner decision A).
+                cost_lower_bound=(
+                    known_spend_lower_bound(trial_result.metrics, trial_result.metadata)
+                    if cost_unmeasured_span
+                    else None
+                ),
             )
 
             # Collect the span via orchestrator

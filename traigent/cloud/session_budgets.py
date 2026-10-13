@@ -11,6 +11,7 @@ from traigent.utils.trial_costs import (
     is_cost_unmeasured,
     is_finite_numeric_cost,
     known_spend_lower_bound,
+    lift_flagged_cost_to_floor,
 )
 
 
@@ -78,14 +79,14 @@ def ensure_cost_metric_for_budgeted_completed_submission(
         return False
     if not is_cost_budget_armed_session(client, session_id):
         return False
-    if is_finite_numeric_cost(metrics.get("cost")):
-        return False
-
     if is_cost_unmeasured(metrics):
         # Unknown spend: send the reported lower bound WITH the flag; the
-        # flag survives, the number is never presented alone (#2517).
-        metrics["cost"] = known_spend_lower_bound(metrics, *telemetry_sources)
-        return True
+        # flag survives, the number is never presented alone (#2517). A
+        # flagged ``cost`` of 0 must not override reported spend.
+        return lift_flagged_cost_to_floor(metrics, *telemetry_sources)
+
+    if is_finite_numeric_cost(metrics.get("cost")):
+        return False
 
     cost = extract_trial_cost_metric(metrics, *telemetry_sources)
     if cost is not None:

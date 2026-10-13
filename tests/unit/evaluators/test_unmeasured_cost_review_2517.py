@@ -541,4 +541,8 @@ def test_workflow_span_omits_cost_for_unmeasured_trial() -> None:
         start_time="x",
         cost_usd=cost,
     )
-    assert "cost_usd" not in span.to_dict()
+    payload = span.to_dict()
+    # The wire contract requires a number: the floor (0.0 here) plus the
+    # reserved metadata flag, never a bare zero (owner decision A).
+    assert payload["cost_usd"] == 0.0
+    assert payload["metadata"]["traigent.cost_unmeasured"] is True

@@ -1652,7 +1652,8 @@ class OptimizationResult:
                 # the experiment's cost, and "cost per configuration" would
                 # divide a floor (or a fabricated 0.0) by the configs (#2517).
                 total_cost = None
-                cost_lower_bound = known_cost if known_cost > 0 else None
+                floor = max(known_cost, self._reported_cost_floor())
+                cost_lower_bound = floor if floor > 0 else None
             cost_per_configuration = (
                 total_cost / unique_configuration_count
                 if total_cost is not None and unique_configuration_count
@@ -1684,6 +1685,22 @@ class OptimizationResult:
                 success_rate=None,
                 error_message=str(exc),
             )
+
+    def _reported_cost_floor(self) -> float:
+        """Spend the trials reported, counting a flagged trial's preserved floor.
+
+        A trial flagged unmeasured can carry ``cost_lower_bound`` (and no
+        ``total_cost``); the floor that reached budget submission must reach
+        the run summaries too (Traigent#2517).
+        """
+        from traigent.utils.trial_costs import known_spend_lower_bound  # noqa: PLC0415
+
+        return sum(
+            known_spend_lower_bound(
+                getattr(trial, "metrics", None), getattr(trial, "metadata", None)
+            )
+            for trial in self.trials
+        )
 
     def _cost_unmeasured_trial_count(self) -> int:
         """Count trials whose cost is flagged unmeasured (Traigent#2517)."""
@@ -2685,7 +2702,8 @@ class OptimizationResult:
         }
         if unmeasured_trials:
             summary["cost_unmeasured_trials"] = unmeasured_trials
-            summary["cost_lower_bound"] = total_cost if total_cost > 0 else None
+            floor = max(total_cost, self._reported_cost_floor())
+            summary["cost_lower_bound"] = floor if floor > 0 else None
 
         # Include best configuration information if available
         summary["best_config"] = self.best_config

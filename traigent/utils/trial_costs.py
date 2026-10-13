@@ -16,6 +16,7 @@ __all__ = [
     "is_cost_unmeasured",
     "is_finite_numeric_cost",
     "known_spend_lower_bound",
+    "lift_flagged_cost_to_floor",
     "row_has_measured_cost",
     "trial_cost_unknown",
 ]
@@ -175,3 +176,22 @@ def known_spend_lower_bound(*sources: Any) -> float:
                 costs_seen.append(cost)
     candidates = bounds + costs_seen
     return max(candidates) if candidates else 0.0
+
+
+def lift_flagged_cost_to_floor(metrics: dict[str, Any], *sources: Any) -> bool:
+    """Make a flagged-unmeasured ``metrics["cost"]`` carry the reported floor.
+
+    A budget-armed submission needs a numeric ``cost``; for a trial flagged
+    ``cost_unmeasured`` that number is only the reported lower bound (``0.0``
+    when nothing was reported), sent together with the flag. An existing
+    ``cost`` (a flagged ``0`` included) never lowers the reported spend: the
+    value becomes ``known_spend_lower_bound(metrics, *sources)``, which already
+    counts ``metrics["cost"]``. Returns True when ``metrics["cost"]`` changed.
+    """
+
+    floor = known_spend_lower_bound(metrics, *sources)
+    current = coerce_finite_cost(metrics.get("cost"))
+    if current is not None and current >= floor:
+        return False
+    metrics["cost"] = floor
+    return True

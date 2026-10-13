@@ -157,7 +157,7 @@ def test_otel_span_without_a_cost_attribute_reports_no_cost() -> None:
     assert wt._optional_span_cost("0.5") == 0.5
 
 
-def test_manual_span_without_a_cost_omits_it_from_the_payload(
+def test_manual_span_without_a_cost_is_flagged_unmeasured_in_the_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(wt, "requests", MagicMock())
@@ -183,7 +183,8 @@ def test_manual_span_without_a_cost_omits_it_from_the_payload(
         payloads = [span.to_dict() for span in tracker._spans]
 
     unreported, reported_zero = payloads
-    assert "cost_usd" not in unreported
+    assert unreported["cost_usd"] == 0.0
+    assert unreported["metadata"]["traigent.cost_unmeasured"] is True
     assert reported_zero["cost_usd"] == 0.0
 
 
