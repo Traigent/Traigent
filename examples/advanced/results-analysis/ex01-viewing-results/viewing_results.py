@@ -74,12 +74,37 @@ except Exception:  # pragma: no cover
             self.content = content
 
 
+COST_SOURCE_SIMULATED = "simulated_estimate"
+SIMULATED_COST_NOTICE = (
+    "NOTE: costs below are SIMULATED estimates for the offline stand-in model "
+    "(estimated tokens at list price), not provider-reported spend."
+)
+
+
+def simulated_cost_provenance() -> dict[str, str]:
+    """Marker merged into exported results next to the cost totals.
+
+    Empty with the real ``langchain_openai`` client, so nothing changes there.
+    """
+    if not _USING_FALLBACK_LLM:
+        return {}
+    return {"cost_source": COST_SOURCE_SIMULATED}
+
+
+def print_simulated_cost_notice() -> None:
+    """Print one clear line before results when the stand-in LLM was used."""
+    if _USING_FALLBACK_LLM:
+        print(SIMULATED_COST_NOTICE)
+
+
 def _fallback_usage(text: str, prompt: str) -> str | dict:
-    """Price the offline stand-in LLM so the `cost` objective is real data.
+    """Price the offline stand-in LLM so the `cost` objective has a value.
 
     The stand-in ``ChatOpenAI`` above makes no provider call, so nothing
     reports usage and honest cost accounting would refuse the run. Report
-    token-derived usage at the tuned model's list price. With the real
+    token-derived usage at the tuned model's list price. These are SIMULATED
+    estimates (not provider-reported spend) and are labelled as such in the
+    run output and exported results. With the real
     ``langchain_openai`` client, usage is captured automatically instead.
     """
     if not _USING_FALLBACK_LLM:
