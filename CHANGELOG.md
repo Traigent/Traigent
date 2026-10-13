@@ -73,8 +73,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **BREAKING: a run with `cost` as an objective now refuses to record an unpriced
   call as $0 (#2517).** Strict cost accounting is on by default, so such a run
-  raises `CostTrackingRequiredError` instead of ranking the unpriced model
-  cheapest. Remedy: report usage with `traigent.with_usage(...)`, or give
+  raises `OptimizationError` (with `CostTrackingRequiredError` as its
+  `__cause__`) instead of ranking the unpriced model cheapest. Remedy: report usage with `traigent.with_usage(...)`, or give
   per-token prices through `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` /
   `TRAIGENT_CUSTOM_MODEL_PRICING_FILE`; set
   `TRAIGENT_STRICT_COST_ACCOUNTING=false` only to accept $0 for unpriced calls.

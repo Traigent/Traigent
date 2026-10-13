@@ -367,13 +367,26 @@ class CostStatus:
 UNMEASURED_COST_TRIAL_LIMIT_WARNING_CODE = "COST_UNMEASURED_TRIAL_LIMIT_REACHED"
 
 
+def _spend_reached_limit(known_spend: object, cost_limit: object) -> bool:
+    """True when numeric known spend (a floor) has reached a numeric limit."""
+    return (
+        isinstance(known_spend, (int, float))
+        and isinstance(cost_limit, (int, float))
+        and known_spend >= cost_limit
+    )
+
+
 def unmeasured_cost_stop_message(
     trial_count: int,
     fallback_trial_limit: int,
     cost_limit: float,
     unmeasured_trials: int | None = None,
+    known_spend: float | None = None,
 ) -> str:
     """Explain the default unknown-cost safety stop and how to continue (#2441).
+
+    When ``known_spend`` (a minimum: it excludes unmeasured cost) has reached
+    ``cost_limit``, the message says the limit itself stopped the run.
 
     Conservative by default: once any trial's cost cannot be measured the cost
     limit cannot bound spend, so a run the user did not size explicitly stops
@@ -395,6 +408,13 @@ def unmeasured_cost_stop_message(
             "find why those configurations report no usage (a gateway that "
             "omits `usage`, a streaming call, an uncaptured client) and call "
             "the model through a captured client for every configuration"
+        )
+    if _spend_reached_limit(known_spend, cost_limit):
+        return (
+            f"The cost limit (${cost_limit:.2f}) was reached: known spend is at "
+            f"least ${known_spend:.2f} (a minimum; some cost could not be "
+            f"measured: {counts}). To get cost measured instead, "
+            f"{capture} (see docs/user-guide/cost_capture.md)."
         )
     return (
         f"Cost could not be measured ({counts}; no LLM usage was captured), "
@@ -422,8 +442,22 @@ def unmeasured_cost_stop_message(
 UNMEASURED_COST_TRIALS_RAN_WARNING_CODE = "COST_UNMEASURED_TRIALS_RAN"
 
 
-def unmeasured_cost_ran_message(trial_count: int, unmeasured_trials: int) -> str:
+def unmeasured_cost_ran_message(
+    trial_count: int,
+    unmeasured_trials: int,
+    *,
+    known_spend: float | None = None,
+    cost_limit: float | None = None,
+) -> str:
     """Warn that an explicitly sized run ran unmeasured-cost trials (#2441)."""
+    if _spend_reached_limit(known_spend, cost_limit):
+        return (
+            f"{unmeasured_trials} of {trial_count} trials ran with a cost that "
+            "could not be measured. The cost limit "
+            f"(${cost_limit:.2f}) was reached: known spend is at least "
+            f"${known_spend:.2f} (a minimum; unmeasured cost is not included). "
+            "See docs/user-guide/cost_capture.md to get cost measured."
+        )
     return (
         f"{unmeasured_trials} of {trial_count} trials ran with a cost that could "
         "not be measured (no LLM usage was captured), so the cost limit did not "
@@ -719,7 +753,13 @@ class CostEnforcer:
         """Check if the cost or trial limit has been reached (thread-safe)."""
         with self._lock:
             if self._unknown_cost_mode and not self._unknown_cost_cap_waived:
-                return self._trial_count >= self.config.fallback_trial_limit
+                # Known spend is a floor: it can only under-count, so reaching
+                # the limit with it is proof enough. The trial-count fallback
+                # stays as an extra bound for the spend we cannot see.
+                return (
+                    self._accumulated_cost >= self.config.limit
+                    or self._trial_count >= self.config.fallback_trial_limit
+                )
             return self._accumulated_cost >= self.config.limit
 
     def waive_unknown_cost_trial_cap(self) -> None:
@@ -766,6 +806,7 @@ class CostEnforcer:
                         self.config.fallback_trial_limit,
                         self.config.limit,
                         self._unmeasured_trial_count,
+                        self._accumulated_cost,
                     )
                 )
             estimated = self._accumulated_cost + self._reserved_cost
@@ -1298,6 +1339,9 @@ Options:
             # In unknown cost mode, use trial count including in-flight
             total_trials = self._trial_count + self._in_flight_count
             if total_trials >= self.config.fallback_trial_limit:
+                return Permit(id=-1, amount=0.0, active=False)  # Denied
+            # The known spend floor still counts against the cost limit.
+            if self._accumulated_cost + self._reserved_cost >= self.config.limit:
                 return Permit(id=-1, amount=0.0, active=False)  # Denied
 
             self._in_flight_count += 1

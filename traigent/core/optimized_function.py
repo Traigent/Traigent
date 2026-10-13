@@ -3050,7 +3050,10 @@ class OptimizedFunction(Generic[_P, _R]):
         if waived:
             code = UNMEASURED_COST_TRIALS_RAN_WARNING_CODE
             message = unmeasured_cost_ran_message(
-                status.trial_count, status.unmeasured_trial_count
+                status.trial_count,
+                status.unmeasured_trial_count,
+                known_spend=status.accumulated_cost_usd,
+                cost_limit=status.limit_usd,
             )
         elif (
             getattr(result, "stop_reason", None) == "cost_limit"
@@ -3062,6 +3065,7 @@ class OptimizedFunction(Generic[_P, _R]):
                 fallback_limit,
                 status.limit_usd,
                 status.unmeasured_trial_count,
+                status.accumulated_cost_usd,
             )
         else:
             return
