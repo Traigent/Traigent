@@ -294,3 +294,89 @@ def test_hybrid_mixed_batch_keeps_reported_floor_with_flag() -> None:
     assert "cost" not in agg and "total_cost" not in agg
     assert agg["cost_lower_bound"] == pytest.approx(0.40)
     assert known_spend_lower_bound(agg) == pytest.approx(0.40)
+
+
+# --- round 12 -------------------------------------------------------------------
+
+
+def _table_for(trials, objectives, metadata=None, best_config=None, no_weighted=False):
+    result = _result(trials)
+    if no_weighted:
+        result.calculate_weighted_scores = lambda **_kw: {"weighted_scores": []}  # type: ignore[method-assign]
+    if isinstance(objectives, list):
+        result.objectives = list(objectives)
+    if metadata:
+        result.metadata = dict(metadata)
+    if best_config is not None:
+        result.best_config = best_config
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        print_results_table(result, config_space={"id": []}, objectives=objectives)
+    return buf.getvalue()
+
+
+def test_multi_objective_accuracy_cost_flagged_trial_is_not_starred() -> None:
+    from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+
+    schema = ObjectiveSchema.from_objectives(
+        [
+            ObjectiveDefinition("accuracy", "maximize", 1.0),
+            ObjectiveDefinition("cost", "minimize", 1.0),
+        ]
+    )
+    out = _table_for(
+        [_trial("a", accuracy=0.9, cost=0.0, cost_unmeasured=1.0)],
+        schema,
+        best_config={"id": "none"},
+    )
+    assert "★" not in out
+    assert "Overall Best" not in out
+
+
+def test_metadata_best_trial_id_naming_flagged_trial_is_not_starred() -> None:
+    out = _table_for(
+        [_trial("a", cost=0.0, cost_unmeasured=1.0)],
+        ["cost"],
+        metadata={"best_trial_id": "a"},
+        best_config={"id": "none"},
+    )
+    assert "★" not in out
+    assert "Overall Best" not in out
+
+
+def test_no_winner_for_other_reason_prints_neutral_line() -> None:
+    from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+    from traigent.tvl.models import BandTarget
+
+    schema = ObjectiveSchema.from_objectives(
+        [
+            ObjectiveDefinition("length", "band", 1.0, band=BandTarget(low=1, high=5)),
+            ObjectiveDefinition("cost", "minimize", 1.0),
+        ]
+    )
+    out = _table_for(
+        [
+            _trial("a", length=3.0, cost=0.0, cost_unmeasured=1.0),
+            _trial(
+                "b", length=3.0, cost=0.40, cost_lower_bound=0.4, cost_unmeasured=1.0
+            ),
+            _trial("c", length=3.0, cost=0.40),
+        ],
+        schema,
+        best_config={"id": "none"},
+        no_weighted=True,
+    )
+    assert "★" not in out
+    assert "every candidate's cost" not in out
+    assert "No overall best could be determined" in out
+
+
+def test_measured_trial_still_wins_beside_flagged_trial() -> None:
+    out = _table_for(
+        [
+            _trial("flagged", cost=0.0, cost_unmeasured=1.0),
+            _trial("measured", cost=0.40),
+        ],
+        ["cost"],
+    )
+    assert "★" in out
