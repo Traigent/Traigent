@@ -8,6 +8,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`ProjectUsageExperimentDTO`: optional `priced_configuration_runs` /
+  `unpriced_configuration_runs`.** Both default to `None` and are read from the
+  matching keys when present, so clients can tell an unmeasured cost (priced 0,
+  unpriced > 0) from a real zero.
 - **`traigent.observability.otel`: OpenTelemetry-based observability (extra `observability`).**
   `init` / `instrument` / `observe` / `attributes` / `flush` / `shutdown` /
   `stats`, a bounded best-effort span processor, an OTLP/HTTP exporter (official
