@@ -842,6 +842,12 @@ class LocalStorageManager:
         the leaf is checked and unlinked relative to that descriptor, so a
         concurrent replacement of the directory by a symlink cannot redirect
         the delete. Returns False when the record does not exist.
+
+        Windows (no ``dir_fd``): the already-validated path is used, but the
+        delete is refused when ``sessions/`` or the leaf is a symlink or a
+        junction/reparse point. A narrow race between that check and the
+        unlink remains; exploiting it needs write access to the storage
+        folder. Accepted by the owner 2026-10-13 and tracked.
         """
         if os.unlink in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW"):
             fd = os.open(
@@ -860,10 +866,28 @@ class LocalStorageManager:
             finally:
                 os.close(fd)
         # Windows (no dir_fd support): fall back to the already-validated path.
+        for candidate in (session_file.parent, session_file):
+            if LocalStorageManager._is_link_or_reparse(candidate):
+                raise ValueError("refusing to delete through a link or junction")
         if session_file.exists():
             session_file.unlink()
             return True
         return False
+
+    @staticmethod
+    def _is_link_or_reparse(path: Path) -> bool:
+        """True for a symlink, junction or reparse point (missing -> False)."""
+        if os.path.islink(path):
+            return True
+        is_junction = getattr(path, "is_junction", None)
+        if is_junction is not None and is_junction():
+            return True
+        try:
+            attrs = getattr(os.lstat(path), "st_file_attributes", None)
+        except OSError:
+            return False
+        reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", None)
+        return bool(attrs is not None and reparse is not None and attrs & reparse)
 
     def export_session(
         self, session_id: str, export_path: str, format: str = "json"

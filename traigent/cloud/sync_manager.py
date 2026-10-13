@@ -1140,9 +1140,11 @@ class SyncManager:
             "synced_at": datetime.now(UTC).isoformat(),
             "last_error": "; ".join(sync_result.get("errors", [])) or None,
         }
-        prior_attempts = 0
+        warning = "local sync state could not be recorded: {}"
         try:
             existing = self.storage.load_session(session_id)
+            if existing is None:
+                raise LookupError("record missing")
         except Exception as exc:
             # The upload already happened; a record that became unreadable or
             # mismatched mid-upload must not mask its outcome. Log the error
@@ -1152,27 +1154,45 @@ class SyncManager:
                 session_id,
                 type(exc).__name__,
             )
-            sync_result["bookkeeping_warning"] = (
-                "local sync state could not be recorded: record unreadable"
-            )
+            sync_result["bookkeeping_warning"] = warning.format("record unreadable")
             return
-        prior_sync_state = getattr(existing, "sync_state", None)
-        if isinstance(prior_sync_state, dict):
-            try:
-                prior_attempts = int(prior_sync_state.get("attempts", 0) or 0)
-            except (TypeError, ValueError):
-                prior_attempts = 0
+
+        prior_attempts = 0
+        try:
+            prior_sync_state = getattr(existing, "sync_state", None)
+            if isinstance(prior_sync_state, dict):
+                raw = prior_sync_state.get("attempts", 0) or 0
+                if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+                    raise TypeError("attempts not numeric")
+                value = float(raw) if isinstance(raw, str) else raw
+                if isinstance(value, float) and not math.isfinite(value):
+                    raise ValueError("attempts not finite")
+                prior_attempts = int(value)
+                if prior_attempts < 0:
+                    raise ValueError("attempts negative")
+        except Exception as exc:
+            prior_attempts = 0
+            logger.warning(
+                "Ignoring invalid stored attempts for session %s (%s)",
+                session_id,
+                type(exc).__name__,
+            )
+            sync_result["bookkeeping_warning"] = warning.format(
+                "stored attempt count invalid"
+            )
         patch["attempts"] = prior_attempts + 1
 
         try:
-            self.storage.update_sync_state(session_id, patch)
-        except Exception as exc:  # pragma: no cover - bookkeeping must not break sync
+            updated = self.storage.update_sync_state(session_id, patch)
+            if updated is None:
+                raise LookupError("session missing")
+        except Exception as exc:
             logger.warning(
-                "Failed to persist sync_state for session %s: %s", session_id, exc
+                "Failed to persist sync_state for session %s (%s)",
+                session_id,
+                type(exc).__name__,
             )
-            sync_result["bookkeeping_warning"] = (
-                "local sync state could not be recorded: update failed"
-            )
+            sync_result["bookkeeping_warning"] = warning.format("update failed")
 
     def sync_all_sessions(
         self, dry_run: bool = False, force: bool = False

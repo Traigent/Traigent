@@ -1205,3 +1205,82 @@ def test_post_upload_record_load_failure_does_not_mask_upload(sync_manager, capl
     assert result["status"] == "success"
     assert "bookkeeping_warning" in result
     assert "SECRET-RECORD-CONTENT" not in caplog.text
+
+
+def test_update_sync_state_returning_none_is_bookkeeping_warning(sync_manager):
+    """B2: update_sync_state() -> None (session vanished) is not success."""
+    sid = _make_completed_session(sync_manager.storage)
+    _stub_backend_success(sync_manager)
+    sync_manager.storage.update_sync_state = lambda *a, **k: None
+
+    result = sync_manager.sync_session_to_cloud(sid)
+
+    assert result["status"] == "success"
+    assert "bookkeeping_warning" in result
+
+
+def test_load_session_returning_none_in_bookkeeping_is_warning(sync_manager):
+    """B2: a None from the bookkeeping load_session is not success."""
+    sid = _make_completed_session(sync_manager.storage)
+    _stub_backend_success(sync_manager)
+    real_load = sync_manager.storage.load_session
+    calls = {"n": 0}
+
+    def load(session_id):
+        calls["n"] += 1
+        return None if calls["n"] > 1 else real_load(session_id)
+
+    sync_manager.storage.load_session = load
+    persisted = {"n": 0}
+    sync_manager.storage.update_sync_state = lambda *a, **k: persisted.update(n=1)
+
+    result = sync_manager.sync_session_to_cloud(sid)
+
+    assert result["status"] == "success"
+    assert "bookkeeping_warning" in result
+
+
+@pytest.mark.parametrize("bad", [1e999, -1e999, float("nan"), -5, "abc", [1]])
+def test_bad_stored_attempts_never_raises_after_upload(sync_manager, bad):
+    """B3: overflow/non-finite/negative/non-numeric attempts -> 0 + warning."""
+    sid = _make_completed_session(sync_manager.storage)
+    _stub_backend_success(sync_manager)
+    real_load = sync_manager.storage.load_session
+    calls = {"n": 0}
+    patches: list = []
+
+    def load(session_id):
+        calls["n"] += 1
+        session = real_load(session_id)
+        if calls["n"] > 1 and session is not None:
+            session.sync_state = {"attempts": bad}
+        return session
+
+    sync_manager.storage.load_session = load
+    sync_manager.storage.update_sync_state = lambda sid_, p, **k: (
+        patches.append(p) or True
+    )
+
+    result = sync_manager.sync_session_to_cloud(sid)
+
+    assert result["status"] == "success"
+    assert "bookkeeping_warning" in result
+    assert patches and patches[-1]["attempts"] == 1
+
+
+def test_update_failure_logs_exception_type_only(sync_manager, caplog):
+    """F1: no raw exception text in the log from _record_sync_state."""
+    sid = _make_completed_session(sync_manager.storage)
+    _stub_backend_success(sync_manager)
+
+    def boom(*a, **k):
+        raise RuntimeError("SECRET-RECORD-CONTENT")
+
+    sync_manager.storage.update_sync_state = boom
+
+    result = sync_manager.sync_session_to_cloud(sid)
+
+    assert result["status"] == "success"
+    assert "bookkeeping_warning" in result
+    assert "SECRET-RECORD-CONTENT" not in caplog.text
+    assert "RuntimeError" in caplog.text
