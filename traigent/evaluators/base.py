@@ -47,7 +47,11 @@ from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.langchain_interceptor import get_captured_response_by_key
 from traigent.utils.logging import get_logger
 from traigent.utils.removed_params import reject_removed_mock_parameters
-from traigent.utils.trial_costs import trial_cost_unknown
+from traigent.utils.trial_costs import (
+    is_cost_unmeasured,
+    known_spend_lower_bound,
+    trial_cost_unknown,
+)
 
 if TYPE_CHECKING:
     from traigent.core.execution_budget import ExecutionBudget
@@ -1672,7 +1676,15 @@ class BaseEvaluator(ABC):
 
     @staticmethod
     def _execution_budget_cost(result: EvaluationResult) -> float | None:
-        """Return an observed evaluation cost, or ``None`` when it is unknown."""
+        """Return an observed evaluation cost, or ``None`` when it is unknown.
+
+        A result flagged ``cost_unmeasured`` yields its known spend floor
+        (``None`` when nothing was reported); the caller keeps the flag visible
+        by marking the debit untracked.
+        """
+        if is_cost_unmeasured(result.aggregated_metrics):
+            floor = known_spend_lower_bound(result.aggregated_metrics)
+            return floor if floor > 0 else None
         for key in ("cost", "total_cost"):
             value = result.aggregated_metrics.get(key)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -1703,7 +1715,7 @@ class BaseEvaluator(ABC):
         budget.debit_trial(
             cost=cost,
             examples=examples,
-            untracked=cost is None,
+            untracked=cost is None or is_cost_unmeasured(result.aggregated_metrics),
         )
         snapshot = budget.snapshot()
         result.execution_budget = snapshot.as_dict()

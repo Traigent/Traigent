@@ -2136,7 +2136,10 @@ class OptimizationOrchestrator:
             budget.debit_trial(
                 cost=trial_cost,
                 examples=self._examples_of(trial_result),
-                untracked=trial_cost is None,
+                # A flagged trial is charged its known floor but stays
+                # "untracked": the ledger is then a minimum, not exact.
+                untracked=trial_cost is None
+                or is_cost_unmeasured(trial_result.metrics),
                 trial_id=trial_result.trial_id,
             )
 

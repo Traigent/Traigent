@@ -13,7 +13,7 @@ from traigent.utils.cost_calculator import UnknownModelError, get_model_token_pr
 from traigent.utils.env_config import is_mock_llm
 from traigent.utils.exceptions import CostLimitExceeded
 from traigent.utils.logging import get_logger
-from traigent.utils.trial_costs import is_cost_unmeasured
+from traigent.utils.trial_costs import is_cost_unmeasured, known_spend_lower_bound
 
 logger = get_logger(__name__)
 
@@ -337,6 +337,9 @@ class CostEstimator:
         """Extract cost from trial result for cost enforcement tracking.
 
         Attempts to find cost from multiple sources:
+        0. A trial flagged ``cost_unmeasured``: the known spend floor
+           (``cost_lower_bound``/reported cost), or None when nothing was
+           reported
         1. trial_result.metrics["total_cost"] or ["cost"]
         2. trial_result.metadata["total_example_cost"], ["total_cost"], or ["cost"]
         3. Returns None if cost cannot be determined (triggers fallback mode)
@@ -351,9 +354,12 @@ class CostEstimator:
         metrics = trial_result.metrics or {}
         if is_cost_unmeasured(metrics):
             # Flagged unknown: a number elsewhere on the trial (metadata, a
-            # telemetry zero) is not a measurement, and enforcement must see
-            # the unknown, not a $0 debit (#2517).
-            return None
+            # telemetry zero) is not a measurement. Budgets and limits still
+            # charge the spend that WAS reported (a floor, never less than
+            # was seen); callers keep the "unmeasured" state visible via the
+            # flag on the trial. Nothing reported at all stays unknown.
+            floor = known_spend_lower_bound(metrics, trial_result.metadata)
+            return floor if floor > 0 else None
         for key in ("total_cost", "cost"):
             if key in metrics:
                 try:

@@ -71,6 +71,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `example_id` or `input_id` (`0`, `False`) is refused too; it used to be
   replaced by the `input_id` or the fallback id.
 
+- **BREAKING: a run with `cost` as an objective now refuses to record an unpriced
+  call as $0 (#2517).** Strict cost accounting is on by default, so such a run
+  raises `CostTrackingRequiredError` instead of ranking the unpriced model
+  cheapest. Remedy: report usage with `traigent.with_usage(...)`, or give
+  per-token prices through `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` /
+  `TRAIGENT_CUSTOM_MODEL_PRICING_FILE`; set
+  `TRAIGENT_STRICT_COST_ACCOUNTING=false` only to accept $0 for unpriced calls.
+  Spend that was reported for a trial flagged `cost_unmeasured` (its
+  `cost_lower_bound`) is charged to `cost_limit`, `ExecutionBudget` and the
+  cost enforcer as a minimum; the trial keeps its `cost_unmeasured` flag and its
+  objective value is unchanged.
+
 ### Removed
 
 - **Candidate runs (`optimize(apply=False)`) are temporarily withdrawn.** Their
@@ -106,6 +118,30 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   even when the value is `None`, instead of storing it in `evaluator.config`.
 
 ### Fixed
+
+- **An unmeasured cost is no longer stored, shown or ranked as $0 (#2517, #2518, #2446).**
+  When no LLM usage is captured for an example (for example a raw provider
+  client the interceptors do not wrap), the local lane used to estimate tokens
+  and record `cost: 0.0` as a measurement. The trial now omits `cost` /
+  `total_cost`, sets `cost_unmeasured: 1.0`, keeps the estimated tokens
+  labelled with `tokens_estimated`, and the results table prints `unmeasured`.
+  The Pareto front excludes a trial missing a configured objective and the batch
+  composite score no longer rescales over the objectives that remain. A run
+  stopped by the SDK default `max_trials` or the unmeasured-cost safety limit
+  records and prints why (`metadata["stop_detail"]`).
+
+- **A hybrid service that reports no cost is unmeasured, not $0 (#2517).**
+  `TraigentService` no longer sends `cost_usd: 0.0` for an execute handler that
+  returned no cost: the per-item field is omitted, and a batch where any handler
+  (or a handler that raised) reported none sends `operational_metrics.cost_unmeasured`
+  next to the priced lower bound it must still send as `total_cost_usd`.
+  `HybridAPIEvaluator` treats that flag, an omitted or negative cost, and a
+  failed row with no reported cost as unknown: the trial carries `cost_unmeasured`
+  and no cost total, a per-item `metrics.cost_unmeasured` from the service can no
+  longer overwrite that verdict, and the optimization logger, outcome matrix and
+  workflow spans write `null`/omit the cost instead of `0.0`. Run summaries
+  (`get_summary()`, `experiment_stats`) withhold `total_cost` when a trial is
+  unmeasured and report `cost_unmeasured_trials` / `cost_lower_bound`.
 
 - **`ObservabilityClient` multi-tag trace/session filters no longer return an
   empty page (#2573).** `list_traces` / `iter_traces` / `list_sessions` /
@@ -197,30 +233,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   got an unexpected keyword argument 'model'`.
 
 ### Fixed
-
-- **An unmeasured cost is no longer stored, shown or ranked as $0 (#2517, #2518, #2446).**
-  When no LLM usage is captured for an example (for example a raw provider
-  client the interceptors do not wrap), the local lane used to estimate tokens
-  and record `cost: 0.0` as a measurement. The trial now omits `cost` /
-  `total_cost`, sets `cost_unmeasured: 1.0`, keeps the estimated tokens
-  labelled with `tokens_estimated`, and the results table prints `unmeasured`.
-  The Pareto front excludes a trial missing a configured objective and the batch
-  composite score no longer rescales over the objectives that remain. A run
-  stopped by the SDK default `max_trials` or the unmeasured-cost safety limit
-  records and prints why (`metadata["stop_detail"]`).
-
-- **A hybrid service that reports no cost is unmeasured, not $0 (#2517).**
-  `TraigentService` no longer sends `cost_usd: 0.0` for an execute handler that
-  returned no cost: the per-item field is omitted, and a batch where any handler
-  (or a handler that raised) reported none sends `operational_metrics.cost_unmeasured`
-  next to the priced lower bound it must still send as `total_cost_usd`.
-  `HybridAPIEvaluator` treats that flag, an omitted or negative cost, and a
-  failed row with no reported cost as unknown: the trial carries `cost_unmeasured`
-  and no cost total, a per-item `metrics.cost_unmeasured` from the service can no
-  longer overwrite that verdict, and the optimization logger, outcome matrix and
-  workflow spans write `null`/omit the cost instead of `0.0`. Run summaries
-  (`get_summary()`, `experiment_stats`) withhold `total_cost` when a trial is
-  unmeasured and report `cost_unmeasured_trials` / `cost_lower_bound`.
 
 - **`import traigent` no longer imports MLflow (#2436).** With MLflow installed, every
   `import traigent` (and every `@traigent.optimize` run, via
