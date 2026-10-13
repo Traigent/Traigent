@@ -15,6 +15,11 @@
       "path": "optimize/stop-limits.v1.json",
       "sha256": "eaa8eb9f181fc0942fb1a01d571cc4bcdd83e7cb2f5489d05ce7323b619d141f",
       "schemaRef": "012f237d881c7a9a1b0d5793da6738dae9e36155"
+    },
+    "optimize.stop-rules.v1": {
+      "path": "optimize/stop-rules.v1.json",
+      "sha256": "04750221ebe23e3208e7f8b0c82eae80f4f828420479fe84164aa16f3e1b7c97",
+      "schemaRef": "PENDING-MERGE-SHA-OF-TRAIGENTSCHEMA-547"
     }
   }
 }
