@@ -743,3 +743,105 @@ class _CountResponse:
         self.error = None
         for key, value in fields.items():
             setattr(self, key, value)
+
+
+def _spans(**counts: int) -> list[_FakeSpan]:
+    return [
+        _FakeSpan(trace_id="t1", configuration_run_id=run)
+        for run, n in counts.items()
+        for _ in range(n)
+    ]
+
+
+class TestSubmitTracesExactMessages:
+    """Pin the exact counts and level of every summary line (#2578)."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("responses", "spans", "expected"),
+        [
+            pytest.param(
+                [{"spans_ingested": 3}, {}],
+                {"r1": 3, "r2": 2},
+                [
+                    (
+                        "INFO",
+                        "Submitted 5 workflow spans for trace t1... (backend did "
+                        "not report how many were ingested for 2 of them; count "
+                        "unconfirmed)",
+                    )
+                ],
+                id="partial-unconfirmed",
+            ),
+            pytest.param(
+                [{"spans_ingested": 1, "skipped_duplicates": 2}, {"graph_id": "g"}],
+                {"r1": 3, "r2": 2},
+                [
+                    (
+                        "WARNING",
+                        "Backend ingested 1 of 3 workflow spans for trace t1..., "
+                        "graph_id=g; 2 skipped as duplicate span ids (already "
+                        "stored, or repeated within the batch); 2 more submitted "
+                        "with the ingested count unconfirmed.",
+                    )
+                ],
+                id="duplicates-plus-unconfirmed",
+            ),
+            pytest.param(
+                [{"spans_ingested": 0, "skipped_duplicates": 1, "graph_id": "g"}],
+                {"r1": 3},
+                [
+                    (
+                        "WARNING",
+                        "Backend ingested 0 of 3 workflow spans for trace t1..., "
+                        "graph_id=g (1 skipped as duplicate span ids, 2 not "
+                        "ingested for an unreported reason); the workflow traces "
+                        "view will be missing those spans.",
+                    )
+                ],
+                id="dropped",
+            ),
+            pytest.param(
+                [{"spans_ingested": 9}],
+                {"r1": 3},
+                [
+                    (
+                        "WARNING",
+                        "Backend reported 9 workflow spans ingested for config_run "
+                        "r1 but only 3 were sent; counting 3.",
+                    ),
+                    ("INFO", "Submitted 3 workflow spans for trace t1..."),
+                ],
+                id="over-report",
+            ),
+        ],
+    )
+    async def test_summary_lines(
+        self,
+        caplog,
+        responses: list[dict[str, Any]],
+        spans: dict[str, int],
+        expected: list[tuple[str, str]],
+    ) -> None:
+        await _submit([_ingest_resp(r) for r in responses], _spans(**spans), caplog)
+        lines = [
+            (r.levelname, r.getMessage())
+            for r in caplog.records
+            if "workflow spans" in r.getMessage()
+        ]
+        assert lines == expected
+
+    @pytest.mark.asyncio
+    async def test_all_groups_failed_logs_no_summary(self, caplog) -> None:
+        await _submit(
+            [
+                _FakeIngestResponse(success=False, error="network error"),
+                _FakeIngestResponse(success=False, error="network error"),
+            ],
+            _spans(r1=1, r2=1),
+            caplog,
+        )
+        assert not any(
+            "Submitted" in r.getMessage() or "Backend ingested" in r.getMessage()
+            for r in caplog.records
+        ), [r.getMessage() for r in caplog.records]
