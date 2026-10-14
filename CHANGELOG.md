@@ -79,6 +79,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   discovery. `max_spend_usd: 0` still loads, as the TVL schema allows, but a run
   that takes its cost limit from the spec still fails the cost-limit check,
   which needs a value above 0.
+- **Hybrid API examples no longer share one id (#2575).** `HybridAPIEvaluator`
+  numbered the fallback example id from the position inside the batch, so at
+  the default `batch_size=1` every example was sent and recorded as `ex_0`, and
+  the outcome matrix merged them into one row. The fallback is now
+  `ex_<dataset position>`; an `example_id` / `input_id` in the inputs still
+  wins, followed by `metadata["example_id"]`. Ids the backend stores for hybrid
+  rows are unchanged. A hybrid dataset whose ids repeat now fails the trial
+  with a `ValidationError` naming the positions, before any request is sent.
+  `build_outcome_matrix` logs a warning when one trial repeats an example id
+  instead of merging the cells silently.
 
 ## [0.30.0] - 2026-09-26
 

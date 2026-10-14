@@ -1003,26 +1003,21 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         Ids correlate each output with its example inside a request and key
         the per-example results (outcome matrix, failing examples), so a
-        repeated id would silently merge examples. The error names positions
-        only: an id may be customer content.
+        repeated id would silently merge examples. Ids are compared as
+        strings, as the outcome matrix keys them (``1`` and ``"1"`` collide
+        there), while each id is still sent with its original type. The error
+        names positions only: an id may be customer content.
 
         Raises:
-            ValidationError: Two examples resolve to the same id, or an id is
-                unhashable.
+            ValidationError: Two examples resolve to the same id.
         """
         example_ids = [
             self._resolve_example_id(example, position)
             for position, example in enumerate(examples)
         ]
-        first_position: dict[Any, int] = {}
+        first_position: dict[str, int] = {}
         for position, example_id in enumerate(example_ids):
-            try:
-                previous = first_position.setdefault(example_id, position)
-            except TypeError as exc:
-                raise ValidationError(
-                    f"Hybrid example at position {position} has an unhashable "
-                    "example_id; example ids must be hashable and unique"
-                ) from exc
+            previous = first_position.setdefault(str(example_id), position)
             if previous != position:
                 raise ValidationError(
                     f"Hybrid examples at positions {previous} and {position} "

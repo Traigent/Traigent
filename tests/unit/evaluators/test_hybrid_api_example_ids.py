@@ -135,13 +135,17 @@ async def test_metadata_example_id_is_honoured_after_input_ids() -> None:
             EvaluationExample(
                 input_data={"q": "q0"}, metadata={"example_id": "example_7"}
             ),
-            EvaluationExample(input_data={"q": "q1", "example_id": "svc-1"}),
+            EvaluationExample(
+                input_data={"q": "q1", "example_id": "svc-1"},
+                metadata={"example_id": "meta-1"},
+            ),
             EvaluationExample(input_data={"q": "q2"}),
         ],
         name="hybrid-ids",
     )
     result = await _evaluator(transport).evaluate(lambda: None, {}, dataset)
 
+    # Row 1 carries both: the id in the inputs wins over the metadata id.
     assert _sent_ids(transport) == ["example_7", "svc-1", "ex_2"]
     assert [r.example_id for r in result.example_results] == [
         "example_7",
@@ -166,6 +170,23 @@ async def test_duplicate_ids_raise_before_any_request() -> None:
         await _evaluator(transport).evaluate(lambda: None, {}, dataset)
 
     assert "secret-id" not in str(excinfo.value)
+    transport.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ids_that_collide_as_strings_are_duplicates() -> None:
+    """``1`` and ``"1"`` are one row in the outcome matrix, so they must clash."""
+    transport = _echo_transport()
+    dataset = Dataset(
+        examples=[
+            EvaluationExample(input_data={"q": "q0", "example_id": 1}),
+            EvaluationExample(input_data={"q": "q1"}, metadata={"example_id": "1"}),
+        ],
+        name="hybrid-ids",
+    )
+
+    with pytest.raises(ValidationError, match="positions 0 and 1"):
+        await _evaluator(transport).evaluate(lambda: None, {}, dataset)
     transport.execute.assert_not_awaited()
 
 
