@@ -987,7 +987,7 @@ if OTEL_AVAILABLE:
 
         @property
         def dropped_span_count(self) -> int:
-            """Spans dropped because no configuration_run_id was bound."""
+            """Spans not sent: no configuration_run_id bound, or conversion failed."""
             with self._lock:
                 return self._dropped_span_count
 
@@ -1039,6 +1039,8 @@ if OTEL_AVAILABLE:
             # Group spans by trace_id
             trace_groups: dict[str, list[SpanPayload]] = {}
 
+            conversion_failures = 0
+            first_error: Exception | None = None
             for otel_span in spans:
                 try:
                     span_payload = self._convert_span(otel_span, config_run_id)
@@ -1047,10 +1049,22 @@ if OTEL_AVAILABLE:
                         trace_groups[trace_id] = []
                     trace_groups[trace_id].append(span_payload)
                 except Exception as e:
-                    logger.warning(f"Failed to convert span: {e}")
+                    conversion_failures += 1
+                    if first_error is None:
+                        first_error = e
 
-            # Export each trace group
-            all_success = True
+            if conversion_failures:
+                with self._lock:
+                    self._dropped_span_count += conversion_failures
+                logger.warning(
+                    "Dropping %d of %d span(s) that failed conversion: %s",
+                    conversion_failures,
+                    len(spans),
+                    first_error,
+                )
+
+            # Export each trace group; any dropped span fails the export
+            all_success = conversion_failures == 0
             for trace_id, span_payloads in trace_groups.items():
                 try:
                     response = self.client.ingest_traces(
@@ -1200,7 +1214,11 @@ class WorkflowTracesTracker:
             backend_url: Base URL of the backend (defaults to env var
                 TRAIGENT_BACKEND_URL or the configured cloud backend)
             auth_token: Bearer token for authentication (defaults to env var TRAIGENT_API_TOKEN)
-            auto_send: Automatically send spans at end of trial context
+            auto_send: Automatically send spans at end of trial context.
+                With ``auto_send=False``, call ``flush()`` inside the
+                ``trace_trial`` context: spans still buffered when it exits
+                are discarded with a WARNING and counted in
+                ``dropped_span_count``.
             batch_size: Number of spans to batch before sending
         """
         backend_url = (
@@ -1239,6 +1257,13 @@ class WorkflowTracesTracker:
         )
         self._graph_id: str | None = None
         self._lock = threading.Lock()
+        self._dropped_span_count = 0
+
+    @property
+    def dropped_span_count(self) -> int:
+        """Spans discarded unsent at trace_trial exit (auto_send=False)."""
+        with self._lock:
+            return self._dropped_span_count
 
     @property
     def _spans(self) -> list[SpanPayload]:
@@ -1414,6 +1439,16 @@ class WorkflowTracesTracker:
             # Send collected spans if auto_send is enabled
             if self.auto_send and self._spans:
                 self._flush_spans()
+            elif self._spans:
+                unflushed = len(self._spans)
+                with self._lock:
+                    self._dropped_span_count += unflushed
+                logger.warning(
+                    "Discarding %d unflushed span(s) at trace_trial exit "
+                    "(auto_send=False); call flush() inside the trace_trial "
+                    "context to send them.",
+                    unflushed,
+                )
 
             # Restore previous context-local state using tokens
             self._cv_trace_id.reset(token_trace)
