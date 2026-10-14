@@ -679,6 +679,8 @@ class TestSubmitTracesIngestCounts:
             {"spans_ingested_reported": True, "spans_ingested": -1},
             {"spans_ingested_reported": True, "spans_ingested": "3"},
             {"spans_ingested_reported": "yes", "spans_ingested": 1},
+            {"spans_ingested_reported": True, "spans_ingested": True},
+            {"spans_ingested": 0},
         ],
     )
     async def test_invalid_count_values_are_unconfirmed(
