@@ -1680,3 +1680,72 @@ class TestFlushSpansWithoutContext:
             tracker._flush_spans()
 
         assert "No trace context" in caplog.text
+
+
+# =============================================================================
+# Tests for TraigentSpanExporter run-id binding (#2563)
+# =============================================================================
+
+
+def _fake_otel_span(trace_id: int = 1, span_id: int = 2) -> MagicMock:
+    span = MagicMock()
+    span.get_span_context.return_value = MagicMock(trace_id=trace_id, span_id=span_id)
+    span.parent = None
+    span.name = "node"
+    span.start_time = 1_700_000_000_000_000_000
+    span.end_time = 1_700_000_001_000_000_000
+    span.attributes = {}
+    span.status = None
+    return span
+
+
+@pytest.mark.skipif(not wt_module.OTEL_AVAILABLE, reason="opentelemetry-sdk missing")
+class TestTraigentSpanExporterRunIdBinding:
+    """Spans without a configuration_run_id must not vanish silently (#2563)."""
+
+    def test_export_without_run_id_fails_and_warns_once(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        exporter = wt_module.TraigentSpanExporter(backend_url="http://localhost:5000")
+        exporter.client = MagicMock()
+
+        with caplog.at_level(logging.DEBUG, logger=wt_module.logger.name):
+            first = exporter.export([_fake_otel_span(), _fake_otel_span(span_id=3)])
+            second = exporter.export([_fake_otel_span(span_id=4)])
+
+        assert first == wt_module.SpanExportResult.FAILURE
+        assert second == wt_module.SpanExportResult.FAILURE
+        warnings = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.WARNING and "configuration_run_id" in r.message
+        ]
+        assert len(warnings) == 1
+        assert exporter.dropped_span_count == 3
+        exporter.client.ingest_traces.assert_not_called()
+
+    def test_export_empty_batch_without_run_id_is_success(self) -> None:
+        exporter = wt_module.TraigentSpanExporter(backend_url="http://localhost:5000")
+        assert exporter.export([]) == wt_module.SpanExportResult.SUCCESS
+        assert exporter.dropped_span_count == 0
+
+    def test_setup_workflow_tracing_binds_run_id_getter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(wt_module.trace, "set_tracer_provider", MagicMock())
+        exporter = wt_module.setup_workflow_tracing(
+            backend_url="http://localhost:5000",
+            configuration_run_id_getter=lambda: "cfg-1",
+        )
+        assert exporter is not None
+        exporter.client = MagicMock()
+        exporter.client.ingest_traces.return_value = MagicMock(success=True)
+
+        result = exporter.export([_fake_otel_span()])
+
+        assert result == wt_module.SpanExportResult.SUCCESS
+        exporter.client.ingest_traces.assert_called_once()
+        assert (
+            exporter.client.ingest_traces.call_args.kwargs["configuration_run_id"]
+            == "cfg-1"
+        )

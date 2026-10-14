@@ -26,6 +26,8 @@ Usage:
 For OpenTelemetry integration, use TraigentSpanExporter:
     exporter = TraigentSpanExporter(backend_url, auth_token)
     provider.add_span_processor(BatchSpanProcessor(exporter))
+    # Spans are only exported while a configuration_run_id is bound:
+    exporter.set_configuration_run_id("config_run_789")
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Observability FUNC-INTEGRATIONS FUNC-ANALYTICS REQ-INT-008 REQ-ANLY-011
@@ -37,7 +39,7 @@ import hashlib
 import json
 import os
 import threading
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -935,6 +937,11 @@ if OTEL_AVAILABLE:
             )
             provider.add_span_processor(BatchSpanProcessor(exporter))
             trace.set_tracer_provider(provider)
+
+            # Spans are only exported while a configuration_run_id is bound
+            # (here, or via configuration_run_id_getter); unbound spans are
+            # dropped with one WARNING and counted in dropped_span_count.
+            exporter.set_configuration_run_id("config_run_789")
         """
 
         def __init__(
@@ -955,6 +962,14 @@ if OTEL_AVAILABLE:
             self._config_run_getter = configuration_run_id_getter
             self._current_config_run_id: str | None = None
             self._lock = threading.Lock()
+            self._dropped_span_count = 0
+            self._warned_missing_run_id = False
+
+        @property
+        def dropped_span_count(self) -> int:
+            """Spans dropped because no configuration_run_id was bound."""
+            with self._lock:
+                return self._dropped_span_count
 
         def set_configuration_run_id(self, config_run_id: str) -> None:
             """Set the current configuration run ID for span association."""
@@ -988,8 +1003,18 @@ if OTEL_AVAILABLE:
 
             config_run_id = self._get_config_run_id()
             if not config_run_id:
-                logger.debug("No configuration_run_id set, skipping span export")
-                return SpanExportResult.SUCCESS
+                with self._lock:
+                    self._dropped_span_count += len(spans)
+                    first_drop = not self._warned_missing_run_id
+                    self._warned_missing_run_id = True
+                log = logger.warning if first_drop else logger.debug
+                log(
+                    "No configuration_run_id bound to TraigentSpanExporter; "
+                    "dropping %d span(s). Pass configuration_run_id_getter or "
+                    "call set_configuration_run_id().",
+                    len(spans),
+                )
+                return SpanExportResult.FAILURE
 
             # Group spans by trace_id
             trace_groups: dict[str, list[SpanPayload]] = {}
@@ -1535,15 +1560,27 @@ def create_workflow_tracker(
 def setup_workflow_tracing(
     backend_url: str | None = None,
     auth_token: str | None = None,
+    configuration_run_id_getter: Callable[[], str | None] | None = None,
 ) -> TraigentSpanExporter | None:
     """Set up OpenTelemetry tracing with the Traigent exporter.
 
     This function configures OpenTelemetry to automatically capture
     and export spans to the Traigent backend.
 
+    Every span must be linked to a configuration run (trial). Spans
+    exported while no configuration_run_id is bound are NOT sent: the
+    exporter logs one WARNING, counts them in ``dropped_span_count`` and
+    returns ``FAILURE``. Bind the id either with
+    ``configuration_run_id_getter`` or by calling
+    ``set_configuration_run_id()`` on the returned exporter. The getter runs
+    on the span processor's export thread, so read the id from state that
+    thread can see (not a ContextVar of the calling task).
+
     Args:
         backend_url: Backend URL (defaults to env var)
         auth_token: Auth token (defaults to env var)
+        configuration_run_id_getter: Callable returning the current
+            configuration_run_id (or None) for span association
 
     Returns:
         TraigentSpanExporter instance if OTEL is available, None otherwise
@@ -1565,6 +1602,7 @@ def setup_workflow_tracing(
     exporter = TraigentSpanExporter(
         backend_url=resolved_url,  # type: ignore[arg-type]
         auth_token=auth_token,
+        configuration_run_id_getter=configuration_run_id_getter,
     )
 
     provider = TracerProvider()
