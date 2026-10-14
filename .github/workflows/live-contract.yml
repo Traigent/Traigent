@@ -172,10 +172,42 @@ jobs:
       - name: Start dockerized backend
         working-directory: ${{ env.BACKEND_DIR }}
         run: |
-          docker compose \
-            -p "$COMPOSE_PROJECT_NAME" \
-            -f docker/docker-compose.dev.yml \
-            up -d --wait postgres redis backend
+          set -euo pipefail
+          # The backend's dev boot (sibling pip installs, bootstrap, the
+          # reloader building the app twice) took 150-190s on passing hosted
+          # runs, and one failing run was still booting at 216s, while the dev
+          # compose healthcheck (start_period 60s + 10 x 15s) marks it unhealthy
+          # after ~210s, so `--wait` failed before any contract test ran. Widen
+          # only the grace period here; keep `--wait` so the next step never
+          # touches the bind-mounted SDK/Schema trees while the container
+          # installs them. The first passing probe ends the wait, so fast boots
+          # are not slowed. A broken backend still goes unhealthy (~420s +
+          # 10 x 15s = ~570s); --wait-timeout 600 caps the wait if probes hang
+          # instead of failing fast.
+          override="$RUNNER_TEMP/live-contract-boot.override.yml"
+          printf '%s\n' \
+            'services:' \
+            '  backend:' \
+            '    healthcheck:' \
+            '      start_period: 420s' >"$override"
+          # The override only widens an upstream probe. If the dev compose ever
+          # drops or disables it, the merge keeps a test-less healthcheck and
+          # `--wait` would return as soon as the container runs, racing the
+          # next step, so refuse to start without a real probe.
+          compose_files=(-f docker/docker-compose.dev.yml -f "$override")
+          if ! merged="$(docker compose -p "$COMPOSE_PROJECT_NAME" "${compose_files[@]}" config --format json)"; then
+            echo "::error::docker compose could not merge the CI boot override into docker-compose.dev.yml."
+            exit 1
+          fi
+          if ! jq -e '.services.backend.healthcheck as $h
+                | ($h.disable != true)
+                  and ($h.test | type == "array" and length > 0 and .[0] != "NONE")' \
+              >/dev/null <<<"$merged"; then
+            echo "::error::The backend service in docker-compose.dev.yml has no active healthcheck test; --wait cannot gate the ownership-restore step."
+            exit 1
+          fi
+          docker compose -p "$COMPOSE_PROJECT_NAME" "${compose_files[@]}" \
+            up -d --wait --wait-timeout 600 postgres redis backend
 
       - name: Restore checkout-root ownership
         if: ${{ always() }}
