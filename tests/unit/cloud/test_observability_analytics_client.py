@@ -97,7 +97,9 @@ async def test_trace_search_uses_canonical_project_route_and_strips_content() ->
                     "id": "trace-1",
                     "name": "PRIVACY_CANARY_NAME",
                     "status": "success",
-                    "metadata": {"secret": "PRIVACY_CANARY_METADATA"},
+                    "metadata": {
+                        "secret": "PRIVACY_CANARY_METADATA"  # pragma: allowlist secret
+                    },
                     "input_data": "PRIVACY_CANARY_INPUT",
                     "output_data": "PRIVACY_CANARY_OUTPUT",
                     "started_at": "2026-07-01T12:00:00Z",
@@ -375,3 +377,192 @@ async def test_client_rejects_unbounded_windows_before_transport() -> None:
         )
 
     client._client.get.assert_not_called()
+
+
+_TRACE_SEARCH_WINDOW = {
+    "start_time": "2026-07-01T00:00:00Z",
+    "end_time": "2026-07-02T00:00:00Z",
+}
+
+
+def _install_transport(client) -> list:
+    """Route the client through a real httpx stack so the wire query is visible."""
+    import httpx
+
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "message": "ok",
+                "data": {
+                    "items": [],
+                    "pagination": {
+                        "page": 1,
+                        "per_page": 50,
+                        "total": 0,
+                        "has_next": False,
+                    },
+                },
+            },
+        )
+
+    client._client = httpx.AsyncClient(
+        base_url="http://localhost:5000", transport=httpx.MockTransport(handler)
+    )
+    return requests
+
+
+@pytest.mark.asyncio
+async def test_trace_search_encodes_new_filters_with_repeated_tag_keys() -> None:
+    client = _client()
+    requests = _install_transport(client)
+
+    await client.search_observability_traces(
+        "project-1",
+        **_TRACE_SEARCH_WINDOW,
+        model="gpt-4o-mini",
+        tags=[" support,billing ", "vip"],
+        outcome_kind=" csat ",
+        has_outcome=True,
+    )
+
+    assert len(requests) == 1
+    params = requests[0].url.params
+    query = requests[0].url.query.decode()
+    # A tag containing a comma travels verbatim as its own repeated key; it is
+    # never comma-joined with its siblings (the server would split that).
+    assert params.get_list("tags") == ["support,billing", "vip"]
+    assert query.count("tags=") == 2
+    assert "tags=support%2Cbilling&tags=vip" in query
+    assert params["model"] == "gpt-4o-mini"
+    assert params["outcome_kind"] == "csat"
+    assert params["has_outcome"] == "true"
+    assert params["start_time_from"] == "2026-07-01T00:00:00Z"
+    assert params["start_time_to"] == "2026-07-02T00:00:00Z"
+    for unsupported in ("search", "user_id", "session_id", "q"):
+        assert unsupported not in params
+
+
+@pytest.mark.asyncio
+async def test_trace_search_sends_has_outcome_false_and_omits_unset_filters() -> None:
+    client = _client()
+    requests = _install_transport(client)
+
+    await client.search_observability_traces(
+        "project-1", **_TRACE_SEARCH_WINDOW, tags=[], has_outcome=False
+    )
+    await client.search_observability_traces("project-1", **_TRACE_SEARCH_WINDOW)
+
+    assert len(requests) == 2
+    explicit_false, unset = (request.url.params for request in requests)
+    assert explicit_false["has_outcome"] == "false"
+    for absent in ("model", "tags", "outcome_kind"):
+        assert absent not in explicit_false
+    for absent in ("model", "tags", "outcome_kind", "has_outcome"):
+        assert absent not in unset
+    assert set(unset.keys()) == {
+        "start_time_from",
+        "start_time_to",
+        "page",
+        "per_page",
+    }
+
+
+@pytest.mark.asyncio
+async def test_trace_search_accepts_filter_bounds_and_outcome_vocabulary() -> None:
+    from traigent.cloud.analytics_client import OBSERVABILITY_OUTCOME_KINDS
+
+    assert OBSERVABILITY_OUTCOME_KINDS == ("conversion", "resolution", "csat", "custom")
+    client = _client()
+    requests = _install_transport(client)
+    tags = [f"tag-{index}" for index in range(19)] + ["t" * 255]
+
+    await client.search_observability_traces(
+        "project-1", **_TRACE_SEARCH_WINDOW, model="m" * 255, tags=tags
+    )
+    for kind in OBSERVABILITY_OUTCOME_KINDS:
+        await client.search_observability_traces(
+            "project-1", **_TRACE_SEARCH_WINDOW, outcome_kind=kind, has_outcome=True
+        )
+
+    assert requests[0].url.params["model"] == "m" * 255
+    assert requests[0].url.params.get_list("tags") == tags
+    assert [request.url.params["outcome_kind"] for request in requests[1:]] == list(
+        OBSERVABILITY_OUTCOME_KINDS
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("filters", "message"),
+    [
+        ({"model": "m" * 256}, "model"),
+        ({"outcome_kind": "refund"}, "outcome_kind"),
+        ({"outcome_kind": "CSAT"}, "outcome_kind"),
+        ({"tags": [f"tag-{index}" for index in range(21)]}, "tags"),
+        ({"tags": ["t" * 256]}, "tags"),
+        ({"tags": ["vip", " vip "]}, "tags"),
+        ({"has_outcome": "true"}, "has_outcome"),
+        ({"has_outcome": 1}, "has_outcome"),
+        (
+            {"outcome_kind": "conversion", "has_outcome": False},
+            r"(?s)(?=.*outcome_kind)(?=.*has_outcome)",
+        ),
+    ],
+)
+async def test_trace_search_rejects_invalid_filters_before_transport(
+    filters: dict[str, object], message: str
+) -> None:
+    client = _client()
+    client._client = AsyncMock()
+
+    with pytest.raises(ValueError, match=message):
+        await client.search_observability_traces(
+            "project-1", **_TRACE_SEARCH_WINDOW, **filters
+        )
+
+    client._client.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tags",
+    ["vip", [1], [["a"]], 5],
+    ids=["bare-string", "int-value", "nested-list", "int"],
+)
+async def test_trace_search_rejects_non_list_tags_before_transport(
+    tags: object,
+) -> None:
+    """A bare string must not be iterated into per-character tags."""
+    client = _client()
+    client._client = AsyncMock()
+
+    with pytest.raises(ValueError, match="tags"):
+        await client.search_observability_traces(
+            "project-1", **_TRACE_SEARCH_WINDOW, tags=tags
+        )
+
+    client._client.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_trace_search_sends_single_comma_tag_as_one_key() -> None:
+    """A lone tag containing a comma is still exactly one ``tags`` key.
+
+    The server keeps repeated (``getlist``) values verbatim and only splits a
+    bare comma string, so one key carrying ``support,billing`` stays one tag.
+    """
+    client = _client()
+    requests = _install_transport(client)
+
+    await client.search_observability_traces(
+        "project-1", **_TRACE_SEARCH_WINDOW, tags=["support,billing"]
+    )
+
+    assert len(requests) == 1
+    assert requests[0].url.params.get_list("tags") == ["support,billing"]
+    assert requests[0].url.query.decode().count("tags=") == 1

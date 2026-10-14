@@ -39,6 +39,7 @@ from traigent.cloud.analytics_client import (
     _project_observability_trace_analysis,
     _project_observability_trace_search,
     _project_observability_trace_slice,
+    _validate_observability_trace_filters,
     normalize_decision_intent,
 )
 from traigent.utils.logging import get_logger
@@ -1154,8 +1155,17 @@ async def observability_search_traces_tool(
     status: str | None = None,
     environment: str | None = None,
     release: str | None = None,
+    *,
+    model: str | None = None,
+    tags: list[str] | None = None,
+    outcome_kind: str | None = None,
+    has_outcome: bool | None = None,
 ) -> dict[str, Any]:
-    """Search trace summaries through a bounded, content-free projection."""
+    """Search trace summaries through a bounded, content-free projection.
+
+    ``model``/``tags``/``outcome_kind``/``has_outcome`` are validated against
+    the reader's own vocabulary and bounds before the reader is called.
+    """
     try:
         pid = _bounded_identifier(project_id, field="project_id")
         start, end = _bounded_time_window(start_time, end_time)
@@ -1167,6 +1177,19 @@ async def observability_search_traces_tool(
             environment, field="environment", maximum=64
         )
         clean_release = _bounded_optional_text(release, field="release", maximum=128)
+        if tags is not None and not isinstance(tags, list):
+            raise _ToolInputError("tags must be a list of strings.")
+        try:
+            clean_model, clean_tags, clean_outcome_kind, _ = (
+                _validate_observability_trace_filters(
+                    model=model,
+                    tags=tags,
+                    outcome_kind=outcome_kind,
+                    has_outcome=has_outcome,
+                )
+            )
+        except ValueError as exc:
+            raise _ToolInputError(str(exc)) from exc
     except _ToolInputError as exc:
         return _failure(str(exc))
     return await _call_observability_backend(
@@ -1179,6 +1202,10 @@ async def observability_search_traces_tool(
             status=clean_status,
             environment=clean_environment,
             release=clean_release,
+            model=clean_model,
+            tags=clean_tags or None,
+            outcome_kind=clean_outcome_kind,
+            has_outcome=has_outcome,
         ),
         what="observability trace search",
         projector=_project_observability_trace_search,

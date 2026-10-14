@@ -289,6 +289,20 @@ _OBSERVABILITY_HASH_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 _OBSERVABILITY_MAX_PAGE_SIZE = 100
 _OBSERVABILITY_MAX_TRACE_SLICE = 500
 _OBSERVABILITY_MAX_WINDOW = timedelta(days=31)
+# Trace-search filter vocabulary and bounds, shared with the analytics MCP tool.
+# Model and tag lengths match the server's own limits (255 characters each),
+# and the outcome kinds are the server's closed outcome vocabulary. The tag
+# count is SDK policy: tags AND together and a trace carries at most 64, so 20
+# keeps the repeated-key query string bounded.
+OBSERVABILITY_OUTCOME_KINDS: tuple[str, ...] = (
+    "conversion",
+    "resolution",
+    "csat",
+    "custom",
+)
+OBSERVABILITY_MAX_MODEL_LENGTH = 255
+OBSERVABILITY_MAX_TAG_LENGTH = 255
+OBSERVABILITY_MAX_TAGS = 20
 _OBSERVABILITY_ISSUE_LIST_REQUIRED_KEYS = frozenset(
     {"items", "page", "per_page", "total", "generated_at"}
 )
@@ -2314,7 +2328,7 @@ class BackendAnalyticsClient:
         *,
         what: str,
         headers: dict[str, str] | None = None,
-        params: dict[str, str] | None = None,
+        params: Mapping[str, str | list[str]] | None = None,
         envelope: bool = True,
     ) -> dict[str, Any]:
         client = self._get_client()
@@ -2655,14 +2669,44 @@ class BackendAnalyticsClient:
         status: str | None = None,
         environment: str | None = None,
         release: str | None = None,
+        model: str | None = None,
+        tags: list[str] | None = None,
+        outcome_kind: str | None = None,
+        has_outcome: bool | None = None,
     ) -> ObservabilityTraceSearchDTO:
-        """Return a bounded, content-free projection of matching trace summaries."""
+        """Return a bounded, content-free projection of matching trace summaries.
+
+        Optional filters (all validated before any request is sent; invalid
+        values raise ``ValueError``):
+
+        * ``model`` -- exact match on the model name of any observation in the
+          trace, at most ``OBSERVABILITY_MAX_MODEL_LENGTH`` characters.
+        * ``tags`` -- exact tag values that must all be present (AND); at most
+          ``OBSERVABILITY_MAX_TAGS`` unique, non-empty tags of at most
+          ``OBSERVABILITY_MAX_TAG_LENGTH`` characters each. Sent as repeated
+          ``tags`` query keys so a tag containing a comma is never split.
+        * ``outcome_kind`` -- one of ``OBSERVABILITY_OUTCOME_KINDS``
+          (case-sensitive): traces with a business outcome of that kind.
+        * ``has_outcome`` -- ``True`` for traces with any business outcome,
+          ``False`` for traces with none. Combining ``outcome_kind`` with
+          ``has_outcome=False`` can never match and is rejected.
+
+        Free-text ``search``, ``user_id`` and ``session_id`` filters are
+        deliberately unsupported pending a review of the content-free reader
+        contract. Matched tags are still excluded from returned summaries.
+        """
         _validate_observability_page(page, per_page)
         start_time, end_time = _validate_observability_time_window(start_time, end_time)
-        payload = await self._get_json(
-            f"{_observability_path(project_id)}/traces",
-            what="observability trace search",
-            params=_without_none(
+        model, clean_tags, outcome_kind, has_outcome_param = (
+            _validate_observability_trace_filters(
+                model=model,
+                tags=tags,
+                outcome_kind=outcome_kind,
+                has_outcome=has_outcome,
+            )
+        )
+        params: dict[str, str | list[str]] = dict(
+            _without_none(
                 {
                     "start_time_from": start_time,
                     "start_time_to": end_time,
@@ -2671,8 +2715,18 @@ class BackendAnalyticsClient:
                     "status": status,
                     "environment": environment,
                     "release": release,
+                    "model": model,
+                    "outcome_kind": outcome_kind,
+                    "has_outcome": has_outcome_param,
                 }
-            ),
+            )
+        )
+        if clean_tags:
+            params["tags"] = clean_tags
+        payload = await self._get_json(
+            f"{_observability_path(project_id)}/traces",
+            what="observability trace search",
+            params=params,
         )
         return cast(
             "ObservabilityTraceSearchDTO",
@@ -3722,6 +3776,81 @@ def _validate_observability_time_window(
     if end - start > _OBSERVABILITY_MAX_WINDOW:
         raise ValueError("observability time windows cannot exceed 31 days.")
     return start_time.strip(), end_time.strip()
+
+
+def _validate_observability_trace_filters(
+    *,
+    model: object,
+    tags: object,
+    outcome_kind: object,
+    has_outcome: object,
+) -> tuple[str | None, list[str], str | None, str | None]:
+    """Normalize the optional trace-search filters or raise ``ValueError``.
+
+    Returns ``(model, tags, outcome_kind, has_outcome)`` ready for the query
+    string: blank text and empty tag lists become absent, and ``has_outcome``
+    is encoded as ``"true"``/``"false"`` (``False`` is kept, ``None`` omitted).
+    """
+    clean_model: str | None = None
+    if model is not None:
+        if not isinstance(model, str):
+            raise ValueError("model must be a string.")
+        clean_model = model.strip() or None
+        if (
+            clean_model is not None
+            and len(clean_model) > OBSERVABILITY_MAX_MODEL_LENGTH
+        ):
+            raise ValueError(
+                f"model must be at most {OBSERVABILITY_MAX_MODEL_LENGTH} characters."
+            )
+
+    clean_tags: list[str] = []
+    if tags is not None:
+        if not isinstance(tags, Sequence) or isinstance(tags, (str, bytes)):
+            raise ValueError("tags must be a list of strings.")
+        if len(tags) > OBSERVABILITY_MAX_TAGS:
+            raise ValueError(
+                f"tags must contain at most {OBSERVABILITY_MAX_TAGS} values."
+            )
+        for tag in tags:
+            if not isinstance(tag, str):
+                raise ValueError("tags values must be strings.")
+            text = tag.strip()
+            if not text:
+                raise ValueError("tags values must be non-empty strings.")
+            if len(text) > OBSERVABILITY_MAX_TAG_LENGTH:
+                raise ValueError(
+                    f"tags values must be at most {OBSERVABILITY_MAX_TAG_LENGTH} "
+                    "characters."
+                )
+            clean_tags.append(text)
+        if len(set(clean_tags)) != len(clean_tags):
+            raise ValueError("tags values must be unique.")
+
+    clean_outcome_kind: str | None = None
+    if outcome_kind is not None:
+        if not isinstance(outcome_kind, str):
+            raise ValueError("outcome_kind must be a string.")
+        clean_outcome_kind = outcome_kind.strip() or None
+        if (
+            clean_outcome_kind is not None
+            and clean_outcome_kind not in OBSERVABILITY_OUTCOME_KINDS
+        ):
+            allowed = ", ".join(OBSERVABILITY_OUTCOME_KINDS)
+            raise ValueError(f"outcome_kind must be one of: {allowed}.")
+
+    has_outcome_param: str | None = None
+    if has_outcome is not None:
+        if not isinstance(has_outcome, bool):
+            raise ValueError("has_outcome must be a boolean.")
+        if clean_outcome_kind is not None and not has_outcome:
+            raise ValueError(
+                "outcome_kind cannot be combined with has_outcome=False; "
+                "no trace can match both."
+            )
+        has_outcome_param = "true" if has_outcome else "false"
+
+    return clean_model, clean_tags, clean_outcome_kind, has_outcome_param
 
 
 def _validate_identifier_list(value: object, *, field: str) -> list[str]:
