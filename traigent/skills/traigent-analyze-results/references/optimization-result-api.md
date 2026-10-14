@@ -34,6 +34,12 @@ The `OptimizationResult` dataclass is returned by `func.optimize()` and contains
 | `success_rate` | `float` | Ratio of successful trials to total trials. Returns `0.0` if no trials exist. |
 | `best_metrics` | `dict[str, float]` | Full metrics dict from the best-scoring trial. Returns `{}` if no trials exist. |
 
+### Methods
+
+| Method | Return Type | Description |
+|---|---|---|
+| `failing_examples(threshold=0.5, mode="all_configs")` | `list[str]` | Ids of the examples the run got wrong, read from its per-example outcome matrix (no re-run). A cell fails on an error, on `success=False`, or on a finite per-example `score` (`accuracy` when `score` is absent) strictly below `threshold`; equality passes; cells with no usable score are unknown, never zero. An example is returned only when **every** selected trial failed it: all trials for `"all_configs"`, the winning configuration's trials for `"best_config"`. Ids keep matrix row order. Returns `[]` when nothing failed everywhere; raises `ValueError` on an invalid threshold/mode, no per-example detail, no usable pass/fail signal, or (for `"best_config"`) no resolvable winner. |
+
 ### Usage
 
 ```python
@@ -104,6 +110,36 @@ artifact did not record it — the run may well have been local.
 
 A result saved by a current SDK that is *missing* a field raises `ValueError`:
 truncated artifacts are treated as corruption, not as an older format.
+
+### Exporting failures as a regression dataset
+
+```python
+failing = results.failing_examples()                    # e.g. ["example_3", "q-17"]
+failing = results.failing_examples(threshold=0.8, mode="best_config")
+```
+
+To turn a run's failures into a JSONL eval dataset, use the CLI. It joins the
+failing ids to rows of the **original, unmodified** dataset (by
+`metadata["example_id"]` or the positional `example_<index>` handle), writes
+`{"input", "expected_output", "metadata"}` rows that `Dataset.from_jsonl` reads
+back unchanged, and stays entirely local:
+
+```bash
+traigent results export-failures my_run --dataset eval.jsonl --out regressions.jsonl
+traigent results export-failures <logger-run-dir> --dataset eval.jsonl \
+    --out regressions.jsonl --threshold 0.8 --mode best_config
+```
+
+`RUN` is a saved result name (as in `traigent results show`, `--storage-dir`
+defaults to `.traigent`) or an optimization-logger run directory / its
+`artifacts/` directory. `local:<session_id>` sources are not supported. If any
+id matches no row or more than one row, the command fails and writes nothing;
+keyed content identities (`ex1:` ids from a purpose-key grant) cannot be
+resolved locally and fail the same way. With no failing examples it prints
+`No failing examples; no dataset written` and leaves `--out` untouched. The
+same pieces are available in Python as
+`traigent.utils.regression_dataset.select_examples_by_id(dataset, ids)` and
+`Dataset.to_jsonl(path)`.
 
 ---
 

@@ -8,6 +8,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Export a run's failing examples as a regression dataset.**
+  `OptimizationResult.failing_examples(threshold=0.5, mode="all_configs")`
+  returns the ids of examples that failed in every trial (or, with
+  `mode="best_config"`, in every trial of the winning configuration), read from
+  the per-example outcome matrix without re-running anything; the selector is
+  `traigent.utils.outcome_matrix.select_failing_example_ids`.
+  `traigent results export-failures RUN --dataset PATH --out PATH` joins those
+  ids to the original dataset's rows and writes them as JSONL that
+  `Dataset.from_jsonl` reads back unchanged, failing without writing if any id
+  is unresolved or ambiguous. `RUN` is a saved result name or an
+  optimization-logger run directory; `local:` session sources and keyed `ex1:`
+  content identities are not supported yet. New helpers:
+  `Dataset.to_jsonl()` (atomic, refuses values JSON would alter) and
+  `traigent.utils.regression_dataset.select_examples_by_id()`. Nothing is sent
+  over the network.
 - **`ProjectUsageExperimentDTO`: optional `priced_configuration_runs` /
   `unpriced_configuration_runs`.** Both default to `None` and are read from the
   matching keys when present, so clients can tell an unmeasured cost (priced 0,

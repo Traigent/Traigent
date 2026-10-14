@@ -1385,6 +1385,7 @@ def results() -> None:
         traigent results show my_run             # Show detailed view
         traigent results compare run1 run2       # Side-by-side comparison
         traigent results rerank my_run --weights accuracy=0.8,cost=0.2
+        traigent results export-failures my_run --dataset eval.jsonl --out regressions.jsonl
     """
     pass
 
@@ -1603,6 +1604,225 @@ def results_rerank(
         console.print(_MSG_RESULTS_LIST_HINT)
     except Exception as e:
         console.print(f"[red]Error re-ranking: {e}[/red]")
+
+
+def _is_logger_run_dir(path: Path) -> bool:
+    """Whether ``path`` is an optimization-logger run dir or its artifacts dir."""
+    if not path.is_dir():
+        return False
+    return path.name == "artifacts" or (path / "artifacts").is_dir()
+
+
+def _load_logger_best_config(run_dir: Path) -> dict[str, Any] | None:
+    """Read the winning config from a logger run's ``best_config`` artifact.
+
+    Raises ``click.ClickException`` when the artifact is missing or malformed;
+    returns ``None`` only when the artifact records that the run had no winner.
+    """
+    artifacts = run_dir if run_dir.name == "artifacts" else run_dir / "artifacts"
+    artifacts_real = artifacts.resolve()
+    for candidate in (
+        artifacts / "best_config_v2.json",
+        artifacts / "best_config.json",
+    ):
+        if not candidate.exists():
+            continue
+        # Same containment guard as load_outcome_matrix: a symlink inside the
+        # artifacts dir must not redirect the read elsewhere on disk.
+        candidate_real = candidate.resolve()
+        try:
+            candidate_real.relative_to(artifacts_real)
+        except ValueError:
+            raise click.ClickException(
+                f"Refusing to read best-config artifact outside {artifacts_real}: "
+                f"{candidate} resolves to {candidate_real}"
+            ) from None
+        try:
+            payload = json.loads(candidate_real.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise click.ClickException(
+                f"Cannot read best-config artifact {candidate}: {exc}"
+            ) from exc
+        if not isinstance(payload, dict) or "config" not in payload:
+            raise click.ClickException(
+                f"Malformed best-config artifact {candidate}: missing 'config'"
+            )
+        config = payload["config"]
+        if config is not None and not isinstance(config, dict):
+            raise click.ClickException(
+                f"Malformed best-config artifact {candidate}: 'config' must be "
+                "an object or null"
+            )
+        return config
+    raise click.ClickException(
+        f"No best-config artifact (best_config_v2.json / best_config.json) in "
+        f"{artifacts}; --mode best_config needs it"
+    )
+
+
+def _select_run_failures(
+    run: str, storage_dir: str, threshold: float, mode: str
+) -> list[str]:
+    """Select failing example ids from a saved result or a logger run dir."""
+    from traigent.utils.outcome_matrix import (
+        load_outcome_matrix,
+        select_failing_example_ids,
+    )
+
+    if run.startswith("local:"):
+        raise click.ClickException(
+            "Local session results ('local:<session_id>') are not supported by "
+            "export-failures; pass a saved result name or an optimization-logger "
+            "run directory"
+        )
+
+    run_path = Path(run).expanduser()
+    if _is_logger_run_dir(run_path):
+        run_dir = _resolve_user_cli_path(run_path, "Run directory", must_exist=True)
+        try:
+            matrix = load_outcome_matrix(run_dir)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        if matrix is None:
+            raise click.ClickException(
+                f"No outcome matrix artifact in {run_dir}; the run captured no "
+                "per-example detail"
+            )
+        best_config = (
+            _load_logger_best_config(run_dir) if mode == "best_config" else None
+        )
+        try:
+            return select_failing_example_ids(
+                matrix, threshold=threshold, mode=mode, best_config=best_config
+            )
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+
+    try:
+        result = PersistenceManager(storage_dir).load_result(run)
+    except FileNotFoundError as exc:
+        raise click.ClickException(
+            f"Result '{run}' not found in {storage_dir}, and it is not an "
+            f"optimization-logger run directory. {_MSG_RESULTS_LIST_HINT}"
+        ) from exc
+    except Exception as exc:
+        raise click.ClickException(f"Error loading result '{run}': {exc}") from exc
+    try:
+        failing: list[str] = result.failing_examples(
+            threshold=threshold, mode=cast(Any, mode)
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    return failing
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    if a == b:
+        return True
+    try:
+        return a.exists() and b.exists() and a.samefile(b)
+    except OSError:
+        return False
+
+
+@results.command("export-failures")
+@click.argument("run")
+@click.option(
+    "--dataset",
+    "dataset_path",
+    required=True,
+    help="The original JSONL/JSON dataset the run evaluated",
+)
+@click.option(
+    "--out",
+    "out_path",
+    required=True,
+    help="Where to write the failing examples as JSONL",
+)
+@click.option(
+    "--threshold",
+    type=float,
+    default=0.5,
+    show_default=True,
+    help="Per-example score below which an example fails (equality passes)",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["all_configs", "best_config"]),
+    default="all_configs",
+    show_default=True,
+    help="all_configs: failed in every trial; best_config: failed in the winner's trials",
+)
+@click.option(
+    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
+)
+def results_export_failures(
+    run: str,
+    dataset_path: str,
+    out_path: str,
+    threshold: float,
+    mode: str,
+    storage_dir: str,
+) -> None:
+    """Export the examples a run got wrong as a regression JSONL dataset.
+
+    RUN is a saved result name (as in 'traigent results show') or the path to an
+    optimization-logger run directory (or its artifacts/ directory). Failing ids
+    come from the run's outcome matrix and are joined to rows of --dataset, which
+    must be the original, unmodified dataset the run evaluated. Every id must
+    resolve to exactly one row or nothing is written. Runs whose example ids are
+    keyed content identities ('ex1:') cannot be exported. Everything stays
+    local: nothing is uploaded.
+
+    Examples:
+        traigent results export-failures my_run --dataset eval.jsonl --out regressions.jsonl
+        traigent results export-failures .traigent/optimization_logs/experiments/x/runs/r1 \\
+            --dataset eval.jsonl --out regressions.jsonl --mode best_config
+    """
+    from traigent.evaluators.base import Dataset
+    from traigent.utils.regression_dataset import (
+        UnresolvedExampleIdError,
+        select_examples_by_id,
+    )
+
+    out_resolved = _resolve_user_cli_path(Path(out_path), "Output path", for_write=True)
+    if out_resolved.is_dir():
+        raise click.ClickException(f"Output path is a directory: {out_resolved}")
+
+    try:
+        dataset = Dataset.from_jsonl(dataset_path)
+    except Exception as exc:
+        raise click.ClickException(
+            f"Cannot load dataset '{dataset_path}': {exc}"
+        ) from exc
+    source_path = Path(str((dataset.metadata or {}).get("source_path", dataset_path)))
+    if _same_file(out_resolved, source_path.resolve()):
+        raise click.ClickException(
+            f"--out resolves to the source dataset {source_path}; refusing to "
+            "overwrite it"
+        )
+
+    failing_ids = _select_run_failures(run, storage_dir, threshold, mode)
+    if not failing_ids:
+        console.print("No failing examples; no dataset written")
+        return
+
+    try:
+        subset = select_examples_by_id(dataset, failing_ids)
+    except UnresolvedExampleIdError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except (TypeError, ValueError) as exc:
+        raise click.ClickException(f"Cannot select failing examples: {exc}") from exc
+
+    try:
+        out_resolved.parent.mkdir(parents=True, exist_ok=True)
+        subset.to_jsonl(out_resolved)
+    except (OSError, TypeError, ValueError) as exc:
+        raise click.ClickException(f"Cannot write {out_resolved}: {exc}") from exc
+
+    console.print(
+        f"Wrote {len(subset)} failing example(s) to {out_resolved}", soft_wrap=True
+    )
 
 
 @cli.command()
