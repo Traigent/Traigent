@@ -14,7 +14,7 @@ import os
 import statistics
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -39,6 +39,7 @@ from traigent.hybrid import (
     TransportTimeoutError,
     create_transport,
 )
+from traigent.utils.exceptions import ValidationError
 from traigent.utils.logging import get_logger
 from traigent.utils.objectives import classify_objective
 from traigent.utils.retry import RetryConfig, RetryHandler
@@ -740,7 +741,13 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         Raises:
             EvaluationError: If evaluation fails.
+            ValidationError: If two examples resolve to the same example id.
         """
+        # Resolve every example's id once, from its dataset position, before any
+        # budget is reserved or any request is sent.
+        examples = list(dataset)
+        example_ids = self._resolve_example_ids(examples)
+
         execution_budget_lease, blocked_result = (
             self._prepare_execution_budget_evaluation(
                 budget, config, sample_lease=sample_lease
@@ -764,8 +771,6 @@ class HybridAPIEvaluator(BaseEvaluator):
             self._ensure_lifecycle_manager(), sample_lease, execution_budget_lease
         )
 
-        # Prepare examples
-        examples = list(dataset)
         total_examples = len(examples)
 
         # Apply sample budget limits
@@ -799,6 +804,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         for batch_start in range(0, len(examples), self._batch_size):
             batch_end = min(batch_start + self._batch_size, len(examples))
             batch = examples[batch_start:batch_end]
+            batch_ids = example_ids[batch_start:batch_end]
 
             # Consume from sample lease
             if sample_lease is not None:
@@ -808,7 +814,7 @@ class HybridAPIEvaluator(BaseEvaluator):
 
             # Execute batch
             batch_results = await self._await_with_sample_lease_cleanup(
-                self._execute_batch(transport, caps, config, batch),
+                self._execute_batch(transport, caps, config, batch, batch_ids),
                 sample_lease,
                 execution_budget_lease,
             )
@@ -876,6 +882,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         caps: ServiceCapabilities,
         config: dict[str, Any],
         batch: list[Any],
+        example_ids: list[Any] | None = None,
     ) -> list[HybridExampleResult]:
         """Execute a batch of examples.
 
@@ -884,23 +891,23 @@ class HybridAPIEvaluator(BaseEvaluator):
             caps: Service capabilities.
             config: Configuration for this trial.
             batch: Batch of examples to process.
+            example_ids: The batch's ids from :meth:`_resolve_example_ids`, in
+                batch order. When omitted the batch is treated as the whole
+                dataset (positions start at 0).
 
         Returns:
             List of results for each example.
         """
+        if example_ids is None:
+            example_ids = self._resolve_example_ids(batch)
         # Prepare examples list
-        inputs = []
-        for i, example in enumerate(batch):
-            input_data = self._extract_input(example)
-            example_id = (
-                input_data.get("example_id") or input_data.get("input_id") or f"ex_{i}"
-            )
-            inputs.append(
-                {
-                    "example_id": example_id,
-                    "data": input_data,
-                }
-            )
+        inputs = [
+            {
+                "example_id": example_id,
+                "data": self._extract_input(example),
+            }
+            for example, example_id in zip(batch, example_ids, strict=True)
+        ]
 
         request = HybridExecuteRequest(
             tunable_id=self._tunable_id or "default",
@@ -968,6 +975,62 @@ class HybridAPIEvaluator(BaseEvaluator):
             logger.error(f"Batch execution failed: {e}")
             # Return error results for all examples
             return self._batch_error_results(batch, inputs, str(e))
+
+    def _resolve_example_id(self, example: Any, position: int) -> Any:
+        """Return the id an example is sent and recorded under.
+
+        Precedence: ``example_id`` / ``input_id`` in the input data (kept
+        verbatim, as the external service may look rows up by them), then
+        ``metadata["example_id"]`` (the local evaluator's correlation key),
+        then ``ex_<position>``, where ``position`` is the example's index in
+        the dataset. The ``ex_`` prefix is deliberate: it never matches the
+        SDK's ``example_<idx>`` measure id, so the ids the backend stores for
+        hybrid rows stay ``ex_<hash>_<idx>``.
+        """
+        input_data = self._extract_input(example)
+        explicit = input_data.get("example_id") or input_data.get("input_id")
+        if explicit:
+            return explicit
+        metadata = getattr(example, "metadata", None)
+        if isinstance(metadata, Mapping):
+            metadata_id = metadata.get("example_id")
+            if metadata_id is not None and str(metadata_id):
+                return str(metadata_id)
+        return f"ex_{position}"
+
+    def _resolve_example_ids(self, examples: list[Any]) -> list[Any]:
+        """Resolve every example's id and require them to be unique.
+
+        Ids correlate each output with its example inside a request and key
+        the per-example results (outcome matrix, failing examples), so a
+        repeated id would silently merge examples. The error names positions
+        only: an id may be customer content.
+
+        Raises:
+            ValidationError: Two examples resolve to the same id, or an id is
+                unhashable.
+        """
+        example_ids = [
+            self._resolve_example_id(example, position)
+            for position, example in enumerate(examples)
+        ]
+        first_position: dict[Any, int] = {}
+        for position, example_id in enumerate(example_ids):
+            try:
+                previous = first_position.setdefault(example_id, position)
+            except TypeError as exc:
+                raise ValidationError(
+                    f"Hybrid example at position {position} has an unhashable "
+                    "example_id; example ids must be hashable and unique"
+                ) from exc
+            if previous != position:
+                raise ValidationError(
+                    f"Hybrid examples at positions {previous} and {position} "
+                    "resolve to the same example_id; example ids must be unique "
+                    "(check example_id / input_id in the inputs and "
+                    "metadata['example_id'])"
+                )
+        return example_ids
 
     def _extract_input(self, example: Any) -> dict[str, Any]:
         """Extract input data from dataset example."""

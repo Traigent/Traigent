@@ -32,7 +32,7 @@ A single JSON object::
           "index": 0,
           "trial_id": "trial_0",
           "config": {"model": "gpt-4o"},
-          "config_hash": "a1b2c3d4e5f6"  # sha256[:12] of the sorted config
+          "config_hash": "a1b2c3d4e5f6"  # sha256[:12] of the sorted config  # pragma: allowlist secret
         },
         ...
       ],
@@ -113,8 +113,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from traigent.utils.logging import get_logger
+
 if TYPE_CHECKING:
     from traigent.api.types import OptimizationResult
+
+logger = get_logger(__name__)
 
 #: Bump when the on-disk shape changes incompatibly.
 OUTCOME_MATRIX_SCHEMA_VERSION = "1.0"
@@ -269,6 +273,9 @@ def build_outcome_matrix(result: OptimizationResult) -> dict[str, Any]:
     # example_id -> {trial_id: cell}
     rows: dict[str, dict[str, Any]] = {}
     order: list[str] = []
+    # trial_id -> number of cells that landed on an id already filled in that
+    # trial (one cell per id is kept, so these were merged).
+    merged_cells: dict[str, int] = {}
 
     for index, trial in enumerate(trials):
         trial_id = getattr(trial, "trial_id", None) or f"trial_{index}"
@@ -297,7 +304,23 @@ def build_outcome_matrix(result: OptimizationResult) -> dict[str, Any]:
             if example_id not in rows:
                 rows[example_id] = {}
                 order.append(example_id)
+            elif trial_id in rows[example_id]:
+                merged_cells[trial_id] = merged_cells.get(trial_id, 0) + 1
             rows[example_id][trial_id] = _extract_cell(ex)
+
+    if merged_cells:
+        # Not an error: with content identity, identical rows legitimately
+        # share one example id. But a merge must never be silent, because a
+        # buggy id scheme (e.g. one id for every example) looks the same.
+        # Content-free: trial ids and counts only, never example ids.
+        logger.warning(
+            "outcome matrix keeps one cell per example_id per trial; merged "
+            "cells that repeated an example_id within the same trial: %s",
+            ", ".join(
+                f"{trial_id}: {count} merged"
+                for trial_id, count in merged_cells.items()
+            ),
+        )
 
     examples = [
         {"example_id": example_id, "cells": rows[example_id]} for example_id in order
