@@ -76,6 +76,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`ObservabilityClient` multi-tag trace/session filters no longer return an
+  empty page (#2573).** `list_traces` / `iter_traces` / `list_sessions` /
+  `iter_sessions` now send a list `tags` filter as repeated keys
+  (`tags=vip&tags=beta`) instead of one comma-joined value, which the backend
+  read as the single literal tag `"vip,beta"`. A single string is still sent
+  as one value.
 - **TVL specs with out-of-range chance thresholds or budgets now fail to load
   (#1616).** `load_tvl_spec` raises `TVLValidationError` when a
   `promotion_policy.chance_constraints[].threshold` is outside `[0, 1]`, or when

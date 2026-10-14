@@ -3136,22 +3136,25 @@ class ObservabilityClient:
         )
 
     def _build_query_string(self, **params: Any) -> str:
-        serialized: dict[str, str] = {}
+        serialized: dict[str, str | list[str]] = {}
         for key, value in params.items():
             if value is None or value == "":
                 continue
             if isinstance(value, datetime):
                 serialized[key] = value.isoformat()
             elif isinstance(value, list):
+                # Repeated keys (`tags=a&tags=b`), never a comma-join: the backend reads
+                # list filters with `getlist` and keeps each value as one literal item,
+                # so `tags=a,b` would be the single tag "a,b" and match nothing.
                 cleaned = [str(item).strip() for item in value if str(item).strip()]
                 if cleaned:
-                    serialized[key] = ",".join(cleaned)
+                    serialized[key] = cleaned
             else:
                 serialized[key] = str(value)
 
         if not serialized:
             return ""
-        return "?" + urlencode(serialized)
+        return "?" + urlencode(serialized, doseq=True)
 
     def _ensure_json_serializable(self, value: Any, *, field_name: str) -> Any:
         if value is None:
