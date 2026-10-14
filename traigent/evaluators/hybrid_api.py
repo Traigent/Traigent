@@ -14,7 +14,7 @@ import os
 import statistics
 import time
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -979,11 +979,10 @@ class HybridAPIEvaluator(BaseEvaluator):
     def _resolve_example_id(self, example: Any, position: int) -> Any:
         """Return the id an example is sent and recorded under.
 
-        Precedence: ``example_id`` / ``input_id`` in the input data (kept
-        verbatim, as the external service may look rows up by them), then
-        ``metadata["example_id"]`` (the local evaluator's correlation key),
-        then ``ex_<position>``, where ``position`` is the example's index in
-        the dataset. The ``ex_`` prefix is deliberate: it never matches the
+        A non-empty ``example_id`` / ``input_id`` in the input data is used
+        as-is (same type), since the external service may look rows up by it;
+        otherwise ``ex_<position>``, where ``position`` is the example's index
+        in the dataset. The ``ex_`` prefix is deliberate: it never matches the
         SDK's ``example_<idx>`` measure id, so the ids the backend stores for
         hybrid rows stay ``ex_<hash>_<idx>``.
         """
@@ -991,22 +990,17 @@ class HybridAPIEvaluator(BaseEvaluator):
         explicit = input_data.get("example_id") or input_data.get("input_id")
         if explicit:
             return explicit
-        metadata = getattr(example, "metadata", None)
-        if isinstance(metadata, Mapping):
-            metadata_id = metadata.get("example_id")
-            if metadata_id is not None and str(metadata_id):
-                return str(metadata_id)
         return f"ex_{position}"
 
     def _resolve_example_ids(self, examples: list[Any]) -> list[Any]:
         """Resolve every example's id and require them to be unique.
 
-        Ids correlate each output with its example inside a request and key
-        the per-example results (outcome matrix, failing examples), so a
-        repeated id would silently merge examples. Ids are compared as
-        strings, as the outcome matrix keys them (``1`` and ``"1"`` collide
-        there), while each id is still sent with its original type. The error
-        names positions only: an id may be customer content.
+        Ids correlate each output with its example inside a request (matched
+        with ``==``) and key the per-example results by ``str(id)`` (outcome
+        matrix, failing examples), so a repeated id would silently merge
+        examples. Two ids clash when they are equal under either rule:
+        ``1`` / ``1.0`` / ``True`` (``==``) and ``1`` / ``"1"`` (``str``).
+        The error names positions only: an id may be customer content.
 
         Raises:
             ValidationError: Two examples resolve to the same id.
@@ -1015,15 +1009,21 @@ class HybridAPIEvaluator(BaseEvaluator):
             self._resolve_example_id(example, position)
             for position, example in enumerate(examples)
         ]
-        first_position: dict[str, int] = {}
+        by_str: dict[str, int] = {}
+        by_value: dict[Any, int] = {}
         for position, example_id in enumerate(example_ids):
-            previous = first_position.setdefault(str(example_id), position)
+            previous = by_str.setdefault(str(example_id), position)
+            if previous == position:
+                try:
+                    previous = by_value.setdefault(example_id, position)
+                except TypeError:
+                    # Unhashable ids are compared by their string form only.
+                    pass
             if previous != position:
                 raise ValidationError(
                     f"Hybrid examples at positions {previous} and {position} "
                     "resolve to the same example_id; example ids must be unique "
-                    "(check example_id / input_id in the inputs and "
-                    "metadata['example_id'])"
+                    "(check example_id / input_id in the inputs)"
                 )
         return example_ids
 

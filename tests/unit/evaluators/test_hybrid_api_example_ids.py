@@ -77,15 +77,10 @@ def _evaluator(transport: MagicMock, batch_size: int = 1) -> HybridAPIEvaluator:
     return ev
 
 
-def _dataset(*questions: str, metadata: list[dict[str, Any]] | None = None) -> Dataset:
+def _dataset(*questions: str) -> Dataset:
     return Dataset(
         examples=[
-            EvaluationExample(
-                input_data={"q": q},
-                expected_output=q,
-                metadata=(metadata[i] if metadata else None),
-            )
-            for i, q in enumerate(questions)
+            EvaluationExample(input_data={"q": q}, expected_output=q) for q in questions
         ],
         name="hybrid-ids",
     )
@@ -128,29 +123,30 @@ async def test_single_batch_wire_ids_are_unchanged() -> None:
 
 
 @pytest.mark.asyncio
-async def test_metadata_example_id_is_honoured_after_input_ids() -> None:
+async def test_input_ids_are_kept_and_metadata_ids_do_not_reach_the_wire() -> None:
+    """Only ids in the inputs replace the positional fallback.
+
+    ``metadata["example_id"]`` (where a JSONL row's top-level ``example_id``
+    lands) is not sent: a single-batch run keeps the exact wire ids it had.
+    """
     transport = _echo_transport()
     dataset = Dataset(
         examples=[
-            EvaluationExample(
-                input_data={"q": "q0"}, metadata={"example_id": "example_7"}
-            ),
-            EvaluationExample(
-                input_data={"q": "q1", "example_id": "svc-1"},
-                metadata={"example_id": "meta-1"},
-            ),
-            EvaluationExample(input_data={"q": "q2"}),
+            EvaluationExample(input_data={"q": "q0"}, metadata={"example_id": "c-A"}),
+            EvaluationExample(input_data={"q": "q1", "example_id": "svc-1"}),
+            EvaluationExample(input_data={"q": "q2", "input_id": "svc-2"}),
         ],
         name="hybrid-ids",
     )
-    result = await _evaluator(transport).evaluate(lambda: None, {}, dataset)
+    result = await _evaluator(transport, batch_size=10).evaluate(
+        lambda: None, {}, dataset
+    )
 
-    # Row 1 carries both: the id in the inputs wins over the metadata id.
-    assert _sent_ids(transport) == ["example_7", "svc-1", "ex_2"]
+    assert transport.sent_batches == [["ex_0", "svc-1", "svc-2"]]
     assert [r.example_id for r in result.example_results] == [
-        "example_7",
+        "ex_0",
         "svc-1",
-        "ex_2",
+        "svc-2",
     ]
 
 
@@ -180,7 +176,27 @@ async def test_ids_that_collide_as_strings_are_duplicates() -> None:
     dataset = Dataset(
         examples=[
             EvaluationExample(input_data={"q": "q0", "example_id": 1}),
-            EvaluationExample(input_data={"q": "q1"}, metadata={"example_id": "1"}),
+            EvaluationExample(input_data={"q": "q1", "example_id": "1"}),
+        ],
+        name="hybrid-ids",
+    )
+
+    with pytest.raises(ValidationError, match="positions 0 and 1"):
+        await _evaluator(transport).evaluate(lambda: None, {}, dataset)
+    transport.execute.assert_not_awaited()
+
+
+@pytest.mark.parametrize(("first", "second"), [(1, 1.0), (True, 1)])
+@pytest.mark.asyncio
+async def test_ids_equal_under_output_matching_are_duplicates(
+    first: Any, second: Any
+) -> None:
+    """Outputs are matched with ``==``, so ``1``/``1.0`` and ``True``/``1`` clash."""
+    transport = _echo_transport()
+    dataset = Dataset(
+        examples=[
+            EvaluationExample(input_data={"q": "q0", "example_id": first}),
+            EvaluationExample(input_data={"q": "q1", "example_id": second}),
         ],
         name="hybrid-ids",
     )

@@ -83,10 +83,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   numbered the fallback example id from the position inside the batch, so at
   the default `batch_size=1` every example was sent and recorded as `ex_0`, and
   the outcome matrix merged them into one row. The fallback is now
-  `ex_<dataset position>`; an `example_id` / `input_id` in the inputs still
-  wins, followed by `metadata["example_id"]`. Ids the backend stores for hybrid
-  rows are unchanged. A hybrid dataset whose ids repeat now fails the trial
-  with a `ValidationError` naming the positions, before any request is sent.
+  `ex_<dataset position>`; a non-empty `example_id` / `input_id` in the inputs
+  still wins, as before. A dataset that fits in one batch sends the same ids as
+  before, and the ids the backend stores for hybrid rows are unchanged. A
+  hybrid dataset whose ids repeat (equal as values or as strings) now fails the
+  trial with a `ValidationError` naming the positions, before any request is
+  sent.
   `build_outcome_matrix` logs a warning when one trial repeats an example id
   instead of merging the cells silently.
 
