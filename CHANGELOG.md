@@ -8,6 +8,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Trace search filters: `model`, `tags`, `outcome_kind`, `has_outcome` (#2564).**
+  `BackendAnalyticsClient.search_observability_traces` and the
+  `observability_search_traces` MCP tool accept them and validate them before
+  any request: tags are exact, sent as repeated `tags` keys and must all match;
+  `outcome_kind` is one of the backend's outcome kinds; `has_outcome=False` is
+  sent explicitly. Free-text `search`, `user_id` and `session_id` remain
+  deliberately unsupported to keep the reader content-free.
 - **`ProjectUsageExperimentDTO`: optional `priced_configuration_runs` /
   `unpriced_configuration_runs`.** Both default to `None` and are read from the
   matching keys when present, so clients can tell an unmeasured cost (priced 0,
