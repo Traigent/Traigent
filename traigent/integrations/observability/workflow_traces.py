@@ -322,25 +322,45 @@ class TraceIngestionRequest:
 
 @dataclass
 class TraceIngestionResponse:
-    """Response from trace ingestion endpoint."""
+    """Response from trace ingestion endpoint.
+
+    ``spans_ingested_reported`` is False when the backend response carried no
+    non-negative integer ``spans_ingested``; ``spans_ingested`` is then 0 and
+    must not be read as "the backend ingested zero spans". A directly
+    constructed response is treated as stating its ``spans_ingested``.
+    """
 
     success: bool
     graph_id: str | None = None
     spans_ingested: int = 0
     trace_id: str | None = None
     error: str | None = None
+    spans_ingested_reported: bool = True
+    skipped_duplicates: int = 0
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TraceIngestionResponse:
         """Create from API response dictionary."""
         response_data = data.get("data", {})
+        spans_ingested = response_data.get("spans_ingested")
+        skipped_duplicates = response_data.get("skipped_duplicates")
+        reported = _is_count(spans_ingested)
         return cls(
             success=data.get("success", False),
             graph_id=response_data.get("graph_id"),
-            spans_ingested=response_data.get("spans_ingested", 0),
+            spans_ingested=spans_ingested if reported else 0,
             trace_id=response_data.get("trace_id"),
             error=data.get("error"),
+            spans_ingested_reported=reported,
+            skipped_duplicates=(
+                skipped_duplicates if _is_count(skipped_duplicates) else 0
+            ),
         )
+
+
+def _is_count(value: Any) -> bool:
+    """Return True for a non-negative int that is not a bool."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 # =============================================================================
