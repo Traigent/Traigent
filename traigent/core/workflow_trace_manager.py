@@ -292,14 +292,18 @@ class WorkflowTraceManager:
 
                 if response.success:
                     total_sent += len(spans)
-                    if response.spans_ingested_reported:
-                        ingested = response.spans_ingested
+                    # getattr: a custom tracker may return a response object
+                    # without these fields; treat that as "count not reported".
+                    if getattr(response, "spans_ingested_reported", False):
+                        # Clamp so an over-report in one group cannot hide a
+                        # shortfall in another.
+                        ingested = min(response.spans_ingested, len(spans))
+                        shortfall = len(spans) - ingested
                         total_ingested += ingested
-                        if ingested < len(spans):
-                            total_shortfall += len(spans) - ingested
-                            total_duplicates += min(
-                                response.skipped_duplicates, len(spans) - ingested
-                            )
+                        total_shortfall += shortfall
+                        total_duplicates += min(
+                            getattr(response, "skipped_duplicates", 0), shortfall
+                        )
                     else:
                         total_unconfirmed += len(spans)
                     if response.graph_id:
@@ -319,24 +323,38 @@ class WorkflowTraceManager:
                         )
 
             graph_msg = f", graph_id={graph_id}" if graph_id else ""
-            if total_shortfall > 0:
+            unconfirmed_msg = (
+                f"; {total_unconfirmed} more submitted with the ingested count "
+                "unconfirmed"
+                if total_unconfirmed
+                else ""
+            )
+            total_dropped = total_shortfall - total_duplicates
+            if total_dropped > 0:
                 logger.warning(
                     "Backend ingested %d of %d workflow spans for trace %s...%s "
-                    "(%d skipped as duplicates, %d not ingested for an "
+                    "(%d skipped as duplicate span ids, %d not ingested for an "
                     "unreported reason%s); the workflow traces view will be "
-                    "missing spans.",
+                    "missing those spans.",
                     total_ingested,
                     total_sent - total_unconfirmed,
                     trace_id[:8],
                     graph_msg,
                     total_duplicates,
-                    total_shortfall - total_duplicates,
-                    (
-                        f"; {total_unconfirmed} more submitted with the "
-                        "ingested count unconfirmed"
-                        if total_unconfirmed
-                        else ""
-                    ),
+                    total_dropped,
+                    unconfirmed_msg,
+                )
+            elif total_shortfall > 0:
+                logger.warning(
+                    "Backend ingested %d of %d workflow spans for trace %s...%s; "
+                    "%d were skipped as duplicate span ids (already stored, or "
+                    "repeated within the batch)%s.",
+                    total_ingested,
+                    total_sent - total_unconfirmed,
+                    trace_id[:8],
+                    graph_msg,
+                    total_duplicates,
+                    unconfirmed_msg,
                 )
             elif total_unconfirmed > 0:
                 logger.info(

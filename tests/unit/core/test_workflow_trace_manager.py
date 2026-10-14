@@ -28,9 +28,6 @@ class _FakeIngestResponse:
     success: bool = True
     graph_id: str | None = None
     error: str | None = None
-    spans_ingested: int = 0
-    spans_ingested_reported: bool = False
-    skipped_duplicates: int = 0
 
 
 def _make_manager(
@@ -479,7 +476,7 @@ class TestTraceIngestionResponseCounts:
         assert resp.spans_ingested_reported is False
         assert resp.skipped_duplicates == 0
 
-    @pytest.mark.parametrize("bad", ["3", None, 2.5, True])
+    @pytest.mark.parametrize("bad", ["3", None, 2.5, True, -1])
     def test_non_integer_count_is_marked_unreported(self, bad: Any) -> None:
         resp = _ingest_resp({"spans_ingested": bad, "skipped_duplicates": bad})
         assert resp.spans_ingested == 0
@@ -527,8 +524,9 @@ class TestSubmitTracesIngestCounts:
         warnings = [msg for lvl, msg in msgs if lvl == logging.WARNING]
         assert len(warnings) == 1, msgs
         assert "ingested 1 of 3 workflow spans" in warnings[0]
-        assert "1 skipped as duplicates" in warnings[0]
+        assert "1 skipped as duplicate span ids" in warnings[0]
         assert "1 not ingested" in warnings[0]
+        assert "missing those spans" in warnings[0]
 
     @pytest.mark.asyncio
     async def test_absent_count_is_reported_as_unconfirmed(self, caplog) -> None:
@@ -563,3 +561,96 @@ class TestSubmitTracesIngestCounts:
         warnings = [msg for lvl, msg in _span_msgs(caplog) if lvl == logging.WARNING]
         assert len(warnings) == 1, warnings
         assert "ingested 2 of 3 workflow spans" in warnings[0]
+
+    @pytest.mark.asyncio
+    async def test_duplicates_only_shortfall_does_not_claim_missing(
+        self, caplog
+    ) -> None:
+        import logging
+
+        await _submit(
+            [_ingest_resp({"spans_ingested": 1, "skipped_duplicates": 2})],
+            [_FakeSpan(trace_id="t1") for _ in range(3)],
+            caplog,
+        )
+        warnings = [msg for lvl, msg in _span_msgs(caplog) if lvl == logging.WARNING]
+        assert len(warnings) == 1, warnings
+        assert "ingested 1 of 3 workflow spans" in warnings[0]
+        assert "2 were skipped as duplicate span ids" in warnings[0]
+        assert "missing" not in warnings[0]
+        assert "unreported reason" not in warnings[0]
+
+    @pytest.mark.asyncio
+    async def test_duplicate_count_is_clamped_to_the_shortfall(self, caplog) -> None:
+        import logging
+
+        await _submit(
+            [_ingest_resp({"spans_ingested": 2, "skipped_duplicates": 5})],
+            [_FakeSpan(trace_id="t1") for _ in range(3)],
+            caplog,
+        )
+        warnings = [msg for lvl, msg in _span_msgs(caplog) if lvl == logging.WARNING]
+        assert len(warnings) == 1, warnings
+        assert "1 were skipped as duplicate span ids" in warnings[0]
+
+    @pytest.mark.asyncio
+    async def test_over_report_cannot_hide_another_groups_shortfall(
+        self, caplog
+    ) -> None:
+        import logging
+
+        await _submit(
+            [
+                _ingest_resp({"spans_ingested": 5}),
+                _ingest_resp({"spans_ingested": 0}),
+            ],
+            [
+                _FakeSpan(trace_id="t1", configuration_run_id="run-1"),
+                _FakeSpan(trace_id="t1", configuration_run_id="run-1"),
+                _FakeSpan(trace_id="t1", configuration_run_id="run-1"),
+                _FakeSpan(trace_id="t1", configuration_run_id="run-2"),
+                _FakeSpan(trace_id="t1", configuration_run_id="run-2"),
+            ],
+            caplog,
+        )
+        warnings = [msg for lvl, msg in _span_msgs(caplog) if lvl == logging.WARNING]
+        assert len(warnings) == 1, warnings
+        assert "ingested 3 of 5 workflow spans" in warnings[0]
+        assert "2 not ingested" in warnings[0]
+
+    @pytest.mark.asyncio
+    async def test_mixed_shortfall_and_unconfirmed_groups(self, caplog) -> None:
+        import logging
+
+        await _submit(
+            [
+                _ingest_resp({"spans_ingested": 0}),
+                _ingest_resp({"graph_id": "g"}),
+            ],
+            [
+                _FakeSpan(trace_id="t1", configuration_run_id="run-1"),
+                _FakeSpan(trace_id="t1", configuration_run_id="run-2"),
+                _FakeSpan(trace_id="t1", configuration_run_id="run-2"),
+            ],
+            caplog,
+        )
+        warnings = [msg for lvl, msg in _span_msgs(caplog) if lvl == logging.WARNING]
+        assert len(warnings) == 1, warnings
+        assert "ingested 0 of 1 workflow spans" in warnings[0]
+        assert "2 more submitted with the ingested count unconfirmed" in warnings[0]
+
+    @pytest.mark.asyncio
+    async def test_response_without_count_fields_is_unconfirmed(self, caplog) -> None:
+        import logging
+
+        await _submit(
+            [_FakeIngestResponse(success=True), _FakeIngestResponse(success=True)],
+            [
+                _FakeSpan(trace_id="t1", configuration_run_id="run-1"),
+                _FakeSpan(trace_id="t1", configuration_run_id="run-2"),
+            ],
+            caplog,
+        )
+        msgs = _span_msgs(caplog)
+        assert not any(lvl >= logging.WARNING for lvl, _ in msgs), msgs
+        assert any("count unconfirmed" in msg for _, msg in msgs), msgs

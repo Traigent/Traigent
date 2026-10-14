@@ -323,8 +323,9 @@ class TraceIngestionResponse:
     """Response from trace ingestion endpoint.
 
     ``spans_ingested_reported`` is False when the backend response carried no
-    integer ``spans_ingested``; ``spans_ingested`` is then 0 by default and
-    must not be read as "the backend ingested zero spans".
+    non-negative integer ``spans_ingested``; ``spans_ingested`` is then 0 and
+    must not be read as "the backend ingested zero spans". A directly
+    constructed response is treated as stating its ``spans_ingested``.
     """
 
     success: bool
