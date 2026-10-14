@@ -83,18 +83,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   numbered the fallback example id from the position inside the batch, so at
   the default `batch_size=1` every example was sent and recorded as `ex_0`, and
   the outcome matrix merged them into one row. The fallback is now
-  `ex_<dataset position>`; a non-empty `example_id` / `input_id` in the inputs
-  still wins, as before. A dataset that fits in one batch sends the same ids as
+  `ex_<dataset position>`; a string `example_id` (else `input_id`) in the
+  inputs still wins. A dataset that fits in one batch sends the same ids as
   before, and the ids the backend stores for hybrid rows are unchanged. A
   hybrid dataset whose ids repeat now fails the trial with a `ValidationError`
-  naming the positions, before any request is sent.
+  naming the positions, before any request is sent. `build_outcome_matrix`
+  logs a warning when one trial repeats an example id instead of merging the
+  cells silently.
 - **Breaking for non-string hybrid ids (#2575):** an `example_id` / `input_id`
   in the inputs that is not a string (an int, float, bool, list or dict) now
   fails the trial with a `ValidationError` naming the position and type. The
   hybrid protocol defines these ids as strings echoed exactly; a dataset with
-  unique int ids that ran before must convert them to strings.
-  `build_outcome_matrix` logs a warning when one trial repeats an example id
-  instead of merging the cells silently.
+  unique int ids that ran before must convert them to strings. A falsy
+  non-string `example_id` (`0`, `False`) is refused too; it used to be
+  replaced by the `input_id` or the fallback id.
 
 ## [0.30.0] - 2026-09-26
 

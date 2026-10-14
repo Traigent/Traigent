@@ -68,6 +68,16 @@ _HYBRID_TRANSPORT_RETRY_CONFIG = RetryConfig(
 )
 
 
+def _is_absent_id(value: Any) -> bool:
+    """True for a missing id (``None`` or ``""``).
+
+    Only a ``str`` is compared with ``""``: values such as ``pandas.NA`` or a
+    NumPy array raise on ``==`` / truth tests, and must reach the type check
+    (and its ``ValidationError``) instead.
+    """
+    return value is None or (isinstance(value, str) and value == "")
+
+
 @dataclass
 class HybridExampleResult:
     """Result for a single example in hybrid evaluation.
@@ -981,11 +991,11 @@ class HybridAPIEvaluator(BaseEvaluator):
         """Return the id an example is sent and recorded under.
 
         An ``example_id`` (else ``input_id``) in the input data that is not
-        ``None`` or ``""`` is used as-is, since the external service may look rows up by it; otherwise
-        ``ex_<position>``, where ``position`` is the example's index in the
-        dataset. The ``ex_`` prefix is deliberate: it never matches the SDK's
-        ``example_<idx>`` measure id, so the ids the backend stores for hybrid
-        rows stay ``ex_<hash>_<idx>``.
+        ``None`` or ``""`` is used as-is, since the external service may look
+        rows up by it; otherwise ``ex_<position>``, where ``position`` is the
+        example's index in the dataset. The ``ex_`` prefix is deliberate: it
+        never matches the SDK's ``example_<idx>`` measure id, so the ids the
+        backend stores for hybrid rows stay ``ex_<hash>_<idx>``.
 
         Raises:
             ValidationError: The id in the input data is not a string. The
@@ -995,9 +1005,9 @@ class HybridAPIEvaluator(BaseEvaluator):
         """
         input_data = self._extract_input(example)
         explicit = input_data.get("example_id")
-        if explicit is None or explicit == "":
+        if _is_absent_id(explicit):
             explicit = input_data.get("input_id")
-        if explicit is None or explicit == "":
+        if _is_absent_id(explicit):
             return f"ex_{position}"
         if not isinstance(explicit, str):
             raise ValidationError(

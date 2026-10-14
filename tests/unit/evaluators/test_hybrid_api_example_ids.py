@@ -150,6 +150,38 @@ async def test_input_ids_are_kept_and_metadata_ids_do_not_reach_the_wire() -> No
     ]
 
 
+@pytest.mark.parametrize(
+    ("input_data", "expected"),
+    [
+        ({"example_id": "a", "input_id": "b"}, "a"),
+        ({"example_id": "", "input_id": "svc"}, "svc"),
+        ({"example_id": None, "input_id": "svc"}, "svc"),
+        ({"example_id": ""}, "ex_0"),
+        ({"example_id": "", "input_id": ""}, "ex_0"),
+    ],
+    ids=[
+        "example_id-wins",
+        "empty-falls-to-input_id",
+        "none-falls-to-input_id",
+        "empty-is-absent",
+        "both-empty",
+    ],
+)
+@pytest.mark.asyncio
+async def test_example_id_precedence_and_absent_values(
+    input_data: dict[str, Any], expected: str
+) -> None:
+    """``example_id`` beats ``input_id``; only ``None`` / ``""`` count as absent."""
+    transport = _echo_transport()
+    dataset = Dataset(
+        examples=[EvaluationExample(input_data={"q": "q0", **input_data})],
+        name="hybrid-ids",
+    )
+    await _evaluator(transport).evaluate(lambda: None, {}, dataset)
+
+    assert _sent_ids(transport) == [expected]
+
+
 @pytest.mark.asyncio
 async def test_duplicate_ids_raise_before_any_request() -> None:
     transport = _echo_transport()
@@ -198,6 +230,24 @@ async def test_non_string_ids_are_rejected_before_any_request(bad_id: Any) -> No
         f"{type(bad_id).__name__}; the hybrid protocol requires a string id"
     )
     transport.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ids_that_break_truth_tests_get_the_validation_error() -> None:
+    """``pandas.NA`` / NumPy arrays raise on ``==``; they still get the clear error."""
+    np = pytest.importorskip("numpy")
+    pd = pytest.importorskip("pandas")
+    for bad_id, type_name in ((pd.NA, "NAType"), (np.array(["a", "b"]), "ndarray")):
+        transport = _echo_transport()
+        dataset = Dataset(
+            examples=[EvaluationExample(input_data={"q": "q0", "example_id": bad_id})],
+            name="hybrid-ids",
+        )
+        with pytest.raises(
+            ValidationError, match=f"position 0 .* of type {type_name};"
+        ):
+            await _evaluator(transport).evaluate(lambda: None, {}, dataset)
+        transport.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio
