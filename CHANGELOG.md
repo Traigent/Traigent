@@ -35,10 +35,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- **BREAKING: non-string hybrid example ids are refused (#2575).** An
-  `example_id` / `input_id` in the inputs that is not a string (an int, float,
-  bool, list or dict) now fails the trial with a `ValidationError` naming the
-  position, the field and its type. The hybrid protocol defines these ids as
+- **BREAKING: non-string hybrid example ids are refused (#2575).** When the
+  id a row resolves to (`example_id`, else `input_id`) is not a string (an
+  int, float, bool, list or dict), the trial now fails with a
+  `ValidationError` naming the position, the field and its type. The hybrid protocol defines these ids as
   strings echoed exactly; a dataset with unique int ids that ran before must
   convert them to strings. A falsy non-string `example_id` (`0`, `False`) is
   refused too; it used to be replaced by the `input_id` or the fallback id.
@@ -99,7 +99,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   hybrid dataset whose ids repeat now fails the trial with a `ValidationError`
   naming the positions, before any request is sent. `build_outcome_matrix`
   logs a warning when one trial repeats an example id instead of merging the
-  cells silently.
+  cells silently. Statistical-significance tests, the best-config margin and
+  the semantic-saturation stop condition, which key per-example scores by id,
+  also saw one example per hybrid trial; they now see every example, so their
+  results for hybrid runs can change.
 
 ## [0.30.0] - 2026-09-26
 

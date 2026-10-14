@@ -751,8 +751,9 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         Raises:
             EvaluationError: If evaluation fails.
-            ValidationError: If an ``example_id`` / ``input_id`` in the inputs
-                is not a string, or two examples resolve to the same id.
+            ValidationError: If the id an example resolves to (``example_id``,
+                else ``input_id``) is not a string, or two examples resolve to
+                the same id.
         """
         # Resolve every example's id once, from its dataset position, before any
         # budget is reserved or any request is sent.
