@@ -2780,6 +2780,7 @@ class TestDirectClientCallsHonorContentMode:
         gate is one shared enforcement point, not two independent ones."""
         sent_batches: list[list[dict]] = []
         client = _make_recording_client(lambda traces: sent_batches.append(traces))
+        # pragma: allowlist nextline secret
         secret = "top-secret-value"
 
         @observe("decorated-call", client=client, content_mode=mode)
@@ -5013,10 +5014,10 @@ class TestM5FullPipelineNumericExemption:
         client.start_trace(
             "m5-root-counterexamples-trace",
             metadata={
-                "passwd": "hunter2",
+                "passwd": "hunter2",  # pragma: allowlist secret
                 "jwt": "eyJhbGciOiJIUzI1NiJ9.secret.sig",
                 "bearer": "some-bearer-value",
-                "privateKey": "not-a-real-key-placeholder",
+                "privateKey": "not-a-real-key-placeholder",  # pragma: allowlist secret
                 "authStuff": "should also be masked",
             },
             content_mode="record",
@@ -5197,7 +5198,8 @@ class TestA4KeyBasedScrubbingCoverage:
         client.start_trace(
             "prompt-reference-secret-trace",
             prompt_reference=PromptReferenceDTO(
-                name="greeting", variables={"api_key": "sk-shouldnotship"}
+                name="greeting",
+                variables={"api_key": "sk-shouldnotship"},  # pragma: allowlist secret
             ),
         )
         client.flush()
@@ -6516,3 +6518,71 @@ class TestFinding2RealTransportInterleavingRegression:
         assert matching["status"] == "running", (
             f"expected the FROZEN pre-mutation status, got {matching['status']!r}"
         )
+
+
+def test_observability_client_sends_multi_tag_filters_as_repeated_keys():
+    """Multi-value list filters must reach the backend as repeated query keys.
+
+    The backend reads list filters with ``request.args.getlist(key)`` and keeps each
+    received value as one literal item, so ``tags=vip%2Cbeta`` is the single tag
+    "vip,beta" and matches nothing. ``tags=vip&tags=beta`` parses as two tags.
+    """
+    from urllib.parse import parse_qs, urlsplit
+
+    request_paths: list[str] = []
+    empty_page = {
+        "data": {
+            "items": [],
+            "pagination": {
+                "page": 1,
+                "per_page": 20,
+                "total": 0,
+                "total_pages": 0,
+                "has_next": False,
+                "has_prev": False,
+            },
+        }
+    }
+
+    def request_sender(method, path, payload):
+        request_paths.append(path)
+        return copy.deepcopy(empty_page)
+
+    client = ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            batch_size=10,
+            max_buffer_age=0.1,
+            max_queue_size=10,
+        ),
+        sender=lambda traces: None,
+        request_sender=request_sender,
+    )
+
+    client.list_traces(tags=["vip", " beta ", "", "  "])
+    client.list_sessions(tags=["vip", "beta"])
+    list(client.iter_traces(tags=["vip", "beta"]))
+    list(client.iter_sessions(tags=["vip", "beta"]))
+    # A single string stays one value: a tag may legitimately contain a comma.
+    client.list_traces(tags="vip,beta")
+    # A list of only blank items omits the key entirely.
+    client.list_traces(tags=["", "  "])
+    client.close()
+
+    def tags_of(path: str) -> list[str] | None:
+        return parse_qs(urlsplit(path).query).get("tags")
+
+    assert [urlsplit(path).path for path in request_paths] == [
+        "/traces",
+        "/sessions",
+        "/traces",
+        "/sessions",
+        "/traces",
+        "/traces",
+    ]
+    for path in request_paths[:4]:
+        assert tags_of(path) == ["vip", "beta"], path
+    assert tags_of(request_paths[4]) == ["vip,beta"]
+    assert tags_of(request_paths[5]) is None
+    assert request_paths[1] == "/sessions?page=1&per_page=20&tags=vip&tags=beta"
