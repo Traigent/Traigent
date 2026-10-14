@@ -146,3 +146,61 @@ class TestFailureModes:
 
         assert _contents(Dataset.from_jsonl(str(out))) == _contents(source)
         assert sorted(p.name for p in tmp_path.iterdir()) == ["out.jsonl"]
+
+    @pytest.mark.parametrize("failing_call", ["write", "replace"])
+    def test_io_failure_mid_write_preserves_destination_and_cleans_up(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing_call: str
+    ) -> None:
+        # The failure happens after serialization, inside the filesystem
+        # write or the rename, so only a temp-file-then-rename writer passes.
+        import os
+
+        out = tmp_path / "out.jsonl"
+        original = b"previous export\n"
+        out.write_bytes(original)
+        real_fdopen = os.fdopen
+
+        def boom(*_args: Any, **_kwargs: Any) -> None:
+            raise OSError(28, "No space left on device")
+
+        class _PartialWriter:
+            """Writes some bytes, then fails like a full disk."""
+
+            def __init__(self, handle: Any) -> None:
+                self._handle = handle
+
+            def __enter__(self) -> _PartialWriter:
+                return self
+
+            def __exit__(self, *_exc: object) -> None:
+                self._handle.close()
+
+            def writelines(self, _lines: Any) -> None:
+                self._handle.write("partial")
+                self._handle.flush()
+                boom()
+
+        if failing_call == "write":
+            monkeypatch.setattr(
+                os, "fdopen", lambda *a, **k: _PartialWriter(real_fdopen(*a, **k))
+            )
+        else:
+            monkeypatch.setattr(os, "replace", boom)
+
+        with pytest.raises(OSError):
+            _dataset(ROWS[:1]).to_jsonl(out)
+
+        assert out.read_bytes() == original
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["out.jsonl"]
+
+    def test_new_file_permissions_follow_the_umask(self, tmp_path: Path) -> None:
+        import os
+        import stat
+
+        previous = os.umask(0o022)
+        try:
+            out = tmp_path / "out.jsonl"
+            _dataset(ROWS[:1]).to_jsonl(out)
+        finally:
+            os.umask(previous)
+        assert stat.S_IMODE(out.stat().st_mode) == 0o644

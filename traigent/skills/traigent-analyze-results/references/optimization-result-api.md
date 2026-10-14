@@ -118,28 +118,29 @@ failing = results.failing_examples()                    # e.g. ["example_3", "q-
 failing = results.failing_examples(threshold=0.8, mode="best_config")
 ```
 
-To turn a run's failures into a JSONL eval dataset, use the CLI. It joins the
-failing ids to rows of the **original, unmodified** dataset (by
-`metadata["example_id"]` or the positional `example_<index>` handle), writes
-`{"input", "expected_output", "metadata"}` rows that `Dataset.from_jsonl` reads
-back unchanged, and stays entirely local:
+To turn a run's failures into a JSONL eval dataset, use the CLI. Each failing
+id is joined to the one row of the dataset whose input and expected_output
+equal what the run recorded for that id, so pass the dataset the run evaluated.
+It writes `{"input", "expected_output", "metadata"}` rows that
+`Dataset.from_jsonl` reads back, and stays entirely local:
 
 ```bash
 traigent results export-failures my_run --dataset eval.jsonl --out regressions.jsonl
-traigent results export-failures <logger-run-dir> --dataset eval.jsonl \
+traigent results export-failures my_run --dataset eval.jsonl \
     --out regressions.jsonl --threshold 0.8 --mode best_config
 ```
 
 `RUN` is a saved result name (as in `traigent results show`, `--storage-dir`
-defaults to `.traigent`) or an optimization-logger run directory / its
-`artifacts/` directory. `local:<session_id>` sources are not supported. If any
-id matches no row or more than one row, the command fails and writes nothing;
-keyed content identities (`ex1:` ids from a purpose-key grant) cannot be
-resolved locally and fail the same way. With no failing examples it prints
+defaults to `.traigent`). Optimization-logger run directories and
+`local:<session_id>` sources are refused: they do not keep the example inputs
+the join needs. If any id has no recorded input (for example, example content
+logging was turned off), matches no row, or matches more than one row, the
+command fails and writes nothing. Exported rows without a `metadata.example_id`
+gain their source id (`example_<index>`). With no failing examples it prints
 `No failing examples; no dataset written` and leaves `--out` untouched. The
 same pieces are available in Python as
-`traigent.utils.regression_dataset.select_examples_by_id(dataset, ids)` and
-`Dataset.to_jsonl(path)`.
+`traigent.utils.regression_dataset.select_examples_by_id(dataset, ids, results)`
+and `Dataset.to_jsonl(path)`.
 
 ---
 

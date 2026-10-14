@@ -14,15 +14,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `mode="best_config"`, in every trial of the winning configuration), read from
   the per-example outcome matrix without re-running anything; the selector is
   `traigent.utils.outcome_matrix.select_failing_example_ids`.
-  `traigent results export-failures RUN --dataset PATH --out PATH` joins those
-  ids to the original dataset's rows and writes them as JSONL that
-  `Dataset.from_jsonl` reads back unchanged, failing without writing if any id
-  is unresolved or ambiguous. `RUN` is a saved result name or an
-  optimization-logger run directory; `local:` session sources and keyed `ex1:`
-  content identities are not supported yet. New helpers:
-  `Dataset.to_jsonl()` (atomic, refuses values JSON would alter) and
-  `traigent.utils.regression_dataset.select_examples_by_id()`. Nothing is sent
-  over the network.
+  `traigent results export-failures RUN --dataset PATH --out PATH` joins each
+  id to the one dataset row whose input and expected_output equal what the run
+  recorded for that id (never by guessing the evaluator's id scheme), and
+  writes the rows as JSONL that `Dataset.from_jsonl` reads back. It writes
+  nothing if any id has no recorded input, matches no row, or matches more than
+  one. Exported rows without a `metadata.example_id` gain their source id
+  (`example_<index>`) so the subset's ids stay unique. `RUN` is a saved result
+  name; logger run directories (which record no example inputs) and `local:`
+  sessions are refused. New helpers: `Dataset.to_jsonl()` (atomic, refuses
+  values JSON would alter) and
+  `traigent.utils.regression_dataset.select_examples_by_id(dataset, ids, run)`.
+  Nothing is sent over the network.
 - **`ProjectUsageExperimentDTO`: optional `priced_configuration_runs` /
   `unpriced_configuration_runs`.** Both default to `None` and are read from the
   matching keys when present, so clients can tell an unmeasured cost (priced 0,

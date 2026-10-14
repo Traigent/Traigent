@@ -1,16 +1,17 @@
 """Tests for ``traigent results export-failures`` (Traigent#2565).
 
 The command selects a run's failing example ids from already-collected
-outcomes, joins them to the ORIGINAL local dataset file, and writes a JSONL
+outcomes, joins each to the ORIGINAL local dataset row whose input and
+expected_output equal what the run recorded for that id, and writes a JSONL
 regression dataset loadable by ``Dataset.from_jsonl``. Covered here:
 
-- both supported ``<run>`` sources: a saved result name (``PersistenceManager``,
-  same default storage dir as ``results show``) and an optimization-logger run
-  directory or its ``artifacts/`` directory;
+- the ``<run>`` source is a saved result name (``PersistenceManager``, same
+  default storage dir as ``results show``); a directory (an
+  optimization-logger run, which records no example inputs) is refused;
 - ``--threshold`` / ``--mode`` pass through to the shared selector;
-- fail loudly (non-zero exit, ``--out`` untouched) on unresolvable ids, keyed
-  ``ex1:`` ids, missing runs, a missing best-config artifact,
-  ``local:<session_id>`` runs, and ``--out`` resolving to the dataset itself;
+- fail loudly (non-zero exit, ``--out`` untouched) on unresolvable ids, runs
+  that did not log example content, missing runs, ``local:<session_id>`` runs,
+  and ``--out`` resolving to the dataset itself;
 - zero failures exit 0 with a message and never touch ``--out``.
 
 No LLM calls and no network: results are built in memory and saved locally.
@@ -36,7 +37,6 @@ from traigent.api.types import (
 )
 from traigent.cli.main import cli
 from traigent.evaluators.base import Dataset
-from traigent.utils.optimization_logger import OptimizationLogger
 from traigent.utils.persistence import PersistenceManager
 
 #: The original dataset rows. Positional ids example_0..example_2 are what the
@@ -59,11 +59,19 @@ BEST_CONFIG = {"model": "a"}
 NO_FAILURES_MESSAGE = "No failing examples; no dataset written"
 
 
+#: What the run recorded for each id: the content of the row it evaluated.
+RECORDED = {
+    f"example_{index}": (row["input"], row["output"])
+    for index, row in enumerate(DATASET_ROWS)
+}
+
+
 def _example(example_id: str, accuracy: float) -> dict[str, Any]:
+    input_data, expected = RECORDED.get(example_id, ({"q": example_id}, "?"))
     return ExampleResult(
         example_id=example_id,
-        input_data={"redacted": True},
-        expected_output="(not the source of truth)",
+        input_data=input_data,
+        expected_output=expected,
         actual_output="x",
         metrics={"accuracy": accuracy},
         execution_time=0.1,
@@ -139,18 +147,6 @@ def storage_dir(workspace: Path) -> Path:
     return storage
 
 
-@pytest.fixture
-def logger_run_dir(workspace: Path) -> Path:
-    log = OptimizationLogger(
-        experiment_name="exp_2565",
-        session_id="sess25650000",
-        execution_mode="local",
-        base_path=workspace / "logs",
-    )
-    log.log_session_end(_result())
-    return Path(log.run_path)
-
-
 def _invoke(
     runner: CliRunner,
     run: str,
@@ -184,11 +180,6 @@ class TestFixtureSanity:
             "example_2",
         ]
         assert loaded.best_config == BEST_CONFIG
-
-    def test_logger_run_dir_has_both_artifacts(self, logger_run_dir: Path) -> None:
-        names = {p.name for p in (logger_run_dir / "artifacts").iterdir()}
-        assert any(n.startswith("outcome_matrix") for n in names), names
-        assert any(n.startswith("best_config") for n in names), names
 
 
 class TestRegistration:
@@ -233,9 +224,10 @@ class TestSavedResultSource:
         out = workspace / "failures.jsonl"
         rows = _read_rows(out)
         assert len(rows) == 1
-        # Content comes from the ORIGINAL dataset, not the redacted trial record.
         assert rows[0]["input"] == DATASET_ROWS[1]["input"]
         assert rows[0]["expected_output"] == DATASET_ROWS[1]["output"]
+        # A row without a metadata example_id gains its source id.
+        assert rows[0]["metadata"] == {"example_id": "example_1"}
         assert "failures.jsonl" in plain(result.output)
 
     def test_output_round_trips_through_from_jsonl(
@@ -246,7 +238,14 @@ class TestSavedResultSource:
 
         exported = Dataset.from_jsonl(str(workspace / "failures.jsonl"))
         original = Dataset.from_jsonl(str(workspace / "data.jsonl"))
-        assert _contents(exported) == [_contents(original)[1]]
+        assert _contents(exported) == [
+            (
+                {"question": "Capital of France? — ünïcode"},
+                "Paris",
+                {"example_id": "example_1"},
+            )
+        ]
+        assert exported.examples[0].input_data == original.examples[1].input_data
 
     def test_best_config_mode_and_metadata_are_preserved(
         self, runner: CliRunner, workspace: Path, storage_dir: Path
@@ -266,8 +265,13 @@ class TestSavedResultSource:
         original = Dataset.from_jsonl(str(workspace / "data.jsonl"))
         # Winner (t0) got example_1 and example_2 wrong; original order kept,
         # and example_2's top-level "tag" survives as metadata.
-        assert _contents(exported) == _contents(original)[1:]
-        assert exported.examples[1].metadata == {"tag": "sky"}
+        assert [(e.input_data, e.expected_output) for e in exported] == [
+            (e.input_data, e.expected_output) for e in original.examples[1:]
+        ]
+        assert exported.examples[1].metadata == {
+            "tag": "sky",
+            "example_id": "example_2",
+        }
 
     def test_default_storage_dir_matches_results_show(
         self,
@@ -305,57 +309,20 @@ class TestSavedResultSource:
         assert not (workspace / "failures.jsonl").exists()
 
 
-class TestLoggerRunSource:
-    @pytest.mark.parametrize("use_artifacts_dir", [False, True])
-    def test_exports_from_run_or_artifacts_dir(
+class TestDirectorySourceIsRefused:
+    def test_a_run_directory_is_refused_with_a_reason(
         self,
         runner: CliRunner,
         workspace: Path,
-        logger_run_dir: Path,
-        use_artifacts_dir: bool,
+        plain: Callable[[str], str],
     ) -> None:
-        run = logger_run_dir / "artifacts" if use_artifacts_dir else logger_run_dir
-        result = _invoke(runner, str(run), workspace)
+        run_dir = workspace / "logs" / "runs" / "r1"
+        (run_dir / "artifacts").mkdir(parents=True)
 
-        assert result.exit_code == 0, result.output
-        rows = _read_rows(workspace / "failures.jsonl")
-        assert [r["input"] for r in rows] == [DATASET_ROWS[1]["input"]]
-
-    def test_best_config_mode_reads_the_best_config_artifact(
-        self, runner: CliRunner, workspace: Path, logger_run_dir: Path
-    ) -> None:
-        result = _invoke(
-            runner, str(logger_run_dir), workspace, "--mode", "best_config"
-        )
-        assert result.exit_code == 0, result.output
-        rows = _read_rows(workspace / "failures.jsonl")
-        assert [r["input"] for r in rows] == [
-            DATASET_ROWS[1]["input"],
-            DATASET_ROWS[2]["input"],
-        ]
-
-    def test_best_config_mode_without_the_artifact_fails_loudly(
-        self, runner: CliRunner, workspace: Path, logger_run_dir: Path
-    ) -> None:
-        for artifact in (logger_run_dir / "artifacts").glob("best_config*.json"):
-            artifact.unlink()
-
-        result = _invoke(
-            runner, str(logger_run_dir), workspace, "--mode", "best_config"
-        )
+        result = _invoke(runner, str(run_dir), workspace)
 
         assert result.exit_code != 0
-        assert not (workspace / "failures.jsonl").exists()
-
-    def test_run_dir_without_an_outcome_matrix_fails_loudly(
-        self, runner: CliRunner, workspace: Path
-    ) -> None:
-        empty_run = workspace / "logs" / "empty_run"
-        (empty_run / "artifacts").mkdir(parents=True)
-
-        result = _invoke(runner, str(empty_run), workspace)
-
-        assert result.exit_code != 0
+        assert "directory" in plain(result.output)
         assert not (workspace / "failures.jsonl").exists()
 
 
@@ -393,16 +360,24 @@ class TestFailLoudly:
         assert result.exit_code != 0
         assert out.read_text(encoding="utf-8") == "previous export\n"
 
-    def test_keyed_content_identity_ids_are_rejected(
-        self, runner: CliRunner, workspace: Path
+    def test_run_without_logged_example_content_is_refused(
+        self,
+        runner: CliRunner,
+        workspace: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        plain: Callable[[str], str],
     ) -> None:
+        # Saved with example content opted out: ids and metrics survive, the
+        # inputs do not, so no id can be tied to a row.
+        monkeypatch.setenv("TRAIGENT_LOG_EXAMPLE_CONTENT", "false")
         storage = workspace / "results"
-        keyed = {"t0": {"ex1:00ff00ff00ff": 0.0}, "t1": {"ex1:00ff00ff00ff": 0.0}}
-        PersistenceManager(str(storage)).save_result(_result(keyed), name="keyed")
+        PersistenceManager(str(storage)).save_result(_result(), name="nocontent")
+        monkeypatch.delenv("TRAIGENT_LOG_EXAMPLE_CONTENT")
 
-        result = _invoke(runner, "keyed", workspace, "--storage-dir", str(storage))
+        result = _invoke(runner, "nocontent", workspace, "--storage-dir", str(storage))
 
         assert result.exit_code != 0
+        assert "example_1" in plain(result.output)
         assert not (workspace / "failures.jsonl").exists()
 
     def test_unknown_run_exits_nonzero(

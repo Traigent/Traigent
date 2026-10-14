@@ -10,7 +10,7 @@ import json
 import math
 import os
 import re
-import tempfile
+import secrets
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -1203,16 +1203,19 @@ class Dataset:
             lines.append(text + "\n")
 
         destination = Path(file_path)
-        fd, tmp_name = tempfile.mkstemp(
-            dir=destination.parent, prefix=f".{destination.name}.", suffix=".tmp"
+        tmp_path = destination.with_name(
+            f".{destination.name}.{secrets.token_hex(8)}.tmp"
         )
+        # Mode 0o666 filtered by the process umask, like a plain ``open(..., "w")``
+        # (``tempfile.mkstemp`` would leave the export owner-only, 0o600).
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 handle.writelines(lines)
-            os.replace(tmp_name, destination)
+            os.replace(tmp_path, destination)
         except BaseException:
             try:
-                os.unlink(tmp_name)
+                os.unlink(tmp_path)
             except FileNotFoundError:
                 pass
             raise

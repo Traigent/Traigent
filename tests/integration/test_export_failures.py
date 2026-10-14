@@ -143,11 +143,17 @@ async def test_export_failures_acceptance(
     source_example = dataset.examples[WRONG_INDEX]
     assert reloaded.examples[0].input_data == source_example.input_data
     assert reloaded.examples[0].expected_output == source_example.expected_output
-    assert reloaded.examples[0].metadata == source_example.metadata
+    assert reloaded.examples[0].metadata == {
+        **source_example.metadata,
+        "example_id": wrong_id,
+    }
 
-    # 4a. API: an id that is not a row of the dataset raises.
+    # 4a. API: the in-memory result exports the same row; an id the run never
+    #     recorded raises.
+    in_memory = select_examples_by_id(dataset, result.failing_examples(), result)
+    assert [ex.input_data for ex in in_memory] == [source_example.input_data]
     with pytest.raises(UnresolvedExampleIdError):
-        select_examples_by_id(dataset, ["example_99"])
+        select_examples_by_id(dataset, ["example_99"], result)
 
     # 4b. CLI: against a dataset missing the failing row, the id cannot be
     #     resolved -> non-zero exit, and an existing --out is not replaced.
