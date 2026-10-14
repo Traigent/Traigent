@@ -1030,7 +1030,8 @@ if OTEL_AVAILABLE:
                     trace_groups[trace_id].append(span_payload)
                 except Exception as e:
                     conversion_failures += 1
-                    first_error = first_error or e
+                    if first_error is None:
+                        first_error = e
 
             if conversion_failures:
                 with self._lock:
