@@ -39,6 +39,7 @@ from traigent.hybrid import (
     TransportTimeoutError,
     create_transport,
 )
+from traigent.utils.exceptions import ValidationError
 from traigent.utils.logging import get_logger
 from traigent.utils.objectives import classify_objective
 from traigent.utils.retry import RetryConfig, RetryHandler
@@ -65,6 +66,16 @@ _HYBRID_TRANSPORT_RETRY_CONFIG = RetryConfig(
         TransportTimeoutError,
     },
 )
+
+
+def _is_absent_id(value: Any) -> bool:
+    """True for a missing id (``None`` or ``""``).
+
+    Only a ``str`` is compared with ``""``: for values such as ``pandas.NA`` or
+    a NumPy array, ``== ""`` returns a non-bool whose truth test raises, so
+    they must reach the type check (and its ``ValidationError``) instead.
+    """
+    return value is None or (isinstance(value, str) and value == "")
 
 
 @dataclass
@@ -740,7 +751,15 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         Raises:
             EvaluationError: If evaluation fails.
+            ValidationError: If the id an example resolves to (``example_id``,
+                else ``input_id``) is not a string, or two examples resolve to
+                the same id.
         """
+        # Resolve every example's id once, from its dataset position, before any
+        # budget is reserved or any request is sent.
+        examples = list(dataset)
+        example_ids = self._resolve_example_ids(examples)
+
         execution_budget_lease, blocked_result = (
             self._prepare_execution_budget_evaluation(
                 budget, config, sample_lease=sample_lease
@@ -764,8 +783,6 @@ class HybridAPIEvaluator(BaseEvaluator):
             self._ensure_lifecycle_manager(), sample_lease, execution_budget_lease
         )
 
-        # Prepare examples
-        examples = list(dataset)
         total_examples = len(examples)
 
         # Apply sample budget limits
@@ -799,6 +816,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         for batch_start in range(0, len(examples), self._batch_size):
             batch_end = min(batch_start + self._batch_size, len(examples))
             batch = examples[batch_start:batch_end]
+            batch_ids = example_ids[batch_start:batch_end]
 
             # Consume from sample lease
             if sample_lease is not None:
@@ -808,7 +826,7 @@ class HybridAPIEvaluator(BaseEvaluator):
 
             # Execute batch
             batch_results = await self._await_with_sample_lease_cleanup(
-                self._execute_batch(transport, caps, config, batch),
+                self._execute_batch(transport, caps, config, batch, batch_ids),
                 sample_lease,
                 execution_budget_lease,
             )
@@ -876,6 +894,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         caps: ServiceCapabilities,
         config: dict[str, Any],
         batch: list[Any],
+        example_ids: list[str] | None = None,
     ) -> list[HybridExampleResult]:
         """Execute a batch of examples.
 
@@ -884,23 +903,23 @@ class HybridAPIEvaluator(BaseEvaluator):
             caps: Service capabilities.
             config: Configuration for this trial.
             batch: Batch of examples to process.
+            example_ids: The batch's ids from :meth:`_resolve_example_ids`, in
+                batch order. When omitted the batch is treated as the whole
+                dataset (positions start at 0).
 
         Returns:
             List of results for each example.
         """
+        if example_ids is None:
+            example_ids = self._resolve_example_ids(batch)
         # Prepare examples list
-        inputs = []
-        for i, example in enumerate(batch):
-            input_data = self._extract_input(example)
-            example_id = (
-                input_data.get("example_id") or input_data.get("input_id") or f"ex_{i}"
-            )
-            inputs.append(
-                {
-                    "example_id": example_id,
-                    "data": input_data,
-                }
-            )
+        inputs = [
+            {
+                "example_id": example_id,
+                "data": self._extract_input(example),
+            }
+            for example, example_id in zip(batch, example_ids, strict=True)
+        ]
 
         request = HybridExecuteRequest(
             tunable_id=self._tunable_id or "default",
@@ -968,6 +987,65 @@ class HybridAPIEvaluator(BaseEvaluator):
             logger.error(f"Batch execution failed: {e}")
             # Return error results for all examples
             return self._batch_error_results(batch, inputs, str(e))
+
+    def _resolve_example_id(self, example: Any, position: int) -> str:
+        """Return the id an example is sent and recorded under.
+
+        An ``example_id`` (else ``input_id``) in the input data that is not
+        ``None`` or ``""`` is used as-is, since the external service may look
+        rows up by it; otherwise ``ex_<position>``, where ``position`` is the
+        example's index in the dataset. The ``ex_`` prefix is deliberate: it
+        never matches the SDK's ``example_<idx>`` measure id, so the ids the
+        backend stores for hybrid rows stay ``ex_<hash>_<idx>``.
+
+        Raises:
+            ValidationError: The id in the input data is not a string. The
+                hybrid protocol defines ``example_id`` / ``input_id`` as
+                strings that the service echoes exactly, and only exact string
+                ids can be matched and checked for uniqueness reliably.
+        """
+        input_data = self._extract_input(example)
+        key = "example_id"
+        explicit = input_data.get(key)
+        if _is_absent_id(explicit):
+            key = "input_id"
+            explicit = input_data.get(key)
+        if _is_absent_id(explicit):
+            return f"ex_{position}"
+        if not isinstance(explicit, str):
+            raise ValidationError(
+                f"Hybrid example at position {position} has an {key} of type "
+                f"{type(explicit).__name__}; the hybrid protocol requires a "
+                "string id"
+            )
+        return explicit
+
+    def _resolve_example_ids(self, examples: list[Any]) -> list[str]:
+        """Resolve every example's id and require them to be unique.
+
+        Ids correlate each output with its example inside a request and key
+        the per-example results (outcome matrix, failing examples), so a
+        repeated id would silently merge examples. The error names positions
+        only: an id may be customer content.
+
+        Raises:
+            ValidationError: An id is not a string, or two examples resolve to
+                the same id.
+        """
+        first_position: dict[str, int] = {}
+        example_ids: list[str] = []
+        for position, example in enumerate(examples):
+            example_id = self._resolve_example_id(example, position)
+            previous = first_position.setdefault(example_id, position)
+            if previous != position:
+                raise ValidationError(
+                    f"Hybrid examples at positions {previous} and {position} "
+                    "resolve to the same example_id; example ids must be unique "
+                    "(check example_id / input_id in the inputs; rows without one "
+                    "use ex_<position>)"
+                )
+            example_ids.append(example_id)
+        return example_ids
 
     def _extract_input(self, example: Any) -> dict[str, Any]:
         """Extract input data from dataset example."""

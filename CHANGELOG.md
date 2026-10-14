@@ -40,6 +40,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   again deliberately. Runs against a backend that reports no generation (older
   backend, offline run, no bound agent) publish exactly as before.
 
+### Changed
+
+- **BREAKING: non-string hybrid example ids are refused (#2575).** When the
+  id a row resolves to (`example_id`, else `input_id`) is not a string (an
+  int, float, bool, list or dict), the trial now fails with a
+  `ValidationError` naming the position, the field and its type. The hybrid
+  protocol defines these ids as strings echoed exactly; a dataset with unique
+  int ids that ran before must convert them to strings. A falsy non-string
+  `example_id` or `input_id` (`0`, `False`) is refused too; it used to be
+  replaced by the `input_id` or the fallback id.
+
 ### Removed
 
 - **Candidate runs (`optimize(apply=False)`) are temporarily withdrawn.** Their
@@ -92,6 +103,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   discovery. `max_spend_usd: 0` still loads, as the TVL schema allows, but a run
   that takes its cost limit from the spec still fails the cost-limit check,
   which needs a value above 0.
+- **Hybrid API examples no longer share one id (#2575).** `HybridAPIEvaluator`
+  numbered the fallback example id from the position inside the batch, so at
+  the default `batch_size=1` every example was sent and recorded as `ex_0`, and
+  the outcome matrix merged them into one row. The fallback is now
+  `ex_<dataset position>`; a string `example_id` (else `input_id`) in the
+  inputs still wins. A dataset that fits in one batch sends the same ids as
+  before, and the ids the backend stores for hybrid rows are unchanged. A
+  hybrid dataset whose ids repeat now fails the trial with a `ValidationError`
+  naming the positions, before any request is sent. `build_outcome_matrix`
+  logs a warning when one trial repeats an example id instead of merging the
+  cells silently. Statistical-significance tests, the best-config margin and
+  the semantic-saturation stop condition, which key per-example scores by id,
+  also saw only one example per in-batch position (a single example at the
+  default `batch_size=1`) when the rows carry no ids; they now see every
+  example, so their results for such hybrid runs can change.
 
 ## [0.30.0] - 2026-09-26
 
