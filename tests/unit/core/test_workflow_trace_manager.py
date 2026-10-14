@@ -28,6 +28,9 @@ class _FakeIngestResponse:
     success: bool = True
     graph_id: str | None = None
     error: str | None = None
+    spans_ingested: int = 0
+    spans_ingested_reported: bool = False
+    skipped_duplicates: int = 0
 
 
 def _make_manager(
@@ -420,3 +423,143 @@ class TestGetExperimentIds:
         backend.get_session_mapping.side_effect = RuntimeError("fail")
         mgr = _make_manager(tracker=MagicMock(), backend_client=backend)
         assert mgr._get_experiment_run_id_from_session("sess") is None
+
+
+# ---------------------------------------------------------------------------
+# submit_traces: ingest-count honesty (#2578)
+# ---------------------------------------------------------------------------
+
+
+def _ingest_resp(data: dict[str, Any]) -> Any:
+    from traigent.integrations.observability.workflow_traces import (
+        TraceIngestionResponse,
+    )
+
+    return TraceIngestionResponse.from_dict({"success": True, "data": data})
+
+
+async def _submit(responses: list[Any], spans: list[_FakeSpan], caplog: Any) -> None:
+    import logging
+
+    tracker = MagicMock()
+    tracker.ingest_traces_async = AsyncMock(side_effect=responses)
+    mgr = _make_manager(tracker=tracker)
+    mgr._collected_spans = list(spans)
+    with (
+        caplog.at_level(logging.DEBUG, logger="traigent.core.workflow_trace_manager"),
+        patch(
+            "traigent.core.workflow_trace_manager.is_backend_offline",
+            return_value=False,
+        ),
+    ):
+        await mgr.submit_traces(session_id="real-session")
+    assert mgr._collected_spans == []
+
+
+def _span_msgs(caplog: Any) -> list[tuple[int, str]]:
+    return [
+        (r.levelno, r.getMessage())
+        for r in caplog.records
+        if "workflow spans" in r.getMessage()
+    ]
+
+
+class TestTraceIngestionResponseCounts:
+    def test_reported_count_and_duplicates_are_parsed(self) -> None:
+        resp = _ingest_resp(
+            {"spans_ingested": 1, "skipped_duplicates": 2, "skipped_span_ids": ["a"]}
+        )
+        assert resp.spans_ingested == 1
+        assert resp.spans_ingested_reported is True
+        assert resp.skipped_duplicates == 2
+
+    def test_absent_count_is_marked_unreported(self) -> None:
+        resp = _ingest_resp({"graph_id": "g"})
+        assert resp.spans_ingested == 0
+        assert resp.spans_ingested_reported is False
+        assert resp.skipped_duplicates == 0
+
+    @pytest.mark.parametrize("bad", ["3", None, 2.5, True])
+    def test_non_integer_count_is_marked_unreported(self, bad: Any) -> None:
+        resp = _ingest_resp({"spans_ingested": bad, "skipped_duplicates": bad})
+        assert resp.spans_ingested == 0
+        assert resp.spans_ingested_reported is False
+        assert resp.skipped_duplicates == 0
+
+    def test_direct_construction_keeps_stated_count(self) -> None:
+        from traigent.integrations.observability.workflow_traces import (
+            TraceIngestionResponse,
+        )
+
+        resp = TraceIngestionResponse(success=True, spans_ingested=4)
+        assert resp.spans_ingested_reported is True
+        assert resp.skipped_duplicates == 0
+
+
+class TestSubmitTracesIngestCounts:
+    @pytest.mark.asyncio
+    async def test_full_ingest_logs_submitted_at_info(self, caplog) -> None:
+        import logging
+
+        await _submit(
+            [_ingest_resp({"spans_ingested": 3})],
+            [_FakeSpan(trace_id="t1") for _ in range(3)],
+            caplog,
+        )
+        msgs = _span_msgs(caplog)
+        assert any(
+            lvl == logging.INFO and msg.startswith("Submitted 3 workflow spans")
+            for lvl, msg in msgs
+        ), msgs
+        assert not any(lvl >= logging.WARNING for lvl, _ in msgs), msgs
+
+    @pytest.mark.asyncio
+    async def test_shortfall_warns_with_counts_not_submitted_n(self, caplog) -> None:
+        import logging
+
+        await _submit(
+            [_ingest_resp({"spans_ingested": 1, "skipped_duplicates": 1})],
+            [_FakeSpan(trace_id="t1") for _ in range(3)],
+            caplog,
+        )
+        msgs = _span_msgs(caplog)
+        assert not any("Submitted 3" in msg for _, msg in msgs), msgs
+        warnings = [msg for lvl, msg in msgs if lvl == logging.WARNING]
+        assert len(warnings) == 1, msgs
+        assert "ingested 1 of 3 workflow spans" in warnings[0]
+        assert "1 skipped as duplicates" in warnings[0]
+        assert "1 not ingested" in warnings[0]
+
+    @pytest.mark.asyncio
+    async def test_absent_count_is_reported_as_unconfirmed(self, caplog) -> None:
+        import logging
+
+        await _submit(
+            [_ingest_resp({"graph_id": "g"})],
+            [_FakeSpan(trace_id="t1") for _ in range(2)],
+            caplog,
+        )
+        msgs = _span_msgs(caplog)
+        assert not any(lvl >= logging.WARNING for lvl, _ in msgs), msgs
+        assert any("count unconfirmed" in msg and "2" in msg for _, msg in msgs), msgs
+        assert not any(msg.startswith("Backend ingested") for _, msg in msgs), msgs
+
+    @pytest.mark.asyncio
+    async def test_counts_aggregate_across_config_runs(self, caplog) -> None:
+        import logging
+
+        await _submit(
+            [
+                _ingest_resp({"spans_ingested": 2}),
+                _ingest_resp({"spans_ingested": 0}),
+            ],
+            [
+                _FakeSpan(trace_id="t1", configuration_run_id="run-1"),
+                _FakeSpan(trace_id="t1", configuration_run_id="run-1"),
+                _FakeSpan(trace_id="t1", configuration_run_id="run-2"),
+            ],
+            caplog,
+        )
+        warnings = [msg for lvl, msg in _span_msgs(caplog) if lvl == logging.WARNING]
+        assert len(warnings) == 1, warnings
+        assert "ingested 2 of 3 workflow spans" in warnings[0]
