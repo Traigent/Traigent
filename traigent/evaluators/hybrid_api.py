@@ -882,7 +882,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         caps: ServiceCapabilities,
         config: dict[str, Any],
         batch: list[Any],
-        example_ids: list[Any] | None = None,
+        example_ids: list[str] | None = None,
     ) -> list[HybridExampleResult]:
         """Execute a batch of examples.
 
@@ -976,61 +976,58 @@ class HybridAPIEvaluator(BaseEvaluator):
             # Return error results for all examples
             return self._batch_error_results(batch, inputs, str(e))
 
-    def _resolve_example_id(self, example: Any, position: int) -> Any:
+    def _resolve_example_id(self, example: Any, position: int) -> str:
         """Return the id an example is sent and recorded under.
 
         A non-empty ``example_id`` / ``input_id`` in the input data is used
-        as-is (same type), since the external service may look rows up by it;
-        otherwise ``ex_<position>``, where ``position`` is the example's index
-        in the dataset. The ``ex_`` prefix is deliberate: it never matches the
-        SDK's ``example_<idx>`` measure id, so the ids the backend stores for
-        hybrid rows stay ``ex_<hash>_<idx>``.
+        as-is, since the external service may look rows up by it; otherwise
+        ``ex_<position>``, where ``position`` is the example's index in the
+        dataset. The ``ex_`` prefix is deliberate: it never matches the SDK's
+        ``example_<idx>`` measure id, so the ids the backend stores for hybrid
+        rows stay ``ex_<hash>_<idx>``.
+
+        Raises:
+            ValidationError: The id in the input data is not a string. The
+                hybrid protocol defines ``example_id`` / ``input_id`` as
+                strings that the service echoes exactly, and only exact string
+                ids can be matched and checked for uniqueness reliably.
         """
         input_data = self._extract_input(example)
         explicit = input_data.get("example_id") or input_data.get("input_id")
-        if explicit:
-            return explicit
-        return f"ex_{position}"
+        if not explicit:
+            return f"ex_{position}"
+        if not isinstance(explicit, str):
+            raise ValidationError(
+                f"Hybrid example at position {position} has a "
+                f"{type(explicit).__name__} example_id / input_id; the hybrid "
+                "protocol requires a string id"
+            )
+        return explicit
 
-    def _resolve_example_ids(self, examples: list[Any]) -> list[Any]:
+    def _resolve_example_ids(self, examples: list[Any]) -> list[str]:
         """Resolve every example's id and require them to be unique.
 
-        Ids correlate each output with its example inside a request (matched
-        with ``==``) and key the per-example results by ``str(id)`` (outcome
-        matrix, failing examples), so a repeated id would silently merge
-        examples. Two ids clash when they are equal under either rule:
-        ``1`` / ``1.0`` / ``True`` (``==``) and ``1`` / ``"1"`` (``str``).
-        The error names positions only: an id may be customer content.
+        Ids correlate each output with its example inside a request and key
+        the per-example results (outcome matrix, failing examples), so a
+        repeated id would silently merge examples. The error names positions
+        only: an id may be customer content.
 
         Raises:
-            ValidationError: Two examples resolve to the same id.
+            ValidationError: An id is not a string, or two examples resolve to
+                the same id.
         """
-        example_ids = [
-            self._resolve_example_id(example, position)
-            for position, example in enumerate(examples)
-        ]
-        by_str: dict[str, int] = {}
-        by_value: dict[Any, int] = {}
-        unhashable: list[tuple[Any, int]] = []
-        for position, example_id in enumerate(example_ids):
-            previous = by_str.setdefault(str(example_id), position)
-            if previous == position:
-                try:
-                    previous = by_value.setdefault(example_id, position)
-                except TypeError:
-                    # Unhashable ids (lists, dicts) cannot key a dict, so
-                    # compare them with == against the earlier unhashable ones.
-                    previous = next(
-                        (pos for other, pos in unhashable if other == example_id),
-                        position,
-                    )
-                    unhashable.append((example_id, position))
+        first_position: dict[str, int] = {}
+        example_ids: list[str] = []
+        for position, example in enumerate(examples):
+            example_id = self._resolve_example_id(example, position)
+            previous = first_position.setdefault(example_id, position)
             if previous != position:
                 raise ValidationError(
                     f"Hybrid examples at positions {previous} and {position} "
                     "resolve to the same example_id; example ids must be unique "
                     "(check example_id / input_id in the inputs)"
                 )
+            example_ids.append(example_id)
         return example_ids
 
     def _extract_input(self, example: Any) -> dict[str, Any]:

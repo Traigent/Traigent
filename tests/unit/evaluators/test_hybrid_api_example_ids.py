@@ -169,47 +169,34 @@ async def test_duplicate_ids_raise_before_any_request() -> None:
     transport.execute.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_ids_that_collide_as_strings_are_duplicates() -> None:
-    """``1`` and ``"1"`` are one row in the outcome matrix, so they must clash."""
-    transport = _echo_transport()
-    dataset = Dataset(
-        examples=[
-            EvaluationExample(input_data={"q": "q0", "example_id": 1}),
-            EvaluationExample(input_data={"q": "q1", "example_id": "1"}),
-        ],
-        name="hybrid-ids",
-    )
-
-    with pytest.raises(ValidationError, match="positions 0 and 1"):
-        await _evaluator(transport).evaluate(lambda: None, {}, dataset)
-    transport.execute.assert_not_awaited()
-
-
 @pytest.mark.parametrize(
-    ("first", "second"),
-    [(1, 1.0), (True, 1), ([1, 2], [1.0, 2]), ({"a": 1, "b": 2}, {"b": 2, "a": 1})],
+    "bad_id",
+    [1, 1.0, True, [1, 2], {"a": 1}],
+    ids=["int", "float", "bool", "list", "dict"],
 )
 @pytest.mark.asyncio
-async def test_ids_equal_under_output_matching_are_duplicates(
-    first: Any, second: Any
-) -> None:
-    """Outputs are matched with ``==``, so ids equal as values clash.
+async def test_non_string_ids_are_rejected_before_any_request(bad_id: Any) -> None:
+    """The protocol's ids are strings echoed exactly; anything else fails loudly.
 
-    Covers hashable ids (``1``/``1.0``, ``True``/``1``) and unhashable ones
-    (lists, dicts) whose string forms differ.
+    A non-string id cannot be matched or de-duplicated reliably (``1`` vs
+    ``"1"`` vs ``1.0`` vs ``[1.0]`` ...), so it is refused instead of guessed.
     """
     transport = _echo_transport()
     dataset = Dataset(
         examples=[
-            EvaluationExample(input_data={"q": "q0", "example_id": first}),
-            EvaluationExample(input_data={"q": "q1", "example_id": second}),
+            EvaluationExample(input_data={"q": "q0", "example_id": "a"}),
+            EvaluationExample(input_data={"q": "q1", "example_id": bad_id}),
         ],
         name="hybrid-ids",
     )
 
-    with pytest.raises(ValidationError, match="positions 0 and 1"):
+    with pytest.raises(ValidationError) as excinfo:
         await _evaluator(transport).evaluate(lambda: None, {}, dataset)
+    # Exact text: the position and the type, never the id's value.
+    assert str(excinfo.value) == (
+        f"Hybrid example at position 1 has a {type(bad_id).__name__} "
+        "example_id / input_id; the hybrid protocol requires a string id"
+    )
     transport.execute.assert_not_awaited()
 
 
