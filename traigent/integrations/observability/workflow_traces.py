@@ -26,6 +26,8 @@ Usage:
 For OpenTelemetry integration, use TraigentSpanExporter:
     exporter = TraigentSpanExporter(backend_url, auth_token)
     provider.add_span_processor(BatchSpanProcessor(exporter))
+    # Spans are only exported while a configuration_run_id is bound:
+    exporter.set_configuration_run_id("config_run_789")
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Observability FUNC-INTEGRATIONS FUNC-ANALYTICS REQ-INT-008 REQ-ANLY-011
@@ -935,6 +937,11 @@ if OTEL_AVAILABLE:
             )
             provider.add_span_processor(BatchSpanProcessor(exporter))
             trace.set_tracer_provider(provider)
+
+            # Spans are only exported while a configuration_run_id is bound
+            # (here, or via configuration_run_id_getter); unbound spans are
+            # dropped with one WARNING and counted in dropped_span_count.
+            exporter.set_configuration_run_id("config_run_789")
         """
 
         def __init__(
