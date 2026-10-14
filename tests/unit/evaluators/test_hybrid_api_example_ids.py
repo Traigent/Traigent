@@ -158,6 +158,7 @@ async def test_input_ids_are_kept_and_metadata_ids_do_not_reach_the_wire() -> No
         ({"example_id": None, "input_id": "svc"}, "svc"),
         ({"example_id": ""}, "ex_0"),
         ({"example_id": "", "input_id": ""}, "ex_0"),
+        ({"example_id": " ", "input_id": "svc"}, " "),
     ],
     ids=[
         "example_id-wins",
@@ -165,6 +166,7 @@ async def test_input_ids_are_kept_and_metadata_ids_do_not_reach_the_wire() -> No
         "none-falls-to-input_id",
         "empty-is-absent",
         "both-empty",
+        "whitespace-is-an-id",
     ],
 )
 @pytest.mark.asyncio
@@ -226,15 +228,30 @@ async def test_non_string_ids_are_rejected_before_any_request(bad_id: Any) -> No
         await _evaluator(transport).evaluate(lambda: None, {}, dataset)
     # Exact text: the position and the type, never the id's value.
     assert str(excinfo.value) == (
-        "Hybrid example at position 1 has an example_id / input_id of type "
+        "Hybrid example at position 1 has an example_id of type "
         f"{type(bad_id).__name__}; the hybrid protocol requires a string id"
     )
     transport.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio
+async def test_non_string_error_names_the_field_that_held_it() -> None:
+    """An empty ``example_id`` falls through, so the bad value is in ``input_id``."""
+    transport = _echo_transport()
+    dataset = Dataset(
+        examples=[
+            EvaluationExample(input_data={"q": "q0", "example_id": "", "input_id": 5})
+        ],
+        name="hybrid-ids",
+    )
+
+    with pytest.raises(ValidationError, match="has an input_id of type int;"):
+        await _evaluator(transport).evaluate(lambda: None, {}, dataset)
+
+
+@pytest.mark.asyncio
 async def test_ids_that_break_truth_tests_get_the_validation_error() -> None:
-    """``pandas.NA`` / NumPy arrays raise on ``==``; they still get the clear error."""
+    """``== ""`` on ``pandas.NA`` / an array is not a bool; still the clear error."""
     np = pytest.importorskip("numpy")
     pd = pytest.importorskip("pandas")
     for bad_id, type_name in ((pd.NA, "NAType"), (np.array(["a", "b"]), "ndarray")):
@@ -244,7 +261,7 @@ async def test_ids_that_break_truth_tests_get_the_validation_error() -> None:
             name="hybrid-ids",
         )
         with pytest.raises(
-            ValidationError, match=f"position 0 .* of type {type_name};"
+            ValidationError, match=f"position 0 has an example_id of type {type_name};"
         ):
             await _evaluator(transport).evaluate(lambda: None, {}, dataset)
         transport.execute.assert_not_awaited()

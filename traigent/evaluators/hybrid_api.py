@@ -71,9 +71,9 @@ _HYBRID_TRANSPORT_RETRY_CONFIG = RetryConfig(
 def _is_absent_id(value: Any) -> bool:
     """True for a missing id (``None`` or ``""``).
 
-    Only a ``str`` is compared with ``""``: values such as ``pandas.NA`` or a
-    NumPy array raise on ``==`` / truth tests, and must reach the type check
-    (and its ``ValidationError``) instead.
+    Only a ``str`` is compared with ``""``: for values such as ``pandas.NA`` or
+    a NumPy array, ``== ""`` returns a non-bool whose truth test raises, so
+    they must reach the type check (and its ``ValidationError``) instead.
     """
     return value is None or (isinstance(value, str) and value == "")
 
@@ -1004,16 +1004,18 @@ class HybridAPIEvaluator(BaseEvaluator):
                 ids can be matched and checked for uniqueness reliably.
         """
         input_data = self._extract_input(example)
-        explicit = input_data.get("example_id")
+        key = "example_id"
+        explicit = input_data.get(key)
         if _is_absent_id(explicit):
-            explicit = input_data.get("input_id")
+            key = "input_id"
+            explicit = input_data.get(key)
         if _is_absent_id(explicit):
             return f"ex_{position}"
         if not isinstance(explicit, str):
             raise ValidationError(
-                f"Hybrid example at position {position} has an example_id / "
-                f"input_id of type {type(explicit).__name__}; the hybrid "
-                "protocol requires a string id"
+                f"Hybrid example at position {position} has an {key} of type "
+                f"{type(explicit).__name__}; the hybrid protocol requires a "
+                "string id"
             )
         return explicit
 
