@@ -28,7 +28,9 @@ detected over the WHOLE dataset and reported as ambiguity, never resolved by
 picking one. The remaining limit is stated rather than hidden: the join proves
 which row of the dataset you pass matches the run's record, so the dataset
 must be the one the run evaluated -- a row edited only inside a redacted span
-would still match.
+would still match. Export with the SDK version that ran the optimization: the
+redaction patterns are applied again at export time, and a changed pattern set
+could make a record match a row that literally contains a placeholder.
 
 Every requested id must resolve, or :class:`UnresolvedExampleIdError` is raised
 before any output is produced:
