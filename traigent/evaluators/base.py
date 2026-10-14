@@ -1212,6 +1212,8 @@ class Dataset:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 handle.writelines(lines)
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(tmp_path, destination)
         except BaseException:
             try:

@@ -326,6 +326,23 @@ class TestDirectorySourceIsRefused:
         assert not (workspace / "failures.jsonl").exists()
 
 
+class TestNameResolution:
+    def test_a_same_named_directory_in_cwd_does_not_shadow_the_saved_result(
+        self,
+        runner: CliRunner,
+        workspace: Path,
+        storage_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.chdir(workspace)
+        (workspace / "run1").mkdir()
+
+        result = _invoke(runner, "run1", workspace, "--storage-dir", str(storage_dir))
+
+        assert result.exit_code == 0, result.output
+        assert len(_read_rows(workspace / "failures.jsonl")) == 1
+
+
 class TestFailLoudly:
     def test_unresolvable_id_exits_nonzero_and_writes_nothing(
         self,

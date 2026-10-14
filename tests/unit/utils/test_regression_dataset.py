@@ -194,6 +194,31 @@ class TestResolution:
         selected = select_examples_by_id(_dataset(rows), ["r"], run)
         assert len(selected) == 1
 
+    def test_records_stored_redacted_resolve_to_their_raw_rows(self) -> None:
+        # The SDK stores records after redact_sensitive_data: an email or a
+        # 9-digit number is a placeholder in the record, raw in the dataset.
+        from traigent.security.redaction import redact_sensitive_data
+
+        rows: list[Row] = [
+            ({"text": "mail bob@example.com"}, "BOB", None),
+            ({"text": "order 123456789"}, "ORDER", None),
+            ({"text": "plain"}, "PLAIN", None),
+        ]
+        records = [
+            redact_sensitive_data(_record(f"example_{i}", inp, exp).to_dict())
+            for i, (inp, exp, _) in enumerate(rows)
+        ]
+        assert records[0]["input_data"] == {"text": "mail [REDACTED:email]"}
+
+        selected = select_examples_by_id(
+            _dataset(rows), ["example_0", "example_1"], _run(records)
+        )
+
+        assert [ex.input_data for ex in selected] == [
+            {"text": "mail bob@example.com"},
+            {"text": "order 123456789"},
+        ]
+
 
 class TestFailLoudly:
     def test_id_without_any_record_is_unverifiable(self) -> None:
@@ -239,6 +264,30 @@ class TestFailLoudly:
         with pytest.raises(UnresolvedExampleIdError) as info:
             select_examples_by_id(_dataset(rows), ["a"], _run_for(rows, ["a", "b"]))
         assert info.value.ambiguous == ["a"]
+
+    def test_rows_differing_only_inside_a_redacted_span_are_ambiguous(
+        self,
+    ) -> None:
+        # Review finding: a row already holding the placeholder and a row with
+        # a real email redact to the same form. Picking either is a guess.
+        from traigent.security.redaction import redact_sensitive_data
+
+        rows: list[Row] = [
+            ({"text": "mail [REDACTED:email]"}, "X", None),
+            ({"text": "mail bob@example.com"}, "X", None),
+        ]
+        record = redact_sensitive_data(
+            _record("example_1", {"text": "mail bob@example.com"}, "X").to_dict()
+        )
+        with pytest.raises(UnresolvedExampleIdError) as info:
+            select_examples_by_id(_dataset(rows), ["example_1"], _run([record]))
+        assert info.value.ambiguous == ["example_1"]
+
+    def test_record_without_canonical_json_form_is_unverifiable(self) -> None:
+        run = _run([_record("r", {1: "a", "b": 2}, "x")])
+        with pytest.raises(UnresolvedExampleIdError) as info:
+            select_examples_by_id(_dataset(POSITIONAL), ["r"], run)
+        assert info.value.unverifiable == ["r"]
 
     def test_two_ids_resolving_to_one_row_are_ambiguous(self) -> None:
         run = _run(

@@ -1620,16 +1620,17 @@ def _select_run_failures(
             "Local session results ('local:<session_id>') are not supported by "
             "export-failures; pass a saved result name"
         )
-    if Path(run).expanduser().is_dir():
-        raise click.ClickException(
-            f"'{run}' is a directory. export-failures reads a saved result name "
-            "(see 'traigent results list'): optimization-logger run directories "
-            "do not record the example inputs needed to join failures to "
-            "dataset rows"
-        )
     try:
         result = PersistenceManager(storage_dir).load_result(run)
     except FileNotFoundError as exc:
+        if Path(run).expanduser().is_dir():
+            raise click.ClickException(
+                f"'{run}' is a directory, not a saved result in {storage_dir}. "
+                "export-failures reads a saved result name (see 'traigent "
+                "results list'): optimization-logger run directories do not "
+                "record the example inputs needed to join failures to dataset "
+                "rows"
+            ) from exc
         raise click.ClickException(
             f"Result '{run}' not found in {storage_dir}. {_MSG_RESULTS_LIST_HINT}"
         ) from exc

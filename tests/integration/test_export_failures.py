@@ -178,3 +178,56 @@ async def test_export_failures_acceptance(
     assert bad.exit_code != 0
     assert wrong_id in bad.output
     assert out.read_bytes() == previous
+
+
+#: Rows whose content the SDK redacts before storing per-example records: an
+#: email and a 9-digit number. Row 1's expected output is deliberately wrong.
+PII_ROWS: list[dict[str, Any]] = [
+    {"input": {"text": "mail bob@example.com"}, "output": "MAIL BOB@EXAMPLE.COM"},
+    {"input": {"text": "order 123456789"}, "output": "WRONG"},
+    {"input": {"text": "plain"}, "output": "PLAIN"},
+]
+
+
+@pytest.mark.asyncio
+async def test_export_failures_with_redacted_records(
+    offline_env: Path, block_network: None
+) -> None:
+    """The real pipeline stores redacted records; export still finds the raw row."""
+    workspace = offline_env
+    dataset_path = workspace / "pii.jsonl"
+    _write_jsonl(dataset_path, PII_ROWS)
+    dataset = Dataset.from_jsonl(str(dataset_path))
+
+    result = await _run_optimization(dataset)
+
+    record = result.trials[0].metadata["example_results"][1]
+    stored_input = (
+        record["input_data"] if isinstance(record, dict) else record.input_data
+    )
+    assert stored_input == {"text": "order [REDACTED:ssn]"}  # precondition
+    assert result.failing_examples() == ["example_1"]
+
+    storage = workspace / "results"
+    PersistenceManager(str(storage)).save_result(result, name="pii")
+    out = workspace / "pii-failures.jsonl"
+    cli_result = CliRunner().invoke(
+        cli,
+        [
+            "results",
+            "export-failures",
+            "pii",
+            "--dataset",
+            str(dataset_path),
+            "--out",
+            str(out),
+            "--storage-dir",
+            str(storage),
+        ],
+    )
+
+    assert cli_result.exit_code == 0, cli_result.output
+    rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+    assert [(r["input"], r["expected_output"]) for r in rows] == [
+        (PII_ROWS[1]["input"], PII_ROWS[1]["output"])
+    ]

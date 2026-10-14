@@ -15,7 +15,20 @@ which scheme produced it, and a wrong assumption exports the wrong row without
 any error. Instead, for every requested id the run's own per-example records
 (``trial.metadata["example_results"]``) supply the ``input_data`` and
 ``expected_output`` the run evaluated under that id, and the id resolves to the
-single dataset row with exactly that content (compared as canonical JSON).
+single dataset row with that content.
+
+**Both sides are compared in the form the run stores.** The SDK redacts
+per-example records before keeping them (``trial_result_factory`` runs
+``redact_sensitive_data`` over each ``to_dict()``), so an email or a 9-digit
+number in a row is recorded as a placeholder. Each dataset row is therefore put
+through the same ``to_dict``-shaped JSON projection and the same redaction
+before comparison, and the record side is projected the same way (redaction is
+idempotent). Redaction can map different rows to the same form; that is
+detected over the WHOLE dataset and reported as ambiguity, never resolved by
+picking one. The remaining limit is stated rather than hidden: the join proves
+which row of the dataset you pass matches the run's record, so the dataset
+must be the one the run evaluated -- a row edited only inside a redacted span
+would still match.
 
 Every requested id must resolve, or :class:`UnresolvedExampleIdError` is raised
 before any output is produced:
@@ -25,8 +38,8 @@ before any output is produced:
   trials disagree about the content (the id named different rows);
 * **unresolved** -- no dataset row has that content (the dataset is not the one
   the run evaluated, or it changed since);
-* **ambiguous** -- more than one row has that content, or two ids resolve to
-  the same row.
+* **ambiguous** -- more than one row has that content (including rows that
+  differ only inside a redacted span), or two ids resolve to the same row.
 
 The returned dataset keeps the source rows' order, content and metadata. A row
 whose metadata has no ``example_id`` gains one holding its id in the SOURCE
@@ -43,6 +56,7 @@ from collections.abc import Iterable, Sequence
 from typing import Any
 
 from traigent.evaluators.base import Dataset
+from traigent.security.redaction import redact_sensitive_data
 from traigent.utils.persistence import _safe_json_value
 
 
@@ -98,12 +112,19 @@ def _field(record: Any, key: str) -> Any:
 
 
 def _canonical(input_data: Any, expected_output: Any) -> str:
-    """One comparable string for an example's input and expected output."""
-    return json.dumps(
-        [_safe_json_value(input_data), _safe_json_value(expected_output)],
-        sort_keys=True,
-        ensure_ascii=False,
+    """One comparable string for an example's input and expected output.
+
+    The JSON projection ``ExampleResult.to_dict`` applies, then the redaction
+    the SDK applies before storing a record, then sorted-key JSON.
+
+    Raises:
+        TypeError: When the value has no canonical JSON form (e.g. a mapping
+            mixing int and str keys).
+    """
+    projected = redact_sensitive_data(
+        [_safe_json_value(input_data), _safe_json_value(expected_output)]
     )
+    return json.dumps(projected, sort_keys=True, ensure_ascii=False)
 
 
 def _recorded_content(trials: Iterable[Any]) -> dict[str, set[str] | None]:
@@ -131,8 +152,12 @@ def _recorded_content(trials: Iterable[Any]) -> dict[str, set[str] | None]:
                 contents[key] = None
                 continue
             seen = contents.setdefault(key, set())
-            if seen is not None:
+            if seen is None:
+                continue
+            try:
                 seen.add(_canonical(input_data, _field(record, "expected_output")))
+            except TypeError:
+                contents[key] = None
     return contents
 
 
@@ -171,7 +196,13 @@ def select_examples_by_id(
     recorded = _recorded_content(list(getattr(run, "trials", None) or []))
     rows_by_content: dict[str, list[int]] = {}
     for index, example in enumerate(dataset.examples):
-        content = _canonical(example.input_data, example.expected_output)
+        try:
+            content = _canonical(example.input_data, example.expected_output)
+        except TypeError as exc:
+            raise ValueError(
+                f"Dataset row {index} has no canonical JSON form ({exc}); it "
+                "cannot be compared with the run's records"
+            ) from exc
         rows_by_content.setdefault(content, []).append(index)
 
     unverifiable: list[str] = []

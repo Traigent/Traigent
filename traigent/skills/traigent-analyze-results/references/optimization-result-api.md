@@ -135,7 +135,9 @@ defaults to `.traigent`). Optimization-logger run directories and
 `local:<session_id>` sources are refused: they do not keep the example inputs
 the join needs. If any id has no recorded input (for example, example content
 logging was turned off), matches no row, or matches more than one row, the
-command fails and writes nothing. Exported rows without a `metadata.example_id`
+command fails and writes nothing. Both sides are compared in the redacted form
+the run stores, so rows holding emails or long numbers still export; rows that
+differ only inside a redacted span are reported as ambiguous. Exported rows without a `metadata.example_id`
 gain their source id (`example_<index>`). With no failing examples it prints
 `No failing examples; no dataset written` and leaves `--out` untouched. The
 same pieces are available in Python as
