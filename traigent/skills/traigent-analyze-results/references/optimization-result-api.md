@@ -137,7 +137,9 @@ the join needs. If any id has no recorded input (for example, example content
 logging was turned off), matches no row, or matches more than one row, the
 command fails and writes nothing. Both sides are compared in the redacted form
 the run stores, so rows holding emails or long numbers still export; rows that
-differ only inside a redacted span are reported as ambiguous. Exported rows without a `metadata.example_id`
+differ only inside a redacted span are reported as ambiguous. Export with the
+SDK version that ran the optimization, since the redaction is re-applied at
+export time. Exported rows without a `metadata.example_id`
 gain their source id (`example_<index>`). With no failing examples it prints
 `No failing examples; no dataset written` and leaves `--out` untouched. The
 same pieces are available in Python as

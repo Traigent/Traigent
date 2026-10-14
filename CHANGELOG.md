@@ -16,7 +16,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `traigent.utils.outcome_matrix.select_failing_example_ids`.
   `traigent results export-failures RUN --dataset PATH --out PATH` joins each
   id to the one dataset row whose input and expected_output equal what the run
-  recorded for that id (never by guessing the evaluator's id scheme), and
+  recorded for that id (never by guessing the evaluator's id scheme; both are
+  compared in the redacted form the run stores, so export with the SDK version
+  that ran the optimization), and
   writes the rows as JSONL that `Dataset.from_jsonl` reads back. It writes
   nothing if any id has no recorded input, matches no row, or matches more than
   one. Exported rows without a `metadata.example_id` gain their source id

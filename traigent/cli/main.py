@@ -1627,9 +1627,9 @@ def _select_run_failures(
         # directory argument that is not also a saved result gets the real
         # explanation; a saved result that fails to load keeps its own error.
         run_path = Path(run).expanduser()
-        is_saved_entry = (
-            not run_path.is_absolute()
-            and (Path(storage_dir).expanduser() / run_path).exists()
+        storage_root = Path(storage_dir).expanduser().resolve()
+        is_saved_entry = (storage_root / run_path).exists() and (
+            not run_path.is_absolute() or run_path.resolve().parent == storage_root
         )
         if run_path.is_dir() and not is_saved_entry:
             raise click.ClickException(
@@ -1709,9 +1709,10 @@ def results_export_failures(
     RUN is a saved result name (as in 'traigent results show'). Failing ids
     come from the run's outcome matrix. Each id is joined to the one row of
     --dataset whose input and expected_output equal what the run recorded for
-    that id, so --dataset must be the dataset the run evaluated. If any id has
-    no recorded input, matches no row, or matches more than one row, nothing is
-    written. Rows without a metadata example_id gain their source id
+    that id (both compared in the redacted form the run stores; export with
+    the SDK version that ran the optimization), so --dataset must be the
+    dataset the run evaluated. If any id has no recorded input, matches no
+    row, or matches more than one row, nothing is written. Rows without a metadata example_id gain their source id
     (example_<index>). Everything stays local: nothing is uploaded.
 
     Examples:

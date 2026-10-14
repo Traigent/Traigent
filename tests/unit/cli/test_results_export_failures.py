@@ -361,11 +361,12 @@ class TestCorruptSavedResult:
             if path.is_file():
                 path.write_bytes(b"not json")
 
-        result = _invoke(runner, "run1", workspace, "--storage-dir", str(storage_dir))
+        for run in ("run1", str(storage_dir / "run1")):
+            result = _invoke(runner, run, workspace, "--storage-dir", str(storage_dir))
 
-        assert result.exit_code != 0
-        assert "is a directory, not a saved result" not in plain(result.output)
-        assert not (workspace / "failures.jsonl").exists()
+            assert result.exit_code != 0, run
+            assert "is a directory, not a saved result" not in plain(result.output)
+            assert not (workspace / "failures.jsonl").exists()
 
 
 class TestFailLoudly:
