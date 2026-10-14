@@ -171,8 +171,8 @@ async def test_duplicate_ids_raise_before_any_request() -> None:
 
 @pytest.mark.parametrize(
     "bad_id",
-    [1, 1.0, True, [1, 2], {"a": 1}],
-    ids=["int", "float", "bool", "list", "dict"],
+    [1, 0, 1.0, True, False, [1, 2], {"a": 1}],
+    ids=["int", "zero", "float", "bool", "false", "list", "dict"],
 )
 @pytest.mark.asyncio
 async def test_non_string_ids_are_rejected_before_any_request(bad_id: Any) -> None:
@@ -194,8 +194,8 @@ async def test_non_string_ids_are_rejected_before_any_request(bad_id: Any) -> No
         await _evaluator(transport).evaluate(lambda: None, {}, dataset)
     # Exact text: the position and the type, never the id's value.
     assert str(excinfo.value) == (
-        f"Hybrid example at position 1 has a {type(bad_id).__name__} "
-        "example_id / input_id; the hybrid protocol requires a string id"
+        "Hybrid example at position 1 has an example_id / input_id of type "
+        f"{type(bad_id).__name__}; the hybrid protocol requires a string id"
     )
     transport.execute.assert_not_awaited()
 

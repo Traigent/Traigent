@@ -741,7 +741,8 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         Raises:
             EvaluationError: If evaluation fails.
-            ValidationError: If two examples resolve to the same example id.
+            ValidationError: If an ``example_id`` / ``input_id`` in the inputs
+                is not a string, or two examples resolve to the same id.
         """
         # Resolve every example's id once, from its dataset position, before any
         # budget is reserved or any request is sent.
@@ -979,8 +980,8 @@ class HybridAPIEvaluator(BaseEvaluator):
     def _resolve_example_id(self, example: Any, position: int) -> str:
         """Return the id an example is sent and recorded under.
 
-        A non-empty ``example_id`` / ``input_id`` in the input data is used
-        as-is, since the external service may look rows up by it; otherwise
+        An ``example_id`` (else ``input_id``) in the input data that is not
+        ``None`` or ``""`` is used as-is, since the external service may look rows up by it; otherwise
         ``ex_<position>``, where ``position`` is the example's index in the
         dataset. The ``ex_`` prefix is deliberate: it never matches the SDK's
         ``example_<idx>`` measure id, so the ids the backend stores for hybrid
@@ -993,13 +994,15 @@ class HybridAPIEvaluator(BaseEvaluator):
                 ids can be matched and checked for uniqueness reliably.
         """
         input_data = self._extract_input(example)
-        explicit = input_data.get("example_id") or input_data.get("input_id")
-        if not explicit:
+        explicit = input_data.get("example_id")
+        if explicit is None or explicit == "":
+            explicit = input_data.get("input_id")
+        if explicit is None or explicit == "":
             return f"ex_{position}"
         if not isinstance(explicit, str):
             raise ValidationError(
-                f"Hybrid example at position {position} has a "
-                f"{type(explicit).__name__} example_id / input_id; the hybrid "
+                f"Hybrid example at position {position} has an example_id / "
+                f"input_id of type {type(explicit).__name__}; the hybrid "
                 "protocol requires a string id"
             )
         return explicit

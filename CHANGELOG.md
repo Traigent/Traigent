@@ -86,9 +86,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `ex_<dataset position>`; a non-empty `example_id` / `input_id` in the inputs
   still wins, as before. A dataset that fits in one batch sends the same ids as
   before, and the ids the backend stores for hybrid rows are unchanged. A
-  hybrid dataset whose ids repeat, or whose `example_id` / `input_id` is not a
-  string (the hybrid protocol defines them as strings), now fails the trial
-  with a `ValidationError` naming the position, before any request is sent.
+  hybrid dataset whose ids repeat now fails the trial with a `ValidationError`
+  naming the positions, before any request is sent.
+- **Breaking for non-string hybrid ids (#2575):** an `example_id` / `input_id`
+  in the inputs that is not a string (an int, float, bool, list or dict) now
+  fails the trial with a `ValidationError` naming the position and type. The
+  hybrid protocol defines these ids as strings echoed exactly; a dataset with
+  unique int ids that ran before must convert them to strings.
   `build_outcome_matrix` logs a warning when one trial repeats an example id
   instead of merging the cells silently.
 
