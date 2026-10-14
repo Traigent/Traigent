@@ -8,6 +8,26 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Export a run's failing examples as a regression dataset.**
+  `OptimizationResult.failing_examples(threshold=0.5, mode="all_configs")`
+  returns the ids of examples that failed in every trial (or, with
+  `mode="best_config"`, in every trial of the winning configuration), read from
+  the per-example outcome matrix without re-running anything; the selector is
+  `traigent.utils.outcome_matrix.select_failing_example_ids`.
+  `traigent results export-failures RUN --dataset PATH --out PATH` joins each
+  id to the one dataset row whose input and expected_output equal what the run
+  recorded for that id (never by guessing the evaluator's id scheme; both are
+  compared in the redacted form the run stores, so export with the SDK version
+  that ran the optimization), and
+  writes the rows as JSONL that `Dataset.from_jsonl` reads back. It writes
+  nothing if any id has no recorded input, matches no row, or matches more than
+  one. Exported rows without a `metadata.example_id` gain their source id
+  (`example_<index>`) so the subset's ids stay unique. `RUN` is a saved result
+  name; logger run directories (which record no example inputs) and `local:`
+  sessions are refused. New helpers: `Dataset.to_jsonl()` (atomic, refuses
+  values JSON would alter) and
+  `traigent.utils.regression_dataset.select_examples_by_id(dataset, ids, run)`.
+  Nothing is sent over the network.
 - **Trace search filters: `model`, `tags`, `outcome_kind`, `has_outcome` (#2564).**
   `BackendAnalyticsClient.search_observability_traces` and the
   `observability_search_traces` MCP tool accept them and validate them before
