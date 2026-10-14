@@ -41,8 +41,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `ValidationError` naming the position, the field and its type. The hybrid
   protocol defines these ids as strings echoed exactly; a dataset with unique
   int ids that ran before must convert them to strings. A falsy non-string
-  `example_id` (`0`, `False`) is refused too; it used to be replaced by the
-  `input_id` or the fallback id.
+  `example_id` or `input_id` (`0`, `False`) is refused too; it used to be
+  replaced by the `input_id` or the fallback id.
 
 ### Removed
 
