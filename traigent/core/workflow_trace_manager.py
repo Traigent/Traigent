@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import threading
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
@@ -21,6 +21,11 @@ from traigent.utils.function_identity import FunctionDescriptor
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def _is_count(value: object) -> TypeGuard[int]:
+    """Return True for a non-negative int that is not a bool."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def _is_trace_ingestion_auth_rejection(error: str | None) -> bool:
@@ -293,16 +298,30 @@ class WorkflowTraceManager:
                 if response.success:
                     total_sent += len(spans)
                     # getattr: a custom tracker may return a response object
-                    # without these fields; treat that as "count not reported".
-                    if getattr(response, "spans_ingested_reported", False):
+                    # without these fields or with non-count values; treat
+                    # that as "count not reported" rather than guessing.
+                    reported = getattr(response, "spans_ingested", None)
+                    if getattr(
+                        response, "spans_ingested_reported", False
+                    ) is True and _is_count(reported):
+                        if reported > len(spans):
+                            logger.warning(
+                                "Backend reported %d workflow spans ingested for "
+                                "config_run %s but only %d were sent; counting %d.",
+                                reported,
+                                config_run_id,
+                                len(spans),
+                                len(spans),
+                            )
                         # Clamp so an over-report in one group cannot hide a
                         # shortfall in another.
-                        ingested = min(response.spans_ingested, len(spans))
+                        ingested = min(reported, len(spans))
                         shortfall = len(spans) - ingested
+                        duplicates = getattr(response, "skipped_duplicates", 0)
                         total_ingested += ingested
                         total_shortfall += shortfall
                         total_duplicates += min(
-                            getattr(response, "skipped_duplicates", 0), shortfall
+                            duplicates if _is_count(duplicates) else 0, shortfall
                         )
                     else:
                         total_unconfirmed += len(spans)
@@ -347,7 +366,7 @@ class WorkflowTraceManager:
             elif total_shortfall > 0:
                 logger.warning(
                     "Backend ingested %d of %d workflow spans for trace %s...%s; "
-                    "%d were skipped as duplicate span ids (already stored, or "
+                    "%d skipped as duplicate span ids (already stored, or "
                     "repeated within the batch)%s.",
                     total_ingested,
                     total_sent - total_unconfirmed,
