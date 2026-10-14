@@ -1011,14 +1011,20 @@ class HybridAPIEvaluator(BaseEvaluator):
         ]
         by_str: dict[str, int] = {}
         by_value: dict[Any, int] = {}
+        unhashable: list[tuple[Any, int]] = []
         for position, example_id in enumerate(example_ids):
             previous = by_str.setdefault(str(example_id), position)
             if previous == position:
                 try:
                     previous = by_value.setdefault(example_id, position)
                 except TypeError:
-                    # Unhashable ids are compared by their string form only.
-                    pass
+                    # Unhashable ids (lists, dicts) cannot key a dict, so
+                    # compare them with == against the earlier unhashable ones.
+                    previous = next(
+                        (pos for other, pos in unhashable if other == example_id),
+                        position,
+                    )
+                    unhashable.append((example_id, position))
             if previous != position:
                 raise ValidationError(
                     f"Hybrid examples at positions {previous} and {position} "

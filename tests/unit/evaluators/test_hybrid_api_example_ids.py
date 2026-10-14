@@ -186,12 +186,19 @@ async def test_ids_that_collide_as_strings_are_duplicates() -> None:
     transport.execute.assert_not_awaited()
 
 
-@pytest.mark.parametrize(("first", "second"), [(1, 1.0), (True, 1)])
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [(1, 1.0), (True, 1), ([1, 2], [1.0, 2]), ({"a": 1, "b": 2}, {"b": 2, "a": 1})],
+)
 @pytest.mark.asyncio
 async def test_ids_equal_under_output_matching_are_duplicates(
     first: Any, second: Any
 ) -> None:
-    """Outputs are matched with ``==``, so ``1``/``1.0`` and ``True``/``1`` clash."""
+    """Outputs are matched with ``==``, so ids equal as values clash.
+
+    Covers hashable ids (``1``/``1.0``, ``True``/``1``) and unhashable ones
+    (lists, dicts) whose string forms differ.
+    """
     transport = _echo_transport()
     dataset = Dataset(
         examples=[
