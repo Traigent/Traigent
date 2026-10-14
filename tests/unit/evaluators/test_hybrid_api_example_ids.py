@@ -203,6 +203,25 @@ async def test_duplicate_ids_raise_before_any_request() -> None:
     transport.execute.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_real_id_colliding_with_a_fallback_id_is_explained() -> None:
+    """An explicit ``ex_1`` clashes with row 1's fallback; the hint says so."""
+    transport = _echo_transport()
+    dataset = Dataset(
+        examples=[
+            EvaluationExample(input_data={"q": "q0", "input_id": "ex_1"}),
+            EvaluationExample(input_data={"q": "q1"}),
+        ],
+        name="hybrid-ids",
+    )
+
+    with pytest.raises(
+        ValidationError, match=r"positions 0 and 1 .*rows without one use ex_<position>"
+    ):
+        await _evaluator(transport).evaluate(lambda: None, {}, dataset)
+    transport.execute.assert_not_awaited()
+
+
 @pytest.mark.parametrize(
     "bad_id",
     [1, 0, 1.0, True, False, [1, 2], {"a": 1}],

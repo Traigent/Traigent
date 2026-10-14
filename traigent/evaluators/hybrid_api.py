@@ -1040,7 +1040,8 @@ class HybridAPIEvaluator(BaseEvaluator):
                 raise ValidationError(
                     f"Hybrid examples at positions {previous} and {position} "
                     "resolve to the same example_id; example ids must be unique "
-                    "(check example_id / input_id in the inputs)"
+                    "(check example_id / input_id in the inputs; rows without one "
+                    "use ex_<position>)"
                 )
             example_ids.append(example_id)
         return example_ids
