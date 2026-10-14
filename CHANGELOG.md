@@ -38,10 +38,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **BREAKING: non-string hybrid example ids are refused (#2575).** When the
   id a row resolves to (`example_id`, else `input_id`) is not a string (an
   int, float, bool, list or dict), the trial now fails with a
-  `ValidationError` naming the position, the field and its type. The hybrid protocol defines these ids as
-  strings echoed exactly; a dataset with unique int ids that ran before must
-  convert them to strings. A falsy non-string `example_id` (`0`, `False`) is
-  refused too; it used to be replaced by the `input_id` or the fallback id.
+  `ValidationError` naming the position, the field and its type. The hybrid
+  protocol defines these ids as strings echoed exactly; a dataset with unique
+  int ids that ran before must convert them to strings. A falsy non-string
+  `example_id` (`0`, `False`) is refused too; it used to be replaced by the
+  `input_id` or the fallback id.
 
 ### Removed
 
@@ -101,8 +102,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   logs a warning when one trial repeats an example id instead of merging the
   cells silently. Statistical-significance tests, the best-config margin and
   the semantic-saturation stop condition, which key per-example scores by id,
-  also saw one example per hybrid trial; they now see every example, so their
-  results for hybrid runs can change.
+  also saw only one example per in-batch position (a single example at the
+  default `batch_size=1`) when the rows carry no ids; they now see every
+  example, so their results for such hybrid runs can change.
 
 ## [0.30.0] - 2026-09-26
 
