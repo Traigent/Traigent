@@ -1657,12 +1657,21 @@ def _select_run_failures(
 
 
 def _same_file(a: Path, b: Path) -> bool:
+    """Whether ``a`` and ``b`` name the same file.
+
+    Fails closed: if the comparison itself cannot be made (e.g. a stat is
+    refused), the caller must not go on to overwrite, so the error is raised as
+    a ClickException rather than read as "different files".
+    """
     if a == b:
         return True
     try:
         return a.exists() and b.exists() and a.samefile(b)
-    except OSError:
-        return False
+    except OSError as exc:
+        raise click.ClickException(
+            f"Cannot tell whether {a} is the source dataset {b}: {exc}; "
+            "refusing to write"
+        ) from exc
 
 
 @results.command("export-failures")

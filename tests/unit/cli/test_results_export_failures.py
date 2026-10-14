@@ -481,6 +481,29 @@ class TestFailLoudly:
         assert dataset.read_bytes() == before
 
 
+class TestOutputGuardFailsClosed:
+    def test_an_uncomparable_out_path_is_refused_not_overwritten(
+        self,
+        runner: CliRunner,
+        workspace: Path,
+        storage_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        out = workspace / "failures.jsonl"
+        out.write_text("previous export\n", encoding="utf-8")
+
+        def refuse(self: Path, other: Any) -> bool:
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(Path, "samefile", refuse)
+
+        result = _invoke(runner, "run1", workspace, "--storage-dir", str(storage_dir))
+
+        assert result.exit_code != 0
+        assert "refusing to write" in result.output
+        assert out.read_text(encoding="utf-8") == "previous export\n"
+
+
 class TestZeroFailures:
     def test_zero_failures_exits_zero_and_leaves_out_untouched(
         self,
