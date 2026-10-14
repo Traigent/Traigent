@@ -1749,3 +1749,99 @@ class TestTraigentSpanExporterRunIdBinding:
             exporter.client.ingest_traces.call_args.kwargs["configuration_run_id"]
             == "cfg-1"
         )
+
+
+@pytest.mark.skipif(not wt_module.OTEL_AVAILABLE, reason="opentelemetry-sdk missing")
+class TestTraigentSpanExporterConversionFailure:
+    """Spans that fail conversion must be counted and reported (#2571)."""
+
+    def _exporter(self) -> Any:
+        exporter = wt_module.TraigentSpanExporter(
+            backend_url="http://localhost:5000",
+            configuration_run_id_getter=lambda: "cfg-1",
+        )
+        exporter.client = MagicMock()
+        exporter.client.ingest_traces.return_value = MagicMock(success=True)
+        return exporter
+
+    def test_all_spans_failing_conversion_fail_the_export(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        exporter = self._exporter()
+        spans = [_fake_otel_span(span_id=i) for i in range(2, 5)]
+        for span in spans:
+            span.attributes = {"llm.input_tokens": "n/a"}
+
+        with caplog.at_level(logging.WARNING, logger=wt_module.logger.name):
+            result = exporter.export(spans)
+
+        assert result == wt_module.SpanExportResult.FAILURE
+        assert exporter.dropped_span_count == 3
+        exporter.client.ingest_traces.assert_not_called()
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "3 of 3" in warnings[0].getMessage()
+
+    def test_partial_conversion_failure_sends_the_rest_and_fails(self) -> None:
+        exporter = self._exporter()
+        bad = _fake_otel_span(span_id=3)
+        bad.attributes = {"llm.cost_usd": "free"}
+
+        result = exporter.export([_fake_otel_span(span_id=2), bad])
+
+        assert result == wt_module.SpanExportResult.FAILURE
+        assert exporter.dropped_span_count == 1
+        exporter.client.ingest_traces.assert_called_once()
+        assert len(exporter.client.ingest_traces.call_args.kwargs["spans"]) == 1
+
+    def test_clean_batch_still_succeeds_without_drops(self) -> None:
+        exporter = self._exporter()
+        assert (
+            exporter.export([_fake_otel_span(span_id=2)])
+            == wt_module.SpanExportResult.SUCCESS
+        )
+        assert exporter.dropped_span_count == 0
+
+
+class TestTraceTrialUnflushedSpans:
+    """auto_send=False must not discard buffered spans silently (#2571)."""
+
+    def _tracker(self) -> WorkflowTracesTracker:
+        tracker = WorkflowTracesTracker(
+            backend_url="http://localhost:5000", auto_send=False
+        )
+        tracker.client = MagicMock()
+        return tracker
+
+    def test_exit_with_unflushed_spans_warns_and_counts(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        tracker = self._tracker()
+
+        with caplog.at_level(logging.WARNING, logger=wt_module.logger.name):
+            with tracker.trace_trial("cfg-1"):
+                tracker.add_span("s1", "node", "node", "2026-01-01T00:00:00+00:00")
+                tracker.add_span("s2", "node", "node", "2026-01-01T00:00:01+00:00")
+
+        tracker.client.ingest_traces.assert_not_called()
+        assert tracker.dropped_span_count == 2
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "2 unflushed span(s)" in warnings[0].getMessage()
+
+    def test_flush_inside_context_drops_nothing(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        tracker = self._tracker()
+        tracker.client.ingest_traces.return_value = MagicMock(
+            success=True, spans_ingested=1
+        )
+
+        with caplog.at_level(logging.WARNING, logger=wt_module.logger.name):
+            with tracker.trace_trial("cfg-1"):
+                tracker.add_span("s1", "node", "node", "2026-01-01T00:00:00+00:00")
+                tracker.flush()
+
+        tracker.client.ingest_traces.assert_called_once()
+        assert tracker.dropped_span_count == 0
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
