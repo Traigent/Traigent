@@ -1624,8 +1624,14 @@ def _select_run_failures(
         result = PersistenceManager(storage_dir).load_result(run)
     except Exception as exc:
         # Whatever the loader's reason (not found, or a path it refuses), a
-        # directory argument gets the real explanation instead of that reason.
-        if Path(run).expanduser().is_dir():
+        # directory argument that is not also a saved result gets the real
+        # explanation; a saved result that fails to load keeps its own error.
+        run_path = Path(run).expanduser()
+        is_saved_entry = (
+            not run_path.is_absolute()
+            and (Path(storage_dir).expanduser() / run_path).exists()
+        )
+        if run_path.is_dir() and not is_saved_entry:
             raise click.ClickException(
                 f"'{run}' is a directory, not a saved result in {storage_dir}. "
                 "export-failures reads a saved result name (see 'traigent "

@@ -345,6 +345,29 @@ class TestNameResolution:
         assert len(_read_rows(workspace / "failures.jsonl")) == 1
 
 
+class TestCorruptSavedResult:
+    def test_a_corrupt_saved_result_keeps_its_own_error(
+        self,
+        runner: CliRunner,
+        workspace: Path,
+        storage_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        plain: Callable[[str], str],
+    ) -> None:
+        # A same-named directory in cwd must not mask the real load failure.
+        monkeypatch.chdir(workspace)
+        (workspace / "run1").mkdir()
+        for path in (storage_dir / "run1").iterdir():
+            if path.is_file():
+                path.write_bytes(b"not json")
+
+        result = _invoke(runner, "run1", workspace, "--storage-dir", str(storage_dir))
+
+        assert result.exit_code != 0
+        assert "is a directory, not a saved result" not in plain(result.output)
+        assert not (workspace / "failures.jsonl").exists()
+
+
 class TestFailLoudly:
     def test_unresolvable_id_exits_nonzero_and_writes_nothing(
         self,
