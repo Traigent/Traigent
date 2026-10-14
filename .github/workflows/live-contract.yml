@@ -172,10 +172,23 @@ jobs:
       - name: Start dockerized backend
         working-directory: ${{ env.BACKEND_DIR }}
         run: |
+          # The backend's dev boot (sibling pip installs, bootstrap, the
+          # reloader building the app twice) takes ~150-220s on hosted runners,
+          # but the dev compose healthcheck marks it unhealthy after ~210s, so
+          # `--wait` failed before any contract test ran. Widen only the grace
+          # period here; keep `--wait` so the next step never touches the
+          # bind-mounted SDK/Schema trees while the container installs them.
+          override="$RUNNER_TEMP/live-contract-boot.override.yml"
+          printf '%s\n' \
+            'services:' \
+            '  backend:' \
+            '    healthcheck:' \
+            '      start_period: 420s' >"$override"
           docker compose \
             -p "$COMPOSE_PROJECT_NAME" \
             -f docker/docker-compose.dev.yml \
-            up -d --wait postgres redis backend
+            -f "$override" \
+            up -d --wait --wait-timeout 600 postgres redis backend
 
       - name: Restore checkout-root ownership
         if: ${{ always() }}
