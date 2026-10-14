@@ -234,6 +234,30 @@ async def test_non_string_ids_are_rejected_before_any_request(bad_id: Any) -> No
     transport.execute.assert_not_awaited()
 
 
+@pytest.mark.parametrize("bad_id", [0, [1]], ids=["zero", "list"])
+@pytest.mark.asyncio
+async def test_non_string_example_id_is_refused_even_with_a_valid_input_id(
+    bad_id: Any,
+) -> None:
+    """A present but non-string ``example_id`` never falls through to ``input_id``."""
+    transport = _echo_transport()
+    dataset = Dataset(
+        examples=[
+            EvaluationExample(
+                input_data={"q": "q0", "example_id": bad_id, "input_id": "svc"}
+            )
+        ],
+        name="hybrid-ids",
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=f"position 0 has an example_id of type {type(bad_id).__name__};",
+    ):
+        await _evaluator(transport).evaluate(lambda: None, {}, dataset)
+    transport.execute.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_non_string_error_names_the_field_that_held_it() -> None:
     """An empty ``example_id`` falls through, so the bad value is in ``input_id``."""

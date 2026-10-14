@@ -33,6 +33,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   again deliberately. Runs against a backend that reports no generation (older
   backend, offline run, no bound agent) publish exactly as before.
 
+### Changed
+
+- **BREAKING: non-string hybrid example ids are refused (#2575).** An
+  `example_id` / `input_id` in the inputs that is not a string (an int, float,
+  bool, list or dict) now fails the trial with a `ValidationError` naming the
+  position, the field and its type. The hybrid protocol defines these ids as
+  strings echoed exactly; a dataset with unique int ids that ran before must
+  convert them to strings. A falsy non-string `example_id` (`0`, `False`) is
+  refused too; it used to be replaced by the `input_id` or the fallback id.
+
 ### Removed
 
 - **Candidate runs (`optimize(apply=False)`) are temporarily withdrawn.** Their
@@ -90,14 +100,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   naming the positions, before any request is sent. `build_outcome_matrix`
   logs a warning when one trial repeats an example id instead of merging the
   cells silently.
-- **Breaking for non-string hybrid ids (#2575):** an `example_id` / `input_id`
-  in the inputs that is not a string (an int, float, bool, list or dict) now
-  fails the trial with a `ValidationError` naming the position, the field and
-  its type. The
-  hybrid protocol defines these ids as strings echoed exactly; a dataset with
-  unique int ids that ran before must convert them to strings. A falsy
-  non-string `example_id` (`0`, `False`) is refused too; it used to be
-  replaced by the `input_id` or the fallback id.
 
 ## [0.30.0] - 2026-09-26
 
