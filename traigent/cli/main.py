@@ -1622,19 +1622,24 @@ def _select_run_failures(
         )
     try:
         result = PersistenceManager(storage_dir).load_result(run)
-    except FileNotFoundError as exc:
+    except Exception as exc:
+        # Whatever the loader's reason (not found, or a path it refuses), a
+        # directory argument gets the real explanation instead of that reason.
         if Path(run).expanduser().is_dir():
             raise click.ClickException(
                 f"'{run}' is a directory, not a saved result in {storage_dir}. "
                 "export-failures reads a saved result name (see 'traigent "
                 "results list'): optimization-logger run directories do not "
                 "record the example inputs needed to join failures to dataset "
-                "rows"
+                "rows. Save the run with PersistenceManager(...).save_result(), "
+                "or in Python call traigent.utils.regression_dataset."
+                "select_examples_by_id(dataset, result.failing_examples(), "
+                "result) on the in-memory result"
             ) from exc
-        raise click.ClickException(
-            f"Result '{run}' not found in {storage_dir}. {_MSG_RESULTS_LIST_HINT}"
-        ) from exc
-    except Exception as exc:
+        if isinstance(exc, FileNotFoundError):
+            raise click.ClickException(
+                f"Result '{run}' not found in {storage_dir}. {_MSG_RESULTS_LIST_HINT}"
+            ) from exc
         raise click.ClickException(f"Error loading result '{run}': {exc}") from exc
     try:
         failing: list[str] = result.failing_examples(

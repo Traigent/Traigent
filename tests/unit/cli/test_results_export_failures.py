@@ -322,7 +322,9 @@ class TestDirectorySourceIsRefused:
         result = _invoke(runner, str(run_dir), workspace)
 
         assert result.exit_code != 0
-        assert "directory" in plain(result.output)
+        text = plain(result.output)
+        assert "is a directory, not a saved result" in text
+        assert "select_examples_by_id" in text
         assert not (workspace / "failures.jsonl").exists()
 
 
