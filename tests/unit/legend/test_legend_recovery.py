@@ -958,3 +958,117 @@ def test_vendored_contract_files_equal_schema_9b0451d():
     fixtures = Path(__file__).parent / "fixtures"
     for f in fixtures.glob("*.json"):
         assert f.read_bytes() == (schema / f.name).read_bytes(), f.name
+
+
+# ------------------------------------------------- review fixes (terra)
+def _plain_evaluator(tmp_path):
+    root, ev, objectives = _evaluator_project(tmp_path)
+    return root, ev, objectives
+
+
+def test_plain_evaluator_is_not_backend_keyed_and_restores_exact(
+    store, tmp_path, idx, schemas
+):
+    root, ev, objectives = _plain_evaluator(tmp_path)
+    try:
+        src = EvaluatorFilesSource(
+            root, evaluator=ev, objectives=objectives, authoritative_format="plain"
+        )
+        t = InMemoryTransport()
+        vref = declare(
+            c.KIND_EVALUATOR,
+            EvaluatorSource(ev, objectives, authoritative_format="plain"),
+            transport=t,
+        ).version_ref
+        rec = capture(
+            vref, src, store=store, transport=t, conformance=PASSED, index=idx
+        )
+        assert rec.backend_keyed is False and rec.coverage["status"] == "complete"
+        schemas.validate(REQ, "RecordCaptureRequestV0", t.requests[-1])
+        res = restore(rec, tmp_path / "o", store=store, transport=t, index=idx)
+        assert res.grade == "exact"
+        schemas.validate(REQ, "RecordRestoreRequestV0", t.requests[-1])
+        assert t.requests[-1]["backend_keyed"] is False
+        # keyed and unknown formats are backend-keyed
+        for fmt in ("keyed", "unknown"):
+            assert c.backend_keyed(c.KIND_EVALUATOR, fmt)
+        assert not c.backend_keyed(c.KIND_EVALUATOR, "plain")
+        with pytest.raises(LegendError):
+            compute_pillar(
+                c.KIND_EVALUATOR,
+                EvaluatorSource(ev, objectives, authoritative_format="x"),
+            )
+    finally:
+        sys.modules.pop("ev_mod_x", None)
+
+
+def test_builders_refuse_unknown_inputs_and_outputs_validate(schemas):
+    from traigent.legend.payloads import (
+        build_availability_payload,
+        build_capture_payload,
+        build_restore_payload,
+    )
+
+    vref, fp = "versionref_" + "1" * 32, "rmf0:sha256:" + "2" * 64
+    cov = {"status": "complete", "covered": ["applied_config"], "missing": []}
+    cap = {
+        "version_ref": vref,
+        "kind": c.KIND_CONFIGURATION,
+        "manifest_fingerprint": fp,
+        "coverage": cov,
+        "recovery_state": "stored_unverified",
+        "conformance_passed": True,
+        "exporter_version": "0.1.0",
+        "backend_keyed": False,
+        "identity_verification_ref": None,
+        "representation_commitment": "sha256:" + "3" * 64,
+        "identity_digests_reproduced": True,
+    }
+    rst = {
+        "version_ref": vref,
+        "kind": c.KIND_CONFIGURATION,
+        "manifest_fingerprint": fp,
+        "outcome": "exact",
+        "coverage": cov,
+        "isolated_destination": True,
+        "representation_digests_match": True,
+        "pillar_fingerprint_match": True,
+        "historical_key_available": True,
+        "dependencies_verified": True,
+        "verified_artifact_digest": "sha256:" + "4" * 64,
+        "backend_keyed": False,
+    }
+    schemas.validate(REQ, "RecordCaptureRequestV0", build_capture_payload(**cap))
+    schemas.validate(REQ, "RecordRestoreRequestV0", build_restore_payload(**rst))
+    schemas.validate(
+        REQ,
+        "RecordAvailabilityRequestV0",
+        build_availability_payload(vref, fp, "retired"),
+    )
+    bad_cov = {**cov, "extra": ["x"]}
+    for override in (
+        {"coverage": bad_cov},
+        {"coverage": {**cov, "covered": ["applied_config", "bogus"]}},
+        {"exporter_version": "1.0"},
+        {"exporter_version": "v1.0.0"},
+        {"exporter_version": "1.0.0\n"},
+    ):
+        with pytest.raises(LegendError):
+            build_capture_payload(**{**cap, **override})
+    for override in (
+        {"coverage": bad_cov},
+        {"isolated_destination": False},
+        {"outcome": "great"},
+    ):
+        with pytest.raises(LegendError):
+            build_restore_payload(**{**rst, **override})
+    with pytest.raises(LegendError):
+        build_restore_payload(
+            **{**rst, "isolated_destination": False, "outcome": "partial"}
+        )
+    with pytest.raises(LegendError):
+        build_availability_payload(vref, fp, "gone")
+    with pytest.raises(LegendError):
+        build_capture_payload(
+            **{**cap, "kind": c.KIND_SEARCH_SPACE, "backend_keyed": False}
+        )

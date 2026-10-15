@@ -110,6 +110,8 @@ def _closed_coverage(kind: str, coverage: dict[str, Any]) -> dict[str, Any]:
     # imported here: manifest imports pillars/payload-free helpers, keep module graph acyclic
     from traigent.legend.manifest import validate_coverage
 
+    if set(coverage) != {"status", "covered", "missing"}:
+        raise LegendError("invalid_request", "coverage has unknown or missing members")
     clean = {
         "status": coverage["status"],
         "covered": list(coverage["covered"]),
@@ -153,12 +155,16 @@ def build_capture_payload(
         raise LegendError("invalid_request", "unknown recovery state")
     if recovery_state == c.RECOVERY_ROUND_TRIP_VERIFIED and not conformance_passed:
         raise LegendError("conformance_failed", "round trip needs conformance")
+    if not c.SEMVER_RE.fullmatch(exporter_version or "") or len(exporter_version) > 32:
+        raise LegendError("invalid_request", "exporter_version must be semver")
     if not c.SHA256_DIGEST_RE.fullmatch(representation_commitment or ""):
         raise LegendError("invalid_request", "representation_commitment malformed")
     if identity_verification_ref is not None and not c.EVENT_REF_RE.fullmatch(
         identity_verification_ref
     ):
         raise LegendError("invalid_request", "identity_verification_ref malformed")
+    if kind in c.BACKEND_KEYED_KINDS and not backend_keyed:
+        raise LegendError("invalid_request", "this kind is backend-keyed")
     clean = _closed_coverage(kind, coverage)
     if clean["status"] == "complete":
         if not identity_digests_reproduced:
@@ -219,6 +225,10 @@ def build_restore_payload(
         c.GRADE_FAILED,
     ):
         raise LegendError("invalid_request", "unknown restore outcome")
+    if isolated_destination is not True:
+        raise LegendError(
+            "invalid_request", "restores are always into an isolated destination"
+        )
     if verified_artifact_digest is not None and not c.SHA256_DIGEST_RE.fullmatch(
         verified_artifact_digest
     ):

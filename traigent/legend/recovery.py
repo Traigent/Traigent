@@ -504,7 +504,10 @@ def restore(
             for d in deps
         )
         coverage = _coverage(manifest)
-        backend_keyed = rkind in c.BACKEND_KEYED_KINDS
+        # the manifest records what the capture claimed; never weaker than the kind's floor
+        backend_keyed = (
+            bool(manifest.get("backend_keyed", True)) or rkind in c.BACKEND_KEYED_KINDS
+        )
         key_ok = _historical_key_available(manifest, backend_keyed, keys)
         if not digests:
             grade: Grade = "failed"

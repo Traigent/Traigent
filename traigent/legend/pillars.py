@@ -66,6 +66,7 @@ class EvaluatorSource:
     evaluator: Any
     objectives: Any = None
     evaluator_id: str | None = None
+    authoritative_format: str = c.AUTH_FORMAT_UNKNOWN
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,7 @@ class EvaluatorManifestSource:
     """A ready ``EvaluatorVersionManifestV1`` dict."""
 
     manifest: dict[str, Any]
+    authoritative_format: str = c.AUTH_FORMAT_UNKNOWN
 
 
 @dataclass(frozen=True)
@@ -111,11 +113,14 @@ class Pillar:
     # coverage can be ``complete`` only when this holds.
     reproduced: bool = False
     skipped: int = 0
+    # evaluators only: the authoritative manifest format the caller declares
+    # (``plain | keyed | unknown``); unknown counts as backend-keyed.
+    authoritative_format: str = c.AUTH_FORMAT_UNKNOWN
 
     @property
     def backend_keyed(self) -> bool:
-        """Conservative ``BackendKeyed`` reading (see ``_contract.BACKEND_KEYED_KINDS``)."""
-        return self.kind in c.BACKEND_KEYED_KINDS
+        """``BackendKeyed`` from kind and declared authoritative format (``_contract.backend_keyed``)."""
+        return c.backend_keyed(self.kind, self.authoritative_format)
 
     def wire_identity(self) -> dict[str, Any]:
         return {
@@ -227,6 +232,8 @@ def _dataset(source: DatasetSource) -> Pillar:
 
 
 def _evaluator(source: EvaluatorSource | EvaluatorManifestSource) -> Pillar:
+    if source.authoritative_format not in c.AUTH_FORMATS:
+        raise _refuse()
     if isinstance(source, EvaluatorManifestSource):
         manifest = source.manifest
         try:
@@ -251,6 +258,7 @@ def _evaluator(source: EvaluatorSource | EvaluatorManifestSource) -> Pillar:
         c.IDENTITY_SDK_FINGERPRINTED,
         (Representation(c.REPR_EVALUATOR_BUNDLE, canonical_bytes(manifest)),),
         tuple(covered),
+        authoritative_format=source.authoritative_format,
     )
 
 

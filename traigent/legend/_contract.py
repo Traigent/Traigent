@@ -107,6 +107,7 @@ IDENTITY_COMPONENT_BY_KIND: Final = {
 # RepresentationCommitment: sha256: + hex SHA-256(domain || 0x00 || jcs_v1({"representations": [d0, ...]}))
 REPRESENTATION_COMMITMENT_DOMAIN: Final = "traigent.legend.representation_commitment.v0"
 EVENT_REF_RE: Final = re.compile(r"eventref_[0-9a-f]{32}")
+SEMVER_RE: Final = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 SHA256_DIGEST_RE: Final = re.compile(r"sha256:[0-9a-f]{64}")
 AVAILABILITY_STATUSES: Final = frozenset(
     {"available", "missing", "corrupted", "retired"}
@@ -146,9 +147,25 @@ GRADE_SUBSTITUTED: Final = "substituted"
 GRADE_FAILED: Final = "failed"
 # BackendKeyed(version) (design note section 4): ``ssp1`` search spaces and evaluators
 # (keyed ``evd1`` leaves under Backend-only ``K_eval``; an unknown authoritative format
-# also counts as backend-keyed). The SDK cannot derive that status from the authority row,
-# so it takes the conservative reading: both kinds are backend-keyed, a client-origin
-# restore is at most ``substituted`` and complete coverage needs a cited
-# ``identity_verified`` proof. The Backend refuses a claim that differs from its derived value.
-BACKEND_KEYED_KINDS: Final = frozenset({KIND_SEARCH_SPACE, KIND_EVALUATOR})
+# also counts as backend-keyed). The Backend refuses a claim that differs from its
+# derived value, so the SDK states it from the declared authoritative format (see
+# ``backend_keyed``): unknown => keyed, plain => not.
+BACKEND_KEYED_KINDS: Final = frozenset({KIND_SEARCH_SPACE})
+# Evaluator authoritative manifest format as declared by the caller (reference model:
+# ``plain | keyed | unknown``). An evaluator is backend-keyed iff keyed OR unknown.
+AUTH_FORMAT_PLAIN: Final = "plain"
+AUTH_FORMAT_KEYED: Final = "keyed"
+AUTH_FORMAT_UNKNOWN: Final = "unknown"
+AUTH_FORMATS: Final = frozenset(
+    {AUTH_FORMAT_PLAIN, AUTH_FORMAT_KEYED, AUTH_FORMAT_UNKNOWN}
+)
+
+
+def backend_keyed(kind: str, authoritative_format: str = AUTH_FORMAT_UNKNOWN) -> bool:
+    """``BackendKeyed(version)``: search space always; evaluator unless its format is ``plain``."""
+    if kind in BACKEND_KEYED_KINDS:
+        return True
+    return kind == KIND_EVALUATOR and authoritative_format != AUTH_FORMAT_PLAIN
+
+
 EVIDENCE_CLIENT_SDK: Final = "client_sdk_reported"

@@ -100,6 +100,7 @@ class EvaluatorFilesSource:
     objectives: Any = None
     evaluator_id: str | None = None
     declared_manifest: Mapping[str, Any] | None = None
+    authoritative_format: str = c.AUTH_FORMAT_UNKNOWN
     declared_fingerprint: str | None = None
     max_file_bytes: int = DEFAULT_MAX_FILE_BYTES
 
@@ -422,6 +423,8 @@ def _agent_manifest_from(
 
 
 def export_evaluator_files(source: EvaluatorFilesSource) -> Pillar:
+    if source.authoritative_format not in c.AUTH_FORMATS:
+        raise LegendError("invalid_request", "unknown authoritative format")
     root = Path(source.root)
     if not root.is_dir():
         raise LegendError("invalid_request", "evaluator root is not a directory")
@@ -480,6 +483,7 @@ def export_evaluator_files(source: EvaluatorFilesSource) -> Pillar:
         tuple(covered),
         reproduced=reproduced,
         skipped=skipped,
+        authoritative_format=source.authoritative_format,
     )
 
 
