@@ -244,3 +244,34 @@ def test_submit_against_full_retained_outbox_arms_retry_timer(transport_factory)
     assert transport.submit("new", {"id": "new"}) is False
     assert transport._timer is not None
     assert transport.get_stats()["queue_depth"] == 1
+
+
+@pytest.mark.timeout(5)
+def test_timer_waiting_on_send_lock_does_not_resend_after_failure(transport_factory):
+    entered = threading.Event()
+    release = threading.Event()
+    attempts = []
+
+    def sender(payloads):
+        attempts.append(payloads)
+        entered.set()
+        assert release.wait(timeout=3)
+        unavailable()
+
+    transport = transport_factory(sender)
+    assert transport.submit("trace", {"id": "trace"})
+    epoch = transport._delivery_failure_epoch
+    worker = threading.Thread(target=transport.flush)
+    worker.start()
+    assert entered.wait(timeout=3)
+
+    # The age timer fires mid-delivery and blocks on the send lock.
+    timer = threading.Thread(target=transport._flush_from_timer, args=(epoch,))
+    timer.start()
+    release.set()
+    worker.join(timeout=3)
+    timer.join(timeout=3)
+
+    assert not worker.is_alive() and not timer.is_alive()
+    assert len(attempts) == 1
+    assert transport.get_stats()["queue_depth"] == 1

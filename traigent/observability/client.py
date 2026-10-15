@@ -980,6 +980,7 @@ class _SyncBatchTransport:
         timeout: float | None = None,
         *,
         warn_on_deadline_expiry: bool | None = None,
+        timer_epoch: int | None = None,
     ) -> BatchFlushResult:
         """Flush queued payloads, waiting no longer than ``timeout`` seconds.
 
@@ -995,7 +996,9 @@ class _SyncBatchTransport:
                 "the timer state lock"
             )
         completed = self._send_available(
-            deadline=deadline, warn_on_deadline_expiry=warn_on_deadline_expiry
+            deadline=deadline,
+            warn_on_deadline_expiry=warn_on_deadline_expiry,
+            timer_epoch=timer_epoch,
         )
         return self._build_result(
             deadline,
@@ -1102,7 +1105,7 @@ class _SyncBatchTransport:
         if epoch is not None and epoch != self._delivery_failure_epoch:
             return
         try:
-            self.flush()
+            self.flush(timer_epoch=epoch)
         except Exception as exc:
             self._append_error(f"timer flush failed: {exc}")
 
@@ -1117,6 +1120,7 @@ class _SyncBatchTransport:
         *,
         deadline: float | None = None,
         warn_on_deadline_expiry: bool = True,
+        timer_epoch: int | None = None,
     ) -> bool:
         events: list[tuple[str, dict[str, Any]]] = []
         caller_released = threading.Event()
@@ -1151,6 +1155,12 @@ class _SyncBatchTransport:
                 if not self._acquire_lock_until(deadline):
                     return False
                 try:
+                    if timer_epoch is not None and (
+                        timer_epoch != self._delivery_failure_epoch
+                    ):
+                        # A failure retained the outbox while this timer drain
+                        # waited for send serialization; do not resend it.
+                        return True
                     if not self._buffer:
                         self._stats["pending_items"] = self._inflight_items
                         return True
