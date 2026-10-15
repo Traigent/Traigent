@@ -1082,9 +1082,9 @@ class BackendSessionManager:
         """
         if policy_requires_cloud(policy_from_config(self._traigent_config)):
             if rejection_reason:
+                # Fixed text only: the backend reason can echo customer content.
                 detail = (
-                    "required cloud tracking was permanently rejected by the "
-                    f"backend: {rejection_reason}"
+                    "required cloud tracking was permanently rejected by the backend"
                 )
             else:
                 detail = "required cloud tracking did not acknowledge the operation"

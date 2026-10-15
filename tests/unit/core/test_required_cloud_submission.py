@@ -76,10 +76,12 @@ async def test_required_cloud_permanent_rejection_fails_closed(connected_manager
 
     manager, client = connected_manager
     client._submit_trial_result_via_session.return_value = (
-        TrialSubmissionResult.rejected("unknown objective")
+        TrialSubmissionResult.rejected("sentinel-customer-text")
     )
-    with pytest.raises(CloudBrainUnavailableError, match="permanently rejected"):
+    with pytest.raises(CloudBrainUnavailableError, match="permanently rejected") as ei:
         await manager._log_trial_to_backend("session-local-control", trial(), 1.0, {})
+    assert "sentinel-customer-text" not in str(ei.value)
+    assert "sentinel-customer-text" not in repr(ei.value.reason)
     assert manager._runtime_degraded is False
     assert manager._acknowledged_trials == set()
 
