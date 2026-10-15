@@ -24,6 +24,7 @@ from traigent.observability.config import (
     ObservabilityConfig,
     apply_content_mode,
     apply_content_mode_to_text,
+    describe_offline_mode_cause,
     most_restrictive_content_mode,
     nonblank_credential,
     redacted_content_marker,
@@ -2967,7 +2968,8 @@ class ObservabilityClient:
         if self.config.offline_mode:
             self._log_offline_mode_once()
             raise ClientError(
-                "Observability backend request skipped because TRAIGENT_OFFLINE_MODE=true"
+                "Observability backend request skipped because offline mode is "
+                f"enabled ({describe_offline_mode_cause()})"
             )
         if self._request_sender_override is not None:
             return cast(

@@ -62,6 +62,32 @@ def _read_observability_offline_mode() -> bool:
     return is_backend_offline() or is_truthy(os.getenv("TRAIGENT_DISABLE_TELEMETRY"))
 
 
+# Every environment variable that `_read_observability_offline_mode` honours
+# (the first two via `is_backend_offline`), in the order they are reported.
+_OFFLINE_MODE_ENV_VARS = (
+    "TRAIGENT_OFFLINE_MODE",
+    "TRAIGENT_OFFLINE",
+    "TRAIGENT_DISABLE_TELEMETRY",
+)
+
+
+def describe_offline_mode_cause() -> str:
+    """Name what put observability into offline mode, for user-facing messages.
+
+    Reports each offline environment variable that is currently truthy, so a
+    message never blames a variable the user did not set (#2603). When none
+    is set, offline mode came from ``ObservabilityConfig(offline_mode=True)``.
+    """
+    causes = [
+        f"{name}={os.environ[name].strip()}"
+        for name in _OFFLINE_MODE_ENV_VARS
+        if is_truthy(os.environ.get(name))
+    ]
+    if causes:
+        return " and ".join(causes)
+    return "ObservabilityConfig.offline_mode=True"
+
+
 _CONTENT_MODE_RANK: dict[str, int] = {"metadata": 0, "redacted": 1, "record": 2}
 
 # Dataclass field sentinel: distinguishes "the constructor's `content_mode`

@@ -496,8 +496,12 @@ def test_observability_client_offline_mode_blocks_request_api():
         request_sender=request_sender,
     )
 
-    with pytest.raises(ClientError, match="TRAIGENT_OFFLINE_MODE=true"):
+    # #2603: no offline env var is set here, so the message must name the
+    # config flag that actually caused it, not TRAIGENT_OFFLINE_MODE.
+    with pytest.raises(ClientError) as exc_info:
         client.list_sessions()
+    assert "ObservabilityConfig.offline_mode=True" in str(exc_info.value)
+    assert "TRAIGENT_OFFLINE_MODE" not in str(exc_info.value)
 
     client.close()
 
