@@ -816,6 +816,13 @@ class LocalStorageManager:
                 self.storage_path,
                 must_exist=False,
             )
+            # A symlinked index file could point at a stored session (in-root,
+            # so containment passes) and the atomic replace would clobber it.
+            if (
+                index_path.is_symlink()
+                or (self.storage_path / "cache" / self._SESSION_INDEX_NAME).is_symlink()
+            ):
+                index_path = None
         except (PathTraversalError, OSError, ValueError):
             index_path = None
         index: dict[str, Any] = {}
