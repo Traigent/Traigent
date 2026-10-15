@@ -321,9 +321,12 @@ _SECRET_KV_RE = re.compile(
     rf"(?:{_QUOTED_VALUE}|\S+)",
     re.IGNORECASE,
 )
+# A quoted value (JSON/dict style) is consumed to its closing quote; an unquoted
+# header consumes the rest of the line so multi-part schemes (``Digest a="b",
+# c="d"``, ``Negotiate <token>``) never leave a parameter behind.
 _AUTH_HEADER_RE = re.compile(
-    r"(?P<key>\bAuthorization[\"']?\s*[=:]\s*[\"']?)"
-    r"(?:(?:Bearer|Basic|Digest|Token)\s+)?[^\s\"'}\]]+",
+    r"(?P<key>\bAuthorization[\"']?\s*[=:]\s*)"
+    r"(?:\"(?:\\[\s\S]?|[^\"\\])*(?:\"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)|[^\r\n]+)",
     re.IGNORECASE,
 )
 _COOKIE_HEADER_RE = re.compile(
@@ -338,6 +341,7 @@ _BASIC_RE = re.compile(
     re.IGNORECASE,
 )
 _URL_USERINFO_RE = re.compile(r"(?<=://)[^/\s@?#]+(?=@)")
+_URL_CUT_AUTHORITY_RE = re.compile(r"(?<=://)[^/\s@?#]+\Z")
 # Windows forbids these characters in a file name; a user name may hold up to
 # two spaces ("John Smith") when a path separator follows.
 _WIN_NAME = r"[^\s\\/\"':*?<>|]+"
@@ -358,8 +362,13 @@ def _scrub_error_text(text: str) -> str:
     heuristics (SSN/card/email) are deliberately not applied: they would eat
     numeric error codes and ids.
     """
+    truncated = len(text) > _MAX_SCRUB_INPUT_CHARS
     text = text[:_MAX_SCRUB_INPUT_CHARS]
     text = _URL_USERINFO_RE.sub("[REDACTED]", text)
+    if truncated:
+        # The cap may have cut through ``scheme://user:pass@host``; the ``@``
+        # is gone, so redact an unterminated authority at the very end.
+        text = _URL_CUT_AUTHORITY_RE.sub("[REDACTED]", text)
     text = _AUTH_HEADER_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
     text = _COOKIE_HEADER_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
     text = _BASIC_RE.sub("Basic [REDACTED]", text)

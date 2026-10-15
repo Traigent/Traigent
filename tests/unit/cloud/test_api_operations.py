@@ -420,6 +420,34 @@ class TestSanitizeErrorMessage:
         assert result == "[PATH]: not found code E1234"
 
     @pytest.mark.parametrize(
+        ("msg", "leaked"),
+        [
+            ("Authorization: Negotiate YIIabc123xyz", "YIIabc123xyz"),
+            (
+                'Authorization: Digest username="alice", response="deadbeef"',
+                "alice",
+            ),
+            (
+                'Authorization: Digest username="alice", response="deadbeef"',
+                "deadbeef",
+            ),
+            ('{"Authorization": "Negotiate YIIabc123xyz"}', "YIIabc123xyz"),
+        ],
+    )
+    def test_full_authorization_value_redacted(self, msg, leaked):
+        assert leaked not in self.ops.sanitize_error_message(msg)
+
+    def test_credentials_cut_by_input_cap_are_redacted(self):
+        msg = "https://alice:hunter2" + "x" * 5000 + "@host/path"
+        result = self.ops.sanitize_error_message(msg)
+        assert "hunter2" not in result
+        assert "alice" not in result
+
+    def test_short_url_without_userinfo_survives(self):
+        msg = "GET https://example.com"
+        assert self.ops.sanitize_error_message(msg) == msg
+
+    @pytest.mark.parametrize(
         "text",
         ["a." * 50_000, "a" * 100_000, "password " * 20_000, "Bearer " * 20_000],
     )
