@@ -82,14 +82,15 @@ async def _submit_through_public_path(
 
     ops = TrialOperations(client)
     ops._handle_trial_success_response = AsyncMock(return_value=True)
-    session, session_ctx = _post_mock()
+    session, _session_ctx = _post_mock()
+    # develop's TrialOperations borrows the client's pooled session
+    client._ensure_session = AsyncMock(return_value=session)
     with (
         patch("traigent.cloud.trial_operations.is_backend_offline", return_value=False),
         patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
         patch("traigent.cloud.trial_operations.validate_configuration_run_submission"),
         patch("traigent.cloud.trial_operations.aiohttp") as aiohttp_mock,
     ):
-        aiohttp_mock.ClientSession = Mock(return_value=session_ctx)
         aiohttp_mock.ClientTimeout = Mock()
         outcome = await ops.submit_trial_result_via_session(
             session_id="s1",
@@ -431,7 +432,11 @@ def test_unknown_cost_without_required_tracking_still_degrades_under_mock_llm(
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
     monkeypatch.setenv("TRAIGENT_REQUIRE_COST_TRACKING", "false")
     monkeypatch.setenv("TRAIGENT_STRICT_COST_ACCOUNTING", "false")
-    enforcer = CostEnforcer(CostEnforcerConfig(fallback_trial_limit=5))
+    # Unknown-cost mode is only reachable for an inherited default cap; a
+    # named limit fails closed (CostEnforcerConfig.limit_explicit, develop).
+    enforcer = CostEnforcer(
+        CostEnforcerConfig(fallback_trial_limit=5, limit_explicit=False)
+    )
 
     enforcer.track_cost(None, permit=Permit(id=0, amount=0.0, active=True))
 

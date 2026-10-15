@@ -74,9 +74,8 @@ async def _submit(summary_stats: dict, budget_armed: bool = False) -> dict:
     post_ctx.__aexit__ = AsyncMock(return_value=False)
     session = AsyncMock()
     session.post = Mock(return_value=post_ctx)
-    session_ctx = AsyncMock()
-    session_ctx.__aenter__ = AsyncMock(return_value=session)
-    session_ctx.__aexit__ = AsyncMock(return_value=False)
+    # develop's TrialOperations borrows the client's pooled session
+    client._ensure_session = AsyncMock(return_value=session)
     ops._handle_trial_success_response = Mock(return_value=True)
     with (
         patch("traigent.cloud.trial_operations.is_backend_offline", return_value=False),
@@ -84,7 +83,6 @@ async def _submit(summary_stats: dict, budget_armed: bool = False) -> dict:
         patch("traigent.cloud.trial_operations.AIOHTTP_AVAILABLE", True),
         patch("traigent.cloud.trial_operations.aiohttp") as aio,
     ):
-        aio.ClientSession = Mock(return_value=session_ctx)
         aio.ClientTimeout = Mock()
         await ops.submit_summary_stats(
             session_id="s1",
