@@ -315,8 +315,9 @@ def build_outcome_matrix(result: OptimizationResult) -> dict[str, Any]:
         # share one example id. But a merge must never be silent, because a
         # buggy id scheme (e.g. one id for every example) looks the same.
         # Content-free: column indexes (the matrix ``trials[].index``) and
-        # counts only. Never example ids, and never trial ids either: a hybrid
-        # trial id is supplied by the caller's service and can carry content.
+        # counts only. Never example ids, and never trial ids either: a trial
+        # id is a free-form string set by whoever built the result, so it can
+        # carry content.
         logger.warning(
             "outcome matrix keeps one cell per example_id per trial; merged "
             "cells that repeated an example_id within the same trial "

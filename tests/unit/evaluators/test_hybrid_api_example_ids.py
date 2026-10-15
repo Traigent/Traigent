@@ -423,10 +423,10 @@ def test_outcome_matrix_warns_when_one_trial_repeats_an_id(
 def test_outcome_matrix_merge_warning_never_logs_the_trial_id(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A caller-supplied trial id can carry content; the warning names the column.
+    """A free-form trial id can carry content; the warning names the column.
 
-    Hybrid trial ids come from the caller's service, so the warning identifies
-    the trial by its matrix column index (a closed token) instead.
+    ``TrialResult.trial_id`` is whatever string the result's builder set, so
+    the warning identifies the trial by its matrix column index instead.
     """
     content_id = "acme-corp jane.doe@example.com Q3 renewal"
     result = OptimizationResult(

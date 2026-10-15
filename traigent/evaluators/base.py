@@ -1233,10 +1233,11 @@ class Dataset:
         tmp_path = destination.with_name(
             f".{destination.name}.{secrets.token_hex(8)}.tmp"
         )
-        # Permissions match a plain ``open(..., "w")``: a new file gets 0o666
-        # filtered by the process umask (``tempfile.mkstemp`` would leave it
-        # owner-only, 0o600), and an existing file keeps its mode, so replacing
-        # an owner-only export never widens access to the examples it holds.
+        # Permission bits match a plain ``open(..., "w")``: a new file gets
+        # 0o666 filtered by the process umask (``tempfile.mkstemp`` would leave
+        # it owner-only, 0o600), and an existing file keeps its mode bits, so
+        # re-exporting over an owner-only file does not widen them. (Owner,
+        # group and ACLs are those of a new file, as with any atomic replace.)
         try:
             existing_mode: int | None = stat.S_IMODE(os.stat(destination).st_mode)
         except FileNotFoundError:
@@ -1247,12 +1248,15 @@ class Dataset:
         fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, create_mode)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                if existing_mode is not None and hasattr(os, "fchmod"):
+                    # On the open descriptor, so no path swap can redirect it.
+                    # Without ``fchmod`` (Windows before 3.13) mode bits are
+                    # only the read-only flag, and a read-only destination
+                    # cannot be replaced there anyway, so nothing is lost.
+                    os.fchmod(fd, existing_mode)
                 handle.writelines(lines)
                 handle.flush()
                 os.fsync(handle.fileno())
-            if existing_mode is not None:
-                # By path, not ``os.fchmod``: that is POSIX-only before 3.13.
-                os.chmod(tmp_path, existing_mode)
             os.replace(tmp_path, destination)
         except BaseException:
             try:
