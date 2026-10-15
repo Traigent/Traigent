@@ -1,0 +1,132 @@
+"""``ClientStore``: the customer-side, no-delete byte store a capture is written to.
+
+Keys are scheme-qualified recovery-manifest fingerprints (``rmf0:sha256:...``),
+never pillar fingerprints. There is no delete: a store may only add. A ``put``
+of an existing key with different bytes is a closed error, never an overwrite.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import tempfile
+from pathlib import Path
+from typing import BinaryIO, Final, Literal, Protocol, runtime_checkable
+
+from traigent.legend import _contract as c
+from traigent.legend.errors import LegendError
+
+PutStatus = Literal["stored_unverified", "unreachable", "permission_denied"]
+# ``retrieved`` is local only; the others are ClientStoreStatus values.
+GetStatus = Literal[
+    "retrieved", "missing", "truncated", "corrupted", "unreachable", "permission_denied"
+]
+HasStatus = Literal["available", "missing", "unknown"]
+
+BUNDLE_NAME: Final = "bundle.rmf"
+_KEY_RE: Final = re.compile(re.escape(c.MANIFEST_FINGERPRINT_PREFIX) + r"[0-9a-f]{64}")
+
+
+@runtime_checkable
+class ClientStore(Protocol):
+    """Implemented by the customer's coding agent for their own storage. No delete."""
+
+    def put(
+        self, kind: str, manifest_fingerprint: str, stream: BinaryIO
+    ) -> PutStatus: ...
+
+    def get(self, kind: str, manifest_fingerprint: str, dest_dir: Path) -> GetStatus:
+        """Write the stored bytes to ``dest_dir / BUNDLE_NAME`` and say how it went."""
+        ...
+
+    def has(self, kind: str, manifest_fingerprint: str) -> HasStatus: ...
+
+
+def check_key(kind: str, manifest_fingerprint: str) -> None:
+    if kind not in c.ENTITY_KINDS or not _KEY_RE.fullmatch(manifest_fingerprint or ""):
+        raise LegendError(
+            "invalid_request", "store key must be a kind and rmf0 fingerprint"
+        )
+
+
+class LocalDirectoryStore:
+    """Reference store: one content-addressed pair of files per key under ``root``."""
+
+    def __init__(self, root: str | os.PathLike[str]) -> None:
+        self.root = Path(root)
+
+    def _paths(self, kind: str, fp: str) -> tuple[Path, Path]:
+        check_key(kind, fp)
+        base = self.root / kind / fp[len(c.MANIFEST_FINGERPRINT_PREFIX) :]
+        return base.with_suffix(".blob"), base.with_suffix(".meta")
+
+    def put(self, kind: str, manifest_fingerprint: str, stream: BinaryIO) -> PutStatus:
+        blob, meta = self._paths(kind, manifest_fingerprint)
+        try:
+            blob.parent.mkdir(parents=True, exist_ok=True)
+            data = stream.read()
+            digest = hashlib.sha256(data).hexdigest()
+            if blob.exists():
+                if self._existing_digest(meta) != digest:
+                    raise LegendError(
+                        "manifest_mismatch", "key already holds other bytes"
+                    )
+                return "stored_unverified"
+            fd, tmp = tempfile.mkstemp(dir=blob.parent, suffix=".tmp")
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+            meta.write_text(json.dumps({"sha256": digest, "length": len(data)}))
+            try:
+                os.link(tmp, blob)  # fails if a concurrent put won the key
+            except FileExistsError:
+                if self._existing_digest(meta) != digest:
+                    raise LegendError(
+                        "manifest_mismatch", "key already holds other bytes"
+                    ) from None
+            finally:
+                os.unlink(tmp)
+            return "stored_unverified"
+        except PermissionError:
+            return "permission_denied"
+        except OSError:
+            return "unreachable"
+
+    @staticmethod
+    def _existing_digest(meta: Path) -> str | None:
+        try:
+            value = json.loads(meta.read_text()).get("sha256")
+            return value if isinstance(value, str) else None
+        except (OSError, ValueError, AttributeError):
+            return None
+
+    def get(self, kind: str, manifest_fingerprint: str, dest_dir: Path) -> GetStatus:
+        blob, meta = self._paths(kind, manifest_fingerprint)
+        try:
+            if not blob.exists():
+                return "missing"
+            data = blob.read_bytes()
+            try:
+                info = json.loads(meta.read_text())
+                digest, length = info["sha256"], int(info["length"])
+            except (OSError, ValueError, KeyError, TypeError):
+                return "corrupted"
+            Path(dest_dir).mkdir(parents=True, exist_ok=True)
+            (Path(dest_dir) / BUNDLE_NAME).write_bytes(data)
+            if len(data) < length:
+                return "truncated"
+            if len(data) != length or hashlib.sha256(data).hexdigest() != digest:
+                return "corrupted"
+            return "retrieved"
+        except PermissionError:
+            return "permission_denied"
+        except OSError:
+            return "unreachable"
+
+    def has(self, kind: str, manifest_fingerprint: str) -> HasStatus:
+        blob, _ = self._paths(kind, manifest_fingerprint)
+        try:
+            return "available" if blob.exists() else "missing"
+        except OSError:
+            return "unknown"

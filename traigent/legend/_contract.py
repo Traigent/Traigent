@@ -56,6 +56,7 @@ ORDERING_PRESERVED: Final = "preserved"
 ORDERING_NOT_APPLICABLE: Final = "not_applicable"
 REPR_SOURCE_BUNDLE: Final = "source_bundle"
 REPR_CONFIG_DOCUMENT: Final = "config_document"
+REPR_DEPENDENCY_LOCK: Final = "dependency_lock"
 REPR_DATASET_ROWS: Final = "dataset_rows"
 REPR_EVALUATOR_BUNDLE: Final = "evaluator_bundle"
 REPR_JUDGE_CONFIG: Final = "judge_config_document"
@@ -105,4 +106,15 @@ QUERY_MAX_PAGE_SIZE: Final = 100
 # Future Backend routes (item 3); not final.
 ROUTE_DECLARE: Final = "/api/v1/legend/versions:declare"
 ROUTE_QUERY: Final = "/api/v1/legend/versions:query"
+ROUTE_RECORD_CAPTURE: Final = "/api/v1/legend/captures:record"
+ROUTE_RECORD_RESTORE: Final = "/api/v1/legend/restores:record"
 LEGEND_ENABLED_ENV: Final = "TRAIGENT_LEGEND_HTTP_ENABLED"
+
+# Recovery state / restore grades / store statuses (pillar_legend_v0.json)
+RECOVERY_STORED_UNVERIFIED: Final = "stored_unverified"
+RECOVERY_ROUND_TRIP_VERIFIED: Final = "round_trip_verified"
+GRADE_EXACT: Final = "exact"
+GRADE_PARTIAL: Final = "partial"
+GRADE_SUBSTITUTED: Final = "substituted"
+GRADE_FAILED: Final = "failed"
+EVIDENCE_CLIENT_SDK: Final = "client_sdk_reported"

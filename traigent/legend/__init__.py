@@ -5,8 +5,18 @@ Contract: TraigentSchema ``docs/identity/pillar-legend-v0.md``. Fingerprints com
 """
 
 from traigent.legend.aliases import AliasMap
+from traigent.legend.bundle import Bundle
 from traigent.legend.client import declare, query, set_default_transport
 from traigent.legend.errors import LegendError
+from traigent.legend.exporters import (
+    AgentStateExport,
+    AgentStateSource,
+    EvaluatorFilesSource,
+    export,
+    export_agent_state,
+    export_pillar,
+    recompute_fingerprint,
+)
 from traigent.legend.manifest import (
     RecoveryManifest,
     build_recovery_manifest,
@@ -23,7 +33,20 @@ from traigent.legend.pillars import (
     SearchSpaceSource,
     compute_pillar,
 )
+from traigent.legend.recovery import (
+    ActivationResult,
+    CaptureIndex,
+    CaptureRecord,
+    ConformanceOutcome,
+    RestoreResult,
+    activate,
+    capture,
+    conformance_check,
+    restore,
+)
+from traigent.legend.store import ClientStore, LocalDirectoryStore
 from traigent.legend.transport import (
+    CaptureTransport,
     DeclareResult,
     HttpLegendTransport,
     InMemoryTransport,
@@ -32,6 +55,26 @@ from traigent.legend.transport import (
 )
 
 __all__ = [
+    "ActivationResult",
+    "AgentStateExport",
+    "AgentStateSource",
+    "Bundle",
+    "CaptureIndex",
+    "CaptureRecord",
+    "CaptureTransport",
+    "ClientStore",
+    "ConformanceOutcome",
+    "EvaluatorFilesSource",
+    "LocalDirectoryStore",
+    "RestoreResult",
+    "activate",
+    "capture",
+    "conformance_check",
+    "export",
+    "export_agent_state",
+    "export_pillar",
+    "recompute_fingerprint",
+    "restore",
     "AgentManifestSource",
     "AgentSource",
     "AliasMap",

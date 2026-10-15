@@ -27,6 +27,14 @@ class QueryResult:
     next_page_cursor: str | None
 
 
+class CaptureTransport(Protocol):
+    """Optional transport half that carries client-originated capture / restore records."""
+
+    def record_capture(self, payload: Mapping[str, Any]) -> str: ...
+
+    def record_restore(self, payload: Mapping[str, Any]) -> str: ...
+
+
 class LegendTransport(Protocol):
     def declare(self, payload: Mapping[str, Any]) -> DeclareResult: ...
 
@@ -133,6 +141,34 @@ class InMemoryTransport:
         self._by_idem[idem] = (body, result)
         return result
 
+    def _record(self, payload: Mapping[str, Any], event_type: str) -> str:
+        body = dict(payload)
+        self.requests.append(body)
+        if body.get("event_type") != event_type:
+            raise LegendError("invalid_request")
+        if body.get("version_ref") not in self.versions:
+            raise LegendError("unknown_ref")
+        idem = body["idempotency_key"]
+        for event in self.events:
+            if event["idempotency_key"] == idem:
+                if {k: event.get(k) for k in body} != body:
+                    raise LegendError("conflicting_idempotency_payload")
+                return str(event["event_ref"])
+        event = {
+            **body,
+            "event_ref": _ref("eventref", str(len(self.events)), idem),
+            "actor_ref": _ref("actorref", "in-memory"),
+            "recorded_at": _now(),
+        }
+        self.events.append(event)
+        return str(event["event_ref"])
+
+    def record_capture(self, payload: Mapping[str, Any]) -> str:
+        return self._record(payload, "captured")
+
+    def record_restore(self, payload: Mapping[str, Any]) -> str:
+        return self._record(payload, "restore_verified")
+
     def query(self, payload: Mapping[str, Any]) -> QueryResult:
         self.requests.append(dict(payload))
         entity_ref = payload["entity_ref"]
@@ -187,6 +223,19 @@ class HttpLegendTransport:
                 bool(data["created"]),
                 data["event_ref"],
             )
+        except (KeyError, TypeError):
+            raise LegendError("internal_error") from None
+
+    def record_capture(self, payload: Mapping[str, Any]) -> str:
+        return self._record(c.ROUTE_RECORD_CAPTURE, payload)
+
+    def record_restore(self, payload: Mapping[str, Any]) -> str:
+        return self._record(c.ROUTE_RECORD_RESTORE, payload)
+
+    def _record(self, path: str, payload: Mapping[str, Any]) -> str:
+        data = self._enabled()(path, payload)
+        try:
+            return str(data["event_ref"])
         except (KeyError, TypeError):
             raise LegendError("internal_error") from None
 
