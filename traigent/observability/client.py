@@ -2202,11 +2202,17 @@ class ObservabilityClient:
         an immediate poll that does not emit a deadline warning.
         Health callbacks are asynchronous, so this can return before callbacks
         for delivery events from this flush have run.
+
+        When delivery is suppressed (offline mode, ``TRAIGENT_DISABLE_TELEMETRY``,
+        or no credential), the result keeps ``success=True`` so telemetry never
+        breaks the host application, but ``items_sent`` is 0 and ``warnings``
+        names the cause. Check ``items_sent`` rather than ``success`` alone to
+        confirm delivery.
         """
         deadline = self._flush_deadline(timeout)
         if self._ingest_suppressed:
             self._log_offline_mode_once()
-            return self._offline_flush_result()
+            return self._suppressed_flush_result()
         if not self._acquire_client_lock_until(deadline):
             return self._flush_lock_timeout_result(deadline)
         try:
@@ -2320,7 +2326,9 @@ class ObservabilityClient:
                     timeout=self._remaining_flush_time(deadline),
                     warn_on_deadline_expiry=timeout != 0,
                 )
-                result = self._flush_result_from_transport(transport_result)
+                result = self._with_suppressed_delivery_warning(
+                    self._flush_result_from_transport(transport_result)
+                )
             else:
                 if inflight_snapshot_submissions:
                     remaining = self._remaining_flush_time(deadline)
@@ -3191,8 +3199,26 @@ class ObservabilityClient:
         self._offline_notice_logged = True
         logger.info("Observability transport in offline mode; traces will not be sent")
 
-    @staticmethod
-    def _offline_flush_result() -> FlushResult:
+    def _suppressed_delivery_warning(self) -> str:
+        """Explain why trace delivery is suppressed, naming the real cause.
+
+        Suppression deliberately keeps ``FlushResult.success`` true (telemetry
+        must never break the host application), so this warning is what lets a
+        caller tell "nothing was delivered" apart from a real delivery (#2602).
+        """
+        if self.config.offline_mode:
+            cause = f"offline mode is enabled ({describe_offline_mode_cause()})"
+        else:
+            cause = (
+                "no credential resolved (set TRAIGENT_API_KEY or run "
+                "`traigent auth login`)"
+            )
+        return (
+            f"Observability trace delivery is suppressed because {cause}; "
+            "no traces were sent to the backend"
+        )
+
+    def _suppressed_flush_result(self) -> FlushResult:
         return FlushResult(
             success=True,
             items_sent=0,
@@ -3201,7 +3227,12 @@ class ObservabilityClient:
             successful_batches=0,
             failed_batches=0,
             errors=[],
-            warnings=[],
+            warnings=[self._suppressed_delivery_warning()],
+        )
+
+    def _with_suppressed_delivery_warning(self, result: FlushResult) -> FlushResult:
+        return replace(
+            result, warnings=[*result.warnings, self._suppressed_delivery_warning()]
         )
 
     def _build_query_string(self, **params: Any) -> str:
