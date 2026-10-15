@@ -372,11 +372,9 @@ def _bound_config(code: Mapping[str, Any], evaluator: Any) -> dict[str, Any] | N
             bound[slot] = state
     metrics = getattr(evaluator, "metrics", None)
     return {
-        "metrics": (
-            sorted(str(m) for m in metrics)
-            if isinstance(metrics, (list, tuple))
-            else []
-        ),
+        "metrics": sorted(str(m) for m in metrics)
+        if isinstance(metrics, (list, tuple))
+        else [],
         "bound": bound,
     }
 

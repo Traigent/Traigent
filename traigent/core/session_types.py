@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+
 # Closed vocabulary of quota/limit error codes safe to render. Anything else
 # (including backend-invented strings) is shown as "unknown" so a quota
 # diagnostic can never carry backend or customer text (#2550).

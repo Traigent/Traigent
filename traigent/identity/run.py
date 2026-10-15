@@ -240,9 +240,9 @@ class ContentIdentityRun:
             # A withheld slot claims no id source (JS parity).
             "agent_id_source": self.agent_id_source if agent is not None else None,
             "agent": agent,
-            "evaluator_id_source": (
-                self.evaluator_id_source if evaluator is not None else None
-            ),
+            "evaluator_id_source": self.evaluator_id_source
+            if evaluator is not None
+            else None,
             "evaluator": evaluator,
             "dataset": dataset,
             "unavailable": unavailable,
@@ -362,9 +362,9 @@ def prepare_content_identity_run(
     return ContentIdentityRun(
         key_id=keys.kid,
         dataset=dataset_identity,
-        dataset_reason=(
-            None if dataset_identity is not None else "row_not_canonicalizable"
-        ),
+        dataset_reason=None
+        if dataset_identity is not None
+        else "row_not_canonicalizable",
         agent_id=agent_id,
         agent_id_source=agent_source,
         agent_base=agent_base,

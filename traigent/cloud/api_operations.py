@@ -318,7 +318,7 @@ _QUOTED_VALUE = r"\"(?:\\[\s\S]?|[^\"\\])*(?:\"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)
 # greedy prefix is not retried from every offset (no quadratic backtracking).
 _SECRET_KV_RE = re.compile(
     rf"(?P<key>(?<![\w.-])[\w.-]*{_SECRET_WORDS}{_KEY_SUFFIX}[\"']?\s*[=:]\s*)"
-    rf"(?:{_QUOTED_VALUE}|[^\s\"'}}]+)",
+    rf"(?:{_QUOTED_VALUE}|\S+)",
     re.IGNORECASE,
 )
 _AUTH_HEADER_RE = re.compile(
@@ -353,11 +353,11 @@ def _scrub_error_text(text: str) -> str:
     numeric error codes and ids.
     """
     text = text[:_MAX_SCRUB_INPUT_CHARS]
+    text = _URL_USERINFO_RE.sub("[REDACTED]", text)
     text = _AUTH_HEADER_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
     text = _COOKIE_HEADER_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
     text = _BEARER_RE.sub("Bearer [REDACTED]", text)
     text = _SECRET_KV_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
-    text = _URL_USERINFO_RE.sub("[REDACTED]", text)
     text = redact_embedded_credentials(text)
     text = _WINDOWS_USER_PATH_RE.sub("[PATH]", text)
     text = re.sub(r"/home/[\w/.@+-]+", "[PATH]", text)

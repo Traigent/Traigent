@@ -359,9 +359,7 @@ def _is_absent(value: Any) -> bool:
     return value is ABSENT or value is None
 
 
-def example_id_payload(
-    input: Any, *, context: Any = ABSENT
-) -> dict[str, Any]:  # noqa: A002
+def example_id_payload(input: Any, *, context: Any = ABSENT) -> dict[str, Any]:  # noqa: A002
     """The object whose jcs_v1 bytes example_id commits to.
 
     ``context`` absent and ``context=None`` are the same (omitted); any other
@@ -446,9 +444,7 @@ def compute_example_version(
     return f"exv1:{keys.key_id}:{digest}"
 
 
-def compute_public_input_digest(
-    input: Any, *, context: Any = ABSENT
-) -> str:  # noqa: A002
+def compute_public_input_digest(input: Any, *, context: Any = ABSENT) -> str:  # noqa: A002
     """``exu1:<hex>`` = SHA-256(domain || 0x00 || jcs_v1({input, context?})).
 
     UNKEYED: anyone who can guess the input can confirm it. Compute it only

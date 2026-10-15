@@ -88,9 +88,9 @@ class PluginRegistry:
 
         self._plugins: dict[str, IntegrationPlugin] = {}
         self._class_to_plugin: dict[str, str] = {}  # Maps class names to plugin names
-        self._package_to_plugin: dict[str, list[str]] = (
-            {}
-        )  # Maps package names to plugin names
+        self._package_to_plugin: dict[
+            str, list[str]
+        ] = {}  # Maps package names to plugin names
         self._config_dir = Path.home() / ".traigent" / "plugins"
         self._initialized = True
 

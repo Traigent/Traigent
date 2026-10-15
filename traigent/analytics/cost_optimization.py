@@ -481,9 +481,9 @@ class CostOptimizationAI:
                     savings = action.estimated_savings_absolute * simulation_days
                     simulation["total_savings"] += savings
                     simulation["total_estimated_savings"] += savings
-                    simulation["savings_breakdown"][
-                        action.resource_type.value
-                    ] = savings
+                    simulation["savings_breakdown"][action.resource_type.value] = (
+                        savings
+                    )
         else:
             # Dictionary format
             if isinstance(actions, dict):

@@ -754,9 +754,7 @@ class TraigentConfig:
     content_identity: bool | None = None
 
     # Analytics and telemetry settings
-    enable_usage_analytics: bool = (
-        True  # Send privacy-safe usage stats when backend/portal integration is configured
-    )
+    enable_usage_analytics: bool = True  # Send privacy-safe usage stats when backend/portal integration is configured
     analytics_endpoint: str | None = None  # Custom analytics endpoint
     anonymous_user_id: str | None = None  # Anonymous identifier (auto-generated)
 
