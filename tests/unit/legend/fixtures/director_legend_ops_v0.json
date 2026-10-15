@@ -297,6 +297,25 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "succeeded"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "version_ref": {
+                "$ref": "./pillar_legend_v0.json#/definitions/VersionRef"
+              },
+              "created": {
+                "type": "boolean"
+              }
+            }
+          }
         }
       ]
     },
@@ -663,6 +682,36 @@
                 "required": [
                   "status"
                 ]
+              },
+              "store_status": {
+                "const": "retrieved"
+              },
+              "outcome": {
+                "const": "succeeded"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "backend_match_result": {
+                "const": "mismatch"
+              }
+            },
+            "required": [
+              "backend_match_result"
+            ]
+          },
+          "then": {
+            "properties": {
+              "restore_outcome": {
+                "enum": [
+                  "partial",
+                  "substituted",
+                  "failed",
+                  null
+                ]
               }
             }
           }
@@ -794,6 +843,12 @@
                 "required": [
                   "status"
                 ]
+              },
+              "store_status": {
+                "const": "retrieved"
+              },
+              "outcome": {
+                "const": "succeeded"
               }
             }
           }

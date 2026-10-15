@@ -104,3 +104,187 @@ def build_query_payload(
         "page_size": page_size,
         "page_cursor": page_cursor,
     }
+
+
+def _closed_coverage(kind: str, coverage: dict[str, Any]) -> dict[str, Any]:
+    # imported here: manifest imports pillars/payload-free helpers, keep module graph acyclic
+    from traigent.legend.manifest import validate_coverage
+
+    clean = {
+        "status": coverage["status"],
+        "covered": list(coverage["covered"]),
+        "missing": list(coverage["missing"]),
+    }
+    validate_coverage(kind, clean)
+    return clean
+
+
+def build_capture_payload(
+    *,
+    version_ref: str,
+    kind: str,
+    manifest_fingerprint: str,
+    coverage: dict[str, Any],
+    recovery_state: str,
+    conformance_passed: bool,
+    exporter_version: str,
+    backend_keyed: bool,
+    identity_verification_ref: str | None,
+    representation_commitment: str,
+    identity_digests_reproduced: bool,
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    """``RecordCaptureRequestV0`` (sealed). Enums, digests and opaque refs only.
+
+    Coverage is validated against ``RequiredComponents(kind)`` before anything is
+    built; complete backend-keyed coverage must cite the ``identity_verified`` proof,
+    and complete coverage needs ``identity_digests_reproduced``.
+    """
+    if not c.VERSION_REF_RE.fullmatch(version_ref or ""):
+        raise LegendError(
+            "invalid_request", "version_ref must be an opaque version ref"
+        )
+    if not c.MANIFEST_FINGERPRINT_RE.fullmatch(manifest_fingerprint or ""):
+        raise LegendError("invalid_request", "manifest fingerprint malformed")
+    if recovery_state not in (
+        c.RECOVERY_STORED_UNVERIFIED,
+        c.RECOVERY_ROUND_TRIP_VERIFIED,
+    ):
+        raise LegendError("invalid_request", "unknown recovery state")
+    if recovery_state == c.RECOVERY_ROUND_TRIP_VERIFIED and not conformance_passed:
+        raise LegendError("conformance_failed", "round trip needs conformance")
+    if not c.SHA256_DIGEST_RE.fullmatch(representation_commitment or ""):
+        raise LegendError("invalid_request", "representation_commitment malformed")
+    if identity_verification_ref is not None and not c.EVENT_REF_RE.fullmatch(
+        identity_verification_ref
+    ):
+        raise LegendError("invalid_request", "identity_verification_ref malformed")
+    clean = _closed_coverage(kind, coverage)
+    if clean["status"] == "complete":
+        if not identity_digests_reproduced:
+            raise LegendError(
+                "coverage_insufficient", "complete needs reproduced digests"
+            )
+        if backend_keyed and identity_verification_ref is None:
+            raise LegendError(
+                "coverage_insufficient", "complete backend-keyed needs a proof"
+            )
+    return seal(
+        {
+            "schema_version": c.SCHEMA_VERSION,
+            "version_ref": version_ref,
+            "recovery_manifest_fingerprint": manifest_fingerprint,
+            "coverage": clean,
+            "recovery_state": recovery_state,
+            "conformance_passed": bool(conformance_passed),
+            "exporter_version": exporter_version,
+            "backend_keyed": bool(backend_keyed),
+            "identity_verification_ref": identity_verification_ref,
+            "representation_commitment": representation_commitment,
+            "identity_digests_reproduced": bool(identity_digests_reproduced),
+        },
+        idempotency_key,
+    )
+
+
+def build_restore_payload(
+    *,
+    version_ref: str,
+    kind: str,
+    manifest_fingerprint: str,
+    outcome: str,
+    coverage: dict[str, Any],
+    isolated_destination: bool,
+    representation_digests_match: bool,
+    pillar_fingerprint_match: bool,
+    historical_key_available: bool,
+    dependencies_verified: bool,
+    verified_artifact_digest: str | None,
+    backend_keyed: bool,
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    """``RecordRestoreRequestV0`` (sealed). A backend-keyed pillar is never ``exact`` here."""
+    if not c.VERSION_REF_RE.fullmatch(version_ref or ""):
+        raise LegendError(
+            "invalid_request", "version_ref must be an opaque version ref"
+        )
+    if kind not in c.ENTITY_KINDS or not c.MANIFEST_FINGERPRINT_RE.fullmatch(
+        manifest_fingerprint or ""
+    ):
+        raise LegendError("invalid_request", "kind or manifest fingerprint malformed")
+    if outcome not in (
+        c.GRADE_EXACT,
+        c.GRADE_PARTIAL,
+        c.GRADE_SUBSTITUTED,
+        c.GRADE_FAILED,
+    ):
+        raise LegendError("invalid_request", "unknown restore outcome")
+    if verified_artifact_digest is not None and not c.SHA256_DIGEST_RE.fullmatch(
+        verified_artifact_digest
+    ):
+        raise LegendError("invalid_request", "verified_artifact_digest malformed")
+    if kind in c.BACKEND_KEYED_KINDS and not backend_keyed:
+        raise LegendError("invalid_request", "this kind is backend-keyed")
+    if outcome == c.GRADE_EXACT:
+        if backend_keyed:
+            raise LegendError(
+                "coverage_insufficient", "backend-keyed is never exact client-side"
+            )
+        if not (
+            isolated_destination
+            and representation_digests_match
+            and pillar_fingerprint_match
+            and historical_key_available
+            and dependencies_verified
+            and verified_artifact_digest is not None
+        ):
+            raise LegendError(
+                "invalid_request", "exact needs every restore measurement"
+            )
+    clean = _closed_coverage(kind, coverage)
+    if outcome == c.GRADE_EXACT and clean["status"] != "complete":
+        raise LegendError("coverage_insufficient", "exact needs complete coverage")
+    return seal(
+        {
+            "schema_version": c.SCHEMA_VERSION,
+            "version_ref": version_ref,
+            "kind": kind,
+            "recovery_manifest_fingerprint": manifest_fingerprint,
+            "outcome": outcome,
+            "coverage": clean,
+            "isolated_destination": bool(isolated_destination),
+            "representation_digests_match": bool(representation_digests_match),
+            "pillar_fingerprint_match": bool(pillar_fingerprint_match),
+            "historical_key_available": bool(historical_key_available),
+            "dependencies_verified": bool(dependencies_verified),
+            "verified_artifact_digest": verified_artifact_digest,
+            "backend_keyed": bool(backend_keyed),
+        },
+        idempotency_key,
+    )
+
+
+def build_availability_payload(
+    version_ref: str,
+    manifest_fingerprint: str,
+    status: str,
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    """``RecordAvailabilityRequestV0`` (sealed): version ref, manifest fingerprint, closed status."""
+    if not c.VERSION_REF_RE.fullmatch(version_ref or ""):
+        raise LegendError(
+            "invalid_request", "version_ref must be an opaque version ref"
+        )
+    if not c.MANIFEST_FINGERPRINT_RE.fullmatch(manifest_fingerprint or ""):
+        raise LegendError("invalid_request", "manifest fingerprint malformed")
+    if status not in c.AVAILABILITY_STATUSES:
+        raise LegendError("invalid_request", "status is not in the closed list")
+    return seal(
+        {
+            "schema_version": c.SCHEMA_VERSION,
+            "version_ref": version_ref,
+            "recovery_manifest_fingerprint": manifest_fingerprint,
+            "status": status,
+        },
+        idempotency_key,
+    )

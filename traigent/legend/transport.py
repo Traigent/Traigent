@@ -55,6 +55,8 @@ class CaptureTransport(Protocol):
 
     def record_restore(self, payload: Mapping[str, Any]) -> str: ...
 
+    def record_availability(self, payload: Mapping[str, Any]) -> str: ...
+
 
 class LegendTransport(Protocol):
     def declare(self, payload: Mapping[str, Any]) -> DeclareResult: ...
@@ -88,6 +90,11 @@ class InMemoryTransport:
         self._by_identity: dict[tuple[Any, ...], str] = {}
         self._by_idem: dict[str, tuple[dict[str, Any], DeclareResult]] = {}
         self._entity_seq = 0
+        self._position = 0  # server-assigned, strictly increasing ledger position
+
+    def _next_position(self) -> int:
+        self._position += 1
+        return self._position
 
     @staticmethod
     def _check_sealed(body: Mapping[str, Any]) -> None:
@@ -152,7 +159,6 @@ class InMemoryTransport:
                 "fingerprint": body["fingerprint"],
                 "initial_parent_version_ref": parent,
                 "identity_source": body["identity_source"],
-                "authority_linked": False,
                 "declared_at": _now(),
             }
         else:
@@ -168,6 +174,7 @@ class InMemoryTransport:
             "actor_ref": _ref("actorref", "in-memory"),
             "origin": "client",
             "evidence_source": "client_reported",
+            "ledger_position": self._next_position(),
             "recorded_at": _now(),
             "idempotency_key": idem,
             "request_digest": body["request_digest"],
@@ -203,6 +210,7 @@ class InMemoryTransport:
             "evidence_source": "client_sdk_reported",
             "event_ref": _ref("eventref", str(len(self.events)), idem),
             "actor_ref": _ref("actorref", "in-memory"),
+            "ledger_position": self._next_position(),
             "recorded_at": _now(),
         }
         if event_type == "restore_verified":
@@ -217,6 +225,9 @@ class InMemoryTransport:
 
     def record_restore(self, payload: Mapping[str, Any]) -> str:
         return self._record(payload, "restore_verified")
+
+    def record_availability(self, payload: Mapping[str, Any]) -> str:
+        return self._record(payload, "availability_changed")
 
     def query(self, payload: Mapping[str, Any]) -> QueryResult:
         self.requests.append(dict(payload))
@@ -285,6 +296,9 @@ class HttpLegendTransport:
 
     def record_restore(self, payload: Mapping[str, Any]) -> str:
         return self._record(c.ROUTE_RECORD_RESTORE, payload)
+
+    def record_availability(self, payload: Mapping[str, Any]) -> str:
+        return self._record(c.ROUTE_RECORD_AVAILABILITY, payload)
 
     def _record(self, path: str, payload: Mapping[str, Any]) -> str:
         data = self._enabled()(path, payload)

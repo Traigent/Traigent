@@ -333,8 +333,10 @@
         "recovery_manifest_fingerprint",
         "coverage_status",
         "run_tuple_digest",
+        "trial_ref",
         "evaluated_subset_root",
         "evaluation_protocol",
+        "ledger_cutoff_position",
         "as_of",
         "policy_version"
       ],
@@ -390,6 +392,16 @@
             }
           ]
         },
+        "trial_ref": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/TrialRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "evaluated_subset_root": {
           "oneOf": [
             {
@@ -409,6 +421,9 @@
               "type": "null"
             }
           ]
+        },
+        "ledger_cutoff_position": {
+          "$ref": "./pillar_legend_v0.json#/definitions/LedgerPosition"
         },
         "as_of": {
           "$ref": "./pillar_legend_v0.json#/definitions/Timestamp"

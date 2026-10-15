@@ -101,7 +101,16 @@ REQUIRED_BY_KIND: Final = {
 IDENTITY_COMPONENT_BY_KIND: Final = {
     KIND_AGENT: "code",
     KIND_EVALUATOR: "evaluator_code",
+    KIND_SEARCH_SPACE: "search_space_definition",
 }
+
+# RepresentationCommitment: sha256: + hex SHA-256(domain || 0x00 || jcs_v1({"representations": [d0, ...]}))
+REPRESENTATION_COMMITMENT_DOMAIN: Final = "traigent.legend.representation_commitment.v0"
+EVENT_REF_RE: Final = re.compile(r"eventref_[0-9a-f]{32}")
+SHA256_DIGEST_RE: Final = re.compile(r"sha256:[0-9a-f]{64}")
+AVAILABILITY_STATUSES: Final = frozenset(
+    {"available", "missing", "corrupted", "retired"}
+)
 
 EXPORTER_ID: Final = "traigent-sdk-legend"
 EXPORTER_VERSION: Final = "0.1.0"
@@ -113,6 +122,7 @@ REQUEST_DOMAIN: Final = "traigent.legend.request.v0"
 VERSION_REF_RE: Final = re.compile(r"versionref_[0-9a-f]{32}")
 ENTITY_REF_RE: Final = re.compile(r"entityref_[0-9a-f]{32}")
 CURSOR_RE: Final = re.compile(r"cursor_[0-9a-f]{32}")
+MANIFEST_FINGERPRINT_RE: Final = re.compile(r"rmf0:sha256:[0-9a-f]{64}")
 KEY_ID_RE: Final = re.compile(r"k[0-9a-f]{16}")
 SEARCH_SPACE_ID_RE: Final = re.compile(r"ssp1:(k[0-9a-f]{16}):[0-9a-f]{64}")
 MULTISET_ROOT_RE: Final = re.compile(r"msr1:(k[0-9a-f]{16}):[0-9a-f]{64}")
@@ -124,6 +134,7 @@ ROUTE_DECLARE: Final = "/api/v1/legend/versions:declare"
 ROUTE_QUERY: Final = "/api/v1/legend/versions:query"
 ROUTE_RECORD_CAPTURE: Final = "/api/v1/legend/captures:record"
 ROUTE_RECORD_RESTORE: Final = "/api/v1/legend/restores:record"
+ROUTE_RECORD_AVAILABILITY: Final = "/api/v1/legend/availability:record"
 LEGEND_ENABLED_ENV: Final = "TRAIGENT_LEGEND_HTTP_ENABLED"
 
 # Recovery state / restore grades / store statuses (pillar_legend_v0.json)
@@ -133,5 +144,11 @@ GRADE_EXACT: Final = "exact"
 GRADE_PARTIAL: Final = "partial"
 GRADE_SUBSTITUTED: Final = "substituted"
 GRADE_FAILED: Final = "failed"
-BACKEND_KEYED_KINDS: Final = frozenset({KIND_SEARCH_SPACE})
+# BackendKeyed(version) (design note section 4): ``ssp1`` search spaces and evaluators
+# (keyed ``evd1`` leaves under Backend-only ``K_eval``; an unknown authoritative format
+# also counts as backend-keyed). The SDK cannot derive that status from the authority row,
+# so it takes the conservative reading: both kinds are backend-keyed, a client-origin
+# restore is at most ``substituted`` and complete coverage needs a cited
+# ``identity_verified`` proof. The Backend refuses a claim that differs from its derived value.
+BACKEND_KEYED_KINDS: Final = frozenset({KIND_SEARCH_SPACE, KIND_EVALUATOR})
 EVIDENCE_CLIENT_SDK: Final = "client_sdk_reported"

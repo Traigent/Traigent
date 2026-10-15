@@ -112,6 +112,11 @@ class Pillar:
     reproduced: bool = False
     skipped: int = 0
 
+    @property
+    def backend_keyed(self) -> bool:
+        """Conservative ``BackendKeyed`` reading (see ``_contract.BACKEND_KEYED_KINDS``)."""
+        return self.kind in c.BACKEND_KEYED_KINDS
+
     def wire_identity(self) -> dict[str, Any]:
         return {
             "kind": self.kind,

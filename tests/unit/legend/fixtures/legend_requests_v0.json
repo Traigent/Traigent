@@ -361,6 +361,25 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "search_space_ssp1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "identity_source": {
+                "const": "client_declared"
+              }
+            }
+          }
         }
       ]
     },
@@ -423,7 +442,11 @@
         "coverage",
         "recovery_state",
         "conformance_passed",
-        "exporter_version"
+        "exporter_version",
+        "backend_keyed",
+        "identity_verification_ref",
+        "representation_commitment",
+        "identity_digests_reproduced"
       ],
       "properties": {
         "schema_version": {
@@ -458,9 +481,58 @@
           "type": "string",
           "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?![\\s\\S])",
           "maxLength": 32
+        },
+        "backend_keyed": {
+          "type": "boolean"
+        },
+        "identity_verification_ref": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/EventRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "representation_commitment": {
+          "$ref": "./pillar_legend_v0.json#/definitions/RepresentationCommitment"
+        },
+        "identity_digests_reproduced": {
+          "type": "boolean"
         }
       },
       "allOf": [
+        {
+          "if": {
+            "properties": {
+              "backend_keyed": {
+                "const": true
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "backend_keyed",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "identity_verification_ref": {
+                "$ref": "./pillar_legend_v0.json#/definitions/EventRef"
+              }
+            }
+          }
+        },
         {
           "if": {
             "properties": {
@@ -479,6 +551,39 @@
         }
       ]
     },
+    "RecordAvailabilityRequestV0": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "idempotency_key",
+        "request_digest",
+        "version_ref",
+        "recovery_manifest_fingerprint",
+        "status"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./pillar_legend_v0.json#/definitions/SchemaVersion"
+        },
+        "idempotency_key": {
+          "$ref": "./pillar_legend_v0.json#/definitions/IdempotencyKey"
+        },
+        "request_digest": {
+          "$ref": "./pillar_legend_v0.json#/definitions/RequestDigest"
+        },
+        "version_ref": {
+          "$ref": "./pillar_legend_v0.json#/definitions/VersionRef"
+        },
+        "recovery_manifest_fingerprint": {
+          "$ref": "./pillar_legend_v0.json#/definitions/ManifestFingerprint"
+        },
+        "status": {
+          "$ref": "./pillar_legend_v0.json#/definitions/AvailabilityStatus"
+        }
+      },
+      "description": "Client availability report for one capture (manifest). Server issues the event, actor, time and position."
+    },
     "RecordRestoreRequestV0": {
       "type": "object",
       "additionalProperties": false,
@@ -493,7 +598,11 @@
         "coverage",
         "isolated_destination",
         "representation_digests_match",
-        "pillar_fingerprint_match"
+        "pillar_fingerprint_match",
+        "historical_key_available",
+        "dependencies_verified",
+        "verified_artifact_digest",
+        "backend_keyed"
       ],
       "properties": {
         "schema_version": {
@@ -529,6 +638,25 @@
         },
         "pillar_fingerprint_match": {
           "type": "boolean"
+        },
+        "historical_key_available": {
+          "type": "boolean"
+        },
+        "dependencies_verified": {
+          "type": "boolean"
+        },
+        "verified_artifact_digest": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "backend_keyed": {
+          "type": "boolean"
         }
       },
       "description": "Client-side restore report. A Backend-keyed pillar (search_space) can never be reported exact here; only the server's own recompute can raise it.",
@@ -555,6 +683,15 @@
               },
               "pillar_fingerprint_match": {
                 "const": true
+              },
+              "historical_key_available": {
+                "const": true
+              },
+              "dependencies_verified": {
+                "const": true
+              },
+              "verified_artifact_digest": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
               }
             }
           }
@@ -572,12 +709,276 @@
           },
           "then": {
             "properties": {
+              "backend_keyed": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "backend_keyed": {
+                "const": true
+              }
+            },
+            "required": [
+              "backend_keyed"
+            ]
+          },
+          "then": {
+            "properties": {
               "outcome": {
                 "enum": [
                   "partial",
                   "substituted",
                   "failed"
                 ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "agent"
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "covered": {
+                    "allOf": [
+                      {
+                        "contains": {
+                          "const": "code"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "prompts"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "helper_modules"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "tool_definitions"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "applied_config"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "runtime"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "configuration"
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "covered": {
+                    "allOf": [
+                      {
+                        "contains": {
+                          "const": "applied_config"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evaluation_dataset"
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "covered": {
+                    "allOf": [
+                      {
+                        "contains": {
+                          "const": "dataset_members"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "dataset_order"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evaluator"
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "covered": {
+                    "allOf": [
+                      {
+                        "contains": {
+                          "const": "evaluator_code"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "judge_config"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "objectives"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "helper_modules"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "search_space"
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "covered": {
+                    "allOf": [
+                      {
+                        "contains": {
+                          "const": "search_space_definition"
+                        }
+                      }
+                    ]
+                  }
+                }
               }
             }
           }
@@ -594,6 +995,9 @@
     },
     {
       "$ref": "#/definitions/RecordCaptureRequestV0"
+    },
+    {
+      "$ref": "#/definitions/RecordAvailabilityRequestV0"
     },
     {
       "$ref": "#/definitions/RecordRestoreRequestV0"

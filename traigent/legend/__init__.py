@@ -21,8 +21,17 @@ from traigent.legend.manifest import (
     RecoveryManifest,
     build_recovery_manifest,
     manifest_fingerprint,
+    pillar_representation_commitment,
+    representation_commitment,
+    validate_coverage,
 )
-from traigent.legend.payloads import new_idempotency_key, request_digest
+from traigent.legend.payloads import (
+    build_availability_payload,
+    build_capture_payload,
+    build_restore_payload,
+    new_idempotency_key,
+    request_digest,
+)
 from traigent.legend.pillars import (
     AgentManifestSource,
     AgentSource,
@@ -43,6 +52,7 @@ from traigent.legend.recovery import (
     activate,
     capture,
     conformance_check,
+    record_availability,
     restore,
 )
 from traigent.legend.store import ClientStore, LocalDirectoryStore
@@ -92,7 +102,14 @@ __all__ = [
     "QueryResult",
     "RecoveryManifest",
     "SearchSpaceSource",
+    "build_availability_payload",
+    "build_capture_payload",
     "build_recovery_manifest",
+    "build_restore_payload",
+    "pillar_representation_commitment",
+    "record_availability",
+    "representation_commitment",
+    "validate_coverage",
     "compute_pillar",
     "declare",
     "manifest_fingerprint",

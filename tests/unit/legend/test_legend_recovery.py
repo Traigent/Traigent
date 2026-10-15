@@ -21,12 +21,14 @@ from traigent.legend import (
     ConfigurationSource,
     DatasetSource,
     EvaluatorFilesSource,
+    EvaluatorSource,
     InMemoryTransport,
     LegendError,
     LocalDirectoryStore,
     SearchSpaceSource,
     activate,
     build_recovery_manifest,
+    record_availability,
     capture,
     compute_pillar,
     conformance_check,
@@ -36,11 +38,17 @@ from traigent.legend import (
     restore,
 )
 from traigent.legend import _contract as c
+from traigent.legend.manifest import (
+    pillar_representation_commitment,
+    representation_commitment,
+    validate_coverage,
+)
 from traigent.legend.store import BUNDLE_NAME
 
 PL = "pillar_legend_v0.json"
 SSP = "ssp1:k" + "cd" * 8 + ":" + "ab" * 32
 PASSED = ConformanceOutcome("passed")
+PROOF = "eventref_" + "7" * 32
 
 
 @pytest.fixture
@@ -358,15 +366,23 @@ def test_missing_dependency_is_partial(store, tmp_path, idx):
 
 
 def test_search_space_is_substituted_never_exact(store, tmp_path, idx):
+    src = SearchSpaceSource(SSP, {"t": [0.1, 0.2]})
+    # without the Backend's pre-capture identity_verified proof the capture is partial
+    bare = capture(
+        "versionref_" + "5" * 32, src, store=store, conformance=PASSED, index=idx
+    )
+    assert bare.coverage["status"] == "partial" and not bare.identity_digests_reproduced
     rec = capture(
         "versionref_" + "5" * 32,
-        SearchSpaceSource(SSP, {"t": [0.1, 0.2]}),
+        src,
         store=store,
         conformance=PASSED,
         index=idx,
+        identity_verification_ref=PROOF,
     )
-    assert rec.coverage["status"] == "complete"
-    assert restore(rec, tmp_path / "o", store=store, index=idx).grade == "substituted"
+    assert rec.coverage["status"] == "complete" and rec.backend_keyed
+    res = restore(rec, tmp_path / "o", store=store, index=idx)
+    assert res.grade == "substituted" and res.verified_artifact_digest is None
 
 
 # ---------------------------------------------------------------- agent code state
@@ -703,15 +719,38 @@ def test_evaluator_files_reproduce_identity_and_restore_exact(
         src = EvaluatorFilesSource(root, evaluator=ev, objectives=objectives)
         pillar = export_pillar_of(src)
         assert pillar.reproduced
-        doc = build_recovery_manifest(pillar).document
+        # evaluators are Backend-keyed: no proof => partial, never client-reproduced
+        bare = build_recovery_manifest(pillar).document
+        assert bare["backend_keyed"] is True
+        assert bare["coverage"]["status"] == "partial"
+        assert bare["identity_digests_reproduced"] is False
+        schemas.validate(RM, "RecoveryManifestV0", bare)
+        doc = build_recovery_manifest(pillar, identity_verification_ref=PROOF).document
         assert doc["coverage"]["status"] == "complete"
         assert doc["identity_digests_reproduced"] is True
+        assert doc["identity_verification_ref"] == PROOF
         schemas.validate(RM, "RecoveryManifestV0", doc)
+        t = InMemoryTransport()
+        vref = declare(
+            c.KIND_EVALUATOR,
+            EvaluatorSource(ev, objectives),
+            transport=t,
+        ).version_ref
         rec = capture(
-            "versionref_" + "6" * 32, src, store=store, conformance=PASSED, index=idx
+            vref,
+            src,
+            store=store,
+            transport=t,
+            conformance=PASSED,
+            index=idx,
+            identity_verification_ref=PROOF,
         )
-        res = restore(rec, tmp_path / "o", store=store, index=idx)
-        assert res.grade == "exact"
+        assert rec.representation_commitment == pillar_representation_commitment(pillar)
+        res = restore(rec, tmp_path / "o", store=store, transport=t, index=idx)
+        # a client-origin restore of a backend-keyed pillar is at most substituted (INV-16)
+        assert res.grade == "substituted"
+        schemas.validate(REQ, "RecordRestoreRequestV0", t.requests[-1])
+        assert t.requests[-1]["backend_keyed"] is True
         assert (res.dest / "evaluator" / "ev_mod.py").read_text() == EV_SRC
         # editing the helper file after declaration: not reproduced, partial
         fp = pillar.fingerprint
@@ -758,6 +797,7 @@ def test_search_space_restore_never_exact_client_side(store, tmp_path, idx, sche
         transport=t,
         conformance=PASSED,
         index=idx,
+        identity_verification_ref=PROOF,
     )
     res = restore(rec, tmp_path / "o", store=store, transport=t, index=idx)
     assert res.grade == "substituted"
@@ -780,3 +820,141 @@ def test_capture_store_key_conflict_is_a_closed_error(tmp_path, idx):
             index=idx,
         )
     assert err.value.code == "store_key_conflict"
+
+
+# ------------------------------------------------- contract 9b0451d additions
+def test_representation_commitment_matches_the_schema_construction():
+    digests = ["sha256:" + "a" * 64, "sha256:" + "b" * 64]
+    raw = (
+        b"traigent.legend.representation_commitment.v0\x00"
+        + json.dumps(
+            {"representations": digests}, sort_keys=True, separators=(",", ":")
+        ).encode()
+    )
+    assert (
+        representation_commitment(digests)
+        == "sha256:" + hashlib.sha256(raw).hexdigest()
+    )
+    # order is part of the commitment
+    assert representation_commitment(digests[::-1]) != representation_commitment(
+        digests
+    )
+
+
+def test_capture_request_carries_commitment_and_validates(store, idx, schemas):
+    t = InMemoryTransport()
+    ref = _vref(t)
+    rec = capture(
+        ref,
+        ConfigurationSource({"seed": 1}),
+        store=store,
+        transport=t,
+        conformance=PASSED,
+        index=idx,
+    )
+    req = t.requests[-1]
+    schemas.validate(REQ, "RecordCaptureRequestV0", req)
+    assert req["backend_keyed"] is False and req["identity_verification_ref"] is None
+    assert req["identity_digests_reproduced"] is True
+    assert req["representation_commitment"] == rec.representation_commitment
+    event = [e for e in t.events if e["event_type"] == "captured"][0]
+    schemas.validate(PL, "CapturedEventV0", event)
+    assert event["ledger_position"] > 0
+
+
+def test_coverage_partition_is_validated_per_kind():
+    ok = {"status": "complete", "covered": ["applied_config"], "missing": []}
+    validate_coverage(c.KIND_CONFIGURATION, ok)
+    cases = {
+        "overlap": (
+            {
+                "status": "partial",
+                "covered": ["applied_config"],
+                "missing": ["applied_config"],
+            },
+            "invalid_request",
+        ),
+        "status": (
+            {"status": "complete", "covered": [], "missing": ["applied_config"]},
+            "invalid_request",
+        ),
+        "foreign": (
+            {
+                "status": "complete",
+                "covered": ["applied_config", "code"],
+                "missing": [],
+            },
+            "invalid_request",
+        ),
+        "gap": (
+            {"status": "complete", "covered": [], "missing": []},
+            "coverage_insufficient",
+        ),
+    }
+    for name, (cov, code) in cases.items():
+        with pytest.raises(LegendError) as err:
+            validate_coverage(c.KIND_CONFIGURATION, cov)
+        assert err.value.code == code, name
+
+
+def test_exact_restore_records_measurements_and_artifact_digest(
+    store, tmp_path, idx, schemas
+):
+    t = InMemoryTransport()
+    ref = _vref(t)
+    rec = capture(
+        ref,
+        ConfigurationSource({"seed": 1}),
+        store=store,
+        transport=t,
+        conformance=PASSED,
+        index=idx,
+    )
+    res = restore(rec, tmp_path / "o", store=store, transport=t, index=idx)
+    req = t.requests[-1]
+    schemas.validate(REQ, "RecordRestoreRequestV0", req)
+    assert (
+        res.grade == "exact"
+        and req["verified_artifact_digest"] == res.verified_artifact_digest
+    )
+    assert req["historical_key_available"] and req["dependencies_verified"]
+    event = [e for e in t.events if e["event_type"] == "restore_verified"][0]
+    schemas.validate(PL, "RestoreVerifiedEventV0", event)
+    # a substituted staged artifact is refused at activation (manifest_mismatch)
+    (res.dest / "00-config_document").write_bytes(b"{}")
+    with pytest.raises(LegendError) as err:
+        activate(res, tmp_path / "live")
+    assert err.value.code == "manifest_mismatch"
+
+
+def test_availability_request_validates_and_is_closed(store, idx, schemas):
+    t = InMemoryTransport()
+    ref = _vref(t)
+    rec = capture(
+        ref,
+        ConfigurationSource({"seed": 1}),
+        store=store,
+        transport=t,
+        conformance=PASSED,
+        index=idx,
+    )
+    ev = record_availability(ref, rec.manifest_fingerprint, "missing", transport=t)
+    schemas.validate(REQ, "RecordAvailabilityRequestV0", t.requests[-1])
+    schemas.validate(REQ, None, t.requests[-1])
+    assert ev is not None
+    for bad in ("Missing", "gone", None):
+        with pytest.raises(LegendError):
+            record_availability(ref, rec.manifest_fingerprint, bad, transport=t)
+    assert record_availability(ref, rec.manifest_fingerprint, "available") is None
+
+
+def test_vendored_contract_files_equal_schema_9b0451d():
+    schema = Path(
+        "/home/nimrod/TraigentProjects/core_project/worktrees/TraigentSchema/"
+        "pillar-legend/traigent_schema/schemas/legend"
+    )
+    if not schema.is_dir():
+        pytest.skip("Schema worktree not present")
+    fixtures = Path(__file__).parent / "fixtures"
+    for f in fixtures.glob("*.json"):
+        assert f.read_bytes() == (schema / f.name).read_bytes(), f.name

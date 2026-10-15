@@ -114,6 +114,8 @@
         "dependencies",
         "coverage",
         "identity_digests_reproduced",
+        "backend_keyed",
+        "identity_verification_ref",
         "rederivation"
       ],
       "properties": {
@@ -186,6 +188,19 @@
         },
         "identity_digests_reproduced": {
           "type": "boolean"
+        },
+        "backend_keyed": {
+          "type": "boolean"
+        },
+        "identity_verification_ref": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/EventRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "rederivation": {
           "$ref": "#/definitions/Rederivation"
@@ -779,6 +794,36 @@
             "properties": {
               "identity_digests_reproduced": {
                 "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "backend_keyed": {
+                "const": true
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "backend_keyed",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "identity_verification_ref": {
+                "$ref": "./pillar_legend_v0.json#/definitions/EventRef"
               }
             }
           }

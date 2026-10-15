@@ -5,6 +5,12 @@ byte streams; ``recompute_fingerprint`` re-derives the pillar fingerprint from
 restored representations alone, which is what makes a restore verifiable.
 Anything that cannot be exported or re-derived lowers coverage or makes the
 fingerprint unrecomputable -- never silently.
+
+Known limit (C9): the ``afp2`` agent source digest and the evaluator ``code_digest``
+are recomputed only from the LIVE callable (``AgentStateSource.func`` /
+``EvaluatorFilesSource.evaluator``); the files on disk alone cannot prove them, so
+without the live callable the code component stays ``missing`` and coverage partial.
+Keyed (Backend-only) fingerprints are never computed here: see ``_contract.BACKEND_KEYED_KINDS``.
 """
 
 from __future__ import annotations

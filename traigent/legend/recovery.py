@@ -30,9 +30,15 @@ from traigent.legend.errors import LegendError
 from traigent.legend.exporters import export, recompute_fingerprint
 from traigent.legend.manifest import (
     build_recovery_manifest,
+    identity_reproduced,
     manifest_fingerprint,
+    pillar_representation_commitment,
 )
-from traigent.legend.payloads import seal
+from traigent.legend.payloads import (
+    build_availability_payload,
+    build_capture_payload,
+    build_restore_payload,
+)
 from traigent.legend.store import BUNDLE_NAME, ClientStore
 from traigent.legend.transport import CaptureTransport, with_retries
 
@@ -152,6 +158,10 @@ class CaptureRecord:
     coverage: dict[str, Any]
     conformance_passed: bool
     event_ref: str | None
+    backend_keyed: bool = False
+    representation_commitment: str | None = None
+    identity_digests_reproduced: bool = False
+    identity_verification_ref: str | None = None
 
 
 def _coverage(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -205,12 +215,24 @@ def _verify_bundle(
     return manifest, True, match, pillar_match, bundle
 
 
-def _post(transport: Any, method: str, body: dict[str, Any]) -> str | None:
+def _post(transport: Any, method: str, sealed: dict[str, Any]) -> str | None:
+    """Send one ALREADY SEALED payload (fresh ``idk_`` key minted once; every retry reuses it)."""
     fn: Callable[[dict[str, Any]], str] | None = getattr(transport, method, None)
     if transport is None or fn is None:
         return None
-    sealed = seal(body)  # fresh idk_ key, minted once; every retry reuses this payload
     return with_retries(lambda: fn(sealed))
+
+
+def _tree_digest(root: Path) -> str:
+    """Abstract digest of a staged directory: sorted (relative path, length, bytes) framing."""
+    h = hashlib.sha256(b"traigent.legend.staged_artifact.v0\x00")
+    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+        rel = path.relative_to(root).as_posix().encode("utf-8")
+        body = path.read_bytes()
+        h.update(
+            len(rel).to_bytes(8, "big") + rel + len(body).to_bytes(8, "big") + body
+        )
+    return "sha256:" + h.hexdigest()
 
 
 def capture(
@@ -224,12 +246,19 @@ def capture(
     keys: ContentIdentityKeys | None = None,
     index: CaptureIndex | None = None,
     source_entity_ref: str | None = None,
+    identity_verification_ref: str | None = None,
 ) -> CaptureRecord:
     """Export real content, store it under its manifest fingerprint and verify the round trip.
 
     Requires a passing conformance check (run here unless one is supplied). A put
     acknowledgement alone is ``stored_unverified``; a per-capture isolated get plus
     re-hash of representations and the pillar fingerprint makes it ``round_trip_verified``.
+
+    A backend-keyed pillar (search space, evaluator) is only ``complete`` when
+    ``identity_verification_ref`` cites the Backend's pre-capture ``identity_verified``
+    event for this version; get the commitment that proof must bind from
+    :func:`traigent.legend.manifest.pillar_representation_commitment` over
+    ``export(source)[0]``. Without it the capture is recorded as ``partial``.
     """
     if not c.VERSION_REF_RE.fullmatch(version_ref or ""):
         raise LegendError(
@@ -237,7 +266,10 @@ def capture(
         )
     pillar, inputs = export(source)
     manifest = build_recovery_manifest(
-        pillar, dependencies=dependencies, source_entity_ref=source_entity_ref
+        pillar,
+        dependencies=dependencies,
+        source_entity_ref=source_entity_ref,
+        identity_verification_ref=identity_verification_ref,
     )
     outcome = conformance if conformance is not None else conformance_check(store)
     if not outcome.passed:
@@ -270,24 +302,39 @@ def capture(
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     coverage = _coverage(manifest.document)
-    event_ref = _post(
-        transport,
-        "record_capture",
-        {
-            "schema_version": c.SCHEMA_VERSION,
-            "version_ref": version_ref,
-            "recovery_manifest_fingerprint": fp,
-            "coverage": coverage,
-            "recovery_state": state,
-            "conformance_passed": True,
-            "exporter_version": c.EXPORTER_VERSION,
-        },
+    commitment = pillar_representation_commitment(pillar)
+    reproduced = identity_reproduced(pillar, identity_verification_ref)
+    payload = build_capture_payload(
+        version_ref=version_ref,
+        kind=pillar.kind,
+        manifest_fingerprint=fp,
+        coverage=coverage,
+        recovery_state=state,
+        conformance_passed=True,
+        exporter_version=c.EXPORTER_VERSION,
+        backend_keyed=pillar.backend_keyed,
+        identity_verification_ref=identity_verification_ref,
+        representation_commitment=commitment,
+        identity_digests_reproduced=reproduced,
     )
+    event_ref = _post(transport, "record_capture", payload)
     root = getattr(source, "root", None)
     (index or DEFAULT_INDEX).add(
         version_ref, pillar.kind, fp, Path(root).resolve() if root is not None else None
     )
-    return CaptureRecord(version_ref, pillar.kind, fp, state, coverage, True, event_ref)
+    return CaptureRecord(
+        version_ref,
+        pillar.kind,
+        fp,
+        state,
+        coverage,
+        True,
+        event_ref,
+        pillar.backend_keyed,
+        commitment,
+        reproduced,
+        identity_verification_ref,
+    )
 
 
 @dataclass(frozen=True)
@@ -304,6 +351,24 @@ class RestoreResult:
     store_status: str
     activated: bool = False
     event_ref: str | None = None
+    backend_keyed: bool = False
+    historical_key_available: bool = False
+    verified_artifact_digest: str | None = None
+
+
+def _historical_key_available(
+    manifest: dict[str, Any], backend_keyed: bool, keys: ContentIdentityKeys | None
+) -> bool:
+    """Is the key the fingerprint was minted under held here? Backend-only keys never are."""
+    if backend_keyed:
+        return False
+    key_id = manifest.get("key_id")
+    if key_id is None:
+        return True
+    from traigent.identity.keys import get_content_identity_keys
+
+    grant = keys if keys is not None else get_content_identity_keys()
+    return grant is not None and grant.kid == key_id
 
 
 def _is_within(path: Path, parent: Path) -> bool:
@@ -439,15 +504,19 @@ def restore(
             for d in deps
         )
         coverage = _coverage(manifest)
+        backend_keyed = rkind in c.BACKEND_KEYED_KINDS
+        key_ok = _historical_key_available(manifest, backend_keyed, keys)
         if not digests:
             grade: Grade = "failed"
         elif coverage["status"] != "complete" or not deps_ok:
             grade = "partial"
         elif not pillar_ok:
             grade = "substituted"
-        elif rkind in c.BACKEND_KEYED_KINDS:
+        elif backend_keyed:
             # INV-16: a Backend-keyed fingerprint cannot be re-verified client-side;
             # only a server-origin match report may say ``exact``.
+            grade = "substituted"
+        elif not key_ok:
             grade = "substituted"
         else:
             grade = "exact"
@@ -456,22 +525,31 @@ def restore(
             kinds = [d["representation_kind"] for d in manifest["representations"]]
             _materialize(dest_path, rkind, kinds, bundle.representations)
             out_dest = dest_path
+        # the abstract digest of the verified staged artifact; recorded only for ``exact``
+        artifact = (
+            _tree_digest(out_dest)
+            if grade == "exact" and out_dest is not None
+            else None
+        )
         event_ref = None
         if version_ref is not None:
             event_ref = _post(
                 transport,
                 "record_restore",
-                {
-                    "schema_version": c.SCHEMA_VERSION,
-                    "version_ref": version_ref,
-                    "kind": rkind,
-                    "recovery_manifest_fingerprint": fp,
-                    "outcome": grade,
-                    "coverage": coverage,
-                    "isolated_destination": True,
-                    "representation_digests_match": digests,
-                    "pillar_fingerprint_match": pillar_ok,
-                },
+                build_restore_payload(
+                    version_ref=version_ref,
+                    kind=rkind,
+                    manifest_fingerprint=fp,
+                    outcome=grade,
+                    coverage=coverage,
+                    isolated_destination=True,
+                    representation_digests_match=digests,
+                    pillar_fingerprint_match=pillar_ok,
+                    historical_key_available=key_ok,
+                    dependencies_verified=deps_ok,
+                    verified_artifact_digest=artifact,
+                    backend_keyed=backend_keyed,
+                ),
             )
         return RestoreResult(
             grade,
@@ -486,6 +564,9 @@ def restore(
             "retrieved",
             False,
             event_ref,
+            backend_keyed,
+            key_ok,
+            artifact,
         )
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
@@ -518,8 +599,37 @@ def activate(
             "coverage_insufficient",
             "activation of a non-exact restore needs explicit accept",
         )
+    if (
+        result.grade == "exact"
+        and result.verified_artifact_digest is not None
+        and _tree_digest(result.dest) != result.verified_artifact_digest
+    ):
+        # the staged artifact is not the one that was verified and recorded
+        raise LegendError(
+            "manifest_mismatch", "staged artifact differs from the verified one"
+        )
     out = Path(os.path.abspath(target))
     if out.exists() and not overwrite and (not out.is_dir() or any(out.iterdir())):
         raise LegendError("invalid_request", "activation target must be new or empty")
     shutil.copytree(result.dest, out, dirs_exist_ok=True)
     return ActivationResult(out, result.grade, inexact)
+
+
+def record_availability(
+    version_ref: str,
+    manifest_fingerprint: str,
+    status: str,
+    *,
+    transport: CaptureTransport | None = None,
+    idempotency_key: str | None = None,
+) -> str | None:
+    """Report the CURRENT availability of one capture (``available | missing | corrupted | retired``).
+
+    Sends ``RecordAvailabilityRequestV0`` (version ref, manifest fingerprint, closed
+    status). The highest ledger position per manifest wins server-side; the report is
+    never inferred from a restore. Returns the event ref, or ``None`` without a transport.
+    """
+    payload = build_availability_payload(
+        version_ref, manifest_fingerprint, status, idempotency_key
+    )
+    return _post(transport, "record_availability", payload)
