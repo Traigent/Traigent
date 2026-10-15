@@ -21,7 +21,7 @@ from traigent.evaluators.base import (
     Dataset,
     EvaluationResult,
     _accuracy_matches_after_unwrap,
-    _accuracy_values_match,
+    _accuracy_value_for_example,
     _example_correlation_key,
     _is_empty_expected_output,
 )
@@ -621,7 +621,10 @@ class LocalEvaluator(BaseEvaluator):
             Extracted text or None if not extractable
         """
         if isinstance(output, dict):
-            return output.get("text")
+            # ``with_usage()`` may carry a non-string output under "text"
+            # (#2522); that is not response text and has no text length.
+            text = output.get("text")
+            return text if isinstance(text, str) else None
         elif isinstance(output, str):
             return output
         elif hasattr(output, "content") and output.content:
@@ -769,12 +772,7 @@ class LocalEvaluator(BaseEvaluator):
         Returns:
             Accuracy value (1.0 or 0.0) or None if not calculable
         """
-        if expected_output is None or actual_value is None:
-            return None
-
-        if isinstance(actual_value, str) and isinstance(expected_output, str):
-            return 1.0 if _accuracy_values_match(actual_value, expected_output) else 0.0
-        return 1.0 if _accuracy_values_match(actual_value, expected_output) else 0.0
+        return _accuracy_value_for_example(actual_value, expected_output)
 
     def _transfer_token_metrics_to_example_result(
         self,
@@ -1632,8 +1630,9 @@ class LocalEvaluator(BaseEvaluator):
         example_metric.accuracy_eligible = not _is_empty_expected_output(
             expected_output
         )
-        actual_value = output.get("text") if isinstance(output, dict) else output
-        accuracy_value = self._calculate_example_accuracy(actual_value, expected_output)
+        # Compare the output as-is: the comparator unwraps a real response
+        # wrapper itself and leaves a structured answer intact (#2523).
+        accuracy_value = self._calculate_example_accuracy(output, expected_output)
         if accuracy_value is not None:
             example_metric.custom_metrics.setdefault("accuracy", accuracy_value)
 
@@ -2545,14 +2544,10 @@ class LocalEvaluator(BaseEvaluator):
         if isinstance(expected_output, str) and not expected_output.strip():
             return 0.0
 
-        # If actual_output is dict, use its 'text' for accuracy comparison
-        actual_to_compare = (
-            actual_output.get("text")
-            if isinstance(actual_output, dict)
-            else actual_output
-        )
-
-        if _accuracy_values_match(actual_to_compare, expected_output):
+        # Same comparator as the aggregate and the tracker path: a real
+        # response wrapper is unwrapped, a structured answer is compared as a
+        # structure rather than reduced to its (absent) "text" field (#2523).
+        if _accuracy_matches_after_unwrap(actual_output, expected_output):
             return 1.0
 
         return 0.0
