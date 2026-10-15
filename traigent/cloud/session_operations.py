@@ -11,6 +11,8 @@ import concurrent.futures
 import inspect
 import time
 import uuid
+from collections.abc import Coroutine
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
@@ -157,6 +159,28 @@ def _is_definitive_auth_rejection(exc: Exception) -> bool:
     if any(marker in msg for marker in _AUTH_TRANSIENT_MARKERS):
         return False
     return any(marker in msg for marker in _AUTH_REJECTION_MARKERS)
+
+
+# Non-None only inside a *_sync wrapper's private event loop: holds the one
+# session local to that loop so the client's shared pool is never used there.
+_loop_local_sessions: ContextVar[list[Any] | None] = ContextVar(
+    "traigent_loop_local_sessions", default=None
+)
+
+
+async def _with_loop_local_session(coro: Coroutine[Any, Any, Any]) -> Any:
+    """Run ``coro`` with a loop-local HTTP session that is closed on exit."""
+    sessions: list[Any] = []
+    token = _loop_local_sessions.set(sessions)
+    try:
+        return await coro
+    finally:
+        _loop_local_sessions.reset(token)
+        for session in sessions:
+            try:
+                await session.close()
+            except Exception as exc:  # pragma: no cover - best-effort cleanup
+                logger.debug("Loop-local session close failed: %s", exc)
 
 
 class SessionOperations:
@@ -955,7 +979,9 @@ class SessionOperations:
                     new_loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(new_loop)
                     try:
-                        return new_loop.run_until_complete(_create_session_async())
+                        return new_loop.run_until_complete(
+                            _with_loop_local_session(_create_session_async())
+                        )
                     finally:
                         new_loop.close()
 
@@ -964,7 +990,7 @@ class SessionOperations:
                 return future.result(timeout=60)
 
             except RuntimeError:
-                return asyncio.run(_create_session_async())
+                return asyncio.run(_with_loop_local_session(_create_session_async()))
 
         except ValidationException:
             raise  # User input errors must propagate
@@ -1806,11 +1832,13 @@ class SessionOperations:
             asyncio.set_event_loop(new_loop)
             try:
                 return new_loop.run_until_complete(
-                    self.finalize_session(
-                        session_id,
-                        include_full_history,
-                        certified_selection=certified_selection,
-                        session_aggregation=session_aggregation,
+                    _with_loop_local_session(
+                        self.finalize_session(
+                            session_id,
+                            include_full_history,
+                            certified_selection=certified_selection,
+                            session_aggregation=session_aggregation,
+                        )
                     )
                 )
             finally:
@@ -1854,7 +1882,9 @@ class SessionOperations:
             asyncio.set_event_loop(new_loop)
             try:
                 return new_loop.run_until_complete(
-                    self.delete_session(session_id, cascade=cascade)
+                    _with_loop_local_session(
+                        self.delete_session(session_id, cascade=cascade)
+                    )
                 )
             finally:
                 new_loop.close()

@@ -72,7 +72,7 @@ from traigent.cloud.session_budgets import (
 
 # Import refactored sub-modules
 from traigent.cloud.privacy_operations import PrivacyOperations
-from traigent.cloud.session_operations import SessionOperations
+from traigent.cloud.session_operations import SessionOperations, _loop_local_sessions
 from traigent.cloud.session_types import SessionCreationResult
 from traigent.core.session_types import safe_http_error_summary
 from traigent.cloud.subset_selection import SmartSubsetSelector
@@ -1441,10 +1441,62 @@ class BackendIntegratedClient:
         """Async context manager exit."""
         await self.close(_reason="context-exit")
 
+    async def _build_http_session(self) -> AioClientSession:
+        """Build an authenticated aiohttp session on the running loop (fail closed)."""
+
+        if not AIOHTTP_AVAILABLE:
+            raise CloudServiceError(
+                "Client session not initialized and aiohttp not available"
+            )
+
+        # B4 ROUND 4: Fail closed on authentication errors. Previously, this
+        # block caught any exception from ``get_headers()`` and silently
+        # rebuilt headers from the raw stored API key (or from the
+        # private ``_get_api_key_headers()`` helper) -- defeating the
+        # round-3 fail-closed change in ``AuthManager.get_auth_headers()``
+        # because the backend-rejected key would still be shipped on the
+        # wire as ``X-API-Key`` / ``Authorization``.
+        #
+        # Now: ``AuthenticationError`` (and its ``InvalidCredentialsError``
+        # subclass) propagates so the caller sees the rejection. Other
+        # unexpected errors are surfaced as ``CloudServiceError`` rather
+        # than silently swallowed -- still fail-closed for auth, but
+        # without losing diagnostic context.
+        try:
+            headers = await self.auth_manager.auth.get_headers()
+        except AuthenticationError:
+            # Do NOT fall back to raw-key headers. Re-raise so callers
+            # see the auth failure instead of getting a session that
+            # silently emits a rejected key.
+            raise
+        except Exception as exc:
+            logger.warning("Could not get auth headers: %s", exc)
+            raise CloudServiceError(
+                f"Failed to build authenticated session: {exc}"
+            ) from exc
+        headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
+        headers.setdefault("User-Agent", _SDK_USER_AGENT)
+
+        return aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self.timeout),
+            # Same rule as __aenter__: no stale trace context in
+            # long-lived session-default headers.
+            headers=_strip_trace_context_headers(headers),
+            trust_env=True,
+        )
+
     async def _ensure_session(self) -> AioClientSession:
         """Ensure session exists with current auth headers."""
 
         self._raise_if_backend_egress_disabled("backend request")
+        scope = _loop_local_sessions.get()
+        if scope is not None:
+            # Inside a *_sync wrapper's private loop: never hand out the shared
+            # pool (it may belong to another loop); use one session local to
+            # this loop that the wrapper closes when it finishes.
+            if not scope or _session_is_closed(scope[0]):
+                scope[:] = [await self._build_http_session()]
+            return scope[0]
         existing = self._session
         if (
             existing is not None
@@ -1465,46 +1517,7 @@ class BackendIntegratedClient:
                 self._detach_session_finalizer()
                 _finalize_aiohttp_session(existing, self.__class__.__name__)
 
-            if not AIOHTTP_AVAILABLE:
-                raise CloudServiceError(
-                    "Client session not initialized and aiohttp not available"
-                )
-
-            # B4 ROUND 4: Fail closed on authentication errors. Previously, this
-            # block caught any exception from ``get_headers()`` and silently
-            # rebuilt headers from the raw stored API key (or from the
-            # private ``_get_api_key_headers()`` helper) -- defeating the
-            # round-3 fail-closed change in ``AuthManager.get_auth_headers()``
-            # because the backend-rejected key would still be shipped on the
-            # wire as ``X-API-Key`` / ``Authorization``.
-            #
-            # Now: ``AuthenticationError`` (and its ``InvalidCredentialsError``
-            # subclass) propagates so the caller sees the rejection. Other
-            # unexpected errors are surfaced as ``CloudServiceError`` rather
-            # than silently swallowed -- still fail-closed for auth, but
-            # without losing diagnostic context.
-            try:
-                headers = await self.auth_manager.auth.get_headers()
-            except AuthenticationError:
-                # Do NOT fall back to raw-key headers. Re-raise so callers
-                # see the auth failure instead of getting a session that
-                # silently emits a rejected key.
-                raise
-            except Exception as exc:
-                logger.warning("Could not get auth headers: %s", exc)
-                raise CloudServiceError(
-                    f"Failed to build authenticated session: {exc}"
-                ) from exc
-            headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
-            headers.setdefault("User-Agent", _SDK_USER_AGENT)
-
-            self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=self.timeout),
-                # Same rule as __aenter__: no stale trace context in
-                # long-lived session-default headers.
-                headers=_strip_trace_context_headers(headers),
-                trust_env=True,
-            )
+            self._session = await self._build_http_session()
             self._register_session_finalizer(self._session)
 
             return cast(AioClientSession, self._session)

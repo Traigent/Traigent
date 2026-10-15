@@ -15,6 +15,7 @@ from aiohttp import web
 from traigent.cloud.api_operations import ApiOperations
 from traigent.cloud.backend_client import BackendIntegratedClient
 from traigent.cloud.client import CloudEgressBlockedError
+from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.trial_operations import TrialOperations
 
 pytestmark = pytest.mark.backend_online
@@ -54,6 +55,8 @@ class _LocalTrialClient(BackendIntegratedClient):
         self._session_lock = asyncio.Lock()
         self._session_finalizer = None
         self._active_sessions = {}
+        self._active_sessions_lock = threading.Lock()
+        self._session_credentials = {}
         self._cost_budget_armed_sessions = set()
         self._api_ops = ApiOperations(self)
         self._trial_ops = TrialOperations(self)
@@ -303,6 +306,11 @@ def threaded_trial_server():
             self.end_headers()
             self.wfile.write(encoded)
 
+        def do_DELETE(self):
+            self.send_response(204)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
         def log_message(self, *_args):
             pass
 
@@ -446,3 +454,32 @@ def test_pool_created_by_finished_loop_is_replaced_for_next_sync_consumer(
     replacement = asyncio.run(fresh())
     assert replacement is not stale and replacement._loop.is_closed()
     assert client._session is replacement
+
+
+@pytest.mark.asyncio
+async def test_sync_wrappers_in_running_loop_never_use_foreign_loop_pool(
+    threaded_trial_server, monkeypatch
+):
+    """delete_session_sync inside a running loop gets a loop-local session."""
+    import aiohttp
+
+    origin, _requests, _connections = threaded_trial_server
+    client = _LocalTrialClient(origin)
+    ops = SessionOperations(client)
+    pool = await client._ensure_session()  # owned by this (still running) loop
+    created = []
+    original_session = aiohttp.ClientSession
+
+    def track_session(*args, **kwargs):
+        session = original_session(*args, **kwargs)
+        created.append(session)
+        return session
+
+    monkeypatch.setattr(aiohttp, "ClientSession", track_session)
+    try:
+        assert ops.delete_session_sync("local-session") is True
+        assert len(created) == 1 and created[0] is not pool
+        assert created[0].closed and not pool.closed
+        assert client._session is pool
+    finally:
+        await client.close()
