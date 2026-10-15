@@ -1515,6 +1515,16 @@ class BackendIntegratedClient:
 
     def _purge_dead_pools(self) -> None:
         """Drop pools whose loop is gone/closed; close them without awaiting."""
+        primary = self._session
+        if primary is not None:
+            primary_loop = getattr(primary, "_loop", None)
+            if _session_is_closed(primary) or (
+                isinstance(primary_loop, asyncio.AbstractEventLoop)
+                and primary_loop.is_closed()
+            ):
+                self._session = None
+                self._detach_session_finalizer()
+                self._dispose_pool(primary, self.__class__.__name__)
         pools = self._loop_pools()
         for key, (loop_ref, session) in list(pools.items()):
             loop = loop_ref()

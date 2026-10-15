@@ -582,3 +582,26 @@ def test_closed_loop_pools_are_released_and_context_entry_keeps_no_orphan(
     finally:
         loop_a.run_until_complete(client.close())
         loop_a.close()
+
+
+def test_dead_primary_pool_is_released_while_secondary_pool_serves():
+    """Primary on closed loop A is disposed even when B's cached pool is returned."""
+    import http.server
+
+    server = http.server.ThreadingHTTPServer(
+        ("127.0.0.1", 0), http.server.BaseHTTPRequestHandler
+    )
+    client = _LocalTrialClient(f"http://127.0.0.1:{server.server_port}")
+    server.server_close()
+    loop_a = asyncio.new_event_loop()
+    loop_b = asyncio.new_event_loop()
+    try:
+        pool_a = loop_a.run_until_complete(client._ensure_session())
+        pool_b = loop_b.run_until_complete(client._ensure_session())
+        assert client._session is pool_a and pool_b is not pool_a
+        loop_a.close()
+        assert loop_b.run_until_complete(client._ensure_session()) is pool_b
+        assert pool_a.closed and client._session is None
+    finally:
+        loop_b.run_until_complete(client.close())
+        loop_b.close()
