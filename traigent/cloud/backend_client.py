@@ -311,6 +311,12 @@ def _session_is_closed(session: Any) -> bool:
     return False
 
 
+def _session_loop_is_closed(session: Any) -> bool:
+    """True when a real aiohttp session is bound to an already-closed event loop."""
+    loop = getattr(session, "_loop", None)
+    return isinstance(loop, asyncio.AbstractEventLoop) and loop.is_closed()
+
+
 # Export public API
 __all__ = [
     "AnalyticsNamespace",
@@ -1440,13 +1446,24 @@ class BackendIntegratedClient:
 
         self._raise_if_backend_egress_disabled("backend request")
         existing = self._session
-        if existing is not None and not _session_is_closed(existing):
+        if (
+            existing is not None
+            and not _session_is_closed(existing)
+            and not _session_loop_is_closed(existing)
+        ):
             return cast(AioClientSession, existing)
 
         async with self._session_lock:
             existing = self._session
             if existing is not None and not _session_is_closed(existing):
-                return cast(AioClientSession, existing)
+                if not _session_loop_is_closed(existing):
+                    return cast(AioClientSession, existing)
+                # Pool bound to an event loop that already closed (a throwaway
+                # loop of a *_sync wrapper or a finished asyncio.run): release
+                # its transports and rebuild on the running loop.
+                self._session = None
+                self._detach_session_finalizer()
+                _finalize_aiohttp_session(existing, self.__class__.__name__)
 
             if not AIOHTTP_AVAILABLE:
                 raise CloudServiceError(

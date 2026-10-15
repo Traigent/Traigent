@@ -183,6 +183,14 @@ class TestSessionFinalizationIntegration:
             return {**headers, "Authorization": "Bearer test-token"}
 
         client.auth_manager.augment_headers = augment_headers
+
+        mock_pool = backend.client_session()
+
+        async def ensure_session():
+            # Trial slot/result submission borrows the client's pooled session.
+            return mock_pool
+
+        client._ensure_session = ensure_session
         return client
 
     @pytest.mark.asyncio

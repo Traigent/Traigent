@@ -387,13 +387,13 @@ def test_sync_registration_without_running_loop_closes_each_transient_session(
 def test_pooled_session_bound_to_another_loop_is_never_reused(
     threaded_trial_server, monkeypatch
 ):
-    """A pool left by a finished throwaway loop must not serve a later loop."""
+    """A pool bound to another, still-open loop must not serve a different loop."""
     import aiohttp
 
     origin, requests, _connections = threaded_trial_server
     client = _LocalTrialClient(origin)
 
-    # Throwaway loop (as the *_sync wrappers use) creates the shared pool, then dies.
+    # Another loop (still open, e.g. owned by a different thread) owns the shared pool.
     loop_a = asyncio.new_event_loop()
     pooled = loop_a.run_until_complete(client._ensure_session())
     assert pooled._loop is loop_a
@@ -406,7 +406,6 @@ def test_pooled_session_bound_to_another_loop_is_never_reused(
         return session
 
     try:
-        loop_a.close()
         monkeypatch.setattr(aiohttp, "ClientSession", track_session)
 
         async def run_on_new_loop():
@@ -425,6 +424,25 @@ def test_pooled_session_bound_to_another_loop_is_never_reused(
         assert client._session is pooled
         assert len(requests) == 2
     finally:
+        loop_a.run_until_complete(pooled.close())
+        loop_a.close()
         client._session = None
         client._session_finalizer = None
-        pooled._connector._closed = True  # drop stale transports without a live loop
+
+
+def test_pool_created_by_finished_loop_is_replaced_for_next_sync_consumer(
+    threaded_trial_server,
+):
+    """asyncio.run(trial call) then a *_sync wrapper must not hit the dead pool."""
+    origin, _requests, _connections = threaded_trial_server
+    client = _LocalTrialClient(origin)
+    asyncio.run(client.request_trial_slot("local-session"))
+    stale = client._session
+    assert stale is not None and stale._loop.is_closed()
+
+    async def fresh():
+        return await client._ensure_session()
+
+    replacement = asyncio.run(fresh())
+    assert replacement is not stale and replacement._loop.is_closed()
+    assert client._session is replacement
