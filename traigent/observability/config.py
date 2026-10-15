@@ -413,7 +413,9 @@ class ObservabilityConfig:
     :data:`INGEST_MAX_OBSERVATIONS_PER_REQUEST` observations (the backend's
     limits), so a larger flush is sent as several requests. A single trace with
     more observations than that cannot be accepted by the backend and is
-    dropped locally with reason ``too_many_observations``.
+    dropped locally with reason ``too_many_observations``. ``max_batch_bytes``
+    should stay at or below the backend's ingest body limit (5 MiB unless the
+    deployment changed it); a request above that limit is rejected with 413.
 
     ``health_callback`` receives batch-level local-drop and warning snapshots
     after internal transport locks are released. It may run on background
