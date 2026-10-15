@@ -152,3 +152,48 @@ def test_delivered_digest_memory_is_bounded_and_forgetting_only_resends():
     transport.close()
 
     assert _sent_ids(requests) == ["a", "b", "c", "a"]
+
+
+def test_a_snapshot_evicted_after_a_failed_send_is_sent_when_resubmitted():
+    """A failed snapshot is never remembered as delivered: if the outbox
+    evicts it and the app re-submits the same content, it must still go out."""
+    import threading
+
+    entered = threading.Event()
+    release = threading.Event()
+    requests: list[list[dict]] = []
+    attempts = {"count": 0}
+
+    def sender(traces):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            entered.set()
+            assert release.wait(timeout=5.0)
+            raise AuthenticationError("invalid credentials")  # not retried
+        requests.append(traces)
+
+    transport = _SyncBatchTransport(
+        sender,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=1,
+        max_batch_bytes=1_000_000,
+    )
+    assert transport.submit("a", {"id": "a"})
+    flush_thread = threading.Thread(target=transport.flush)
+    flush_thread.start()
+    assert entered.wait(timeout=5.0)
+    assert transport.submit("b", {"id": "b"})  # queued while "a" is in flight
+    release.set()
+    flush_thread.join(timeout=5.0)
+    assert not flush_thread.is_alive()
+    # The failed "a" was evicted from the full outbox in favour of newer "b".
+    assert transport.get_stats()["dropped_by_reason"] == {"outbox_full": 1}
+    # Nothing was delivered, so nothing may be remembered as delivered.
+    assert dict(transport._delivered_digests) == {}
+    transport.flush()  # delivers "b", freeing the one-slot outbox
+
+    assert transport.submit("a", {"id": "a"})
+    transport.close()
+
+    assert sorted(_sent_ids(requests)) == ["a", "b"]
