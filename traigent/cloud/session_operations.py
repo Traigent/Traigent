@@ -14,7 +14,7 @@ import uuid
 from collections.abc import Coroutine
 from contextvars import ContextVar
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, NoReturn, cast
+from typing import TYPE_CHECKING, Any, NoReturn, TypeVar, cast
 
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.backend_bridges import SessionExperimentMapping
@@ -161,6 +161,8 @@ def _is_definitive_auth_rejection(exc: Exception) -> bool:
     return any(marker in msg for marker in _AUTH_REJECTION_MARKERS)
 
 
+_T = TypeVar("_T")
+
 # Non-None only inside a *_sync wrapper's private event loop: holds the one
 # session local to that loop so the client's shared pool is never used there.
 _loop_local_sessions: ContextVar[list[Any] | None] = ContextVar(
@@ -168,7 +170,7 @@ _loop_local_sessions: ContextVar[list[Any] | None] = ContextVar(
 )
 
 
-async def _with_loop_local_session(coro: Coroutine[Any, Any, Any]) -> Any:
+async def _with_loop_local_session(coro: Coroutine[Any, Any, _T]) -> _T:
     """Run ``coro`` with a loop-local HTTP session that is closed on exit."""
     sessions: list[Any] = []
     token = _loop_local_sessions.set(sessions)
