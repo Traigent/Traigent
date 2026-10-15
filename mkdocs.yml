@@ -36,7 +36,6 @@ markdown_extensions:
 
 nav:
   - Home: README.md
-  - JavaScript SDK: guides/js-bridge.md
   - Getting Started:
       - Overview: getting-started/README.md
       - Quickstart: getting-started/GETTING_STARTED.md

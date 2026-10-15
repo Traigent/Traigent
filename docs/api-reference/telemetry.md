@@ -171,8 +171,7 @@ secret scrubbing.
 
 Dataset-conversion and content-upload endpoints (`traigent.datasets.*`) are
 a separate content-egress surface with their own contract; they are not
-gated by observability's `content_mode` and are out of scope here — see
-traigent-js#387.
+gated by observability's `content_mode` and are out of scope here.
 
 **`user_id` is not anonymized.** The SDK never generates, hashes, or maps
 `user_id` for you — whatever string you pass on `start_trace(user_id=...)`

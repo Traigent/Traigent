@@ -26,7 +26,7 @@ Traigent/
 ```
 
 > **Note**: Use-cases, demos, playground, paper experiments, and non-essential tools
-> have been moved to the TraigentDemo repository.
+> have been moved out of this repository.
 
 ## Key Directories Explained
 

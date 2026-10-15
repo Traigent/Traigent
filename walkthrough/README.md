@@ -251,8 +251,8 @@ If you want a different location, set `TRAIGENT_RESULTS_FOLDER` before running.
 
 ## Benchmarks
 
-For advanced benchmarks like HotpotQA multi-hop QA optimization, see the
-benchmarks in the TraigentDemo repository.
+Advanced benchmarks such as HotpotQA multi-hop QA optimization are maintained
+outside this repository.
 
 ## Further Reading
 

@@ -20,7 +20,7 @@ if [[ -z "${VIRTUAL_ENV:-}" && -f "${PROJECT_ROOT}/.venv/bin/activate" ]]; then
   source "${PROJECT_ROOT}/.venv/bin/activate"
 fi
 
-# NOTE: Paper experiments (FEVER, HotpotQA) moved to TraigentDemo repository
+# NOTE: Paper experiments (FEVER, HotpotQA) moved out of this repository
 
 scenarios=(
   "RAG Optimization – RAG tuner"
