@@ -6,6 +6,7 @@ including session creation, status updates, and configuration run management.
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-AGENTS REQ-CLOUD-009 REQ-AGNT-013
 
+import re
 import time
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 from urllib.parse import urlparse
@@ -48,6 +49,7 @@ from traigent.core.session_types import (
     SessionCreationHTTPError,
     safe_http_error_summary,
 )
+from traigent.security.redaction import redact_sensitive_text
 from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
     fingerprint_meta_to_wire,
@@ -297,6 +299,40 @@ def _typed_configuration_space(space: Any) -> Any:
     return normalized
 
 
+_SECRET_KEY = (
+    r"(?:[\w.-]*?(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key))"
+)
+# key=value / key: value (optionally quoted key and/or value). A bare "token"
+# or "password" in prose has no "=" or ":" and is left alone.
+_SECRET_KV_RE = re.compile(
+    rf"(?P<key>\b{_SECRET_KEY}[\"']?\s*[=:]\s*)"
+    r"(?:\"[^\"]*\"|'[^']*'|[^\s,;&\"'}]+)",
+    re.IGNORECASE,
+)
+_AUTH_HEADER_RE = re.compile(
+    r"(?P<key>\bAuthorization\s*[=:]\s*)(?:(?:Bearer|Basic|Digest|Token)\s+)?"
+    r"[^\s,;\"'}]+",
+    re.IGNORECASE,
+)
+_BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{4,}", re.IGNORECASE)
+_WINDOWS_USER_PATH_RE = re.compile(
+    r"\b[A-Za-z]:[\\/]+Users[\\/]+[^\\/\"'\n]+(?:[\\/]+[^\s\"']*)?",
+    re.IGNORECASE,
+)
+
+
+def _scrub_error_text(text: str) -> str:
+    """Mask credentials and user-identifying paths in error text."""
+    text = _AUTH_HEADER_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
+    text = _BEARER_RE.sub("Bearer [REDACTED]", text)
+    text = _SECRET_KV_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
+    # Vendor-shaped credentials (AWS/GitHub/JWT/PEM/...) via the shared helper.
+    text = redact_sensitive_text(text)
+    text = _WINDOWS_USER_PATH_RE.sub("[PATH]", text)
+    text = re.sub(r"/home/[\w/.-]+", "[PATH]", text)
+    return re.sub(r"/Users/[\w/.-]+", "[PATH]", text)
+
+
 class ApiOperations:
     """Handles backend API operations."""
 
@@ -424,20 +460,7 @@ class ApiOperations:
         if not error_message:
             return None
 
-        # Remove sensitive information patterns
-        import re
-
-        # Remove potential secrets/tokens
-        sanitized = re.sub(
-            r"(api[_-]?key|token|secret|password)[\s=:]+[\w-]+",
-            "[REDACTED]",
-            error_message,
-            flags=re.IGNORECASE,
-        )
-
-        # Remove file paths that might contain user info
-        sanitized = re.sub(r"/home/[\w/.-]+", "[PATH]", sanitized)
-        sanitized = re.sub(r"/Users/[\w/.-]+", "[PATH]", sanitized)
+        sanitized = _scrub_error_text(error_message)
 
         # Truncate if too long
         max_length = 1000

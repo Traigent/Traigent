@@ -300,6 +300,66 @@ class TestSanitizeErrorMessage:
         assert "/Users/username" not in result
         assert "[PATH]" in result
 
+    @pytest.mark.parametrize(
+        ("msg", "leaked"),
+        [
+            ("auth failed: Authorization: Bearer abc123tokenvalue", "abc123tokenvalue"),
+            ("header Authorization: Basic dXNlcjpwYXNz sent", "dXNlcjpwYXNz"),
+            ("got Bearer abc123tokenvalue here", "abc123tokenvalue"),
+            ("bearer short-tok", "short-tok"),
+            ("connect password='hunter2' failed", "hunter2"),
+            ('connect password="hunter2" failed', "hunter2"),
+            ("connect pwd=hunter2 failed", "hunter2"),
+            ("connect passwd: hunter2 failed", "hunter2"),
+            ("PASSWORD='Hunter 2 x' failed", "Hunter 2"),
+            ("secret='s3cr3t' x", "s3cr3t"),
+            ("client_secret=abcdef123", "abcdef123"),
+            ("access_key=AKIDEXAMPLE1", "AKIDEXAMPLE1"),
+            ("apikey: 'k-12345'", "k-12345"),
+            ('{"api_key": "k-12345"}', "k-12345"),
+            ("db_password=hunter2", "hunter2"),
+            (r"Error in C:\Users\alice\proj\file.py", "alice"),
+            (r"Error in c:\users\Bob\x.py", "Bob"),
+            ("Error in C:/Users/alice/proj/file.py", "alice"),
+        ],
+    )
+    def test_additional_secret_shapes_redacted(self, msg, leaked):
+        """Bearer/Authorization, quoted key-value secrets, Windows user paths."""
+        result = self.ops.sanitize_error_message(msg)
+        assert leaked not in result
+        assert "REDACTED" in result or "[PATH]" in result
+
+    def test_windows_user_path_becomes_path_marker(self):
+        result = self.ops.sanitize_error_message(r"open C:\Users\alice\a\b.py failed")
+        assert result == "open [PATH] failed"
+
+    def test_windows_user_path_with_space_in_name(self):
+        result = self.ops.sanitize_error_message(
+            r"C:\Users\John Smith\data.csv not found"
+        )
+        assert "John" not in result
+        assert "Smith" not in result
+        assert "[PATH]" in result
+
+    def test_sentence_without_path_untouched(self):
+        msg = "The Users table is missing a column named John"
+        assert self.ops.sanitize_error_message(msg) == msg
+
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            "invalid password",
+            "invalid password for user",
+            "Token expired, please retry",
+            "secret not found in vault",
+            "Authorization failed",
+            "bearer of bad news",
+            r"Error in C:\Program Files\App\x.py",
+        ],
+    )
+    def test_ordinary_text_not_over_redacted(self, msg):
+        assert self.ops.sanitize_error_message(msg) == msg
+
     def test_long_message_truncated(self):
         """Test long messages are truncated."""
         msg = "x" * 2000
