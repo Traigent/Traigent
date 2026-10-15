@@ -44,6 +44,11 @@ def _config(**overrides) -> ObservabilityConfig:
     return ObservabilityConfig(**values)
 
 
+# Explicit None, not just unset env vars: BackendConfig otherwise falls back to
+# stored CLI credentials, which would make this test depend on the machine.
+_NO_CREDENTIALS = {"api_key": None, "jwt_token": None}
+
+
 def _no_network(*args, **kwargs):
     raise AssertionError("network egress attempted while delivery is suppressed")
 
@@ -103,7 +108,7 @@ def test_disabled_telemetry_flush_and_close_warn_that_nothing_was_sent(monkeypat
 def test_missing_credential_flush_and_close_warn_that_nothing_was_sent(monkeypatch):
     monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
     monkeypatch.delenv("TRAIGENT_JWT_TOKEN", raising=False)
-    client = ObservabilityClient(_config(api_key=None, jwt_token=None))
+    client = ObservabilityClient(_config(**_NO_CREDENTIALS))
     monkeypatch.setattr(client._http_opener, "open", _no_network)
 
     trace_id = client.start_trace("no-credential", trace_id="trace_no_credential")
