@@ -248,7 +248,6 @@ We welcome contributions! Areas where we'd love help:
 ## 📚 References
 
 - [Traigent Documentation](../../../README.md)
-- [Original Research](https://github.com/traigent/research)
 
 ## 📄 License
 

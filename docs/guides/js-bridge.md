@@ -9,10 +9,8 @@ checkout instructions when available.
 The current native TypeScript SDK support exists in the internal `traigent-js`
 repo; npm publication for `@traigent/sdk` is pending.
 
-Migration reference:
-
-- https://github.com/Traigent/traigent-js/blob/main/docs/getting-started/minimal-integration.md
-- https://github.com/Traigent/traigent-js/blob/main/docs/MIGRATION_FROM_PYTHON.md
+Migration reference: the JS SDK's `docs/getting-started/minimal-integration.md`
+and `docs/MIGRATION_FROM_PYTHON.md`, published with the JS SDK once it is public.
 
 Removed Python APIs include:
 

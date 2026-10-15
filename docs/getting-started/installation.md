@@ -72,7 +72,7 @@ License: Traigent SDK is dual-licensed under AGPL-3.0-only OR LicenseRef-Traigen
 
 - **Interactive UI & advanced examples:**
 
-  See the [TraigentDemo](https://github.com/Traigent/TraigentDemo) repository for Streamlit UI tools, use cases, and research examples.
+  See the TraigentDemo repository for Streamlit UI tools, use cases, and research examples.
 
 - **Full bundle for team environments:**
 

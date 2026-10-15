@@ -220,7 +220,7 @@ diff saved_config.json <(jq .best_config results-ci/math/tuned.json)
 
 ## 📚 References
 
-- [Traigent Documentation](https://traigent.ai/docs)
+- [Traigent Documentation](https://traigent.github.io/Traigent/)
 - [GitHub Actions Workflow](../../../.github/workflows/traigent-ci-gates.yml)
 - [SDK Evaluator API](../../../traigent/evaluators/base.py)
 

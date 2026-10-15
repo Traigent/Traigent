@@ -172,7 +172,7 @@ secret scrubbing.
 Dataset-conversion and content-upload endpoints (`traigent.datasets.*`) are
 a separate content-egress surface with their own contract; they are not
 gated by observability's `content_mode` and are out of scope here — see
-[traigent-js#387](https://github.com/Traigent/traigent-js/issues/387).
+traigent-js#387.
 
 **`user_id` is not anonymized.** The SDK never generates, hashes, or maps
 `user_id` for you — whatever string you pass on `start_trace(user_id=...)`
@@ -360,6 +360,7 @@ When `TRAIGENT_DISABLE_TELEMETRY` is set:
 2. **No metrics are sent to collectors** - MetricsCollector calls are skipped
 3. **Optimization still works normally** - Only telemetry is disabled, not functionality
 4. **Local results are still saved** - Optimization results are still persisted locally for your use
+5. **Observability traces are not sent** - `ObservabilityClient.flush()` and `close()` still return `success=True`, but `items_sent` is 0 and `warnings` says delivery was suppressed and why. Check `items_sent` to confirm delivery.
 
 ## Telemetry Implementation
 
