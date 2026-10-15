@@ -415,9 +415,44 @@ def test_outcome_matrix_warns_when_one_trial_repeats_an_id(
     warnings = [r for r in caplog.records if "outcome matrix" in r.getMessage()]
     assert len(warnings) == 1
     message = warnings[0].getMessage()
-    assert "trial_0" in message and "1 " in message
-    assert "trial_1" not in message
+    assert "column 0: 1 merged" in message
+    assert "column 1" not in message
     assert "customer-id-a" not in message
+
+
+def test_outcome_matrix_merge_warning_never_logs_the_trial_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A free-form trial id can carry content; the warning names the column.
+
+    ``TrialResult.trial_id`` is whatever string the result's builder set, so
+    the warning identifies the trial by its matrix column index instead.
+    """
+    content_id = "acme-corp jane.doe@example.com Q3 renewal"
+    result = OptimizationResult(
+        trials=[_trial_with(content_id, ["a", "a"])],
+        best_config={},
+        best_score=0.0,
+        optimization_id="opt",
+        duration=1.0,
+        convergence_info={},
+        status=OptimizationStatus.COMPLETED,
+        objectives=["accuracy"],
+        algorithm="grid",
+        timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        matrix = build_outcome_matrix(result)
+
+    # The id itself still names the column in the matrix artifact.
+    assert matrix["trials"][0]["trial_id"] == content_id
+    warnings = [r for r in caplog.records if "outcome matrix" in r.getMessage()]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "column 0: 1 merged" in message
+    for fragment in ("acme-corp", "jane.doe", "example.com", "renewal"):
+        assert fragment not in message
 
 
 def test_outcome_matrix_without_collisions_does_not_warn(
