@@ -750,12 +750,18 @@ def test_env_var_overrides_the_default_safety_limit(monkeypatch, tmp_path):
     assert "default safety limit of 4 trials" in _stop_message(result)
 
 
-def test_env_var_applies_when_cost_limit_is_set(monkeypatch, tmp_path):
-    # cost_limit builds the enforcer config directly; that path used to ignore
-    # TRAIGENT_FALLBACK_TRIAL_LIMIT and use 10.
+def test_explicit_cost_limit_refuses_a_trial_without_a_measured_cost(
+    monkeypatch, tmp_path
+):
+    # An explicit cost_limit cannot be enforced on a completed trial that
+    # reports no cost, so the run is refused instead of falling back to the
+    # unknown-cost trial cap (owner-ruled stop rule, optimize.stop-rules.v1).
+    # This replaces the old check that the env override reached this path.
+    from traigent.utils.exceptions import OptimizationError
+
     monkeypatch.setenv("TRAIGENT_FALLBACK_TRIAL_LIMIT", "4")
-    result = _run(monkeypatch, tmp_path, cost_limit=5.0)
-    assert len(result.trials) == 4
+    with pytest.raises(OptimizationError, match="completed without a reported cost"):
+        _run(monkeypatch, tmp_path, cost_limit=5.0)
 
 
 @pytest.mark.parametrize("where", ["call", "constructor"])

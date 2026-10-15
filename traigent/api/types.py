@@ -15,11 +15,11 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.core.objective_directions import (
     resolve_objective_orientation,
     validate_objective_orientation,
 )
+from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.utils.exceptions import PlatformCapabilityError
 from traigent.utils.logging import get_logger
 
@@ -1180,6 +1180,48 @@ class OptimizationResult:
         from traigent.utils.outcome_matrix import build_outcome_matrix
 
         return build_outcome_matrix(self)
+
+    def failing_examples(
+        self,
+        threshold: float = 0.5,
+        mode: Literal["all_configs", "best_config"] = "all_configs",
+    ) -> list[str]:
+        """Ids of the examples this run got wrong, from its outcome matrix.
+
+        A cell fails on an error, on ``success=False``, or on a finite per-example
+        ``score`` (``accuracy`` when ``score`` is absent) strictly below
+        ``threshold``; equality passes. Cells with no usable score are unknown,
+        not zero. An example is returned only when every selected column failed:
+        every trial for ``"all_configs"``, or the winning configuration's trials
+        for ``"best_config"`` (``session_summary["winning_trial_ids"]`` when
+        stamped, else config equality with ``best_config``).
+
+        Returns:
+            Failing example ids in matrix row order, each once; ``[]`` when the
+            run has usable evidence but nothing failed everywhere.
+
+        Raises:
+            ValueError: On an invalid threshold/mode, no per-example detail, no
+                usable pass/fail signal, or no resolvable winner for
+                ``"best_config"``.
+        """
+        from traigent.utils.outcome_matrix import select_failing_example_ids
+
+        winning_trial_ids: list[Any] | None = None
+        metadata = self.metadata
+        if isinstance(metadata, dict):
+            summary = metadata.get("session_summary")
+            if isinstance(summary, dict):
+                stamped = summary.get("winning_trial_ids")
+                if isinstance(stamped, list) and stamped:
+                    winning_trial_ids = stamped
+        return select_failing_example_ids(
+            self.example_matrix,
+            threshold=threshold,
+            mode=mode,
+            best_config=self.best_config,
+            winning_trial_ids=winning_trial_ids,
+        )
 
     @property
     def eval_audit(self) -> EvalAudit | None:

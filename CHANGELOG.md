@@ -8,6 +8,37 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Export a run's failing examples as a regression dataset.**
+  `OptimizationResult.failing_examples(threshold=0.5, mode="all_configs")`
+  returns the ids of examples that failed in every trial (or, with
+  `mode="best_config"`, in every trial of the winning configuration), read from
+  the per-example outcome matrix without re-running anything; the selector is
+  `traigent.utils.outcome_matrix.select_failing_example_ids`.
+  `traigent results export-failures RUN --dataset PATH --out PATH` joins each
+  id to the one dataset row whose input and expected_output equal what the run
+  recorded for that id (never by guessing the evaluator's id scheme; both are
+  compared in the redacted form the run stores, so export with the SDK version
+  that ran the optimization), and
+  writes the rows as JSONL that `Dataset.from_jsonl` reads back. It writes
+  nothing if any id has no recorded input, matches no row, or matches more than
+  one. Exported rows without a `metadata.example_id` gain their source id
+  (`example_<index>`) so the subset's ids stay unique. `RUN` is a saved result
+  name; logger run directories (which record no example inputs) and `local:`
+  sessions are refused. New helpers: `Dataset.to_jsonl()` (atomic, refuses
+  values JSON would alter) and
+  `traigent.utils.regression_dataset.select_examples_by_id(dataset, ids, run)`.
+  Nothing is sent over the network.
+- **Trace search filters: `model`, `tags`, `outcome_kind`, `has_outcome` (#2564).**
+  `BackendAnalyticsClient.search_observability_traces` and the
+  `observability_search_traces` MCP tool accept them and validate them before
+  any request: tags are exact, sent as repeated `tags` keys and must all match;
+  `outcome_kind` is one of the backend's outcome kinds; `has_outcome=False` is
+  sent explicitly. Free-text `search`, `user_id` and `session_id` remain
+  deliberately unsupported to keep the reader content-free.
+- **`ProjectUsageExperimentDTO`: optional `priced_configuration_runs` /
+  `unpriced_configuration_runs`.** Both default to `None` and are read from the
+  matching keys when present, so clients can tell an unmeasured cost (priced 0,
+  unpriced > 0) from a real zero.
 - **`traigent.observability.otel`: OpenTelemetry-based observability (extra `observability`).**
   `init` / `instrument` / `observe` / `attributes` / `flush` / `shutdown` /
   `stats`, a bounded best-effort span processor, an OTLP/HTTP exporter (official
@@ -28,6 +59,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   left untouched and the run's `OptimizationResult` stays available to publish
   again deliberately. Runs against a backend that reports no generation (older
   backend, offline run, no bound agent) publish exactly as before.
+
+### Changed
+
+- **BREAKING: non-string hybrid example ids are refused (#2575).** When the
+  id a row resolves to (`example_id`, else `input_id`) is not a string (an
+  int, float, bool, list or dict), the trial now fails with a
+  `ValidationError` naming the position, the field and its type. The hybrid
+  protocol defines these ids as strings echoed exactly; a dataset with unique
+  int ids that ran before must convert them to strings. A falsy non-string
+  `example_id` or `input_id` (`0`, `False`) is refused too; it used to be
+  replaced by the `input_id` or the fallback id.
 
 ### Removed
 
@@ -62,6 +104,40 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **BREAKING: evaluators reject `mock` and `mock_mode_config`.** `LocalEvaluator(...)`
   (and every `BaseEvaluator` subclass) now raises `TypeError` for either name,
   even when the value is `None`, instead of storing it in `evaluator.config`.
+
+### Fixed
+
+- **`ObservabilityClient` multi-tag trace/session filters no longer return an
+  empty page (#2573).** `list_traces` / `iter_traces` / `list_sessions` /
+  `iter_sessions` now send a list `tags` filter as repeated keys
+  (`tags=vip&tags=beta`) instead of one comma-joined value, which the backend
+  read as the single literal tag `"vip,beta"`. A single string is still sent
+  as one value.
+- **TVL specs with out-of-range chance thresholds or budgets now fail to load
+  (#1616).** `load_tvl_spec` raises `TVLValidationError` when a
+  `promotion_policy.chance_constraints[].threshold` is outside `[0, 1]`, or when
+  `exploration.budgets` has a `max_trials` or `max_wallclock_s` below 1 or not a
+  whole number, or a `max_spend_usd` below 0 or NaN. These are the canonical TVL
+  bounds. A threshold above 1 used to make the constraint always pass. The same
+  check applies to a `promotion_policy` returned by hybrid config-space
+  discovery. `max_spend_usd: 0` still loads, as the TVL schema allows, but a run
+  that takes its cost limit from the spec still fails the cost-limit check,
+  which needs a value above 0.
+- **Hybrid API examples no longer share one id (#2575).** `HybridAPIEvaluator`
+  numbered the fallback example id from the position inside the batch, so at
+  the default `batch_size=1` every example was sent and recorded as `ex_0`, and
+  the outcome matrix merged them into one row. The fallback is now
+  `ex_<dataset position>`; a string `example_id` (else `input_id`) in the
+  inputs still wins. A dataset that fits in one batch sends the same ids as
+  before, and the ids the backend stores for hybrid rows are unchanged. A
+  hybrid dataset whose ids repeat now fails the trial with a `ValidationError`
+  naming the positions, before any request is sent. `build_outcome_matrix`
+  logs a warning when one trial repeats an example id instead of merging the
+  cells silently. Statistical-significance tests, the best-config margin and
+  the semantic-saturation stop condition, which key per-example scores by id,
+  also saw only one example per in-batch position (a single example at the
+  default `batch_size=1`) when the rows carry no ids; they now see every
+  example, so their results for such hybrid runs can change.
 
 ## [0.30.0] - 2026-09-26
 

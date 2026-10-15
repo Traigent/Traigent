@@ -39,6 +39,7 @@ except ImportError:
 
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.security.redaction import is_credential_key_name
+from traigent.core.session_types import safe_http_error_summary
 from traigent.utils.exceptions import DatasetValidationError
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import safe_write_text, sanitize_filename, validate_path
@@ -978,7 +979,7 @@ class DatasetConverter:
             else:
                 error_text = await response.text()
                 raise Exception(
-                    f"Failed to create example set: {response.status} {error_text}"
+                    f"Failed to create example set: {safe_http_error_summary(response.status, error_text)}"
                 )
 
     async def _upload_examples_to_backend(
@@ -1032,7 +1033,7 @@ class DatasetConverter:
             else:
                 error_text = await response.text()
                 raise Exception(
-                    f"Failed to upload examples: {response.status} {error_text}"
+                    f"Failed to upload examples: {safe_http_error_summary(response.status, error_text)}"
                 )
 
     async def _fetch_backend_example_set(
@@ -1055,7 +1056,7 @@ class DatasetConverter:
             else:
                 error_text = await response.text()
                 raise Exception(
-                    f"Failed to fetch example set: {response.status} {error_text}"
+                    f"Failed to fetch example set: {safe_http_error_summary(response.status, error_text)}"
                 )
 
     async def _fetch_backend_examples(
@@ -1082,7 +1083,8 @@ class DatasetConverter:
                 if response.status != 200:
                     error_text = await response.text()
                     raise Exception(
-                        f"Failed to fetch examples: {response.status} {error_text}"
+                        "Failed to fetch examples: "
+                        f"{safe_http_error_summary(response.status, error_text)}"
                     )
                 result = await response.json()
             items, has_next = _parse_examples_page(result)

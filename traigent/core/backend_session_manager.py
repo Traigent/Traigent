@@ -451,6 +451,8 @@ def _classify_session_creation_failure(
         return SessionCreationFailureClassification.NETWORK
 
     if reason == SessionCreationFailureReason.SESSION_FAILED:
+        if detail and detail.is_quota_refusal:
+            return SessionCreationFailureClassification.QUOTA_EXCEEDED
         if detail and detail.status_code and 400 <= detail.status_code < 500:
             return SessionCreationFailureClassification.UNKNOWN
         return SessionCreationFailureClassification.BACKEND_UNREACHABLE
@@ -497,10 +499,9 @@ def _classify_session_creation_failure(
 
 
 def _format_raw_reason(result: SessionCreationResult) -> str | None:
-    detail = result.failure_response
+    # failure_detail is SDK-composed (status + closed code); the backend raw
+    # body is never printed (#2552).
     raw_reason = result.failure_detail
-    if detail and detail.raw_body:
-        raw_reason = detail.raw_body
     if not raw_reason:
         return None
     return cast(str, raw_reason.replace("\n", "\\n")[:500])
@@ -557,15 +558,23 @@ def _format_untracked_warning_block(
         lines.append(f"HTTP status: {detail.status_code}")
     if detail and detail.backend_url:
         lines.append(f"Backend URL: {detail.backend_url}")
-    if detail and detail.error_code:
-        lines.append(f"Backend error_code: {detail.error_code}")
-    if detail and detail.message:
-        lines.append(f"Backend message: {detail.message}")
+    quota_refusal = bool(detail and detail.is_quota_refusal)
+    if quota_refusal and detail:
+        # Quota path: closed error code only, never backend message/raw body.
+        lines.append(f"Backend error_code: {detail.safe_quota_error_code}")
+    elif detail and detail.error_code:
+        # Closed vocabulary only; the backend message/raw body is never printed.
+        lines.append(f"Backend error_code: {detail.safe_error_code}")
     if detail and detail.missing_permissions:
-        permissions = ", ".join(f"`{p}`" for p in detail.missing_permissions)
-        lines.append(f"Missing permissions: {permissions}")
+        # Count only: permission strings from the backend are never printed
+        # (they can echo customer identifiers). The full list stays on the
+        # failure detail for programmatic callers.
+        lines.append(
+            f"Missing permissions: {len(detail.missing_permissions)} "
+            "(see the Traigent portal for your role)"
+        )
 
-    raw_reason = _format_raw_reason(result)
+    raw_reason = None if quota_refusal else _format_raw_reason(result)
     if raw_reason:
         lines.append(f"Raw reason: {raw_reason}")
 
@@ -613,6 +622,12 @@ def _format_untracked_warning_block(
     elif classification == SessionCreationFailureClassification.KEY_NOT_FOUND:
         lines.append(
             "Remedy: configure a valid Traigent API key or run `traigent auth login`."
+        )
+    elif classification == SessionCreationFailureClassification.QUOTA_EXCEEDED:
+        lines.append(
+            "Remedy: a plan quota/limit was reached (the backend is reachable). "
+            "Review usage and upgrade in the Traigent portal (Billing), or reduce "
+            "the requested trials/samples."
         )
     elif classification == SessionCreationFailureClassification.BACKEND_UNREACHABLE:
         lines.append(
@@ -1078,12 +1093,11 @@ class BackendSessionManager:
             logger.warning(
                 "⚠️  Traigent backend tracking was REJECTED during %s — "
                 "continuing in LOCAL-ONLY mode. The backend was reachable and "
-                "rejected the submitted config: %s. Trials are still optimized "
+                "rejected the submitted config. Trials are still optimized "
                 "and saved to local storage, but this run is NOT tracked on the "
                 "cloud backend; its result is marked source='local_fallback' "
                 "and persistence_reason='rejected'.",
                 context,
-                rejection_reason,
             )
             return
         logger.warning(
@@ -2683,10 +2697,10 @@ class BackendSessionManager:
                         "trial submission", rejection_reason=rejection_reason
                     )
                     logger.warning(
-                        "Backend session endpoint rejected trial %s for session %s: %s",
+                        "Backend session endpoint rejected trial %s for session %s "
+                        "(permanent rejection)",
                         backend_trial_id,
                         session_id,
-                        rejection_reason,
                     )
                 else:
                     self._flag_backend_degraded("trial submission")

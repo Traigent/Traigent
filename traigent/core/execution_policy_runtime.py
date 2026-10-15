@@ -355,6 +355,10 @@ def session_failure_is_connectivity(result: SessionCreationResult) -> bool:
     if result.failure_reason is SessionCreationFailureReason.NO_API_KEY:
         return True
     detail = result.failure_response
+    if detail is not None and detail.is_quota_refusal:
+        # A plan quota/limit refusal is a reachable-backend answer, never
+        # connectivity (#2550).
+        return False
     status = detail.status_code if detail else None
     if status in HARD_FAILURE_STATUSES:
         return False
@@ -372,6 +376,8 @@ def session_failure_is_session_create_400(result: SessionCreationResult) -> bool
     if not result.typed_legacy_session_create_400:
         return False
     detail = result.failure_response
+    if detail is not None and detail.is_quota_refusal:
+        return False
     if detail and detail.status_code == 400:
         return True
     text = _combined_session_text(result)

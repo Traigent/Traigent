@@ -15,11 +15,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from traigent.integrations.langfuse.client import (
+    _LEGACY_REPROBE_SECONDS,
     AIOHTTP_AVAILABLE,
     REQUESTS_AVAILABLE,
-    _LEGACY_REPROBE_SECONDS,
-    _V2Unavailable,
     LangfuseClient,
+    _V2Unavailable,
 )
 
 pytestmark = pytest.mark.skipif(not REQUESTS_AVAILABLE, reason="requests not installed")
@@ -679,6 +679,7 @@ def test_root_tie_break_by_id(client):
 @pytest.mark.parametrize("bad", [0, -1, 3651, True, 1.5, "30", None])
 def test_invalid_lookback_days_rejected(bad):
     with pytest.raises(ValueError):
+        # pragma: allowlist nextline secret
         LangfuseClient(public_key="pk", secret_key="sk", v2_lookback_days=bad)
 
 

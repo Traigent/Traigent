@@ -25,6 +25,7 @@ from traigent.cloud.models import (
     dataset_identity_from_record,
 )
 from traigent.cloud.url_security import validate_cloud_base_url
+from traigent.core.session_types import safe_http_error_summary
 
 try:
     import aiohttp  # noqa: F401 - Import check only
@@ -1243,7 +1244,9 @@ class SyncManager:
             if response.status_code not in (200, 201):
                 return {
                     "success": False,
-                    "error": f"HTTP {response.status_code}: {response.text}",
+                    "error": safe_http_error_summary(
+                        response.status_code, response.text
+                    ),
                 }
             payload = self._response_json(response)
             if not isinstance(payload, Mapping):
@@ -1343,7 +1346,7 @@ class SyncManager:
         if response.status_code not in (200, 201):
             return {
                 "success": False,
-                "error": f"HTTP {response.status_code}: {response.text}",
+                "error": safe_http_error_summary(response.status_code, response.text),
             }
         payload = self._response_json(response)
         if not isinstance(payload, Mapping):
@@ -1460,7 +1463,7 @@ class SyncManager:
                 continue
 
             errors.append(
-                f"trial {ordinal}: HTTP {response.status_code}: {response.text}"
+                f"trial {ordinal}: {safe_http_error_summary(response.status_code, response.text)}"
             )
 
         return {
@@ -1495,7 +1498,7 @@ class SyncManager:
                 return {"success": True, "classification": "completed"}
             return {
                 "success": False,
-                "error": f"HTTP {response.status_code}: {response.text}",
+                "error": safe_http_error_summary(response.status_code, response.text),
             }
         except Exception as e:
             return {"success": False, "error": str(e)}

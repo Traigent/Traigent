@@ -1814,7 +1814,10 @@ class TestHandle400NotFound:
         assert "outside the declared categorical domain" in result.reason
 
         combined = " ".join(r.getMessage() for r in caplog.records)
-        assert "outside the declared categorical domain" in combined
+        # #2552: the log carries status + closed code only, never backend text;
+        # the reason stays available on the typed result for the caller.
+        assert "outside the declared categorical domain" not in combined
+        assert "HTTP 400" in combined
         assert "cost_usd" not in combined
 
     def test_handle_trial_error_response_400_trial_not_found_logs_warning(

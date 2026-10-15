@@ -39,17 +39,45 @@ class TestWithUsage:
         )
         assert result == "hello"  # No wrapper in production
 
-    def test_with_usage_rejects_non_string(self):
-        """Should raise TypeError if text is not a string."""
+    # Traigent#2522: any output type round-trips. The {category, urgency}
+    # triage answer is the regression case for structured outputs.
+    @pytest.mark.parametrize(
+        "output",
+        [
+            {"category": "billing", "urgency": "high"},
+            3,
+            0.75,
+            ["billing", "high"],
+        ],
+        ids=["dict", "int", "float", "list"],
+    )
+    def test_with_usage_accepts_any_output_during_optimization(self, output):
+        """A non-string output is carried unchanged, with usage attached."""
         token = trial_context.set({"trial_id": 1})
         try:
-            with pytest.raises(TypeError, match="requires text to be a string"):
-                traigent.with_usage(
-                    text={"answer": "hello"},  # Dict not allowed
-                    total_cost=0.0023,
-                )
+            result = traigent.with_usage(
+                output, total_cost=0.0023, input_tokens=100, output_tokens=50
+            )
+            assert result == {
+                "text": output,
+                "__traigent_meta__": {
+                    "total_cost": 0.0023,
+                    "usage": {"input_tokens": 100, "output_tokens": 50},
+                },
+            }
+            assert result["text"] is output
         finally:
             trial_context.reset(token)
+
+    @pytest.mark.parametrize(
+        "output",
+        [{"category": "billing", "urgency": "high"}, 3, ["billing", "high"]],
+        ids=["dict", "int", "list"],
+    )
+    def test_with_usage_passes_any_output_through_in_production(self, output):
+        """Outside optimization the output is returned as-is, never rejected."""
+        assert traigent.get_trial_context() is None
+        assert traigent.with_usage(output, total_cost=0.0023) is output
 
     def test_with_usage_only_total_cost(self):
         """Should work with only total_cost (no token counts)."""
@@ -380,3 +408,32 @@ class TestWithUsageModelCosts:
             assert sum(call["cost"] for call in meta["calls"]) == 12.0
         finally:
             trial_context.reset(ctx_handle)
+
+
+@pytest.mark.asyncio
+async def test_with_usage_structured_output_reports_cost_and_accuracy():
+    """End to end through LocalEvaluator: the wrapped triage dict keeps its
+    accuracy and its reported cost (Traigent#2522, #2523)."""
+    from traigent.evaluators.base import Dataset, EvaluationExample
+    from traigent.evaluators.local import LocalEvaluator
+
+    triage = {"category": "billing", "urgency": "high"}
+    dataset = Dataset(
+        [EvaluationExample({"ticket": "charged twice"}, dict(triage))], name="t"
+    )
+
+    def agent(_inp):
+        return traigent.with_usage(dict(triage), total_cost=0.004, input_tokens=12)
+
+    ctx_reset = trial_context.set({"trial_id": "t-2522"})
+    try:
+        result = await LocalEvaluator(metrics=["accuracy"], detailed=True).evaluate(
+            agent, {}, dataset
+        )
+    finally:
+        trial_context.reset(ctx_reset)
+
+    assert result.metrics["accuracy"] == pytest.approx(1.0)
+    [example] = result.example_results
+    assert example.metrics.get("accuracy") == 1.0
+    assert example.metrics.get("total_cost") == pytest.approx(0.004)

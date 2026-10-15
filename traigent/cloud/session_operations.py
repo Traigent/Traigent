@@ -20,6 +20,7 @@ from traigent.cloud.client import (
     CloudEgressBlockedError,
     CloudServiceError,
     SessionContractError,
+    SessionQuotaRefusedError,
     raise_if_cloud_egress_disabled,
 )
 from traigent.cloud.models import (
@@ -38,6 +39,7 @@ from traigent.cloud.session_types import (
 )
 from traigent.cloud.smart_pruning import normalize_smart_pruning_options
 from traigent.config.backend_config import BackendConfig
+from traigent.core.session_types import safe_http_error_summary
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
@@ -263,7 +265,7 @@ class SessionOperations:
                 fingerprint = {}
 
         summary = self._summarize_actor(fingerprint)
-        excerpt = self._first_error_line(error_text)
+        excerpt = safe_http_error_summary(status, error_text)
 
         message = (
             f"{action} for session '{session_id}' failed: HTTP {status} Forbidden. "
@@ -275,22 +277,6 @@ class SessionOperations:
             message = f"{message} Backend response: {excerpt}"
 
         raise CloudServiceError(message)
-
-    @staticmethod
-    def _first_error_line(error_text: str | None) -> str:
-        """Return a safe, truncated first line for backend error messages."""
-
-        if not error_text:
-            return ""
-
-        lines = error_text.strip().splitlines()
-        if not lines:
-            return ""
-
-        excerpt = lines[0].strip()
-        if len(excerpt) > 200:
-            return f"{excerpt[:197]}..."
-        return excerpt
 
     def _create_local_fallback_session(
         self,
@@ -406,6 +392,29 @@ class SessionOperations:
                 session_id,
                 storage_e,
             )
+
+    @staticmethod
+    def _raise_if_quota_refusal(exc: Exception) -> None:
+        """Stop the run on a backend quota/limit refusal (#2550).
+
+        The backend was reachable and refused on plan limits, so this is not a
+        connectivity failure and must not degrade to LOCAL. Re-raised as a typed
+        error carrying only the HTTP status and a closed error code (never the
+        backend message or raw body), with a sanitized detail attached.
+        """
+        if isinstance(exc, SessionQuotaRefusedError):
+            raise exc
+        failure_response = _get_session_creation_failure_detail(exc)
+        if failure_response is None or not failure_response.is_quota_refusal:
+            return
+        safe = SessionQuotaRefusedError(
+            failure_response.status_code, failure_response.safe_quota_error_code
+        )
+        safe.session_creation_failure = SessionCreationFailureDetail(
+            status_code=failure_response.status_code,
+            error_code=failure_response.safe_quota_error_code,
+        )
+        raise safe from None
 
     def _auth_fallback_result(
         self,
@@ -546,7 +555,12 @@ class SessionOperations:
                     intends_cloud_egress and _is_definitive_auth_rejection(exc)
                 )
             return governed or isinstance(
-                exc, (CloudEgressBlockedError, SessionContractError)
+                exc,
+                (
+                    CloudEgressBlockedError,
+                    SessionContractError,
+                    SessionQuotaRefusedError,
+                ),
             )
 
         if is_backend_offline():
@@ -836,6 +850,7 @@ class SessionOperations:
 
             except (TimeoutError, CloudServiceError, OSError) as e:
                 await self._reset_client_session("create_session fallback")
+                self._raise_if_quota_refusal(e)
                 if _must_fail_loud(e):
                     raise
                 # A configured key intended a managed/cloud run, but the backend
@@ -925,6 +940,7 @@ class SessionOperations:
             )
 
         except (TimeoutError, CloudServiceError, OSError) as exc:
+            self._raise_if_quota_refusal(exc)
             if _must_fail_loud(exc):
                 raise
             # Backend unreachable on the outer path — same downgrade semantics as
@@ -1034,8 +1050,21 @@ class SessionOperations:
                     await self._reset_client_session(
                         "create_hybrid_session non-201 response"
                     )
+                    detail = SessionCreationFailureDetail.from_http_response(
+                        response.status, error_text
+                    )
+                    if detail.is_quota_refusal:
+                        safe = SessionQuotaRefusedError(
+                            response.status, detail.safe_quota_error_code
+                        )
+                        safe.session_creation_failure = SessionCreationFailureDetail(
+                            status_code=response.status,
+                            error_code=detail.safe_quota_error_code,
+                        )
+                        raise safe
+                    # Status only: never embed the backend body (customer text).
                     raise CloudServiceError(
-                        f"Failed to create hybrid session: {error_text}"
+                        f"Failed to create hybrid session: HTTP {response.status}"
                     )
 
                 data = await response.json()
@@ -1107,7 +1136,10 @@ class SessionOperations:
                 await self._reset_client_session(
                     "get_hybrid_session_status unexpected response"
                 )
-                raise CloudServiceError(f"Failed to get session status: {error_text}")
+                raise CloudServiceError(
+                    "Failed to get session status: "
+                    f"{safe_http_error_summary(response.status, error_text)}"
+                )
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("get_hybrid_session_status network error")
@@ -1159,7 +1191,10 @@ class SessionOperations:
                 await self._reset_client_session(
                     "finalize_hybrid_session unexpected response"
                 )
-                raise CloudServiceError(f"Failed to finalize session: {error_text}")
+                raise CloudServiceError(
+                    "Failed to finalize session: "
+                    f"{safe_http_error_summary(response.status, error_text)}"
+                )
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("finalize_hybrid_session network error")
@@ -1592,7 +1627,7 @@ class SessionOperations:
                     else:
                         error_text = await response.text()
                         logger.debug(
-                            f"Backend finalization endpoint returned HTTP {response.status}: {error_text}"
+                            f"Backend finalization endpoint returned {safe_http_error_summary(response.status, error_text)}"
                         )
                         return None
         except Exception as e:
@@ -1684,10 +1719,9 @@ class SessionOperations:
 
                 error_text = await response.text()
                 logger.warning(
-                    "Failed to delete session %s: status=%s body=%s",
+                    "Failed to delete session %s: %s",
                     session_id,
-                    response.status,
-                    error_text[:200],
+                    safe_http_error_summary(response.status, error_text),
                 )
                 return False
 

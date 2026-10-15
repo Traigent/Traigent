@@ -32,7 +32,7 @@ A single JSON object::
           "index": 0,
           "trial_id": "trial_0",
           "config": {"model": "gpt-4o"},
-          "config_hash": "a1b2c3d4e5f6"  # sha256[:12] of the sorted config
+          "config_hash": "a1b2c3d4e5f6"  # sha256[:12] of the sorted config  # pragma: allowlist secret
         },
         ...
       ],
@@ -109,12 +109,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from traigent.utils.logging import get_logger
+
 if TYPE_CHECKING:
     from traigent.api.types import OptimizationResult
+
+logger = get_logger(__name__)
 
 #: Bump when the on-disk shape changes incompatibly.
 OUTCOME_MATRIX_SCHEMA_VERSION = "1.0"
@@ -269,6 +275,9 @@ def build_outcome_matrix(result: OptimizationResult) -> dict[str, Any]:
     # example_id -> {trial_id: cell}
     rows: dict[str, dict[str, Any]] = {}
     order: list[str] = []
+    # trial_id -> number of cells that landed on an id already filled in that
+    # trial (one cell per id is kept, so these were merged).
+    merged_cells: dict[str, int] = {}
 
     for index, trial in enumerate(trials):
         trial_id = getattr(trial, "trial_id", None) or f"trial_{index}"
@@ -297,7 +306,23 @@ def build_outcome_matrix(result: OptimizationResult) -> dict[str, Any]:
             if example_id not in rows:
                 rows[example_id] = {}
                 order.append(example_id)
+            elif trial_id in rows[example_id]:
+                merged_cells[trial_id] = merged_cells.get(trial_id, 0) + 1
             rows[example_id][trial_id] = _extract_cell(ex)
+
+    if merged_cells:
+        # Not an error: with content identity, identical rows legitimately
+        # share one example id. But a merge must never be silent, because a
+        # buggy id scheme (e.g. one id for every example) looks the same.
+        # Content-free: trial ids and counts only, never example ids.
+        logger.warning(
+            "outcome matrix keeps one cell per example_id per trial; merged "
+            "cells that repeated an example_id within the same trial: %s",
+            ", ".join(
+                f"{trial_id}: {count} merged"
+                for trial_id, count in merged_cells.items()
+            ),
+        )
 
     examples = [
         {"example_id": example_id, "cells": rows[example_id]} for example_id in order
@@ -381,3 +406,203 @@ def load_outcome_matrix(run_path: str | Path) -> dict[str, Any] | None:
             ) from exc
 
     return None
+
+
+#: Selection modes accepted by :func:`select_failing_example_ids`.
+FAILING_EXAMPLE_MODES: tuple[str, ...] = ("all_configs", "best_config")
+
+_FAIL = "fail"
+_PASS = "pass"
+_UNKNOWN = "unknown"
+
+
+def _classify_cell(cell: Any, threshold: float) -> str:
+    """Classify one matrix cell as ``fail``, ``pass`` or ``unknown``.
+
+    A non-``None`` error or an explicit ``success=False`` is a failure whatever
+    the score says. Otherwise the cell's ``score`` (falling back to
+    ``accuracy`` when ``score`` is absent/``None``) is compared to
+    ``threshold``: strictly below fails, equal or above passes. ``success=True``
+    alone proves only that execution succeeded, not that the answer was right,
+    so a cell with no usable finite score is ``unknown`` — never treated as 0.
+    """
+    if not isinstance(cell, Mapping):
+        return _UNKNOWN
+    if cell.get("error") is not None or cell.get("success") is False:
+        return _FAIL
+    score = cell.get("score")
+    if score is None:
+        score = cell.get("accuracy")
+    if isinstance(score, bool) or not isinstance(score, (int, float)):
+        return _UNKNOWN
+    if not math.isfinite(score):
+        return _UNKNOWN
+    return _FAIL if score < threshold else _PASS
+
+
+def _validate_threshold(threshold: Any) -> float:
+    if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
+        raise ValueError(
+            f"threshold must be a finite number, got {type(threshold).__name__}"
+        )
+    if not math.isfinite(threshold):
+        raise ValueError(f"threshold must be a finite number, got {threshold!r}")
+    return float(threshold)
+
+
+def _matrix_columns(matrix: Mapping[str, Any]) -> list[tuple[str, Any]]:
+    """Return ``(normalized trial_id, config)`` for every matrix column."""
+    trials = matrix.get("trials")
+    if not isinstance(trials, list):
+        raise ValueError("Malformed outcome matrix: 'trials' must be a list")
+    columns: list[tuple[str, Any]] = []
+    for position, column in enumerate(trials):
+        if not isinstance(column, Mapping) or column.get("trial_id") is None:
+            raise ValueError(
+                f"Malformed outcome matrix: trials[{position}] must be an object "
+                "with a non-null 'trial_id'"
+            )
+        # Normalize: local-session trial ids are ints, while JSON object keys
+        # (the cells map) always reload as strings.
+        columns.append((str(column["trial_id"]), column.get("config")))
+    return columns
+
+
+def _winner_column_ids(
+    columns: list[tuple[str, Any]],
+    best_config: Mapping[str, Any] | None,
+    winning_trial_ids: Iterable[Any] | None,
+) -> list[str]:
+    """Resolve the winning configuration's trial columns.
+
+    Prefers the authoritative ``winning_trial_ids`` stamp (#1854): replicate
+    grouping projects configs onto the config-space keys, so full-config
+    equality can drop replicates. Falls back to config equality with
+    ``best_config`` (``None`` means no winner; ``{}`` is a real config).
+    """
+    stamped = (
+        [str(trial_id) for trial_id in winning_trial_ids]
+        if winning_trial_ids is not None
+        else []
+    )
+    if stamped:
+        wanted = set(stamped)
+        selected = [trial_id for trial_id, _ in columns if trial_id in wanted]
+        if not selected:
+            raise ValueError(
+                "No outcome-matrix column matches the winning trial ids "
+                f"{sorted(wanted)}; cannot select best_config failures"
+            )
+        return selected
+    if best_config is None:
+        raise ValueError(
+            "The run has no best configuration; cannot select best_config failures"
+        )
+    selected = [trial_id for trial_id, config in columns if config == best_config]
+    if not selected:
+        raise ValueError(
+            "No outcome-matrix column ran the best configuration; cannot select "
+            "best_config failures"
+        )
+    return selected
+
+
+def select_failing_example_ids(
+    matrix: Mapping[str, Any],
+    *,
+    threshold: float = 0.5,
+    mode: str = "all_configs",
+    best_config: Mapping[str, Any] | None = None,
+    winning_trial_ids: Iterable[Any] | None = None,
+) -> list[str]:
+    """Select the ids of examples that failed in an outcome matrix.
+
+    Pure function over the matrix built by :func:`build_outcome_matrix` (or
+    loaded by :func:`load_outcome_matrix`); it re-scores nothing. A cell fails
+    on an error, on ``success=False``, or on a finite score strictly below
+    ``threshold`` (see :func:`_classify_cell`). An example is selected only
+    when **every** selected column holds a failing cell — a passing, missing or
+    unscorable cell excludes it, so the result measures persistent failure, not
+    failure frequency.
+
+    Args:
+        matrix: The outcome matrix.
+        threshold: Finite score cutoff; ``score < threshold`` fails, equality
+            passes.
+        mode: ``"all_configs"`` (every trial column) or ``"best_config"`` (the
+            winning configuration's columns only).
+        best_config: The run's best configuration, used for ``best_config``
+            mode when ``winning_trial_ids`` is not given.
+        winning_trial_ids: The winning configuration's trial ids, preferred
+            over config equality for ``best_config`` mode.
+
+    Returns:
+        Failing example ids in matrix row order, each once. ``[]`` when the
+        matrix carries usable evidence but no example failed everywhere.
+
+    Raises:
+        ValueError: On an invalid threshold or mode, a malformed matrix, a
+            matrix with no per-example detail, no usable pass/fail signal in
+            the selected columns, or no resolvable winner for ``best_config``.
+    """
+    threshold = _validate_threshold(threshold)
+    if mode not in FAILING_EXAMPLE_MODES:
+        raise ValueError(
+            f"mode must be one of {list(FAILING_EXAMPLE_MODES)}, got {mode!r}"
+        )
+    if not isinstance(matrix, Mapping):
+        raise ValueError("Malformed outcome matrix: expected a JSON object")
+    examples = matrix.get("examples")
+    if not isinstance(examples, list):
+        raise ValueError("Malformed outcome matrix: 'examples' must be a list")
+    if not examples:
+        raise ValueError(
+            "The run captured no per-example detail; cannot select failing examples"
+        )
+
+    columns = _matrix_columns(matrix)
+    if mode == "best_config":
+        selected_ids = _winner_column_ids(columns, best_config, winning_trial_ids)
+    else:
+        selected_ids = [trial_id for trial_id, _ in columns]
+    if not selected_ids:
+        raise ValueError("The outcome matrix has no trial columns")
+
+    failing: list[str] = []
+    seen: set[str] = set()
+    has_signal = False
+    for position, row in enumerate(examples):
+        if not isinstance(row, Mapping):
+            raise ValueError(
+                f"Malformed outcome matrix: examples[{position}] must be an object"
+            )
+        example_id = row.get("example_id")
+        if not isinstance(example_id, str):
+            raise ValueError(
+                f"Malformed outcome matrix: examples[{position}].example_id must "
+                f"be a string, got {example_id!r}"
+            )
+        cells = row.get("cells")
+        if not isinstance(cells, Mapping):
+            raise ValueError(
+                f"Malformed outcome matrix: examples[{position}].cells must be "
+                "an object"
+            )
+        cells_by_id = {str(key): value for key, value in cells.items()}
+        verdicts = [
+            _classify_cell(cells_by_id.get(trial_id), threshold)
+            for trial_id in selected_ids
+        ]
+        if any(verdict != _UNKNOWN for verdict in verdicts):
+            has_signal = True
+        if all(verdict == _FAIL for verdict in verdicts) and example_id not in seen:
+            seen.add(example_id)
+            failing.append(example_id)
+
+    if not has_signal:
+        raise ValueError(
+            "No cell in the selected columns carries a usable pass/fail signal "
+            "(no error, success=False, or finite score/accuracy); cannot select "
+            "failing examples"
+        )
+    return failing

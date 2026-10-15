@@ -468,6 +468,10 @@ class ProjectUsageExperimentDTO:
     total_tokens: int
     avg_latency_ms: float | None
     privacy_classification: str
+    # Pricing coverage; both zero-priced and unpriced > 0 means the total cost
+    # is unmeasured rather than zero. None = server did not send the counts.
+    priced_configuration_runs: int | None = None
+    unpriced_configuration_runs: int | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> ProjectUsageExperimentDTO:
@@ -483,6 +487,12 @@ class ProjectUsageExperimentDTO:
                 else None
             ),
             privacy_classification=str(payload["privacy_classification"]),
+            priced_configuration_runs=_optional_int(
+                payload, "priced_configuration_runs"
+            ),
+            unpriced_configuration_runs=_optional_int(
+                payload, "unpriced_configuration_runs"
+            ),
         )
 
 

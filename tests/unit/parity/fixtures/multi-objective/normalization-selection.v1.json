@@ -1,0 +1,533 @@
+{
+  "fixtureId": "multi-objective.normalization-selection.v1",
+  "capability": "multi-objective.normalization-selection",
+  "kind": "spec-derived-expected-result",
+  "contract": "optimization/multi_objective_semantics_schema.json v1.0.0 (this repository): min-max normalization, zero-span fallback 0.5 with epsilon 1e-9 (strictly less-than), sum-to-one weight rescaling, dominance guard 0.99 when more than one objective.",
+  "formula": {
+    "normalizedMaximize": "(v - min) / (max - min)",
+    "normalizedMinimize": "(max - v) / (max - min)",
+    "zeroSpan": "if |max - min| < 1e-9 for an objective, every trial's normalized value for it is 0.5",
+    "range": "min and max are taken over all trials in the case, per objective",
+    "weights": "w_i = raw_i / sum(raw); weighted = sum_i(w_i * normalized_i)",
+    "dominanceGuard": "with more than one objective, any w_i > 0.99 is a validation error raised before scoring"
+  },
+  "cases": [
+    {
+      "id": "mixed_directions_rescaled_weights",
+      "input": {
+        "objectives": [
+          {
+            "metric": "accuracy",
+            "direction": "maximize",
+            "weight": 3
+          },
+          {
+            "metric": "cost",
+            "direction": "minimize",
+            "weight": 1
+          },
+          {
+            "metric": "latency",
+            "direction": "minimize",
+            "weight": 1
+          }
+        ],
+        "trials": [
+          {
+            "trial_id": "t1",
+            "metrics": {
+              "accuracy": 0.6,
+              "cost": 4.0,
+              "latency": 300
+            }
+          },
+          {
+            "trial_id": "t2",
+            "metrics": {
+              "accuracy": 0.9,
+              "cost": 1.0,
+              "latency": 100
+            }
+          },
+          {
+            "trial_id": "t3",
+            "metrics": {
+              "accuracy": 0.66,
+              "cost": 3.1,
+              "latency": 250
+            }
+          },
+          {
+            "trial_id": "t4",
+            "metrics": {
+              "accuracy": 0.84,
+              "cost": 1.6,
+              "latency": 160
+            }
+          }
+        ]
+      },
+      "expected": {
+        "normalizedWeights": {
+          "accuracy": 0.6,
+          "cost": 0.2,
+          "latency": 0.2
+        },
+        "trial_scores": [
+          {
+            "trial_id": "t1",
+            "normalized": {
+              "accuracy": 0.0,
+              "cost": 0.0,
+              "latency": 0.0
+            },
+            "weighted": 0.0
+          },
+          {
+            "trial_id": "t2",
+            "normalized": {
+              "accuracy": 1.0,
+              "cost": 1.0,
+              "latency": 1.0
+            },
+            "weighted": 1.0
+          },
+          {
+            "trial_id": "t3",
+            "normalized": {
+              "accuracy": 0.2,
+              "cost": 0.3,
+              "latency": 0.25
+            },
+            "weighted": 0.23
+          },
+          {
+            "trial_id": "t4",
+            "normalized": {
+              "accuracy": 0.8,
+              "cost": 0.8,
+              "latency": 0.7
+            },
+            "weighted": 0.78
+          }
+        ],
+        "bestTrialId": "t2"
+      },
+      "derivation": "Raw weights 3+1+1 = 5, so w = [3/5, 1/5, 1/5] = [0.6, 0.2, 0.2]; the largest is 0.6 <= 0.99. accuracy (maximize): min 0.60, max 0.90, span 0.30. t1 (0.60-0.60)/0.30 = 0; t2 0.30/0.30 = 1; t3 0.06/0.30 = 0.2; t4 0.24/0.30 = 0.8. cost (minimize): min 1.0, max 4.0, span 3.0. t1 (4.0-4.0)/3 = 0; t2 (4.0-1.0)/3 = 1; t3 (4.0-3.1)/3 = 0.3; t4 (4.0-1.6)/3 = 0.8. latency (minimize): min 100, max 300, span 200. t1 0; t2 200/200 = 1; t3 (300-250)/200 = 0.25; t4 (300-160)/200 = 0.7. Weighted: t1 0; t2 0.6+0.2+0.2 = 1.0; t3 0.6*0.2 + 0.2*0.3 + 0.2*0.25 = 0.12 + 0.06 + 0.05 = 0.23; t4 0.6*0.8 + 0.2*0.8 + 0.2*0.7 = 0.48 + 0.16 + 0.14 = 0.78. Unique maximum is t2 at 1.0."
+    },
+    {
+      "id": "interior_winner_two_objectives",
+      "input": {
+        "objectives": [
+          {
+            "metric": "quality",
+            "direction": "maximize",
+            "weight": 1
+          },
+          {
+            "metric": "spend",
+            "direction": "minimize",
+            "weight": 1
+          }
+        ],
+        "trials": [
+          {
+            "trial_id": "a",
+            "metrics": {
+              "quality": 0.9,
+              "spend": 10
+            }
+          },
+          {
+            "trial_id": "b",
+            "metrics": {
+              "quality": 0.6,
+              "spend": 2
+            }
+          },
+          {
+            "trial_id": "c",
+            "metrics": {
+              "quality": 0.8,
+              "spend": 4
+            }
+          }
+        ]
+      },
+      "expected": {
+        "normalizedWeights": {
+          "quality": 0.5,
+          "spend": 0.5
+        },
+        "trial_scores": [
+          {
+            "trial_id": "a",
+            "normalized": {
+              "quality": 1.0,
+              "spend": 0.0
+            },
+            "weighted": 0.5
+          },
+          {
+            "trial_id": "b",
+            "normalized": {
+              "quality": 0.0,
+              "spend": 1.0
+            },
+            "weighted": 0.5
+          },
+          {
+            "trial_id": "c",
+            "normalized": {
+              "quality": 0.666666666667,
+              "spend": 0.75
+            },
+            "weighted": 0.708333333333
+          }
+        ],
+        "bestTrialId": "c"
+      },
+      "derivation": "Raw weights 1+1 = 2, so w = [0.5, 0.5]. quality (maximize): min 0.6, max 0.9, span 0.3; a 0.3/0.3 = 1; b 0; c 0.2/0.3 = 2/3 = 0.666666666667. spend (minimize): min 2, max 10, span 8; a (10-10)/8 = 0; b (10-2)/8 = 1; c (10-4)/8 = 0.75. Weighted: a 0.5*1 + 0.5*0 = 0.5; b 0.5*0 + 0.5*1 = 0.5; c 0.5*(2/3) + 0.5*0.75 = 1/3 + 0.375 = 0.708333333333. The unique maximum is the interior trial c; a and b tie at 0.5 and are not the best."
+    },
+    {
+      "id": "partial_zero_span",
+      "input": {
+        "objectives": [
+          {
+            "metric": "quality",
+            "direction": "maximize",
+            "weight": 1
+          },
+          {
+            "metric": "spend",
+            "direction": "minimize",
+            "weight": 1
+          }
+        ],
+        "trials": [
+          {
+            "trial_id": "t1",
+            "metrics": {
+              "quality": 0.2,
+              "spend": 3.0
+            }
+          },
+          {
+            "trial_id": "t2",
+            "metrics": {
+              "quality": 0.8,
+              "spend": 3.0
+            }
+          },
+          {
+            "trial_id": "t3",
+            "metrics": {
+              "quality": 0.5,
+              "spend": 3.0
+            }
+          }
+        ]
+      },
+      "expected": {
+        "normalizedWeights": {
+          "quality": 0.5,
+          "spend": 0.5
+        },
+        "trial_scores": [
+          {
+            "trial_id": "t1",
+            "normalized": {
+              "quality": 0.0,
+              "spend": 0.5
+            },
+            "weighted": 0.25
+          },
+          {
+            "trial_id": "t2",
+            "normalized": {
+              "quality": 1.0,
+              "spend": 0.5
+            },
+            "weighted": 0.75
+          },
+          {
+            "trial_id": "t3",
+            "normalized": {
+              "quality": 0.5,
+              "spend": 0.5
+            },
+            "weighted": 0.5
+          }
+        ],
+        "bestTrialId": "t2"
+      },
+      "derivation": "w = [0.5, 0.5]. spend has min = max = 3.0, span 0 < 1e-9, so every trial gets the fallback 0.5. quality: min 0.2, max 0.8, span 0.6; t1 0; t2 0.6/0.6 = 1; t3 0.3/0.6 = 0.5. Weighted: t1 0.5*0 + 0.5*0.5 = 0.25; t2 0.5*1 + 0.25 = 0.75; t3 0.25 + 0.25 = 0.5. Unique maximum is t2."
+    },
+    {
+      "id": "span_below_epsilon_collapses",
+      "input": {
+        "objectives": [
+          {
+            "metric": "quality",
+            "direction": "maximize",
+            "weight": 1
+          }
+        ],
+        "trials": [
+          {
+            "trial_id": "t1",
+            "metrics": {
+              "quality": 1.0
+            }
+          },
+          {
+            "trial_id": "t2",
+            "metrics": {
+              "quality": 1.0000000005
+            }
+          }
+        ]
+      },
+      "expected": {
+        "normalizedWeights": {
+          "quality": 1.0
+        },
+        "trial_scores": [
+          {
+            "trial_id": "t1",
+            "normalized": {
+              "quality": 0.5
+            },
+            "weighted": 0.5
+          },
+          {
+            "trial_id": "t2",
+            "normalized": {
+              "quality": 0.5
+            },
+            "weighted": 0.5
+          }
+        ],
+        "bestTrialId": null
+      },
+      "derivation": "Span = 1.0000000005 - 1.0 = 5e-10, which is strictly less than 1e-9, so zero-span applies and both trials normalize to 0.5; weight is 1/1 = 1, so weighted = 0.5 for both. The two trials tie, so no best trial is asserted (bestTrialId null)."
+    },
+    {
+      "id": "span_above_epsilon_is_linear",
+      "input": {
+        "objectives": [
+          {
+            "metric": "quality",
+            "direction": "maximize",
+            "weight": 1
+          }
+        ],
+        "trials": [
+          {
+            "trial_id": "t1",
+            "metrics": {
+              "quality": 1.0
+            }
+          },
+          {
+            "trial_id": "t2",
+            "metrics": {
+              "quality": 1.000000002
+            }
+          }
+        ]
+      },
+      "expected": {
+        "normalizedWeights": {
+          "quality": 1.0
+        },
+        "trial_scores": [
+          {
+            "trial_id": "t1",
+            "normalized": {
+              "quality": 0.0
+            },
+            "weighted": 0.0
+          },
+          {
+            "trial_id": "t2",
+            "normalized": {
+              "quality": 1.0
+            },
+            "weighted": 1.0
+          }
+        ],
+        "bestTrialId": "t2"
+      },
+      "derivation": "Span = 2e-9, not less than 1e-9, so normalization is linear: t1 (1.0 - 1.0)/2e-9 = 0; t2 2e-9/2e-9 = 1. With a single objective the weight is 1 (the dominance guard applies only to more than one objective), so weighted equals normalized. Unique maximum is t2."
+    },
+    {
+      "id": "span_exactly_epsilon_is_linear",
+      "input": {
+        "objectives": [
+          {
+            "metric": "quality",
+            "direction": "maximize",
+            "weight": 1
+          }
+        ],
+        "trials": [
+          {
+            "trial_id": "t1",
+            "metrics": {
+              "quality": 0.0
+            }
+          },
+          {
+            "trial_id": "t2",
+            "metrics": {
+              "quality": 1e-09
+            }
+          }
+        ]
+      },
+      "expected": {
+        "normalizedWeights": {
+          "quality": 1.0
+        },
+        "trial_scores": [
+          {
+            "trial_id": "t1",
+            "normalized": {
+              "quality": 0.0
+            },
+            "weighted": 0.0
+          },
+          {
+            "trial_id": "t2",
+            "normalized": {
+              "quality": 1.0
+            },
+            "weighted": 1.0
+          }
+        ],
+        "bestTrialId": "t2"
+      },
+      "derivation": "Values are 0.0 and 1e-9, so the span is 1e-9 - 0 = 1e-9 exactly (no subtraction rounding, since one value is zero). The zero-span test is strictly less-than: 1e-9 < 1e-9 is false, so normalization is linear: t1 0/1e-9 = 0; t2 1e-9/1e-9 = 1. Single objective, weight 1, so weighted equals normalized. Unique maximum is t2."
+    },
+    {
+      "id": "dominance_guard_boundary_allowed",
+      "input": {
+        "objectives": [
+          {
+            "metric": "quality",
+            "direction": "maximize",
+            "weight": 99
+          },
+          {
+            "metric": "spend",
+            "direction": "minimize",
+            "weight": 1
+          }
+        ],
+        "trials": [
+          {
+            "trial_id": "t1",
+            "metrics": {
+              "quality": 0.5,
+              "spend": 8.0
+            }
+          },
+          {
+            "trial_id": "t2",
+            "metrics": {
+              "quality": 0.9,
+              "spend": 10.0
+            }
+          },
+          {
+            "trial_id": "t3",
+            "metrics": {
+              "quality": 0.7,
+              "spend": 6.0
+            }
+          }
+        ]
+      },
+      "expected": {
+        "normalizedWeights": {
+          "quality": 0.99,
+          "spend": 0.01
+        },
+        "trial_scores": [
+          {
+            "trial_id": "t1",
+            "normalized": {
+              "quality": 0.0,
+              "spend": 0.5
+            },
+            "weighted": 0.005
+          },
+          {
+            "trial_id": "t2",
+            "normalized": {
+              "quality": 1.0,
+              "spend": 0.0
+            },
+            "weighted": 0.99
+          },
+          {
+            "trial_id": "t3",
+            "normalized": {
+              "quality": 0.5,
+              "spend": 1.0
+            },
+            "weighted": 0.505
+          }
+        ],
+        "bestTrialId": "t2"
+      },
+      "derivation": "Raw weights 99+1 = 100, so w = [0.99, 0.01]. The guard rejects only a normalized weight strictly greater than 0.99; 0.99 is not > 0.99, so construction succeeds and scoring proceeds. quality (maximize): min 0.5, max 0.9, span 0.4; t1 0; t2 1; t3 0.2/0.4 = 0.5. spend (minimize): min 6, max 10, span 4; t1 (10-8)/4 = 0.5; t2 (10-10)/4 = 0; t3 (10-6)/4 = 1. Weighted: t1 0.99*0 + 0.01*0.5 = 0.005; t2 0.99*1 + 0.01*0 = 0.99; t3 0.99*0.5 + 0.01*1 = 0.495 + 0.01 = 0.505. Unique maximum is t2."
+    },
+    {
+      "id": "dominance_guard_violation",
+      "input": {
+        "objectives": [
+          {
+            "metric": "quality",
+            "direction": "maximize",
+            "weight": 199
+          },
+          {
+            "metric": "spend",
+            "direction": "minimize",
+            "weight": 1
+          }
+        ],
+        "trials": [
+          {
+            "trial_id": "t1",
+            "metrics": {
+              "quality": 0.7,
+              "spend": 2.0
+            }
+          },
+          {
+            "trial_id": "t2",
+            "metrics": {
+              "quality": 0.9,
+              "spend": 1.0
+            }
+          }
+        ]
+      },
+      "expected": {
+        "validationError": true
+      },
+      "derivation": "Raw weights 199+1 = 200, so w = [199/200, 1/200] = [0.995, 0.005]. 0.995 > 0.99 with two objectives, so objective construction must fail with a validation error before any scoring; no scores are produced."
+    }
+  ],
+  "comparison": {
+    "numericTolerance": "absolute 1e-9 on every normalized value, weighted score and normalizedWeights entry",
+    "trialOrder": "trial_scores are asserted in input trial order and by trial_id",
+    "adapterRequirement": "For each case without validationError, the adapter must feed the input through the SDK's public multi-objective optimization/result scoring surface and assert per-trial normalized values, weighted scores and the normalized (sum-to-one) weights within tolerance, and that every expected metric key is present. bestTrialId, when non-null, must equal the trial with the strictly greatest weighted score; when null, no best trial is asserted. For validationError cases the adapter must assert that constructing the objectives fails before scoring, without asserting message text.",
+    "notAsserted": "Tie-breaking among equal weighted scores, handling of failed or metric-less trials, band objectives and error message wording are not part of this fixture's contract.",
+    "note": "Expected values were written by hand from the formula above and were not produced by running either SDK.",
+    "dominanceGuardCondition": "The validation error condition is normalizedWeight > 0.99 (strict). Adapters compare the computed normalized weight (raw/sum) against 0.99 with strict greater-than and no tolerance band: weights [99,1] give exactly the boundary and must be accepted; [199,1] give 0.995 and must be rejected."
+  }
+}

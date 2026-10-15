@@ -312,9 +312,11 @@ class TestParallelExecutionManagerAsync:
             cancel_sentinel="CANCELLED",
         )
 
-        assert cancelled == 3
-        assert all(result.result == "CANCELLED" for result in results)
-        assert not trial_executed
+        # The first trial always starts (no cost estimate exists before a trial
+        # completes); the other two are denied and cancelled.
+        assert cancelled == 2
+        assert sum(result.result == "CANCELLED" for result in results) == 2
+        assert trial_executed
 
         gc.collect()
         await asyncio.sleep(0)

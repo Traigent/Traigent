@@ -22,10 +22,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 import requests
 
-from traigent.cloud.sync_manager import (
-    SyncManager,
-    build_experiment_url,
-)
+from traigent.cloud.sync_manager import SyncManager, build_experiment_url
 from traigent.config.types import TraigentConfig
 from traigent.storage.local_storage import OptimizationSession, TrialResult
 from traigent.utils.exceptions import TraigentStorageError
@@ -1326,7 +1323,7 @@ class TestSyncManager:
 
         result = sync_manager._sync_create_session({})
 
-        assert result == {"success": False, "error": "HTTP 500: boom"}
+        assert result == {"success": False, "error": "HTTP 500 | unknown"}
 
     def test_sync_create_session_missing_session_id(
         self, sync_manager: SyncManager
@@ -1450,7 +1447,7 @@ class TestSyncManager:
 
         assert result["success"] is False
         assert result["synced"] == 0
-        assert result["errors"] == ["trial 1: HTTP 500: bad"]
+        assert result["errors"] == ["trial 1: HTTP 500 | unknown"]
 
     def test_sync_session_results_next_trial_failure(
         self, sync_manager: SyncManager
@@ -1505,7 +1502,7 @@ class TestSyncManager:
 
         result = sync_manager._sync_finalize_session("sess-1", "run-1")
 
-        assert result == {"success": False, "error": "HTTP 409: conflict"}
+        assert result == {"success": False, "error": "HTTP 409 | unknown"}
 
     # Resume idempotency (no duplicate result rows on retry)
 

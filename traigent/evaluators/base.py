@@ -10,6 +10,7 @@ import json
 import math
 import os
 import re
+import secrets
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -24,8 +25,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from traigent.api.types import ExampleResult
-from traigent.utils.removed_params import reject_removed_mock_parameters
-from traigent.identity.examples import result_identity_fields
 from traigent.evaluators.dataset_registry import (
     DatasetRegistryEntry,
     resolve_dataset_reference,
@@ -37,6 +36,7 @@ from traigent.evaluators.metrics_tracker import (
     extract_llm_metrics,
     is_reserved_metric_key,
 )
+from traigent.identity.examples import result_identity_fields
 from traigent.utils.env_config import is_truthy
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
@@ -46,6 +46,7 @@ from traigent.utils.exceptions import TrialPrunedError, ValidationError
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.langchain_interceptor import get_captured_response_by_key
 from traigent.utils.logging import get_logger
+from traigent.utils.removed_params import reject_removed_mock_parameters
 
 if TYPE_CHECKING:
     from traigent.core.execution_budget import ExecutionBudget
@@ -367,6 +368,9 @@ def _accuracy_values_match(actual: Any, expected: Any) -> bool:
     return _typed_accuracy_equality(actual, expected)
 
 
+_TRAIGENT_META_KEY = "__traigent_meta__"
+
+
 def _normalize_output_for_accuracy_comparison(
     raw_output: Any, expected: Any = None
 ) -> Any:
@@ -424,13 +428,36 @@ def _normalize_output_for_accuracy_comparison(
     broken.
     """
     output, _ = BaseEvaluator._unpack_user_metrics(raw_output)
-    if (
-        isinstance(output, CollectionsMapping)
-        and "text" in output
-        and not isinstance(expected, CollectionsMapping)
-    ):
+    if not isinstance(output, CollectionsMapping) or "text" not in output:
+        return output
+    # ``with_usage()`` marks its wrapper with the reserved ``__traigent_meta__``
+    # key and carries the real output, of any type, under ``text``
+    # (Traigent#2522). That marker makes it a wrapper whatever the expected
+    # shape, so a structured answer wrapped by ``with_usage()`` is compared as
+    # itself against a structured gold value (Traigent#2523).
+    if _TRAIGENT_META_KEY in output:
+        return output["text"]
+    if not isinstance(expected, CollectionsMapping):
         return output["text"]
     return output
+
+
+def _accuracy_value_for_example(actual: Any, expected: Any) -> float | None:
+    """Per-example built-in accuracy, using the same comparison as the aggregate.
+
+    The per-example paths used to unwrap every dict as a ``{"text": ...}``
+    wrapper before comparing, so a correct structured answer such as
+    ``{"category": "billing", "urgency": "high"}`` against the same structured
+    gold became ``None`` (tracker path) or ``0.0`` (detailed path), while the
+    aggregate -- which goes through :func:`_accuracy_matches_after_unwrap` --
+    scored it 1.0 (Traigent#2523). Routing every site through one comparator
+    keeps per-example evidence and the aggregate from disagreeing.
+
+    Returns ``None`` when there is no gold value or no output to compare.
+    """
+    if expected is None or actual is None:
+        return None
+    return 1.0 if _accuracy_matches_after_unwrap(actual, expected) else 0.0
 
 
 def _accuracy_matches_after_unwrap(actual: Any, expected: Any) -> bool:
@@ -1156,6 +1183,70 @@ class Dataset:
                 "must be hashable and unique"
             ) from exc
         self.examples.append(example)
+
+    def to_jsonl(self, file_path: str | os.PathLike[str]) -> None:
+        """Write the examples as JSONL that :meth:`from_jsonl` reads back.
+
+        One row per example: ``{"input": ..., "expected_output": ...,
+        "metadata": {...}}``, UTF-8, one trailing newline per row. Reloading
+        with ``Dataset.from_jsonl`` yields equal ``input_data``,
+        ``expected_output`` and ``metadata`` for every example. Dataset-level
+        ``name``/``description``/``metadata`` are not part of the row-only
+        JSONL format and are not written.
+
+        Every row is serialized and checked before the destination is touched;
+        the file is then written to a temporary sibling and atomically moved
+        into place, so a failure never leaves a partial or replaced file.
+
+        Raises:
+            ValueError: When the dataset is empty (``from_jsonl`` rejects an
+                empty file), or a value cannot be written as JSON without
+                changing it (NaN/infinity, non-string mapping keys, tuples).
+            TypeError: When a value is not JSON-serializable.
+        """
+        if not self.examples:
+            raise ValueError(
+                f"Dataset '{self.name}' has no examples; refusing to write an "
+                "empty JSONL file that Dataset.from_jsonl would reject"
+            )
+
+        lines: list[str] = []
+        for index, example in enumerate(self.examples):
+            row = {
+                "input": example.input_data,
+                "expected_output": example.expected_output,
+                "metadata": example.metadata or {},
+            }
+            # No ``default=str``: an unsupported value must fail, not be
+            # silently rewritten into a different value.
+            text = json.dumps(row, ensure_ascii=False, allow_nan=False)
+            if json.loads(text) != row:
+                raise ValueError(
+                    f"Example {index} in dataset '{self.name}' does not round-trip "
+                    "through JSON unchanged (non-string mapping keys or tuples); "
+                    "refusing to write it"
+                )
+            lines.append(text + "\n")
+
+        destination = Path(file_path)
+        tmp_path = destination.with_name(
+            f".{destination.name}.{secrets.token_hex(8)}.tmp"
+        )
+        # Mode 0o666 filtered by the process umask, like a plain ``open(..., "w")``
+        # (``tempfile.mkstemp`` would leave the export owner-only, 0o600).
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.writelines(lines)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_path, destination)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except FileNotFoundError:
+                pass
+            raise
 
 
 def load_inline_dataset(
