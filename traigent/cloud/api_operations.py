@@ -331,10 +331,11 @@ _COOKIE_HEADER_RE = re.compile(
 )
 _BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{4,}", re.IGNORECASE)
 # Whole userinfo (``user:pass@`` or ``token@``): the user name can be a secret too.
-# Standalone ``Basic <base64>`` (needs a digit/symbol so prose such as
-# "Basic authentication" is untouched).
+# Standalone ``Basic <base64>`` (needs a capital/digit/symbol so lowercase prose
+# such as "Basic authentication" is untouched).
 _BASIC_RE = re.compile(
-    r"\bBasic\s+(?=[A-Za-z0-9+/]*[0-9+/=])[A-Za-z0-9+/]{8,}={0,2}", re.IGNORECASE
+    r"\bBasic\s+(?=[A-Za-z0-9+/]*(?-i:[A-Z0-9+/=]))[A-Za-z0-9+/]{8,}={0,2}",
+    re.IGNORECASE,
 )
 _URL_USERINFO_RE = re.compile(r"(?<=://)[^/\s@?#]+(?=@)")
 # Windows forbids these characters in a file name; a user name may hold up to
