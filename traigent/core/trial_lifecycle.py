@@ -42,7 +42,6 @@ from traigent.core.trial_result_factory import (
 from traigent.core.types import TrialResult, TrialStatus
 from traigent.evaluators.base import Dataset
 from traigent.utils.error_handler import APIKeyError
-from traigent.utils.langchain_interceptor import capture_scope
 from traigent.utils.exceptions import (
     InsufficientFundsError,
     OptimizationError,
@@ -53,6 +52,7 @@ from traigent.utils.exceptions import (
     TVLConstraintError,
     VendorPauseError,
 )
+from traigent.utils.langchain_interceptor import capture_scope
 from traigent.utils.logging import get_logger
 
 from .tracing import record_trial_result, trial_span
@@ -1461,9 +1461,11 @@ class TrialLifecycle:
                 error_message=span_error,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
-                cost_usd=_privacy_cost(span_metrics)
-                if privacy_enabled
-                else (span_metrics.get("total_cost", 0.0) if span_metrics else 0.0),
+                cost_usd=(
+                    _privacy_cost(span_metrics)
+                    if privacy_enabled
+                    else (span_metrics.get("total_cost", 0.0) if span_metrics else 0.0)
+                ),
                 input_data={"config": span_config},
                 output_data={"metrics": span_metrics},
                 metadata=span_metadata,

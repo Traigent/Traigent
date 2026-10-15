@@ -23,6 +23,9 @@ from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Spec suffixes that directory discovery matches (and the empty-set error names).
+_TVL_SUFFIXES = (".tvl.yml", ".tvl.yaml")
+
 
 def validate_tvl_files(
     files: list[Path],
@@ -123,7 +126,7 @@ def find_tvl_files(directory: Path, recursive: bool = True) -> list[Path]:
     Returns:
         List of TVL file paths.
     """
-    patterns = ["*.tvl.yaml", "*.tvl.yml"]
+    patterns = [f"*{suffix}" for suffix in _TVL_SUFFIXES]
     files: list[Path] = []
 
     for pattern in patterns:
@@ -175,6 +178,13 @@ def main() -> int:
         dest="recursive",
         help="Disable recursive directory search.",
     )
+    parser.add_argument(
+        "--allow-empty",
+        action="store_true",
+        help=(
+            "Exit 0 when no TVL spec files are found. A missing path is still an error."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -187,18 +197,28 @@ def main() -> int:
                 files_to_validate.extend(
                     find_tvl_files(file_path, recursive=args.recursive)
                 )
-            elif file_path.exists():
-                files_to_validate.append(file_path)
             else:
-                print(f"ERROR: File not found: {file_path}", file=sys.stderr)
+                # A missing path is kept so validate_tvl_files() reports it
+                # and counts it as a failure: a CI gate must not pass when
+                # the input it was pointed at does not exist (#2414).
+                files_to_validate.append(file_path)
+        searched = [str(p) for p in args.files]
     else:
         # Search current directory
         files_to_validate = find_tvl_files(Path.cwd(), recursive=args.recursive)
+        searched = [str(Path.cwd())]
 
     if not files_to_validate:
-        if args.verbose:
-            print("No TVL files found to validate.")
-        return 0
+        if args.allow_empty:
+            if args.verbose:
+                print("No TVL files found to validate.")
+            return 0
+        print(
+            f"ERROR: no TVL spec files ({', '.join(_TVL_SUFFIXES)}) found under: "
+            f"{', '.join(searched)}. Pass --allow-empty if an empty set is expected.",
+            file=sys.stderr,
+        )
+        return 1
 
     # Validate files
     passed, failed = validate_tvl_files(

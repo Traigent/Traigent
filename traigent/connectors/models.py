@@ -6,15 +6,14 @@ the connector package defines no backend transport or exporter.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from inspect import isfunction, ismethod
 from pathlib import Path
-import re
 from types import FunctionType, MethodType
 from typing import Any
 from weakref import WeakValueDictionary
-
 
 _VERIFIED_CODE_FACTS: WeakValueDictionary[int, VerifiedCodeFact] = WeakValueDictionary()
 _TOKEN_RE = re.compile(r"^tk_[0-9a-hjkmnp-tv-z]{26}$")

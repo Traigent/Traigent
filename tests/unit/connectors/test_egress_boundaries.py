@@ -1,10 +1,10 @@
 from contextlib import ExitStack
 from unittest.mock import patch
+from urllib import request as urllib_request
 
 import aiohttp
 import httpx
 import requests
-from urllib import request as urllib_request
 
 from traigent.connectors.models import ConnectionRef
 from traigent.connectors.privacy import (

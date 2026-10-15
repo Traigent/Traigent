@@ -293,6 +293,16 @@ def local_fallback_notice(
     """
 
     reason_text = (reason or "backend unavailable").strip()
+    # Never tell a user to set the variable they already set (#2510). With
+    # require-cloud on, reaching this notice means the backend was lost after
+    # the session started, which the variable does not currently guard.
+    require_cloud_remedy = (
+        "TRAIGENT_REQUIRE_CLOUD is set, but it is enforced only when the "
+        "session is created; this run lost the backend after that and "
+        "continued locally."
+        if env_requires_cloud()
+        else "Set TRAIGENT_REQUIRE_CLOUD=1 to fail instead of falling back."
+    )
     if failure_reason is SessionCreationFailureReason.NO_API_KEY:
         lead = (
             "No Traigent API key was found, so this ran a LOCAL search on your "
@@ -301,13 +311,16 @@ def local_fallback_notice(
         remedy = (
             "Set TRAIGENT_API_KEY to run managed optimization, or "
             "TRAIGENT_REQUIRE_CLOUD=1 to fail instead of falling back."
+            if not env_requires_cloud()
+            else f"Set TRAIGENT_API_KEY to run managed optimization. "
+            f"{require_cloud_remedy}"
         )
     else:
         lead = (
             "Traigent's managed optimization was unavailable, so this ran a "
             "LOCAL search on your machine."
         )
-        remedy = "Set TRAIGENT_REQUIRE_CLOUD=1 to fail instead of falling back."
+        remedy = require_cloud_remedy
     return (
         f"{lead} The reported best configuration was chosen by that local "
         f"search (reason: {reason_text}). {remedy}"

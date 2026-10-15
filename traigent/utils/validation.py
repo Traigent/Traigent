@@ -281,7 +281,7 @@ class Validators:
         """Validate positive integer."""
         result = ValidationResult()
 
-        if not isinstance(value, int):
+        if isinstance(value, bool) or not isinstance(value, int):
             result.add_error(
                 field_name,
                 f"Expected integer, got {type(value).__name__}",

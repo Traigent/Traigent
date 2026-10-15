@@ -546,3 +546,34 @@ def test_development_loopback_name_skips_resolution() -> None:
                 == "http://localhost:5000"
             )
         dns.assert_not_called()
+
+
+# --- Error wording names the assumption and the switch (issue #2503) ----------
+
+
+@pytest.mark.parametrize(
+    ("url", "prefix"),
+    [
+        ("http://localhost:8006", "must use https in production"),
+        ("https://localhost:8006", "not allowed in production"),
+    ],
+)
+def test_undeclared_environment_error_says_production_was_assumed(
+    url: str, prefix: str
+) -> None:
+    with patch.dict("os.environ", {}, clear=True):
+        with pytest.raises(ValueError) as excinfo:
+            validate_cloud_base_url(url)
+    message = str(excinfo.value)
+    assert prefix in message
+    assert "production was assumed" in message
+    assert "ENVIRONMENT=development" in message
+
+
+def test_declared_strict_environment_error_names_the_declared_value() -> None:
+    with patch.dict("os.environ", {"ENVIRONMENT": "staging"}, clear=True):
+        with pytest.raises(ValueError) as excinfo:
+            validate_cloud_base_url("http://localhost:8006")
+    message = str(excinfo.value)
+    assert "ENVIRONMENT=staging" in message
+    assert "production was assumed" not in message

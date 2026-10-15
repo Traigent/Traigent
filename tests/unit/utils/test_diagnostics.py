@@ -455,6 +455,9 @@ class TestTraigentDiagnostics:
         destructive -- so the next implementation change is free.
         """
         report = DiagnosticReport()
+        # Exercise the existing-directory write probe; absent directories
+        # follow the separate create-permission path without being created.
+        (tmp_path / ".traigent").mkdir()
 
         with patch.object(Path, "home", return_value=tmp_path):
             TraigentDiagnostics._check_permissions(report)
@@ -474,13 +477,21 @@ class TestTraigentDiagnostics:
 
         assert set(target.iterdir()) == before, "the probe left a file behind"
 
-    @patch("pathlib.Path.mkdir")
-    def test_check_permissions_failure(self, mock_mkdir: MagicMock) -> None:
-        """Test file permissions check when permissions denied."""
+    def test_check_permissions_failure(self, tmp_path) -> None:
+        """Unwritable directories (existing or yet to be created) are warned."""
         report = DiagnosticReport()
-        mock_mkdir.side_effect = OSError("Permission denied")
+        (tmp_path / ".traigent").mkdir()
 
-        TraigentDiagnostics._check_permissions(report)
+        with (
+            patch.object(Path, "home", return_value=tmp_path),
+            patch.object(Path, "cwd", return_value=tmp_path),
+            patch(
+                "traigent.utils.diagnostics.tempfile.NamedTemporaryFile",
+                side_effect=OSError("Permission denied"),
+            ),
+            patch("traigent.utils.diagnostics.os.access", return_value=False),
+        ):
+            TraigentDiagnostics._check_permissions(report)
 
         assert len(report.warnings) >= 1
         assert any("Cannot write to" in w["message"] for w in report.warnings)
@@ -577,12 +588,14 @@ class TestTraigentDiagnostics:
         assert any("Add API keys to .env file" in r for r in report.recommendations)
 
     def test_add_recommendations_includes_quickstart(self) -> None:
-        """Test recommendations always include quickstart script."""
+        """Recommendations point at the shipped quickstart command, not a
+        repository script customers do not have (#2504)."""
         report = DiagnosticReport()
 
         TraigentDiagnostics._add_recommendations(report)
 
-        assert any("quickstart" in r for r in report.recommendations)
+        assert any("traigent quickstart" in r for r in report.recommendations)
+        assert not any("scripts/quickstart.py" in r for r in report.recommendations)
 
     @patch.object(TraigentDiagnostics, "_check_python_version")
     @patch.object(TraigentDiagnostics, "_check_virtual_env")

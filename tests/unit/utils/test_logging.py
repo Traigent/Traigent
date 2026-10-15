@@ -196,3 +196,77 @@ def test_setup_logging_with_logger_name_emits_each_record_exactly_once(monkeypat
             named_logger.addHandler(handler)
         named_logger.setLevel(previous_named_level)
         named_logger.propagate = previous_named_propagate
+
+
+_DECORATOR_PATH_PROBE = r"""
+import logging, os, sys
+os.chdir(sys.argv[1])
+root = logging.getLogger()
+root_state = (root.level, list(root.handlers))
+import traigent
+from traigent.testing import enable_mock_mode_for_quickstart
+enable_mock_mode_for_quickstart()
+@traigent.optimize(eval_dataset="data.jsonl", configuration_space={"model": ["a", "b"]},
+                   objectives=["accuracy"], offline=True)
+def h(text):
+    return "x"
+h.optimize_sync(max_trials=2)
+print("EFFECTIVE=" + logging.getLevelName(logging.getLogger("traigent").getEffectiveLevel()))
+print("TRAIGENT_HANDLERS=%d" % len(logging.getLogger("traigent").handlers))
+print("ROOT_UNCHANGED=%s" % ((root.level, list(root.handlers)) == root_state))
+"""
+
+
+def _run_decorator_probe(tmp_path, env_level):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    (tmp_path / "data.jsonl").write_text(
+        '{"input": {"text": "a"}, "output": "x"}\n'
+        '{"input": {"text": "b"}, "output": "x"}\n'
+    )
+    script = tmp_path / "probe.py"
+    script.write_text(_DECORATOR_PATH_PROBE)
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.endswith("_API_KEY") and k != "TRAIGENT_LOG_LEVEL"
+    }
+    env.update(
+        HOME=str(tmp_path),
+        TRAIGENT_SKIP_DOTENV="1",
+        TRAIGENT_OFFLINE_MODE="true",
+        TRAIGENT_MOCK_LLM="true",
+        PYTHONPATH=str(Path(__file__).resolve().parents[3]),
+    )
+    if env_level is not None:
+        env["TRAIGENT_LOG_LEVEL"] = env_level
+    proc = subprocess.run(
+        [sys.executable, str(script), str(tmp_path)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=240,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    return proc.stdout, proc.stderr
+
+
+def test_env_log_level_applies_on_decorator_path_without_configure(tmp_path):
+    """#2413: TRAIGENT_LOG_LEVEL=DEBUG must reach the traigent logger on a
+    plain @traigent.optimize + optimize_sync() run, without configure()."""
+    stdout, stderr = _run_decorator_probe(tmp_path, "DEBUG")
+
+    assert "EFFECTIVE=DEBUG" in stdout, stdout + stderr
+    assert "ROOT_UNCHANGED=True" in stdout, stdout
+    assert " - traigent." in stderr and " - DEBUG - " in stderr, stderr
+
+
+def test_env_log_level_unset_adds_no_traigent_handler(tmp_path):
+    """#2413: with the env var unset, import adds no handler (default unchanged)."""
+    stdout, stderr = _run_decorator_probe(tmp_path, None)
+
+    assert "TRAIGENT_HANDLERS=0" in stdout, stdout + stderr
+    assert "EFFECTIVE=WARNING" in stdout, stdout

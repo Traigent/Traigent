@@ -21,6 +21,20 @@ from traigent.cli.doctor_command import DoctorReport, doctor
 from traigent.cli.main import cli
 
 
+@pytest.fixture(autouse=True)
+def block_diagnostic_network(monkeypatch):
+    """Unit diagnostics use a deterministic network failure, never live probes.
+
+    Tests for socket wiring install their own recorder after this fixture.
+    """
+    import socket
+
+    def unavailable(*args, **kwargs):
+        raise OSError("network disabled for unit tests")
+
+    monkeypatch.setattr(socket, "create_connection", unavailable)
+
+
 @pytest.fixture()
 def runner() -> CliRunner:
     """A runner whose ``stdout`` really is stdout.
@@ -378,10 +392,8 @@ class TestReportIsSecretSafe:
         # stricter than `.stdout`: a leaked key is a leak on EITHER stream.
         # Tests that PARSE the report use `.stdout`, because on click >= 8.2
         # `.output` interleaves the SDK's stderr log line with the JSON.
-        assert SENTINEL not in result.output, (
-            "the API key reached the doctor report; --json is exactly what a "
-            "user pastes into an issue"
-        )
+        _failure_detail = "the API key reached the doctor report; --json is exactly what a user pastes into an issue"
+        assert SENTINEL not in result.output, _failure_detail
         # The failure must still be REPORTED -- redaction that hides the
         # problem as well as the secret is not a fix.
         assert "leaky_scorer" in result.output
@@ -494,10 +506,8 @@ class TestOfflineIsReal:
         monkeypatch.setattr(socket, "create_connection", _record)
         monkeypatch.setenv("TRAIGENT_SKIP_DOTENV", "true")
         runner.invoke(doctor, ["--json", "--offline"])
-        assert opened == [], (
-            f"`doctor --offline` opened sockets: {opened}; the flag is not "
-            "reaching diagnose()"
-        )
+        _failure_detail = f"`doctor --offline` opened sockets: {opened}; the flag is not reaching diagnose()"
+        assert opened == [], _failure_detail
 
     def test_without_the_flag_the_cli_does_open_sockets(
         self, runner, monkeypatch
@@ -534,9 +544,10 @@ class TestOfflineIsReal:
 
         monkeypatch.setattr(socket, "create_connection", _record)
         diagnose(offline=False)
-        assert opened, (
+        _failure_detail = (
             "the network check no longer goes through socket.create_connection"
         )
+        assert opened, _failure_detail
 
 
 class TestPermissionProbeIsNonDestructive:
@@ -595,9 +606,8 @@ class TestPermissionProbeIsNonDestructive:
             TraigentDiagnostics._check_permissions(DiagnosticReport())
 
         for directory, contents in before.items():
-            assert set(directory.iterdir()) == contents, (
-                f"the probe left a file behind in {directory}"
-            )
+            _failure_detail = f"the probe left a file behind in {directory}"
+            assert set(directory.iterdir()) == contents, _failure_detail
 
 
 class TestChecksCannotPassWithoutChecking:
@@ -618,9 +628,9 @@ class TestChecksCannotPassWithoutChecking:
             if c["category"] == "Model" and "pricing" in c["message"]
         ]
         assert pricing, "no pricing check was reported"
-        assert all(c["status"] != "PASS" for c in pricing), (
-            f"an invented model id was reported as priced: {pricing}"
-        )
+        _failure_detail = f"an invented model id was reported as priced: {pricing}"
+        _matching_checks = all(c["status"] != "PASS" for c in pricing)
+        assert _matching_checks, _failure_detail
 
     def test_a_real_model_is_still_reported_as_priced(
         self, runner, monkeypatch
@@ -636,12 +646,14 @@ class TestChecksCannotPassWithoutChecking:
 
         result = runner.invoke(doctor, ["--json", "--offline", "--model", known])
         payload = json.loads(result.stdout)
-        assert any(
+        _failure_detail = f"a real priced model was not recognized: {known}"
+        _matching_checks = any(
             c["category"] == "Model"
             and c["status"] == "PASS"
-            and "pricing" in c["message"]
+            and ("pricing" in c["message"])
             for c in payload["checks"]
-        ), f"a real priced model was not recognized: {known}"
+        )
+        assert _matching_checks, _failure_detail
 
     def test_a_scorer_with_a_required_keyword_only_param_fails(
         self, runner, tmp_path, monkeypatch
@@ -661,9 +673,9 @@ class TestChecksCannotPassWithoutChecking:
         )
         payload = json.loads(result.stdout)
         scorer_checks = [c for c in payload["checks"] if c["category"] == "Scorer"]
-        assert any(c["status"] == "FAIL" for c in scorer_checks), (
-            f"an uncallable scorer passed the preflight: {scorer_checks}"
-        )
+        _failure_detail = f"an uncallable scorer passed the preflight: {scorer_checks}"
+        _matching_checks = any(c["status"] == "FAIL" for c in scorer_checks)
+        assert _matching_checks, _failure_detail
 
     def test_a_bindable_scorer_still_passes(
         self, runner, tmp_path, monkeypatch
@@ -702,13 +714,16 @@ class TestStrictIsUsable:
         report = DoctorReport()
         _fold_diagnostic_report(report, diag)
 
-        assert not report.has_warn, (
-            "the standing Chroma advisory still makes --strict exit 1"
+        _failure_detail = "the standing Chroma advisory still makes --strict exit 1"
+        assert not report.has_warn, _failure_detail
+        _failure_detail = (
+            "the advisory must still be reported, just not as a gate failure"
         )
-        assert any(
+        _matching_checks = any(
             TraigentDiagnostics.CHROMA_INTEGRATION_UNAVAILABLE in c.message
             for c in report.checks
-        ), "the advisory must still be reported, just not as a gate failure"
+        )
+        assert _matching_checks, _failure_detail
 
 
 class TestProviderKeysAreNotVendorSpecific:
@@ -788,9 +803,10 @@ class TestOfflinePinsTheLiteLLMPriceTable:
         help_text = offline_opt.help or ""
 
         assert "no effect" not in help_text
-        assert "scorer" in help_text.lower(), (
+        _failure_detail = (
             "the caveat about --scorer executing user code must stay in the help"
         )
+        assert "scorer" in help_text.lower(), _failure_detail
 
 
 class TestEverySinkIsGuarded:
@@ -838,9 +854,8 @@ class TestEverySinkIsGuarded:
             if entry["message"].startswith("TRAIGENT_BACKEND_URL = ")
         )
         url = urlsplit(reported.removeprefix("TRAIGENT_BACKEND_URL = "))
-        assert url.hostname == "backend.example.com", (
-            "the host is the diagnostically useful part and must survive"
-        )
+        _failure_detail = "the host is the diagnostically useful part and must survive"
+        assert url.hostname == "backend.example.com", _failure_detail
 
     def test_a_password_containing_an_at_sign_is_masked_whole(self) -> None:
         """The old pattern stopped at the first `@` and left the tail exposed.
@@ -1093,7 +1108,7 @@ class TestSinksFoundInTheFifthRound:
         "flag,value",
         [
             ("--model", "hf_CANARYVALUEabcdefghij"),
-            ("--model", "AIzaCANARYVALUEabcdefghijklmnop"),
+            ("--model", "AIzaCANARYVALUEabcdefghijklmnop"),  # pragma: allowlist secret
         ],
     )
     def test_a_vendor_key_doctor_knows_about_is_masked(
@@ -1177,6 +1192,71 @@ class TestPricingKeepsProviderIdentity:
             and "pricing coverage" in c["message"]
             for c in payload["checks"]
         )
-        assert priced is should_be_priced, (
+        _failure_detail = (
             f"{model_id!r}: expected priced={should_be_priced}, got {priced}"
         )
+        assert priced is should_be_priced, _failure_detail
+
+
+class TestWorkingOpenRouterProjectIsNotCalledBroken:
+    """#2504: a LiteLLM agent on OpenRouter, without LangChain or pandas, got
+    4 FAIL and exit 1 from doctor -- three framework packages treated as
+    required, and a provider-key row that ignored the OpenRouter key the Auth
+    row accepted."""
+
+    _ABSENT = {"langchain", "langchain_openai", "openai", "pandas", "numpy", "dotenv"}
+
+    def _import_without_frameworks(self):
+        import importlib
+
+        real_import = importlib.import_module
+
+        def fake_import(name: str, *args, **kwargs):
+            if name in self._ABSENT:
+                raise ImportError(f"No module named {name!r}")
+            return real_import(name, *args, **kwargs)
+
+        return fake_import
+
+    def test_openrouter_only_env_without_frameworks_has_no_fail(
+        self, runner: CliRunner, tmp_path, monkeypatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        env = {
+            **_clean_env(),
+            "HOME": str(tmp_path),
+            "OPENROUTER_API_KEY": "sk-or-" + "x" * 32,  # pragma: allowlist secret
+        }
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch(
+                "traigent.utils.diagnostics.importlib.import_module",
+                side_effect=self._import_without_frameworks(),
+            ),
+        ):
+            result = runner.invoke(doctor, ["--json", "--offline"])
+        payload = json.loads(result.stdout)
+        fails = [c for c in payload["checks"] if c["status"] == "FAIL"]
+        assert fails == []
+        assert result.exit_code == 0
+        recommendations = " ".join(payload.get("recommendations", []))
+        assert "scripts/quickstart.py" not in recommendations
+        assert "export TRAIGENT_MOCK_LLM=true" not in recommendations
+        # The permission probe must not create project directories.
+        assert not (tmp_path / "data").exists()
+        assert not (tmp_path / "logs").exists()
+
+    def test_environment_and_auth_rows_use_the_same_key_set(self) -> None:
+        from traigent.cli.doctor_command import _ALL_VENDOR_KEY_MARKERS
+        from traigent.utils.diagnostics import TraigentDiagnostics
+
+        assert set(TraigentDiagnostics.PROVIDER_KEY_VARIABLES) == set(
+            _ALL_VENDOR_KEY_MARKERS
+        )
+
+    def test_chroma_notice_keeps_the_extra_name_in_the_table(
+        self, runner: CliRunner
+    ) -> None:
+        with patch.dict(os.environ, _clean_env(), clear=True):
+            result = runner.invoke(doctor, ["--offline"])
+        assert "traigent[chroma]" in "".join(result.output.split())

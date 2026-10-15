@@ -37,9 +37,9 @@ except ImportError:
                 raise ImportError("aiohttp not available") from None
 
 
+from traigent.core.session_types import safe_http_error_summary
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.security.redaction import is_credential_key_name
-from traigent.core.session_types import safe_http_error_summary
 from traigent.utils.exceptions import DatasetValidationError
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import safe_write_text, sanitize_filename, validate_path
@@ -138,6 +138,12 @@ class ExampleSetMetadata:
     total_examples: int
     created_from: str
     privacy_mode: bool
+
+
+# Backend serves example sets only under the versioned API (#2368).
+_EXAMPLE_SETS_PATH = "/api/v1/example-sets"
+# Backend caps per_page at 100 for the examples listing.
+_EXAMPLES_PAGE_SIZE = 100
 
 
 class DatasetConverter:
@@ -958,7 +964,7 @@ class DatasetConverter:
         if not self._session:
             raise RuntimeError("Session not initialized") from None
 
-        url = f"{self.backend_base_url}/api/example-sets"
+        url = f"{self.backend_base_url}{_EXAMPLE_SETS_PATH}"
         payload = {
             "name": metadata.name,
             "type": metadata.type,
@@ -1011,7 +1017,7 @@ class DatasetConverter:
         csv_content = output.getvalue()
 
         # Upload via API
-        url = f"{self.backend_base_url}/api/example-sets/{example_set_id}/upload"
+        url = f"{self.backend_base_url}{_EXAMPLE_SETS_PATH}/{example_set_id}/upload"
 
         data = aiohttp.FormData()
         data.add_field(
@@ -1042,7 +1048,7 @@ class DatasetConverter:
 
         example_set_id = self._validate_example_set_id(example_set_id)
 
-        url = f"{self.backend_base_url}/api/example-sets/{example_set_id}"
+        url = f"{self.backend_base_url}{_EXAMPLE_SETS_PATH}/{example_set_id}"
 
         async with self._session.get(url) as response:
             if response.status == 200:
@@ -1065,17 +1071,57 @@ class DatasetConverter:
 
         example_set_id = self._validate_example_set_id(example_set_id)
 
-        url = f"{self.backend_base_url}/api/example-sets/{example_set_id}/examples"
+        url = f"{self.backend_base_url}{_EXAMPLE_SETS_PATH}/{example_set_id}/examples"
 
-        async with self._session.get(url) as response:
-            if response.status == 200:
+        # The endpoint is paginated; read every page so a set larger than one
+        # page is not silently truncated.
+        examples: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            params = {"page": page, "per_page": _EXAMPLES_PAGE_SIZE}
+            async with self._session.get(url, params=params) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise Exception(
+                        "Failed to fetch examples: "
+                        f"{safe_http_error_summary(response.status, error_text)}"
+                    )
                 result = await response.json()
-                return cast(list[dict[str, Any]], result.get("examples", []))
-            else:
-                error_text = await response.text()
-                raise Exception(
-                    f"Failed to fetch examples: {safe_http_error_summary(response.status, error_text)}"
+            items, has_next = _parse_examples_page(result)
+            examples.extend(items)
+            if not has_next:
+                return examples
+            if not items:
+                raise ValueError("Invalid empty nonterminal examples page")
+            page += 1
+
+
+def _parse_examples_page(result: Any) -> tuple[list[dict[str, Any]], bool]:
+    """Read one page of ``GET /example-sets/{id}/examples``.
+
+    Accepts the canonical ``{"data": {"items": [...], "pagination": {...}}}``
+    envelope and the older top-level ``{"examples": [...]}`` shape. Any other
+    body raises: an unrecognised response must never read as an empty dataset
+    (#2368).
+    """
+    if isinstance(result, dict):
+        data = result.get("data")
+        if isinstance(data, dict) and isinstance(data.get("items"), list):
+            pagination = data.get("pagination")
+            if not isinstance(pagination, dict) or not isinstance(
+                pagination.get("has_next"), bool
+            ):
+                raise ValueError(
+                    "Invalid example-set pagination: has_next must be boolean"
                 )
+            return cast(list[dict[str, Any]], data["items"]), pagination["has_next"]
+        if isinstance(result.get("examples"), list):
+            return cast(list[dict[str, Any]], result["examples"]), False
+    shape = sorted(result) if isinstance(result, dict) else type(result).__name__
+    raise ValueError(
+        "Unrecognised example-set examples response: expected data.items or "
+        f"examples, got {shape}"
+    )
 
 
 # Global converter instance
