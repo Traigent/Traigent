@@ -575,7 +575,7 @@ def test_closed_loop_pools_are_released_and_context_entry_keeps_no_orphan(
         try:
             client._session = None
             before = loop_c.run_until_complete(enter_after_trial())
-            assert before.closed  # not orphaned by __aenter__
+            assert before.closed  # reused, then closed by the context exit
         finally:
             loop_c.close()
         assert not pool_a.closed
@@ -605,3 +605,31 @@ def test_dead_primary_pool_is_released_while_secondary_pool_serves():
     finally:
         loop_b.run_until_complete(client.close())
         loop_b.close()
+
+
+def test_secondary_pool_is_closed_when_client_is_collected(threaded_trial_server):
+    import gc
+
+    origin, _requests, _connections = threaded_trial_server
+    client = _LocalTrialClient(origin)
+    loop_a = asyncio.new_event_loop()
+    try:
+        loop_a.run_until_complete(client._ensure_session())
+        asyncio.run(client._ensure_session())  # secondary pool, loop B now closed
+        ((_ref, pool_b),) = client._loop_pools().values()
+        assert not pool_b.closed
+        del client
+        gc.collect()
+        assert pool_b.closed
+    finally:
+        loop_a.close()
+
+
+@pytest.mark.asyncio
+async def test_context_entry_keeps_running_loops_pool(threaded_trial_server):
+    origin, _requests, _connections = threaded_trial_server
+    client = _LocalTrialClient(origin)
+    pool = await client._ensure_session()
+    async with client:
+        assert client._session is pool and not pool.closed
+    await client.close()

@@ -311,6 +311,14 @@ def _session_is_closed(session: Any) -> bool:
     return False
 
 
+def _dispose_pool_map(pools: dict[int, tuple[Any, Any]], owner: str) -> None:
+    """Finalizer: close any secondary pools still held when the client is collected."""
+    for _loop_ref, session in list(pools.values()):
+        if not _session_is_closed(session):
+            _finalize_aiohttp_session(session, owner)
+    pools.clear()
+
+
 # Export public API
 __all__ = [
     "AnalyticsNamespace",
@@ -1440,6 +1448,9 @@ class BackendIntegratedClient:
                     "X-Client-Version": "2.0.0",
                 }
             )
+            if self._pool_for_loop(asyncio.get_running_loop()) is not None:
+                # Keep the running loop's pool: in-flight requests may be using it.
+                return self
             await self._retire_primary_pool()
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
@@ -1505,6 +1516,8 @@ class BackendIntegratedClient:
         pools = self.__dict__.get("_extra_loop_pools")
         if pools is None:
             pools = self.__dict__["_extra_loop_pools"] = {}
+            # GC cleanup for secondary pools (captures the dict, not ``self``).
+            weakref.finalize(self, _dispose_pool_map, pools, self.__class__.__name__)
         return cast(dict[int, tuple[weakref.ref[Any], Any]], pools)
 
     @staticmethod
