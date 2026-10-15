@@ -209,3 +209,38 @@ def test_retained_prepared_snapshots_keep_redaction_and_byte_batches(transport_f
         assert len(serialized.encode("utf-8")) <= byte_cap
         assert "fictional-sensitive-value" not in serialized
         assert "mutated after submission" not in serialized
+
+
+@pytest.mark.timeout(3)
+def test_stale_timer_does_not_resend_retained_outbox(transport_factory):
+    attempts = []
+
+    def sender(payloads):
+        attempts.append(payloads)
+        unavailable()
+
+    transport = transport_factory(sender)
+    assert transport.submit("trace", {"id": "trace"})
+    stale_epoch = transport._delivery_failure_epoch
+    transport.flush()
+    assert len(attempts) == 1
+    assert transport._delivery_failure_epoch == stale_epoch + 1
+
+    # A timer armed before the failure fires after it: it must be a no-op.
+    transport._flush_from_timer(stale_epoch)
+    assert len(attempts) == 1
+    assert transport.get_stats()["queue_depth"] == 1
+
+
+@pytest.mark.timeout(3)
+def test_submit_against_full_retained_outbox_arms_retry_timer(transport_factory):
+    transport = transport_factory(lambda _payloads: unavailable(), max_queue_size=1)
+    assert transport.submit("old", {"id": "old"})
+    transport.flush()
+    assert transport._timer is None
+    assert transport.get_stats()["queue_depth"] == 1
+
+    # New id is dropped (queue_full, bounded) but still gives recovery a chance.
+    assert transport.submit("new", {"id": "new"}) is False
+    assert transport._timer is not None
+    assert transport.get_stats()["queue_depth"] == 1

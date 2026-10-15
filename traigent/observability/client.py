@@ -853,6 +853,7 @@ class _SyncBatchTransport:
         self._dropped_health_events = 0
         self._health_dispatch_closed = False
         self._timer: threading.Timer | None = None
+        self._delivery_failure_epoch = 0
         self._flush_thread: threading.Thread | None = None
         self._closed = False
         self._errors: list[str] = []
@@ -945,6 +946,10 @@ class _SyncBatchTransport:
                     f"transport queue full; dropped payload for item '{item_id}'",
                     item_id=item_id,
                 )
+                # A full backlog (possibly a retained outbox whose timer was
+                # cancelled after a failure) still gets one bounded retry
+                # opportunity from this submission.
+                self._ensure_timer_locked()
             else:
                 self._buffer.pop(item_id, None)
                 self._buffer[item_id] = buffered_payload
@@ -1057,7 +1062,11 @@ class _SyncBatchTransport:
     def _ensure_timer_locked(self) -> None:
         if self._timer is not None and self._timer.is_alive():
             return
-        self._timer = threading.Timer(self.max_buffer_age, self._flush_from_timer)
+        self._timer = threading.Timer(
+            self.max_buffer_age,
+            self._flush_from_timer,
+            args=(self._delivery_failure_epoch,),
+        )
         self._timer.daemon = True
         self._timer.start()
 
@@ -1087,7 +1096,11 @@ class _SyncBatchTransport:
         finally:
             self._lock.release()
 
-    def _flush_from_timer(self) -> None:
+    def _flush_from_timer(self, epoch: int | None = None) -> None:
+        # A timer armed before a delivery failure must not resend the retained
+        # outbox: only a later explicit flush or fresh submission may retry.
+        if epoch is not None and epoch != self._delivery_failure_epoch:
+            return
         try:
             self.flush()
         except Exception as exc:
@@ -1374,6 +1387,7 @@ class _SyncBatchTransport:
             # A failed-only outbox must not create an automatic retry storm.
             # A later explicit flush, or fresh submission after reconnection,
             # provides another bounded retry opportunity.
+            self._delivery_failure_epoch += 1
             self._cancel_timer_locked()
             dropped_items = self._stats["dropped_items"]
             queue_depth = len(self._buffer)
