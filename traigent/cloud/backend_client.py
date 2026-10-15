@@ -311,6 +311,14 @@ def _session_is_closed(session: Any) -> bool:
     return False
 
 
+def _dispose_pool_map(pools: dict[int, tuple[Any, Any]], owner: str) -> None:
+    """Finalizer: close any secondary pools still held when the client is collected."""
+    for _loop_ref, session in list(pools.values()):
+        if not _session_is_closed(session):
+            _finalize_aiohttp_session(session, owner)
+    pools.clear()
+
+
 # Export public API
 __all__ = [
     "AnalyticsNamespace",
@@ -1388,6 +1396,26 @@ class BackendIntegratedClient:
 
     # === Context Manager Support ===
 
+    async def _retire_primary_pool(self) -> None:
+        """Make room for a new primary pool without orphaning the current one."""
+        primary = self._session
+        if primary is None:
+            return
+        self._session = None
+        self._detach_session_finalizer()
+        if _session_is_closed(primary):
+            return
+        owner = getattr(primary, "_loop", None)
+        if not isinstance(owner, asyncio.AbstractEventLoop):
+            await primary.close()
+        elif owner is asyncio.get_running_loop():
+            await primary.close()
+        elif not owner.is_closed():
+            # Still serving another live loop: keep it as that loop's pool.
+            self._loop_pools()[id(owner)] = (weakref.ref(owner), primary)
+        else:
+            self._dispose_pool(primary, self.__class__.__name__)
+
     async def __aenter__(self) -> "BackendIntegratedClient":
         """Async context manager entry."""
         if cloud_backend_egress_disabled(self.no_egress):
@@ -1420,6 +1448,10 @@ class BackendIntegratedClient:
                     "X-Client-Version": "2.0.0",
                 }
             )
+            if self._pool_for_loop(asyncio.get_running_loop()) is not None:
+                # Keep the running loop's pool: in-flight requests may be using it.
+                return self
+            await self._retire_primary_pool()
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
                 # Session-default headers are long-lived: never freeze a
@@ -1435,62 +1467,139 @@ class BackendIntegratedClient:
         """Async context manager exit."""
         await self.close(_reason="context-exit")
 
+    async def _build_http_session(self) -> AioClientSession:
+        """Build an authenticated aiohttp session on the running loop (fail closed)."""
+
+        if not AIOHTTP_AVAILABLE:
+            raise CloudServiceError(
+                "Client session not initialized and aiohttp not available"
+            )
+
+        # B4 ROUND 4: Fail closed on authentication errors. Previously, this
+        # block caught any exception from ``get_headers()`` and silently
+        # rebuilt headers from the raw stored API key (or from the
+        # private ``_get_api_key_headers()`` helper) -- defeating the
+        # round-3 fail-closed change in ``AuthManager.get_auth_headers()``
+        # because the backend-rejected key would still be shipped on the
+        # wire as ``X-API-Key`` / ``Authorization``.
+        #
+        # Now: ``AuthenticationError`` (and its ``InvalidCredentialsError``
+        # subclass) propagates so the caller sees the rejection. Other
+        # unexpected errors are surfaced as ``CloudServiceError`` rather
+        # than silently swallowed -- still fail-closed for auth, but
+        # without losing diagnostic context.
+        try:
+            headers = await self.auth_manager.auth.get_headers()
+        except AuthenticationError:
+            # Do NOT fall back to raw-key headers. Re-raise so callers
+            # see the auth failure instead of getting a session that
+            # silently emits a rejected key.
+            raise
+        except Exception as exc:
+            logger.warning("Could not get auth headers: %s", exc)
+            raise CloudServiceError(
+                f"Failed to build authenticated session: {exc}"
+            ) from exc
+        headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
+        headers.setdefault("User-Agent", _SDK_USER_AGENT)
+
+        return aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self.timeout),
+            # Same rule as __aenter__: no stale trace context in
+            # long-lived session-default headers.
+            headers=_strip_trace_context_headers(headers),
+            trust_env=True,
+        )
+
+    def _loop_pools(self) -> dict[int, tuple[weakref.ref[Any], Any]]:
+        """Pools for event loops other than the primary pool's (id(loop) -> ...)."""
+        pools = self.__dict__.get("_extra_loop_pools")
+        if pools is None:
+            pools = self.__dict__["_extra_loop_pools"] = {}
+            # GC cleanup for secondary pools (captures the dict, not ``self``).
+            weakref.finalize(self, _dispose_pool_map, pools, self.__class__.__name__)
+        return cast(dict[int, tuple[weakref.ref[Any], Any]], pools)
+
+    @staticmethod
+    def _dispose_pool(session: Any, owner: str) -> None:
+        """Close a pool without awaiting on a loop we may not be running on."""
+        if not _session_is_closed(session):
+            _finalize_aiohttp_session(session, owner)
+
+    def _purge_dead_pools(self) -> None:
+        """Drop pools whose loop is gone/closed; close them without awaiting."""
+        primary = self._session
+        if primary is not None:
+            primary_loop = getattr(primary, "_loop", None)
+            if _session_is_closed(primary) or (
+                isinstance(primary_loop, asyncio.AbstractEventLoop)
+                and primary_loop.is_closed()
+            ):
+                self._session = None
+                self._detach_session_finalizer()
+                self._dispose_pool(primary, self.__class__.__name__)
+        pools = self._loop_pools()
+        for key, (loop_ref, session) in list(pools.items()):
+            loop = loop_ref()
+            if loop is None or loop.is_closed() or _session_is_closed(session):
+                pools.pop(key, None)
+                self._dispose_pool(session, self.__class__.__name__)
+
+    def _pool_for_loop(self, loop: asyncio.AbstractEventLoop) -> Any:
+        """The usable pool owned by ``loop`` (primary or per-loop), else None."""
+        primary = self._session
+        if primary is not None and not _session_is_closed(primary):
+            owner = getattr(primary, "_loop", None)
+            if not isinstance(owner, asyncio.AbstractEventLoop) or owner is loop:
+                return primary
+        entry = self._loop_pools().get(id(loop))
+        if (
+            entry is not None
+            and entry[0]() is loop
+            and not _session_is_closed(entry[1])
+        ):
+            return entry[1]
+        return None
+
     async def _ensure_session(self) -> AioClientSession:
-        """Ensure session exists with current auth headers."""
+        """Return the authenticated session owned by the *running* event loop.
+
+        One pool per event loop: a session is never handed to a loop that did
+        not create it. Pools of closed loops are discarded.
+        """
 
         self._raise_if_backend_egress_disabled("backend request")
-        existing = self._session
-        if existing is not None and not _session_is_closed(existing):
-            return cast(AioClientSession, existing)
+        loop = asyncio.get_running_loop()
+        self._purge_dead_pools()
+        pool = self._pool_for_loop(loop)
+        if pool is not None:
+            return cast(AioClientSession, pool)
 
-        async with self._session_lock:
-            existing = self._session
-            if existing is not None and not _session_is_closed(existing):
-                return cast(AioClientSession, existing)
+        session = await self._build_http_session()
+        pool = self._pool_for_loop(loop)  # another task on this loop won the race
+        if pool is not None:
+            await session.close()
+            return cast(AioClientSession, pool)
 
-            if not AIOHTTP_AVAILABLE:
-                raise CloudServiceError(
-                    "Client session not initialized and aiohttp not available"
-                )
-
-            # B4 ROUND 4: Fail closed on authentication errors. Previously, this
-            # block caught any exception from ``get_headers()`` and silently
-            # rebuilt headers from the raw stored API key (or from the
-            # private ``_get_api_key_headers()`` helper) -- defeating the
-            # round-3 fail-closed change in ``AuthManager.get_auth_headers()``
-            # because the backend-rejected key would still be shipped on the
-            # wire as ``X-API-Key`` / ``Authorization``.
-            #
-            # Now: ``AuthenticationError`` (and its ``InvalidCredentialsError``
-            # subclass) propagates so the caller sees the rejection. Other
-            # unexpected errors are surfaced as ``CloudServiceError`` rather
-            # than silently swallowed -- still fail-closed for auth, but
-            # without losing diagnostic context.
-            try:
-                headers = await self.auth_manager.auth.get_headers()
-            except AuthenticationError:
-                # Do NOT fall back to raw-key headers. Re-raise so callers
-                # see the auth failure instead of getting a session that
-                # silently emits a rejected key.
-                raise
-            except Exception as exc:
-                logger.warning("Could not get auth headers: %s", exc)
-                raise CloudServiceError(
-                    f"Failed to build authenticated session: {exc}"
-                ) from exc
-            headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
-            headers.setdefault("User-Agent", _SDK_USER_AGENT)
-
-            self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=self.timeout),
-                # Same rule as __aenter__: no stale trace context in
-                # long-lived session-default headers.
-                headers=_strip_trace_context_headers(headers),
-                trust_env=True,
+        primary = self._session
+        primary_owner = getattr(primary, "_loop", None) if primary is not None else None
+        primary_dead = (
+            primary is None
+            or _session_is_closed(primary)
+            or (
+                isinstance(primary_owner, asyncio.AbstractEventLoop)
+                and primary_owner.is_closed()
             )
-            self._register_session_finalizer(self._session)
-
-            return cast(AioClientSession, self._session)
+        )
+        if primary_dead:
+            if primary is not None:
+                self._detach_session_finalizer()
+                self._dispose_pool(primary, self.__class__.__name__)
+            self._session = session
+            self._register_session_finalizer(session)
+        else:
+            self._loop_pools()[id(loop)] = (weakref.ref(loop), session)
+        return session
 
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:
         """Fail closed before any backend HTTP request."""
@@ -1500,14 +1609,17 @@ class BackendIntegratedClient:
         raise_if_cloud_egress_disabled(operation, no_egress=self.no_egress)
 
     async def _reset_http_session(self, reason: str | None = None) -> None:
-        """Close and discard the shared aiohttp session."""
+        """Close and discard the running loop's aiohttp session."""
 
-        if not self._session:
+        loop = asyncio.get_running_loop()
+        session = self._pool_for_loop(loop)
+        if session is None:
             return
-
-        session = self._session
-        self._session = None
-        self._detach_session_finalizer()
+        if session is self._session:
+            self._session = None
+            self._detach_session_finalizer()
+        else:
+            self._loop_pools().pop(id(loop), None)
         try:
             if _session_is_closed(session):
                 return
@@ -1529,9 +1641,18 @@ class BackendIntegratedClient:
             )
 
     async def close(self, *, _reason: str = "shutdown") -> None:
-        """Close any active HTTP session to avoid resource leaks."""
+        """Close every pool: this loop's awaited, other loops' disposed safely."""
 
         await self._reset_http_session(_reason)
+        owner = self.__class__.__name__
+        for _key, (_ref, session) in list(self._loop_pools().items()):
+            self._dispose_pool(session, owner)
+        self._loop_pools().clear()
+        primary = self._session
+        if primary is not None:  # primary owned by a different loop
+            self._session = None
+            self._detach_session_finalizer()
+            self._dispose_pool(primary, owner)
 
     def _register_session_finalizer(self, session: AioClientSession) -> None:
         self._detach_session_finalizer()

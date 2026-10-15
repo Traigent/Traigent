@@ -12,6 +12,9 @@ import copy
 import hashlib
 import json
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -102,6 +105,11 @@ class TrialSubmissionResult:
     @classmethod
     def rejected(cls, reason: str | None = None) -> "TrialSubmissionResult":
         return cls(permanent_rejection=True, reason=reason)
+
+
+_sync_registration_loop: ContextVar[bool] = ContextVar(
+    "traigent_sync_registration_loop", default=False
+)
 
 
 class TrialOperations:
@@ -320,6 +328,20 @@ class TrialOperations:
             ]
         return data
 
+    @asynccontextmanager
+    async def _trial_http_session(self) -> AsyncIterator[Any]:
+        """Borrow the running loop's pooled session, or own a sync wrapper's.
+
+        ``_ensure_session`` keeps one pool per event loop, so a borrowed session
+        always belongs to the running loop. A sync wrapper's temporary loop gets
+        a private session closed before the wrapper returns.
+        """
+        if not _sync_registration_loop.get():
+            yield await self.client._ensure_session()
+            return
+        async with aiohttp.ClientSession(trust_env=True) as session:
+            yield session
+
     async def register_trial_start(
         self,
         session_id: str,
@@ -374,16 +396,12 @@ class TrialOperations:
             }
             registration_payload = self._sanitize_for_json(registration_data)
 
-            connector = None
-
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
                 _JSON_CONTENT_TYPE_HEADER
             )
 
-            async with aiohttp.ClientSession(
-                connector=connector, trust_env=True
-            ) as session:
+            async with self._trial_http_session() as session:
                 # Use the same endpoint but with "running" status
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -451,7 +469,11 @@ class TrialOperations:
         """
 
         async def _register_async() -> bool | None:
-            return await self.register_trial_start(session_id, trial_id, config)
+            context_reset = _sync_registration_loop.set(True)
+            try:
+                return await self.register_trial_start(session_id, trial_id, config)
+            finally:
+                _sync_registration_loop.reset(context_reset)
 
         try:
             # Check if there's a running event loop
@@ -529,10 +551,7 @@ class TrialOperations:
             headers = await self.client.auth_manager.augment_headers(
                 _JSON_CONTENT_TYPE_HEADER
             )
-            connector = self._create_localhost_connector()
-            async with aiohttp.ClientSession(
-                connector=connector, trust_env=True
-            ) as session:
+            async with self._trial_http_session() as session:
                 api_base = (
                     self.client.backend_config.api_base_url
                     or BackendConfig.get_backend_api_url()
@@ -1033,8 +1052,6 @@ class TrialOperations:
                     error_message
                 )
 
-            connector = self._create_localhost_connector()
-
             logger.debug(f"📤 Submission data for trial {trial_id}:")
             logger.debug(f"   Has measures: {'measures' in result_data}")
             logger.debug(f"   Has summary_stats: {'summary_stats' in result_data}")
@@ -1051,10 +1068,7 @@ class TrialOperations:
                 _JSON_CONTENT_TYPE_HEADER
             )
 
-            async with aiohttp.ClientSession(
-                connector=connector,
-                trust_env=True,
-            ) as session:
+            async with self._trial_http_session() as session:
                 api_base = (
                     self.client.backend_config.api_base_url
                     or BackendConfig.get_backend_api_url()
@@ -1231,16 +1245,12 @@ class TrialOperations:
                 sorted(submission_data.keys()),
             )
 
-            connector = self._create_localhost_connector()
-
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
                 _JSON_CONTENT_TYPE_HEADER
             )
 
-            # fmt: off
-            async with aiohttp.ClientSession(connector=connector, trust_env=True) as session:
-                # fmt: on
+            async with self._trial_http_session() as session:
                 # Submit to session endpoint with summary_stats
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1335,17 +1345,12 @@ class TrialOperations:
                 },
             }
 
-            connector = None
-
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
                 _JSON_CONTENT_TYPE_HEADER
             )
 
-            async with aiohttp.ClientSession(
-                connector=connector,
-                trust_env=True,
-            ) as session:
+            async with self._trial_http_session() as session:
                 api_base = (
                     self.client.backend_config.api_base_url
                     or BackendConfig.get_backend_api_url()
