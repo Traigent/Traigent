@@ -990,7 +990,7 @@ class _SyncBatchTransport:
         deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
         if warn_on_deadline_expiry is None:
             warn_on_deadline_expiry = timeout != 0
-        if not self._cancel_timer(deadline):
+        if not self._cancel_timer(deadline, timer_epoch=timer_epoch):
             return self._deadline_expiry_result(
                 "Observability transport flush deadline exceeded while acquiring "
                 "the timer state lock"
@@ -1078,6 +1078,7 @@ class _SyncBatchTransport:
             return
         self._flush_thread = threading.Thread(
             target=self._flush_from_worker,
+            args=(self._delivery_failure_epoch,),
             name="traigent-observability-flush",
             daemon=True,
         )
@@ -1090,11 +1091,16 @@ class _SyncBatchTransport:
         if timer is not None and timer is not threading.current_thread():
             timer.cancel()
 
-    def _cancel_timer(self, deadline: float | None = None) -> bool:
+    def _cancel_timer(
+        self, deadline: float | None = None, *, timer_epoch: int | None = None
+    ) -> bool:
         if not self._acquire_lock_until(deadline):
             return False
         try:
-            self._cancel_timer_locked()
+            # A stale timer/worker must not cancel a timer armed by a newer
+            # submission after the failure it predates.
+            if timer_epoch is None or timer_epoch == self._delivery_failure_epoch:
+                self._cancel_timer_locked()
             return True
         finally:
             self._lock.release()
@@ -1109,9 +1115,9 @@ class _SyncBatchTransport:
         except Exception as exc:
             self._append_error(f"timer flush failed: {exc}")
 
-    def _flush_from_worker(self) -> None:
+    def _flush_from_worker(self, epoch: int | None = None) -> None:
         try:
-            self._send_available()
+            self._send_available(timer_epoch=epoch)
         except Exception as exc:
             self._append_error(f"background flush failed: {exc}")
 

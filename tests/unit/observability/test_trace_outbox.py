@@ -275,3 +275,48 @@ def test_timer_waiting_on_send_lock_does_not_resend_after_failure(transport_fact
     assert not worker.is_alive() and not timer.is_alive()
     assert len(attempts) == 1
     assert transport.get_stats()["queue_depth"] == 1
+
+
+@pytest.mark.timeout(5)
+def test_stale_timer_flush_keeps_newer_timer(transport_factory):
+    transport = transport_factory(lambda _payloads: unavailable())
+    assert transport.submit("old", {"id": "old"})
+    stale_epoch = transport._delivery_failure_epoch
+    transport.flush()
+    assert transport.submit("new", {"id": "new"})
+    fresh_timer = transport._timer
+    assert fresh_timer is not None
+
+    transport.flush(timer_epoch=stale_epoch)
+    assert transport._timer is fresh_timer
+
+
+@pytest.mark.timeout(5)
+def test_worker_waiting_on_send_lock_does_not_resend_after_failure(transport_factory):
+    entered = threading.Event()
+    release = threading.Event()
+    attempts = []
+
+    def sender(payloads):
+        attempts.append(payloads)
+        entered.set()
+        assert release.wait(timeout=3)
+        unavailable()
+
+    transport = transport_factory(sender)
+    assert transport.submit("trace", {"id": "trace"})
+    epoch = transport._delivery_failure_epoch
+    flusher = threading.Thread(target=transport.flush)
+    flusher.start()
+    assert entered.wait(timeout=3)
+
+    # A submission-started worker queues behind the explicit flush's send lock.
+    worker = threading.Thread(target=transport._flush_from_worker, args=(epoch,))
+    worker.start()
+    release.set()
+    flusher.join(timeout=3)
+    worker.join(timeout=3)
+
+    assert not flusher.is_alive() and not worker.is_alive()
+    assert len(attempts) == 1
+    assert transport.get_stats()["queue_depth"] == 1
