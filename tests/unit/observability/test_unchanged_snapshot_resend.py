@@ -359,3 +359,42 @@ def test_a_failed_send_forgets_the_older_delivered_snapshot():
     transport.close()
 
     assert [request[0]["v"] for request in requests] == ["A", "A"]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["malformed_warnings", "base_exception"],
+)
+def test_no_exit_from_a_send_leaves_a_stale_delivered_snapshot(failure):
+    """A delivered; B is sent and the send ends abnormally after the server may
+    have written it; the app goes back to A. A must be sent."""
+    requests: list[list[dict]] = []
+
+    def sender(traces):
+        requests.append(traces)
+        if traces[0].get("v") == "B":
+            if failure == "malformed_warnings":
+                return {"warnings": 1}
+            raise SystemExit(1)
+        return None
+
+    transport = _SyncBatchTransport(
+        sender,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=100,
+        max_batch_bytes=1_000_000,
+    )
+    assert transport.submit("x", {"id": "x", "v": "A"})
+    transport.flush()
+    assert transport.submit("x", {"id": "x", "v": "B"})
+    if failure == "base_exception":
+        with pytest.raises(SystemExit):
+            transport.flush()
+    else:
+        # A malformed warnings value must not raise out of flush().
+        assert transport.flush().items_pending == 0
+    assert transport.submit("x", {"id": "x", "v": "A"})
+    transport.close()
+
+    assert [request[0]["v"] for request in requests] == ["A", "B", "A"]

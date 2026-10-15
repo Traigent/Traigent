@@ -1290,6 +1290,12 @@ class _SyncBatchTransport:
                             break
                         self._buffer.popitem(last=False)
                         self._inflight_digests[item_id] = buffered.digest
+                        # Once a send starts, the backend may end up holding
+                        # this snapshot whatever the outcome (a timeout after
+                        # commit, an exception escaping the send), so the
+                        # older delivered one is forgotten until this send
+                        # succeeds. The cost is at most one redundant resend.
+                        self._delivered_digests.pop(item_id, None)
                         batch_items.append((item_id, buffered.payload))
                         batch_body_bytes = projected_body_bytes
                         batch_observations = projected_observations
@@ -1482,11 +1488,14 @@ class _SyncBatchTransport:
         result = self._retry_handler.execute_with_result(self._sender, payloads)
 
         if result.success:
-            response_warnings = (
-                result.result.get("warnings") or []
+            raw_warnings = (
+                result.result.get("warnings")
                 if isinstance(result.result, dict)
-                else []
+                else None
             )
+            # Same tolerance as `_log_ingest_warnings_from_data`: a malformed
+            # warnings value must not raise out of a flush.
+            response_warnings = raw_warnings if isinstance(raw_warnings, list) else []
             for warning in response_warnings:
                 events.append(self._append_warning(str(warning)))
             with self._lock:
@@ -1508,12 +1517,6 @@ class _SyncBatchTransport:
 
         with self._lock:
             self._stats["failed_batches"] += 1
-            # A failed send may still have been written server-side (e.g. a
-            # timeout after commit), so the backend may no longer hold the
-            # snapshot remembered as delivered: forget it, so a later re-submit
-            # of that snapshot is sent rather than skipped.
-            for item_id, _ in batch_items:
-                self._delivered_digests.pop(item_id, None)
             # The sender receives already prepared snapshots. Retain those exact
             # payloads; do not re-redact them using mutable live trace state.
             retained = OrderedDict(
