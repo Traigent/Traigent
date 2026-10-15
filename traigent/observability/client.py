@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import atexit
 import copy
+import hashlib
 import io
 import json
 import threading
@@ -825,13 +826,19 @@ class _BufferedPayload:
     payload: dict[str, Any]
     payload_bytes: int
     observation_count: int = 0
+    # Content digest of the encoded payload; lets the transport skip a
+    # snapshot identical to the one it last delivered for the item (#2604).
+    digest: bytes = b""
 
 
 class _SyncBatchTransport:
     """Thread-safe batch transport that avoids cross-thread asyncio coordination.
 
     Failed snapshots remain in a bounded memory outbox for a later explicit
-    flush or submission after connectivity recovers. This transport does not
+    flush or submission after connectivity recovers. A submitted snapshot
+    identical to the one last delivered for the same item is not queued again
+    (counted in ``skipped_unchanged_items``), so repeated flushes of unchanged
+    traces cost no requests (#2604). This transport does not
     detect reconnects; exhausted attempts stop the current drain and its timer.
 
     ``health_callback`` receives snapshots after transport state has been
@@ -882,6 +889,11 @@ class _SyncBatchTransport:
         # Item ids whose in-flight snapshot was superseded by a rejected update
         # (#2601): a failed send must not retain them for another attempt.
         self._superseded_inflight_ids: set[str] = set()
+        # Digests of the in-flight batch's snapshots, and of the last snapshot
+        # delivered per item (LRU, bounded by max_queue_size). Forgetting a
+        # delivered digest only costs a redundant resend, never a lost update.
+        self._inflight_digests: dict[str, bytes] = {}
+        self._delivered_digests: OrderedDict[str, bytes] = OrderedDict()
         self._oldest_inflight_started_at: float | None = None
         self._active_send_completion: threading.Event | None = None
         self._stats: dict[str, int] = {
@@ -893,6 +905,7 @@ class _SyncBatchTransport:
             "pending_items": 0,
             "background_flushes": 0,
             "retry_attempts": 0,
+            "skipped_unchanged_items": 0,
         }
         self._dropped_by_reason: dict[str, int] = {}
         self._health_dispatcher_thread: threading.Thread | None = None
@@ -986,6 +999,13 @@ class _SyncBatchTransport:
                     f"transport closed; dropped payload for item '{item_id}'",
                     item_id=item_id,
                 )
+            elif (
+                item_id not in self._buffer
+                and self._delivered_digests.get(item_id) == buffered_payload.digest
+            ):
+                # Already delivered exactly this snapshot and nothing newer is
+                # queued: re-sending it would only repeat the same write.
+                self._stats["skipped_unchanged_items"] += 1
             elif (
                 item_id not in self._buffer and len(self._buffer) >= self.max_queue_size
             ):
@@ -1247,6 +1267,7 @@ class _SyncBatchTransport:
                         ):
                             break
                         self._buffer.popitem(last=False)
+                        self._inflight_digests[item_id] = buffered.digest
                         batch_items.append((item_id, buffered.payload))
                         batch_body_bytes = projected_body_bytes
                         batch_observations = projected_observations
@@ -1372,6 +1393,7 @@ class _SyncBatchTransport:
             if self._inflight_items == 0:
                 self._oldest_inflight_started_at = None
                 self._superseded_inflight_ids.clear()
+                self._inflight_digests.clear()
             self._stats["pending_items"] = len(self._buffer) + self._inflight_items
             if completion is not None and self._active_send_completion is completion:
                 self._active_send_completion = None
@@ -1414,16 +1436,17 @@ class _SyncBatchTransport:
         # instead of a state-blind one -- see
         # `ObservabilityClient._submit_trace_snapshot`.
         redacted_payload = _redact_trace_payload(payload, state=state)
-        copied_payload = copy.deepcopy(redacted_payload)
-        return _BufferedPayload(
-            payload=copied_payload,
-            payload_bytes=self._payload_json_size(copied_payload),
-            observation_count=_count_payload_observations(copied_payload),
-        )
+        return self._buffered_payload(copy.deepcopy(redacted_payload))
 
     @staticmethod
-    def _payload_json_size(payload: dict[str, Any]) -> int:
-        return len(json.dumps(payload).encode("utf-8"))
+    def _buffered_payload(payload: dict[str, Any]) -> _BufferedPayload:
+        encoded = json.dumps(payload).encode("utf-8")
+        return _BufferedPayload(
+            payload=payload,
+            payload_bytes=len(encoded),
+            observation_count=_count_payload_observations(payload),
+            digest=hashlib.blake2b(encoded, digest_size=16).digest(),
+        )
 
     @staticmethod
     def _batch_payload_size_from_body(body_bytes: int) -> int:
@@ -1443,6 +1466,14 @@ class _SyncBatchTransport:
             with self._lock:
                 self._stats["successful_batches"] += 1
                 self._stats["sent_items"] += len(payloads)
+                for item_id, _ in batch_items:
+                    digest = self._inflight_digests.pop(item_id, None)
+                    if digest is None:
+                        continue
+                    self._delivered_digests[item_id] = digest
+                    self._delivered_digests.move_to_end(item_id)
+                while len(self._delivered_digests) > self.max_queue_size:
+                    self._delivered_digests.popitem(last=False)
             return True, events
 
         with self._lock:
@@ -1450,14 +1481,7 @@ class _SyncBatchTransport:
             # The sender receives already prepared snapshots. Retain those exact
             # payloads; do not re-redact them using mutable live trace state.
             retained = OrderedDict(
-                (
-                    item_id,
-                    _BufferedPayload(
-                        payload,
-                        self._payload_json_size(payload),
-                        _count_payload_observations(payload),
-                    ),
-                )
+                (item_id, self._buffered_payload(payload))
                 for item_id, payload in batch_items
                 if item_id not in self._buffer
                 and item_id not in self._superseded_inflight_ids
