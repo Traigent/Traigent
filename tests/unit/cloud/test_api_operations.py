@@ -360,6 +360,55 @@ class TestSanitizeErrorMessage:
     def test_ordinary_text_not_over_redacted(self, msg):
         assert self.ops.sanitize_error_message(msg) == msg
 
+    @pytest.mark.parametrize(
+        ("msg", "leaked"),
+        [
+            ('password="a\\"b-tail" x', "b-tail"),
+            ("connect password='unterminated-secret", "unterminated-secret"),
+            ("mail pw=abc12345 x", "abc12345"),
+            ("Cookie: sid=abc123; other=zzz999", "zzz999"),
+            ("Set-Cookie: sid=abc123", "abc123"),
+            ("url https://user:s3cretpass@host/x", "s3cretpass"),
+            ("x-api-key: abc123token", "abc123token"),
+            ("Proxy-Authorization: Basic Zm9vYmFy", "Zm9vYmFy"),
+            ("key AKIAABCDEFGHIJKLMNOP leaked", "AKIAABCDEFGHIJKLMNOP"),
+        ],
+    )
+    def test_more_secret_shapes_redacted(self, msg, leaked):
+        assert leaked not in self.ops.sanitize_error_message(msg)
+
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            "HTTP 500 code 123456789 failed",
+            "trace id 4111111111111111 failed",
+            "user a@b.com not found",
+            "max_tokens=100 exceeded",
+        ],
+    )
+    def test_error_codes_and_ids_survive(self, msg):
+        """Credential scrubbing must not eat numeric codes, ids or emails."""
+        assert self.ops.sanitize_error_message(msg) == msg
+
+    def test_windows_path_keeps_text_after_username(self):
+        result = self.ops.sanitize_error_message(
+            r"C:\Users\alice: not found code E1234"
+        )
+        assert "alice" not in result
+        assert result == "[PATH]: not found code E1234"
+
+    @pytest.mark.parametrize(
+        "text",
+        ["a." * 50_000, "a" * 100_000, "password " * 20_000, "Bearer " * 20_000],
+    )
+    def test_pathological_input_is_fast(self, text):
+        """No catastrophic backtracking: bounded input, linear patterns."""
+        import time
+
+        start = time.perf_counter()
+        self.ops.sanitize_error_message(text)
+        assert time.perf_counter() - start < 1.0
+
     def test_long_message_truncated(self):
         """Test long messages are truncated."""
         msg = "x" * 2000

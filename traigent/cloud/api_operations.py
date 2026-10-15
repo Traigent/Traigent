@@ -49,7 +49,7 @@ from traigent.core.session_types import (
     SessionCreationHTTPError,
     safe_http_error_summary,
 )
-from traigent.security.redaction import redact_sensitive_text
+from traigent.security.redaction import redact_embedded_credentials
 from traigent.utils.artifact_fingerprints import (
     artifact_fingerprints_to_wire,
     fingerprint_meta_to_wire,
@@ -299,14 +299,24 @@ def _typed_configuration_space(space: Any) -> Any:
     return normalized
 
 
-_SECRET_KEY = (
-    r"(?:[\w.-]*?(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key))"
+# Upper bound on the text the scrubbers ever see. Error text is truncated to
+# 1000 chars on output anyway; bounding the input keeps every pattern below
+# cheap on hostile or runaway messages.
+_MAX_SCRUB_INPUT_CHARS = 4096
+
+_SECRET_WORDS = (
+    r"(?:password|passwd|passphrase|pwd|pw|secret|token|credentials?|"
+    r"api[_-]?key|access[_-]?key|private[_-]?key)"
 )
-# key=value / key: value (optionally quoted key and/or value). A bare "token"
-# or "password" in prose has no "=" or ":" and is left alone.
+# Quoted values may contain escaped quotes and may be unterminated (the text
+# can be cut mid-value); both forms are consumed to the end.
+_QUOTED_VALUE = r"\"(?:\\.|[^\"\\])*(?:\"|$)|'(?:\\.|[^'\\])*(?:'|$)"
+# Key (optionally prefixed, e.g. ``db_password``) followed by ``=`` or ``:``.
+# The lookbehind makes a match start only at the beginning of a name, so the
+# greedy prefix is not retried from every offset (no quadratic backtracking).
 _SECRET_KV_RE = re.compile(
-    rf"(?P<key>\b{_SECRET_KEY}[\"']?\s*[=:]\s*)"
-    r"(?:\"[^\"]*\"|'[^']*'|[^\s,;&\"'}]+)",
+    rf"(?P<key>(?<![\w.-])[\w.-]*{_SECRET_WORDS}[\"']?\s*[=:]\s*)"
+    rf"(?:{_QUOTED_VALUE}|[^\s,;&\"'}}]+)",
     re.IGNORECASE,
 )
 _AUTH_HEADER_RE = re.compile(
@@ -314,20 +324,38 @@ _AUTH_HEADER_RE = re.compile(
     r"[^\s,;\"'}]+",
     re.IGNORECASE,
 )
+_COOKIE_HEADER_RE = re.compile(
+    r"(?P<key>\b(?:Set-)?Cookie\s*:\s*)[^\r\n]+", re.IGNORECASE
+)
 _BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{4,}", re.IGNORECASE)
+_URL_USERINFO_RE = re.compile(r"(?P<pre>://[^/\s:@]+:)[^@\s/]+(?=@)")
+# Windows forbids these characters in a file name; a user name may hold up to
+# two spaces ("John Smith") when a path separator follows.
+_WIN_NAME = r"[^\s\\/\"':*?<>|]+"
 _WINDOWS_USER_PATH_RE = re.compile(
-    r"\b[A-Za-z]:[\\/]+Users[\\/]+[^\\/\"'\n]+(?:[\\/]+[^\s\"']*)?",
+    r"\b[A-Za-z]:[\\/]+Users[\\/]+"
+    rf"(?:{_WIN_NAME}(?: {_WIN_NAME}){{0,2}}(?=[\\/])|{_WIN_NAME})"
+    r"(?:[\\/]+[^\s\"']*)?",
     re.IGNORECASE,
 )
 
 
 def _scrub_error_text(text: str) -> str:
-    """Mask credentials and user-identifying paths in error text."""
+    """Mask credentials and user-identifying paths in error text.
+
+    Default-deny for credential-shaped key/value pairs, ``Authorization`` /
+    ``Bearer`` / ``Cookie`` values and URL userinfo; credential shapes from the
+    shared redaction helper (AWS, GitHub, JWT, PEM, ...) are masked too. PII
+    heuristics (SSN/card/email) are deliberately not applied: they would eat
+    numeric error codes and ids.
+    """
+    text = text[:_MAX_SCRUB_INPUT_CHARS]
     text = _AUTH_HEADER_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
+    text = _COOKIE_HEADER_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
     text = _BEARER_RE.sub("Bearer [REDACTED]", text)
     text = _SECRET_KV_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
-    # Vendor-shaped credentials (AWS/GitHub/JWT/PEM/...) via the shared helper.
-    text = redact_sensitive_text(text)
+    text = _URL_USERINFO_RE.sub(lambda m: f"{m.group('pre')}[REDACTED]", text)
+    text = redact_embedded_credentials(text)
     text = _WINDOWS_USER_PATH_RE.sub("[PATH]", text)
     text = re.sub(r"/home/[\w/.-]+", "[PATH]", text)
     return re.sub(r"/Users/[\w/.-]+", "[PATH]", text)
