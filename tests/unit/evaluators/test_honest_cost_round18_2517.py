@@ -84,7 +84,9 @@ def test_flagged_trial_counts_as_unmeasured_and_charges_floor(
 ) -> None:
     for key in _COST_ENV:
         monkeypatch.delenv(key, raising=False)
-    enforcer = CostEnforcer(CostEnforcerConfig(limit=10.0))
+    # limit_explicit=False: the inherited-default-cap case, the only one that
+    # reaches unknown-cost mode (a named limit fails closed, see round 19).
+    enforcer = CostEnforcer(CostEnforcerConfig(limit=10.0, limit_explicit=False))
     permit = enforcer.acquire_permit()
     with caplog.at_level(logging.WARNING):
         enforcer.track_cost(

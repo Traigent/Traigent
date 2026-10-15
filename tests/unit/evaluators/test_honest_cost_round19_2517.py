@@ -46,7 +46,7 @@ def _unknown_mode_enforcer(
 ) -> CostEnforcer:
     for key in _COST_ENV:
         monkeypatch.delenv(key, raising=False)
-    enforcer = CostEnforcer(CostEnforcerConfig(limit=limit))
+    enforcer = CostEnforcer(CostEnforcerConfig(limit=limit, limit_explicit=False))
     permit = enforcer.acquire_permit()
     enforcer.track_cost(cost=None, permit=permit)  # enters unknown-cost mode
     return enforcer
@@ -58,7 +58,7 @@ def test_unwaived_unknown_cost_run_stops_when_known_spend_reaches_limit(
     """probe_limit_e2e shape: $1 limit, $0.50 floors, no max_trials."""
     for key in _COST_ENV:
         monkeypatch.delenv(key, raising=False)
-    enforcer = CostEnforcer(CostEnforcerConfig(limit=1.0))
+    enforcer = CostEnforcer(CostEnforcerConfig(limit=1.0, limit_explicit=False))
     ran = 0
     for _ in range(10):
         permit = enforcer.acquire_permit()
