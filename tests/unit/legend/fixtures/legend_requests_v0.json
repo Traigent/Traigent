@@ -1,0 +1,602 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/legend/v0/legend_requests_v0.json",
+  "title": "Legend Client Requests V0",
+  "description": "Client request bodies for declare, query, record-capture and record-restore. Client fields only. Closed schema (additionalProperties false everywhere, closed enums, no free text): any new field or enum value ships as a new schema_version published alongside this one; consumers dispatch on schema_version. Normative text: docs/identity/pillar-legend-v0.md. Every string pattern ends with the portable end anchor (?![\\s\\S]) rather than $.",
+  "version": "0.1.0",
+  "definitions": {
+    "DeclareRequestV0": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "idempotency_key",
+        "request_digest",
+        "entity_ref",
+        "kind",
+        "fingerprint_scheme",
+        "key_id",
+        "fingerprint",
+        "initial_parent_version_ref",
+        "provenance",
+        "identity_source"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./pillar_legend_v0.json#/definitions/SchemaVersion"
+        },
+        "idempotency_key": {
+          "$ref": "./pillar_legend_v0.json#/definitions/IdempotencyKey"
+        },
+        "request_digest": {
+          "$ref": "./pillar_legend_v0.json#/definitions/RequestDigest"
+        },
+        "entity_ref": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/EntityRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "$ref": "./pillar_legend_v0.json#/definitions/EntityKind"
+        },
+        "fingerprint_scheme": {
+          "$ref": "./pillar_legend_v0.json#/definitions/FingerprintScheme"
+        },
+        "key_id": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/KeyId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fingerprint": {
+          "$ref": "./pillar_legend_v0.json#/definitions/Fingerprint"
+        },
+        "initial_parent_version_ref": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/VersionRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "previous_version_ref": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/VersionRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "type": "string",
+          "enum": [
+            "explicit",
+            "implicit_run"
+          ]
+        },
+        "identity_source": {
+          "$ref": "./pillar_legend_v0.json#/definitions/IdentitySource"
+        },
+        "change_reason": {
+          "$ref": "./pillar_legend_v0.json#/definitions/ChangeReason"
+        }
+      },
+      "description": "Client fields of a declaration only; the server issues version_ref, event_ref, actor_ref, origin, evidence_source and recorded_at. initial_parent_version_ref is honoured only on the version's FIRST declaration (later declarations send null; a different non-null value is refused with invalid_request). previous_version_ref is optional and independent of it. A Backend-keyed fingerprint (ssp1) is declared client_declared with the Backend-minted id.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "agent"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "agent_build_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "configuration"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "applied_config_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evaluation_dataset"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "dataset_multiset_root_v1",
+                  "dataset_content_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evaluator"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "evaluator_version_digest_v1",
+                  "judge_config_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "search_space"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "search_space_ssp1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "agent_build_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "applied_config_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "dataset_content_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "dataset_multiset_root_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "$ref": "./pillar_legend_v0.json#/definitions/KeyId"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/MultisetRoot"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "evaluator_version_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "judge_config_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "search_space_ssp1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "$ref": "./pillar_legend_v0.json#/definitions/KeyId"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/SearchSpaceId"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "QueryRequestV0": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "entity_ref",
+        "kind",
+        "page_size",
+        "page_cursor"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./pillar_legend_v0.json#/definitions/SchemaVersion"
+        },
+        "entity_ref": {
+          "$ref": "./pillar_legend_v0.json#/definitions/EntityRef"
+        },
+        "kind": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/EntityKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "page_size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "page_cursor": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 39,
+              "pattern": "^cursor_[0-9a-f]{32}(?![\\s\\S])"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "description": "Client query. No instruction_ref: that exists only on the Director path."
+    },
+    "RecordCaptureRequestV0": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "idempotency_key",
+        "request_digest",
+        "version_ref",
+        "recovery_manifest_fingerprint",
+        "coverage",
+        "recovery_state",
+        "conformance_passed",
+        "exporter_version"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./pillar_legend_v0.json#/definitions/SchemaVersion"
+        },
+        "idempotency_key": {
+          "$ref": "./pillar_legend_v0.json#/definitions/IdempotencyKey"
+        },
+        "request_digest": {
+          "$ref": "./pillar_legend_v0.json#/definitions/RequestDigest"
+        },
+        "version_ref": {
+          "$ref": "./pillar_legend_v0.json#/definitions/VersionRef"
+        },
+        "recovery_manifest_fingerprint": {
+          "$ref": "./pillar_legend_v0.json#/definitions/ManifestFingerprint"
+        },
+        "coverage": {
+          "$ref": "./pillar_legend_v0.json#/definitions/Coverage"
+        },
+        "recovery_state": {
+          "type": "string",
+          "enum": [
+            "stored_unverified",
+            "round_trip_verified"
+          ]
+        },
+        "conformance_passed": {
+          "type": "boolean"
+        },
+        "exporter_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?![\\s\\S])",
+          "maxLength": 32
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "recovery_state": {
+                "const": "round_trip_verified"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "conformance_passed": {
+                "const": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "RecordRestoreRequestV0": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "idempotency_key",
+        "request_digest",
+        "version_ref",
+        "kind",
+        "recovery_manifest_fingerprint",
+        "outcome",
+        "coverage",
+        "isolated_destination",
+        "representation_digests_match",
+        "pillar_fingerprint_match"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./pillar_legend_v0.json#/definitions/SchemaVersion"
+        },
+        "idempotency_key": {
+          "$ref": "./pillar_legend_v0.json#/definitions/IdempotencyKey"
+        },
+        "request_digest": {
+          "$ref": "./pillar_legend_v0.json#/definitions/RequestDigest"
+        },
+        "version_ref": {
+          "$ref": "./pillar_legend_v0.json#/definitions/VersionRef"
+        },
+        "kind": {
+          "$ref": "./pillar_legend_v0.json#/definitions/EntityKind"
+        },
+        "recovery_manifest_fingerprint": {
+          "$ref": "./pillar_legend_v0.json#/definitions/ManifestFingerprint"
+        },
+        "outcome": {
+          "$ref": "./pillar_legend_v0.json#/definitions/RestoreOutcome"
+        },
+        "coverage": {
+          "$ref": "./pillar_legend_v0.json#/definitions/Coverage"
+        },
+        "isolated_destination": {
+          "type": "boolean",
+          "const": true
+        },
+        "representation_digests_match": {
+          "type": "boolean"
+        },
+        "pillar_fingerprint_match": {
+          "type": "boolean"
+        }
+      },
+      "description": "Client-side restore report. A Backend-keyed pillar (search_space) can never be reported exact here; only the server's own recompute can raise it.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "exact"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                }
+              },
+              "representation_digests_match": {
+                "const": true
+              },
+              "pillar_fingerprint_match": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "search_space"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "partial",
+                  "substituted",
+                  "failed"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/definitions/DeclareRequestV0"
+    },
+    {
+      "$ref": "#/definitions/QueryRequestV0"
+    },
+    {
+      "$ref": "#/definitions/RecordCaptureRequestV0"
+    },
+    {
+      "$ref": "#/definitions/RecordRestoreRequestV0"
+    }
+  ]
+}

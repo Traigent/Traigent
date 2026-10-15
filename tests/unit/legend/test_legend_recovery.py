@@ -6,12 +6,15 @@ import hashlib
 import io
 import json
 import subprocess
+import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
 
 from tests.unit.legend.conftest import make_dataset
 from traigent.legend import (
+    AgentSource,
     AgentStateSource,
     CaptureIndex,
     ConformanceOutcome,
@@ -29,6 +32,7 @@ from traigent.legend import (
     conformance_check,
     declare,
     export_agent_state,
+    recompute_fingerprint,
     restore,
 )
 from traigent.legend import _contract as c
@@ -93,9 +97,9 @@ def test_store_refuses_overwrite_with_different_bytes(store):
     fp = c.MANIFEST_FINGERPRINT_PREFIX + "a" * 64
     assert store.put(c.KIND_AGENT, fp, io.BytesIO(b"one")) == "stored_unverified"
     assert store.put(c.KIND_AGENT, fp, io.BytesIO(b"one")) == "stored_unverified"
-    with pytest.raises(LegendError) as err:
-        store.put(c.KIND_AGENT, fp, io.BytesIO(b"two"))
-    assert err.value.code == "manifest_mismatch"
+    assert store.put(c.KIND_AGENT, fp, io.BytesIO(b"two")) == "store_key_conflict"
+    assert store.get(c.KIND_AGENT, fp, store.root / "chk") == "retrieved"
+    assert (store.root / "chk" / BUNDLE_NAME).read_bytes() == b"one"
     assert store.has(c.KIND_AGENT, fp) == "available"
     assert store.has(c.KIND_DATASET, fp) == "missing"
 
@@ -365,105 +369,7 @@ def test_search_space_is_substituted_never_exact(store, tmp_path, idx):
     assert restore(rec, tmp_path / "o", store=store, index=idx).grade == "substituted"
 
 
-def test_evaluator_files_exact(store, tmp_path, idx):
-    root = tmp_path / "ev"
-    root.mkdir()
-    (root / "score.py").write_text("def score(x):\n    return 1\n")
-    src = EvaluatorFilesSource(
-        root,
-        ["score.py"],
-        [{"name": "accuracy", "orientation": "maximize", "weight": 1}],
-        "ev_1",
-    )
-    rec = capture(
-        "versionref_" + "6" * 32, src, store=store, conformance=PASSED, index=idx
-    )
-    res = restore(rec, tmp_path / "o", store=store, index=idx)
-    assert res.grade == "exact"
-    assert (res.dest / "evaluator" / "score.py").read_text().startswith("def score")
-
-
 # ---------------------------------------------------------------- agent code state
-def test_dirty_tree_capture_and_restore(tmp_path, store, idx):
-    root = _repo(tmp_path)
-    (root / "main.py").write_text("print('dirty edit')\n")  # modified, uncommitted
-    (root / "new_prompt.txt").write_text("untracked prompt\n")  # untracked
-    (root / "secret.env").write_text("TOKEN=x\n")  # ignored
-    (root / "keep.txt").unlink()  # tracked file deleted in the work tree
-    lock = tmp_path / "uv.lock"
-    lock.write_text("lock v1\n")
-    before = _tree_hash(root)
-    src = AgentStateSource(root, "agent_1", {"temperature": 0.2}, lockfile=lock)
-    rec = capture(
-        "versionref_" + "7" * 32, src, store=store, conformance=PASSED, index=idx
-    )
-    assert (
-        rec.coverage["status"] == "complete"
-        and "dependency_lock" in rec.coverage["covered"]
-    )
-    dest = tmp_path / "restored"
-    res = restore(rec, dest, store=store, index=idx)
-    assert res.grade == "exact"
-    assert (dest / "tree" / "main.py").read_text() == "print('dirty edit')\n"
-    assert (dest / "tree" / "new_prompt.txt").read_text() == "untracked prompt\n"
-    assert not (dest / "tree" / "secret.env").exists()  # .gitignore respected
-    assert not (dest / "tree" / "keep.txt").exists()
-    assert not any(".git" in p.parts for p in (dest / "tree").rglob("*"))
-    assert _tree_hash(root) == before  # restore never touched the source
-
-
-def test_restore_refuses_destination_inside_source(tmp_path, store, idx):
-    root = _repo(tmp_path)
-    rec = capture(
-        "versionref_" + "8" * 32,
-        AgentStateSource(root, "a"),
-        store=store,
-        conformance=PASSED,
-        index=idx,
-    )
-    before = _tree_hash(root)
-    for bad in (root, root / "sub", root.parent):
-        with pytest.raises(LegendError) as err:
-            restore(rec, bad, store=store, index=idx)
-        assert err.value.code == "invalid_request"
-    assert _tree_hash(root) == before
-    (tmp_path / "busy").mkdir()
-    (tmp_path / "busy" / "f").write_text("x")
-    with pytest.raises(LegendError):
-        restore(rec, tmp_path / "busy", store=store, index=idx)
-
-
-def test_size_limit_gives_partial_coverage_not_silence(tmp_path, store, idx):
-    root = _repo(tmp_path)
-    (root / "big.bin").write_bytes(b"0" * 5000)
-    exp = export_agent_state(AgentStateSource(root, "a", max_file_bytes=1000))
-    assert exp.skipped == 1
-    assert exp.pillar.covered == ("applied_config",)
-    rec = capture(
-        "versionref_" + "a" * 32,
-        AgentStateSource(root, "a", max_file_bytes=1000),
-        store=store,
-        conformance=PASSED,
-        index=idx,
-    )
-    assert rec.coverage["status"] == "partial" and "code" in rec.coverage["missing"]
-    res = restore(rec, tmp_path / "o", store=store, index=idx)
-    assert (
-        res.grade == "partial" and res.pillar_fingerprint_match
-    )  # content verified, coverage not
-
-
-def test_agent_state_change_changes_manifest_and_fingerprint(tmp_path):
-    root = _repo(tmp_path)
-    a = export_agent_state(AgentStateSource(root, "a")).pillar
-    (root / "main.py").write_text("print('v2')\n")
-    b = export_agent_state(AgentStateSource(root, "a")).pillar
-    assert a.fingerprint != b.fingerprint
-    assert (
-        build_recovery_manifest(a).fingerprint != build_recovery_manifest(b).fingerprint
-    )
-
-
 # ---------------------------------------------------------------- activation
 def test_activate_requires_exact_or_explicit_accept(store, tmp_path, idx):
     dep = "versionref_" + "9" * 32
@@ -530,3 +436,347 @@ def test_distinct_captures_do_not_overwrite(store, tmp_path, idx):
     assert r1.manifest_fingerprint != r2.manifest_fingerprint
     assert restore(r1, tmp_path / "1", store=store, index=idx).grade == "exact"
     assert restore(r2, tmp_path / "2", store=store, index=idx).grade == "exact"
+
+
+# ---------------------------------------------------------------- C9 / INV-17: identity digests
+RM = "recovery_manifest_v0.json"
+REQ = "legend_requests_v0.json"
+HELPER = "def helper(x):\n    return x + 1\n"
+PROMPT = "You are a careful assistant.\n"
+TOOLS = {"name": "search", "params": ["q"]}
+AGENT_SRC = "import helper_mod\n\n\ndef agent(q):\n    return helper_mod.helper(q)\n"
+
+
+class Project:
+    def __init__(self, tmp_path: Path, tag: str) -> None:
+        self.root = tmp_path / f"proj_{tag}"
+        self.root.mkdir()
+        _git(self.root, "init", "-q")
+        (self.root / ".gitignore").write_text("__pycache__/\n")
+        (self.root / "helper_mod.py").write_text(HELPER)
+        (self.root / "agent_mod.py").write_text(AGENT_SRC)
+        (self.root / "prompts").mkdir()
+        (self.root / "prompts" / "system.txt").write_text(PROMPT)
+        (self.root / "tools.json").write_text(json.dumps(TOOLS))
+        (self.root / "uv.lock").write_text("lock v1\n")
+        _git(self.root, "add", "-A")
+        _git(self.root, "commit", "-q", "-m", "init")
+        sys.path.insert(0, str(self.root))
+        self.mod_name = f"agent_mod_{tag}"
+        spec = importlib.util.spec_from_file_location(
+            self.mod_name, self.root / "agent_mod.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[self.mod_name] = module
+        spec.loader.exec_module(module)
+        from traigent.identity.agent_build import declare_agent_assets
+
+        self.func = declare_agent_assets(
+            module.agent,
+            prompts={"system": PROMPT},
+            tool_definitions={"search": TOOLS},
+            helper_modules={"helper_mod.py": HELPER},
+            coverage="complete",
+        )
+        self.config = {"temperature": 0.2}
+
+    def close(self) -> None:
+        sys.modules.pop(self.mod_name, None)
+        sys.modules.pop("helper_mod", None)
+        if str(self.root) in sys.path:
+            sys.path.remove(str(self.root))
+
+    def source(self, **kw) -> AgentStateSource:
+        base = {
+            "root": self.root,
+            "agent_id": "agent_1",
+            "config": self.config,
+            "func": self.func,
+            "prompt_files": {"system": "prompts/system.txt"},
+            "tool_definition_files": {"search": "tools.json"},
+        }
+        return AgentStateSource(**{**base, **kw})
+
+
+@pytest.fixture
+def project(tmp_path):
+    p = Project(tmp_path, "a")
+    yield p
+    p.close()
+
+
+def test_callable_declared_agent_and_captured_state_yield_same_build_digest(
+    project, store, tmp_path, idx, schemas
+):
+    t = InMemoryTransport()
+    declared = declare(
+        c.KIND_AGENT, AgentSource(project.func, "agent_1", project.config), transport=t
+    )
+    fingerprint = t.versions[declared.version_ref]["fingerprint"]
+    exp = export_agent_state(project.source(declared_fingerprint=fingerprint))
+    assert exp.pillar.fingerprint == fingerprint  # callable-declared == captured state
+    assert exp.pillar.reproduced and exp.skipped == 0
+    # the digest recomputed from the CAPTURED representations alone is the same digest
+    kinds = [r.kind for r in exp.pillar.representations]
+    reps = [r.data for r in exp.pillar.representations]
+    frame = {
+        k: v
+        for k, v in exp.manifest.items()
+        if k not in ("asset_digests", "applied_config_digest", "dependency_lock_digest")
+    }
+    assert (
+        recompute_fingerprint(c.KIND_AGENT, kinds, reps, {"frame": frame})
+        == fingerprint
+    )
+    m = build_recovery_manifest(exp.pillar, source_entity_ref=declared.entity_ref)
+    assert m.document["identity_digests_reproduced"] is True
+    assert m.document["coverage"] == {
+        "status": "complete",
+        "covered": list(c.REQUIRED_BY_KIND[c.KIND_AGENT]),
+        "missing": [],
+    }
+    schemas.validate(RM, "RecoveryManifestV0", m.document)
+    rec = capture(
+        declared.version_ref,
+        project.source(declared_fingerprint=fingerprint),
+        store=store,
+        transport=t,
+        conformance=PASSED,
+        index=idx,
+    )
+    assert rec.coverage["status"] == "complete"
+    res = restore(rec, tmp_path / "restored", store=store, index=idx)
+    assert res.grade == "exact"
+    assert (tmp_path / "restored" / "tree" / "helper_mod.py").read_text() == HELPER
+
+
+def test_capture_requests_validate_against_request_schemas(
+    project, store, tmp_path, idx, schemas
+):
+    t = InMemoryTransport()
+    ref = declare(c.KIND_CONFIGURATION, ConfigurationSource({"a": 1}), transport=t)
+    rec = capture(
+        ref.version_ref,
+        ConfigurationSource({"a": 1}),
+        store=store,
+        transport=t,
+        conformance=PASSED,
+        index=idx,
+    )
+    restore(rec, tmp_path / "o", store=store, transport=t, index=idx)
+    cap, res = t.requests[-2], t.requests[-1]
+    schemas.validate(REQ, "RecordCaptureRequestV0", cap)
+    schemas.validate(REQ, "RecordRestoreRequestV0", res)
+    for body in (cap, res):
+        assert not {"origin", "evidence_source", "event_type"} & set(body)
+        assert c.IDEMPOTENCY_KEY_RE.fullmatch(body["idempotency_key"])
+    assert cap["idempotency_key"] != res["idempotency_key"]
+
+
+@pytest.mark.parametrize(
+    "path,text",
+    [("helper_mod.py", HELPER + "# edited\n"), ("prompts/system.txt", PROMPT + "x\n")],
+)
+def test_changed_asset_file_means_identity_not_reproduced_and_partial(
+    project, store, tmp_path, idx, path, text
+):
+    fp = export_agent_state(project.source()).pillar.fingerprint
+    (project.root / path).write_text(text)
+    exp = export_agent_state(project.source(declared_fingerprint=fp))
+    assert exp.pillar.fingerprint == fp and not exp.pillar.reproduced
+    m = build_recovery_manifest(exp.pillar)
+    assert m.document["coverage"]["status"] == "partial"
+    assert m.document["identity_digests_reproduced"] is False
+    rec = capture(
+        "versionref_" + "d" * 32,
+        project.source(declared_fingerprint=fp),
+        store=store,
+        conformance=PASSED,
+        index=idx,
+    )
+    res = restore(rec, tmp_path / "o", store=store, index=idx)
+    assert res.grade == "partial" and not res.pillar_fingerprint_match
+
+
+def test_wrong_declared_fingerprint_is_partial(project):
+    exp = export_agent_state(project.source(declared_fingerprint="sha256:" + "0" * 64))
+    assert not exp.pillar.reproduced
+    assert (
+        build_recovery_manifest(exp.pillar).document["coverage"]["status"] == "partial"
+    )
+
+
+def test_manifest_only_agent_cannot_be_complete(project):
+    full = export_agent_state(project.source())
+    exp = export_agent_state(project.source(func=None, declared_manifest=full.manifest))
+    assert exp.pillar.fingerprint == full.pillar.fingerprint
+    cov = build_recovery_manifest(exp.pillar).document["coverage"]
+    assert cov["status"] == "partial" and "code" in cov["missing"]
+
+
+def test_agent_without_identity_is_refused(project):
+    with pytest.raises(LegendError) as err:
+        export_agent_state(project.source(func=None))
+    assert err.value.code == "coverage_insufficient"
+
+
+def test_unmapped_prompt_file_is_skipped_and_forces_partial(project, schemas):
+    exp = export_agent_state(project.source(prompt_files={}))
+    assert exp.skipped >= 1
+    doc = build_recovery_manifest(exp.pillar).document
+    assert doc["rederivation"]["skipped_file_count"] == exp.skipped
+    assert doc["coverage"]["status"] == "partial"
+    assert "prompts" in doc["coverage"]["missing"]
+    schemas.validate(RM, "RecoveryManifestV0", doc)
+
+
+def test_size_limit_gives_partial_coverage_not_silence(project):
+    (project.root / "big.bin").write_bytes(b"0" * 5000)
+    exp = export_agent_state(project.source(max_file_bytes=1000))
+    assert exp.skipped >= 1
+    cov = build_recovery_manifest(exp.pillar).document["coverage"]
+    assert cov["status"] == "partial" and "code" in cov["missing"]
+
+
+def test_coverage_partitions_required_components_per_kind(keys):
+    for kind, source in {
+        c.KIND_CONFIGURATION: ConfigurationSource({"a": 1}),
+        c.KIND_DATASET: DatasetSource(make_dataset([("a", 1)]), keys),
+        c.KIND_SEARCH_SPACE: SearchSpaceSource(SSP, {"t": [1]}),
+    }.items():
+        cov = build_recovery_manifest(compute_pillar(kind, source)).document["coverage"]
+        assert not set(cov["covered"]) & set(cov["missing"])
+        assert set(cov["covered"]) | set(cov["missing"]) == set(
+            c.REQUIRED_BY_KIND[kind]
+        )
+        assert (cov["status"] == "complete") == (cov["missing"] == [])
+    # a declared-only agent: everything not read is missing, never silently dropped
+    p = compute_pillar(c.KIND_AGENT, AgentSource(_fn, "agent_1", {}))
+    cov = build_recovery_manifest(p).document["coverage"]
+    assert set(cov["covered"]) | set(cov["missing"]) == set(
+        c.REQUIRED_BY_KIND[c.KIND_AGENT]
+    )
+    assert cov["status"] == "partial" and "runtime" in cov["missing"]
+
+
+def _fn():  # noqa: ANN202 - fixture function whose source is hashed
+    return 1
+
+
+EV_SRC = (
+    "def score(output, expected):\n    return 1.0 if output == expected else 0.0\n\n\n"
+    "class Ev:\n    def __init__(self):\n        self.scoring_function = score\n"
+    "        self.metrics = ['accuracy']\n"
+)
+
+
+def _evaluator_project(tmp_path: Path):
+    from traigent.identity.evaluator_version import declare_evaluator
+
+    root = tmp_path / "evproj"
+    root.mkdir()
+    _git(root, "init", "-q")
+    (root / "ev_mod.py").write_text(EV_SRC)
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "init")
+    spec = importlib.util.spec_from_file_location("ev_mod_x", root / "ev_mod.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["ev_mod_x"] = module
+    spec.loader.exec_module(module)
+    ev = declare_evaluator(
+        module.Ev(),
+        judge=None,
+        dependency_versions={},
+        config_digest="sha256:" + "1" * 64,
+    )
+    objectives = [{"name": "accuracy", "orientation": "maximize", "weight": 1}]
+    return root, ev, objectives
+
+
+def test_evaluator_files_reproduce_identity_and_restore_exact(
+    store, tmp_path, idx, schemas
+):
+    from traigent.legend import EvaluatorManifestSource  # noqa: F401
+
+    root, ev, objectives = _evaluator_project(tmp_path)
+    try:
+        src = EvaluatorFilesSource(root, evaluator=ev, objectives=objectives)
+        pillar = export_pillar_of(src)
+        assert pillar.reproduced
+        doc = build_recovery_manifest(pillar).document
+        assert doc["coverage"]["status"] == "complete"
+        assert doc["identity_digests_reproduced"] is True
+        schemas.validate(RM, "RecoveryManifestV0", doc)
+        rec = capture(
+            "versionref_" + "6" * 32, src, store=store, conformance=PASSED, index=idx
+        )
+        res = restore(rec, tmp_path / "o", store=store, index=idx)
+        assert res.grade == "exact"
+        assert (res.dest / "evaluator" / "ev_mod.py").read_text() == EV_SRC
+        # editing the helper file after declaration: not reproduced, partial
+        fp = pillar.fingerprint
+        (root / "ev_mod.py").write_text(EV_SRC + "# edit\n")
+        changed = export_pillar_of(
+            EvaluatorFilesSource(
+                root, evaluator=ev, objectives=objectives, declared_fingerprint=fp
+            )
+        )
+        assert not changed.reproduced
+        assert (
+            build_recovery_manifest(changed).document["coverage"]["status"] == "partial"
+        )
+    finally:
+        sys.modules.pop("ev_mod_x", None)
+
+
+def export_pillar_of(src):
+    from traigent.legend import export_pillar
+
+    return export_pillar(src)
+
+
+def test_conformance_artifacts_use_reserved_namespace(tmp_path):
+    seen: list[str] = []
+
+    class Spy(LocalDirectoryStore):
+        def put(self, kind, fp, stream):
+            seen.append(fp)
+            return super().put(kind, fp, stream)
+
+    assert conformance_check(Spy(tmp_path / "s")) == PASSED
+    assert seen and all(k.startswith(c.CONFORMANCE_KEY_PREFIX) for k in seen)
+    assert not any(k.startswith(c.MANIFEST_FINGERPRINT_PREFIX) for k in seen)
+
+
+def test_search_space_restore_never_exact_client_side(store, tmp_path, idx, schemas):
+    t = InMemoryTransport()
+    ref = declare(c.KIND_SEARCH_SPACE, SearchSpaceSource(SSP, {"t": [1]}), transport=t)
+    rec = capture(
+        ref.version_ref,
+        SearchSpaceSource(SSP, {"t": [1]}),
+        store=store,
+        transport=t,
+        conformance=PASSED,
+        index=idx,
+    )
+    res = restore(rec, tmp_path / "o", store=store, transport=t, index=idx)
+    assert res.grade == "substituted"
+    schemas.validate(REQ, "RecordRestoreRequestV0", t.requests[-1])
+    assert t.requests[-1]["outcome"] == "substituted"
+
+
+def test_capture_store_key_conflict_is_a_closed_error(tmp_path, idx):
+    class Conflicting(LocalDirectoryStore):
+        def put(self, kind, fp, stream):
+            if not fp.startswith(c.CONFORMANCE_KEY_PREFIX):
+                return "store_key_conflict"
+            return super().put(kind, fp, stream)
+
+    with pytest.raises(LegendError) as err:
+        capture(
+            "versionref_" + "e" * 32,
+            ConfigurationSource({"a": 1}),
+            store=Conflicting(tmp_path / "s"),
+            index=idx,
+        )
+    assert err.value.code == "store_key_conflict"

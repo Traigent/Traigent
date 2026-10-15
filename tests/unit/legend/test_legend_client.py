@@ -24,9 +24,11 @@ from traigent.legend import (
     query,
 )
 from traigent.legend import _contract as c
+from traigent.legend import payloads
 
 PL = "pillar_legend_v0.json"
 RM = "recovery_manifest_v0.json"
+REQ = "legend_requests_v0.json"
 CANARY = "CANARY_name_Alice_has_diabetes"
 SSP = "ssp1:k" + "cd" * 8 + ":" + "ab" * 32
 DIGEST = "sha256:" + "11" * 32
@@ -79,6 +81,7 @@ def test_declaration_validates_against_contract(kind, keys, schemas):
     version = t.versions[result.version_ref]
     schemas.validate(PL, "LegendVersionV0", version)
     schemas.validate(PL, "DeclaredEventV0", t.events[0])
+    schemas.validate(REQ, "DeclareRequestV0", payload)
     props = schemas.docs[PL]["definitions"]["DeclaredEventV0"]["properties"]
     # every client-supplied event field is a contract field (closed shape)
     event_fields = set(payload) - {
@@ -104,14 +107,10 @@ def test_query_payload_matches_contract(keys, schemas):
     r = declare(c.KIND_CONFIGURATION, ConfigurationSource({"a": 1}), transport=t)
     page = query(r.entity_ref, page_size=10, transport=t)
     assert page.version_refs == (r.version_ref,)
-    instruction = {
-        **t.requests[-1],
-        "instruction_ref": "instructionref_" + "0" * 32,
-        "operation": "query_versions",
-    }
-    schemas.validate(
-        "director_legend_ops_v0.json", "QueryVersionsInstruction", instruction
-    )
+    schemas.validate(REQ, "QueryRequestV0", t.requests[-1])
+    assert t.requests[-1]["kind"] is None and "instruction_ref" not in t.requests[-1]
+    narrowed = query(r.entity_ref, kind=c.KIND_AGENT, transport=t)
+    assert narrowed.version_refs == ()
 
 
 def test_no_names_or_paths_in_any_payload(keys, tmp_path):
@@ -147,7 +146,12 @@ def test_redeclare_is_idempotent(keys):
     assert first.version_ref == again.version_ref == again2.version_ref
     assert len(t.versions) == 1
     assert t.requests[1]["fingerprint"] == t.requests[0]["fingerprint"]
-    assert t.requests[1]["idempotency_key"] == t.requests[2]["idempotency_key"]
+    # a fresh key per LOGICAL request; the digest (which excludes the key) is stable
+    keys_ = {r["idempotency_key"] for r in t.requests}
+    assert len(keys_) == 3
+    assert t.requests[1]["request_digest"] == t.requests[2]["request_digest"]
+    for r in t.requests:
+        assert c.IDEMPOTENCY_KEY_RE.fullmatch(r["idempotency_key"])
     assert not again.created and first.created
 
 
@@ -204,10 +208,82 @@ def test_bad_refs_and_reasons_refused():
 def test_conflicting_idempotency_payload_refused():
     t = InMemoryTransport()
     declare(c.KIND_CONFIGURATION, ConfigurationSource({"a": 1}), transport=t)
-    forged = {**t.requests[0], "change_reason": "code"}
+    first = t.requests[0]
+    forged = payloads.seal(
+        {
+            k: v
+            for k, v in {**first, "change_reason": "code"}.items()
+            if k not in ("idempotency_key", "request_digest")
+        },
+        first["idempotency_key"],
+    )
     with pytest.raises(LegendError) as err:
         t.declare(forged)
     assert err.value.code == "conflicting_idempotency_payload"
+    # a body whose digest does not match is malformed, not a conflict
+    with pytest.raises(LegendError) as bad:
+        t.declare({**first, "change_reason": "code"})
+    assert bad.value.code == "invalid_request"
+
+
+class _Flaky(InMemoryTransport):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail = 2
+
+    def declare(self, payload):
+        if self.fail:
+            self.fail -= 1
+            self.requests.append(dict(payload))
+            raise LegendError("store_unavailable")
+        return super().declare(payload)
+
+
+def test_retries_reuse_key_and_digest_and_append_once():
+    t = _Flaky()
+    declare(c.KIND_CONFIGURATION, ConfigurationSource({"a": 1}), transport=t)
+    assert len(t.requests) == 3 and len(t.events) == 1
+    assert len({r["idempotency_key"] for r in t.requests}) == 1
+    assert len({r["request_digest"] for r in t.requests}) == 1
+
+
+def test_request_digest_excludes_key_and_digest():
+    body = {"schema_version": "0", "x": 1}
+    a, b = payloads.seal(body), payloads.seal(body)
+    assert a["idempotency_key"] != b["idempotency_key"]
+    assert a["request_digest"] == b["request_digest"] == payloads.request_digest(body)
+
+
+def test_initial_parent_only_on_first_declaration_and_independent_of_previous():
+    t = InMemoryTransport()
+    v1 = declare(c.KIND_CONFIGURATION, ConfigurationSource({"t": 1}), transport=t)
+    v2 = declare(
+        c.KIND_CONFIGURATION,
+        ConfigurationSource({"t": 2}),
+        entity=v1.entity_ref,
+        initial_parent=v1.version_ref,
+        transport=t,
+    )
+    assert t.versions[v2.version_ref]["initial_parent_version_ref"] == v1.version_ref
+    assert "previous_version_ref" not in t.requests[-1]
+    # revert v2 -> v1 with previous set, initial parent null: legal, parent unchanged
+    declare(
+        c.KIND_CONFIGURATION,
+        ConfigurationSource({"t": 2}),
+        entity=v1.entity_ref,
+        previous_version=v1.version_ref,
+        transport=t,
+    )
+    assert t.versions[v2.version_ref]["initial_parent_version_ref"] == v1.version_ref
+    with pytest.raises(LegendError) as err:  # a different non-null parent is refused
+        declare(
+            c.KIND_CONFIGURATION,
+            ConfigurationSource({"t": 2}),
+            entity=v1.entity_ref,
+            initial_parent=v2.version_ref,
+            transport=t,
+        )
+    assert err.value.code == "invalid_request"
 
 
 def test_dataset_without_grant_refuses_to_mint():

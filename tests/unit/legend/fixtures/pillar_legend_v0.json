@@ -79,8 +79,8 @@
       "type": "string",
       "format": "date-time",
       "maxLength": 32,
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$",
-      "description": "RFC 3339 UTC timestamp (trailing Z, no offsets)."
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:([0-5][0-9]|60)(\\.[0-9]{1,6})?Z(?![\\s\\S])",
+      "description": "RFC 3339 UTC timestamp (trailing Z, no offsets, ASCII digits, strict end anchor). The pattern bounds each field; calendar validity (for example 30 February) still requires consumers to parse the value."
     },
     "EntityRef": {
       "type": "string",
@@ -120,8 +120,18 @@
     },
     "IdempotencyKey": {
       "type": "string",
-      "pattern": "^[0-9a-f]{64}(?![\\s\\S])",
-      "description": "Digest of the canonical event payload (sha256 hex); never a name or free text."
+      "pattern": "^idk_[0-9a-f]{32}(?![\\s\\S])",
+      "description": "Fresh opaque request key (128 random bits), minted once per LOGICAL declaration/record and reused unchanged on every retry of that same request. Scope: (tenant, project, endpoint). Never derived from content, so repeated legitimate movements A->B, B->A, A->B each get their own key."
+    },
+    "RequestDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])",
+      "description": "sha256: + hex SHA-256(UTF8('traigent.legend.request.v0') || 0x00 || jcs_v1(request body)). The body EXCLUDES idempotency_key, request_digest, and every server-issued field (event_ref, actor_ref, recorded_at, origin, evidence_source, entity/version refs minted by the server). Same key + equal digest is a retry; same key + different digest is conflicting_idempotency_payload."
+    },
+    "ConformanceKey": {
+      "type": "string",
+      "pattern": "^rmfc0:sha256:[0-9a-f]{64}(?![\\s\\S])",
+      "description": "Reserved synthetic namespace for store-conformance self-test artifacts (the store has no delete, so they persist). Disjoint from ManifestFingerprint: no event, predicate or instruction may reference one."
     },
     "IdentitySource": {
       "type": "string",
@@ -202,6 +212,36 @@
         "retired"
       ]
     },
+    "AvailabilityState": {
+      "type": "string",
+      "enum": [
+        "unknown",
+        "available",
+        "missing",
+        "corrupted",
+        "retired"
+      ]
+    },
+    "SourceAuthority": {
+      "type": "string",
+      "enum": [
+        "agent_builds",
+        "evaluator_versions",
+        "dataset_versions",
+        "run_search_space_records",
+        "run_identity_bindings",
+        "none"
+      ]
+    },
+    "MatchResult": {
+      "type": "string",
+      "enum": [
+        "not_applicable",
+        "not_checked",
+        "match",
+        "mismatch"
+      ]
+    },
     "RestoreOutcome": {
       "type": "string",
       "enum": [
@@ -225,7 +265,8 @@
         "evaluator_code",
         "judge_config",
         "objectives",
-        "search_space_definition"
+        "search_space_definition",
+        "runtime"
       ]
     },
     "CoverageStatus": {
@@ -250,7 +291,7 @@
         "covered": {
           "type": "array",
           "uniqueItems": true,
-          "maxItems": 12,
+          "maxItems": 13,
           "items": {
             "$ref": "#/definitions/CoverageComponent"
           }
@@ -258,7 +299,7 @@
         "missing": {
           "type": "array",
           "uniqueItems": true,
-          "maxItems": 12,
+          "maxItems": 13,
           "items": {
             "$ref": "#/definitions/CoverageComponent"
           }
@@ -278,6 +319,9 @@
             "properties": {
               "missing": {
                 "maxItems": 0
+              },
+              "covered": {
+                "minItems": 1
               }
             }
           }
@@ -323,6 +367,8 @@
     "ClientStoreStatus": {
       "type": "string",
       "enum": [
+        "retrieved",
+        "store_key_conflict",
         "not_captured",
         "stored_unverified",
         "round_trip_verified",
@@ -337,6 +383,7 @@
     "LegendErrorCode": {
       "type": "string",
       "enum": [
+        "store_key_conflict",
         "invalid_request",
         "unknown_ref",
         "foreign_ref",
@@ -365,6 +412,7 @@
         "fingerprint",
         "initial_parent_version_ref",
         "identity_source",
+        "authority_linked",
         "declared_at"
       ],
       "properties": {
@@ -408,6 +456,9 @@
         },
         "identity_source": {
           "$ref": "#/definitions/IdentitySource"
+        },
+        "authority_linked": {
+          "type": "boolean"
         },
         "declared_at": {
           "$ref": "#/definitions/Timestamp"
@@ -690,6 +741,7 @@
         "schema_version",
         "entity_ref",
         "kind",
+        "source_authority",
         "created_at"
       ],
       "properties": {
@@ -701,6 +753,9 @@
         },
         "kind": {
           "$ref": "#/definitions/EntityKind"
+        },
+        "source_authority": {
+          "$ref": "#/definitions/SourceAuthority"
         },
         "created_at": {
           "$ref": "#/definitions/Timestamp"
@@ -720,10 +775,10 @@
         "evidence_source",
         "recorded_at",
         "idempotency_key",
+        "request_digest",
         "event_type",
         "provenance",
-        "identity_source",
-        "previous_version_ref"
+        "identity_source"
       ],
       "properties": {
         "schema_version": {
@@ -757,6 +812,9 @@
         "idempotency_key": {
           "$ref": "#/definitions/IdempotencyKey"
         },
+        "request_digest": {
+          "$ref": "#/definitions/RequestDigest"
+        },
         "event_type": {
           "type": "string",
           "const": "declared"
@@ -781,7 +839,44 @@
           "$ref": "#/definitions/ChangeReason"
         }
       },
-      "description": "A version was declared. Server-origin only for implicit_legacy backfill. Never witnessed."
+      "description": "A version was declared. Server-origin only for implicit_legacy backfill. Never witnessed.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "origin": {
+                "const": "server"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "provenance": {
+                "const": "implicit_legacy"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "provenance": {
+                "const": "implicit_legacy"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "identity_source": {
+                "const": "client_declared"
+              },
+              "origin": {
+                "const": "server"
+              }
+            }
+          }
+        }
+      ]
     },
     "CapturedEventV0": {
       "type": "object",
@@ -795,6 +890,7 @@
         "evidence_source",
         "recorded_at",
         "idempotency_key",
+        "request_digest",
         "event_type",
         "recovery_manifest_fingerprint",
         "coverage",
@@ -830,6 +926,9 @@
         },
         "idempotency_key": {
           "$ref": "#/definitions/IdempotencyKey"
+        },
+        "request_digest": {
+          "$ref": "#/definitions/RequestDigest"
         },
         "event_type": {
           "type": "string",
@@ -889,13 +988,16 @@
         "evidence_source",
         "recorded_at",
         "idempotency_key",
+        "request_digest",
         "event_type",
+        "kind",
         "recovery_manifest_fingerprint",
         "outcome",
         "coverage",
         "isolated_destination",
         "representation_digests_match",
-        "pillar_fingerprint_match"
+        "pillar_fingerprint_match",
+        "backend_match_result"
       ],
       "properties": {
         "schema_version": {
@@ -912,12 +1014,16 @@
         },
         "origin": {
           "type": "string",
-          "const": "client"
+          "enum": [
+            "client",
+            "server"
+          ]
         },
         "evidence_source": {
           "type": "string",
           "enum": [
-            "client_sdk_reported"
+            "client_sdk_reported",
+            "server_recorded"
           ]
         },
         "recorded_at": {
@@ -926,9 +1032,15 @@
         "idempotency_key": {
           "$ref": "#/definitions/IdempotencyKey"
         },
+        "request_digest": {
+          "$ref": "#/definitions/RequestDigest"
+        },
         "event_type": {
           "type": "string",
           "const": "restore_verified"
+        },
+        "kind": {
+          "$ref": "#/definitions/EntityKind"
         },
         "recovery_manifest_fingerprint": {
           "$ref": "#/definitions/ManifestFingerprint"
@@ -948,9 +1060,12 @@
         },
         "pillar_fingerprint_match": {
           "type": "boolean"
+        },
+        "backend_match_result": {
+          "$ref": "#/definitions/MatchResult"
         }
       },
-      "description": "Client-side restore into an isolated destination was re-hashed. exact requires complete coverage and both equalities.",
+      "description": "Restore into an isolated destination re-hashed. Client origin: client_sdk_reported, no Backend result. Server origin: the Backend's own server-side recompute of the same manifest (backend_match_result match|mismatch), the only way a Backend-keyed pillar (search_space) reaches exact.",
       "allOf": [
         {
           "if": {
@@ -974,6 +1089,102 @@
               },
               "pillar_fingerprint_match": {
                 "const": true
+              },
+              "backend_match_result": {
+                "enum": [
+                  "not_applicable",
+                  "match"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "origin": {
+                "const": "client"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence_source": {
+                "const": "client_sdk_reported"
+              },
+              "backend_match_result": {
+                "enum": [
+                  "not_applicable",
+                  "not_checked"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "origin": {
+                "const": "server"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence_source": {
+                "const": "server_recorded"
+              },
+              "backend_match_result": {
+                "enum": [
+                  "match",
+                  "mismatch"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "search_space"
+              },
+              "outcome": {
+                "const": "exact"
+              }
+            },
+            "required": [
+              "kind",
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "origin": {
+                "const": "server"
+              },
+              "backend_match_result": {
+                "const": "match"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "backend_match_result": {
+                "const": "mismatch"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "partial",
+                  "substituted",
+                  "failed"
+                ]
               }
             }
           }
@@ -992,10 +1203,12 @@
         "evidence_source",
         "recorded_at",
         "idempotency_key",
+        "request_digest",
         "event_type",
         "run_ref",
         "trial_ref",
         "binding_role",
+        "binding_slot",
         "run_tuple_digest"
       ],
       "properties": {
@@ -1027,6 +1240,9 @@
         "idempotency_key": {
           "$ref": "#/definitions/IdempotencyKey"
         },
+        "request_digest": {
+          "$ref": "#/definitions/RequestDigest"
+        },
         "event_type": {
           "type": "string",
           "const": "bound_to_run"
@@ -1047,11 +1263,55 @@
         "binding_role": {
           "$ref": "#/definitions/BindingRole"
         },
+        "binding_slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1023
+        },
         "run_tuple_digest": {
           "$ref": "#/definitions/Sha256Digest"
         }
       },
-      "description": "Server-recorded binding of a version to a run input or trial candidate. Several versions per run are allowed."
+      "description": "Server-recorded binding of a version to a run input or trial candidate. Several versions per run are allowed.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "binding_role": {
+                "const": "trial_candidate"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "trial_ref": {
+                "$ref": "#/definitions/TrialRef"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "binding_role": {
+                "enum": [
+                  "base_agent",
+                  "dataset",
+                  "search_set",
+                  "search_space"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "trial_ref": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
     },
     "EvaluatedEventV0": {
       "type": "object",
@@ -1065,6 +1325,7 @@
         "evidence_source",
         "recorded_at",
         "idempotency_key",
+        "request_digest",
         "event_type",
         "run_ref",
         "run_tuple_digest",
@@ -1103,6 +1364,9 @@
         },
         "idempotency_key": {
           "$ref": "#/definitions/IdempotencyKey"
+        },
+        "request_digest": {
+          "$ref": "#/definitions/RequestDigest"
         },
         "event_type": {
           "type": "string",
@@ -1169,6 +1433,7 @@
         "evidence_source",
         "recorded_at",
         "idempotency_key",
+        "request_digest",
         "event_type",
         "recovery_manifest_fingerprint",
         "status"
@@ -1201,6 +1466,9 @@
         },
         "idempotency_key": {
           "$ref": "#/definitions/IdempotencyKey"
+        },
+        "request_digest": {
+          "$ref": "#/definitions/RequestDigest"
         },
         "event_type": {
           "type": "string",
@@ -1254,14 +1522,7 @@
           "$ref": "#/definitions/RecoveryState"
         },
         "current_availability": {
-          "oneOf": [
-            {
-              "$ref": "#/definitions/AvailabilityStatus"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "$ref": "#/definitions/AvailabilityState"
         },
         "evaluation_state": {
           "$ref": "#/definitions/EvaluationState"

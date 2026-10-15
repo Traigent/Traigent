@@ -6,6 +6,7 @@ from typing import Any
 
 from traigent.legend import payloads
 from traigent.legend.pillars import compute_pillar
+from traigent.legend.transport import with_retries
 from traigent.legend.transport import (
     DeclareResult,
     InMemoryTransport,
@@ -37,7 +38,9 @@ def declare(
     *,
     entity: str | None = None,
     previous_version: str | None = None,
+    initial_parent: str | None = None,
     change_reason: str | None = None,
+    idempotency_key: str | None = None,
     transport: LegendTransport | None = None,
 ) -> DeclareResult:
     """Declare a pillar version.
@@ -46,6 +49,12 @@ def declare(
     local alias map to translate). Passing ``previous_version`` records where
     the declarer moved from; returning to an older fingerprint (a revert) is
     just a declare of that fingerprint with ``previous_version`` set.
+    ``initial_parent`` is the version's lineage edge and only counts on its FIRST
+    declaration; it is independent of ``previous_version``.
+
+    A fresh ``idempotency_key`` is minted per call and reused unchanged on every
+    transient-failure retry; pass ``idempotency_key`` to retry a logical request
+    yourself.
     """
     pillar = compute_pillar(kind, source)
     payload = payloads.build_declaration_payload(
@@ -53,8 +62,11 @@ def declare(
         entity_ref=entity,
         previous_version_ref=previous_version,
         change_reason=change_reason,
+        initial_parent_version_ref=initial_parent,
+        idempotency_key=idempotency_key,
     )
-    return _resolve(transport).declare(payload)
+    target = _resolve(transport)
+    return with_retries(lambda: target.declare(payload))
 
 
 def query(
@@ -62,8 +74,9 @@ def query(
     *,
     page_size: int = 50,
     page_cursor: str | None = None,
+    kind: str | None = None,
     transport: LegendTransport | None = None,
 ) -> QueryResult:
-    """List version refs of an entity (paginated)."""
-    payload = payloads.build_query_payload(entity, page_size, page_cursor)
+    """List version refs of an entity (paginated), optionally narrowed to one kind."""
+    payload = payloads.build_query_payload(entity, page_size, page_cursor, kind)
     return _resolve(transport).query(payload)

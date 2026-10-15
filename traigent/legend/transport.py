@@ -7,10 +7,31 @@ import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 
 from traigent.legend import _contract as c
 from traigent.legend.errors import LegendError
+from traigent.legend.payloads import request_digest
+
+T = TypeVar("T")
+# Transient codes worth a retry; the request (and so its idempotency key) is unchanged.
+RETRYABLE_CODES = frozenset({"store_unavailable", "internal_error"})
+MAX_ATTEMPTS = 3
+
+
+def with_retries(send: Callable[[], T], attempts: int = MAX_ATTEMPTS) -> T:
+    """Run ``send`` (a closure over ONE sealed payload), retrying transient failures.
+
+    The payload -- and therefore ``idempotency_key`` and ``request_digest`` -- is built
+    once outside this call, so every attempt carries the same key and digest.
+    """
+    for attempt in range(attempts):
+        try:
+            return send()
+        except LegendError as error:
+            if error.code not in RETRYABLE_CODES or attempt == attempts - 1:
+                raise
+    raise LegendError("internal_error")  # pragma: no cover - loop always returns/raises
 
 
 @dataclass(frozen=True)
@@ -68,16 +89,38 @@ class InMemoryTransport:
         self._by_idem: dict[str, tuple[dict[str, Any], DeclareResult]] = {}
         self._entity_seq = 0
 
+    @staticmethod
+    def _check_sealed(body: Mapping[str, Any]) -> None:
+        if body.get("request_digest") != request_digest(dict(body)):
+            raise LegendError("invalid_request")
+        if not c.IDEMPOTENCY_KEY_RE.fullmatch(str(body.get("idempotency_key"))):
+            raise LegendError("invalid_request")
+
     def declare(self, payload: Mapping[str, Any]) -> DeclareResult:
         body = dict(payload)
         self.requests.append(body)
+        self._check_sealed(body)
         idem = body["idempotency_key"]
         if idem in self._by_idem:
             first, result = self._by_idem[idem]
-            if first != body:
+            if first["request_digest"] != body["request_digest"]:
                 raise LegendError("conflicting_idempotency_payload")
             return result
         entity_ref = body["entity_ref"]
+        known_entity = entity_ref is not None and entity_ref in self.entities
+        if entity_ref is not None and not known_entity:
+            raise LegendError("unknown_ref")
+        parent = body["initial_parent_version_ref"]
+        prev = body.get("previous_version_ref")
+        for ref in (parent, prev):
+            if ref is None:
+                continue
+            if ref not in self.versions:
+                raise LegendError("unknown_ref")
+            if known_entity and self.versions[ref]["entity_ref"] != entity_ref:
+                raise LegendError("unknown_ref")
+        if entity_ref is None and (parent is not None or prev is not None):
+            raise LegendError("invalid_request")  # a new entity has no earlier versions
         if entity_ref is None:
             self._entity_seq += 1
             entity_ref = _ref("entityref", "entity", str(self._entity_seq), idem)
@@ -87,16 +130,6 @@ class InMemoryTransport:
                 "kind": body["kind"],
                 "created_at": _now(),
             }
-        elif entity_ref not in self.entities:
-            raise LegendError("unknown_ref")
-        parent = body["initial_parent_version_ref"]
-        prev = body["previous_version_ref"]
-        for ref in (parent, prev):
-            if ref is not None and (
-                ref not in self.versions
-                or self.versions[ref]["entity_ref"] != entity_ref
-            ):
-                raise LegendError("unknown_ref")
         identity = (
             entity_ref,
             body["fingerprint_scheme"],
@@ -106,6 +139,8 @@ class InMemoryTransport:
         created = identity not in self._by_identity
         if created:
             version_ref = _ref("versionref", *map(str, identity))
+            if parent == version_ref:
+                raise LegendError("invalid_request")
             self._by_identity[identity] = version_ref
             self.versions[version_ref] = {
                 "schema_version": c.SCHEMA_VERSION,
@@ -117,8 +152,14 @@ class InMemoryTransport:
                 "fingerprint": body["fingerprint"],
                 "initial_parent_version_ref": parent,
                 "identity_source": body["identity_source"],
+                "authority_linked": False,
                 "declared_at": _now(),
             }
+        else:
+            stored = self.versions[self._by_identity[identity]]
+            # the initial parent is set on the FIRST declaration only and never rewritten
+            if parent is not None and parent != stored["initial_parent_version_ref"]:
+                raise LegendError("invalid_request")
         version_ref = self._by_identity[identity]
         event: dict[str, Any] = {
             "schema_version": c.SCHEMA_VERSION,
@@ -129,6 +170,7 @@ class InMemoryTransport:
             "evidence_source": "client_reported",
             "recorded_at": _now(),
             "idempotency_key": idem,
+            "request_digest": body["request_digest"],
             "event_type": "declared",
             "provenance": body["provenance"],
             "identity_source": body["identity_source"],
@@ -144,22 +186,29 @@ class InMemoryTransport:
     def _record(self, payload: Mapping[str, Any], event_type: str) -> str:
         body = dict(payload)
         self.requests.append(body)
-        if body.get("event_type") != event_type:
-            raise LegendError("invalid_request")
+        self._check_sealed(body)
         if body.get("version_ref") not in self.versions:
             raise LegendError("unknown_ref")
         idem = body["idempotency_key"]
         for event in self.events:
             if event["idempotency_key"] == idem:
-                if {k: event.get(k) for k in body} != body:
+                if event["request_digest"] != body["request_digest"]:
                     raise LegendError("conflicting_idempotency_payload")
                 return str(event["event_ref"])
+        # origin / evidence_source are assigned by the (trusted) route, never the body
         event = {
             **body,
+            "event_type": event_type,
+            "origin": "client",
+            "evidence_source": "client_sdk_reported",
             "event_ref": _ref("eventref", str(len(self.events)), idem),
             "actor_ref": _ref("actorref", "in-memory"),
             "recorded_at": _now(),
         }
+        if event_type == "restore_verified":
+            event["backend_match_result"] = (
+                "not_applicable"  # a client restore carries no Backend match
+            )
         self.events.append(event)
         return str(event["event_ref"])
 
@@ -174,7 +223,12 @@ class InMemoryTransport:
         entity_ref = payload["entity_ref"]
         if entity_ref not in self.entities:
             raise LegendError("unknown_ref")
-        refs = [r for r, v in self.versions.items() if v["entity_ref"] == entity_ref]
+        kind = payload.get("kind")
+        refs = [
+            r
+            for r, v in self.versions.items()
+            if v["entity_ref"] == entity_ref and kind in (None, v["kind"])
+        ]
         start = 0
         cursor = payload["page_cursor"]
         if cursor is not None:

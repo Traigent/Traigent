@@ -32,9 +32,9 @@ from traigent.legend.manifest import (
     build_recovery_manifest,
     manifest_fingerprint,
 )
-from traigent.legend.payloads import idempotency_key
+from traigent.legend.payloads import seal
 from traigent.legend.store import BUNDLE_NAME, ClientStore
-from traigent.legend.transport import CaptureTransport
+from traigent.legend.transport import CaptureTransport, with_retries
 
 ConformanceStatus = Literal[
     "passed", "conformance_failed", "unreachable", "permission_denied"
@@ -53,9 +53,9 @@ class ConformanceOutcome:
 
 
 def _synthetic_key() -> str:
+    """A conformance key in the reserved ``rmfc0:`` namespace, disjoint from manifest keys."""
     return (
-        c.MANIFEST_FINGERPRINT_PREFIX
-        + hashlib.sha256(secrets.token_bytes(32)).hexdigest()
+        c.CONFORMANCE_KEY_PREFIX + hashlib.sha256(secrets.token_bytes(32)).hexdigest()
     )
 
 
@@ -205,12 +205,12 @@ def _verify_bundle(
     return manifest, True, match, pillar_match, bundle
 
 
-def _post(transport: Any, method: str, payload: dict[str, Any]) -> str | None:
+def _post(transport: Any, method: str, body: dict[str, Any]) -> str | None:
     fn: Callable[[dict[str, Any]], str] | None = getattr(transport, method, None)
     if transport is None or fn is None:
         return None
-    payload["idempotency_key"] = idempotency_key(payload)
-    return fn(payload)
+    sealed = seal(body)  # fresh idk_ key, minted once; every retry reuses this payload
+    return with_retries(lambda: fn(sealed))
 
 
 def capture(
@@ -223,6 +223,7 @@ def capture(
     conformance: ConformanceOutcome | None = None,
     keys: ContentIdentityKeys | None = None,
     index: CaptureIndex | None = None,
+    source_entity_ref: str | None = None,
 ) -> CaptureRecord:
     """Export real content, store it under its manifest fingerprint and verify the round trip.
 
@@ -235,7 +236,9 @@ def capture(
             "invalid_request", "version_ref must be an opaque version ref"
         )
     pillar, inputs = export(source)
-    manifest = build_recovery_manifest(pillar, dependencies=dependencies)
+    manifest = build_recovery_manifest(
+        pillar, dependencies=dependencies, source_entity_ref=source_entity_ref
+    )
     outcome = conformance if conformance is not None else conformance_check(store)
     if not outcome.passed:
         raise LegendError(
@@ -247,6 +250,8 @@ def capture(
         [rep.data for rep in pillar.representations],
     )
     status = store.put(pillar.kind, fp, io.BytesIO(data))
+    if status == "store_key_conflict":
+        raise LegendError("store_key_conflict", "store key already holds other bytes")
     if status != "stored_unverified":
         raise LegendError("store_unavailable", "store did not accept the capture")
     state = c.RECOVERY_STORED_UNVERIFIED
@@ -271,9 +276,6 @@ def capture(
         {
             "schema_version": c.SCHEMA_VERSION,
             "version_ref": version_ref,
-            "origin": "client",
-            "evidence_source": c.EVIDENCE_CLIENT_SDK,
-            "event_type": "captured",
             "recovery_manifest_fingerprint": fp,
             "coverage": coverage,
             "recovery_state": state,
@@ -328,7 +330,7 @@ def _materialize(
     for i, (rkind, data) in enumerate(zip(kinds, reps, strict=False)):
         if rkind == c.REPR_SOURCE_BUNDLE or rkind == c.REPR_EVALUATOR_BUNDLE:
             base = dest / ("tree" if rkind == c.REPR_SOURCE_BUNDLE else "evaluator")
-            for path, executable, body in unpack_tree(data):
+            for path, executable, body in unpack_tree(data) if data else []:
                 target = base / path
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(body)
@@ -443,6 +445,10 @@ def restore(
             grade = "partial"
         elif not pillar_ok:
             grade = "substituted"
+        elif rkind in c.BACKEND_KEYED_KINDS:
+            # INV-16: a Backend-keyed fingerprint cannot be re-verified client-side;
+            # only a server-origin match report may say ``exact``.
+            grade = "substituted"
         else:
             grade = "exact"
         out_dest: Path | None = None
@@ -458,9 +464,7 @@ def restore(
                 {
                     "schema_version": c.SCHEMA_VERSION,
                     "version_ref": version_ref,
-                    "origin": "client",
-                    "evidence_source": c.EVIDENCE_CLIENT_SDK,
-                    "event_type": "restore_verified",
+                    "kind": rkind,
                     "recovery_manifest_fingerprint": fp,
                     "outcome": grade,
                     "coverage": coverage,

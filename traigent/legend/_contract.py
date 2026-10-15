@@ -55,6 +55,9 @@ CHANGE_REASONS: Final = frozenset(
 ORDERING_PRESERVED: Final = "preserved"
 ORDERING_NOT_APPLICABLE: Final = "not_applicable"
 REPR_SOURCE_BUNDLE: Final = "source_bundle"
+REPR_PROMPT_FILES: Final = "prompt_files"
+REPR_HELPER_MODULES: Final = "helper_modules"
+REPR_TOOL_DEFINITIONS: Final = "tool_definitions"
 REPR_CONFIG_DOCUMENT: Final = "config_document"
 REPR_DEPENDENCY_LOCK: Final = "dependency_lock"
 REPR_DATASET_ROWS: Final = "dataset_rows"
@@ -74,26 +77,39 @@ COVERAGE_COMPONENTS: Final = (
     "judge_config",
     "objectives",
     "search_space_definition",
+    "runtime",
 )
-COVERED_BY_KIND: Final = {
+# RequiredComponents(kind), fixed by the schema. ``covered`` and ``missing`` partition
+# exactly this set (disjoint, union = required); ``dependency_lock`` is optional extra
+# coverage and appears in neither list (it stays a representation).
+REQUIRED_BY_KIND: Final = {
     KIND_AGENT: (
         "code",
         "prompts",
         "helper_modules",
         "tool_definitions",
         "applied_config",
-        "dependency_lock",
+        "runtime",
     ),
     KIND_CONFIGURATION: ("applied_config",),
     KIND_DATASET: ("dataset_members", "dataset_order"),
-    KIND_EVALUATOR: ("evaluator_code", "judge_config", "objectives"),
+    KIND_EVALUATOR: ("evaluator_code", "judge_config", "objectives", "helper_modules"),
     KIND_SEARCH_SPACE: ("search_space_definition",),
+}
+# The component whose truth the identity-digest reproduction vouches for; it is demoted
+# to ``missing`` when an agent/evaluator capture did not reproduce the identity digests.
+IDENTITY_COMPONENT_BY_KIND: Final = {
+    KIND_AGENT: "code",
+    KIND_EVALUATOR: "evaluator_code",
 }
 
 EXPORTER_ID: Final = "traigent-sdk-legend"
 EXPORTER_VERSION: Final = "0.1.0"
 
 # Wire patterns (must match the schema; every pattern there ends in (?![\s\S])).
+IDEMPOTENCY_KEY_RE: Final = re.compile(r"idk_[0-9a-f]{32}")
+CONFORMANCE_KEY_PREFIX: Final = "rmfc0:sha256:"
+REQUEST_DOMAIN: Final = "traigent.legend.request.v0"
 VERSION_REF_RE: Final = re.compile(r"versionref_[0-9a-f]{32}")
 ENTITY_REF_RE: Final = re.compile(r"entityref_[0-9a-f]{32}")
 CURSOR_RE: Final = re.compile(r"cursor_[0-9a-f]{32}")
@@ -117,4 +133,5 @@ GRADE_EXACT: Final = "exact"
 GRADE_PARTIAL: Final = "partial"
 GRADE_SUBSTITUTED: Final = "substituted"
 GRADE_FAILED: Final = "failed"
+BACKEND_KEYED_KINDS: Final = frozenset({KIND_SEARCH_SPACE})
 EVIDENCE_CLIENT_SDK: Final = "client_sdk_reported"

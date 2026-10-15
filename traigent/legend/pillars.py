@@ -106,6 +106,11 @@ class Pillar:
     covered: tuple[str, ...] = field(default=())
     ordering: str = c.ORDERING_NOT_APPLICABLE
     dependencies: tuple[tuple[str, str], ...] = field(default=())
+    # INV-17: True only when an exporter recomputed the identity-construction digests
+    # from the files it captured and they equal the declared ones. Agent / evaluator
+    # coverage can be ``complete`` only when this holds.
+    reproduced: bool = False
+    skipped: int = 0
 
     def wire_identity(self) -> dict[str, Any]:
         return {
@@ -181,6 +186,7 @@ def _configuration(source: ConfigurationSource) -> Pillar:
         c.IDENTITY_SDK_FINGERPRINTED,
         (Representation(c.REPR_CONFIG_DOCUMENT, data),),
         ("applied_config",),
+        reproduced=True,
     )
 
 
@@ -211,6 +217,7 @@ def _dataset(source: DatasetSource) -> Pillar:
         (Representation(c.REPR_DATASET_ROWS, data),),
         ("dataset_members", "dataset_order"),
         c.ORDERING_PRESERVED,
+        reproduced=True,
     )
 
 

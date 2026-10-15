@@ -12,6 +12,7 @@
         "captured",
         "restorable_now",
         "restore_verified_client_reported",
+        "restore_verified_backend_matched",
         "bound_to_run",
         "evaluated_client_reported",
         "evaluated_traigent_witnessed"
@@ -50,7 +51,275 @@
         "fingerprint": {
           "$ref": "./pillar_legend_v0.json#/definitions/Fingerprint"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "agent"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "agent_build_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "configuration"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "applied_config_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evaluation_dataset"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "dataset_multiset_root_v1",
+                  "dataset_content_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evaluator"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "evaluator_version_digest_v1",
+                  "judge_config_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "search_space"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "search_space_ssp1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "agent_build_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "applied_config_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "dataset_content_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "dataset_multiset_root_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "$ref": "./pillar_legend_v0.json#/definitions/KeyId"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/MultisetRoot"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "evaluator_version_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "judge_config_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "search_space_ssp1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "$ref": "./pillar_legend_v0.json#/definitions/KeyId"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/SearchSpaceId"
+              }
+            }
+          }
+        }
+      ]
     },
     "ClaimPredicateV0": {
       "type": "object",
@@ -64,6 +333,8 @@
         "recovery_manifest_fingerprint",
         "coverage_status",
         "run_tuple_digest",
+        "evaluated_subset_root",
+        "evaluation_protocol",
         "as_of",
         "policy_version"
       ],
@@ -113,6 +384,26 @@
           "oneOf": [
             {
               "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evaluated_subset_root": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/MultisetRoot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evaluation_protocol": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/EvaluationProtocol"
             },
             {
               "type": "null"
@@ -221,6 +512,28 @@
           "if": {
             "properties": {
               "predicate_type": {
+                "const": "restore_verified_backend_matched"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence_source": {
+                "type": "string",
+                "enum": [
+                  "server_recorded"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
                 "const": "bound_to_run"
               }
             },
@@ -287,6 +600,88 @@
           "if": {
             "properties": {
               "predicate_type": {
+                "const": "restore_verified_client_reported"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage_status": {
+                "const": "complete"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "restore_verified_backend_matched"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage_status": {
+                "const": "complete"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "evaluated_client_reported"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evaluated_subset_root": {
+                "$ref": "./pillar_legend_v0.json#/definitions/MultisetRoot"
+              },
+              "evaluation_protocol": {
+                "$ref": "./pillar_legend_v0.json#/definitions/EvaluationProtocol"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "evaluated_traigent_witnessed"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evaluated_subset_root": {
+                "$ref": "./pillar_legend_v0.json#/definitions/MultisetRoot"
+              },
+              "evaluation_protocol": {
+                "$ref": "./pillar_legend_v0.json#/definitions/EvaluationProtocol"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
                 "const": "captured"
               }
             },
@@ -332,6 +727,28 @@
             "properties": {
               "predicate_type": {
                 "const": "restore_verified_client_reported"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "recovery_manifest_fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/ManifestFingerprint"
+              },
+              "coverage_status": {
+                "$ref": "./pillar_legend_v0.json#/definitions/CoverageStatus"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "restore_verified_backend_matched"
               }
             },
             "required": [

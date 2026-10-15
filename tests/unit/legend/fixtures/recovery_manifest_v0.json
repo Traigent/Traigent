@@ -65,6 +65,32 @@
       },
       "description": "Another declared version this capture needs to be restorable (by opaque ref, never by name)."
     },
+    "Rederivation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_entity_ref",
+        "skipped_file_count"
+      ],
+      "properties": {
+        "source_entity_ref": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/EntityRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skipped_file_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "description": "Closed re-derivation inputs: the opaque entity the capture was taken for, and how many files the exporter could not read. skipped_file_count > 0 forces partial coverage."
+    },
     "Ordering": {
       "type": "string",
       "enum": [
@@ -86,7 +112,9 @@
         "representations",
         "ordering",
         "dependencies",
-        "coverage"
+        "coverage",
+        "identity_digests_reproduced",
+        "rederivation"
       ],
       "properties": {
         "schema_version": {
@@ -155,10 +183,282 @@
         },
         "coverage": {
           "$ref": "./pillar_legend_v0.json#/definitions/Coverage"
+        },
+        "identity_digests_reproduced": {
+          "type": "boolean"
+        },
+        "rederivation": {
+          "$ref": "#/definitions/Rederivation"
         }
       },
       "description": "Client-side recovery manifest. It binds the pillar identity/key, exporter version, ordered representation digests, dependencies and coverage. Stays client-side/in the store; only its fingerprint, coverage and enums cross the bridge.",
       "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "agent"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "agent_build_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "configuration"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "applied_config_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evaluation_dataset"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "dataset_multiset_root_v1",
+                  "dataset_content_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evaluator"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "evaluator_version_digest_v1",
+                  "judge_config_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "search_space"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "search_space_ssp1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "agent_build_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "pillar_fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "applied_config_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "pillar_fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "dataset_content_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "pillar_fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "dataset_multiset_root_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "$ref": "./pillar_legend_v0.json#/definitions/KeyId"
+              },
+              "pillar_fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/MultisetRoot"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "evaluator_version_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "pillar_fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "judge_config_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "pillar_fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "search_space_ssp1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "$ref": "./pillar_legend_v0.json#/definitions/KeyId"
+              },
+              "pillar_fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/SearchSpaceId"
+              }
+            }
+          }
+        },
         {
           "if": {
             "properties": {
@@ -174,6 +474,341 @@
             "properties": {
               "ordering": {
                 "const": "preserved"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "agent"
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "covered": {
+                    "allOf": [
+                      {
+                        "contains": {
+                          "const": "code"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "prompts"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "helper_modules"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "tool_definitions"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "applied_config"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "runtime"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "configuration"
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "covered": {
+                    "allOf": [
+                      {
+                        "contains": {
+                          "const": "applied_config"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evaluation_dataset"
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "covered": {
+                    "allOf": [
+                      {
+                        "contains": {
+                          "const": "dataset_members"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "dataset_order"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evaluator"
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "covered": {
+                    "allOf": [
+                      {
+                        "contains": {
+                          "const": "evaluator_code"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "judge_config"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "objectives"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "helper_modules"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "search_space"
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "covered": {
+                    "allOf": [
+                      {
+                        "contains": {
+                          "const": "search_space_definition"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "agent"
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "identity_digests_reproduced": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evaluator"
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "identity_digests_reproduced": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "rederivation": {
+                "properties": {
+                  "skipped_file_count": {
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "skipped_file_count"
+                ]
+              }
+            },
+            "required": [
+              "rederivation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "partial"
+                  }
+                }
               }
             }
           }

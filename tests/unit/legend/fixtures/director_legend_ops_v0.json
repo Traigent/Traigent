@@ -91,6 +91,7 @@
           "oneOf": [
             {
               "type": "string",
+              "maxLength": 39,
               "pattern": "^cursor_[0-9a-f]{32}(?![\\s\\S])"
             },
             {
@@ -347,6 +348,7 @@
           "oneOf": [
             {
               "type": "string",
+              "maxLength": 39,
               "pattern": "^cursor_[0-9a-f]{32}(?![\\s\\S])"
             },
             {
@@ -493,6 +495,47 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "store_status": {
+                "const": "round_trip_verified"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "conformance_passed": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "succeeded"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "store_status": {
+                "enum": [
+                  "stored_unverified",
+                  "round_trip_verified"
+                ]
+              },
+              "recovery_manifest_fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/ManifestFingerprint"
+              },
+              "coverage": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Coverage"
+              }
+            }
+          }
         }
       ]
     },
@@ -507,7 +550,8 @@
         "error_code",
         "restore_outcome",
         "coverage",
-        "store_status"
+        "store_status",
+        "backend_match_result"
       ],
       "properties": {
         "schema_version": {
@@ -555,6 +599,9 @@
         },
         "store_status": {
           "$ref": "./pillar_legend_v0.json#/definitions/ClientStoreStatus"
+        },
+        "backend_match_result": {
+          "$ref": "./pillar_legend_v0.json#/definitions/MatchResult"
         }
       },
       "allOf": [
@@ -592,6 +639,33 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "restore_outcome": {
+                "const": "exact"
+              }
+            },
+            "required": [
+              "restore_outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            }
+          }
         }
       ]
     },
@@ -605,6 +679,7 @@
         "outcome",
         "error_code",
         "restore_outcome",
+        "coverage",
         "store_status",
         "activated"
       ],
@@ -636,6 +711,16 @@
           "oneOf": [
             {
               "$ref": "./pillar_legend_v0.json#/definitions/RestoreOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "coverage": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/Coverage"
             },
             {
               "type": "null"
@@ -682,6 +767,33 @@
             "properties": {
               "error_code": {
                 "$ref": "./pillar_legend_v0.json#/definitions/LegendErrorCode"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "restore_outcome": {
+                "const": "exact"
+              }
+            },
+            "required": [
+              "restore_outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
               }
             }
           }

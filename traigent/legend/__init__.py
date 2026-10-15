@@ -22,6 +22,7 @@ from traigent.legend.manifest import (
     build_recovery_manifest,
     manifest_fingerprint,
 )
+from traigent.legend.payloads import new_idempotency_key, request_digest
 from traigent.legend.pillars import (
     AgentManifestSource,
     AgentSource,
@@ -95,6 +96,8 @@ __all__ = [
     "compute_pillar",
     "declare",
     "manifest_fingerprint",
+    "new_idempotency_key",
     "query",
+    "request_digest",
     "set_default_transport",
 ]

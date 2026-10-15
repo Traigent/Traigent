@@ -18,7 +18,9 @@ from typing import BinaryIO, Final, Literal, Protocol, runtime_checkable
 from traigent.legend import _contract as c
 from traigent.legend.errors import LegendError
 
-PutStatus = Literal["stored_unverified", "unreachable", "permission_denied"]
+PutStatus = Literal[
+    "stored_unverified", "store_key_conflict", "unreachable", "permission_denied"
+]
 # ``retrieved`` is local only; the others are ClientStoreStatus values.
 GetStatus = Literal[
     "retrieved", "missing", "truncated", "corrupted", "unreachable", "permission_denied"
@@ -26,7 +28,15 @@ GetStatus = Literal[
 HasStatus = Literal["available", "missing", "unknown"]
 
 BUNDLE_NAME: Final = "bundle.rmf"
-_KEY_RE: Final = re.compile(re.escape(c.MANIFEST_FINGERPRINT_PREFIX) + r"[0-9a-f]{64}")
+# Manifest fingerprints (rmf0) and the reserved synthetic conformance keys (rmfc0) are
+# disjoint namespaces; each gets its own directory so they can never collide.
+_KEY_RE: Final = re.compile(
+    "(?:"
+    + re.escape(c.MANIFEST_FINGERPRINT_PREFIX)
+    + "|"
+    + re.escape(c.CONFORMANCE_KEY_PREFIX)
+    + r")[0-9a-f]{64}"
+)
 
 
 @runtime_checkable
@@ -59,7 +69,8 @@ class LocalDirectoryStore:
 
     def _paths(self, kind: str, fp: str) -> tuple[Path, Path]:
         check_key(kind, fp)
-        base = self.root / kind / fp[len(c.MANIFEST_FINGERPRINT_PREFIX) :]
+        namespace, _, digest = fp.rpartition(":sha256:")
+        base = self.root / kind / namespace / digest
         return base.with_suffix(".blob"), base.with_suffix(".meta")
 
     def put(self, kind: str, manifest_fingerprint: str, stream: BinaryIO) -> PutStatus:
@@ -70,9 +81,7 @@ class LocalDirectoryStore:
             digest = hashlib.sha256(data).hexdigest()
             if blob.exists():
                 if self._existing_digest(meta) != digest:
-                    raise LegendError(
-                        "manifest_mismatch", "key already holds other bytes"
-                    )
+                    return "store_key_conflict"
                 return "stored_unverified"
             fd, tmp = tempfile.mkstemp(dir=blob.parent, suffix=".tmp")
             with os.fdopen(fd, "wb") as handle:
@@ -82,9 +91,7 @@ class LocalDirectoryStore:
                 os.link(tmp, blob)  # fails if a concurrent put won the key
             except FileExistsError:
                 if self._existing_digest(meta) != digest:
-                    raise LegendError(
-                        "manifest_mismatch", "key already holds other bytes"
-                    ) from None
+                    return "store_key_conflict"
             finally:
                 os.unlink(tmp)
             return "stored_unverified"

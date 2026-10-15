@@ -25,19 +25,41 @@ def manifest_fingerprint(document: dict[str, Any]) -> str:
     return c.MANIFEST_FINGERPRINT_PREFIX + hashlib.sha256(framed).hexdigest()
 
 
+def coverage_for(pillar: Pillar) -> dict[str, Any]:
+    """Coverage per kind: ``covered`` and ``missing`` partition ``REQUIRED_BY_KIND[kind]``.
+
+    ``complete`` iff ``missing`` is empty. An agent/evaluator capture that did not
+    reproduce the identity digests (INV-17), or skipped files, cannot be complete: the
+    identity-bearing component moves to ``missing``.
+    """
+    required = c.REQUIRED_BY_KIND[pillar.kind]
+    covered = [x for x in required if x in pillar.covered]
+    identity = c.IDENTITY_COMPONENT_BY_KIND.get(pillar.kind)
+    if identity is not None and not (pillar.reproduced and pillar.skipped == 0):
+        covered = [x for x in covered if x != identity]
+    missing = [x for x in required if x not in covered]
+    return {
+        "status": "partial" if missing else "complete",
+        "covered": covered,
+        "missing": missing,
+    }
+
+
 def build_recovery_manifest(
     pillar: Pillar,
     *,
     dependencies: Sequence[tuple[str, str]] = (),
+    source_entity_ref: str | None = None,
 ) -> RecoveryManifest:
     """Build the manifest for ``pillar`` (``dependencies``: ``(version_ref, kind)`` pairs)."""
     if not pillar.representations:
         raise LegendError(
             "coverage_insufficient", "nothing was exported for this pillar"
         )
-    universe = c.COVERED_BY_KIND[pillar.kind]
-    covered = [x for x in universe if x in pillar.covered]
-    missing = [x for x in universe if x not in pillar.covered]
+    if source_entity_ref is not None and not c.ENTITY_REF_RE.fullmatch(
+        source_entity_ref
+    ):
+        raise LegendError("invalid_request", "entity must be an opaque entity ref")
     deps = []
     for ref, kind in dependencies:
         if not c.VERSION_REF_RE.fullmatch(ref) or kind not in c.ENTITY_KINDS:
@@ -65,10 +87,11 @@ def build_recovery_manifest(
         ],
         "ordering": pillar.ordering,
         "dependencies": deps,
-        "coverage": {
-            "status": "partial" if missing else "complete",
-            "covered": covered,
-            "missing": missing,
+        "coverage": coverage_for(pillar),
+        "identity_digests_reproduced": bool(pillar.reproduced and pillar.skipped == 0),
+        "rederivation": {
+            "source_entity_ref": source_entity_ref,
+            "skipped_file_count": pillar.skipped,
         },
     }
     # wire_identity() carries "fingerprint"; the manifest names it pillar_fingerprint.
