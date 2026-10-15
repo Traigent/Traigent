@@ -275,9 +275,9 @@ def build_outcome_matrix(result: OptimizationResult) -> dict[str, Any]:
     # example_id -> {trial_id: cell}
     rows: dict[str, dict[str, Any]] = {}
     order: list[str] = []
-    # trial_id -> number of cells that landed on an id already filled in that
-    # trial (one cell per id is kept, so these were merged).
-    merged_cells: dict[str, int] = {}
+    # column index -> number of cells that landed on an id already filled in
+    # that trial (one cell per id is kept, so these were merged).
+    merged_cells: dict[int, int] = {}
 
     for index, trial in enumerate(trials):
         trial_id = getattr(trial, "trial_id", None) or f"trial_{index}"
@@ -307,20 +307,23 @@ def build_outcome_matrix(result: OptimizationResult) -> dict[str, Any]:
                 rows[example_id] = {}
                 order.append(example_id)
             elif trial_id in rows[example_id]:
-                merged_cells[trial_id] = merged_cells.get(trial_id, 0) + 1
+                merged_cells[index] = merged_cells.get(index, 0) + 1
             rows[example_id][trial_id] = _extract_cell(ex)
 
     if merged_cells:
         # Not an error: with content identity, identical rows legitimately
         # share one example id. But a merge must never be silent, because a
         # buggy id scheme (e.g. one id for every example) looks the same.
-        # Content-free: trial ids and counts only, never example ids.
+        # Content-free: column indexes (the matrix ``trials[].index``) and
+        # counts only. Never example ids, and never trial ids either: a hybrid
+        # trial id is supplied by the caller's service and can carry content.
         logger.warning(
             "outcome matrix keeps one cell per example_id per trial; merged "
-            "cells that repeated an example_id within the same trial: %s",
+            "cells that repeated an example_id within the same trial "
+            "(by trial column index): %s",
             ", ".join(
-                f"{trial_id}: {count} merged"
-                for trial_id, count in merged_cells.items()
+                f"column {index}: {count} merged"
+                for index, count in merged_cells.items()
             ),
         )
 

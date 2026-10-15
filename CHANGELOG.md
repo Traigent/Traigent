@@ -107,6 +107,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`Dataset.to_jsonl` keeps an existing file's permissions when it replaces
+  it.** Re-exporting over an owner-only (`0600`) file under a `022` umask used
+  to leave it `0644`. A new file still follows the umask, like `open(..., "w")`.
+- **The outcome-matrix merge warning no longer logs trial ids.** A trial id
+  can come from the caller's service and carry content, so the warning now
+  names the trial by its matrix column index.
+- **`TraceIngestionResponse(success=True)` without `spans_ingested` is now an
+  unconfirmed count, not a confirmed zero**, so `submit_traces` no longer warns
+  that every span went missing. Pass `spans_ingested=0` to state zero.
 - **`ObservabilityClient` multi-tag trace/session filters no longer return an
   empty page (#2573).** `list_traces` / `iter_traces` / `list_sessions` /
   `iter_sessions` now send a list `tags` filter as repeated keys
