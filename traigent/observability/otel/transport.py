@@ -46,7 +46,9 @@ class UrllibTransport:
             self._url, data=payload, headers=headers, method="POST"
         )
         try:
-            with self._opener.open(req, timeout=max(0.05, timeout)) as resp:  # nosec B310
+            with self._opener.open(
+                req, timeout=max(0.05, timeout)
+            ) as resp:  # nosec B310
                 return TransportResponse(
                     status=resp.status,
                     body=resp.read(1 << 20),

@@ -102,9 +102,11 @@ class StreamingInvoker(LocalInvoker):
         }
         normalized["total_tokens"] = max(
             0,
-            total_tokens
-            if total_tokens is not None
-            else normalized["input_tokens"] + normalized["output_tokens"],
+            (
+                total_tokens
+                if total_tokens is not None
+                else normalized["input_tokens"] + normalized["output_tokens"]
+            ),
         )
         return normalized
 

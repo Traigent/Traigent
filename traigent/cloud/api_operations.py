@@ -318,7 +318,7 @@ _QUOTED_VALUE = r"\"(?:\\[\s\S]?|[^\"\\])*(?:\"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)
 # greedy prefix is not retried from every offset (no quadratic backtracking).
 _SECRET_KV_RE = re.compile(
     rf"(?P<key>(?<![\w.-])[\w.-]*{_SECRET_WORDS}{_KEY_SUFFIX}[\"']?\s*[=:]\s*)"
-    rf"(?:{_QUOTED_VALUE}|[^\s\"'}}\])]+)",
+    rf"(?:{_QUOTED_VALUE}|[^\s\"'}}]+)",
     re.IGNORECASE,
 )
 _AUTH_HEADER_RE = re.compile(
@@ -327,7 +327,7 @@ _AUTH_HEADER_RE = re.compile(
     re.IGNORECASE,
 )
 _COOKIE_HEADER_RE = re.compile(
-    r"(?P<key>\b(?:Set-)?Cookie[\"']?\s*:\s*[\"']?)[^\r\n\"']+", re.IGNORECASE
+    r"(?P<key>\b(?:Set-)?Cookie[\"']?\s*:\s*[\"']?)[^\r\n]+", re.IGNORECASE
 )
 _BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{4,}", re.IGNORECASE)
 # Whole userinfo (``user:pass@`` or ``token@``): the user name can be a secret too.

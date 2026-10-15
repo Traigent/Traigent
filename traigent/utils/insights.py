@@ -227,9 +227,7 @@ def _analyze_parameter_importance(
                 "optimization_priority": (
                     "high"
                     if performance_impact > 0.1
-                    else "medium"
-                    if performance_impact > 0.05
-                    else "low"
+                    else "medium" if performance_impact > 0.05 else "low"
                 ),
             }
 
