@@ -37,9 +37,9 @@ except ImportError:
                 raise ImportError("aiohttp not available") from None
 
 
+from traigent.core.session_types import safe_http_error_summary
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.security.redaction import is_credential_key_name
-from traigent.core.session_types import safe_http_error_summary
 from traigent.utils.exceptions import DatasetValidationError
 from traigent.utils.logging import get_logger
 from traigent.utils.secure_path import safe_write_text, sanitize_filename, validate_path
