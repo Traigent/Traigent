@@ -432,15 +432,13 @@ def test_pooled_session_bound_to_another_loop_is_never_reused(
             )
 
         asyncio.run(run_on_new_loop())
-        # Each call used a private session that is closed; the stale pool was untouched.
-        assert len(created) == 2 and all(s.closed for s in created)
-        assert client._session is pooled
+        # Loop B got its own single pool (reused for both calls); loop A's is untouched.
+        assert len(created) == 1 and created[0] is not pooled
+        assert client._session is pooled and not pooled.closed
         assert len(requests) == 2
     finally:
-        loop_a.run_until_complete(pooled.close())
+        loop_a.run_until_complete(client.close())
         loop_a.close()
-        client._session = None
-        client._session_finalizer = None
 
 
 def test_pool_created_by_finished_loop_is_replaced_for_next_sync_consumer(
@@ -515,3 +513,34 @@ async def test_sync_wrapper_failure_resets_only_loop_local_session(
         assert not pool.closed and client._session is pool
     finally:
         await client.close()
+
+
+def test_async_consumer_on_second_open_loop_gets_its_own_pool(threaded_trial_server):
+    """Round-4 scenario: pool made on open loop A is never used from loop B."""
+    origin, _requests, _connections = threaded_trial_server
+    client = _LocalTrialClient(origin)
+    ops = SessionOperations(client)
+    loop_a = asyncio.new_event_loop()
+    try:
+        assert (
+            loop_a.run_until_complete(client.request_trial_slot("local-session"))
+        ).trial_id
+        pool_a = client._session
+        assert pool_a._loop is loop_a
+
+        async def delete_on_b():
+            ok = await ops.delete_session("local-session")
+            return ok, await client._ensure_session()
+
+        ok, pool_b = asyncio.run(delete_on_b())
+        assert ok is True
+        assert pool_b is not pool_a and pool_b._loop is not loop_a
+        # Loop A's pool is untouched and still serves loop A.
+        assert not pool_a.closed
+        assert (
+            loop_a.run_until_complete(client.request_trial_slot("local-session"))
+        ).trial_id
+        assert client._session is pool_a
+    finally:
+        loop_a.run_until_complete(client.close())
+        loop_a.close()

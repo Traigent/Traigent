@@ -330,22 +330,15 @@ class TrialOperations:
 
     @asynccontextmanager
     async def _trial_http_session(self) -> AsyncIterator[Any]:
-        """Yield a session safe for the running loop.
+        """Borrow the running loop's pooled session, or own a sync wrapper's.
 
-        Borrow the client's pooled session only when it belongs to the running
-        event loop. A sync wrapper's temporary loop, or a pooled session left
-        bound to another (possibly closed) loop, gets a private session that
-        is closed on exit, so nothing is ever reused across event loops.
+        ``_ensure_session`` keeps one pool per event loop, so a borrowed session
+        always belongs to the running loop. A sync wrapper's temporary loop gets
+        a private session closed before the wrapper returns.
         """
         if not _sync_registration_loop.get():
-            pooled = await self.client._ensure_session()
-            owner_loop = getattr(pooled, "_loop", None)
-            if (
-                not isinstance(owner_loop, asyncio.AbstractEventLoop)
-                or owner_loop is asyncio.get_running_loop()
-            ):
-                yield pooled
-                return
+            yield await self.client._ensure_session()
+            return
         async with aiohttp.ClientSession(trust_env=True) as session:
             yield session
 

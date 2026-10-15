@@ -72,7 +72,7 @@ from traigent.cloud.session_budgets import (
 
 # Import refactored sub-modules
 from traigent.cloud.privacy_operations import PrivacyOperations
-from traigent.cloud.session_operations import SessionOperations, _loop_local_sessions
+from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.session_types import SessionCreationResult
 from traigent.core.session_types import safe_http_error_summary
 from traigent.cloud.subset_selection import SmartSubsetSelector
@@ -309,12 +309,6 @@ def _session_is_closed(session: Any) -> bool:
     if isinstance(closed_flag, bool):
         return closed_flag
     return False
-
-
-def _session_loop_is_closed(session: Any) -> bool:
-    """True when a real aiohttp session is bound to an already-closed event loop."""
-    loop = getattr(session, "_loop", None)
-    return isinstance(loop, asyncio.AbstractEventLoop) and loop.is_closed()
 
 
 # Export public API
@@ -1485,42 +1479,83 @@ class BackendIntegratedClient:
             trust_env=True,
         )
 
+    def _loop_pools(self) -> dict[int, tuple[weakref.ref[Any], Any]]:
+        """Pools for event loops other than the primary pool's (id(loop) -> ...)."""
+        pools = self.__dict__.get("_extra_loop_pools")
+        if pools is None:
+            pools = self.__dict__["_extra_loop_pools"] = {}
+        return cast(dict[int, tuple[weakref.ref[Any], Any]], pools)
+
+    @staticmethod
+    def _dispose_pool(session: Any, owner: str) -> None:
+        """Close a pool without awaiting on a loop we may not be running on."""
+        if not _session_is_closed(session):
+            _finalize_aiohttp_session(session, owner)
+
+    def _purge_dead_pools(self) -> None:
+        """Drop pools whose loop is gone/closed; close them without awaiting."""
+        pools = self._loop_pools()
+        for key, (loop_ref, session) in list(pools.items()):
+            loop = loop_ref()
+            if loop is None or loop.is_closed() or _session_is_closed(session):
+                pools.pop(key, None)
+                self._dispose_pool(session, self.__class__.__name__)
+
+    def _pool_for_loop(self, loop: asyncio.AbstractEventLoop) -> Any:
+        """The usable pool owned by ``loop`` (primary or per-loop), else None."""
+        primary = self._session
+        if primary is not None and not _session_is_closed(primary):
+            owner = getattr(primary, "_loop", None)
+            if not isinstance(owner, asyncio.AbstractEventLoop) or owner is loop:
+                return primary
+        entry = self._loop_pools().get(id(loop))
+        if (
+            entry is not None
+            and entry[0]() is loop
+            and not _session_is_closed(entry[1])
+        ):
+            return entry[1]
+        return None
+
     async def _ensure_session(self) -> AioClientSession:
-        """Ensure session exists with current auth headers."""
+        """Return the authenticated session owned by the *running* event loop.
+
+        One pool per event loop: a session is never handed to a loop that did
+        not create it. Pools of closed loops are discarded.
+        """
 
         self._raise_if_backend_egress_disabled("backend request")
-        scope = _loop_local_sessions.get()
-        if scope is not None:
-            # Inside a *_sync wrapper's private loop: never hand out the shared
-            # pool (it may belong to another loop); use one session local to
-            # this loop that the wrapper closes when it finishes.
-            if not scope or _session_is_closed(scope[0]):
-                scope[:] = [await self._build_http_session()]
-            return scope[0]
-        existing = self._session
-        if (
-            existing is not None
-            and not _session_is_closed(existing)
-            and not _session_loop_is_closed(existing)
-        ):
-            return cast(AioClientSession, existing)
+        loop = asyncio.get_running_loop()
+        pool = self._pool_for_loop(loop)
+        if pool is not None:
+            return cast(AioClientSession, pool)
 
-        async with self._session_lock:
-            existing = self._session
-            if existing is not None and not _session_is_closed(existing):
-                if not _session_loop_is_closed(existing):
-                    return cast(AioClientSession, existing)
-                # Pool bound to an event loop that already closed (a throwaway
-                # loop of a *_sync wrapper or a finished asyncio.run): release
-                # its transports and rebuild on the running loop.
-                self._session = None
+        self._purge_dead_pools()
+        session = await self._build_http_session()
+        pool = self._pool_for_loop(loop)  # another task on this loop won the race
+        if pool is not None:
+            await session.close()
+            return cast(AioClientSession, pool)
+
+        primary = self._session
+        primary_owner = getattr(primary, "_loop", None) if primary is not None else None
+        primary_dead = (
+            primary is None
+            or _session_is_closed(primary)
+            or (
+                isinstance(primary_owner, asyncio.AbstractEventLoop)
+                and primary_owner.is_closed()
+            )
+        )
+        if primary_dead:
+            if primary is not None:
                 self._detach_session_finalizer()
-                _finalize_aiohttp_session(existing, self.__class__.__name__)
-
-            self._session = await self._build_http_session()
-            self._register_session_finalizer(self._session)
-
-            return cast(AioClientSession, self._session)
+                self._dispose_pool(primary, self.__class__.__name__)
+            self._session = session
+            self._register_session_finalizer(session)
+        else:
+            self._loop_pools()[id(loop)] = (weakref.ref(loop), session)
+        return session
 
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:
         """Fail closed before any backend HTTP request."""
@@ -1530,24 +1565,17 @@ class BackendIntegratedClient:
         raise_if_cloud_egress_disabled(operation, no_egress=self.no_egress)
 
     async def _reset_http_session(self, reason: str | None = None) -> None:
-        """Close and discard the shared aiohttp session."""
+        """Close and discard the running loop's aiohttp session."""
 
-        scope = _loop_local_sessions.get()
-        if scope is not None:
-            # Inside a *_sync wrapper's private loop: only the loop-local
-            # session is reset; the shared pool belongs to another loop.
-            local, scope[:] = list(scope), []
-            for local_session in local:
-                if not _session_is_closed(local_session):
-                    await local_session.close()
+        loop = asyncio.get_running_loop()
+        session = self._pool_for_loop(loop)
+        if session is None:
             return
-
-        if not self._session:
-            return
-
-        session = self._session
-        self._session = None
-        self._detach_session_finalizer()
+        if session is self._session:
+            self._session = None
+            self._detach_session_finalizer()
+        else:
+            self._loop_pools().pop(id(loop), None)
         try:
             if _session_is_closed(session):
                 return
@@ -1569,9 +1597,18 @@ class BackendIntegratedClient:
             )
 
     async def close(self, *, _reason: str = "shutdown") -> None:
-        """Close any active HTTP session to avoid resource leaks."""
+        """Close every pool: this loop's awaited, other loops' disposed safely."""
 
         await self._reset_http_session(_reason)
+        owner = self.__class__.__name__
+        for _key, (_ref, session) in list(self._loop_pools().items()):
+            self._dispose_pool(session, owner)
+        self._loop_pools().clear()
+        primary = self._session
+        if primary is not None:  # primary owned by a different loop
+            self._session = None
+            self._detach_session_finalizer()
+            self._dispose_pool(primary, owner)
 
     def _register_session_finalizer(self, session: AioClientSession) -> None:
         self._detach_session_finalizer()
