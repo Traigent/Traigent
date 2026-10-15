@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import socket
 import statistics
 import threading
 import time
@@ -307,6 +308,10 @@ def threaded_trial_server():
             self.wfile.write(encoded)
 
         def do_DELETE(self):
+            if self.path.startswith("/sessions/failing-session"):
+                self.close_connection = True
+                self.connection.shutdown(socket.SHUT_RDWR)  # -> aiohttp.ClientError
+                return
             self.send_response(204)
             self.send_header("Content-Length", "0")
             self.end_headers()
@@ -481,5 +486,32 @@ async def test_sync_wrappers_in_running_loop_never_use_foreign_loop_pool(
         assert len(created) == 1 and created[0] is not pool
         assert created[0].closed and not pool.closed
         assert client._session is pool
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_sync_wrapper_failure_resets_only_loop_local_session(
+    threaded_trial_server, monkeypatch
+):
+    import aiohttp
+
+    origin, _requests, _connections = threaded_trial_server
+    client = _LocalTrialClient(origin)
+    ops = SessionOperations(client)
+    pool = await client._ensure_session()
+    created = []
+    original_session = aiohttp.ClientSession
+
+    def track_session(*args, **kwargs):
+        session = original_session(*args, **kwargs)
+        created.append(session)
+        return session
+
+    monkeypatch.setattr(aiohttp, "ClientSession", track_session)
+    try:
+        assert ops.delete_session_sync("failing-session") is False
+        assert created and all(s.closed for s in created)
+        assert not pool.closed and client._session is pool
     finally:
         await client.close()

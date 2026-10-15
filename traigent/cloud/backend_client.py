@@ -1532,6 +1532,16 @@ class BackendIntegratedClient:
     async def _reset_http_session(self, reason: str | None = None) -> None:
         """Close and discard the shared aiohttp session."""
 
+        scope = _loop_local_sessions.get()
+        if scope is not None:
+            # Inside a *_sync wrapper's private loop: only the loop-local
+            # session is reset; the shared pool belongs to another loop.
+            local, scope[:] = list(scope), []
+            for local_session in local:
+                if not _session_is_closed(local_session):
+                    await local_session.close()
+            return
+
         if not self._session:
             return
 
