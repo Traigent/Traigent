@@ -419,9 +419,9 @@ class TestFix5ClosedAiohttpSession:
                     if isinstance(item.context_expr, ast.Call):
                         # Check if it's aiohttp.ClientSession
                         func = item.context_expr.func
-                        if (
-                            isinstance(func, ast.Attribute)
-                            and func.attr == "ClientSession"
+                        if isinstance(func, ast.Attribute) and func.attr in (
+                            "ClientSession",
+                            "_trial_http_session",
                         ):
                             # Now check if there's an async with session.post inside
                             for inner_node in ast.walk(node):
@@ -467,7 +467,9 @@ class TestFix5ClosedAiohttpSession:
             stripped = line.lstrip()
             current_indent = len(line) - len(stripped)
 
-            if "aiohttp.ClientSession" in line and "async with" in line:
+            if (
+                "aiohttp.ClientSession" in line or "_trial_http_session" in line
+            ) and "async with" in line:
                 in_client_session = True
                 client_session_indent = current_indent
             elif in_client_session:

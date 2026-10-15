@@ -168,6 +168,8 @@ class TestSummaryStatsIntegration:
             mock_session_context.__aenter__ = AsyncMock(return_value=mock_session)
             mock_session_context.__aexit__ = AsyncMock(return_value=False)
             mock_session_class.return_value = mock_session_context
+            # Summary-stats submission borrows the client's pooled session.
+            backend_client._ensure_session = AsyncMock(return_value=mock_session)
 
             # Create summary_stats data
             summary_stats = {
