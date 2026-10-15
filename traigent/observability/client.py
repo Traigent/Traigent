@@ -879,6 +879,9 @@ class _SyncBatchTransport:
         self._errors: list[str] = []
         self._warnings: list[str] = []
         self._inflight_items = 0
+        # Item ids whose in-flight snapshot was superseded by a rejected update
+        # (#2601): a failed send must not retain them for another attempt.
+        self._superseded_inflight_ids: set[str] = set()
         self._oldest_inflight_started_at: float | None = None
         self._active_send_completion: threading.Event | None = None
         self._stats: dict[str, int] = {
@@ -916,7 +919,9 @@ class _SyncBatchTransport:
                 "observability payload for item "
                 f"'{item_id}' is not JSON serializable: {exc}; dropped"
             )
-            self._record_drop("payload_not_json_serializable", message, item_id=item_id)
+            self._reject_update(
+                "payload_not_json_serializable", message, item_id=item_id
+            )
             logger.warning(
                 "Observability transport dropped payload '%s' because "
                 "it is not JSON serializable: %s",
@@ -932,7 +937,7 @@ class _SyncBatchTransport:
                 f"'{item_id}' is {item_bytes} bytes, exceeding "
                 f"max_batch_bytes={self.max_batch_bytes}; dropped"
             )
-            self._record_drop(
+            self._reject_update(
                 "payload_too_large",
                 message,
                 item_id=item_id,
@@ -955,7 +960,7 @@ class _SyncBatchTransport:
                 "observations, exceeding the backend's limit of "
                 f"{INGEST_MAX_OBSERVATIONS_PER_REQUEST} per ingest request; dropped"
             )
-            self._record_drop(
+            self._reject_update(
                 "too_many_observations",
                 message,
                 item_id=item_id,
@@ -1366,6 +1371,7 @@ class _SyncBatchTransport:
             self._inflight_items -= item_count
             if self._inflight_items == 0:
                 self._oldest_inflight_started_at = None
+                self._superseded_inflight_ids.clear()
             self._stats["pending_items"] = len(self._buffer) + self._inflight_items
             if completion is not None and self._active_send_completion is completion:
                 self._active_send_completion = None
@@ -1454,6 +1460,7 @@ class _SyncBatchTransport:
                 )
                 for item_id, payload in batch_items
                 if item_id not in self._buffer
+                and item_id not in self._superseded_inflight_ids
             )
             # Submissions made during the send are newer and must win on ID
             # collisions. Old retained entries come first for bounded eviction.
@@ -1547,9 +1554,32 @@ class _SyncBatchTransport:
                 self._warnings = self._warnings[-50:]
             return self._queue_health_event_locked("warning", {"message": message})
 
-    def _record_drop(self, event_type: str, message: str, **details: Any) -> None:
+    def _reject_update(
+        self, event_type: str, message: str, *, item_id: str, **details: Any
+    ) -> None:
+        """Drop a submitted snapshot that can never be delivered, and the older
+        snapshot of the same item it was meant to replace (#2601).
+
+        The buffer holds the latest snapshot per item. When the latest one is
+        rejected (too large, not serializable, too many observations), sending
+        the older one still queued would report success for state the
+        application has already moved past, so it is evicted too. If that older
+        snapshot is already in flight it cannot be recalled, but it is marked so
+        a failed send does not put it back into the buffer.
+        """
         with self._lock:
-            event = self._record_drop_locked(event_type, message, **details)
+            evicted = self._buffer.pop(item_id, None) is not None
+            if evicted:
+                self._stats["pending_items"] = len(self._buffer) + self._inflight_items
+            if self._inflight_items:
+                self._superseded_inflight_ids.add(item_id)
+            event = self._record_drop_locked(
+                event_type,
+                message,
+                item_id=item_id,
+                evicted_stale_snapshot=evicted,
+                **details,
+            )
         self._emit_health_events([event])
 
     def _record_drop_locked(
