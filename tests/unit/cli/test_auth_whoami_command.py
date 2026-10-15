@@ -241,7 +241,18 @@ def test_auth_still_loads_the_project_dotenv(tmp_path: Path) -> None:
     malformed_key = "xx_from_project_dotenv"  # pragma: allowlist secret
     (tmp_path / ".env").write_text("=".join(("TRAIGENT_API_KEY", malformed_key)) + "\n")
     runner = tmp_path / "run_whoami.py"
+    # env_config also reads a package-adjacent .env (the checkout's own, on a
+    # developer machine). Let only the project file through so the probe is
+    # hermetic and still exercises env_config's real discovery of that file.
     runner.write_text(
+        "import dotenv, pathlib\n"
+        "_real = dotenv.load_dotenv\n"
+        "_here = pathlib.Path.cwd().resolve()\n"
+        "dotenv.load_dotenv = lambda p=None, *a, **k: (\n"
+        "    _real(p, *a, **k)\n"
+        "    if p is not None and pathlib.Path(p).resolve().parent == _here\n"
+        "    else False\n"
+        ")\n"
         "from click.testing import CliRunner\n"
         "from traigent.cli.auth_commands import auth\n"
         "print(CliRunner().invoke(auth, ['whoami']).output)\n"
