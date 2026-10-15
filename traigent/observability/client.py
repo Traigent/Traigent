@@ -20,6 +20,8 @@ from urllib.parse import urlencode
 
 from traigent.cloud.async_batch_transport import BatchFlushResult
 from traigent.observability.config import (
+    INGEST_MAX_OBSERVATIONS_PER_REQUEST,
+    INGEST_MAX_TRACES_PER_REQUEST,
     NOT_SUPPLIED,
     ObservabilityConfig,
     apply_content_mode,
@@ -802,10 +804,27 @@ def _safe_trace_snapshot(
     return _redact_trace_payload(payload, state=descriptor), descriptor
 
 
+def _count_payload_observations(payload: dict[str, Any]) -> int:
+    """Count observations the way the backend's ingest cap does: every
+    observation object, nested ``children`` included (#2600)."""
+    count = 0
+    pending: list[Any] = [payload.get("observations")]
+    while pending:
+        observations = pending.pop()
+        if not isinstance(observations, list):
+            continue
+        for observation in observations:
+            if isinstance(observation, dict):
+                count += 1
+                pending.append(observation.get("children"))
+    return count
+
+
 @dataclass(frozen=True)
 class _BufferedPayload:
     payload: dict[str, Any]
     payload_bytes: int
+    observation_count: int = 0
 
 
 class _SyncBatchTransport:
@@ -926,6 +945,29 @@ class _SyncBatchTransport:
                 item_id,
                 item_bytes,
                 self.max_batch_bytes,
+            )
+            return False
+
+        if buffered_payload.observation_count > INGEST_MAX_OBSERVATIONS_PER_REQUEST:
+            message = (
+                "observability payload for item "
+                f"'{item_id}' has {buffered_payload.observation_count} "
+                "observations, exceeding the backend's limit of "
+                f"{INGEST_MAX_OBSERVATIONS_PER_REQUEST} per ingest request; dropped"
+            )
+            self._record_drop(
+                "too_many_observations",
+                message,
+                item_id=item_id,
+                observation_count=buffered_payload.observation_count,
+                max_observations=INGEST_MAX_OBSERVATIONS_PER_REQUEST,
+            )
+            logger.warning(
+                "Observability transport dropped payload '%s' because it has %d "
+                "observations, above the backend limit of %d per request",
+                item_id,
+                buffered_payload.observation_count,
+                INGEST_MAX_OBSERVATIONS_PER_REQUEST,
             )
             return False
 
@@ -1174,7 +1216,15 @@ class _SyncBatchTransport:
 
                     batch_items: list[tuple[str, dict[str, Any]]] = []
                     batch_body_bytes = 0
-                    for _ in range(min(self.batch_size, len(self._buffer))):
+                    batch_observations = 0
+                    # Every request fits the backend's per-request caps
+                    # (#2600), whatever batch_size the caller configured.
+                    max_batch_items = min(
+                        self.batch_size,
+                        INGEST_MAX_TRACES_PER_REQUEST,
+                        len(self._buffer),
+                    )
+                    for _ in range(max_batch_items):
                         item_id, buffered = next(iter(self._buffer.items()))
                         projected_body_bytes = batch_body_bytes + buffered.payload_bytes
                         if batch_items:
@@ -1182,11 +1232,19 @@ class _SyncBatchTransport:
                         projected_bytes = self._batch_payload_size_from_body(
                             projected_body_bytes
                         )
-                        if batch_items and projected_bytes > self.max_batch_bytes:
+                        projected_observations = (
+                            batch_observations + buffered.observation_count
+                        )
+                        if batch_items and (
+                            projected_bytes > self.max_batch_bytes
+                            or projected_observations
+                            > INGEST_MAX_OBSERVATIONS_PER_REQUEST
+                        ):
                             break
                         self._buffer.popitem(last=False)
                         batch_items.append((item_id, buffered.payload))
                         batch_body_bytes = projected_body_bytes
+                        batch_observations = projected_observations
                     self._inflight_items += len(batch_items)
                     if self._oldest_inflight_started_at is None:
                         self._oldest_inflight_started_at = time.monotonic()
@@ -1354,6 +1412,7 @@ class _SyncBatchTransport:
         return _BufferedPayload(
             payload=copied_payload,
             payload_bytes=self._payload_json_size(copied_payload),
+            observation_count=_count_payload_observations(copied_payload),
         )
 
     @staticmethod
@@ -1385,7 +1444,14 @@ class _SyncBatchTransport:
             # The sender receives already prepared snapshots. Retain those exact
             # payloads; do not re-redact them using mutable live trace state.
             retained = OrderedDict(
-                (item_id, _BufferedPayload(payload, self._payload_json_size(payload)))
+                (
+                    item_id,
+                    _BufferedPayload(
+                        payload,
+                        self._payload_json_size(payload),
+                        _count_payload_observations(payload),
+                    ),
+                )
                 for item_id, payload in batch_items
                 if item_id not in self._buffer
             )

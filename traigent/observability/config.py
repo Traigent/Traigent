@@ -23,6 +23,12 @@ MAX_QUEUE_SIZE = 1_000_000
 MAX_BATCH_BYTES = 10 * 1024 * 1024
 MAX_BUFFER_AGE_SECONDS = 3600.0
 MAX_TIMEOUT_SECONDS = 600.0
+# Backend ingest contract (POST .../observability/ingest): one request may carry
+# at most this many traces (422 above it) and this many observations, nested
+# children included (413 above it). The transport cuts every request to fit,
+# whatever ``batch_size`` is (#2600).
+INGEST_MAX_TRACES_PER_REQUEST = 100
+INGEST_MAX_OBSERVATIONS_PER_REQUEST = 1000
 OBSERVABILITY_CONTENT_MODES = frozenset({"metadata", "redacted", "record"})
 
 _EXECUTION_CONTEXT_ENV_VARS = {
@@ -400,6 +406,14 @@ def _read_default_execution_context() -> dict[str, str | None]:
 @dataclass
 class ObservabilityConfig:
     """Configuration for SDK-side observability delivery.
+
+    ``batch_size`` is how many buffered traces trigger a background flush.
+    Each ingest request still carries at most
+    :data:`INGEST_MAX_TRACES_PER_REQUEST` traces and
+    :data:`INGEST_MAX_OBSERVATIONS_PER_REQUEST` observations (the backend's
+    limits), so a larger flush is sent as several requests. A single trace with
+    more observations than that cannot be accepted by the backend and is
+    dropped locally with reason ``too_many_observations``.
 
     ``health_callback`` receives batch-level local-drop and warning snapshots
     after internal transport locks are released. It may run on background
