@@ -1,0 +1,719 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/legend/v0/director_legend_ops_v0.json",
+  "title": "Director Legend Ops V0",
+  "description": "Closed Director menu operations over pillar versions: instruction (Director to agent) and result (agent to backend). Opaque server-issued refs and closed enums only; the Director is advisory, capture/restore run locally, activation is not on the menu. Closed schema (additionalProperties false everywhere, closed enums, no free text): any new field or enum value ships as a new schema_version published alongside this one; consumers dispatch on schema_version. Normative text: docs/identity/pillar-legend-v0.md. Every string pattern ends with the portable end anchor (?![\\s\\S]) rather than $.",
+  "version": "0.1.0",
+  "definitions": {
+    "LegendOperation": {
+      "type": "string",
+      "enum": [
+        "declare_version",
+        "query_versions",
+        "capture_version",
+        "verify_restore",
+        "restore_version"
+      ]
+    },
+    "InstructionRef": {
+      "type": "string",
+      "pattern": "^instructionref_[0-9a-f]{32}(?![\\s\\S])",
+      "minLength": 47,
+      "maxLength": 47
+    },
+    "DeclareVersionInstruction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "instruction_ref",
+        "operation",
+        "kind",
+        "entity_ref"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./pillar_legend_v0.json#/definitions/SchemaVersion"
+        },
+        "instruction_ref": {
+          "$ref": "#/definitions/InstructionRef"
+        },
+        "operation": {
+          "type": "string",
+          "const": "declare_version"
+        },
+        "kind": {
+          "$ref": "./pillar_legend_v0.json#/definitions/EntityKind"
+        },
+        "entity_ref": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/EntityRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "QueryVersionsInstruction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "instruction_ref",
+        "operation",
+        "entity_ref",
+        "page_size",
+        "page_cursor"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./pillar_legend_v0.json#/definitions/SchemaVersion"
+        },
+        "instruction_ref": {
+          "$ref": "#/definitions/InstructionRef"
+        },
+        "operation": {
+          "type": "string",
+          "const": "query_versions"
+        },
+        "entity_ref": {
+          "$ref": "./pillar_legend_v0.json#/definitions/EntityRef"
+        },
+        "page_size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "page_cursor": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^cursor_[0-9a-f]{32}(?![\\s\\S])"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "CaptureVersionInstruction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "instruction_ref",
+        "operation",
+        "version_ref"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./pillar_legend_v0.json#/definitions/SchemaVersion"
+        },
+        "instruction_ref": {
+          "$ref": "#/definitions/InstructionRef"
+        },
+        "operation": {
+          "type": "string",
+          "const": "capture_version"
+        },
+        "version_ref": {
+          "$ref": "./pillar_legend_v0.json#/definitions/VersionRef"
+        }
+      }
+    },
+    "VerifyRestoreInstruction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "instruction_ref",
+        "operation",
+        "version_ref",
+        "recovery_manifest_fingerprint"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./pillar_legend_v0.json#/definitions/SchemaVersion"
+        },
+        "instruction_ref": {
+          "$ref": "#/definitions/InstructionRef"
+        },
+        "operation": {
+          "type": "string",
+          "const": "verify_restore"
+        },
+        "version_ref": {
+          "$ref": "./pillar_legend_v0.json#/definitions/VersionRef"
+        },
+        "recovery_manifest_fingerprint": {
+          "$ref": "./pillar_legend_v0.json#/definitions/ManifestFingerprint"
+        }
+      }
+    },
+    "RestoreVersionInstruction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "instruction_ref",
+        "operation",
+        "version_ref",
+        "recovery_manifest_fingerprint"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./pillar_legend_v0.json#/definitions/SchemaVersion"
+        },
+        "instruction_ref": {
+          "$ref": "#/definitions/InstructionRef"
+        },
+        "operation": {
+          "type": "string",
+          "const": "restore_version"
+        },
+        "version_ref": {
+          "$ref": "./pillar_legend_v0.json#/definitions/VersionRef"
+        },
+        "recovery_manifest_fingerprint": {
+          "$ref": "./pillar_legend_v0.json#/definitions/ManifestFingerprint"
+        }
+      },
+      "description": "Restores into an isolated destination only. Activation is never a Director operation."
+    },
+    "LegendInstruction": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/DeclareVersionInstruction"
+        },
+        {
+          "$ref": "#/definitions/QueryVersionsInstruction"
+        },
+        {
+          "$ref": "#/definitions/CaptureVersionInstruction"
+        },
+        {
+          "$ref": "#/definitions/VerifyRestoreInstruction"
+        },
+        {
+          "$ref": "#/definitions/RestoreVersionInstruction"
+        }
+      ]
+    },
+    "ResultOutcome": {
+      "type": "string",
+      "enum": [
+        "succeeded",
+        "refused",
+        "failed"
+      ]
+    },
+    "DeclareVersionResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "instruction_ref",
+        "operation",
+        "outcome",
+        "error_code",
+        "version_ref",
+        "created"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./pillar_legend_v0.json#/definitions/SchemaVersion"
+        },
+        "instruction_ref": {
+          "$ref": "#/definitions/InstructionRef"
+        },
+        "operation": {
+          "type": "string",
+          "const": "declare_version"
+        },
+        "outcome": {
+          "$ref": "#/definitions/ResultOutcome"
+        },
+        "error_code": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/LegendErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "version_ref": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/VersionRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "succeeded"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "error_code": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused",
+                  "failed"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "error_code": {
+                "$ref": "./pillar_legend_v0.json#/definitions/LegendErrorCode"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "QueryVersionsResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "instruction_ref",
+        "operation",
+        "outcome",
+        "error_code",
+        "version_refs",
+        "next_page_cursor"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./pillar_legend_v0.json#/definitions/SchemaVersion"
+        },
+        "instruction_ref": {
+          "$ref": "#/definitions/InstructionRef"
+        },
+        "operation": {
+          "type": "string",
+          "const": "query_versions"
+        },
+        "outcome": {
+          "$ref": "#/definitions/ResultOutcome"
+        },
+        "error_code": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/LegendErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "version_refs": {
+          "type": "array",
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "./pillar_legend_v0.json#/definitions/VersionRef"
+          }
+        },
+        "next_page_cursor": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^cursor_[0-9a-f]{32}(?![\\s\\S])"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "succeeded"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "error_code": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused",
+                  "failed"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "error_code": {
+                "$ref": "./pillar_legend_v0.json#/definitions/LegendErrorCode"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "CaptureVersionResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "instruction_ref",
+        "operation",
+        "outcome",
+        "error_code",
+        "store_status",
+        "recovery_manifest_fingerprint",
+        "coverage",
+        "conformance_passed"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./pillar_legend_v0.json#/definitions/SchemaVersion"
+        },
+        "instruction_ref": {
+          "$ref": "#/definitions/InstructionRef"
+        },
+        "operation": {
+          "type": "string",
+          "const": "capture_version"
+        },
+        "outcome": {
+          "$ref": "#/definitions/ResultOutcome"
+        },
+        "error_code": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/LegendErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "store_status": {
+          "$ref": "./pillar_legend_v0.json#/definitions/ClientStoreStatus"
+        },
+        "recovery_manifest_fingerprint": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/ManifestFingerprint"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "coverage": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/Coverage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "conformance_passed": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "succeeded"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "error_code": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused",
+                  "failed"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "error_code": {
+                "$ref": "./pillar_legend_v0.json#/definitions/LegendErrorCode"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "VerifyRestoreResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "instruction_ref",
+        "operation",
+        "outcome",
+        "error_code",
+        "restore_outcome",
+        "coverage",
+        "store_status"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./pillar_legend_v0.json#/definitions/SchemaVersion"
+        },
+        "instruction_ref": {
+          "$ref": "#/definitions/InstructionRef"
+        },
+        "operation": {
+          "type": "string",
+          "const": "verify_restore"
+        },
+        "outcome": {
+          "$ref": "#/definitions/ResultOutcome"
+        },
+        "error_code": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/LegendErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "restore_outcome": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/RestoreOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "coverage": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/Coverage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "store_status": {
+          "$ref": "./pillar_legend_v0.json#/definitions/ClientStoreStatus"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "succeeded"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "error_code": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused",
+                  "failed"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "error_code": {
+                "$ref": "./pillar_legend_v0.json#/definitions/LegendErrorCode"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "RestoreVersionResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "instruction_ref",
+        "operation",
+        "outcome",
+        "error_code",
+        "restore_outcome",
+        "store_status",
+        "activated"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./pillar_legend_v0.json#/definitions/SchemaVersion"
+        },
+        "instruction_ref": {
+          "$ref": "#/definitions/InstructionRef"
+        },
+        "operation": {
+          "type": "string",
+          "const": "restore_version"
+        },
+        "outcome": {
+          "$ref": "#/definitions/ResultOutcome"
+        },
+        "error_code": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/LegendErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "restore_outcome": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/RestoreOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "store_status": {
+          "$ref": "./pillar_legend_v0.json#/definitions/ClientStoreStatus"
+        },
+        "activated": {
+          "type": "boolean",
+          "const": false
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "succeeded"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "error_code": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused",
+                  "failed"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "error_code": {
+                "$ref": "./pillar_legend_v0.json#/definitions/LegendErrorCode"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "LegendResult": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/DeclareVersionResult"
+        },
+        {
+          "$ref": "#/definitions/QueryVersionsResult"
+        },
+        {
+          "$ref": "#/definitions/CaptureVersionResult"
+        },
+        {
+          "$ref": "#/definitions/VerifyRestoreResult"
+        },
+        {
+          "$ref": "#/definitions/RestoreVersionResult"
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/definitions/LegendInstruction"
+    },
+    {
+      "$ref": "#/definitions/LegendResult"
+    }
+  ]
+}
