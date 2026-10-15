@@ -123,6 +123,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   single trace with more than 1,000 observations can never be accepted, so it
   is now dropped locally (`dropped_by_reason["too_many_observations"]`, named
   in `FlushResult.errors`) instead of blocking the traces batched with it.
+  These limits apply only to the SDK's own ingest path; a custom `sender=`
+  receives batches cut by `batch_size` and `max_batch_bytes` as before.
 - **A rejected trace update no longer lets an older snapshot of the same trace
   go out (#2601).** When an update was dropped (`payload_too_large`, not JSON
   serializable, or `too_many_observations`), the older snapshot already queued
@@ -136,8 +138,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   client had started, and each was sent again. A snapshot identical to the one
   last delivered for that trace is now skipped
   (`get_stats()["skipped_unchanged_items"]`); a changed or never-delivered
-  trace is sent as before. `FlushResult.items_sent` no longer counts repeats.
-  The client still keeps every trace it started in memory; that is unchanged.
+  trace is sent as before, and so is any trace whose last delivery came back
+  with backend warnings. The transport remembers delivered snapshots for the
+  most recent `max_queue_size` traces (10,000 by default); beyond that, older
+  traces are sent again on the next flush, as before. `FlushResult.items_sent`
+  no longer counts skipped repeats. The client still keeps every trace it
+  started in memory; that is unchanged.
 - **Suppressed observability delivery is now reported (#2602).** With offline
   mode, `TRAIGENT_DISABLE_TELEMETRY`, or no credential, `flush()` and
   `close()` returned `success=True, items_sent=0` and no warning, the same as

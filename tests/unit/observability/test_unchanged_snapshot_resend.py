@@ -197,3 +197,96 @@ def test_a_snapshot_evicted_after_a_failed_send_is_sent_when_resubmitted():
     transport.close()
 
     assert sorted(_sent_ids(requests)) == ["a", "b"]
+
+
+def _blocking_sender(requests, *, fail: bool = False):
+    import threading
+
+    entered = threading.Event()
+    release = threading.Event()
+    state = {"block": False}
+
+    def sender(traces):
+        if state["block"]:
+            state["block"] = False
+            entered.set()
+            assert release.wait(timeout=5.0)
+            if fail:
+                raise AuthenticationError("invalid credentials")  # not retried
+        requests.append(traces)
+
+    return sender, state, entered, release
+
+
+def _flush_in_thread(transport):
+    import threading
+
+    thread = threading.Thread(target=transport.flush)
+    thread.start()
+    return thread
+
+
+def test_reverting_to_the_delivered_snapshot_while_another_is_in_flight_is_sent():
+    """Delivered A, B in flight, app re-submits A: A must still go out, or the
+    backend ends on B while the application is back at A."""
+    requests: list[list[dict]] = []
+    sender, state, entered, release = _blocking_sender(requests)
+    transport = _SyncBatchTransport(
+        sender,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=100,
+        max_batch_bytes=1_000_000,
+    )
+    a = {"id": "x", "v": "A"}
+    b = {"id": "x", "v": "B"}
+    assert transport.submit("x", a)
+    transport.flush()
+
+    assert transport.submit("x", b)
+    state["block"] = True
+    thread = _flush_in_thread(transport)
+    assert entered.wait(timeout=5.0)
+    assert transport.submit("x", dict(a))
+    release.set()
+    thread.join(timeout=5.0)
+    transport.close()
+
+    assert [request[0]["v"] for request in requests] == ["A", "B", "A"]
+
+
+def test_reverting_to_the_delivered_snapshot_while_another_is_queued_is_sent():
+    requests: list[list[dict]] = []
+    transport = _transport(requests)
+    assert transport.submit("x", {"id": "x", "v": "A"})
+    transport.flush()
+
+    assert transport.submit("x", {"id": "x", "v": "B"})  # queued, not sent
+    assert transport.submit("x", {"id": "x", "v": "A"})  # replaces B
+    transport.close()
+
+    # B never left the buffer; the backend's last write is the app's last: A.
+    assert [request[0]["v"] for request in requests] == ["A", "A"]
+
+
+def test_a_response_with_warnings_does_not_count_as_delivered():
+    requests: list[list[dict]] = []
+
+    def sender(traces):
+        requests.append(traces)
+        return {"warnings": ["prompt link not resolved"]}
+
+    transport = _SyncBatchTransport(
+        sender,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=100,
+        max_batch_bytes=1_000_000,
+    )
+    for _ in range(2):
+        assert transport.submit("x", {"id": "x"})
+        transport.flush()
+    transport.close()
+
+    assert _sent_ids(requests) == ["x", "x"]
+    assert transport.get_stats()["skipped_unchanged_items"] == 0

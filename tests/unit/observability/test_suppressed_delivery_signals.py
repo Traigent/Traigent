@@ -132,3 +132,14 @@ def test_delivering_flush_carries_no_suppression_warning():
     assert result.items_sent >= 1
     assert sent
     assert not any("suppressed" in warning for warning in result.warnings)
+
+
+def test_repeated_close_of_a_suppressed_client_still_warns(monkeypatch):
+    monkeypatch.setenv("TRAIGENT_DISABLE_TELEMETRY", "true")
+    client = ObservabilityClient(_config())
+
+    client.close()
+    second = client.close()
+
+    assert second.items_sent == 0
+    assert any("suppressed" in warning for warning in second.warnings)

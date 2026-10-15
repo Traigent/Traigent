@@ -145,3 +145,36 @@ def test_client_record_mode_oversized_observation_does_not_send_stale_trace():
     assert "trace_repro" not in _sent_ids(requests)
     assert result.items_dropped >= 1
     assert any("trace_repro" in error for error in result.errors)
+
+
+def test_a_superseded_mark_does_not_outlive_its_in_flight_batch():
+    """Rejecting X while an unrelated batch is in flight must not make a later,
+    valid X unretainable once that batch has finished."""
+    entered = threading.Event()
+    release = threading.Event()
+    calls = {"count": 0}
+
+    def sender(traces):
+        calls["count"] += 1
+        if calls["count"] == 1:  # the unrelated batch [y]
+            entered.set()
+            assert release.wait(timeout=5.0)
+            return None
+        raise AuthenticationError("invalid credentials")  # not retried
+
+    transport = _transport(sender)
+    assert transport.submit("trace_y", {"id": "trace_y"})
+    flush_thread = threading.Thread(target=transport.flush)
+    flush_thread.start()
+    assert entered.wait(timeout=5.0)
+    assert not transport.submit("trace_x", {"id": "trace_x", "blob": "x" * 4096})
+    release.set()
+    flush_thread.join(timeout=5.0)
+    assert not flush_thread.is_alive()
+
+    assert transport.submit("trace_x", {"id": "trace_x", "status": "completed"})
+    result = transport.flush()
+
+    # The send failed, so the valid snapshot is retained for a later retry.
+    assert result.success is False
+    assert list(transport._buffer) == ["trace_x"]

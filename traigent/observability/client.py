@@ -859,6 +859,8 @@ class _SyncBatchTransport:
         max_queue_size: int,
         max_batch_bytes: int,
         health_callback: Callable[[str, dict[str, Any]], None] | None = None,
+        max_traces_per_request: int | None = INGEST_MAX_TRACES_PER_REQUEST,
+        max_observations_per_request: int | None = INGEST_MAX_OBSERVATIONS_PER_REQUEST,
     ) -> None:
         self._sender = sender
         self._health_callback = health_callback
@@ -866,6 +868,10 @@ class _SyncBatchTransport:
         self.max_buffer_age = max_buffer_age
         self.max_queue_size = max_queue_size
         self.max_batch_bytes = max_batch_bytes
+        # Backend ingest caps (#2600); None disables a cap, for a custom
+        # sender whose sink is not the Traigent backend.
+        self.max_traces_per_request = max_traces_per_request
+        self.max_observations_per_request = max_observations_per_request
         self._retry_handler = RetryHandler(
             replace(CLOUD_API_RETRY_CONFIG, callback_on_retry=self._record_retry)
         )
@@ -966,26 +972,30 @@ class _SyncBatchTransport:
             )
             return False
 
-        if buffered_payload.observation_count > INGEST_MAX_OBSERVATIONS_PER_REQUEST:
+        max_observations = self.max_observations_per_request
+        if (
+            max_observations is not None
+            and buffered_payload.observation_count > max_observations
+        ):
             message = (
                 "observability payload for item "
                 f"'{item_id}' has {buffered_payload.observation_count} "
                 "observations, exceeding the backend's limit of "
-                f"{INGEST_MAX_OBSERVATIONS_PER_REQUEST} per ingest request; dropped"
+                f"{max_observations} per ingest request; dropped"
             )
             self._reject_update(
                 "too_many_observations",
                 message,
                 item_id=item_id,
                 observation_count=buffered_payload.observation_count,
-                max_observations=INGEST_MAX_OBSERVATIONS_PER_REQUEST,
+                max_observations=max_observations,
             )
             logger.warning(
                 "Observability transport dropped payload '%s' because it has %d "
                 "observations, above the backend limit of %d per request",
                 item_id,
                 buffered_payload.observation_count,
-                INGEST_MAX_OBSERVATIONS_PER_REQUEST,
+                max_observations,
             )
             return False
 
@@ -1002,9 +1012,12 @@ class _SyncBatchTransport:
             elif (
                 item_id not in self._buffer
                 and self._delivered_digests.get(item_id) == buffered_payload.digest
+                and self._inflight_digests.get(item_id, buffered_payload.digest)
+                == buffered_payload.digest
             ):
-                # Already delivered exactly this snapshot and nothing newer is
-                # queued: re-sending it would only repeat the same write.
+                # Already delivered exactly this snapshot, and nothing different
+                # is queued or in flight that would land after it: re-sending it
+                # would only repeat the same write.
                 self._stats["skipped_unchanged_items"] += 1
             elif (
                 item_id not in self._buffer and len(self._buffer) >= self.max_queue_size
@@ -1244,11 +1257,11 @@ class _SyncBatchTransport:
                     batch_observations = 0
                     # Every request fits the backend's per-request caps
                     # (#2600), whatever batch_size the caller configured.
-                    max_batch_items = min(
-                        self.batch_size,
-                        INGEST_MAX_TRACES_PER_REQUEST,
-                        len(self._buffer),
-                    )
+                    max_batch_items = min(self.batch_size, len(self._buffer))
+                    if self.max_traces_per_request is not None:
+                        max_batch_items = min(
+                            max_batch_items, self.max_traces_per_request
+                        )
                     for _ in range(max_batch_items):
                         item_id, buffered = next(iter(self._buffer.items()))
                         projected_body_bytes = batch_body_bytes + buffered.payload_bytes
@@ -1262,8 +1275,11 @@ class _SyncBatchTransport:
                         )
                         if batch_items and (
                             projected_bytes > self.max_batch_bytes
-                            or projected_observations
-                            > INGEST_MAX_OBSERVATIONS_PER_REQUEST
+                            or (
+                                self.max_observations_per_request is not None
+                                and projected_observations
+                                > self.max_observations_per_request
+                            )
                         ):
                             break
                         self._buffer.popitem(last=False)
@@ -1460,15 +1476,23 @@ class _SyncBatchTransport:
         result = self._retry_handler.execute_with_result(self._sender, payloads)
 
         if result.success:
-            if isinstance(result.result, dict):
-                for warning in result.result.get("warnings") or []:
-                    events.append(self._append_warning(str(warning)))
+            response_warnings = (
+                result.result.get("warnings") or []
+                if isinstance(result.result, dict)
+                else []
+            )
+            for warning in response_warnings:
+                events.append(self._append_warning(str(warning)))
             with self._lock:
                 self._stats["successful_batches"] += 1
                 self._stats["sent_items"] += len(payloads)
                 for item_id, _ in batch_items:
                     digest = self._inflight_digests.pop(item_id, None)
-                    if digest is None:
+                    if digest is None or response_warnings:
+                        # A response with warnings (e.g. an unresolved prompt
+                        # link) may be resolved by a later re-send, so it does
+                        # not count as delivered for dedup.
+                        self._delivered_digests.pop(item_id, None)
                         continue
                     self._delivered_digests[item_id] = digest
                     self._delivered_digests.move_to_end(item_id)
@@ -2434,7 +2458,10 @@ class ObservabilityClient:
         if close_in_progress:
             return self._wait_for_concurrent_close(deadline)
         if already_closed:
-            return self._flush_transport_until(deadline)
+            closed_result = self._flush_transport_until(deadline)
+            if self._ingest_suppressed:
+                return self._with_suppressed_delivery_warning(closed_result)
+            return closed_result
 
         result: FlushResult | None = None
         transport_close_completed = False
@@ -2981,6 +3008,9 @@ class ObservabilityClient:
         return SessionRecord.from_dict(self._unwrap_data(payload, "session detail"))
 
     def _create_transport(self) -> _SyncBatchTransport:
+        # The backend's per-request caps (#2600) bind only the SDK's own ingest
+        # sender; a custom sender's sink has its own limits.
+        backend_sink = self._sender_override is None
         return _SyncBatchTransport(
             self._send_payload_batch,
             batch_size=self.config.batch_size,
@@ -2988,6 +3018,12 @@ class ObservabilityClient:
             max_queue_size=self.config.max_queue_size,
             max_batch_bytes=self.config.max_batch_bytes,
             health_callback=self.config.health_callback,
+            max_traces_per_request=(
+                INGEST_MAX_TRACES_PER_REQUEST if backend_sink else None
+            ),
+            max_observations_per_request=(
+                INGEST_MAX_OBSERVATIONS_PER_REQUEST if backend_sink else None
+            ),
         )
 
     def _send_payload_batch(

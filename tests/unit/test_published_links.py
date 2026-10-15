@@ -38,6 +38,7 @@ TEXT_GLOBS = (
     "pyproject.toml",
     "mkdocs.yml",
     "README.md",
+    "CHANGELOG.md",
     "docs/**/*.md",
     "walkthrough/**/*.md",
     "examples/**/README.md",

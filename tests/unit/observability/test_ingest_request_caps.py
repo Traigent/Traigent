@@ -167,18 +167,33 @@ def test_nested_children_count_toward_the_observation_cap():
     assert sender.requests == []
 
 
-def test_client_with_large_batch_size_still_sends_capped_requests():
+def _client_config(**overrides) -> ObservabilityConfig:
+    values = {
+        "backend_origin": "http://localhost:5000",
+        "api_key": "test-key",  # pragma: allowlist secret
+        "batch_size": 500,  # still accepted: batch_size is the flush trigger
+        "max_buffer_age": 999.0,
+        "enable_atexit_flush": False,
+    }
+    values.update(overrides)
+    return ObservabilityConfig(**values)
+
+
+@pytest.fixture
+def _online(monkeypatch, jwt_development_mode):
+    del jwt_development_mode
+    for name in ("TRAIGENT_DISABLE_TELEMETRY", "TRAIGENT_OFFLINE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+    monkeypatch.setenv("TRAIGENT_ENV", "development")
+
+
+@pytest.mark.usefixtures("_online")
+def test_backend_sender_requests_are_capped_with_large_batch_size(monkeypatch):
     sender = _RecordingSender()
-    client = ObservabilityClient(
-        ObservabilityConfig(
-            backend_origin="http://localhost:5000",
-            api_key="test-key",  # pragma: allowlist secret
-            batch_size=500,  # still accepted: batch_size is the flush trigger
-            max_buffer_age=999.0,
-            enable_atexit_flush=False,
-        ),
-        sender=sender,
-    )
+    client = ObservabilityClient(_client_config())
+    # The SDK's own ingest path, with the HTTP call replaced by a recorder.
+    monkeypatch.setattr(client, "_post_batch_sync", sender)
     for index in range(200):
         trace_id = client.start_trace("trace", trace_id=f"trace_{index}")
         client.end_trace(trace_id)
@@ -190,3 +205,24 @@ def test_client_with_large_batch_size_still_sends_capped_requests():
     assert max(len(request) for request in sender.requests) <= 100
     delivered = {trace["id"] for request in sender.requests for trace in request}
     assert delivered == {f"trace_{index}" for index in range(200)}
+
+
+@pytest.mark.usefixtures("_online")
+def test_custom_sender_is_not_bound_by_the_backend_caps():
+    """A custom sender's sink is not the Traigent backend: no trace is dropped
+    or split on the backend's behalf."""
+    sender = _RecordingSender()
+    client = ObservabilityClient(_client_config(), sender=sender)
+    big = client.start_trace("big", trace_id="trace_big")
+    for index in range(INGEST_MAX_OBSERVATIONS_PER_REQUEST + 1):
+        client.record_observation(big, name="step", observation_id=f"obs_{index}")
+    for index in range(150):
+        client.start_trace("trace", trace_id=f"trace_{index}")
+
+    result = client.close()
+
+    assert result.items_dropped == 0
+    assert client._transport.get_stats()["dropped_by_reason"] == {}
+    delivered = {trace["id"] for request in sender.requests for trace in request}
+    assert "trace_big" in delivered
+    assert max(len(request) for request in sender.requests) > 100
