@@ -1388,6 +1388,26 @@ class BackendIntegratedClient:
 
     # === Context Manager Support ===
 
+    async def _retire_primary_pool(self) -> None:
+        """Make room for a new primary pool without orphaning the current one."""
+        primary = self._session
+        if primary is None:
+            return
+        self._session = None
+        self._detach_session_finalizer()
+        if _session_is_closed(primary):
+            return
+        owner = getattr(primary, "_loop", None)
+        if not isinstance(owner, asyncio.AbstractEventLoop):
+            await primary.close()
+        elif owner is asyncio.get_running_loop():
+            await primary.close()
+        elif not owner.is_closed():
+            # Still serving another live loop: keep it as that loop's pool.
+            self._loop_pools()[id(owner)] = (weakref.ref(owner), primary)
+        else:
+            self._dispose_pool(primary, self.__class__.__name__)
+
     async def __aenter__(self) -> "BackendIntegratedClient":
         """Async context manager entry."""
         if cloud_backend_egress_disabled(self.no_egress):
@@ -1420,6 +1440,7 @@ class BackendIntegratedClient:
                     "X-Client-Version": "2.0.0",
                 }
             )
+            await self._retire_primary_pool()
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
                 # Session-default headers are long-lived: never freeze a
@@ -1526,11 +1547,11 @@ class BackendIntegratedClient:
 
         self._raise_if_backend_egress_disabled("backend request")
         loop = asyncio.get_running_loop()
+        self._purge_dead_pools()
         pool = self._pool_for_loop(loop)
         if pool is not None:
             return cast(AioClientSession, pool)
 
-        self._purge_dead_pools()
         session = await self._build_http_session()
         pool = self._pool_for_loop(loop)  # another task on this loop won the race
         if pool is not None:

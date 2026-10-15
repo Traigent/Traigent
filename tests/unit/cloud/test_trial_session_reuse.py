@@ -58,6 +58,8 @@ class _LocalTrialClient(BackendIntegratedClient):
         self._active_sessions = {}
         self._active_sessions_lock = threading.Lock()
         self._session_credentials = {}
+        self._request_nonces = set()
+        self._max_nonces = 1000
         self._cost_budget_armed_sessions = set()
         self._api_ops = ApiOperations(self)
         self._trial_ops = TrialOperations(self)
@@ -541,6 +543,42 @@ def test_async_consumer_on_second_open_loop_gets_its_own_pool(threaded_trial_ser
             loop_a.run_until_complete(client.request_trial_slot("local-session"))
         ).trial_id
         assert client._session is pool_a
+    finally:
+        loop_a.run_until_complete(client.close())
+        loop_a.close()
+
+
+def test_closed_loop_pools_are_released_and_context_entry_keeps_no_orphan(
+    threaded_trial_server,
+):
+    origin, _requests, _connections = threaded_trial_server
+    client = _LocalTrialClient(origin)
+    loop_a = asyncio.new_event_loop()
+    try:
+        loop_a.run_until_complete(client.request_trial_slot("local-session"))
+        pool_a = client._session
+
+        asyncio.run(client.request_trial_slot("local-session"))  # pool on loop B
+        ((_ref, pool_b),) = client._loop_pools().values()
+        # Next request on A purges B's closed-loop pool even though A's is cached.
+        loop_a.run_until_complete(client.request_trial_slot("local-session"))
+        assert pool_b.closed and not client._loop_pools()
+
+        async def enter_after_trial():
+            await client.request_trial_slot("local-session")
+            before = client._session
+            async with client:
+                pass
+            return before
+
+        loop_c = asyncio.new_event_loop()
+        try:
+            client._session = None
+            before = loop_c.run_until_complete(enter_after_trial())
+            assert before.closed  # not orphaned by __aenter__
+        finally:
+            loop_c.close()
+        assert not pool_a.closed
     finally:
         loop_a.run_until_complete(client.close())
         loop_a.close()
