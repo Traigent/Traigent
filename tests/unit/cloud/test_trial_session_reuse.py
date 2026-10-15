@@ -382,3 +382,49 @@ def test_sync_registration_without_running_loop_closes_each_transient_session(
         assert client._session is None
         assert created[-1].closed
     assert len(requests) == len(connections) == len(created) == 2
+
+
+def test_pooled_session_bound_to_another_loop_is_never_reused(
+    threaded_trial_server, monkeypatch
+):
+    """A pool left by a finished throwaway loop must not serve a later loop."""
+    import aiohttp
+
+    origin, requests, _connections = threaded_trial_server
+    client = _LocalTrialClient(origin)
+
+    # Throwaway loop (as the *_sync wrappers use) creates the shared pool, then dies.
+    loop_a = asyncio.new_event_loop()
+    pooled = loop_a.run_until_complete(client._ensure_session())
+    assert pooled._loop is loop_a
+    created = []
+    original_session = aiohttp.ClientSession
+
+    def track_session(*args, **kwargs):
+        session = original_session(*args, **kwargs)
+        created.append(session)
+        return session
+
+    try:
+        loop_a.close()
+        monkeypatch.setattr(aiohttp, "ClientSession", track_session)
+
+        async def run_on_new_loop():
+            slot = await client.request_trial_slot("local-session")
+            assert slot.trial_id == "trial-1"
+            assert (
+                await client._trial_ops.submit_trial_result_via_session(
+                    "local-session", slot.trial_id, {}, {"accuracy": 0.5}, "completed"
+                )
+                is True
+            )
+
+        asyncio.run(run_on_new_loop())
+        # Each call used a private session that is closed; the stale pool was untouched.
+        assert len(created) == 2 and all(s.closed for s in created)
+        assert client._session is pooled
+        assert len(requests) == 2
+    finally:
+        client._session = None
+        client._session_finalizer = None
+        pooled._connector._closed = True  # drop stale transports without a live loop
