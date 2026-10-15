@@ -86,6 +86,7 @@ def test_declared_capability_overrides_detection_both_ways() -> None:
         "DDL = 'create table t (id int)'\n",
         'def f(conn):\n    return conn.execute("select name from users").fetchall()\n',
         'Q = "Select id From t"\n',
+        'def agent(q): return generate_code("### Generate SQL: " + q)\n',
     ],
 )
 def test_sql_signal_detected(source: str) -> None:

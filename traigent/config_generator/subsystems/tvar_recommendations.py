@@ -266,13 +266,34 @@ _SQL_SIGNAL_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
+def _without_comments(source_code: str) -> str:
+    """Remove Python comment tokens, keeping string literals intact."""
+    import io
+    import tokenize
+
+    try:
+        tokens = [
+            tok
+            for tok in tokenize.generate_tokens(io.StringIO(source_code).readline)
+            if tok.type != tokenize.COMMENT
+        ]
+        return " ".join(tok.string for tok in tokens)
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        # Not tokenizable (partial or non-Python source): fall back to a
+        # line-wise strip of text after "#" that is outside quotes.
+        return "\n".join(
+            line if re.search(r"""["']""", line) else line.split("#", 1)[0]
+            for line in source_code.splitlines()
+        )
+
+
 def detect_capability_signals(source_code: str) -> frozenset[str]:
     """Return the capabilities the source code shows a concrete signal for.
 
     ``#`` comment text is ignored so prose such as ``# no SQL needed`` is not
     read as a signal.
     """
-    code = re.sub(r"(?m)#[^\n]*", "", source_code or "")
+    code = _without_comments(source_code or "")
     signals: set[str] = set()
     if any(p.search(code) for p in _SQL_SIGNAL_PATTERNS):
         signals.add(SQL_CAPABILITY)
