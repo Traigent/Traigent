@@ -308,27 +308,30 @@ _SECRET_WORDS = (
     r"(?:password|passwd|passphrase|pwd|pw|secret|token|credentials?|"
     r"api[_-]?key|access[_-]?key|private[_-]?key)"
 )
+# ``api_key_value=...`` is still a secret; ``max_tokens=100`` is not.
+_KEY_SUFFIX = r"(?:[_-](?:value|val|str|string|hash|key|text|data|id))?"
 # Quoted values may contain escaped quotes and may be unterminated (the text
 # can be cut mid-value); both forms are consumed to the end.
-_QUOTED_VALUE = r"\"(?:\\.|[^\"\\])*(?:\"|$)|'(?:\\.|[^'\\])*(?:'|$)"
+_QUOTED_VALUE = r"\"(?:\\[\s\S]?|[^\"\\])*(?:\"|$)|'(?:\\[\s\S]?|[^'\\])*(?:'|$)"
 # Key (optionally prefixed, e.g. ``db_password``) followed by ``=`` or ``:``.
 # The lookbehind makes a match start only at the beginning of a name, so the
 # greedy prefix is not retried from every offset (no quadratic backtracking).
 _SECRET_KV_RE = re.compile(
-    rf"(?P<key>(?<![\w.-])[\w.-]*{_SECRET_WORDS}[\"']?\s*[=:]\s*)"
-    rf"(?:{_QUOTED_VALUE}|[^\s,;&\"'}}]+)",
+    rf"(?P<key>(?<![\w.-])[\w.-]*{_SECRET_WORDS}{_KEY_SUFFIX}[\"']?\s*[=:]\s*)"
+    rf"(?:{_QUOTED_VALUE}|[^\s\"'}}\])]+)",
     re.IGNORECASE,
 )
 _AUTH_HEADER_RE = re.compile(
-    r"(?P<key>\bAuthorization\s*[=:]\s*)(?:(?:Bearer|Basic|Digest|Token)\s+)?"
-    r"[^\s,;\"'}]+",
+    r"(?P<key>\bAuthorization[\"']?\s*[=:]\s*[\"']?)"
+    r"(?:(?:Bearer|Basic|Digest|Token)\s+)?[^\s\"'}\]]+",
     re.IGNORECASE,
 )
 _COOKIE_HEADER_RE = re.compile(
-    r"(?P<key>\b(?:Set-)?Cookie\s*:\s*)[^\r\n]+", re.IGNORECASE
+    r"(?P<key>\b(?:Set-)?Cookie[\"']?\s*:\s*[\"']?)[^\r\n\"']+", re.IGNORECASE
 )
 _BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{4,}", re.IGNORECASE)
-_URL_USERINFO_RE = re.compile(r"(?P<pre>://[^/\s:@]+:)[^@\s/]+(?=@)")
+# Whole userinfo (``user:pass@`` or ``token@``): the user name can be a secret too.
+_URL_USERINFO_RE = re.compile(r"(?<=://)[^/\s@?#]+(?=@)")
 # Windows forbids these characters in a file name; a user name may hold up to
 # two spaces ("John Smith") when a path separator follows.
 _WIN_NAME = r"[^\s\\/\"':*?<>|]+"
@@ -354,11 +357,11 @@ def _scrub_error_text(text: str) -> str:
     text = _COOKIE_HEADER_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
     text = _BEARER_RE.sub("Bearer [REDACTED]", text)
     text = _SECRET_KV_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
-    text = _URL_USERINFO_RE.sub(lambda m: f"{m.group('pre')}[REDACTED]", text)
+    text = _URL_USERINFO_RE.sub("[REDACTED]", text)
     text = redact_embedded_credentials(text)
     text = _WINDOWS_USER_PATH_RE.sub("[PATH]", text)
-    text = re.sub(r"/home/[\w/.-]+", "[PATH]", text)
-    return re.sub(r"/Users/[\w/.-]+", "[PATH]", text)
+    text = re.sub(r"/home/[\w/.@+-]+", "[PATH]", text)
+    return re.sub(r"/Users/[\w/.@+-]+", "[PATH]", text)
 
 
 class ApiOperations:

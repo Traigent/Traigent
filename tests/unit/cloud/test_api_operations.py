@@ -372,6 +372,17 @@ class TestSanitizeErrorMessage:
             ("x-api-key: abc123token", "abc123token"),
             ("Proxy-Authorization: Basic Zm9vYmFy", "Zm9vYmFy"),
             ("key AKIAABCDEFGHIJKLMNOP leaked", "AKIAABCDEFGHIJKLMNOP"),
+            ('{"Authorization": "Basic dXNlcjpwYXNz"}', "dXNlcjpwYXNz"),
+            ("{'Authorization': 'Bearer abc123xyz'}", "abc123xyz"),
+            ('{"Cookie": "sid=abc123"}', "abc123"),
+            ("password=alpha;private-tail", "private-tail"),
+            ("password=alpha,private-tail", "private-tail"),
+            ('password="hunter2\\', "hunter2"),
+            ("api_key_value=abc123", "abc123"),
+            ("password_value=hunter2", "hunter2"),
+            ("https://private-token@host/path", "private-token"),
+            ("https://alice:pw1@host/path", "alice"),
+            ("open /home/alice@example.com/file.py", "alice"),
         ],
     )
     def test_more_secret_shapes_redacted(self, msg, leaked):
