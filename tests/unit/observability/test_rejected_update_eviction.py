@@ -178,3 +178,20 @@ def test_a_superseded_mark_does_not_outlive_its_in_flight_batch():
     # The send failed, so the valid snapshot is retained for a later retry.
     assert result.success is False
     assert list(transport._buffer) == ["trace_x"]
+
+
+def test_a_rejection_with_nothing_in_flight_does_not_block_a_later_retry():
+    """Rejecting X while nothing is in flight marks nothing as superseded: a
+    later valid X whose send fails is retained for a retry."""
+
+    def sender(traces):
+        raise AuthenticationError("invalid credentials")  # not retried
+
+    transport = _transport(sender)
+    assert not transport.submit("trace_x", {"id": "trace_x", "blob": "x" * 4096})
+    assert transport.submit("trace_x", {"id": "trace_x", "status": "completed"})
+    result = transport.flush()
+
+    assert result.success is False
+    assert result.items_pending == 1
+    assert list(transport._buffer) == ["trace_x"]

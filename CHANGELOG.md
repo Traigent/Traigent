@@ -161,8 +161,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   that does not resolve; both now use the docs site
   (https://traigent.github.io/Traigent/). The "API keys detected in code"
   warning linked a domain Traigent does not own; it now links the secret
-  management guide. The docs nav's dead "JavaScript SDK" entry now opens the
-  JS bridge guide, and doc links to a dead community forum and to
+  management guide. The docs nav's dead "JavaScript SDK" entry is removed
+  until JS SDK docs are published, and doc links to a dead community forum and to
   repositories the public cannot open were removed. A new offline test fails
   if any of these come back.
 - **`ObservabilityClient` multi-tag trace/session filters no longer return an

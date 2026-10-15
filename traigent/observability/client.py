@@ -870,6 +870,12 @@ class _SyncBatchTransport:
         self.max_batch_bytes = max_batch_bytes
         # Backend ingest caps (#2600); None disables a cap, for a custom
         # sender whose sink is not the Traigent backend.
+        for name, cap in (
+            ("max_traces_per_request", max_traces_per_request),
+            ("max_observations_per_request", max_observations_per_request),
+        ):
+            if cap is not None and cap <= 0:
+                raise ValueError(f"{name} must be greater than 0 or None")
         self.max_traces_per_request = max_traces_per_request
         self.max_observations_per_request = max_observations_per_request
         self._retry_handler = RetryHandler(

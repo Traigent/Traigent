@@ -290,3 +290,42 @@ def test_a_response_with_warnings_does_not_count_as_delivered():
 
     assert _sent_ids(requests) == ["x", "x"]
     assert transport.get_stats()["skipped_unchanged_items"] == 0
+
+
+def test_a_warned_delivery_forgets_the_older_delivered_snapshot():
+    """A delivered; B delivered with warnings; the app goes back to A. A must be
+    sent: the backend holds B, so the remembered A is stale."""
+    requests: list[list[dict]] = []
+
+    def sender(traces):
+        requests.append(traces)
+        if traces[0]["v"] == "B":
+            return {"warnings": ["prompt link not resolved"]}
+        return None
+
+    transport = _SyncBatchTransport(
+        sender,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=100,
+        max_batch_bytes=1_000_000,
+    )
+    for version in ("A", "B", "A"):
+        assert transport.submit("x", {"id": "x", "v": version})
+        transport.flush()
+    transport.close()
+
+    assert [request[0]["v"] for request in requests] == ["A", "B", "A"]
+
+
+def test_transport_rejects_non_positive_request_caps():
+    for name in ("max_traces_per_request", "max_observations_per_request"):
+        with pytest.raises(ValueError, match=name):
+            _SyncBatchTransport(
+                lambda traces: None,
+                batch_size=10,
+                max_buffer_age=999.0,
+                max_queue_size=10,
+                max_batch_bytes=1_000_000,
+                **{name: 0},
+            )
