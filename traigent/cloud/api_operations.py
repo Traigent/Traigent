@@ -331,6 +331,11 @@ _COOKIE_HEADER_RE = re.compile(
 )
 _BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{4,}", re.IGNORECASE)
 # Whole userinfo (``user:pass@`` or ``token@``): the user name can be a secret too.
+# Standalone ``Basic <base64>`` (needs a digit/symbol so prose such as
+# "Basic authentication" is untouched).
+_BASIC_RE = re.compile(
+    r"\bBasic\s+(?=[A-Za-z0-9+/]*[0-9+/=])[A-Za-z0-9+/]{8,}={0,2}", re.IGNORECASE
+)
 _URL_USERINFO_RE = re.compile(r"(?<=://)[^/\s@?#]+(?=@)")
 # Windows forbids these characters in a file name; a user name may hold up to
 # two spaces ("John Smith") when a path separator follows.
@@ -356,6 +361,7 @@ def _scrub_error_text(text: str) -> str:
     text = _URL_USERINFO_RE.sub("[REDACTED]", text)
     text = _AUTH_HEADER_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
     text = _COOKIE_HEADER_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
+    text = _BASIC_RE.sub("Basic [REDACTED]", text)
     text = _BEARER_RE.sub("Bearer [REDACTED]", text)
     text = _SECRET_KV_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
     text = redact_embedded_credentials(text)

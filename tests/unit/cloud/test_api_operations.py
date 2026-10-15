@@ -381,6 +381,7 @@ class TestSanitizeErrorMessage:
             ('Cookie: sid="alpha"; other=bravo', "alpha"),
             ("password=alpha)private-tail", "private-tail"),
             ("password=alpha}private-tail", "private-tail"),
+            ("authentication rejected: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz"),
             ("password=o'connor", "connor"),
             ("https://private-token:password=abc123@host/path", "private-token"),
             ("password=alpha]private-tail", "private-tail"),
@@ -402,6 +403,7 @@ class TestSanitizeErrorMessage:
             "trace id 4111111111111111 failed",
             "user a@b.com not found",
             "max_tokens=100 exceeded",
+            "Basic authentication required",
         ],
     )
     def test_error_codes_and_ids_survive(self, msg):
