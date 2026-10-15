@@ -204,3 +204,24 @@ class TestFailureModes:
         finally:
             os.umask(previous)
         assert stat.S_IMODE(out.stat().st_mode) == 0o644
+
+    @pytest.mark.parametrize("existing_mode", [0o600, 0o640])
+    def test_replacing_an_existing_file_keeps_its_permissions(
+        self, tmp_path: Path, existing_mode: int
+    ) -> None:
+        # A plain ``open(..., "w")`` keeps an existing file's mode; the atomic
+        # replace must too, so re-exporting over an owner-only file never
+        # widens access to the raw examples it holds.
+        import os
+        import stat
+
+        out = tmp_path / "out.jsonl"
+        out.write_text("previous export\n", encoding="utf-8")
+        out.chmod(existing_mode)
+        previous = os.umask(0o022)
+        try:
+            _dataset(ROWS[:1]).to_jsonl(out)
+        finally:
+            os.umask(previous)
+        assert stat.S_IMODE(out.stat().st_mode) == existing_mode
+        assert _contents(Dataset.from_jsonl(str(out))) == _contents(_dataset(ROWS[:1]))
