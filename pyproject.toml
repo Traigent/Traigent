@@ -105,7 +105,7 @@ pydanticai = [
     # 2.x span as well. Two patched boundaries exist -- 1.107.4 on the 1.x
     # line and 2.28.0 on 2.x. We take 2.28.0 because that is the version
     # this repo locks, installs and tests against.
-    "pydantic-ai-slim>=2.28.0,<3",
+    "pydantic-ai-slim>=2.53.0,<3",
 ]
 
 # Enterprise security features (Sprint 7)
