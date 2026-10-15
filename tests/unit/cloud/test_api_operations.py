@@ -382,6 +382,8 @@ class TestSanitizeErrorMessage:
             ("password=alpha)private-tail", "private-tail"),
             ("password=alpha}private-tail", "private-tail"),
             ("authentication rejected: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz"),
+            (r"C:\Users\Juan Carlos de la Cruz\file.txt", "Carlos"),
+            ("bAsIc dXNlcjpwYXNz", "dXNlcjpwYXNz"),
             ("password=o'connor", "connor"),
             ("https://private-token:password=abc123@host/path", "private-token"),
             ("password=alpha]private-tail", "private-tail"),

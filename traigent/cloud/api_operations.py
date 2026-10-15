@@ -343,7 +343,7 @@ _URL_USERINFO_RE = re.compile(r"(?<=://)[^/\s@?#]+(?=@)")
 _WIN_NAME = r"[^\s\\/\"':*?<>|]+"
 _WINDOWS_USER_PATH_RE = re.compile(
     r"\b[A-Za-z]:[\\/]+Users[\\/]+"
-    rf"(?:{_WIN_NAME}(?: {_WIN_NAME}){{0,2}}(?=[\\/])|{_WIN_NAME})"
+    rf"(?:{_WIN_NAME}(?: {_WIN_NAME})*(?=[\\/])|{_WIN_NAME})"
     r"(?:[\\/]+[^\s\"']*)?",
     re.IGNORECASE,
 )
