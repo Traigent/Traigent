@@ -83,7 +83,10 @@ def generate_recommendations(
         llm_recs = _llm_recommend(tvars, agent_type, source_code, llm)
         # Deduplicate by name
         existing_rec_names = {r.name for r in recs}
+        gated_out = _capability_gated_names(signals)
         for rec in llm_recs:
+            if rec.name in gated_out:
+                continue
             if rec.name not in existing_rec_names and rec.name not in existing_names:
                 recs.append(rec)
                 existing_rec_names.add(rec.name)
@@ -247,11 +250,14 @@ _ENTRY_REQUIRED_CAPABILITIES: Mapping[str, frozenset[str]] = {
 
 _SQL_SIGNAL_PATTERNS: tuple[re.Pattern[str], ...] = (
     # An identifier or string naming SQL: generate_sql, text2sql, sqlite3,
-    # sqlalchemy, mysql, postgresql, "sql" ... but not "NoSQL", which names
-    # the absence of a SQL schema.
-    re.compile(r"(?<!no)sql", re.IGNORECASE),
-    # A SQL statement in a string literal.
-    re.compile(r"\bSELECT\b[^\n]{0,200}?\bFROM\b"),
+    # sqlalchemy, mysql, postgresql, "sql" ... but not a negative mention
+    # ("NoSQL", "no SQL", "non-SQL", "not SQL", "without SQL").
+    re.compile(
+        r"(?<!no)(?<!no )(?<!non-)(?<!non )(?<!not )(?<!without )sql",
+        re.IGNORECASE,
+    ),
+    # A SQL statement at the start of a string literal, in any letter case.
+    re.compile(r"""["'(]\s*select\s+[^\n"']{1,200}?\sfrom\s+\w""", re.IGNORECASE),
     re.compile(r"\bCREATE\s+TABLE\b|\bFOREIGN\s+KEY\b", re.IGNORECASE),
     # Common database drivers whose names do not contain "sql".
     re.compile(
@@ -261,9 +267,14 @@ _SQL_SIGNAL_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 
 def detect_capability_signals(source_code: str) -> frozenset[str]:
-    """Return the capabilities the source code shows a concrete signal for."""
+    """Return the capabilities the source code shows a concrete signal for.
+
+    ``#`` comment text is ignored so prose such as ``# no SQL needed`` is not
+    read as a signal.
+    """
+    code = re.sub(r"(?m)#[^\n]*", "", source_code or "")
     signals: set[str] = set()
-    if source_code and any(p.search(source_code) for p in _SQL_SIGNAL_PATTERNS):
+    if any(p.search(code) for p in _SQL_SIGNAL_PATTERNS):
         signals.add(SQL_CAPABILITY)
     return frozenset(signals)
 
@@ -275,6 +286,15 @@ def _entry_capabilities_met(
         return True
     required = _ENTRY_REQUIRED_CAPABILITIES.get(str(entry.get("entry_id", "")))
     return required is None or required <= signals
+
+
+def _capability_gated_names(signals: frozenset[str]) -> frozenset[str]:
+    """Knob names of catalog entries whose required capabilities ``signals`` lacks."""
+    return frozenset(
+        entry_to_recommendation(entry).name
+        for entry in catalog_entries("code_gen")
+        if not _entry_capabilities_met(entry, signals)
+    )
 
 
 def _catalog_recommendation_templates(

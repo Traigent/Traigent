@@ -84,6 +84,8 @@ def test_declared_capability_overrides_detection_both_ways() -> None:
         "import duckdb\n",
         "from psycopg2 import connect\n",
         "DDL = 'create table t (id int)'\n",
+        'def f(conn):\n    return conn.execute("select name from users").fetchall()\n',
+        'Q = "Select id From t"\n',
     ],
 )
 def test_sql_signal_detected(source: str) -> None:
@@ -97,7 +99,47 @@ def test_sql_signal_detected(source: str) -> None:
         HUMANEVAL_AGENT,
         "def select_best(items):\n    return items[0]\n",
         "from pymongo import MongoClient  # a NoSQL document store\n",
+        HUMANEVAL_AGENT + "\n# no SQL needed\n",
+        HUMANEVAL_AGENT + "\n# this is not SQL, without SQL, non-SQL\n",
     ],
 )
 def test_no_sql_signal(source: str) -> None:
     assert detect_capability_signals(source) == frozenset()
+
+
+class _FakeLLM:
+    """Returns a fixed JSON reply recommending a SQL-only knob."""
+
+    def complete(self, prompt: str, *, max_tokens: int = 1024) -> str:
+        return (
+            '[{"name": "schema_context", "range_type": "Choices", '
+            '"kwargs": {"values": ["none", "full_ddl_fk"]}, '
+            '"category": "prompting", "reasoning": "r", "impact": "high"}]'
+        )
+
+
+def test_llm_enrichment_cannot_reintroduce_a_gated_knob() -> None:
+    recs = generate_recommendations(
+        [],
+        source_code=HUMANEVAL_AGENT,
+        classification=classify_agent(HUMANEVAL_AGENT),
+        recommendation_bundle=RecommendationBundle.empty(),
+        llm=_FakeLLM(),
+        capability_signals=(),
+    )
+    assert "schema_context" not in {r.name for r in recs}
+
+
+def test_llm_enrichment_may_suggest_the_knob_for_a_sql_agent() -> None:
+    # Control: the same reply is not dropped when the capability is present, so
+    # the test above is discriminating (it would also pass if the LLM path
+    # never produced the knob at all, which this rules out).
+    recs = generate_recommendations(
+        [],
+        source_code=HUMANEVAL_AGENT,
+        classification=classify_agent(HUMANEVAL_AGENT),
+        recommendation_bundle=RecommendationBundle.empty(),
+        llm=_FakeLLM(),
+        capability_signals={"sql"},
+    )
+    assert "schema_context" in {r.name for r in recs}
