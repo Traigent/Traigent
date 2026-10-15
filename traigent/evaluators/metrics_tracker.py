@@ -1245,7 +1245,8 @@ class MetricsTracker:
         # `measured=False`) -- `_calculate_describe_stats([])` already
         # returns a proper zero-count structure. Optional/custom-metric keys
         # keep the pre-existing "only if non-empty" behavior.
-        summary_metrics = {}
+        # describe() dicts plus scalar flags/None placeholders (#2517)
+        summary_metrics: dict[str, Any] = {}
         for metric_name, values in metrics_data.items():
             if values or metric_name in always_emit_keys:
                 summary_metrics[metric_name] = self._calculate_describe_stats(values)

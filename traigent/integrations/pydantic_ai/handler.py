@@ -257,7 +257,7 @@ class PydanticAIHandler:
             self._runs.append(metrics)
 
     @staticmethod
-    def _usage_counter(usage: Any, name: str) -> int | float | None:
+    def _usage_counter(usage: Any, name: str) -> int | None:
         """Return a reported, non-negative token counter, else ``None``.
 
         ``None`` means "not reported" (usage missing, attribute absent or
@@ -271,7 +271,7 @@ class PydanticAIHandler:
             return None
         if not math.isfinite(value) or value < 0:
             return None
-        return value
+        return int(value)
 
     def _record_error(self, start_time: float) -> None:
         """Record a failed run: no usage was reported, and none is invented."""

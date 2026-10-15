@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, TypeGuard
 
 from traigent.storage.local_storage import TRIAL_COST_FIELDS, extract_trial_cost_fields
 
@@ -60,7 +60,7 @@ def is_cost_unmeasured(metrics: Any) -> bool:
     )
 
 
-def is_finite_numeric_cost(value: Any) -> bool:
+def is_finite_numeric_cost(value: Any) -> TypeGuard[int | float]:
     """Return True only for finite JSON numeric cost values."""
 
     if value is None or isinstance(value, bool):
