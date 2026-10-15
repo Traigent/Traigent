@@ -329,3 +329,33 @@ def test_transport_rejects_non_positive_request_caps():
                 max_batch_bytes=1_000_000,
                 **{name: 0},
             )
+
+
+def test_a_failed_send_forgets_the_older_delivered_snapshot():
+    """A delivered; B's send fails (the server may still have written it); B
+    then leaves the buffer via a rejected update; the app goes back to A. A
+    must be sent, because the backend may hold B."""
+    requests: list[list[dict]] = []
+
+    def sender(traces):
+        if traces[0].get("v") == "B":
+            raise AuthenticationError("invalid credentials")  # not retried
+        requests.append(traces)
+
+    transport = _SyncBatchTransport(
+        sender,
+        batch_size=100,
+        max_buffer_age=999.0,
+        max_queue_size=100,
+        max_batch_bytes=2048,
+    )
+    assert transport.submit("x", {"id": "x", "v": "A"})
+    transport.flush()
+    assert transport.submit("x", {"id": "x", "v": "B"})
+    assert transport.flush().success is False
+    # A rejected update evicts the retained B.
+    assert not transport.submit("x", {"id": "x", "v": "C", "blob": "x" * 4096})
+    assert transport.submit("x", {"id": "x", "v": "A"})
+    transport.close()
+
+    assert [request[0]["v"] for request in requests] == ["A", "A"]

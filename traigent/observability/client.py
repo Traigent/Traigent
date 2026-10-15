@@ -1508,6 +1508,12 @@ class _SyncBatchTransport:
 
         with self._lock:
             self._stats["failed_batches"] += 1
+            # A failed send may still have been written server-side (e.g. a
+            # timeout after commit), so the backend may no longer hold the
+            # snapshot remembered as delivered: forget it, so a later re-submit
+            # of that snapshot is sent rather than skipped.
+            for item_id, _ in batch_items:
+                self._delivered_digests.pop(item_id, None)
             # The sender receives already prepared snapshots. Retain those exact
             # payloads; do not re-redact them using mutable live trace state.
             retained = OrderedDict(
