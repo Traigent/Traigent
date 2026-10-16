@@ -517,3 +517,53 @@ def test_store_stamps_a_format_marker_and_refuses_legacy_or_unknown_layouts(tmp_
     (other / STORE_FORMAT_FILE).write_text("traigent.legend.store/99\n")
     with pytest.raises(LegendError):
         LocalDirectoryStore(other).has(c.KIND_AGENT, fp)
+
+
+def test_store_refuses_markerless_entries_and_only_stamps_an_empty_root(tmp_path):
+    import io
+
+    from traigent.legend import LocalDirectoryStore
+
+    fp = "rmf0:sha256:" + "ef" * 32
+    root = tmp_path / "r"
+    d = root / c.KIND_AGENT / "rmf0"
+    d.mkdir(parents=True)
+    (d / ("ef" * 32 + ".entry")).write_bytes(b"0" * 64 + b" 1\nx")  # no marker
+    store = LocalDirectoryStore(root)
+    for call in (
+        lambda: store.has(c.KIND_AGENT, fp),
+        lambda: store.get(c.KIND_AGENT, fp, tmp_path / "o"),
+        lambda: store.put(c.KIND_AGENT, fp, io.BytesIO(b"x")),
+    ):
+        with pytest.raises(LegendError) as err:
+            call()
+        assert err.value.code == "local_store_layout_unsupported"
+    assert not (
+        root / ".legend-store-format"
+    ).exists()  # never stamped over foreign data
+
+
+def test_declare_under_an_entity_of_another_kind_is_refused():
+    t = InMemoryTransport()
+    agent = declare(c.KIND_CONFIGURATION, ConfigurationSource({"a": 1}), transport=t)
+    with pytest.raises(LegendError) as err:
+        declare(
+            c.KIND_AGENT,
+            AgentManifestSource(_agent_manifest()),
+            entity=agent.entity_ref,
+            transport=t,
+        )
+    assert (
+        err.value.code == "invalid_request"
+    )  # (entity, kind) must match, like the Backend FK
+
+
+def _agent_manifest():
+    from traigent.identity.agent_build import collect_agent_build_base
+
+    def agent(q):
+        return q
+
+    return collect_agent_build_base(agent, agent_id="agent_x").manifest(
+        "sha256:" + "0" * 64
+    )

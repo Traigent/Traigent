@@ -1288,3 +1288,53 @@ def test_legend_client_works_end_to_end_over_the_backend_transport(
     }
     for route, body in posts:
         schemas.validate("legend_requests_v0.json", shapes[route], body)
+
+
+@pytest.mark.asyncio
+async def test_matching_suggestion_fingerprint_does_not_substitute_for_the_advertised_entity() -> (
+    None
+):
+    """The live path the earlier fallback used: trial_lifecycle with a suggested-fingerprint
+    key in the config and a block that names NO entity. Digest equality must not admit the
+    advertised version; strict refuses with a closed code and nothing is posted."""
+    server = FakeServer()
+    proposal = _config_ref(
+        server, {"param1": 1}
+    )  # the Backend's proposal for this trial
+    fingerprint = compute_pillar(
+        c.KIND_CONFIGURATION, ConfigurationSource({"param1": 1})
+    ).fingerprint
+    plan = [
+        {
+            "param1": 1,  # exactly what was suggested: the fingerprints are equal
+            "_traigent_backend_trial_id": "t_1",
+            "_traigent_legend_suggested": fingerprint,  # what the older code keyed on
+            "_traigent_legend_trial": _trial_block(
+                1, proposal.version_ref, [("run_base_configuration", vref(7))]
+            ),  # no entity_ref
+        }
+    ]
+    optimizer = _Optimizer({"param1": [0, 1, 2]}, ["accuracy"])
+    optimizer.plan = plan
+    evaluator = _Evaluator()
+    orch = OptimizationOrchestrator(
+        optimizer=optimizer,
+        evaluator=evaluator,
+        max_trials=2,
+        config=TraigentConfig(no_egress=True, enable_usage_analytics=False),
+        default_config={"param1": 1},
+    )
+    orch.legend_options = LegendOptions(transport=server)  # strict
+    orch.backend_session_manager.create_session = lambda **kw: SessionContext(  # type: ignore[method-assign]
+        "s", "d", "f", "o", 0.0, legend=block([("run_base_configuration", vref(7))])
+    )
+
+    async def f(input_data: dict[str, Any], **cfg: Any) -> Any:
+        return "x"
+
+    with pytest.raises(OptimizationError) as err:
+        await orch.optimize(f, Dataset([EvaluationExample({"q": "a"}, "b")], name="ds"))
+    assert isinstance(err.value.__cause__, LegendError)
+    assert err.value.__cause__.code == "local_observation_incomplete"
+    assert not [a for a in server.admissions if "trial_id" in a]
+    assert proposal.version_ref not in json.dumps(server.admissions)

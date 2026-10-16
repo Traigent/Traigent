@@ -85,10 +85,14 @@ class LocalDirectoryStore:
                 if marker.read_text() != STORE_FORMAT:
                     raise LegendError(LAYOUT_UNSUPPORTED, "unsupported store format")
                 return
+            # No marker: only a root with nothing in it (bar in-flight temp files) may be
+            # stamped. ANY other file, ``.entry`` files included, is an unknown layout.
             populated = self.root.is_dir() and any(
-                p.is_file() and p.suffix not in (".tmp", ".entry") and p != marker
+                p.is_file() and p.suffix != ".tmp" and p != marker
                 for p in self.root.rglob("*")
             )
+            if populated and marker.exists():
+                return self._check_layout(create)  # a concurrent first put stamped it
         except OSError:
             return  # unreachable root: the operation reports that itself
         if populated:

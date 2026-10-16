@@ -121,6 +121,9 @@ class InMemoryTransport:
         known_entity = entity_ref is not None and entity_ref in self.entities
         if entity_ref is not None and not known_entity:
             raise LegendError("unknown_ref")
+        if known_entity and self.entities[entity_ref]["kind"] != body["kind"]:
+            # the Backend's composite (entity_id, kind) foreign key
+            raise LegendError("invalid_request")
         parent = body["initial_parent_version_ref"]
         prev = body.get("previous_version_ref")
         for ref in (parent, prev):
