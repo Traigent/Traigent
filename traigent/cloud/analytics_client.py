@@ -759,9 +759,15 @@ def _exact_observability_object(
     keys: frozenset[str],
     what: str,
     require_all: bool = True,
+    required: frozenset[str] | None = None,
 ) -> dict[str, Any]:
+    """Closed-key check; ``required`` (subset of ``keys``) makes the rest optional."""
     source = _require_object(payload, what=what)
-    _require_exact_keys(source, keys, what=what, require_all=require_all)
+    if required is not None:
+        _require_keys(source, required, what=what)
+        _require_exact_keys(source, keys, what=what, require_all=False)
+    else:
+        _require_exact_keys(source, keys, what=what, require_all=require_all)
     return source
 
 
@@ -1790,10 +1796,15 @@ def _project_observability_tool_analysis(payload: Any) -> dict[str, Any]:
             "issue_ids",
         }
     )
+    optional_item_keys = frozenset(
+        {"cost_status", "priced_cost_usd", "unpriced_attempt_count"}
+    )
     projected_items: list[dict[str, Any]] = []
     for index, value in enumerate(items):
         what = f"tool_analysis.items[{index}]"
-        item = _exact_observability_object(value, keys=item_keys, what=what)
+        item = _exact_observability_object(
+            value, keys=item_keys | optional_item_keys, what=what, required=item_keys
+        )
         _require_safe_observability_identifier(
             item["normalized_tool_id"], what=f"{what}.normalized_tool_id"
         )
@@ -1812,9 +1823,26 @@ def _project_observability_tool_analysis(payload: Any) -> dict[str, Any]:
             _require_observability_number(
                 item[field], what=f"{what}.{field}", minimum=0, maximum=1
             )
-        for field in ("p50_latency_ms", "p95_latency_ms", "total_cost_usd"):
+        for field in ("p50_latency_ms", "p95_latency_ms"):
             _require_non_negative_observability_number(
                 item[field], what=f"{what}.{field}"
+            )
+        # Unknown cost is null, never 0 (Backend contract).
+        for field in ("total_cost_usd", "priced_cost_usd"):
+            if item.get(field) is not None:
+                _require_non_negative_observability_number(
+                    item[field], what=f"{what}.{field}"
+                )
+        if "cost_status" in item:
+            _require_observability_enum(
+                item["cost_status"],
+                _OBSERVABILITY_COST_STATUSES,
+                what=f"{what}.cost_status",
+            )
+        if "unpriced_attempt_count" in item:
+            _require_observability_integer(
+                item["unpriced_attempt_count"],
+                what=f"{what}.unpriced_attempt_count",
             )
         issue_ids = _require_bounded_list(
             item["issue_ids"], what=f"{what}.issue_ids", maximum=100
@@ -1823,6 +1851,7 @@ def _project_observability_tool_analysis(payload: Any) -> dict[str, Any]:
         projected_items.append(
             {
                 **{key: item[key] for key in item_keys if key != "issue_ids"},
+                **{key: item[key] for key in optional_item_keys if key in item},
                 "issue_ids": list(issue_ids),
             }
         )
@@ -1846,11 +1875,17 @@ def _project_observability_cohort_summary(payload: Any, *, what: str) -> dict[st
         source["metrics"], what=f"{what}.metrics", maximum=8
     )
     metric_keys = frozenset({"metric", "sample_count", "mean", "median", "p95"})
+    optional_metric_keys = frozenset({"unknown_count", "cost_status"})
     projected_metrics: list[dict[str, Any]] = []
     seen_metrics: set[str] = set()
     for index, value in enumerate(metrics):
         metric_what = f"{what}.metrics[{index}]"
-        metric = _exact_observability_object(value, keys=metric_keys, what=metric_what)
+        metric = _exact_observability_object(
+            value,
+            keys=metric_keys | optional_metric_keys,
+            what=metric_what,
+            required=metric_keys,
+        )
         name = _require_observability_enum(
             metric["metric"],
             _OBSERVABILITY_COHORT_METRICS,
@@ -1869,7 +1904,23 @@ def _project_observability_cohort_summary(payload: Any, *, what: str) -> dict[st
                 _require_finite_observability_number(
                     metric[field], what=f"{metric_what}.{field}"
                 )
-        projected_metrics.append({key: metric[key] for key in metric_keys})
+        if "unknown_count" in metric:
+            _require_observability_integer(
+                metric["unknown_count"], what=f"{metric_what}.unknown_count"
+            )
+        if "cost_status" in metric:
+            _require_observability_enum(
+                metric["cost_status"],
+                _OBSERVABILITY_COST_STATUSES,
+                what=f"{metric_what}.cost_status",
+            )
+        projected_metrics.append(
+            {
+                key: metric[key]
+                for key in metric_keys | optional_metric_keys
+                if key in metric
+            }
+        )
     return {"trace_count": trace_count, "metrics": projected_metrics}
 
 

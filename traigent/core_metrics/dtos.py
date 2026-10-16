@@ -12,6 +12,12 @@ def _optional_cost(payload: dict[str, Any], key: str) -> float | None:
     return None if value is None else float(value)
 
 
+def _nullable_cost(payload: dict[str, Any], key: str) -> float | None:
+    """Read a required-but-nullable cost field: null means unknown, never 0.0."""
+    value = payload[key]
+    return None if value is None else float(value)
+
+
 def _optional_str(payload: dict[str, Any], key: str) -> str | None:
     value = payload.get(key)
     return None if value is None else str(value)
@@ -151,7 +157,7 @@ class OptimizationOverviewSummaryCardsDTO:
     configuration_runs_in_range: int
     priced_configuration_runs_in_range: int
     unpriced_configuration_runs_in_range: int
-    total_cost_usd_in_range: float
+    total_cost_usd_in_range: float | None
     avg_latency_ms_in_range: float
     total_tokens_in_range: int
 
@@ -167,7 +173,7 @@ class OptimizationOverviewSummaryCardsDTO:
             unpriced_configuration_runs_in_range=int(
                 payload["unpriced_configuration_runs_in_range"]
             ),
-            total_cost_usd_in_range=float(payload["total_cost_usd_in_range"]),
+            total_cost_usd_in_range=_nullable_cost(payload, "total_cost_usd_in_range"),
             avg_latency_ms_in_range=float(payload["avg_latency_ms_in_range"]),
             total_tokens_in_range=int(payload["total_tokens_in_range"]),
         )
@@ -182,7 +188,7 @@ class OptimizationOverviewExperimentDTO:
     configuration_run_count: int
     priced_configuration_runs: int
     unpriced_configuration_runs: int
-    total_cost_usd: float
+    total_cost_usd: float | None
     avg_latency_ms: float | None
     avg_primary_score: float | None
     total_tokens: int
@@ -199,7 +205,7 @@ class OptimizationOverviewExperimentDTO:
             configuration_run_count=int(payload["configuration_run_count"]),
             priced_configuration_runs=int(payload["priced_configuration_runs"]),
             unpriced_configuration_runs=int(payload["unpriced_configuration_runs"]),
-            total_cost_usd=float(payload["total_cost_usd"]),
+            total_cost_usd=_nullable_cost(payload, "total_cost_usd"),
             avg_latency_ms=(
                 float(payload["avg_latency_ms"])
                 if payload.get("avg_latency_ms") is not None
@@ -226,8 +232,8 @@ class UsageSummaryDTO:
     configuration_runs: int
     priced_configuration_runs: int
     unpriced_configuration_runs: int
-    total_cost_usd: float
-    avg_cost_usd: float
+    total_cost_usd: float | None
+    avg_cost_usd: float | None
     cost_source_breakdown: CostSourceBreakdownDTO
     total_tokens: int
     avg_latency_ms: float
@@ -240,8 +246,8 @@ class UsageSummaryDTO:
             configuration_runs=int(payload["configuration_runs"]),
             priced_configuration_runs=int(payload["priced_configuration_runs"]),
             unpriced_configuration_runs=int(payload["unpriced_configuration_runs"]),
-            total_cost_usd=float(payload["total_cost_usd"]),
-            avg_cost_usd=float(payload["avg_cost_usd"]),
+            total_cost_usd=_nullable_cost(payload, "total_cost_usd"),
+            avg_cost_usd=_nullable_cost(payload, "avg_cost_usd"),
             cost_source_breakdown=CostSourceBreakdownDTO.from_dict(
                 payload["cost_source_breakdown"]
             ),
@@ -287,7 +293,7 @@ class EvaluatorQualitySummaryCardsDTO:
     failed_runs_in_range: int
     scored_runs_in_range: int
     avg_numeric_score_in_range: float | None
-    total_cost_usd_in_range: float
+    total_cost_usd_in_range: float | None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> EvaluatorQualitySummaryCardsDTO:
@@ -302,7 +308,7 @@ class EvaluatorQualitySummaryCardsDTO:
                 if payload.get("avg_numeric_score_in_range") is not None
                 else None
             ),
-            total_cost_usd_in_range=float(payload["total_cost_usd_in_range"]),
+            total_cost_usd_in_range=_nullable_cost(payload, "total_cost_usd_in_range"),
         )
 
 
@@ -340,7 +346,7 @@ class EvaluatorQualityEvaluatorDTO:
     scored_runs: int
     avg_numeric_score: float | None
     avg_latency_ms: float | None
-    total_cost_usd: float
+    total_cost_usd: float | None
     last_run_at: str | None
     privacy_classification: str
 
@@ -366,7 +372,7 @@ class EvaluatorQualityEvaluatorDTO:
                 if payload.get("avg_latency_ms") is not None
                 else None
             ),
-            total_cost_usd=float(payload["total_cost_usd"]),
+            total_cost_usd=_nullable_cost(payload, "total_cost_usd"),
             last_run_at=(
                 str(payload["last_run_at"])
                 if payload.get("last_run_at") is not None
@@ -411,7 +417,7 @@ class ProjectUsageSummaryCardsDTO:
     configuration_runs_in_range: int
     priced_configuration_runs_in_range: int
     unpriced_configuration_runs_in_range: int
-    total_cost_usd_in_range: float
+    total_cost_usd_in_range: float | None
     total_tokens_in_range: int
     avg_latency_ms_in_range: float
     p95_latency_ms_in_range: float
@@ -427,7 +433,7 @@ class ProjectUsageSummaryCardsDTO:
             unpriced_configuration_runs_in_range=int(
                 payload["unpriced_configuration_runs_in_range"]
             ),
-            total_cost_usd_in_range=float(payload["total_cost_usd_in_range"]),
+            total_cost_usd_in_range=_nullable_cost(payload, "total_cost_usd_in_range"),
             total_tokens_in_range=int(payload["total_tokens_in_range"]),
             avg_latency_ms_in_range=float(payload["avg_latency_ms_in_range"]),
             p95_latency_ms_in_range=float(payload["p95_latency_ms_in_range"]),
@@ -438,7 +444,7 @@ class ProjectUsageSummaryCardsDTO:
 class ProjectUsageTrendPointDTO:
     bucket_start: str
     bucket_label: str
-    cost_usd: float
+    cost_usd: float | None
     total_tokens: int
     avg_latency_ms: float | None
     configuration_runs: int
@@ -448,7 +454,7 @@ class ProjectUsageTrendPointDTO:
         return cls(
             bucket_start=str(payload["bucket_start"]),
             bucket_label=str(payload["bucket_label"]),
-            cost_usd=float(payload["cost_usd"]),
+            cost_usd=_nullable_cost(payload, "cost_usd"),
             total_tokens=int(payload["total_tokens"]),
             avg_latency_ms=(
                 float(payload["avg_latency_ms"])
@@ -464,7 +470,7 @@ class ProjectUsageExperimentDTO:
     experiment_id: str
     name: str
     configuration_runs: int
-    total_cost_usd: float
+    total_cost_usd: float | None
     total_tokens: int
     avg_latency_ms: float | None
     privacy_classification: str
@@ -479,7 +485,7 @@ class ProjectUsageExperimentDTO:
             experiment_id=str(payload["experiment_id"]),
             name=str(payload["name"]),
             configuration_runs=int(payload["configuration_runs"]),
-            total_cost_usd=float(payload["total_cost_usd"]),
+            total_cost_usd=_nullable_cost(payload, "total_cost_usd"),
             total_tokens=int(payload["total_tokens"]),
             avg_latency_ms=(
                 float(payload["avg_latency_ms"])
