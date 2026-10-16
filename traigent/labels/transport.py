@@ -182,27 +182,71 @@ def _state_path() -> Path:
     return root / "labels_state.json"
 
 
-def _retained_sequence(path: Path, scope: str) -> int:
+SEQUENCE_NOT_PERSISTED = "sequence_not_persisted"
+
+
+def _read_state(path: Path) -> dict[str, Any]:
+    """The retained-sequence map. Missing file = empty; unreadable/corrupt = closed refusal."""
     try:
-        value = json.loads(path.read_text(encoding="utf-8")).get(scope, 0)
-    except (OSError, ValueError, AttributeError):
-        return 0
-    return value if isinstance(value, int) and value >= 0 else 0
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    except OSError:
+        raise LabelTransportError(SEQUENCE_NOT_PERSISTED) from None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        raise LabelTransportError(SEQUENCE_NOT_PERSISTED) from None
+    if not isinstance(data, dict):
+        raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
+    return data
+
+
+def _retained_sequence(path: Path, scope: str) -> int:
+    value = _read_state(path).get(scope, 0)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
+    return value
 
 
 def _retain_sequence(path: Path, scope: str, sequence: int) -> None:
+    """Durably record the highest verified binding-list sequence, or raise.
+
+    Monotonic (never lowers), serialized across processes by an exclusive file lock, and
+    atomic (temp file + fsync + rename + directory fsync). Any failure raises a closed
+    ``sequence_not_persisted`` error: the caller must not hand out a writer, because a later
+    process would otherwise accept a replayed older binding list.
+    """
     try:
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            data = {}
-        if not isinstance(data, dict):
-            data = {}
-        data[scope] = max(sequence, data.get(scope, 0))
+        import fcntl
+    except ImportError:  # no advisory locks on this platform: fail closed
+        raise LabelTransportError(SEQUENCE_NOT_PERSISTED) from None
+    try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
+        with open(path.with_suffix(".lock"), "a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            data = _read_state(path)
+            current = data.get(scope, 0)
+            if not isinstance(current, int) or isinstance(current, bool):
+                raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
+            if sequence < current:
+                raise LabelTransportError(SEQUENCE_NOT_PERSISTED)
+            data[scope] = max(sequence, current)
+            tmp = path.with_suffix(f".tmp{os.getpid()}")
+            with open(tmp, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(data, sort_keys=True))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, path)
+            dir_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+    except LabelTransportError:
+        raise
     except OSError:
-        logger.debug("label binding sequence could not be retained")
+        raise LabelTransportError(SEQUENCE_NOT_PERSISTED) from None
 
 
 # ---------------------------------------------------------------------------- sender

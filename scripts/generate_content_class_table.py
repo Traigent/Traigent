@@ -25,6 +25,31 @@ from urllib.parse import urljoin
 
 BASE = "https://schemas.traigent.ai/"
 ENDPOINTS = "optimization/optimization_endpoints.json"
+LABEL_IO = "labels/label_io_schema.json"
+#: Label-service routes (Backend ``/api/v1/labels/*``): the Schema defines the write
+#: request in label_io_schema.json; the read request (a list of object refs) is defined
+#: by the Backend contract only, so it is compiled from this inline equivalent.
+LABEL_ROUTES = (
+    ("GET", "/api/v1/labels/binding-list", None),
+    ("PUT", "/api/v1/labels/objects", {"$ref": "#/definitions/LabelWriteRequest"}),
+    (
+        "POST",
+        "/api/v1/labels/objects/read",
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["object_refs"],
+            "properties": {
+                "object_refs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "label_common_schema.json#/definitions/ObjectRef"
+                    },
+                }
+            },
+        },
+    ),
+)
 OUT = (
     Path(__file__).resolve().parents[1]
     / "traigent"
@@ -181,6 +206,22 @@ def build(schema_root: Path, commit: str | None = None) -> dict[str, Any]:
                     "body": body,
                 }
             )
+    label_uri = BASE + LABEL_IO
+    label_doc = comp.docs[label_uri]
+    for method, template, schema in LABEL_ROUTES:
+        routes.append(
+            {
+                "method": method,
+                "template": template,
+                "path": {},
+                "query": {},
+                "body": (
+                    None
+                    if schema is None
+                    else comp.compile(schema, label_uri, (label_doc,), label_doc)
+                ),
+            }
+        )
     manifest = schema_root / "docs" / "content-class-manifest.json"
     commit = (
         commit

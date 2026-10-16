@@ -312,3 +312,122 @@ def test_session_create_path_sends_labels_through_the_writer(
 
     fake, _ = asyncio.run(_with_server(vectors, go))
     assert fake.plaintexts == {AGENT_REF: NAME, DATASET_REF: "My dataset"}
+
+
+# ------------------------------------------------- durable, monotonic sequence retention
+
+
+def _scope(vectors: dict) -> str:
+    return f"{vectors['refs']['tenant_ref']}/{vectors['refs']['project_ref']}"
+
+
+def test_unpersistable_sequence_means_no_writer_and_no_write(
+    tmp_path: Path, vectors: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x", encoding="utf-8")  # a file where the state dir must be
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(blocker / "sub"))
+    cfg = _config(tmp_path, vectors)
+
+    async def go(fake, base):
+        return await send_session_labels(
+            {"agent": NAME}, {"agent": AGENT_REF}, base, _headers, cfg
+        )
+
+    fake, result = asyncio.run(_with_server(vectors, go))
+    assert result == {}
+    assert fake.plaintexts == {}
+    assert [c for c in fake.calls if c[0] in ("PUT", "POST")] == []
+
+
+def test_corrupt_state_fails_closed(
+    tmp_path: Path, vectors: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
+    (tmp_path / "labels_state.json").write_text("{not json", encoding="utf-8")
+    cfg = _config(tmp_path, vectors)
+
+    async def go(fake, base):
+        return await send_session_labels(
+            {"agent": NAME}, {"agent": AGENT_REF}, base, _headers, cfg
+        )
+
+    fake, result = asyncio.run(_with_server(vectors, go))
+    assert result == {} and fake.plaintexts == {}
+
+
+def test_sequence_is_persisted_and_an_older_list_is_refused_after_restart(
+    tmp_path: Path, vectors: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRAIGENT_RESULTS_FOLDER", str(tmp_path))
+    cfg = _config(tmp_path, vectors)
+    state = tmp_path / "labels_state.json"
+
+    async def first(fake, base):
+        return await send_session_labels(
+            {"agent": NAME}, {"agent": AGENT_REF}, base, _headers, cfg
+        )
+
+    _fake, sent = asyncio.run(_with_server(vectors, first))
+    assert sent == {AGENT_REF: 1}
+    assert json.loads(state.read_text("utf-8"))[_scope(vectors)] == 1
+    assert not list(tmp_path.glob("labels_state.tmp*"))  # temp file renamed away
+
+    # another client has since verified a newer list (sequence 2) and retained it
+    state.write_text(json.dumps({_scope(vectors): 2}), encoding="utf-8")
+
+    async def restarted(
+        fake, base
+    ):  # a new process: new sender, replayed sequence-1 list
+        return await send_session_labels(
+            {"dataset": "x"}, {"dataset": DATASET_REF}, base, _headers, cfg
+        )
+
+    fake, replay = asyncio.run(_with_server(vectors, restarted))
+    assert replay == {} and fake.plaintexts == {}
+    assert json.loads(state.read_text("utf-8"))[_scope(vectors)] == 2  # never lowered
+
+
+def test_retention_is_monotonic(tmp_path: Path) -> None:
+    from traigent.labels.transport import _retain_sequence
+
+    path = tmp_path / "s.json"
+    _retain_sequence(path, "scope", 3)
+    _retain_sequence(path, "scope", 3)
+    with pytest.raises(LabelTransportError):
+        _retain_sequence(path, "scope", 2)
+    assert json.loads(path.read_text("utf-8")) == {"scope": 3}
+
+
+def test_label_routes_pass_the_gate_only_when_sealed(vectors: dict) -> None:
+    """The gate now knows the label routes: an envelope passes, a plaintext name is refused."""
+    from traigent.labels import transport_gate as gate
+
+    good = {
+        "object_ref": AGENT_REF,
+        "purpose": "label",
+        "base_revision": 0,
+        "epoch": 1,
+        "envelope": vectors["label_envelopes"][0]["envelope"],
+    }
+    url = "https://backend.example.test/api/v1/labels/objects"
+    gate.set_allowed_origins(["https://backend.example.test"])
+    gate.set_mode("refuse")
+    try:
+        assert gate.inspect_outgoing("PUT", url, json.dumps(good)) is not None
+        for bad in (
+            {**good, "object_ref": NAME},
+            {**good, "purpose": NAME},
+            {**good, "name": NAME},
+        ):
+            with pytest.raises(gate.TransportGateRefusal):
+                gate.inspect_outgoing("PUT", url, json.dumps(bad))
+        read_url = url + "/read"
+        assert gate.inspect_outgoing(
+            "POST", read_url, json.dumps({"object_refs": [AGENT_REF]})
+        )
+        with pytest.raises(gate.TransportGateRefusal):
+            gate.inspect_outgoing("POST", read_url, json.dumps({"object_refs": [NAME]}))
+    finally:
+        gate.set_mode(None)
+        gate.set_allowed_origins(None)
