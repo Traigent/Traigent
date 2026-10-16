@@ -496,8 +496,12 @@ def test_observability_client_offline_mode_blocks_request_api():
         request_sender=request_sender,
     )
 
-    with pytest.raises(ClientError, match="TRAIGENT_OFFLINE_MODE=true"):
+    # #2603: no offline env var is set here, so the message must name the
+    # config flag that actually caused it, not TRAIGENT_OFFLINE_MODE.
+    with pytest.raises(ClientError) as exc_info:
         client.list_sessions()
+    assert "ObservabilityConfig.offline_mode=True" in str(exc_info.value)
+    assert "TRAIGENT_OFFLINE_MODE" not in str(exc_info.value)
 
     client.close()
 
@@ -6427,9 +6431,8 @@ class TestFinding2RealTransportInterleavingRegression:
             index = next(call_index)
             if index == paused_call_index:
                 entered_pause.set()
-                assert proceed.wait(timeout=5.0), (
-                    "test never released the paused transport submission"
-                )
+                release_message = "test never released the paused transport submission"
+                assert proceed.wait(timeout=5.0), release_message
                 scrub_armed["on"] = True
             return real_prepare_payload(self, payload, state=state)
 
@@ -6464,9 +6467,8 @@ class TestFinding2RealTransportInterleavingRegression:
         )
         paused_thread.start()
 
-        assert entered_pause.wait(timeout=5.0), (
-            "paused submission never reached the transport prepare step"
-        )
+        pause_message = "paused submission never reached the transport prepare step"
+        assert entered_pause.wait(timeout=5.0), pause_message
 
         # Mutate the SAME trace from this (the main) thread while the
         # first observation's snapshot submission is paused: complete it,
@@ -6521,15 +6523,15 @@ class TestFinding2RealTransportInterleavingRegression:
 
         observations = final_payload.get("observations", [])
         observation_ids = {obs["id"] for obs in observations}
-        assert observation_ids == {first_observation_id}, (
-            f"expected only the frozen observation, got {observation_ids}"
-        )
+        ids_message = f"expected only the frozen observation, got {observation_ids}"
+        assert observation_ids == {first_observation_id}, ids_message
         matching = next(
             obs for obs in observations if obs["id"] == first_observation_id
         )
-        assert matching["status"] == "running", (
+        status_message = (
             f"expected the FROZEN pre-mutation status, got {matching['status']!r}"
         )
+        assert matching["status"] == "running", status_message
 
 
 def test_observability_client_sends_multi_tag_filters_as_repeated_keys():

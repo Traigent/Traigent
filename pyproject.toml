@@ -293,7 +293,7 @@ enterprise = [
 
 [project.urls]
 Homepage = "https://github.com/Traigent/Traigent"
-Documentation = "https://docs.traigent.ai"
+Documentation = "https://traigent.github.io/Traigent/"
 Repository = "https://github.com/Traigent/Traigent"
 "Bug Tracker" = "https://github.com/Traigent/Traigent/issues"
 Changelog = "https://github.com/Traigent/Traigent/blob/main/CHANGELOG.md"
