@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://schemas.traigent.ai/legend/v0/legend_requests_v0.json",
   "title": "Legend Client Requests V0",
-  "description": "Client request bodies for declare, query, record-capture and record-restore. Client fields only. Closed schema (additionalProperties false everywhere, closed enums, no free text): any new field or enum value ships as a new schema_version published alongside this one; consumers dispatch on schema_version. Normative text: docs/identity/pillar-legend-v0.md. Every string pattern ends with the portable end anchor (?![\\s\\S]) rather than $.",
+  "description": "Client request bodies for declare, query, record-capture and record-restore. Client fields only. Closed schema (additionalProperties false everywhere, closed enums, no free text). Version 0.1.0 is unreleased: its delta over 9b0451d is NOT purely additive. It adds the optional QueryRequestV0.as_of_ledger_position property, which the breaking-change gate acknowledges as a conservative finding (scripts/breaking_schema_allowlist.json). Once 0.1.0 is released, any new field or enum value ships as a new schema_version published alongside it; consumers dispatch on schema_version. Normative text: docs/identity/pillar-legend-v0.md. Every string pattern ends with the portable end anchor (?![\\s\\S]) rather than $.",
   "version": "0.1.0",
   "definitions": {
     "DeclareRequestV0": {
@@ -426,9 +426,14 @@
               "type": "null"
             }
           ]
+        },
+        "as_of_ledger_position": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional snapshot selector. Results include only versions whose first declared event has ledger_position <= this value; omitted means current. A page_cursor is bound to this value (omitted binds to 'omitted'): a cursor issued under one as_of_ledger_position, or under none, is refused (invalid_request) under another. A value above the current ledger position is refused (invalid_request). The Director supplies it as the as_of_ledger_position of its instruction's legend member."
         }
       },
-      "description": "Client query. No instruction_ref: that exists only on the Director path."
+      "description": "Client query. No instruction_ref: that exists only on the Director path. page_cursor is an opaque server-issued string from the single cursor issuer shared by the Legend API and the Director; as_of_ledger_position is optional and additive (omitted = current)."
     },
     "RecordCaptureRequestV0": {
       "type": "object",

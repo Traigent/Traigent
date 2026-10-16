@@ -92,7 +92,8 @@
             {
               "type": "string",
               "maxLength": 39,
-              "pattern": "^cursor_[0-9a-f]{32}(?![\\s\\S])"
+              "pattern": "^cursor_[0-9a-f]{32}(?![\\s\\S])",
+              "description": "Opaque server-issued cursor. ONE issuer is shared by the Legend API and the Director: a Director query instruction carries a cursor returned by the Legend API (or by an earlier Director page), never one the Director or agent composed."
             },
             {
               "type": "null"
@@ -368,7 +369,8 @@
             {
               "type": "string",
               "maxLength": 39,
-              "pattern": "^cursor_[0-9a-f]{32}(?![\\s\\S])"
+              "pattern": "^cursor_[0-9a-f]{32}(?![\\s\\S])",
+              "description": "Opaque server-issued cursor. ONE issuer is shared by the Legend API and the Director: a Director query instruction carries a cursor returned by the Legend API (or by an earlier Director page), never one the Director or agent composed."
             },
             {
               "type": "null"
@@ -408,6 +410,28 @@
             "properties": {
               "error_code": {
                 "$ref": "./pillar_legend_v0.json#/definitions/LegendErrorCode"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused",
+                  "failed"
+                ]
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "next_page_cursor": {
+                "type": "null"
               }
             }
           }
@@ -871,6 +895,367 @@
         },
         {
           "$ref": "#/definitions/RestoreVersionResult"
+        }
+      ]
+    },
+    "PageCursor": {
+      "type": "string",
+      "maxLength": 39,
+      "pattern": "^cursor_[0-9a-f]{32}(?![\\s\\S])",
+      "description": "Opaque server-issued cursor. ONE issuer is shared by the Legend API and the Director: a Director query instruction carries a cursor returned by the Legend API (or by an earlier Director page), never one the Director or agent composed."
+    },
+    "LegendInstructionMember": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The `legend` member added to a Director instruction. Closed: operation, opaque refs, enums, integers. as_of_ledger_position is the instruction's snapshot ledger position and is non-null exactly for query_versions; it is the value the agent MUST pass as as_of_ledger_position in the Legend query request. With a page_cursor it equals the position the cursor is bound to. The snapshot is carried here only (there is no separate legend_snapshot member).",
+      "required": [
+        "schema_version",
+        "instruction_ref",
+        "operation",
+        "kind",
+        "entity_ref",
+        "version_ref",
+        "recovery_manifest_fingerprint",
+        "page_size",
+        "page_cursor",
+        "as_of_ledger_position"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./pillar_legend_v0.json#/definitions/SchemaVersion"
+        },
+        "instruction_ref": {
+          "$ref": "#/definitions/InstructionRef"
+        },
+        "operation": {
+          "$ref": "#/definitions/LegendOperation"
+        },
+        "kind": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/EntityKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "entity_ref": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/EntityRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "version_ref": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/VersionRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recovery_manifest_fingerprint": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/ManifestFingerprint"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "page_size": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "page_cursor": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/PageCursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "as_of_ledger_position": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "declare_version"
+              }
+            },
+            "required": [
+              "operation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "version_ref": {
+                "type": "null"
+              },
+              "recovery_manifest_fingerprint": {
+                "type": "null"
+              },
+              "page_size": {
+                "type": "null"
+              },
+              "page_cursor": {
+                "type": "null"
+              },
+              "as_of_ledger_position": {
+                "type": "null"
+              },
+              "kind": {
+                "$ref": "./pillar_legend_v0.json#/definitions/EntityKind"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "query_versions"
+              }
+            },
+            "required": [
+              "operation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "kind": {
+                "type": "null"
+              },
+              "version_ref": {
+                "type": "null"
+              },
+              "recovery_manifest_fingerprint": {
+                "type": "null"
+              },
+              "entity_ref": {
+                "$ref": "./pillar_legend_v0.json#/definitions/EntityRef"
+              },
+              "page_size": {
+                "type": "integer"
+              },
+              "as_of_ledger_position": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "capture_version"
+              }
+            },
+            "required": [
+              "operation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "kind": {
+                "type": "null"
+              },
+              "entity_ref": {
+                "type": "null"
+              },
+              "recovery_manifest_fingerprint": {
+                "type": "null"
+              },
+              "page_size": {
+                "type": "null"
+              },
+              "page_cursor": {
+                "type": "null"
+              },
+              "as_of_ledger_position": {
+                "type": "null"
+              },
+              "version_ref": {
+                "$ref": "./pillar_legend_v0.json#/definitions/VersionRef"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "verify_restore",
+                  "restore_version"
+                ]
+              }
+            },
+            "required": [
+              "operation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "kind": {
+                "type": "null"
+              },
+              "entity_ref": {
+                "type": "null"
+              },
+              "page_size": {
+                "type": "null"
+              },
+              "page_cursor": {
+                "type": "null"
+              },
+              "as_of_ledger_position": {
+                "type": "null"
+              },
+              "version_ref": {
+                "$ref": "./pillar_legend_v0.json#/definitions/VersionRef"
+              },
+              "recovery_manifest_fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/ManifestFingerprint"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "LegendResultAckMember": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The `legend` member of the result acknowledgement the Backend returns for a stored result. Closed enums and refs only, no free text. as_of_ledger_position echoes the instruction's snapshot for query_versions and is null for every other operation.",
+      "required": [
+        "schema_version",
+        "instruction_ref",
+        "operation",
+        "ack_status",
+        "error_code",
+        "as_of_ledger_position"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./pillar_legend_v0.json#/definitions/SchemaVersion"
+        },
+        "instruction_ref": {
+          "$ref": "#/definitions/InstructionRef"
+        },
+        "operation": {
+          "$ref": "#/definitions/LegendOperation"
+        },
+        "ack_status": {
+          "type": "string",
+          "enum": [
+            "stored",
+            "identical_retry",
+            "rejected"
+          ]
+        },
+        "error_code": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/LegendErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "as_of_ledger_position": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ack_status": {
+                "const": "rejected"
+              }
+            },
+            "required": [
+              "ack_status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "error_code": {
+                "$ref": "./pillar_legend_v0.json#/definitions/LegendErrorCode"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "error_code": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "query_versions"
+              }
+            },
+            "required": [
+              "operation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "as_of_ledger_position": {
+                "type": "integer"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "as_of_ledger_position": {
+                "type": "null"
+              }
+            }
+          }
         }
       ]
     }

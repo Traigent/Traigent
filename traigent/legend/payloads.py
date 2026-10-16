@@ -87,6 +87,7 @@ def build_query_payload(
     page_size: int,
     page_cursor: str | None,
     kind: str | None = None,
+    as_of_ledger_position: int | None = None,
 ) -> dict[str, Any]:
     """``QueryRequestV0`` (no ``instruction_ref``: that exists only on the Director path)."""
     if not c.ENTITY_REF_RE.fullmatch(entity_ref or ""):
@@ -97,13 +98,21 @@ def build_query_payload(
         raise LegendError("invalid_request", "page_cursor must be an opaque cursor")
     if kind is not None and kind not in c.ENTITY_KINDS:
         raise LegendError("invalid_request", "unknown pillar kind")
-    return {
+    body: dict[str, Any] = {
         "schema_version": c.SCHEMA_VERSION,
         "entity_ref": entity_ref,
         "kind": kind,
         "page_size": page_size,
         "page_cursor": page_cursor,
     }
+    if as_of_ledger_position is not None:
+        # bool is an int subclass: refuse it explicitly. Cursors stay opaque.
+        if type(as_of_ledger_position) is not int or as_of_ledger_position < 0:
+            raise LegendError(
+                "invalid_request", "as_of_ledger_position must be an integer >= 0"
+            )
+        body["as_of_ledger_position"] = as_of_ledger_position
+    return body
 
 
 def _closed_coverage(kind: str, coverage: dict[str, Any]) -> dict[str, Any]:

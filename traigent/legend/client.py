@@ -75,8 +75,15 @@ def query(
     page_size: int = 50,
     page_cursor: str | None = None,
     kind: str | None = None,
+    as_of_ledger_position: int | None = None,
     transport: LegendTransport | None = None,
 ) -> QueryResult:
-    """List version refs of an entity (paginated), optionally narrowed to one kind."""
-    payload = payloads.build_query_payload(entity, page_size, page_cursor, kind)
+    """List version refs of an entity (paginated), optionally narrowed to one kind.
+
+    Pass the same ``as_of_ledger_position`` on every page of one read: the
+    server binds cursors to it. Cursors are opaque and never parsed here.
+    """
+    payload = payloads.build_query_payload(
+        entity, page_size, page_cursor, kind, as_of_ledger_position
+    )
     return _resolve(transport).query(payload)

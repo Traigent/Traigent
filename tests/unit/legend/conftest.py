@@ -1,6 +1,6 @@
 """Legend test support: schema validation against the Schema repo's contract files.
 
-The contract JSON files are snapshotted in ``fixtures/`` (Schema commit 9b0451d,
+The contract JSON files are snapshotted in ``fixtures/`` (Schema commit 9d71d82,
 design note ``docs/identity/pillar-legend-v0.md``). Point
 ``TRAIGENT_LEGEND_SCHEMA_DIR`` at a live ``traigent_schema/schemas/legend`` to
 validate against it instead.

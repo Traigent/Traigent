@@ -113,6 +113,29 @@ def test_query_payload_matches_contract(keys, schemas):
     assert narrowed.version_refs == ()
 
 
+def test_query_as_of_is_validated_sent_and_kept_across_pages(keys, schemas):
+    t = InMemoryTransport()
+    r = declare(c.KIND_CONFIGURATION, ConfigurationSource({"a": 1}), transport=t)
+    declare(c.KIND_CONFIGURATION, ConfigurationSource({"a": 2}), transport=t)
+    query(r.entity_ref, transport=t)
+    assert "as_of_ledger_position" not in t.requests[-1]
+    p1 = query(r.entity_ref, page_size=1, as_of_ledger_position=7, transport=t)
+    schemas.validate(REQ, "QueryRequestV0", t.requests[-1])
+    assert t.requests[-1]["as_of_ledger_position"] == 7
+    if p1.next_page_cursor:
+        query(
+            r.entity_ref, page_size=1, page_cursor=p1.next_page_cursor,
+            as_of_ledger_position=7, transport=t,
+        )
+        assert t.requests[-1]["as_of_ledger_position"] == 7
+        assert t.requests[-1]["page_cursor"] == p1.next_page_cursor
+    for bad in (-1, 1.5, "3", True):
+        with pytest.raises(LegendError):
+            query(r.entity_ref, as_of_ledger_position=bad, transport=t)
+    query(r.entity_ref, as_of_ledger_position=0, transport=t)
+    assert t.requests[-1]["as_of_ledger_position"] == 0
+
+
 def test_no_names_or_paths_in_any_payload(keys, tmp_path):
     t = InMemoryTransport()
     ds = make_dataset([(CANARY, 1)])
