@@ -41,6 +41,11 @@ def test_advanced_example_labels_simulated_cost(example: str, tmp_path: Path) ->
         "PYTHONPATH": str(REPO),
         "TRAIGENT_DATASET_ROOT": str(ADVANCED / example),
     }
+    # With ``langchain_openai`` installed the examples construct the real
+    # ``ChatOpenAI`` client, which refuses to build without a key even though
+    # mock mode never sends a request. A placeholder keeps the run hermetic
+    # (CI and a developer machine without a key behave the same).
+    env.setdefault("OPENAI_API_KEY", "sk-placeholder-mock-mode-never-sent")
     proc = subprocess.run(
         [sys.executable, str(ADVANCED / example / "run.py")],
         cwd=tmp_path,
