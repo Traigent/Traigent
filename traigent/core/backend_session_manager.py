@@ -1609,6 +1609,9 @@ class BackendSessionManager:
 
         bound_agent_id: str | None = None
         head_generation: int | None = None
+        bound_agent_ref: str | None = None
+        session_content_less = False
+        head_capture_refusal: str | None = None
         if self._backend_client:
             evaluation_set_name = getattr(dataset, "name", None) or "default_evaluation"
             self._warn_if_dataset_unlinked(dataset, dataset_id)
@@ -1783,10 +1786,21 @@ class BackendSessionManager:
                 }
                 if owning_context:
                     self._session_owning_context[session_id] = owning_context
-                bound_agent_id = result.agent_id
-                head_generation = self._capture_agent_head_generation(
-                    bound_agent_id, head_environment
-                )
+                if getattr(result, "content_less", False) is True:
+                    # content_less_v1: the session is addressed by the opaque
+                    # agent_ref of the create 201; metadata.agent_id is never read.
+                    session_content_less = True
+                    bound_agent_ref = getattr(result, "agent_ref", None)
+                    head_generation, head_capture_refusal = (
+                        self._capture_agent_head_generation_by_ref(
+                            bound_agent_ref, head_environment
+                        )
+                    )
+                else:
+                    bound_agent_id = result.agent_id
+                    head_generation = self._capture_agent_head_generation(
+                        bound_agent_id, head_environment
+                    )
 
             # On success, upload dataset features via the session mapping
             if result.backend_connected:
@@ -1833,7 +1847,57 @@ class BackendSessionManager:
             agent_id=bound_agent_id,
             head_generation=head_generation,
             head_environment=head_environment if head_generation is not None else None,
+            agent_ref=bound_agent_ref,
+            content_less=session_content_less,
+            head_capture_refusal=head_capture_refusal,
         )
+
+    def _capture_agent_head_generation_by_ref(
+        self, agent_ref: str | None, environment: str | None
+    ) -> tuple[int | None, str | None]:
+        """Read a content-less agent's head generation once, at the start of the step.
+
+        Returns ``(generation, None)`` on success, else ``(None, closed_code)``. Unlike
+        the legacy capture there is NO silent fallback: the run continues, but a later
+        publish of its result is refused locally with this closed code instead of going
+        out unprotected. The code is a ``HeadRefusalCode`` value; no response text is
+        kept or logged.
+        """
+        from traigent.core.best_config_runtime import (
+            CloudBestConfigHeadRefusedError,
+            HeadRefusalCode,
+        )
+
+        if not agent_ref or not environment:
+            logger.warning(
+                "Content-less session has no agent_ref or environment; "
+                "promotion of this run's result will be refused"
+            )
+            return None, HeadRefusalCode.CAPTURE_MISSING.value
+        fetch = getattr(
+            self._backend_client, "fetch_agent_head_generation_by_ref_sync", None
+        )
+        if not callable(fetch):
+            return None, HeadRefusalCode.CAPTURE_MISSING.value
+        try:
+            generation = fetch(agent_ref, environment=environment)
+        except CloudBestConfigHeadRefusedError as exc:
+            logger.warning(
+                "Content-less agent head read refused (%s); promotion of this "
+                "run's result will be refused",
+                exc.code.value,
+            )
+            return None, exc.code.value
+        except Exception as exc:  # noqa: BLE001 - closed code only, never the text
+            logger.warning(
+                "Content-less agent head read failed (%s); promotion of this "
+                "run's result will be refused",
+                type(exc).__name__,
+            )
+            return None, HeadRefusalCode.CAPTURE_MISSING.value
+        if isinstance(generation, bool) or not isinstance(generation, int):
+            return None, HeadRefusalCode.CAPTURE_MISSING.value
+        return cast(int, generation), None
 
     def _capture_agent_head_generation(
         self, agent_id: str | None, environment: str | None

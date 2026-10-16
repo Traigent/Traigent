@@ -25,9 +25,11 @@ from traigent.core.best_config_runtime import (
     BestConfigSnapshot,
     BestConfigSource,
     BestConfigSourceMode,
+    CloudBestConfigHeadRefusedError,
     CloudBestConfigStaleHeadError,
     CloudPublishUnavailable,
     CloudPublishUnavailableReason,
+    HeadRefusalCode,
     SafetySensitiveBestConfigError,
     canonical_json,
     compute_spec_hash,
@@ -1069,9 +1071,14 @@ class ConfigStateManager:
             # Detached from the live state and from the run's result, so later
             # mutation of either cannot change what is reported on refusal.
             refused_config = copy.deepcopy(spec["config"])
-            precondition_kwargs = self._promotion_precondition_kwargs(
-                self._best_config_precondition, environment
-            )
+            try:
+                precondition_kwargs = self._promotion_precondition_kwargs(
+                    self._best_config_precondition, environment
+                )
+            except CloudBestConfigHeadRefusedError as refusal:
+                # Refused locally, before any request: the caller keeps the config.
+                refusal.best_config = copy.deepcopy(refused_config)
+                raise
         try:
             client = get_backend_client(enable_fallback=False)
             current = client.fetch_best_config_sync(
@@ -1095,6 +1102,11 @@ class ConfigStateManager:
         except CloudBestConfigStaleHeadError as exc:
             # The backend refused and wrote nothing. Keep the refused config on
             # the error so the caller can re-publish it deliberately.
+            exc.best_config = copy.deepcopy(refused_config)
+            raise
+        except CloudBestConfigHeadRefusedError as exc:
+            # Closed refusal from the protected path (stale included). Nothing was
+            # written and nothing is retried or re-read here: the caller decides.
             exc.best_config = copy.deepcopy(refused_config)
             raise
         except CloudPublishUnavailable:
@@ -1124,6 +1136,10 @@ class ConfigStateManager:
         if not isinstance(captured, dict):
             logger.debug("No agent head generation captured; publishing without one")
             return {}
+        if captured.get("protected") is True:
+            return ConfigStateManager._protected_precondition_kwargs(
+                captured, environment
+            )
         agent_id = captured.get("agent_id")
         generation = captured.get("generation")
         if (
@@ -1144,6 +1160,47 @@ class ConfigStateManager:
             )
             return {}
         return {"agent_id": agent_id, "expected_head_generation": generation}
+
+    @staticmethod
+    def _protected_precondition_kwargs(
+        captured: dict[str, Any], environment: str
+    ) -> dict[str, Any]:
+        """Head precondition of a content-less (protected) session.
+
+        Unlike the legacy path this NEVER degrades to "publish without one": if the
+        run could not capture its head (no ``agent_ref``, failed head read), or the
+        capture is malformed or for another environment, the publish is refused here,
+        locally, with a closed code and nothing is sent.
+        """
+        refusal = captured.get("capture_refusal")
+        if isinstance(refusal, str) and refusal:
+            try:
+                code = HeadRefusalCode(refusal)
+            except ValueError:
+                code = HeadRefusalCode.CAPTURE_MISSING
+            raise CloudBestConfigHeadRefusedError(
+                code,
+                reason=CloudPublishUnavailableReason.HEAD_CAPTURE_MISSING,
+            )
+        agent_ref = captured.get("agent_ref")
+        generation = captured.get("generation")
+        if (
+            not isinstance(agent_ref, str)
+            or not agent_ref
+            or isinstance(generation, bool)
+            or not isinstance(generation, int)
+            or generation < 0
+        ):
+            raise CloudBestConfigHeadRefusedError(
+                HeadRefusalCode.CAPTURE_MISSING,
+                reason=CloudPublishUnavailableReason.HEAD_CAPTURE_MISSING,
+            )
+        if captured.get("environment") != environment:
+            raise CloudBestConfigHeadRefusedError(
+                HeadRefusalCode.HEAD_ENVIRONMENT_MISMATCH,
+                reason=CloudPublishUnavailableReason.HEAD_CAPTURE_MISSING,
+            )
+        return {"agent_ref": agent_ref, "expected_head_generation": generation}
 
     def _create_slim_export(self, include_metadata: bool) -> dict[str, Any]:
         """Create a slim export suitable for git and deployment."""

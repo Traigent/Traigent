@@ -125,6 +125,8 @@ class TraigentSessionApiResult(tuple):
     tenant_id: str | None
     warm_start_transfer: dict[str, Any] | None
     agent_id: str | None
+    agent_ref: str | None
+    content_less: bool
 
     def __new__(
         cls,
@@ -136,9 +138,13 @@ class TraigentSessionApiResult(tuple):
         tenant_id: str | None = None,
         warm_start_transfer: dict[str, Any] | None = None,
         agent_id: str | None = None,
+        agent_ref: str | None = None,
+        content_less: bool = False,
     ):
         obj = super().__new__(cls, (session_id, experiment_id, experiment_run_id))
         obj.agent_id = agent_id
+        obj.agent_ref = agent_ref
+        obj.content_less = content_less
         obj.project_id = project_id
         obj.tenant_id = tenant_id
         obj.warm_start_transfer = warm_start_transfer
@@ -1001,7 +1007,15 @@ class ApiOperations:
             tenant_id=tenant_id,
             warm_start_transfer=warm_start_transfer,
             # Disclosed by the backend for API-key callers; null/absent otherwise.
-            agent_id=self._optional_context_id(metadata.get("agent_id")),
+            # A content_less_v1 session never reads it: that session is addressed
+            # by the opaque ``agent_ref`` the 201 advertises.
+            agent_id=(
+                None
+                if content_less_ctx is not None
+                else self._optional_context_id(metadata.get("agent_id"))
+            ),
+            agent_ref=issued_refs.get("agent"),
+            content_less=content_less_ctx is not None,
         )
         if issued_refs:
             cast(Any, parsed).content_less_refs = issued_refs

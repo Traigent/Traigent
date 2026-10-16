@@ -5295,7 +5295,36 @@ class OptimizationOrchestrator:
 
     @staticmethod
     def _promotion_precondition_from(session_context: Any) -> dict[str, Any] | None:
-        """The agent head generation captured at step start, or None."""
+        """The agent head generation captured at step start, or None.
+
+        A content-less session always yields a precondition (protected path): either the
+        captured ``agent_ref`` + generation, or the closed ``capture_refusal`` code that
+        makes a later publish refuse locally. It never degrades to "no precondition".
+        """
+        if getattr(session_context, "content_less", False) is True:
+            precondition: dict[str, Any] = {"protected": True}
+            agent_ref = getattr(session_context, "agent_ref", None)
+            generation = getattr(session_context, "head_generation", None)
+            environment = getattr(session_context, "head_environment", None)
+            if (
+                isinstance(agent_ref, str)
+                and agent_ref
+                and isinstance(generation, int)
+                and not isinstance(generation, bool)
+                and isinstance(environment, str)
+                and environment
+            ):
+                precondition.update(
+                    agent_ref=agent_ref, environment=environment, generation=generation
+                )
+            else:
+                refusal = getattr(session_context, "head_capture_refusal", None)
+                precondition["capture_refusal"] = (
+                    refusal
+                    if isinstance(refusal, str) and refusal
+                    else "capture_missing"
+                )
+            return precondition
         agent_id = getattr(session_context, "agent_id", None)
         generation = getattr(session_context, "head_generation", None)
         environment = getattr(session_context, "head_environment", None)

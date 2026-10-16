@@ -125,6 +125,32 @@ class CloudPublishUnavailableReason(StrEnum):
     REQUEST_FAILED = "request_failed"
     INTEGRITY_FAILED = "integrity_failed"
     STALE_HEAD_GENERATION = "stale_head_generation"
+    HEAD_REFUSED = "head_refused"
+    HEAD_CAPTURE_MISSING = "head_capture_missing"
+
+
+class HeadRefusalCode(StrEnum):
+    """Closed refusal codes of the content-less agent-head read and protected publish.
+
+    Mirrors TraigentSchema ``optimization/best_config_head_refusal_schema.json``
+    (``error_code``). ``UNRECOGNIZED`` is SDK-local: the backend answered a protected
+    request with a body outside the closed envelope. ``CAPTURE_MISSING`` is SDK-local:
+    the run could not capture the head at its start, so nothing was sent.
+    """
+
+    REFERENCE_NOT_FOUND = "reference_not_found"
+    HEAD_CAPTURE_INVALID = "head_capture_invalid"
+    HEAD_ENVIRONMENT_MISMATCH = "head_environment_mismatch"
+    HEAD_AGENT_MISMATCH = "head_agent_mismatch"
+    HEAD_GENERATION_STALE = "head_generation_stale"
+    HEAD_WRITE_UNAUTHORIZED = "head_write_unauthorized"
+    HEAD_BODY_INVALID = "head_body_invalid"
+    HEAD_PUBLISH_CONFLICT = "head_publish_conflict"
+    UNAUTHENTICATED = "unauthenticated"
+    FORBIDDEN = "forbidden"
+    INTERNAL_ERROR = "internal_error"
+    UNRECOGNIZED = "unrecognized"
+    CAPTURE_MISSING = "capture_missing"
 
 
 class CloudPublishUnavailable(ConfigurationError):
@@ -168,6 +194,54 @@ class CloudBestConfigStaleHeadError(CloudPublishUnavailable):
         self.agent_id = agent_id
         self.environment = environment
         self.best_config = best_config
+
+
+class CloudBestConfigHeadRefusedError(CloudPublishUnavailable):
+    """A content-less (protected) publish was refused with a closed code, or refused locally.
+
+    Carries only the closed ``code`` (:class:`HeadRefusalCode`) and the HTTP status the
+    backend answered with (None for a local refusal). The message is fixed SDK text:
+    nothing of the response body, the ref, the ids or the headers is echoed. The backend
+    wrote nothing; ``best_config`` is the refused configuration so the caller can decide
+    deliberately what to do next.
+    """
+
+    def __init__(
+        self,
+        code: HeadRefusalCode,
+        *,
+        status_code: int | None = None,
+        reason: CloudPublishUnavailableReason = CloudPublishUnavailableReason.HEAD_REFUSED,
+        best_config: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            reason, f"Protected best-config publish refused: {code.value}."
+        )
+        self.code = code
+        self.status_code = status_code
+        self.best_config = best_config
+
+
+class CloudBestConfigHeadStaleError(CloudBestConfigHeadRefusedError):
+    """``head_generation_stale``: the agent head moved after this run captured its generation.
+
+    The run's RESULT is stale. It must never be auto-retried, and the generation must
+    never be refreshed and the same result resubmitted: start a new run (or re-evaluate
+    against the new head) and publish with that run's own captured generation.
+    """
+
+    def __init__(
+        self,
+        *,
+        status_code: int | None = 409,
+        best_config: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            HeadRefusalCode.HEAD_GENERATION_STALE,
+            status_code=status_code,
+            reason=CloudPublishUnavailableReason.STALE_HEAD_GENERATION,
+            best_config=best_config,
+        )
 
 
 class SafetySensitiveBestConfigError(ConfigurationError):
@@ -855,9 +929,12 @@ __all__ = [
     "BestConfigSnapshot",
     "BestConfigSource",
     "BestConfigSourceMode",
+    "CloudBestConfigHeadRefusedError",
+    "CloudBestConfigHeadStaleError",
     "CloudBestConfigStaleHeadError",
     "CloudPublishUnavailable",
     "CloudPublishUnavailableReason",
+    "HeadRefusalCode",
     "SafetySensitiveBestConfigError",
     "canonical_json",
     "compute_spec_hash",

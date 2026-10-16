@@ -718,6 +718,12 @@ class SessionOperations:
                 bound_agent_id = getattr(session_api_result, "agent_id", None)
                 if not isinstance(bound_agent_id, str) or not bound_agent_id.strip():
                     bound_agent_id = None
+                bound_agent_ref = getattr(session_api_result, "agent_ref", None)
+                if not isinstance(bound_agent_ref, str) or not bound_agent_ref:
+                    bound_agent_ref = None
+                session_content_less = (
+                    getattr(session_api_result, "content_less", False) is True
+                )
                 # #1683 Bug B: the backend sends the warm-start decision block
                 # in the CREATE response (it is not resent at finalize).
                 # Retain it verbatim so finalize can surface it in result
@@ -846,6 +852,8 @@ class SessionOperations:
                     project_id=owning_context.get("project_id"),
                     tenant_id=owning_context.get("tenant_id"),
                     agent_id=bound_agent_id,
+                    agent_ref=bound_agent_ref,
+                    content_less=session_content_less,
                 )
 
             except ValidationException:

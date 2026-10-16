@@ -24,6 +24,12 @@ class SessionContext:
             created, i.e. at the start of the optimization step (None when it
             could not be read or the run is offline)
         head_environment: Environment the head generation was read for
+        agent_ref: Opaque agent ref the content-less session-create 201 advertised
+        content_less: True when the backend negotiated ``content_less_v1``; every
+            promotion of such a session is protected (ref + captured generation)
+        head_capture_refusal: Closed code (``HeadRefusalCode`` value) when a
+            content-less run could not capture its head at start; a later publish
+            is then refused locally
     """
 
     session_id: str | None
@@ -34,3 +40,6 @@ class SessionContext:
     agent_id: str | None = None
     head_generation: int | None = None
     head_environment: str | None = None
+    agent_ref: str | None = None
+    content_less: bool = False
+    head_capture_refusal: str | None = None

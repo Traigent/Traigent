@@ -140,7 +140,25 @@ _JSON_CONTENT_TYPE = "application/json"
 _SDK_USER_AGENT = get_sdk_user_agent()
 _AGENT_ID_HEADER = "X-Traigent-Agent-Id"
 _EXPECTED_HEAD_GENERATION_HEADER = "X-Traigent-Expected-Head-Generation"
+_AGENT_REF_HEADER = "X-Traigent-Agent-Ref"
+_MAX_HEAD_GENERATION = 9007199254740991
 _STALE_HEAD_ERROR_CODE = "STALE_HEAD_GENERATION"
+#: Closed ``error_code`` values of best_config_head_refusal_schema.json (backend-issued).
+_CLOSED_HEAD_REFUSAL_CODES = frozenset(
+    {
+        "reference_not_found",
+        "head_capture_invalid",
+        "head_environment_mismatch",
+        "head_agent_mismatch",
+        "head_generation_stale",
+        "head_write_unauthorized",
+        "head_body_invalid",
+        "head_publish_conflict",
+        "unauthenticated",
+        "forbidden",
+        "internal_error",
+    }
+)
 _SYNC_BACKEND_TRANSIENT_STATUSES = frozenset({408, 429, *range(500, 600)})
 _INTERACTION_POLICY_REQUIRED_KEYS = frozenset(
     {
@@ -2216,6 +2234,186 @@ class BackendIntegratedClient:
             raise CloudServiceError("Agent-head response carried a negative generation")
         return generation
 
+    @staticmethod
+    def _head_refusal_from_response(
+        response: Any,
+        *,
+        best_config: dict[str, Any] | None = None,
+    ) -> Exception:
+        """Map a protected-path error response to a typed, content-free exception.
+
+        Only the closed ``error_code`` of the Schema refusal envelope is read, and only
+        when it is one of the closed codes; nothing else of the body is kept or echoed.
+        A body outside the closed envelope maps to ``UNRECOGNIZED`` (status only).
+        ``head_generation_stale`` maps to its own type and is never retried here.
+        """
+        from traigent.core.best_config_runtime import (
+            CloudBestConfigHeadRefusedError,
+            CloudBestConfigHeadStaleError,
+            HeadRefusalCode,
+        )
+
+        status = getattr(response, "status_code", None)
+        status = (
+            status if isinstance(status, int) and not isinstance(status, bool) else None
+        )
+        code = HeadRefusalCode.UNRECOGNIZED
+        try:
+            body = response.json()
+        except Exception:  # noqa: BLE001  # silent-ok: unreadable body is the UNRECOGNIZED refusal below
+            body = None
+        if isinstance(body, dict) and body.get("success") is False:
+            raw = body.get("error_code")
+            if isinstance(raw, str) and raw in _CLOSED_HEAD_REFUSAL_CODES:
+                code = HeadRefusalCode(raw)
+        if code is HeadRefusalCode.HEAD_GENERATION_STALE:
+            return CloudBestConfigHeadStaleError(
+                status_code=status, best_config=best_config
+            )
+        return CloudBestConfigHeadRefusedError(
+            code, status_code=status, best_config=best_config
+        )
+
+    def _protected_request(
+        self, method: str, url: str, *, operation: str, **kwargs: Any
+    ) -> Any:
+        """One request of the content-less protected path, on a strict gated session.
+
+        The session accepts only this URL's origin and refuses every redirect, so the
+        ref and credentials cannot travel anywhere else. Transport failures surface as
+        fixed text (no URL, no exception text).
+        """
+        try:
+            import requests
+        except ImportError as exc:  # pragma: no cover - requests is required
+            raise CloudServiceError("requests is unavailable") from exc
+
+        session = gate_session(requests.Session(), origins=[url], strict=True)
+        try:
+            return session.request(
+                method,
+                url,
+                allow_redirects=False,
+                timeout=min(self.timeout, 30.0),
+                **kwargs,
+            )
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+            ConnectionError,
+            TimeoutError,
+        ) as exc:
+            raise CloudServiceError(f"{operation} transport failed") from exc
+        finally:
+            session.close()
+
+    def fetch_agent_head_generation_by_ref_sync(
+        self, agent_ref: str, *, environment: str
+    ) -> int:
+        """Read a content-less agent's head generation by its opaque ``agent_ref``.
+
+        Contract: TraigentSchema ``optimization/best_config_head_endpoints.json``
+        (``GET /api/v1/best-configs/agent-heads/by-ref/{agent_ref}?environment=``).
+        Returns the generation (0 when never promoted). Any closed refusal raises
+        ``CloudBestConfigHeadRefusedError``; any other failure raises
+        ``CloudServiceError`` with fixed text. The caller captures this ONCE, at the
+        start of the run.
+        """
+        from traigent.cloud import content_less as content_less_session
+        from traigent.core.best_config_runtime import (
+            CloudBestConfigHeadRefusedError,
+            HeadRefusalCode,
+        )
+
+        self._raise_if_backend_egress_disabled("fetch agent head")
+        if not content_less_session.is_well_formed_ref("agent", agent_ref):
+            raise CloudBestConfigHeadRefusedError(HeadRefusalCode.HEAD_CAPTURE_INVALID)
+        if environment not in content_less_session.ENVIRONMENTS:
+            raise CloudBestConfigHeadRefusedError(HeadRefusalCode.HEAD_CAPTURE_INVALID)
+        base = self._build_best_config_url()
+        if not base:
+            raise CloudServiceError("Backend agent-head URL is invalid")
+        url = f"{base}/agent-heads/by-ref/{quote(agent_ref, safe='')}"
+        headers = self._get_sync_auth_headers(target="backend")
+
+        def _get_head() -> Any:
+            response = self._protected_request(
+                "GET",
+                url,
+                operation="Agent-head fetch",
+                params={"environment": environment},
+                headers=headers,
+            )
+            if (
+                getattr(response, "status_code", None)
+                in _SYNC_BACKEND_TRANSIENT_STATUSES
+            ):
+                raise _SyncBackendTransientError(
+                    "Agent-head fetch returned a transient error",
+                    status_code=response.status_code,
+                    retry_after=_parse_retry_after(getattr(response, "headers", None)),
+                )
+            return response
+
+        response = _run_sync_backend_request_with_retry("Agent-head fetch", _get_head)
+        if response.status_code >= 400:
+            raise self._head_refusal_from_response(response)
+        try:
+            body = response.json()
+        except Exception as exc:  # noqa: BLE001
+            raise CloudServiceError("Agent-head response was not valid JSON") from exc
+        data = body.get("data", body) if isinstance(body, dict) else None
+        generation = data.get("generation") if isinstance(data, dict) else None
+        if (
+            not isinstance(data, dict)
+            or data.get("agent_ref") != agent_ref
+            or data.get("environment") != environment
+            or isinstance(generation, bool)
+            or not isinstance(generation, int)
+            or not 0 <= generation <= _MAX_HEAD_GENERATION
+            or data.get("exists") is not (generation >= 1)
+        ):
+            raise CloudServiceError("Agent-head response did not match its contract")
+        return generation
+
+    def _publish_best_config_protected_sync(
+        self,
+        spec: dict[str, Any],
+        *,
+        environment: str | None,
+        if_match: str | None,
+        agent_ref: str,
+        expected_head_generation: int,
+    ) -> dict[str, Any]:
+        """Protected (content-less) publish: both headers, one attempt, closed refusals.
+
+        Never retried: a ``head_generation_stale`` refusal means the run's result is
+        stale, and re-sending after an ambiguous failure could misreport the head this
+        very call moved as someone else's write.
+        """
+        self._raise_if_backend_egress_disabled("publish best config")
+        url = self._build_best_config_url()
+        if not url:
+            raise CloudServiceError("Backend best-config URL is invalid")
+        headers = self._get_sync_auth_headers(target="backend")
+        if if_match:
+            headers["If-Match"] = if_match
+        headers[_AGENT_REF_HEADER] = agent_ref
+        headers[_EXPECTED_HEAD_GENERATION_HEADER] = str(int(expected_head_generation))
+        payload: dict[str, Any] = {"spec": spec}
+        if environment:
+            payload["environment"] = environment
+        response = self._protected_request(
+            "POST",
+            url,
+            operation="Best-config publish",
+            json=payload,
+            headers=headers,
+        )
+        if response.status_code >= 400:
+            raise self._head_refusal_from_response(response)
+        return self._extract_backend_data(response)
+
     def publish_best_config_sync(
         self,
         spec: dict[str, Any],
@@ -2224,8 +2422,16 @@ class BackendIntegratedClient:
         if_match: str | None = None,
         agent_id: str | None = None,
         expected_head_generation: int | None = None,
+        agent_ref: str | None = None,
     ) -> dict[str, Any]:
         """Publish a canonical best-config spec to the backend.
+
+        With ``agent_ref`` (a content-less session's opaque ref) the publish is the
+        PROTECTED path: it sends ``X-Traigent-Agent-Ref`` and
+        ``X-Traigent-Expected-Head-Generation``, is never retried, and every closed
+        refusal raises ``CloudBestConfigHeadRefusedError`` (``head_generation_stale``
+        raises ``CloudBestConfigHeadStaleError``). ``agent_ref`` and ``agent_id`` are
+        mutually exclusive.
 
         When both ``agent_id`` and ``expected_head_generation`` are given the
         publish is also a promotion to that agent's head, conditional on the
@@ -2233,6 +2439,28 @@ class BackendIntegratedClient:
         ``CloudBestConfigStaleHeadError`` and nothing is written. Supplying only
         one of the two is a caller bug and is rejected before any request.
         """
+        if agent_ref is not None:
+            from traigent.cloud import content_less as content_less_session
+
+            if agent_id is not None or expected_head_generation is None:
+                raise CloudServiceError(
+                    "agent_ref requires expected_head_generation and excludes agent_id"
+                )
+            if not content_less_session.is_well_formed_ref("agent", agent_ref):
+                raise CloudServiceError("agent_ref is not a valid agent reference")
+            if (
+                isinstance(expected_head_generation, bool)
+                or not isinstance(expected_head_generation, int)
+                or not 0 <= expected_head_generation <= _MAX_HEAD_GENERATION
+            ):
+                raise CloudServiceError("expected_head_generation is out of range")
+            return self._publish_best_config_protected_sync(
+                spec,
+                environment=environment,
+                if_match=if_match,
+                agent_ref=agent_ref,
+                expected_head_generation=expected_head_generation,
+            )
         if (agent_id is None) != (expected_head_generation is None):
             raise CloudServiceError(
                 "agent_id and expected_head_generation must be provided together"
