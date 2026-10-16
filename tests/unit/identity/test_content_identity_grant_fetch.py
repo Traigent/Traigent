@@ -27,6 +27,7 @@ from traigent.cloud.backend_client import (
     PurposeKeyGrantFetchError,
 )
 from traigent.cloud.client import CloudEgressBlockedError
+from traigent.api.functions import with_usage
 from traigent.config.types import TraigentConfig, content_identity_enabled
 from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.orchestrator import OptimizationOrchestrator
@@ -384,7 +385,8 @@ def test_one_warning_names_only_the_failure_type(
 
 
 def identity_agent(text: str) -> str:
-    return text.upper()
+    # No model call: report a measured $0 instead of leaving the cost unreported.
+    return with_usage(text.upper(), total_cost=0.0)
 
 
 def _dataset() -> Dataset:

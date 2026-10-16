@@ -88,7 +88,8 @@ def _orchestrator(
     orchestrator.backend_session_manager = manager
     orchestrator.traigent_config = config
     orchestrator.cost_enforcer = Mock(
-        get_status=Mock(return_value=SimpleNamespace(accumulated_cost_usd=0.0))
+        get_status=Mock(return_value=SimpleNamespace(accumulated_cost_usd=0.0, unmeasured_trial_count=0)
+        )
     )
     orchestrator._build_certified_selection_report = Mock(return_value=None)
     orchestrator._submit_usage_analytics = AsyncMock()
