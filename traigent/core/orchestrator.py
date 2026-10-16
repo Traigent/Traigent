@@ -2721,20 +2721,7 @@ class OptimizationOrchestrator:
                 # run once the batch is drained.
                 elif isinstance(result, LegendTrialRefused):
                     legend_refusal = legend_refusal or result
-                    trial_result = TrialResult(
-                        trial_id=result.backend_trial_id,
-                        config=config,
-                        metrics={},
-                        status=TrialStatus.CANCELLED,
-                        duration=0.0,
-                        timestamp=datetime.now(UTC),
-                        error_message=f"Trial not executed: Legend admission refused ({result.code})",
-                        metadata={
-                            "backend_trial_id_acquired": True,
-                            "backend_trial_id_source": "cloud_brain",
-                            "legend_refusal": result.code,
-                        },
-                    )
+                    trial_result = self._legend_refused_trial_result(result, config)
                 # Handle exceptions from gather (P4 fix)
                 elif isinstance(result, BaseException):
                     logger.warning(
@@ -2788,6 +2775,29 @@ class OptimizationOrchestrator:
         if legend_refusal is not None:
             raise legend_refusal
         return trial_count
+
+    @staticmethod
+    def _legend_refused_trial_result(
+        refusal: LegendTrialRefused, config: dict[str, Any]
+    ) -> TrialResult:
+        """A not-executed (CANCELLED) outcome for a trial Legend refused before evaluation.
+
+        Keeps the ISSUED backend trial id (``backend_trial_id_acquired``) so finalizing it
+        allocates no new slot and the issued trial does not stay pending."""
+        return TrialResult(
+            trial_id=refusal.backend_trial_id,
+            config=config,
+            metrics={},
+            status=TrialStatus.CANCELLED,
+            duration=0.0,
+            timestamp=datetime.now(UTC),
+            error_message=f"Trial not executed: Legend admission refused ({refusal.code})",
+            metadata={
+                "backend_trial_id_acquired": True,
+                "backend_trial_id_source": "cloud_brain",
+                "legend_refusal": refusal.code,
+            },
+        )
 
     def _apply_cap_and_prevent_excess(
         self,

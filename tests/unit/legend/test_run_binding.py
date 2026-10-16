@@ -921,3 +921,52 @@ def test_backend_client_posts_with_auth_bounded_timeout_and_closed_errors(
             "s1", {"run_observed": [], "mode": "strict"}
         )
     assert err.value.code == "manifest_mismatch" and CANARY not in str(err.value)
+
+
+@pytest.mark.asyncio
+async def test_sequential_refusal_finalizes_the_issued_trial_as_not_executed() -> None:
+    from traigent.api.types import TrialStatus
+
+    server = FakeServer()
+    suggested = _config_ref(server, {"param1": 1})
+    plan = [
+        {
+            "param1": 2,
+            "_traigent_backend_trial_id": "issued_1",
+            "_traigent_legend_trial": _trial_block(
+                1, suggested.version_ref, [("run_base_configuration", vref(7))]
+            ),
+        }
+    ]
+    optimizer = _Optimizer({"param1": [0, 1, 2]}, ["accuracy"])
+    optimizer.plan = plan
+    evaluator = _Evaluator()
+    orch = OptimizationOrchestrator(
+        optimizer=optimizer,
+        evaluator=evaluator,
+        max_trials=2,
+        config=TraigentConfig(no_egress=True, enable_usage_analytics=False),
+        default_config={"param1": 1},
+    )
+    orch.legend_options = LegendOptions(transport=server)
+    orch.backend_session_manager.create_session = lambda **kw: SessionContext(  # type: ignore[method-assign]
+        "s", "d", "f", "o", 0.0, legend=block([("run_base_configuration", vref(7))])
+    )
+    handled: list[Any] = []
+    real = orch._handle_trial_result
+
+    async def spy(**kw: Any) -> Any:
+        handled.append(kw["trial_result"])
+        return await real(**kw)
+
+    orch._handle_trial_result = spy  # type: ignore[method-assign]
+
+    async def f(input_data: dict[str, Any], **cfg: Any) -> Any:
+        return "x"
+
+    with pytest.raises(OptimizationError):
+        await orch.optimize(f, Dataset([EvaluationExample({"q": "a"}, "b")], name="ds"))
+    refused = [t for t in handled if t.trial_id == "issued_1"]
+    assert len(refused) == 1 and refused[0].status == TrialStatus.CANCELLED
+    assert refused[0].metadata["backend_trial_id_acquired"] is True
+    assert [cfg.get("param1") for cfg in evaluator.configs] == [1]  # drifted never ran

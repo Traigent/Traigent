@@ -130,14 +130,6 @@ MULTISET_ROOT_RE: Final = re.compile(r"msr1:(k[0-9a-f]{16}):[0-9a-f]{64}")
 
 QUERY_MAX_PAGE_SIZE: Final = 100
 
-# Future Backend routes (item 3); not final.
-ROUTE_DECLARE: Final = "/api/v1/legend/versions:declare"
-ROUTE_QUERY: Final = "/api/v1/legend/versions:query"
-ROUTE_RECORD_CAPTURE: Final = "/api/v1/legend/captures:record"
-ROUTE_RECORD_RESTORE: Final = "/api/v1/legend/restores:record"
-ROUTE_RECORD_AVAILABILITY: Final = "/api/v1/legend/availability:record"
-LEGEND_ENABLED_ENV: Final = "TRAIGENT_LEGEND_HTTP_ENABLED"
-
 # Recovery state / restore grades / store statuses (pillar_legend_v0.json)
 RECOVERY_STORED_UNVERIFIED: Final = "stored_unverified"
 RECOVERY_ROUND_TRIP_VERIFIED: Final = "round_trip_verified"

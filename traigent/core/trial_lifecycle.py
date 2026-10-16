@@ -425,7 +425,27 @@ class TrialLifecycle:
                 log_on_success=True,
                 permit=permit,
             )
-        except Exception:
+        except Exception as error:
+            from traigent.legend.run_binding import LegendTrialRefused
+
+            if isinstance(error, LegendTrialRefused):
+                # Refused before any evaluator call: finalize the ISSUED backend trial
+                # as not-executed (same id, no new slot) so it does not stay pending,
+                # then abort the run.
+                try:
+                    await orchestrator._handle_trial_result(
+                        trial_result=orchestrator._legend_refused_trial_result(
+                            error, config_for_trial
+                        ),
+                        optimizer_config=config_for_trial,
+                        current_trial_index=trial_count,
+                        session_id=session_id,
+                        optuna_trial_id=optuna_trial_id,
+                        log_on_success=False,
+                        permit=permit,
+                    )
+                except Exception:  # noqa: BLE001 - the refusal is the error to surface
+                    logger.debug("Refused Legend trial could not be finalized")
             # Release permit on exception to prevent stranding
             if (
                 permit is not None

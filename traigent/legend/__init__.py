@@ -59,7 +59,6 @@ from traigent.legend.store import ClientStore, LocalDirectoryStore
 from traigent.legend.transport import (
     CaptureTransport,
     DeclareResult,
-    HttpLegendTransport,
     InMemoryTransport,
     LegendTransport,
     QueryResult,
@@ -94,7 +93,6 @@ __all__ = [
     "DeclareResult",
     "EvaluatorManifestSource",
     "EvaluatorSource",
-    "HttpLegendTransport",
     "InMemoryTransport",
     "LegendError",
     "LegendTransport",

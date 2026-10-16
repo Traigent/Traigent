@@ -14,7 +14,6 @@ from traigent.legend import (
     ConfigurationSource,
     DatasetSource,
     EvaluatorManifestSource,
-    HttpLegendTransport,
     InMemoryTransport,
     LegendError,
     SearchSpaceSource,
@@ -395,24 +394,27 @@ def test_alias_round_trip(tmp_path):
         a.set("x", c.KIND_AGENT, "not-a-ref")
 
 
-def test_http_transport_is_off_by_default(monkeypatch):
-    monkeypatch.delenv(c.LEGEND_ENABLED_ENV, raising=False)
-    calls = []
-    http = HttpLegendTransport(lambda path, payload: calls.append(path) or {})
-    with pytest.raises(LegendError) as err:
-        declare(c.KIND_CONFIGURATION, ConfigurationSource({}), transport=http)
-    assert err.value.code == "flag_disabled" and calls == []
-    monkeypatch.setenv(c.LEGEND_ENABLED_ENV, "1")
-    ref = "versionref_" + "1" * 32
-    ok = HttpLegendTransport(
-        lambda p, b: {
-            "version_ref": ref,
-            "entity_ref": "entityref_" + "2" * 32,
-            "created": True,
-            "event_ref": "eventref_" + "3" * 32,
-        }
-    )
-    assert (
-        declare(c.KIND_CONFIGURATION, ConfigurationSource({}), transport=ok).version_ref
-        == ref
-    )
+def test_store_put_is_crash_safe_between_meta_and_blob(tmp_path, monkeypatch):
+    import io
+    import os
+
+    from traigent.legend import LocalDirectoryStore
+
+    store = LocalDirectoryStore(tmp_path / "s")
+    fp = "rmf0:sha256:" + "ab" * 32
+    real_link = os.link
+
+    def crash(*_a, **_k):
+        raise OSError("simulated crash after the meta was published")
+
+    monkeypatch.setattr(os, "link", crash)
+    assert store.put(c.KIND_AGENT, fp, io.BytesIO(b"payload")) == "unreachable"
+    monkeypatch.setattr(os, "link", real_link)
+    files = sorted(p.suffix for p in (tmp_path / "s").rglob("*") if p.is_file())
+    assert files == [".meta"]  # an orphan meta, and no leaked temp files
+    assert store.has(c.KIND_AGENT, fp) == "missing"
+    assert store.get(c.KIND_AGENT, fp, tmp_path / "out") == "missing"
+    # the retry (even with different bytes: no blob was ever published) succeeds cleanly
+    assert store.put(c.KIND_AGENT, fp, io.BytesIO(b"other")) == "stored_unverified"
+    assert store.get(c.KIND_AGENT, fp, tmp_path / "out") == "retrieved"
+    assert store.put(c.KIND_AGENT, fp, io.BytesIO(b"payload")) == "store_key_conflict"

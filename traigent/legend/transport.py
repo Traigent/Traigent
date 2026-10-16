@@ -1,9 +1,8 @@
-"""Transport for Legend requests: a protocol, an in-memory fake and a default-off HTTP stub."""
+"""Transport for Legend requests: a protocol, an in-memory fake."""
 
 from __future__ import annotations
 
 import hashlib
-import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -257,61 +256,3 @@ class InMemoryTransport:
             else None
         )
         return QueryResult(tuple(page), nxt)
-
-
-class HttpLegendTransport:
-    """Thin stub for the future Backend routes; off unless ``TRAIGENT_LEGEND_HTTP_ENABLED=1``.
-
-    ``send(path, payload) -> dict`` is injected by the caller (it owns auth and
-    the network); there is no built-in network call, so nothing here can reach
-    out by default.
-    """
-
-    def __init__(
-        self, send: Callable[[str, Mapping[str, Any]], Mapping[str, Any]] | None = None
-    ) -> None:
-        self._send = send
-
-    def _enabled(self) -> Callable[[str, Mapping[str, Any]], Mapping[str, Any]]:
-        if os.environ.get(c.LEGEND_ENABLED_ENV) != "1":
-            raise LegendError("flag_disabled")
-        if self._send is None:
-            raise LegendError("store_unavailable")
-        return self._send
-
-    def declare(self, payload: Mapping[str, Any]) -> DeclareResult:
-        data = self._enabled()(c.ROUTE_DECLARE, payload)
-        try:
-            return DeclareResult(
-                data["version_ref"],
-                data["entity_ref"],
-                bool(data["created"]),
-                data["event_ref"],
-            )
-        except (KeyError, TypeError):
-            raise LegendError("internal_error") from None
-
-    def record_capture(self, payload: Mapping[str, Any]) -> str:
-        return self._record(c.ROUTE_RECORD_CAPTURE, payload)
-
-    def record_restore(self, payload: Mapping[str, Any]) -> str:
-        return self._record(c.ROUTE_RECORD_RESTORE, payload)
-
-    def record_availability(self, payload: Mapping[str, Any]) -> str:
-        return self._record(c.ROUTE_RECORD_AVAILABILITY, payload)
-
-    def _record(self, path: str, payload: Mapping[str, Any]) -> str:
-        data = self._enabled()(path, payload)
-        try:
-            return str(data["event_ref"])
-        except (KeyError, TypeError):
-            raise LegendError("internal_error") from None
-
-    def query(self, payload: Mapping[str, Any]) -> QueryResult:
-        data = self._enabled()(c.ROUTE_QUERY, payload)
-        try:
-            return QueryResult(
-                tuple(data["version_refs"]), data.get("next_page_cursor")
-            )
-        except (KeyError, TypeError):
-            raise LegendError("internal_error") from None

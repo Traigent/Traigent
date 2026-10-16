@@ -83,17 +83,29 @@ class LocalDirectoryStore:
                 if self._existing_digest(meta) != digest:
                     return "store_key_conflict"
                 return "stored_unverified"
+            # Crash-safe order: the meta is published ATOMICALLY (temp + rename) BEFORE the
+            # blob appears, and the blob is published atomically by a hard link. Readers key
+            # on the blob, so an orphan meta (crash between the two) is invisible to has/get
+            # and is simply replaced by the next put.
             fd, tmp = tempfile.mkstemp(dir=blob.parent, suffix=".tmp")
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(data)
-            meta.write_text(json.dumps({"sha256": digest, "length": len(data)}))
+            mfd, mtmp = tempfile.mkstemp(dir=blob.parent, suffix=".tmp")
             try:
-                os.link(tmp, blob)  # fails if a concurrent put won the key
-            except FileExistsError:
-                if self._existing_digest(meta) != digest:
-                    return "store_key_conflict"
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(data)
+                with os.fdopen(mfd, "w") as handle:
+                    handle.write(json.dumps({"sha256": digest, "length": len(data)}))
+                os.replace(mtmp, meta)
+                try:
+                    os.link(tmp, blob)  # fails if a concurrent put won the key
+                except FileExistsError:
+                    if self._existing_digest(meta) != digest:
+                        return "store_key_conflict"
             finally:
-                os.unlink(tmp)
+                for leftover in (tmp, mtmp):
+                    try:
+                        os.unlink(leftover)
+                    except FileNotFoundError:
+                        pass
             return "stored_unverified"
         except PermissionError:
             return "permission_denied"
