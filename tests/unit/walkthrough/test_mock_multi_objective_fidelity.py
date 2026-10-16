@@ -358,7 +358,11 @@ async def test_shipped_09_cost_is_inert_without_with_usage(
         algorithm="grid", max_trials=len(DIVERGENT_RAG_MODELS)
     )
 
-    assert {trial.metrics.get("cost", 0.0) for trial in results.trials} == {0.0}
+    # Unknown spend stays unknown even with strict off: no cost number, flagged.
+    assert results.trials
+    for trial in results.trials:
+        assert "cost" not in trial.metrics
+        assert trial.metrics.get("cost_unmeasured")
 
 
 # ---------------------------------------------------------------------------

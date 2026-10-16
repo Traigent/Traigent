@@ -39,15 +39,13 @@ def _result(trials):
 )
 def test_terminal_trial_without_progress_telemetry_is_unmeasured(status):
     result = _result([_trial(status)])
-    stats = result.experiment_stats if hasattr(result, "get_stats") else None
-    summary = result.get_summary() if hasattr(result, "get_summary") else None
-    if stats is not None:
-        assert stats.total_cost is None
-        assert stats.cost_per_configuration is None
-        assert stats.cost_unmeasured_trials == 1
-    if summary is not None:
-        assert summary["total_cost"] is None
-        assert summary["cost_unmeasured_trials"] == 1
+    stats = result.experiment_stats
+    summary = result.get_summary()
+    assert stats.total_cost is None
+    assert stats.cost_per_configuration is None
+    assert stats.cost_unmeasured_trials == 1
+    assert summary["total_cost"] is None
+    assert summary["cost_unmeasured_trials"] == 1
 
 
 def test_completed_trial_without_cost_metric_is_unmeasured():
