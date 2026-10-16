@@ -34,3 +34,15 @@ sha256sum tests/unit/identity/fixtures/content_identity_v1_vectors.json
 ```
 
 then update the commit and SHA-256 above and `EXPECTED_SHA256` in the test.
+
+## identity_vectors_v1.json (agent identity labels)
+
+`identity_vectors_v1.json` is vendored **byte-for-byte** from the TraigentSchema
+local branch `feat/identity-vectors` (commit a6bbbaa)
+(`traigent_schema/data/identity/identity_vectors_v1.json`).
+
+- SHA-256: `294814bec6a947b3c32cc4ec1c438b16f2c3fdcca815adb4883258ac7f0ff4d4`
+  (pinned in `tests/unit/identity/test_agent_identity_labels.py`).
+- Replace this copy with the TraigentSchema package data once that package is
+  published; until then the sha256 pin is what keeps the three consumers on the
+  same vectors.

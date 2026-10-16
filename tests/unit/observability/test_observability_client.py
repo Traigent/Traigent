@@ -96,10 +96,35 @@ def test_observability_config_does_not_emit_unknown_environment_content(
 
     config = ObservabilityConfig(backend_origin="https://auth.example.com")
 
-    assert config.default_environment is None
+    assert config.default_environment == "default"
     assert sentinel not in json.dumps(config.__dict__)
     assert "Ignoring unknown environment label" in caplog.text
     assert sentinel not in caplog.text
+
+
+def test_observability_environment_follows_one_resolution_order(monkeypatch):
+    """TRAIGENT_ENVIRONMENT beats ENVIRONMENT on the config and on the trace."""
+    monkeypatch.setenv("TRAIGENT_ENVIRONMENT", "staging")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("TRAIGENT_ENV", raising=False)
+    monkeypatch.delenv("OTEL_RESOURCE_ATTRIBUTES", raising=False)
+    _mock_public_backend_dns(monkeypatch)
+    sent_batches: list[list[dict]] = []
+    config = ObservabilityConfig(
+        backend_origin="https://auth.example.com",
+        api_key="test-key",  # pragma: allowlist secret
+    )
+    assert config.default_environment == "staging"
+
+    client = ObservabilityClient(config, sender=sent_batches.append)
+    trace_id = client.start_trace("env-order", trace_id="trace_env_order")
+    client.end_trace(trace_id)
+    client.flush()
+    client.close()
+
+    traces = [t for batch in sent_batches for t in batch]
+    assert traces
+    assert {t.get("environment") for t in traces} == {"staging"}
 
 
 def test_observability_config_defaults_to_metadata_content_mode(monkeypatch):
