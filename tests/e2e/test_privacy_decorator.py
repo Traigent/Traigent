@@ -1,7 +1,12 @@
 """End-to-end tests for privacy-first mode using the @traigent.optimize decorator.
 
-These tests verify that the decorator properly integrates with privacy mode
-and that no sensitive data leaks during optimization.
+NOTE: ``@optimize(privacy_enabled=True)`` is a deprecated no-op and no longer
+appears here; it never protected data. The patched cloud client below is a local
+dummy server, so the "no privacy violations" assertions exercise the dummy server
+only. They are not evidence that the SDK withholds data. The real mechanisms are
+``offline=True`` (no Traigent backend egress) and the trial-level redaction gated
+by ``TraigentConfig.privacy_enabled``; see docs/api-reference/telemetry.md and
+the unit tests in tests/unit/core/test_backend_session_manager.py.
 """
 
 # ruff: noqa: S101 - asserts are standard in test files
@@ -137,7 +142,6 @@ class TestPrivacyDecoratorE2E:
                     "max_tokens": [200, 300, 400],
                 },
                 execution_mode="hybrid",
-                privacy_enabled=True,
                 max_trials=10,  # Limit trials to avoid config space exhaustion
             )
             async def process_medical_query(**kwargs):
@@ -288,7 +292,6 @@ class TestPrivacyDecoratorE2E:
                     "param2": ["A", "B", "C"],
                 },
                 execution_mode="hybrid",
-                privacy_enabled=True,
             )
             def secure_function(input_data):
                 """Function using context-based config access."""
@@ -355,7 +358,6 @@ class TestPrivacyDecoratorE2E:
                 objectives=["success_rate"],
                 configuration_space={"tolerance": [1, 2, 3, 4, 5]},
                 execution_mode="hybrid",
-                privacy_enabled=True,
             )
             def challenging_function(input_data, **config):
                 """Function that may fail on difficult inputs."""
@@ -453,7 +455,6 @@ class TestPrivacyDecoratorE2E:
                     "ensemble_size": [1, 3, 5],
                 },
                 execution_mode="hybrid",
-                privacy_enabled=True,
             )
             def financial_risk_assessment(**kwargs):
                 """Assess financial risk using sensitive data locally."""
@@ -588,7 +589,6 @@ class TestPrivacyIntegrationEdgeCases:
                 ),
                 configuration_space={"param": [1, 2, 3]},
                 execution_mode="hybrid",
-                privacy_enabled=True,
             )
             def sometimes_empty_function(input_data, **config):
                 """Function that sometimes returns empty results."""
@@ -647,7 +647,6 @@ class TestPrivacyIntegrationEdgeCases:
                 ),
                 configuration_space={"x": [1, 2, 3]},
                 execution_mode="hybrid",
-                privacy_enabled=True,
             )
             def function_a(**kwargs):
                 return {"score": 0.8 + kwargs.get("x", 1) * 0.05}
@@ -659,7 +658,6 @@ class TestPrivacyIntegrationEdgeCases:
                 ),
                 configuration_space={"y": [0.1, 0.5, 0.9]},
                 execution_mode="hybrid",
-                privacy_enabled=True,
             )
             def function_b(**kwargs):
                 return {"performance": 0.7 + kwargs.get("y", 0.5)}

@@ -197,7 +197,7 @@ class ObjectiveDefinition:
 
         # A target band is non-directional. Scalar objectives must either carry
         # an explicit direction or use an exact SDK-owned metric default.
-        orientation = (
+        orientation: Literal["maximize", "minimize", "band"] = (
             "band"
             if band is not None
             else resolve_objective_orientation(

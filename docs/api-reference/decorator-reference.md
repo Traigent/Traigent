@@ -48,7 +48,6 @@ def optimize(
     injection: InjectionOptions | dict[str, Any] | None = None,
     effectuation: bool = False,
     execution: ExecutionOptions | dict[str, Any] | None = None,
-    mock: MockModeOptions | dict[str, Any] | None = None,
     strategy: str | None = None,
     strategy_params: Mapping[str, Any] | None = None,
 
@@ -516,40 +515,13 @@ from traigent.config.parallel import ParallelConfig
 - `reps_aggregation`: Repetition aggregation method. OSS SDK accepts only `"mean"`; non-default values raise `pydantic.ValidationError` and require Traigent Enterprise.
 - `evaluator`: external evaluator bundle for API-contract integrations. This does not change optimizer routing; it only changes how each trial is evaluated.
 
-#### `mock`
+#### Removed: `mock` and `mock_mode_config`
 
-- **Type**: `MockModeOptions | dict[str, Any] | None`
-- **Default**: `None`
-
-```python
-from traigent.api.decorators import MockModeOptions
-
-# DEPRECATED: MockModeOptions and its fields are inert in the current SDK.
-# They round-trip cleanly for backwards compatibility but do not affect
-# runtime behavior. Enable mock mode in local tutorial or test code by
-# calling traigent.testing.enable_mock_mode_for_quickstart(). The legacy
-# TRAIGENT_MOCK_LLM=true env var remains for shell fixtures only and
-# emits DeprecationWarning when users set it directly. See issue #874.
-@traigent.optimize(
-    mock=MockModeOptions(enabled=True),  # inert; kept for config round-trip
-    ...
-)
-```
-
-**MockModeOptions Fields (DEPRECATED — all inert)**:
-
-The fields below are kept on the schema for backwards compatibility but
-are ignored at runtime. Mock mode is enabled by calling
-`traigent.testing.enable_mock_mode_for_quickstart()` in local tutorial or test code. The legacy `TRAIGENT_MOCK_LLM=true` env var remains available outside production for shell fixtures and backwards compatibility but emits `DeprecationWarning` when users set it directly. In mock mode the LLM call
-layer is intercepted with canned responses; evaluator scoring (built-in
-or custom) is unchanged — there is no fabricated random-score path.
-
-- `enabled`: Inert. Use `traigent.testing.enable_mock_mode_for_quickstart()` in local tutorial or test code to enable mock mode.
-- `override_evaluator`: Inert. The SDK no longer ships a mock evaluator
-  override; custom and local evaluators always run their real scoring
-  logic.
-- `base_accuracy`: Inert. No baseline-accuracy fabrication path remains.
-- `variance`: Inert. No score-variance fabrication path remains.
+The inert `mock` (`MockModeOptions`) and `mock_mode_config` parameters were
+removed (Traigent#1370 Item 6). Passing either raises `TypeError`. Enable mock
+mode in local tutorial or test code by calling
+`traigent.testing.enable_mock_mode_for_quickstart()`; the legacy
+`TRAIGENT_MOCK_LLM=true` env var remains for shell fixtures only.
 
 ### Runtime Overrides
 

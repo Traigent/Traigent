@@ -168,11 +168,14 @@ class TestChanceConstraint:
 
     def test_from_dict(self) -> None:
         """ChanceConstraint.from_dict works correctly."""
+        # The threshold is an allowed violation RATE (promotion_gate compares a
+        # Clopper-Pearson upper bound against it), so it must lie in [0, 1];
+        # this fixture used to carry a metric-like 100.0 (Traigent#1616).
         cc = ChanceConstraint.from_dict(
-            {"name": "latency", "threshold": 100.0, "confidence": 0.9}
+            {"name": "latency_violation", "threshold": 0.05, "confidence": 0.9}
         )
-        assert cc.name == "latency"
-        assert cc.threshold == 100.0
+        assert cc.name == "latency_violation"
+        assert cc.threshold == 0.05
         assert cc.confidence == 0.9
 
 

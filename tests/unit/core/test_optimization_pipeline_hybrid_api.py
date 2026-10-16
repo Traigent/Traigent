@@ -20,7 +20,6 @@ def _make_common_kwargs() -> dict[str, object]:
         "effective_thread_workers": None,
         "effective_privacy_enabled": False,
         "objectives": ["accuracy"],
-        "mock_mode_config": None,
         "metric_functions": None,
         "scoring_function": None,
         "decorator_custom_evaluator": None,

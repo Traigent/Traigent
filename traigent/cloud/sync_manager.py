@@ -7,8 +7,10 @@ Handles migration of local data to Traigent backend when users upgrade.
 
 import hashlib
 import json
+import math
 import os
 import re
+import sys
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -23,6 +25,7 @@ from traigent.cloud.models import (
     dataset_identity_from_record,
 )
 from traigent.cloud.url_security import validate_cloud_base_url
+from traigent.core.session_types import safe_http_error_summary
 
 try:
     import aiohttp  # noqa: F401 - Import check only
@@ -43,6 +46,19 @@ from ..utils.exceptions import TraigentStorageError
 from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# Backend per-example measures limits (TraigentBackend workflow_metadata).
+# Version of the converted-payload shape whose hash is recorded in sync_state:
+# 2 = content-free typed-session payload; 3 = adds per-example measures.
+PAYLOAD_HASH_VERSION = 3
+_MAX_EXAMPLE_MEASURES = 1000
+_MAX_EXAMPLE_METRICS = 50
+_MAX_EXAMPLE_METRIC_KEY_LENGTH = 100
+_EXAMPLE_METRIC_KEY_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+# SDK-minted example ids (traigent/core/metadata_helpers.py, utils/example_id):
+# only the index digits are ever read from them.
+_SDK_EXAMPLE_ID_RE = re.compile(r"(?:example_([0-9]{1,9})|ex_[0-9a-f]+_([0-9]{1,9}))")
 
 _BACKEND_NAME_DISALLOWED = re.compile(r"[^a-zA-Z0-9 _-]+")
 _BACKEND_NAME_SPACES = re.compile(r"\s+")
@@ -292,7 +308,11 @@ class SyncManager:
         }
 
     def convert_session_to_traigent_format(
-        self, session: OptimizationSession
+        self,
+        session: OptimizationSession,
+        *,
+        legacy_shape: bool = False,
+        include_example_measures: bool = True,
     ) -> dict[str, Any]:
         """
         Convert a local session to the content-free typed-session payload.
@@ -311,6 +331,9 @@ class SyncManager:
 
         Args:
             session: Local optimization session
+            legacy_shape: Reproduce the payload exactly as releases before
+                offline metadata was read were converting it. Used ONLY to
+                recognise a fingerprint recorded by such a release; never sent.
 
         Returns:
             Dict with a ``session_create`` payload plus ``configuration_runs``.
@@ -320,8 +343,11 @@ class SyncManager:
         if not isinstance(search_space, dict):
             search_space = {}
 
+        # Releases before payload hash version 3 never produced per-example
+        # measures; their fingerprints are reproduced without them.
         configuration_runs = self._convert_trials_to_configuration_runs(
-            session.trials or []
+            session.trials or [],
+            include_example_measures=include_example_measures and not legacy_shape,
         )
         objectives = self._derive_objectives(opt_config, configuration_runs)
         # Guard: the backend rejects a COMPLETED trial whose metrics lack any
@@ -337,7 +363,17 @@ class SyncManager:
         # to 1 — exactly like the live SDK builder
         # (api_operations._build_typed_session_payload). The empty-dataset
         # pass-through comes from binding NO benchmark, not from the size field.
+        session_metadata = (
+            session.metadata
+            if isinstance(session.metadata, dict) and not legacy_shape
+            else {}
+        )
+        # Offline sessions persist dataset_size / evaluation_set under
+        # session.metadata (written by the orchestrator); optimization_config
+        # wins when it carries them.
         dataset_size = opt_config.get("dataset_size")
+        if dataset_size is None:
+            dataset_size = session_metadata.get("dataset_size")
         if (
             not isinstance(dataset_size, int)
             or isinstance(dataset_size, bool)
@@ -345,10 +381,43 @@ class SyncManager:
         ):
             dataset_size = 1
         dataset_name = sanitize_backend_name(f"Local Dataset {session.function_name}")
-        evaluation_set = opt_config.get("evaluation_set") or "default"
+        evaluation_set = opt_config.get("evaluation_set")
+        if legacy_shape:
+            # Exactly the pre-upgrade expression: any truthy value (even a
+            # non-string) was kept verbatim.
+            evaluation_set = evaluation_set or "default"
+        else:
+            if not evaluation_set:
+                evaluation_set = session_metadata.get("evaluation_set")
+            if not isinstance(evaluation_set, str) or not evaluation_set:
+                evaluation_set = "default"
+        # Mirror the live path (BackendSessionManager): the portal experiment
+        # name is the display name when present, while metadata.function_name
+        # keeps the stable derived identifier.
+        display_name = session_metadata.get("function_display_name")
+        if not isinstance(display_name, str) or not display_name.strip():
+            display_name = None
+        else:
+            display_name = display_name.strip()
+        # The live path's agent-routing name (objectives/knobs label + slug
+        # hash) is persisted at offline-session creation; the backend uses
+        # function_name as agent identity when no agent_key is sent, so the bare
+        # display name must never be used here. Old files without it keep the
+        # pre-existing behaviour (the derived identifier).
+        stored_portal_name = session_metadata.get("portal_name")
+        if isinstance(stored_portal_name, str) and stored_portal_name.strip():
+            portal_name = stored_portal_name.strip()
+        else:
+            portal_name = session.function_name
+        stored_agent_key = session_metadata.get("agent_key")
+        agent_key = (
+            stored_agent_key.strip()
+            if isinstance(stored_agent_key, str) and stored_agent_key.strip()
+            else None
+        )
 
         session_create = {
-            "function_name": session.function_name,
+            "function_name": portal_name,
             "configuration_space": _typed_configuration_space(search_space),
             "objectives": objectives,
             "dataset_metadata": {
@@ -377,6 +446,10 @@ class SyncManager:
                 "source": "offline_sync",
             },
         }
+        if display_name:
+            session_create["metadata"]["function_display_name"] = display_name
+        if agent_key:
+            session_create["agent_key"] = agent_key
         # Declared dataset identity: sent only when the local record persisted
         # one at creation (the value the live create would have sent). Legacy
         # records without it send none -- identity is never invented here, and
@@ -446,7 +519,7 @@ class SyncManager:
                     measures[objective] = fallback
 
     def _convert_trials_to_configuration_runs(
-        self, trials: list[Any]
+        self, trials: list[Any], *, include_example_measures: bool = True
     ) -> list[dict[str, Any]]:
         """Reshape local trial results into per-trial result payloads.
 
@@ -473,14 +546,20 @@ class SyncManager:
                     if isinstance(metadata_config, Mapping) and metadata_config:
                         experiment_parameters = dict(metadata_config)
             status = "FAILED" if result.get("status") == "failed" else "COMPLETED"
-            configuration_runs.append(
-                {
-                    "trial_id": result.get("trial_id"),
-                    "experiment_parameters": experiment_parameters,
-                    "measures": measures,
-                    "status": status,
-                }
+            configuration_run: dict[str, Any] = {
+                "trial_id": result.get("trial_id"),
+                "experiment_parameters": experiment_parameters,
+                "measures": measures,
+                "status": status,
+            }
+            example_measures = (
+                self._content_free_example_measures(result.get("metadata"))
+                if include_example_measures
+                else []
             )
+            if example_measures:
+                configuration_run["example_measures"] = example_measures
+            configuration_runs.append(configuration_run)
 
         return configuration_runs
 
@@ -502,6 +581,96 @@ class SyncManager:
                 measures[key] = value
 
         return measures
+
+    @classmethod
+    def _content_free_example_measures(cls, metadata: Any) -> list[dict[str, Any]]:
+        """Build content-free per-example measures from ``metadata["measures"]``.
+
+        Mirrors the live submit shape (``[{"example_id", "metrics"}]``) so the
+        backend can count distinct examples, but keeps no customer content:
+        ``example_id`` is regenerated as ``example_<dataset index>`` (customer-
+        chosen ids count as content) and only finite numeric metrics with
+        backend-valid keys survive. Malformed entries, rows left with no
+        metrics and repeated indices within one trial are skipped, mirroring
+        the live builder (which drops examples without numeric metrics).
+
+        The dataset index is recovered from SDK-minted ids only
+        (``example_<n>`` / ``ex_<hash>_<n>``): only the parsed digits are used,
+        never the original string. The live builder drops rows, so the list
+        position drifts from the dataset position and differs per trial; the
+        backend counts distinct examples by id across all trials.
+
+        The choice is made per trial and never mixed: if EVERY kept row's id
+        parses as SDK-minted, parsed indices are used; otherwise the list
+        position is used for ALL rows. Mixing would let a position fallback
+        collide with another row's parsed index and drop a genuine row. Files
+        whose ids are all customer-chosen (SDK <= 0.27) therefore get position
+        ids, which may not align across trials.
+        """
+        if not isinstance(metadata, Mapping):
+            return []
+        raw = metadata.get("measures")
+        if not isinstance(raw, list):
+            return []
+
+        rows: list[tuple[int, int | None, dict[str, Any]]] = []
+        for position, entry in enumerate(raw):
+            if not isinstance(entry, Mapping):
+                continue
+            metrics = entry.get("metrics")
+            if not isinstance(metrics, Mapping):
+                continue
+            clean: dict[str, Any] = {}
+            for key, value in metrics.items():
+                if (
+                    isinstance(key, str)
+                    and len(key) <= _MAX_EXAMPLE_METRIC_KEY_LENGTH
+                    and _EXAMPLE_METRIC_KEY_RE.match(key)
+                    and cls._is_finite_number(value)
+                    and len(clean) < _MAX_EXAMPLE_METRICS
+                ):
+                    clean[key] = value
+            if clean:
+                rows.append(
+                    (
+                        position,
+                        cls._dataset_example_index(entry.get("example_id")),
+                        clean,
+                    )
+                )
+
+        use_parsed = bool(rows) and all(parsed is not None for _, parsed, _ in rows)
+        out: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        for position, parsed, clean in rows:
+            if len(out) >= _MAX_EXAMPLE_MEASURES:
+                break
+            index = parsed if use_parsed and parsed is not None else position
+            if index in seen:
+                continue
+            seen.add(index)
+            out.append({"example_id": f"example_{index}", "metrics": clean})
+        return out
+
+    @staticmethod
+    def _dataset_example_index(example_id: Any) -> int | None:
+        """Integer dataset index from an SDK-minted id, else ``None``."""
+        if isinstance(example_id, str):
+            match = _SDK_EXAMPLE_ID_RE.fullmatch(example_id)
+            if match:
+                return int(match.group(1) or match.group(2))
+        return None
+
+    @classmethod
+    def _is_finite_number(cls, value: Any) -> bool:
+        """Numeric, non-bool and finite; huge ints count as non-finite."""
+        if not cls._is_numeric(value):
+            return False
+        if isinstance(value, int):
+            # int vs float compares exactly (no conversion), so huge ints are
+            # rejected without math.isfinite raising OverflowError.
+            return abs(value) <= sys.float_info.max
+        return math.isfinite(value)
 
     @staticmethod
     def _is_numeric(value: Any) -> bool:
@@ -572,6 +741,55 @@ class SyncManager:
         canonical = json.dumps(traigent_data, sort_keys=True, default=str)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
+    def _legacy_payload_hash(self, session: OptimizationSession) -> str:
+        """Fingerprint as recorded by releases that ignored offline metadata.
+
+        Those releases hashed a payload derived from ``optimization_config``
+        only. Recomputing it lets an already- or partially-synced session be
+        recognised after upgrade instead of being re-uploaded as a duplicate
+        experiment. It hashes the same trials, so a genuinely changed session
+        still differs.
+        """
+        return self._compute_payload_hash(
+            self.convert_session_to_traigent_format(session, legacy_shape=True)
+        )
+
+    def _acceptable_payload_hashes(
+        self,
+        session: OptimizationSession,
+        stored_version: Any,
+        current_hash: str,
+    ) -> list[str]:
+        """Fingerprints that name this session's content for a stored state.
+
+        State records the hash version of the release that wrote it:
+
+        * no version  -> pre-metadata releases: legacy shape or current
+        * version 2   -> no per-example measures yet: v2 shape or current
+        * version 3+  -> current hash only
+
+        Every shape hashes the same trials, so a genuinely changed session
+        differs under all of them.
+
+        Known limitation: for state written before version 3, a change ONLY to
+        per-example scores (aggregates and trials otherwise identical) is
+        treated as already synced, because older fingerprints never covered
+        per-example scores. ``--force`` re-uploads. Intentional; pinned by
+        ``test_pre_v3_state_ignores_per_example_score_only_change``.
+        """
+        accepted = [current_hash]
+        if stored_version is None:
+            accepted.append(self._legacy_payload_hash(session))
+        elif stored_version == 2:
+            accepted.append(
+                self._compute_payload_hash(
+                    self.convert_session_to_traigent_format(
+                        session, include_example_measures=False
+                    )
+                )
+            )
+        return accepted
+
     @staticmethod
     def _config_run_key(index: int) -> str:
         """Stable key identifying a configuration-run within a session's batch.
@@ -631,10 +849,14 @@ class SyncManager:
             traigent_data = self.convert_session_to_traigent_format(session)
             payload_hash = self._compute_payload_hash(traigent_data)
             prior_state = dict(session.sync_state or {})
-            already_synced = (
-                prior_state.get("status") == "synced"
-                and prior_state.get("payload_hash") == payload_hash
+            # A hash recorded by a pre-upgrade release names the same content.
+            # State written by the current release carries a hash version and is
+            # compared against the current hash only.
+            accepted_hashes = self._acceptable_payload_hashes(
+                session, prior_state.get("payload_hash_version"), payload_hash
             )
+            same_content = prior_state.get("payload_hash") in accepted_hashes
+            already_synced = prior_state.get("status") == "synced" and same_content
 
             sync_result: dict[str, Any] = {
                 "session_id": session_id,
@@ -695,7 +917,7 @@ class SyncManager:
             # after a partial/failed attempt — that is what prevents duplicate
             # experiments. A changed run, or --force, starts a fresh experiment.
             resume = (
-                prior_state.get("payload_hash") == payload_hash
+                same_content
                 and prior_state.get("status") in {"partial", "failed"}
                 and not force
             )
@@ -907,6 +1129,7 @@ class SyncManager:
             "status": marker_status,
             "source": "offline_sync",
             "payload_hash": payload_hash,
+            "payload_hash_version": PAYLOAD_HASH_VERSION,
             # Persist all cloud ids so a retry of a partial sync reuses them
             # instead of creating a duplicate session/experiment.
             "cloud_session_id": sync_result.get("cloud_session_id"),
@@ -1021,7 +1244,9 @@ class SyncManager:
             if response.status_code not in (200, 201):
                 return {
                     "success": False,
-                    "error": f"HTTP {response.status_code}: {response.text}",
+                    "error": safe_http_error_summary(
+                        response.status_code, response.text
+                    ),
                 }
             payload = self._response_json(response)
             if not isinstance(payload, Mapping):
@@ -1121,7 +1346,7 @@ class SyncManager:
         if response.status_code not in (200, 201):
             return {
                 "success": False,
-                "error": f"HTTP {response.status_code}: {response.text}",
+                "error": safe_http_error_summary(response.status_code, response.text),
             }
         payload = self._response_json(response)
         if not isinstance(payload, Mapping):
@@ -1212,6 +1437,9 @@ class SyncManager:
                 "status": configuration_run.get("status") or "COMPLETED",
                 "metrics": configuration_run.get("measures", {}),
             }
+            if configuration_run.get("example_measures"):
+                # Same top-level ``measures`` list the live path submits.
+                result_payload["measures"] = configuration_run["example_measures"]
             try:
                 response = self._session.post(
                     f"{self.base_url}/sessions/{session_id}/results",
@@ -1235,7 +1463,7 @@ class SyncManager:
                 continue
 
             errors.append(
-                f"trial {ordinal}: HTTP {response.status_code}: {response.text}"
+                f"trial {ordinal}: {safe_http_error_summary(response.status_code, response.text)}"
             )
 
         return {
@@ -1270,7 +1498,7 @@ class SyncManager:
                 return {"success": True, "classification": "completed"}
             return {
                 "success": False,
-                "error": f"HTTP {response.status_code}: {response.text}",
+                "error": safe_http_error_summary(response.status_code, response.text),
             }
         except Exception as e:
             return {"success": False, "error": str(e)}

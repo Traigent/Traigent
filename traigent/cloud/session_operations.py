@@ -11,8 +11,9 @@ import concurrent.futures
 import inspect
 import time
 import uuid
+from collections.abc import Coroutine
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, NoReturn, cast
+from typing import TYPE_CHECKING, Any, NoReturn, TypeVar, cast
 
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.backend_bridges import SessionExperimentMapping
@@ -20,6 +21,7 @@ from traigent.cloud.client import (
     CloudEgressBlockedError,
     CloudServiceError,
     SessionContractError,
+    SessionQuotaRefusedError,
     raise_if_cloud_egress_disabled,
 )
 from traigent.cloud.models import (
@@ -38,6 +40,7 @@ from traigent.cloud.session_types import (
 )
 from traigent.cloud.smart_pruning import normalize_smart_pruning_options
 from traigent.config.backend_config import BackendConfig
+from traigent.core.session_types import safe_http_error_summary
 from traigent.utils.env_config import is_backend_offline, resolve_environment_label
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
@@ -157,6 +160,22 @@ def _is_definitive_auth_rejection(exc: Exception) -> bool:
     return any(marker in msg for marker in _AUTH_REJECTION_MARKERS)
 
 
+_T = TypeVar("_T")
+
+
+async def _with_loop_local_session(client: Any, coro: Coroutine[Any, Any, _T]) -> _T:
+    """Run ``coro`` on a wrapper's private loop and release that loop's pool."""
+    try:
+        return await coro
+    finally:
+        reset = getattr(client, "_reset_http_session", None)
+        if reset is not None:
+            try:
+                await reset("sync-wrapper-exit")
+            except Exception as exc:  # pragma: no cover - best-effort cleanup
+                logger.debug("Loop-local session close failed: %s", exc)
+
+
 class SessionOperations:
     """Handles session management operations."""
 
@@ -182,63 +201,6 @@ class SessionOperations:
     def _validate_positive_int(value: int, field_name: str) -> None:
         """Validate that an integer is positive."""
         validate_or_raise(CoreValidators.validate_positive_int(value, field_name))
-
-    @staticmethod
-    def _config_value_contains_bool(value: Any) -> bool:
-        """Return True if a configuration_space value contains boolean(s).
-
-        Handles all supported parameter shapes:
-          - scalar bool: ``True`` / ``False``
-          - list/tuple of values containing a bool: ``[True, False]``
-          - typed/structured dict whose ``choices`` or ``values`` list contains a
-            bool: ``{"type": "categorical", "choices": [True, False]}``
-
-        Note: ``bool`` is a subclass of ``int`` in Python.  We use
-        ``type(v) is bool`` so plain ints/floats (including 0/1) are NOT
-        rejected — only literal ``True``/``False`` values.
-        """
-        if type(value) is bool:
-            return True
-        if isinstance(value, (list, tuple)):
-            return any(type(v) is bool for v in value)
-        if isinstance(value, dict):
-            for key in ("choices", "values"):
-                seq = value.get(key)
-                if isinstance(seq, (list, tuple)) and any(type(v) is bool for v in seq):
-                    return True
-        return False
-
-    @staticmethod
-    def _validate_configuration_space_no_bools(
-        space: dict[str, Any], field_name: str
-    ) -> None:
-        """Raise ValidationException when a parameter contains boolean values.
-
-        The cloud session API rejects boolean knobs with a generic HTTP 400
-        VALIDATION_ERROR that names no field.  Catching the problem client-side
-        gives a clear, actionable error before any network round-trip.
-
-        Catches booleans in ALL supported configuration_space value shapes:
-          - scalar bool: ``{"flag": True}``
-          - list/tuple of values: ``{"flag": [True, False]}``
-          - typed param dict: ``{"flag": {"type": "categorical", "choices": [True, False]}}``
-
-        Note: ``bool`` is a subclass of ``int`` in Python.  We use
-        ``type(v) is bool`` (not ``isinstance``) so plain ints and floats such
-        as 0/1 are NOT rejected — only literal ``True``/``False`` values.
-        """
-        offending = [
-            key
-            for key, value in space.items()
-            if SessionOperations._config_value_contains_bool(value)
-        ]
-        if offending:
-            field_refs = ", ".join(f'"{k}"' for k in offending)
-            raise ValidationException(
-                f"{field_name}[{field_refs}]: boolean values are not supported "
-                f"by the cloud session API — encode as strings "
-                f'(e.g. "true"/"false") or 0/1'
-            )
 
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:
         """Fail closed before any backend HTTP request."""
@@ -320,7 +282,7 @@ class SessionOperations:
                 fingerprint = {}
 
         summary = self._summarize_actor(fingerprint)
-        excerpt = self._first_error_line(error_text)
+        excerpt = safe_http_error_summary(status, error_text)
 
         message = (
             f"{action} for session '{session_id}' failed: HTTP {status} Forbidden. "
@@ -332,22 +294,6 @@ class SessionOperations:
             message = f"{message} Backend response: {excerpt}"
 
         raise CloudServiceError(message)
-
-    @staticmethod
-    def _first_error_line(error_text: str | None) -> str:
-        """Return a safe, truncated first line for backend error messages."""
-
-        if not error_text:
-            return ""
-
-        lines = error_text.strip().splitlines()
-        if not lines:
-            return ""
-
-        excerpt = lines[0].strip()
-        if len(excerpt) > 200:
-            return f"{excerpt[:197]}..."
-        return excerpt
 
     def _create_local_fallback_session(
         self,
@@ -464,6 +410,29 @@ class SessionOperations:
                 storage_e,
             )
 
+    @staticmethod
+    def _raise_if_quota_refusal(exc: Exception) -> None:
+        """Stop the run on a backend quota/limit refusal (#2550).
+
+        The backend was reachable and refused on plan limits, so this is not a
+        connectivity failure and must not degrade to LOCAL. Re-raised as a typed
+        error carrying only the HTTP status and a closed error code (never the
+        backend message or raw body), with a sanitized detail attached.
+        """
+        if isinstance(exc, SessionQuotaRefusedError):
+            raise exc
+        failure_response = _get_session_creation_failure_detail(exc)
+        if failure_response is None or not failure_response.is_quota_refusal:
+            return
+        safe = SessionQuotaRefusedError(
+            failure_response.status_code, failure_response.safe_quota_error_code
+        )
+        safe.session_creation_failure = SessionCreationFailureDetail(
+            status_code=failure_response.status_code,
+            error_code=failure_response.safe_quota_error_code,
+        )
+        raise safe from None
+
     def _auth_fallback_result(
         self,
         exc: Exception,
@@ -560,7 +529,6 @@ class SessionOperations:
         """
         self._validate_non_empty_string(function_name, "function_name")
         self._validate_mapping(search_space, "search_space")
-        self._validate_configuration_space_no_bools(search_space, "configuration_space")
         self._validate_non_empty_string(optimization_goal, "optimization_goal")
         if metadata is not None and not isinstance(metadata, dict):
             raise ValidationException("metadata must be a dictionary if provided")
@@ -604,7 +572,12 @@ class SessionOperations:
                     intends_cloud_egress and _is_definitive_auth_rejection(exc)
                 )
             return governed or isinstance(
-                exc, (CloudEgressBlockedError, SessionContractError)
+                exc,
+                (
+                    CloudEgressBlockedError,
+                    SessionContractError,
+                    SessionQuotaRefusedError,
+                ),
             )
 
         if is_backend_offline():
@@ -731,6 +704,9 @@ class SessionOperations:
                 session_id, experiment_id, experiment_run_id = session_api_result
                 project_id = getattr(session_api_result, "project_id", None)
                 tenant_id = getattr(session_api_result, "tenant_id", None)
+                bound_agent_id = getattr(session_api_result, "agent_id", None)
+                if not isinstance(bound_agent_id, str) or not bound_agent_id.strip():
+                    bound_agent_id = None
                 # #1683 Bug B: the backend sends the warm-start decision block
                 # in the CREATE response (it is not resent at finalize).
                 # Retain it verbatim so finalize can surface it in result
@@ -858,6 +834,7 @@ class SessionOperations:
                     session_id=session_id,
                     project_id=owning_context.get("project_id"),
                     tenant_id=owning_context.get("tenant_id"),
+                    agent_id=bound_agent_id,
                 )
 
             except ValidationException:
@@ -890,6 +867,7 @@ class SessionOperations:
 
             except (TimeoutError, CloudServiceError, OSError) as e:
                 await self._reset_client_session("create_session fallback")
+                self._raise_if_quota_refusal(e)
                 if _must_fail_loud(e):
                     raise
                 # A configured key intended a managed/cloud run, but the backend
@@ -936,7 +914,11 @@ class SessionOperations:
                     new_loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(new_loop)
                     try:
-                        return new_loop.run_until_complete(_create_session_async())
+                        return new_loop.run_until_complete(
+                            _with_loop_local_session(
+                                self.client, _create_session_async()
+                            )
+                        )
                     finally:
                         new_loop.close()
 
@@ -945,7 +927,9 @@ class SessionOperations:
                 return future.result(timeout=60)
 
             except RuntimeError:
-                return asyncio.run(_create_session_async())
+                return asyncio.run(
+                    _with_loop_local_session(self.client, _create_session_async())
+                )
 
         except ValidationException:
             raise  # User input errors must propagate
@@ -979,6 +963,7 @@ class SessionOperations:
             )
 
         except (TimeoutError, CloudServiceError, OSError) as exc:
+            self._raise_if_quota_refusal(exc)
             if _must_fail_loud(exc):
                 raise
             # Backend unreachable on the outer path — same downgrade semantics as
@@ -1088,8 +1073,21 @@ class SessionOperations:
                     await self._reset_client_session(
                         "create_hybrid_session non-201 response"
                     )
+                    detail = SessionCreationFailureDetail.from_http_response(
+                        response.status, error_text
+                    )
+                    if detail.is_quota_refusal:
+                        safe = SessionQuotaRefusedError(
+                            response.status, detail.safe_quota_error_code
+                        )
+                        safe.session_creation_failure = SessionCreationFailureDetail(
+                            status_code=response.status,
+                            error_code=detail.safe_quota_error_code,
+                        )
+                        raise safe
+                    # Status only: never embed the backend body (customer text).
                     raise CloudServiceError(
-                        f"Failed to create hybrid session: {error_text}"
+                        f"Failed to create hybrid session: HTTP {response.status}"
                     )
 
                 data = await response.json()
@@ -1161,7 +1159,10 @@ class SessionOperations:
                 await self._reset_client_session(
                     "get_hybrid_session_status unexpected response"
                 )
-                raise CloudServiceError(f"Failed to get session status: {error_text}")
+                raise CloudServiceError(
+                    "Failed to get session status: "
+                    f"{safe_http_error_summary(response.status, error_text)}"
+                )
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("get_hybrid_session_status network error")
@@ -1213,7 +1214,10 @@ class SessionOperations:
                 await self._reset_client_session(
                     "finalize_hybrid_session unexpected response"
                 )
-                raise CloudServiceError(f"Failed to finalize session: {error_text}")
+                raise CloudServiceError(
+                    "Failed to finalize session: "
+                    f"{safe_http_error_summary(response.status, error_text)}"
+                )
 
         except aiohttp.ClientError as e:
             await self._reset_client_session("finalize_hybrid_session network error")
@@ -1646,7 +1650,7 @@ class SessionOperations:
                     else:
                         error_text = await response.text()
                         logger.debug(
-                            f"Backend finalization endpoint returned HTTP {response.status}: {error_text}"
+                            f"Backend finalization endpoint returned {safe_http_error_summary(response.status, error_text)}"
                         )
                         return None
         except Exception as e:
@@ -1738,10 +1742,9 @@ class SessionOperations:
 
                 error_text = await response.text()
                 logger.warning(
-                    "Failed to delete session %s: status=%s body=%s",
+                    "Failed to delete session %s: %s",
                     session_id,
-                    response.status,
-                    error_text[:200],
+                    safe_http_error_summary(response.status, error_text),
                 )
                 return False
 
@@ -1768,11 +1771,14 @@ class SessionOperations:
             asyncio.set_event_loop(new_loop)
             try:
                 return new_loop.run_until_complete(
-                    self.finalize_session(
-                        session_id,
-                        include_full_history,
-                        certified_selection=certified_selection,
-                        session_aggregation=session_aggregation,
+                    _with_loop_local_session(
+                        self.client,
+                        self.finalize_session(
+                            session_id,
+                            include_full_history,
+                            certified_selection=certified_selection,
+                            session_aggregation=session_aggregation,
+                        ),
                     )
                 )
             finally:
@@ -1816,7 +1822,9 @@ class SessionOperations:
             asyncio.set_event_loop(new_loop)
             try:
                 return new_loop.run_until_complete(
-                    self.delete_session(session_id, cascade=cascade)
+                    _with_loop_local_session(
+                        self.client, self.delete_session(session_id, cascade=cascade)
+                    )
                 )
             finally:
                 new_loop.close()

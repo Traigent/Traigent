@@ -1,0 +1,817 @@
+{
+  "fixtureId": "optimize.stop-rules.v1",
+  "capability": "optimize.stop-rules",
+  "kind": "spec-derived-expected-result",
+  "contract": "Stop rules of an optimization run beyond plain limits: failed-trial handling, the default cost cap, plateau stopping, precedence between simultaneous stops, the pre-trial cost estimate and refusal of a cost cap without reported costs. Expected values are derived from the owner-ruled rules below, not from running an SDK.",
+  "rules": {
+    "crashedTrial": "A trial whose evaluation raises is recorded with status failed and the run continues with the next trial; it does not abort the run. A failed trial counts as an attempted trial (it counts toward maxTrials) but reports no accuracy, so it never counts toward best-configuration selection. A scripted trial with raises true raises during evaluation; its accuracy is never reported.",
+    "defaultCostCap": "When no cost cap is set, a default cumulative cost cap of 2.0 USD applies. Trial costs accumulate; the trial that crosses the cap (accumulated cost >= cap after it finishes) finishes and counts, with stop reason cost_limit, as in the stop-limits fixture.",
+    "plateau": "Plateau is configured with a window N (positive integer) and a tolerance. After each completed trial, record the running-best accuracy (the maximum accuracy over completed trials so far, since the objective is maximize). The window includes the current trial: once at least N running-best values exist, take the last N values, including the one recorded after the trial just completed. If max - min of those N values <= tolerance, stop with reason plateau. A tolerance of 0 is treated as 1e-6, so exactly equal running-best values still plateau. A running best that improves by more than the tolerance across the window does not plateau; one that improves by no more than the tolerance across the window does.",
+    "tiePrecedence": "When a hard limit (maxTrials or maxTotalExamples) and plateau both become true after the same trial, the reported stop reason is the hard limit (max_trials or max_examples), not plateau.",
+    "preTrialEstimate": "Before dispatching a trial, the estimate of its cost is the arithmetic mean of the observed costs of the completed trials; there is no estimate before the first trial completes, so the first trial always starts. If accumulated cost + estimate > cap, the trial is not started and the stop reason is cost_limit.",
+    "costCapRequiresCost": "When a cost cap is set and a completed trial reports no cost, the run is refused. Assert only that it rejects.",
+    "order": "Trials run one at a time in grid order. scriptedTrials[i] is bound to the i-th grid configuration (not to call order): every evaluation made for that configuration returns its accuracy, and its cost is reported once per trial as the trial cost.",
+    "explicitCap": "Cases that do not test the cost cap set an explicit cost cap of 1000, far above any total they can reach, so no default cap an SDK applies can bind.",
+    "dataset": "When datasetRows is given, the run evaluates a dataset of that many rows; each row evaluation returns the trial's scripted accuracy. Without datasetRows, each trial evaluates one row. rowsEvaluatedPerTrial counts the evaluations actually performed."
+  },
+  "stopReasonVocabulary": {
+    "max_trials": "trial limit reached while untried configurations remain",
+    "cost_limit": "accumulated cost >= cap after a trial, or accumulated cost plus the estimate of the next trial > cap before it; the trial that crosses the cap finishes and counts",
+    "max_examples": "total evaluated examples reached the cap",
+    "plateau": "the last N running-best values span <= tolerance, and no hard limit became true after the same trial"
+  },
+  "trialStatusVocabulary": {
+    "completed": "the trial's evaluation returned a result",
+    "failed": "the trial's evaluation raised; the run continued"
+  },
+  "cases": [
+    {
+      "id": "crashed-trial-continues",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.1,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.9,
+            "raises": true,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.3,
+            "cost": 0.01
+          }
+        ],
+        "maxTrials": 10,
+        "costCap": 1000.0
+      },
+      "expected": {
+        "trialCount": 4,
+        "trialStatuses": [
+          "completed",
+          "failed",
+          "completed",
+          "completed"
+        ],
+        "bestAccuracy": 0.5,
+        "runCompletes": true
+      },
+      "derivation": "Trial 2 raises during evaluation (its scripted accuracy 0.9 is never reported), so it is recorded as failed and the run continues with trial 3 and trial 4: 4 trials attempted, statuses [completed, failed, completed, completed]. Failed trials do not count toward best selection, so the best is the maximum of the completed accuracies 0.1, 0.5, 0.3 = 0.5, not 0.9. The grid is exhausted with no limit reached; the label of that stop is not asserted."
+    },
+    {
+      "id": "default-cap-applies",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4",
+            "v5",
+            "v6",
+            "v7",
+            "v8",
+            "v9",
+            "v10"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.1,
+            "cost": 0.6
+          },
+          {
+            "accuracy": 0.2,
+            "cost": 0.6
+          },
+          {
+            "accuracy": 0.3,
+            "cost": 0.6
+          },
+          {
+            "accuracy": 0.4,
+            "cost": 0.6
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.6
+          },
+          {
+            "accuracy": 0.6,
+            "cost": 0.6
+          },
+          {
+            "accuracy": 0.7,
+            "cost": 0.6
+          },
+          {
+            "accuracy": 0.8,
+            "cost": 0.6
+          },
+          {
+            "accuracy": 0.9,
+            "cost": 0.6
+          },
+          {
+            "accuracy": 1.0,
+            "cost": 0.6
+          }
+        ],
+        "maxTrials": 10
+      },
+      "expected": {
+        "trialCount": 3,
+        "stopReason": "cost_limit",
+        "bestAccuracy": 0.3
+      },
+      "derivation": "No cost cap is set, so the default cap of 2.0 USD applies. Trial 1 always starts (no estimate yet) and costs 0.6: accumulated 0.6. Before trial 2: estimate = mean(0.6) = 0.6, 0.6 + 0.6 = 1.2 <= 2.0, start; accumulated 1.2. Before trial 3: estimate 0.6, 1.2 + 0.6 = 1.8 <= 2.0, start; accumulated 1.8 (< 2.0, cap not crossed). Before trial 4: estimate 0.6, 1.8 + 0.6 = 2.4 > 2.0, so trial 4 is not started and the stop reason is cost_limit. 3 trials, accuracies 0.1, 0.2, 0.3, best 0.3."
+    },
+    {
+      "id": "plateau-fires",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4",
+            "v5",
+            "v6",
+            "v7",
+            "v8"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.2,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.4,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.3,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.6,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.7,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.8,
+            "cost": 0.01
+          }
+        ],
+        "maxTrials": 10,
+        "plateau": {
+          "window": 3,
+          "tolerance": 0.01
+        },
+        "costCap": 1000.0
+      },
+      "expected": {
+        "trialCount": 4,
+        "stopReason": "plateau",
+        "bestAccuracy": 0.5
+      },
+      "derivation": "Window 3, tolerance 0.01. Running best after each trial: 0.2, 0.5, 0.5, 0.5. After trial 1 and 2 fewer than 3 values exist. After trial 3 the last 3 are [0.2, 0.5, 0.5]: max - min = 0.3 > 0.01. After trial 4 the last 3 are [0.5, 0.5, 0.5]: max - min = 0 <= 0.01, so the run stops with reason plateau after 4 trials (the window includes the current trial). Best accuracy 0.5; the later 0.6, 0.7, 0.8 are never run."
+    },
+    {
+      "id": "plateau-tolerance-zero",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4",
+            "v5",
+            "v6"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.2,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.6,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.6,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.6,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.7,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.8,
+            "cost": 0.01
+          }
+        ],
+        "maxTrials": 10,
+        "plateau": {
+          "window": 3,
+          "tolerance": 0.0
+        },
+        "costCap": 1000.0
+      },
+      "expected": {
+        "trialCount": 4,
+        "stopReason": "plateau",
+        "bestAccuracy": 0.6
+      },
+      "derivation": "Window 3, tolerance 0 (treated as 1e-6). Running best: 0.2, 0.6, 0.6, 0.6. After trial 3 the last 3 are [0.2, 0.6, 0.6]: spread 0.4 > 1e-6. After trial 4 the last 3 are [0.6, 0.6, 0.6]: spread 0 <= 1e-6, so exactly equal running-best values still plateau: stop with reason plateau after 4 trials, best 0.6."
+    },
+    {
+      "id": "plateau-not-fired-when-improving",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4",
+            "v5",
+            "v6"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.1,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.2,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.3,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.4,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.6,
+            "cost": 0.01
+          }
+        ],
+        "maxTrials": 4,
+        "plateau": {
+          "window": 3,
+          "tolerance": 0.0
+        },
+        "costCap": 1000.0
+      },
+      "expected": {
+        "trialCount": 4,
+        "stopReason": "max_trials",
+        "bestAccuracy": 0.4
+      },
+      "derivation": "Window 3, tolerance 0 (1e-6). Accuracy rises strictly every trial, so the running best is 0.1, 0.2, 0.3, 0.4. Every window of 3 has spread 0.2 > 1e-6 (after trial 3: [0.1,0.2,0.3]; after trial 4: [0.2,0.3,0.4]), so plateau never fires. The run reaches maxTrials = 4 with 2 configurations untried: stop reason max_trials, best 0.4."
+    },
+    {
+      "id": "tie-max-trials-over-plateau",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4",
+            "v5",
+            "v6"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.2,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.6,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.7,
+            "cost": 0.01
+          }
+        ],
+        "maxTrials": 4,
+        "plateau": {
+          "window": 3,
+          "tolerance": 0.01
+        },
+        "costCap": 1000.0
+      },
+      "expected": {
+        "trialCount": 4,
+        "stopReason": "max_trials",
+        "bestAccuracy": 0.5
+      },
+      "derivation": "Window 3, tolerance 0.01, maxTrials 4. Running best: 0.2, 0.5, 0.5, 0.5. After trial 3 the last 3 are [0.2, 0.5, 0.5]: spread 0.3, no plateau. After trial 4 the last 3 are [0.5, 0.5, 0.5]: plateau is true, and trial count 4 = maxTrials is also true. A hard limit takes precedence over plateau, so the reason is max_trials. Best 0.5."
+    },
+    {
+      "id": "tie-max-examples-over-plateau",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4",
+            "v5",
+            "v6"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.2,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.6,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.7,
+            "cost": 0.01
+          }
+        ],
+        "maxTrials": 10,
+        "maxTotalExamples": 8,
+        "datasetRows": 2,
+        "plateau": {
+          "window": 3,
+          "tolerance": 0.01
+        },
+        "costCap": 1000.0
+      },
+      "expected": {
+        "trialCount": 4,
+        "rowsEvaluatedPerTrial": [
+          2,
+          2,
+          2,
+          2
+        ],
+        "totalRowsEvaluated": 8,
+        "stopReason": "max_examples",
+        "bestAccuracy": 0.5
+      },
+      "derivation": "Window 3, tolerance 0.01, maxTotalExamples 8, datasetRows 2 (2 rows per trial, so rows and trials differ). Running best: 0.2, 0.5, 0.5, 0.5. Total evaluated rows after each trial: 2, 4, 6, 8. After trial 4 total rows = 8 reaches the example cap (no truncation needed; counting trials as examples would give 4 < 8 and not stop) and the last 3 running-best values [0.5, 0.5, 0.5] also plateau. A hard limit takes precedence over plateau, so the reason is max_examples. Best 0.5."
+    },
+    {
+      "id": "estimator-uses-mean",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4",
+            "v5",
+            "v6",
+            "v7",
+            "v8"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.1,
+            "cost": 0.1
+          },
+          {
+            "accuracy": 0.2,
+            "cost": 0.9
+          },
+          {
+            "accuracy": 0.3,
+            "cost": 0.3
+          },
+          {
+            "accuracy": 0.4,
+            "cost": 0.2
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.2
+          },
+          {
+            "accuracy": 0.6,
+            "cost": 0.3
+          },
+          {
+            "accuracy": 0.7,
+            "cost": 0.3
+          },
+          {
+            "accuracy": 0.8,
+            "cost": 0.3
+          }
+        ],
+        "maxTrials": 10,
+        "costCap": 2.0
+      },
+      "expected": {
+        "trialCount": 5,
+        "stopReason": "cost_limit",
+        "bestAccuracy": 0.5
+      },
+      "derivation": "Cost cap 2.0 (explicit); trial costs 0.1, 0.9, 0.3, 0.2, 0.2, 0.3, ...; accumulated cost after trials 1..5 is 0.1, 1.0, 1.3, 1.5, 1.7. Trial 1 starts (no estimate). Mean estimate before each later trial: T2 0.1 -> 0.1+0.1=0.2; T3 mean(0.1,0.9)=0.5 -> 1.0+0.5=1.5; T4 mean(0.1,0.9,0.3)=0.4333 -> 1.3+0.4333=1.7333; T5 mean(0.1,0.9,0.3,0.2)=0.375 -> 1.5+0.375=1.875; all <= 2.0, so all start. Before T6: mean(0.1,0.9,0.3,0.2,0.2)=1.7/5=0.34, 1.7+0.34=2.04 > 2.0, so trial 6 is not started: cost_limit after 5 trials, accuracies 0.1..0.5, best 0.5. Rivals before T6 (accumulated 1.7): last-cost 0.2 -> 1.9 <= 2.0, starts T6 (cost 0.3, accumulated 2.0 >= cap, stop after 6 trials); median(0.1,0.2,0.2,0.3,0.9)=0.2 -> 1.9, starts; EMA weight 0.25 on the latest: 0.1, 0.3, 0.3, 0.275, 0.25625 -> 1.95625, starts; EMA weight 0.5: 0.1, 0.5, 0.4, 0.3, 0.25 -> 1.95, starts; EMA weight 0.75: 0.1, 0.7, 0.4, 0.25, 0.2125 -> 1.9125, starts; first-cost 0.1 -> 1.8, starts; max-so-far: before T3 1.0+0.9=1.9 <= 2.0 starts T3, before T4 1.3+0.9=2.2 > 2.0, so it stops after 3 trials. Only the mean stops after exactly 5 trials."
+    },
+    {
+      "id": "plateau-within-nonzero-tolerance",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4",
+            "v5",
+            "v6"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.3,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.52,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.54,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.56,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.58,
+            "cost": 0.01
+          }
+        ],
+        "maxTrials": 10,
+        "plateau": {
+          "window": 3,
+          "tolerance": 0.05
+        },
+        "costCap": 1000.0
+      },
+      "expected": {
+        "trialCount": 4,
+        "stopReason": "plateau",
+        "bestAccuracy": 0.54
+      },
+      "derivation": "Window 3, tolerance 0.05. Running best: 0.30, 0.50, 0.52, 0.54 (no two equal). After trial 3 the last 3 are [0.30, 0.50, 0.52]: spread 0.22 > 0.05. After trial 4 the last 3 are [0.50, 0.52, 0.54]: spread 0.04 <= 0.05, so the run stops with reason plateau after 4 trials; an implementation that only recognises exactly equal values would continue. Best accuracy of the completed trials is 0.54."
+    },
+    {
+      "id": "default-cap-crossing-trial-counts",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4",
+            "v5",
+            "v6"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.1,
+            "cost": 0.1
+          },
+          {
+            "accuracy": 0.2,
+            "cost": 0.1
+          },
+          {
+            "accuracy": 0.3,
+            "cost": 2.0
+          },
+          {
+            "accuracy": 0.4,
+            "cost": 0.1
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.1
+          },
+          {
+            "accuracy": 0.6,
+            "cost": 0.1
+          }
+        ],
+        "maxTrials": 10
+      },
+      "expected": {
+        "trialCount": 3,
+        "stopReason": "cost_limit",
+        "bestAccuracy": 0.3
+      },
+      "derivation": "No cost cap is set, so the default 2.0 applies. Trial 1 starts and costs 0.1 (accumulated 0.1). Before trial 2: mean 0.1, 0.1+0.1=0.2 <= 2.0, start; accumulated 0.2. Before trial 3: mean(0.1,0.1)=0.1, 0.2+0.1=0.3 <= 2.0, start. Trial 3 costs 2.0: accumulated 2.2 >= 2.0, the crossing trial finishes and counts, then the run stops with cost_limit. 3 trials, best 0.3."
+    },
+    {
+      "id": "estimate-exactly-equals-cap-starts",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4",
+            "v5",
+            "v6",
+            "v7",
+            "v8",
+            "v9",
+            "v10"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.1,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.2,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.3,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.4,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.6,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.7,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.8,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.9,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 1.0,
+            "cost": 0.5
+          }
+        ],
+        "maxTrials": 10
+      },
+      "expected": {
+        "trialCount": 4,
+        "stopReason": "cost_limit",
+        "bestAccuracy": 0.4
+      },
+      "derivation": "No cost cap is set, so the default 2.0 applies; each trial costs 0.5. Trial 1 starts; accumulated 0.5. Before trial 2: 0.5+0.5=1.0 <= 2.0, start; accumulated 1.0. Before trial 3: 1.0+0.5=1.5 <= 2.0, start; accumulated 1.5. Before trial 4: 1.5+0.5=2.0, which is not > 2.0, so trial 4 starts; accumulated 2.0 >= 2.0 after it, so the run stops with cost_limit with trial 4 counted. 4 trials, best 0.4."
+    },
+    {
+      "id": "crashed-trial-counts-toward-max-trials",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.1,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.9,
+            "raises": true,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.8,
+            "cost": 0.01
+          }
+        ],
+        "maxTrials": 3,
+        "costCap": 1000.0
+      },
+      "expected": {
+        "trialCount": 3,
+        "trialStatuses": [
+          "completed",
+          "failed",
+          "completed"
+        ],
+        "stopReason": "max_trials",
+        "bestAccuracy": 0.5
+      },
+      "derivation": "maxTrials 3 over a 4-point grid. Trial 2 raises and is recorded failed, but it counts as an attempted trial, so the 3 allowed trials are trials 1, 2, 3 with statuses [completed, failed, completed]. Configuration 4 is never tried, so the stop reason is max_trials. Best of the completed trials is max(0.1, 0.5) = 0.5 (the untried 0.8 is never reached)."
+    },
+    {
+      "id": "cost-cap-no-cost-reported-refused",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.1
+          },
+          {
+            "accuracy": 0.2
+          },
+          {
+            "accuracy": 0.3
+          },
+          {
+            "accuracy": 0.4
+          }
+        ],
+        "maxTrials": 10,
+        "costCap": 1.0
+      },
+      "expected": {
+        "rejects": true
+      },
+      "derivation": "A cost cap is set (1.0) but the completed trials report no cost, so the run is refused. Assert only that the SDK rejects; do not assert an error class, message or the point at which it rejects."
+    }
+  ],
+  "comparison": {
+    "numericTolerance": "absolute 1e-9 on bestAccuracy",
+    "adapterRequirement": "Feed the scripted per-trial accuracy and cost (reported as the trial cost metric) to the SDK through its public optimize entry point, one trial at a time, in grid order; a trial with raises true must raise from the evaluation. Map the SDK's stop reason onto stopReasonVocabulary. Cases without costCap use the SDK's default cost cap. For rejects cases assert only that the SDK rejects; never assert an error class or message. Cases without stopReason assert only the listed fields.",
+    "notAsserted": "The label of a stop when the grid is exhausted exactly at a limit or without any limit (crashed-trial-continues), wallclock limits, Python-only stop conditions, error classes and messages, and the point at which a refused run is rejected.",
+    "note": "Expected values were written by hand from the rules above and were not produced by running either SDK."
+  }
+}

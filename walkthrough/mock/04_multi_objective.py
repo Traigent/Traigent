@@ -31,18 +31,6 @@ traigent.initialize(offline=True, minimal_logging=True)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
-SIMULATED_BEST = {
-    "model": "gpt-4o",
-    "temperature": 0.0,
-    "instructions": "CoT",
-    "accuracy": 0.95,
-    # Cost and latency are not listed here: they are simulated per trial from
-    # the shared mock tables (get_mock_cost / get_mock_latency below).
-}
-MOCK_MODE_CONFIG = {
-    "base_accuracy": SIMULATED_BEST["accuracy"],
-    "variance": 0.0,
-}
 CONFIG_SPACE = {
     "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
     "prompt": ["v1", "v2"],
@@ -94,7 +82,6 @@ def mock_latency_ms(
     configuration_space=CONFIG_SPACE,
     injection_mode="context",  # default, added explicitly for clarity
     offline=True,
-    mock_mode_config=MOCK_MODE_CONFIG,
 )
 def ai_agent_classify_text_sentiment(text: str) -> str | dict[str, Any]:
     """Text classification with multiple objectives."""

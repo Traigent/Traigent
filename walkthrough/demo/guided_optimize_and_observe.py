@@ -307,11 +307,6 @@ def create_guided_agent(
         default_config=DEFAULT_BASELINE_CONFIG,
         injection_mode="context",
         offline=True,
-        mock_mode_config={
-            "base_accuracy": 0.85,
-            "variance": 0.0,
-            "random_seed": 42,
-        },
     )
     @observe(
         name=trace_name,

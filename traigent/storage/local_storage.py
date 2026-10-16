@@ -26,7 +26,7 @@ from ..utils.exceptions import TraigentStorageError
 from ..utils.function_identity import sanitize_identifier
 from ..utils.logging import get_logger
 from ..utils.objectives import is_minimization_objective
-from ..utils.secure_path import safe_open, validate_path
+from ..utils.secure_path import PathTraversalError, safe_open, validate_path
 
 logger = get_logger(__name__)
 
@@ -117,6 +117,14 @@ class TrialResult:
     def from_dict(cls, data: dict[str, Any]) -> "TrialResult":
         """Create from dictionary."""
         return cls(**data)
+
+
+@dataclass(frozen=True)
+class SessionSummary:
+    """The two session fields usage counters need (see ``session_summaries``)."""
+
+    status: str
+    completed_trials: int
 
 
 @dataclass
@@ -782,6 +790,104 @@ class LocalStorageManager:
         # Sort by creation time, newest first
         sessions.sort(key=lambda s: s.created_at, reverse=True)
         return sessions
+
+    _SESSION_INDEX_NAME = "session_summary_index.json"
+
+    def session_summaries(self) -> list[SessionSummary]:
+        """Return ``status`` / ``completed_trials`` for every stored session.
+
+        Equivalent to reading those two fields from :meth:`list_sessions`, but
+        a session file is parsed only when its ``(mtime_ns, size)`` differs
+        from the cached entry in ``cache/session_summary_index.json``. Callers
+        that only count sessions (the post-run incentive hint, #2457) would
+        otherwise re-read every stored session after every run: O(history)
+        work that grew to a ~1 min stall on a large ``~/.traigent``.
+        """
+        sessions_dir = self.storage_path / "sessions"
+        if not sessions_dir.exists():
+            return []
+        # ``cache`` may be a symlink to somewhere else: confine the index (and
+        # its temp file) to the storage root like session writes are, and run
+        # uncached rather than follow the link out.
+        index_path: Path | None
+        try:
+            index_path = validate_path(
+                self.storage_path / "cache" / self._SESSION_INDEX_NAME,
+                self.storage_path,
+                must_exist=False,
+            )
+            # A symlinked index file could point at a stored session (in-root,
+            # so containment passes) and the atomic replace would clobber it.
+            if (
+                index_path.is_symlink()
+                or (self.storage_path / "cache" / self._SESSION_INDEX_NAME).is_symlink()
+            ):
+                index_path = None
+        except (PathTraversalError, OSError, ValueError):
+            index_path = None
+        index: dict[str, Any] = {}
+        try:
+            if index_path is None:
+                raise OSError("session summary index outside storage root")
+            with open(index_path) as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                index = loaded
+        except (OSError, ValueError):
+            index = {}
+
+        fresh: dict[str, list[Any]] = {}
+        for session_file in sessions_dir.glob("*.json"):
+            try:
+                stat = session_file.stat()
+            except OSError:
+                continue
+            session_id = session_file.stem
+            cached = index.get(session_id)
+            if (
+                isinstance(cached, list)
+                and len(cached) == 4
+                and type(cached[0]) is int
+                and type(cached[1]) is int
+                and isinstance(cached[2], str)
+                and cached[2] in {status.value for status in OptimizationStatus}
+                and type(cached[3]) is int
+                and cached[3] >= 0
+                and cached[0] == stat.st_mtime_ns
+                and cached[1] == stat.st_size
+            ):
+                fresh[session_id] = cached
+                continue
+            session = self.load_session(session_id)
+            if session is None:
+                continue
+            fresh[session_id] = [
+                stat.st_mtime_ns,
+                stat.st_size,
+                session.status,
+                int(session.completed_trials or 0),
+            ]
+
+        if index_path is not None and fresh != index:
+            try:
+                tmp_path = validate_path(
+                    index_path.with_name(f".{index_path.name}.{uuid4().hex}.tmp"),
+                    self.storage_path,
+                    must_exist=False,
+                )
+                try:
+                    with open(tmp_path, "x") as f:
+                        json.dump(fresh, f)
+                    os.replace(tmp_path, index_path)
+                finally:
+                    tmp_path.unlink(missing_ok=True)
+            except (PathTraversalError, OSError) as e:
+                logger.debug(f"Failed to write session summary index: {e}")
+
+        return [
+            SessionSummary(status=entry[2], completed_trials=entry[3])
+            for entry in fresh.values()
+        ]
 
     def delete_session(self, session_id: str) -> bool:
         """Delete a session from storage."""

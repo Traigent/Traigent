@@ -133,3 +133,51 @@ def test_no_warn_in_parameter_mode():
         )
         def generate(question, model="default", config=None):
             return model
+
+
+def test_no_warn_when_no_param_overlap_and_reads_get_trial_config():
+    """#2476: get_trial_config() is a public in-trial accessor; reading it is
+    the correct CONTEXT pattern, so the phantom warning must not fire."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+
+        @optimize(
+            configuration_space={"strategy": ["s1", "s2"]},
+            algorithm="grid",
+        )
+        def generate(question):
+            import traigent
+
+            cfg = traigent.get_trial_config()
+            return cfg.get("strategy", "default")
+
+
+def test_no_warn_when_param_overlap_and_reads_get_trial_config():
+    """#2476: the #1372 param-shadowing branch shares the same source scan."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+
+        @optimize(
+            configuration_space={"model": ["a", "b"]},
+            algorithm="grid",
+        )
+        def generate(question, *, model="default"):
+            from traigent import get_trial_config
+
+            return get_trial_config().get("model", model)
+
+
+def test_phantom_warning_names_every_public_accessor():
+    """#2476: the advice must not claim get_config() is the ONLY accessor."""
+    with pytest.warns(UserWarning, match="phantom best_config") as record:
+
+        @optimize(
+            configuration_space={"temperature": [0.1, 0.9]},
+            algorithm="grid",
+        )
+        def generate(question):
+            return "fixed"
+
+    msg = str(record[0].message)
+    assert "get_trial_config()" in msg
+    assert "ONLY via" not in msg

@@ -42,7 +42,6 @@ from traigent.core.trial_result_factory import (
 from traigent.core.types import TrialResult, TrialStatus
 from traigent.evaluators.base import Dataset
 from traigent.utils.error_handler import APIKeyError
-from traigent.utils.langchain_interceptor import capture_scope
 from traigent.utils.exceptions import (
     InsufficientFundsError,
     OptimizationError,
@@ -53,6 +52,7 @@ from traigent.utils.exceptions import (
     TVLConstraintError,
     VendorPauseError,
 )
+from traigent.utils.langchain_interceptor import capture_scope
 from traigent.utils.logging import get_logger
 
 from .tracing import record_trial_result, trial_span
@@ -63,6 +63,33 @@ if TYPE_CHECKING:
 from traigent.core.cost_enforcement import Permit
 
 logger = get_logger(__name__)
+
+
+def _privacy_int(value: Any) -> int | None:
+    """Return an exact integer suitable for a privacy-mode trial span."""
+
+    return value if type(value) is int else None
+
+
+def _privacy_metrics(metrics: dict[str, Any]) -> dict[str, int | float | bool]:
+    """Project trial metrics onto the flat, finite scalar privacy boundary."""
+
+    projected: dict[str, int | float | bool] = {}
+    for key, value in metrics.items():
+        if type(value) is bool or type(value) is int:
+            projected[key] = value
+        elif type(value) is float and math.isfinite(value):
+            projected[key] = value
+    return projected
+
+
+def _privacy_cost(metrics: dict[str, Any]) -> int | float:
+    """Return a finite numeric cost, or the inert wire default."""
+
+    value = metrics.get("total_cost", 0.0)
+    if type(value) is int or (type(value) is float and math.isfinite(value)):
+        return value
+    return 0.0
 
 
 def _resolve_primary_objective(orchestrator: Any) -> str | None:
@@ -1371,6 +1398,56 @@ class TrialLifecycle:
             # Note: trial_id IS the configuration_run_id (backend creates it at /next-trial)
             # Use timezone-aware datetime with UTC; .isoformat() includes +00:00 offset
             # DO NOT add "Z" suffix - that would create invalid "+00:00Z" format
+            from traigent.cloud.trial_operations import resolve_privacy_enabled
+
+            privacy_enabled = resolve_privacy_enabled(orchestrator)
+            span_config = trial_result.config
+            span_error = trial_result.error_message
+            span_metrics = trial_result.metrics
+            input_tokens = (
+                trial_result.metadata.get("input_tokens", 0)
+                if trial_result.metadata
+                else 0
+            )
+            output_tokens = (
+                trial_result.metadata.get("output_tokens", 0)
+                if trial_result.metadata
+                else 0
+            )
+            span_metadata = {
+                "trial_number": (
+                    trial_result.metadata.get("trial_number")
+                    if trial_result.metadata
+                    else None
+                ),
+                "examples_attempted": (
+                    trial_result.metadata.get("examples_attempted")
+                    if trial_result.metadata
+                    else None
+                ),
+            }
+            if privacy_enabled:
+                # Reuse the canonical config policy used by trial submissions.
+                from traigent.cloud.trial_operations import TrialOperations
+
+                # Workflow traces retain config names for attribution but no values.
+                # Use the submission sanitizer to normalize names, then apply its
+                # canonical marker consistently to every retained key.
+                span_config = {
+                    key: TrialOperations._redaction_marker(None)
+                    for key in TrialOperations._redact_privacy_config(span_config)
+                }
+                if span_error:
+                    span_error = getattr(trial_result.error, "error_type", None)
+                input_tokens = _privacy_int(input_tokens) or 0
+                output_tokens = _privacy_int(output_tokens) or 0
+                span_metrics = _privacy_metrics(span_metrics or {})
+                span_metadata = {
+                    key: value
+                    for key, value in span_metadata.items()
+                    if _privacy_int(value) is not None
+                }
+
             span = SpanPayload(
                 span_id=uuid.uuid4().hex[:16],
                 trace_id=orchestrator._optimization_id,  # Use optimization ID as trace
@@ -1381,36 +1458,17 @@ class TrialLifecycle:
                 end_time=datetime.fromtimestamp(end_time, UTC).isoformat(),
                 status=span_status,
                 node_id="optimization_run",  # Links span to workflow graph node
-                error_message=trial_result.error_message,
-                input_tokens=(
-                    trial_result.metadata.get("input_tokens", 0)
-                    if trial_result.metadata
-                    else 0
-                ),
-                output_tokens=(
-                    trial_result.metadata.get("output_tokens", 0)
-                    if trial_result.metadata
-                    else 0
-                ),
+                error_message=span_error,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 cost_usd=(
-                    trial_result.metrics.get("total_cost", 0.0)
-                    if trial_result.metrics
-                    else 0.0
+                    _privacy_cost(span_metrics)
+                    if privacy_enabled
+                    else (span_metrics.get("total_cost", 0.0) if span_metrics else 0.0)
                 ),
-                input_data={"config": trial_result.config},
-                output_data={"metrics": trial_result.metrics},
-                metadata={
-                    "trial_number": (
-                        trial_result.metadata.get("trial_number")
-                        if trial_result.metadata
-                        else None
-                    ),
-                    "examples_attempted": (
-                        trial_result.metadata.get("examples_attempted")
-                        if trial_result.metadata
-                        else None
-                    ),
-                },
+                input_data={"config": span_config},
+                output_data={"metrics": span_metrics},
+                metadata=span_metadata,
             )
 
             # Collect the span via orchestrator

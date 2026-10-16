@@ -74,6 +74,7 @@ from traigent.cloud.session_budgets import (
 from traigent.cloud.privacy_operations import PrivacyOperations
 from traigent.cloud.session_operations import SessionOperations
 from traigent.cloud.session_types import SessionCreationResult
+from traigent.core.session_types import safe_http_error_summary
 from traigent.cloud.subset_selection import SmartSubsetSelector
 from traigent.cloud.trial_operations import (
     TrialOperations,
@@ -135,6 +136,9 @@ logger = get_logger(__name__)
 _ALLOWED_EXAMPLE_FEATURE_KINDS = frozenset({"simhash_v1"})
 _JSON_CONTENT_TYPE = "application/json"
 _SDK_USER_AGENT = get_sdk_user_agent()
+_AGENT_ID_HEADER = "X-Traigent-Agent-Id"
+_EXPECTED_HEAD_GENERATION_HEADER = "X-Traigent-Expected-Head-Generation"
+_STALE_HEAD_ERROR_CODE = "STALE_HEAD_GENERATION"
 _SYNC_BACKEND_TRANSIENT_STATUSES = frozenset({408, 429, *range(500, 600)})
 _INTERACTION_POLICY_REQUIRED_KEYS = frozenset(
     {
@@ -278,7 +282,7 @@ def _raise_for_transient_backend_response(response: Any, operation: str) -> None
 
     response_text = getattr(response, "text", "")
     raise _SyncBackendTransientError(
-        f"{operation} returned transient HTTP {status_code}: {str(response_text)[:200]}",
+        f"{operation} returned transient {safe_http_error_summary(status_code, str(response_text))}",
         status_code=status_code,
         retry_after=_parse_retry_after(getattr(response, "headers", None)),
     )
@@ -305,6 +309,14 @@ def _session_is_closed(session: Any) -> bool:
     if isinstance(closed_flag, bool):
         return closed_flag
     return False
+
+
+def _dispose_pool_map(pools: dict[int, tuple[Any, Any]], owner: str) -> None:
+    """Finalizer: close any secondary pools still held when the client is collected."""
+    for _loop_ref, session in list(pools.values()):
+        if not _session_is_closed(session):
+            _finalize_aiohttp_session(session, owner)
+    pools.clear()
 
 
 # Export public API
@@ -1240,8 +1252,8 @@ class BackendIntegratedClient:
                     if response.status >= 400:
                         error_text = await response.text()
                         raise CloudServiceError(
-                            "Interaction policy request failed with HTTP "
-                            f"{response.status}: {error_text[:200]}"
+                            "Interaction policy request failed: "
+                            f"{safe_http_error_summary(response.status, error_text)}"
                         )
 
                     try:
@@ -1384,6 +1396,26 @@ class BackendIntegratedClient:
 
     # === Context Manager Support ===
 
+    async def _retire_primary_pool(self) -> None:
+        """Make room for a new primary pool without orphaning the current one."""
+        primary = self._session
+        if primary is None:
+            return
+        self._session = None
+        self._detach_session_finalizer()
+        if _session_is_closed(primary):
+            return
+        owner = getattr(primary, "_loop", None)
+        if not isinstance(owner, asyncio.AbstractEventLoop):
+            await primary.close()
+        elif owner is asyncio.get_running_loop():
+            await primary.close()
+        elif not owner.is_closed():
+            # Still serving another live loop: keep it as that loop's pool.
+            self._loop_pools()[id(owner)] = (weakref.ref(owner), primary)
+        else:
+            self._dispose_pool(primary, self.__class__.__name__)
+
     async def __aenter__(self) -> "BackendIntegratedClient":
         """Async context manager entry."""
         if cloud_backend_egress_disabled(self.no_egress):
@@ -1416,6 +1448,10 @@ class BackendIntegratedClient:
                     "X-Client-Version": "2.0.0",
                 }
             )
+            if self._pool_for_loop(asyncio.get_running_loop()) is not None:
+                # Keep the running loop's pool: in-flight requests may be using it.
+                return self
+            await self._retire_primary_pool()
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
                 # Session-default headers are long-lived: never freeze a
@@ -1431,62 +1467,139 @@ class BackendIntegratedClient:
         """Async context manager exit."""
         await self.close(_reason="context-exit")
 
+    async def _build_http_session(self) -> AioClientSession:
+        """Build an authenticated aiohttp session on the running loop (fail closed)."""
+
+        if not AIOHTTP_AVAILABLE:
+            raise CloudServiceError(
+                "Client session not initialized and aiohttp not available"
+            )
+
+        # B4 ROUND 4: Fail closed on authentication errors. Previously, this
+        # block caught any exception from ``get_headers()`` and silently
+        # rebuilt headers from the raw stored API key (or from the
+        # private ``_get_api_key_headers()`` helper) -- defeating the
+        # round-3 fail-closed change in ``AuthManager.get_auth_headers()``
+        # because the backend-rejected key would still be shipped on the
+        # wire as ``X-API-Key`` / ``Authorization``.
+        #
+        # Now: ``AuthenticationError`` (and its ``InvalidCredentialsError``
+        # subclass) propagates so the caller sees the rejection. Other
+        # unexpected errors are surfaced as ``CloudServiceError`` rather
+        # than silently swallowed -- still fail-closed for auth, but
+        # without losing diagnostic context.
+        try:
+            headers = await self.auth_manager.auth.get_headers()
+        except AuthenticationError:
+            # Do NOT fall back to raw-key headers. Re-raise so callers
+            # see the auth failure instead of getting a session that
+            # silently emits a rejected key.
+            raise
+        except Exception as exc:
+            logger.warning("Could not get auth headers: %s", exc)
+            raise CloudServiceError(
+                f"Failed to build authenticated session: {exc}"
+            ) from exc
+        headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
+        headers.setdefault("User-Agent", _SDK_USER_AGENT)
+
+        return aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self.timeout),
+            # Same rule as __aenter__: no stale trace context in
+            # long-lived session-default headers.
+            headers=_strip_trace_context_headers(headers),
+            trust_env=True,
+        )
+
+    def _loop_pools(self) -> dict[int, tuple[weakref.ref[Any], Any]]:
+        """Pools for event loops other than the primary pool's (id(loop) -> ...)."""
+        pools = self.__dict__.get("_extra_loop_pools")
+        if pools is None:
+            pools = self.__dict__["_extra_loop_pools"] = {}
+            # GC cleanup for secondary pools (captures the dict, not ``self``).
+            weakref.finalize(self, _dispose_pool_map, pools, self.__class__.__name__)
+        return cast(dict[int, tuple[weakref.ref[Any], Any]], pools)
+
+    @staticmethod
+    def _dispose_pool(session: Any, owner: str) -> None:
+        """Close a pool without awaiting on a loop we may not be running on."""
+        if not _session_is_closed(session):
+            _finalize_aiohttp_session(session, owner)
+
+    def _purge_dead_pools(self) -> None:
+        """Drop pools whose loop is gone/closed; close them without awaiting."""
+        primary = self._session
+        if primary is not None:
+            primary_loop = getattr(primary, "_loop", None)
+            if _session_is_closed(primary) or (
+                isinstance(primary_loop, asyncio.AbstractEventLoop)
+                and primary_loop.is_closed()
+            ):
+                self._session = None
+                self._detach_session_finalizer()
+                self._dispose_pool(primary, self.__class__.__name__)
+        pools = self._loop_pools()
+        for key, (loop_ref, session) in list(pools.items()):
+            loop = loop_ref()
+            if loop is None or loop.is_closed() or _session_is_closed(session):
+                pools.pop(key, None)
+                self._dispose_pool(session, self.__class__.__name__)
+
+    def _pool_for_loop(self, loop: asyncio.AbstractEventLoop) -> Any:
+        """The usable pool owned by ``loop`` (primary or per-loop), else None."""
+        primary = self._session
+        if primary is not None and not _session_is_closed(primary):
+            owner = getattr(primary, "_loop", None)
+            if not isinstance(owner, asyncio.AbstractEventLoop) or owner is loop:
+                return primary
+        entry = self._loop_pools().get(id(loop))
+        if (
+            entry is not None
+            and entry[0]() is loop
+            and not _session_is_closed(entry[1])
+        ):
+            return entry[1]
+        return None
+
     async def _ensure_session(self) -> AioClientSession:
-        """Ensure session exists with current auth headers."""
+        """Return the authenticated session owned by the *running* event loop.
+
+        One pool per event loop: a session is never handed to a loop that did
+        not create it. Pools of closed loops are discarded.
+        """
 
         self._raise_if_backend_egress_disabled("backend request")
-        existing = self._session
-        if existing is not None and not _session_is_closed(existing):
-            return cast(AioClientSession, existing)
+        loop = asyncio.get_running_loop()
+        self._purge_dead_pools()
+        pool = self._pool_for_loop(loop)
+        if pool is not None:
+            return cast(AioClientSession, pool)
 
-        async with self._session_lock:
-            existing = self._session
-            if existing is not None and not _session_is_closed(existing):
-                return cast(AioClientSession, existing)
+        session = await self._build_http_session()
+        pool = self._pool_for_loop(loop)  # another task on this loop won the race
+        if pool is not None:
+            await session.close()
+            return cast(AioClientSession, pool)
 
-            if not AIOHTTP_AVAILABLE:
-                raise CloudServiceError(
-                    "Client session not initialized and aiohttp not available"
-                )
-
-            # B4 ROUND 4: Fail closed on authentication errors. Previously, this
-            # block caught any exception from ``get_headers()`` and silently
-            # rebuilt headers from the raw stored API key (or from the
-            # private ``_get_api_key_headers()`` helper) -- defeating the
-            # round-3 fail-closed change in ``AuthManager.get_auth_headers()``
-            # because the backend-rejected key would still be shipped on the
-            # wire as ``X-API-Key`` / ``Authorization``.
-            #
-            # Now: ``AuthenticationError`` (and its ``InvalidCredentialsError``
-            # subclass) propagates so the caller sees the rejection. Other
-            # unexpected errors are surfaced as ``CloudServiceError`` rather
-            # than silently swallowed -- still fail-closed for auth, but
-            # without losing diagnostic context.
-            try:
-                headers = await self.auth_manager.auth.get_headers()
-            except AuthenticationError:
-                # Do NOT fall back to raw-key headers. Re-raise so callers
-                # see the auth failure instead of getting a session that
-                # silently emits a rejected key.
-                raise
-            except Exception as exc:
-                logger.warning("Could not get auth headers: %s", exc)
-                raise CloudServiceError(
-                    f"Failed to build authenticated session: {exc}"
-                ) from exc
-            headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
-            headers.setdefault("User-Agent", _SDK_USER_AGENT)
-
-            self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=self.timeout),
-                # Same rule as __aenter__: no stale trace context in
-                # long-lived session-default headers.
-                headers=_strip_trace_context_headers(headers),
-                trust_env=True,
+        primary = self._session
+        primary_owner = getattr(primary, "_loop", None) if primary is not None else None
+        primary_dead = (
+            primary is None
+            or _session_is_closed(primary)
+            or (
+                isinstance(primary_owner, asyncio.AbstractEventLoop)
+                and primary_owner.is_closed()
             )
-            self._register_session_finalizer(self._session)
-
-            return cast(AioClientSession, self._session)
+        )
+        if primary_dead:
+            if primary is not None:
+                self._detach_session_finalizer()
+                self._dispose_pool(primary, self.__class__.__name__)
+            self._session = session
+            self._register_session_finalizer(session)
+        else:
+            self._loop_pools()[id(loop)] = (weakref.ref(loop), session)
+        return session
 
     def _raise_if_backend_egress_disabled(self, operation: str) -> None:
         """Fail closed before any backend HTTP request."""
@@ -1496,14 +1609,17 @@ class BackendIntegratedClient:
         raise_if_cloud_egress_disabled(operation, no_egress=self.no_egress)
 
     async def _reset_http_session(self, reason: str | None = None) -> None:
-        """Close and discard the shared aiohttp session."""
+        """Close and discard the running loop's aiohttp session."""
 
-        if not self._session:
+        loop = asyncio.get_running_loop()
+        session = self._pool_for_loop(loop)
+        if session is None:
             return
-
-        session = self._session
-        self._session = None
-        self._detach_session_finalizer()
+        if session is self._session:
+            self._session = None
+            self._detach_session_finalizer()
+        else:
+            self._loop_pools().pop(id(loop), None)
         try:
             if _session_is_closed(session):
                 return
@@ -1525,9 +1641,18 @@ class BackendIntegratedClient:
             )
 
     async def close(self, *, _reason: str = "shutdown") -> None:
-        """Close any active HTTP session to avoid resource leaks."""
+        """Close every pool: this loop's awaited, other loops' disposed safely."""
 
         await self._reset_http_session(_reason)
+        owner = self.__class__.__name__
+        for _key, (_ref, session) in list(self._loop_pools().items()):
+            self._dispose_pool(session, owner)
+        self._loop_pools().clear()
+        primary = self._session
+        if primary is not None:  # primary owned by a different loop
+            self._session = None
+            self._detach_session_finalizer()
+            self._dispose_pool(primary, owner)
 
     def _register_session_finalizer(self, session: AioClientSession) -> None:
         self._detach_session_finalizer()
@@ -1987,14 +2112,120 @@ class BackendIntegratedClient:
             raise CloudServiceError("Backend response data was not an object")
         return data
 
+    @staticmethod
+    def _stale_head_error_from_response(
+        response: Any,
+        *,
+        expected_head_generation: int,
+        agent_id: str | None,
+        environment: str | None,
+    ) -> Exception | None:
+        """Map a stale-head 409 body to the typed error, or None if it is not one.
+
+        A 409 for any other reason (or a body that cannot be read) falls through
+        to the generic rejection path, so an ambiguous response is never treated
+        as a clean outcome.
+        """
+        from traigent.core.best_config_runtime import CloudBestConfigStaleHeadError
+
+        body: Any = None
+        try:
+            body = response.json()
+        except Exception as exc:  # noqa: BLE001
+            # Not a readable stale-head body: the caller raises the generic
+            # rejection for this 409, so the failure is still surfaced.
+            logger.warning("Best-config 409 body was not readable JSON: %s", exc)
+        if not isinstance(body, dict):
+            return None
+        if (body.get("code") or body.get("error_code")) != _STALE_HEAD_ERROR_CODE:
+            return None
+        current = body.get("current_generation")
+        if isinstance(current, bool) or not isinstance(current, int):
+            return None
+        expected = body.get("expected_generation")
+        if isinstance(expected, bool) or not isinstance(expected, int):
+            expected = expected_head_generation
+        # Fixed SDK-authored message (constructor default); the backend message
+        # can echo customer text and is never forwarded (#2552).
+        return CloudBestConfigStaleHeadError(
+            current_generation=current,
+            expected_generation=expected,
+            agent_id=agent_id,
+            environment=environment,
+        )
+
+    def fetch_agent_head_generation_sync(
+        self, agent_id: str, *, environment: str | None = None
+    ) -> int:
+        """Read an agent's current head generation (0 if never promoted)."""
+        self._raise_if_backend_egress_disabled("fetch agent head")
+        try:
+            import requests
+        except ImportError as exc:  # pragma: no cover - requests is required
+            raise CloudServiceError("requests is unavailable") from exc
+
+        base = self._build_best_config_url()
+        if not base:
+            raise CloudServiceError("Backend agent-head URL is invalid")
+        url = f"{base}/agent-heads/{quote(agent_id, safe='')}"
+
+        headers = self._get_sync_auth_headers(target="backend")
+        params = {"environment": environment} if environment else None
+
+        def _get_head() -> Any:
+            try:
+                response = requests.get(  # nosec B113 - timeout is provided
+                    url,
+                    params=params,
+                    headers=headers,
+                    timeout=min(self.timeout, 30.0),
+                )
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                ConnectionError,
+                TimeoutError,
+            ) as exc:
+                raise _SyncBackendTransientError(
+                    f"Agent-head fetch transport failed: {exc}"
+                ) from exc
+            _raise_for_transient_backend_response(response, "Agent-head fetch")
+            return response
+
+        response = _run_sync_backend_request_with_retry("Agent-head fetch", _get_head)
+        if response.status_code >= 400:
+            raise CloudServiceError(
+                f"Agent-head fetch rejected: "
+                f"{safe_http_error_summary(response.status_code, response.text)}"
+            )
+        generation = self._extract_backend_data(response).get("generation")
+        if isinstance(generation, bool) or not isinstance(generation, int):
+            raise CloudServiceError("Agent-head response carried no integer generation")
+        if generation < 0:
+            raise CloudServiceError("Agent-head response carried a negative generation")
+        return generation
+
     def publish_best_config_sync(
         self,
         spec: dict[str, Any],
         *,
         environment: str | None = None,
         if_match: str | None = None,
+        agent_id: str | None = None,
+        expected_head_generation: int | None = None,
     ) -> dict[str, Any]:
-        """Publish a canonical best-config spec to the backend."""
+        """Publish a canonical best-config spec to the backend.
+
+        When both ``agent_id`` and ``expected_head_generation`` are given the
+        publish is also a promotion to that agent's head, conditional on the
+        head still being at the expected generation. A stale generation raises
+        ``CloudBestConfigStaleHeadError`` and nothing is written. Supplying only
+        one of the two is a caller bug and is rejected before any request.
+        """
+        if (agent_id is None) != (expected_head_generation is None):
+            raise CloudServiceError(
+                "agent_id and expected_head_generation must be provided together"
+            )
         self._raise_if_backend_egress_disabled("publish best config")
         try:
             import requests
@@ -2008,6 +2239,11 @@ class BackendIntegratedClient:
         headers = self._get_sync_auth_headers(target="backend")
         if if_match:
             headers["If-Match"] = if_match
+        if agent_id is not None and expected_head_generation is not None:
+            headers[_AGENT_ID_HEADER] = agent_id
+            headers[_EXPECTED_HEAD_GENERATION_HEADER] = str(
+                int(expected_head_generation)
+            )
         payload: dict[str, Any] = {"spec": spec}
         if environment:
             payload["environment"] = environment
@@ -2037,10 +2273,19 @@ class BackendIntegratedClient:
             _post_best_config,
         )
 
+        if response.status_code == 409 and expected_head_generation is not None:
+            stale = self._stale_head_error_from_response(
+                response,
+                expected_head_generation=expected_head_generation,
+                agent_id=agent_id,
+                environment=environment,
+            )
+            if stale is not None:
+                raise stale
         if response.status_code >= 400:
             raise CloudServiceError(
-                f"Best-config publish rejected with HTTP {response.status_code}: "
-                f"{response.text[:200]}"
+                f"Best-config publish rejected: "
+                f"{safe_http_error_summary(response.status_code, response.text)}"
             )
         return self._extract_backend_data(response)
 
@@ -2104,8 +2349,8 @@ class BackendIntegratedClient:
             return None
         if response.status_code >= 400:
             raise CloudServiceError(
-                f"Best-config fetch rejected with HTTP {response.status_code}: "
-                f"{response.text[:200]}"
+                f"Best-config fetch rejected: "
+                f"{safe_http_error_summary(response.status_code, response.text)}"
             )
         return self._extract_backend_data(response)
 
@@ -2261,10 +2506,9 @@ class BackendIntegratedClient:
 
         if response.status_code >= 400:
             logger.debug(
-                "Example feature upload rejected for run %s: HTTP %s %s",
+                "Example feature upload rejected for run %s: %s",
                 experiment_run_id,
-                response.status_code,
-                response.text[:200],
+                safe_http_error_summary(response.status_code, response.text),
             )
             return False
 

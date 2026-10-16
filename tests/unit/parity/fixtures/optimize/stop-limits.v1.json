@@ -1,0 +1,421 @@
+{
+  "fixtureId": "optimize.stop-limits.v1",
+  "capability": "optimize.stop-limits",
+  "kind": "spec-derived-expected-result",
+  "contract": "Stop limits of an optimization run: a trial-count limit, a cumulative-cost cap and a total-evaluated-examples cap. Expected values are derived from the rules below, not from running an SDK.",
+  "rules": {
+    "maxTrials": "The run starts at most maxTrials trials. maxTrials must be a positive integer; 0 and negative values are rejected.",
+    "costCap": "After each finished trial, accumulated cost is compared with the cap. If accumulated cost >= cap the run stops. The trial that crosses the cap finishes and counts. The cap must be a positive finite number; 0, negative values and NaN are rejected.",
+    "maxTotalExamples": "The run stops when the total number of evaluated examples reaches the cap. The last trial is truncated to the remaining allowance, so no more than the cap is ever evaluated.",
+    "trialCost": "A trial cost must be non-negative; a negative reported cost is rejected.",
+    "order": "Trials run one at a time in grid order. scriptedTrials[i] is bound to the i-th grid configuration (not to call order): every evaluation made for that configuration returns its accuracy, and its cost is reported once per trial as the trial cost.",
+    "explicitCap": "Cases that do not test the cost cap set an explicit cost cap of 1000, far above any total they can reach, so no default cap an SDK applies can bind.",
+    "preTrialEstimate": "An SDK may refuse to start a trial when accumulated cost plus its estimate of the next trial's cost exceeds the cap. The first trial is always started, since no cost has been observed yet. For later trials in the cost-cap cases every trial has the same cost, so any estimate not larger than the observed per-trial cost admits the expected trials; the expected values assume such an estimate.",
+    "dataset": "When datasetRows is given, the run evaluates a dataset of that many rows; each row evaluation of a trial returns the trial's scripted accuracy and the trial accuracy is their mean (equal to the scripted value). rowsEvaluatedPerTrial counts the evaluations actually performed. Without datasetRows, each trial evaluates one row."
+  },
+  "stopReasonVocabulary": {
+    "max_trials": "trial limit reached while untried configurations remain",
+    "cost_limit": "accumulated cost >= cap after a trial; the trial that crosses the cap finishes and counts",
+    "max_examples": "total evaluated examples reached the cap; the last trial is truncated to the remaining allowance"
+  },
+  "cases": [
+    {
+      "id": "max-trials-below-space",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4",
+            "v5",
+            "v6"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.1,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.2,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.3,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.4,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.6,
+            "cost": 0.01
+          }
+        ],
+        "maxTrials": 3,
+        "costCap": 1000.0
+      },
+      "expected": {
+        "trialCount": 3,
+        "stopReason": "max_trials",
+        "bestAccuracy": 0.3
+      },
+      "derivation": "The grid has 6 points but maxTrials is 3, so 3 trials run in grid order with accuracies 0.1, 0.2, 0.3. Untried configurations remain, so the reason is max_trials. Best accuracy is 0.3."
+    },
+    {
+      "id": "max-trials-invalid",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4",
+            "v5",
+            "v6"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.1,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.2,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.3,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.4,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.6,
+            "cost": 0.01
+          }
+        ],
+        "maxTrialsValues": [
+          0,
+          -1
+        ],
+        "costCap": 1000.0
+      },
+      "expected": {
+        "rejects": true
+      },
+      "derivation": "maxTrials must be a positive integer, so each of 0 and -1 is rejected. Assert only that the SDK rejects; do not assert an error class, message or the point at which it rejects."
+    },
+    {
+      "id": "cost-cap-crossing-trial-counts",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4",
+            "v5",
+            "v6"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.1,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.2,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.3,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.4,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.6,
+            "cost": 0.5
+          }
+        ],
+        "maxTrials": 10,
+        "costCap": 1.0
+      },
+      "expected": {
+        "trialCount": 2,
+        "stopReason": "cost_limit",
+        "bestAccuracy": 0.2
+      },
+      "derivation": "Each trial costs 0.5. After trial 1 accumulated cost is 0.5 < 1.0, so the run continues. After trial 2 it is 1.0 >= 1.0, so the run stops with that trial counted. 2 trials, accuracies 0.1 and 0.2, best 0.2."
+    },
+    {
+      "id": "cost-cap-first-trial-exceeds",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4",
+            "v5",
+            "v6"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.1,
+            "cost": 2.0
+          },
+          {
+            "accuracy": 0.2,
+            "cost": 2.0
+          },
+          {
+            "accuracy": 0.3,
+            "cost": 2.0
+          },
+          {
+            "accuracy": 0.4,
+            "cost": 2.0
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 2.0
+          },
+          {
+            "accuracy": 0.6,
+            "cost": 2.0
+          }
+        ],
+        "maxTrials": 10,
+        "costCap": 1.0
+      },
+      "expected": {
+        "trialCount": 1,
+        "stopReason": "cost_limit",
+        "bestAccuracy": 0.1
+      },
+      "derivation": "The first trial costs 2.0 >= 1.0. It finishes and counts, then the run stops. 1 trial, best accuracy 0.1."
+    },
+    {
+      "id": "cost-cap-invalid",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4",
+            "v5",
+            "v6"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.1,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.2,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.3,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.4,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.6,
+            "cost": 0.5
+          }
+        ],
+        "costCapValues": [
+          0,
+          -1,
+          "NaN"
+        ]
+      },
+      "expected": {
+        "rejects": true
+      },
+      "derivation": "The cost cap must be a positive finite number, so 0, -1 and NaN are each rejected. JSON cannot hold NaN, so it is encoded as the string token \"NaN\"; adapters convert it to a floating-point NaN. Assert only that the SDK rejects."
+    },
+    {
+      "id": "max-examples-truncation",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4",
+            "v5",
+            "v6"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.1,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.2,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.3,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.4,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.01
+          },
+          {
+            "accuracy": 0.6,
+            "cost": 0.01
+          }
+        ],
+        "maxTrials": 10,
+        "costCap": 1000.0,
+        "maxTotalExamples": 6,
+        "datasetRows": 4
+      },
+      "expected": {
+        "trialCount": 2,
+        "rowsEvaluatedPerTrial": [
+          4,
+          2
+        ],
+        "totalRowsEvaluated": 6,
+        "stopReason": "max_examples",
+        "bestAccuracy": 0.2
+      },
+      "derivation": "Each trial would evaluate all 4 rows. Trial 1 evaluates 4 (4 of 6 used). Trial 2 has an allowance of 2 remaining, so it is truncated to 2 rows (6 of 6 used) and the run stops. 2 trials, rows [4,2], accuracies 0.1 and 0.2, best 0.2."
+    },
+    {
+      "id": "negative-trial-cost",
+      "input": {
+        "algorithm": "grid",
+        "concurrency": 1,
+        "configurationSpace": {
+          "variant": [
+            "v1",
+            "v2",
+            "v3",
+            "v4",
+            "v5",
+            "v6"
+          ]
+        },
+        "objective": {
+          "metric": "accuracy",
+          "direction": "maximize"
+        },
+        "scriptedTrials": [
+          {
+            "accuracy": 0.1,
+            "cost": -0.1
+          },
+          {
+            "accuracy": 0.2,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.3,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.4,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.5,
+            "cost": 0.5
+          },
+          {
+            "accuracy": 0.6,
+            "cost": 0.5
+          }
+        ],
+        "maxTrials": 10,
+        "costCap": 1000.0
+      },
+      "expected": {
+        "rejects": true
+      },
+      "derivation": "A trial reporting cost -0.1 violates the non-negative cost rule and is rejected. Assert only that the SDK rejects, not when or with what error."
+    }
+  ],
+  "comparison": {
+    "numericTolerance": "absolute 1e-9 on bestAccuracy",
+    "adapterRequirement": "Feed the scripted per-trial accuracy and cost (reported as the trial cost metric) to the SDK through its public optimize entry point, one trial at a time, in grid order. Map the SDK's stop reason onto stopReasonVocabulary. For rejects cases assert only that the SDK rejects, for each listed value; never assert an error class or message.",
+    "notAsserted": "Plateau stopping, cost estimation before a trial, a default cost cap, failed-trial handling, a grid exhausted exactly at a limit, precedence when two limits trigger on the same trial, error classes and messages, and the point at which an invalid value is rejected.",
+    "note": "Expected values were written by hand from the rules above and were not produced by running either SDK."
+  }
+}

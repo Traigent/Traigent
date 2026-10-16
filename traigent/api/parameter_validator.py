@@ -20,6 +20,7 @@ from traigent.config.types import (
 )
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import ValidationError
+from traigent.utils.removed_params import REMOVED_MOCK_PARAMETERS
 
 logger = logging.getLogger(__name__)
 
@@ -449,7 +450,13 @@ def validate_optimize_parameters(**kwargs: Any) -> OptimizeParameters:
     """
     unsupported = {
         key
-        for key in ("auto_optimize", "trigger", "batch_size", "parallel_trials")
+        for key in (
+            "auto_optimize",
+            "trigger",
+            "batch_size",
+            "parallel_trials",
+            *sorted(REMOVED_MOCK_PARAMETERS),
+        )
         if key in kwargs
     }
     if unsupported:

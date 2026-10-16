@@ -299,15 +299,22 @@ class TestLangfuseClientTraceRetrieval:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "id": "trace-123",
-            "name": "test-trace",
-            "observations": [],
+            "data": [
+                {
+                    "id": "obs-1",
+                    "traceId": "trace-123",
+                    "traceName": "test-trace",
+                    "parentObservationId": None,
+                }
+            ],
+            "meta": {},
         }
 
         with patch("requests.get", return_value=mock_response):
             result = client._get_trace_http("trace-123")
             assert result is not None
             assert result["id"] == "trace-123"
+            assert result["name"] == "test-trace"
 
     @pytest.mark.skipif(not REQUESTS_AVAILABLE, reason="requests not installed")
     def test_get_trace_http_404(self, client):
@@ -719,9 +726,10 @@ class TestLangfuseClientErrorHandling:
         import requests
 
         first_page = MagicMock()
+        first_page.status_code = 200
         first_page.json.return_value = {
             "data": [{"id": "obs-1", "name": "llm-call", "type": "GENERATION"}],
-            "meta": {"totalItems": 2},
+            "meta": {"cursor": "next-page"},
         }
 
         with patch(
@@ -754,20 +762,17 @@ class TestLangfuseClientGetTrace:
             assert result == {"id": "trace-123"}
             mock_http.assert_called_once_with("trace-123")
 
-    def test_get_trace_sdk_exception_falls_back(self, client):
-        """Test get_trace falls back to HTTP on SDK exception."""
+    def test_get_trace_never_calls_sdk_read_methods(self, client):
+        """SDK get_trace hits an endpoint removed in Langfuse v4: HTTP v2 only."""
         mock_sdk = MagicMock()
-        mock_sdk.get_trace.side_effect = Exception("SDK error")
         client._sdk_client = mock_sdk
 
         with patch.object(client, "_get_trace_http") as mock_http:
             mock_http.return_value = {"id": "trace-123"}
             result = client.get_trace("trace-123")
-            # On SDK failure, get_trace must still return the HTTP fallback's
-            # result, called with the same trace_id passed in by the caller.
             assert result == {"id": "trace-123"}
             mock_http.assert_called_once_with("trace-123")
-            mock_sdk.get_trace.assert_called_once_with("trace-123")
+            mock_sdk.get_trace.assert_not_called()
 
 
 class TestLangfuseClientMetricsAggregation:
@@ -993,6 +998,8 @@ class TestLangfuseClientAsync:
             async def __aexit__(self, *_args):
                 return False
 
+            status = 200
+
             def raise_for_status(self):
                 return None
 
@@ -1021,7 +1028,7 @@ class TestLangfuseClientAsync:
                                     "type": "GENERATION",
                                 }
                             ],
-                            "meta": {"totalItems": 2},
+                            "meta": {"cursor": "next-page"},
                         }
                     )
                 return AsyncResponse(
@@ -1056,46 +1063,16 @@ class TestLangfuseClientSDK:
             client.get_observations_for_trace("trace-123")
             mock_http.assert_called_once()
 
-    def test_get_trace_with_sdk_success(self, client):
-        """Test get_trace using SDK."""
+    def test_get_observations_for_trace_never_calls_sdk_read_methods(self, client):
+        """SDK get_observations hits the removed v1 endpoint: HTTP v2 only."""
         mock_sdk = MagicMock()
-        mock_trace = MagicMock()
-        mock_trace.id = "trace-123"
-        mock_trace.name = "test"
-        mock_trace.observations = []
-        mock_sdk.get_trace.return_value = mock_trace
-        client._sdk_client = mock_sdk
-
-        result = client.get_trace("trace-123")
-        assert result is not None
-        assert result["id"] == "trace-123"
-        mock_sdk.get_trace.assert_called_once_with("trace-123")
-
-    def test_get_observations_for_trace_sdk_success(self, client):
-        """Test get_observations_for_trace using SDK."""
-        mock_sdk = MagicMock()
-        mock_obs = MagicMock()
-        mock_obs.id = "obs-123"
-        mock_obs.name = "test"
-        mock_obs.type = "GENERATION"
-        mock_sdk.get_observations.return_value = MagicMock(data=[mock_obs])
-        client._sdk_client = mock_sdk
-
-        result = client.get_observations_for_trace("trace-123")
-        assert len(result) == 1
-        assert client._observations_partial_by_trace["trace-123"] is False
-        mock_sdk.get_observations.assert_called_once()
-
-    def test_get_observations_for_trace_sdk_exception(self, client):
-        """Test get_observations_for_trace falls back on SDK exception."""
-        mock_sdk = MagicMock()
-        mock_sdk.get_observations.side_effect = Exception("SDK error")
         client._sdk_client = mock_sdk
 
         with patch.object(client, "_get_observations_http") as mock_http:
             mock_http.return_value = []
             client.get_observations_for_trace("trace-123")
             mock_http.assert_called_once()
+            mock_sdk.get_observations.assert_not_called()
 
 
 class TestLangfuseAgentSanitization:

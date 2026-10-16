@@ -289,6 +289,96 @@ def _objectives(objectives: Iterable[Any] | None) -> list[dict[str, Any]] | None
     return sorted(rows, key=lambda row: str(row["name"]))
 
 
+def _resolve_evaluator_id(
+    declaration: Mapping[str, Any], evaluator_id: str | None
+) -> tuple[str, str] | None:
+    """``(evaluator_id, source)``; ``None`` when the declared id is malformed."""
+    if declaration.get("evaluator_id"):
+        evaluator_id = declaration["evaluator_id"]
+    declared = evaluator_id.strip() if isinstance(evaluator_id, str) else ""
+    if not declared:
+        return FALLBACK_EVALUATOR_ID, "fallback"
+    if not _FOREIGN_KEY_ID.fullmatch(declared):
+        return None
+    return declared, "declared"
+
+
+def _resolve_claims(
+    declaration: Mapping[str, Any], code: Mapping[str, Any], evaluator: Any
+) -> tuple[dict[str, Any] | None, dict[str, str]] | None:
+    """``(judge, dependency_versions)``; ``None`` when a claim is unknown.
+
+    judge and dependency_versions are claims: known for pure deterministic
+    built-in scoring (no model, no dependency beyond the SDK, whose version is
+    the efp2 external revision), else they must be declared.
+    """
+    builtin_only = not code and _builtin_is_model_free(evaluator)
+    if "judge" in declaration:
+        judge = declaration["judge"]
+    elif builtin_only:
+        judge = None
+    else:
+        return None
+    if judge is not None and judge.get("config_digest") is None:
+        return None
+    dependency_versions = declaration.get("dependency_versions")
+    if dependency_versions is None:
+        if not builtin_only:
+            return None
+        dependency_versions = {}
+    # A user-defined evaluator class carries instance state (thresholds, ...)
+    # the SDK cannot canonicalize honestly for arbitrary objects: its
+    # configuration must be declared.
+    if "evaluator_class" in code and not declaration.get("config_digest"):
+        return None
+    return judge, dependency_versions
+
+
+def _efp2_payload(
+    code: Mapping[str, Any], evaluator: Any, sdk_version: str
+) -> dict[str, Any] | None:
+    """The fp2 ``efp2`` payload; ``None`` when scoring source is unreadable."""
+    if not code:
+        return {
+            "kind": "efp2",
+            "runtime": "python",
+            "external": {
+                "kind": "traigent_builtin",
+                "revision": f"{type(evaluator).__name__}@{sdk_version}",
+            },
+        }
+    sources: list[str] = []
+    for slot in sorted(code):
+        text = _source(code[slot])
+        if text is None:
+            return None
+        sources.append(f"# {slot}\n{text}")
+    return {"kind": "efp2", "runtime": "python", "source": "\n\n".join(sources)}
+
+
+def _bound_config(code: Mapping[str, Any], evaluator: Any) -> dict[str, Any] | None:
+    """``{"metrics", "bound"}`` for the config digest; ``None`` if state is unobservable."""
+    bound: dict[str, Any] = {}
+    for slot in sorted(code):
+        obj = code[slot]
+        if inspect.isclass(obj):
+            continue
+        partial = obj if isinstance(obj, functools.partial) else None
+        target = _ab.innermost_callable(partial.func if partial else obj)
+        state = _ab._bound_state(partial, target)
+        if state is None:
+            return None
+        if state:
+            bound[slot] = state
+    metrics = getattr(evaluator, "metrics", None)
+    return {
+        "metrics": sorted(str(m) for m in metrics)
+        if isinstance(metrics, (list, tuple))
+        else [],
+        "bound": bound,
+    }
+
+
 def build_evaluator_binding(
     evaluator: Any,
     *,
@@ -303,80 +393,22 @@ def build_evaluator_binding(
         declaration = _declaration_of(evaluator, code) or {}
     except ContentIdentityError:
         return None, None, "evaluator_manifest_unavailable"
-    if declaration.get("evaluator_id"):
-        evaluator_id = declaration["evaluator_id"]
-    declared = evaluator_id.strip() if isinstance(evaluator_id, str) else ""
-    if declared:
-        if not _FOREIGN_KEY_ID.fullmatch(declared):
-            return None, None, "evaluator_id_unavailable"
-        resolved_id, source = declared, "declared"
-    else:
-        resolved_id, source = FALLBACK_EVALUATOR_ID, "fallback"
-
-    # judge and dependency_versions are claims: known for pure deterministic
-    # built-in scoring (no model, no dependency beyond the SDK, whose version is
-    # the efp2 external revision), else they must be declared.
-    builtin_only = not code and _builtin_is_model_free(evaluator)
-    if "judge" in declaration:
-        judge = declaration["judge"]
-    elif builtin_only:
-        judge = None
-    else:
+    resolved = _resolve_evaluator_id(declaration, evaluator_id)
+    if resolved is None:
+        return None, None, "evaluator_id_unavailable"
+    resolved_id, source = resolved
+    claims = _resolve_claims(declaration, code, evaluator)
+    if claims is None:
         return None, source, "evaluator_manifest_unavailable"
-    if judge is not None and judge.get("config_digest") is None:
-        return None, source, "evaluator_manifest_unavailable"
-    dependency_versions = declaration.get("dependency_versions")
-    if dependency_versions is None:
-        if not builtin_only:
-            return None, source, "evaluator_manifest_unavailable"
-        dependency_versions = {}
-    # A user-defined evaluator class carries instance state (thresholds, ...)
-    # the SDK cannot canonicalize honestly for arbitrary objects: its
-    # configuration must be declared.
-    if "evaluator_class" in code and not declaration.get("config_digest"):
-        return None, source, "evaluator_manifest_unavailable"
+    judge, dependency_versions = claims
     sdk_version = _ab.sdk_version()
     try:
-        if code:
-            sources: list[str] = []
-            for slot in sorted(code):
-                text = _source(code[slot])
-                if text is None:
-                    return None, source, "evaluator_manifest_unavailable"
-                sources.append(f"# {slot}\n{text}")
-            efp2: dict[str, Any] = {
-                "kind": "efp2",
-                "runtime": "python",
-                "source": "\n\n".join(sources),
-            }
-        else:
-            efp2 = {
-                "kind": "efp2",
-                "runtime": "python",
-                "external": {
-                    "kind": "traigent_builtin",
-                    "revision": f"{type(evaluator).__name__}@{sdk_version}",
-                },
-            }
-        bound: dict[str, Any] = {}
-        for slot in sorted(code):
-            obj = code[slot]
-            if inspect.isclass(obj):
-                continue
-            partial = obj if isinstance(obj, functools.partial) else None
-            target = _ab.innermost_callable(partial.func if partial else obj)
-            state = _ab._bound_state(partial, target)
-            if state is None:
-                return None, source, "evaluator_manifest_unavailable"
-            if state:
-                bound[slot] = state
-        metrics = getattr(evaluator, "metrics", None)
-        config = {
-            "metrics": sorted(str(m) for m in metrics)
-            if isinstance(metrics, (list, tuple))
-            else [],
-            "bound": bound,
-        }
+        efp2 = _efp2_payload(code, evaluator, sdk_version)
+        if efp2 is None:
+            return None, source, "evaluator_manifest_unavailable"
+        config = _bound_config(code, evaluator)
+        if config is None:
+            return None, source, "evaluator_manifest_unavailable"
         helper_digests = declaration.get("helper_digests")
         if helper_digests is None:
             helper_digests = _helper_digests(code)

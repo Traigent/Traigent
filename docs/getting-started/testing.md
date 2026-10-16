@@ -71,6 +71,12 @@ pytest tests/integration/ -v
 pytest tests/integration/optimizers/ -v
 ```
 
+The test suite does not read your `.env`: `tests/conftest.py` sets
+`TRAIGENT_SKIP_DOTENV=1` (the SDK's loader) and `LITELLM_MODE=PRODUCTION`
+(litellm otherwise loads `.env` on import), so a local key file never leaks into
+a run. Tests that need real keys only see the ones exported in the shell (as CI
+provides them). Live tests can call paid providers.
+
 ### Security Tests
 
 Located in `tests/security/`, these validate security features:
@@ -131,14 +137,11 @@ TRAIGENT_MOCK_LLM=true TRAIGENT_COST_APPROVED=true python examples/core/rag-opti
   the same scoring logic in both mock and real modes. There is no
   fabricated random-score path.
 
-> Note: The legacy `MockModeOptions` fields (`enabled`,
-> `override_evaluator`, `base_accuracy`, `variance`) are kept on the
-> schema for backwards compatibility but are inert — mock mode is
-> activated by `traigent.testing.enable_mock_mode_for_quickstart()`
-> in local code, not by passing `mock=...`. The legacy
-> `TRAIGENT_MOCK_LLM=true` env var remains for shell fixtures and
-> backwards compatibility, but emits `DeprecationWarning` when users set
-> it directly. See issue #874.
+> Note: The inert `mock=...` / `mock_mode_config=...` parameters (and
+> `MockModeOptions`) were removed and now raise `TypeError`. Mock mode is
+> activated by `traigent.testing.enable_mock_mode_for_quickstart()` in local
+> code. The legacy `TRAIGENT_MOCK_LLM=true` env var remains for shell
+> fixtures and emits `DeprecationWarning` when users set it directly.
 
 ## Development Testing Workflow
 

@@ -21,7 +21,6 @@ def _assert_invariants_hold() -> None:
     configuration_space={"model": ["gpt-4o-mini"]},
     objectives=["accuracy"],
     injection={"injection_mode": "seamless"},
-    mock={"enabled": True},
 )
 def _seamless_function(prompt: str = "test") -> str:
     """Function that should have its local model variable rewritten."""

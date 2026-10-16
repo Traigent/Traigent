@@ -42,18 +42,31 @@ class CredentialManager:
         Returns:
             API key or None if not found
         """
+        return cls.get_api_key_with_source()[0]
+
+    @classmethod
+    def get_api_key_with_source(cls) -> tuple[str | None, str | None]:
+        """Get the API key ``get_api_key()`` returns, plus where it came from.
+
+        Uses the same priority as ``get_api_key()``, which delegates here.
+
+        Returns:
+            ``(key, "TRAIGENT_API_KEY")``, ``(key, "stored CLI credentials")``,
+            ``(key, "TRAIGENT_DEV_API_KEY (development mode)")``, or
+            ``(None, None)``.
+        """
         # Check environment variables first (highest priority)
         api_key = cls._get_env_api_key()
         if api_key:
             logger.debug("Using API key from environment variable")
-            return api_key
+            return api_key, "TRAIGENT_API_KEY"
 
         # Check for CLI stored credentials
         stored_creds = cls._load_cli_credentials()
         if stored_creds:
             if stored_creds.get("api_key"):
                 logger.debug("Using API key from CLI credentials")
-                return cast(str, stored_creds["api_key"])
+                return cast(str, stored_creds["api_key"]), "stored CLI credentials"
             # regression fix: previously this fell back to using the
             # stored `jwt_token` as if it were an API key. JWTs expire
             # within minutes; using one as a long-lived API key leaks
@@ -87,7 +100,7 @@ class CredentialManager:
             dev_key = cls._get_dev_api_key()
             if dev_key:
                 logger.debug("Using TRAIGENT_DEV_API_KEY (development only)")
-                return dev_key
+                return dev_key, "TRAIGENT_DEV_API_KEY (development mode)"
             logger.debug(
                 "Development mode is enabled but TRAIGENT_DEV_API_KEY is not set; "
                 "no dev-mode credential will be returned. Set TRAIGENT_DEV_API_KEY "
@@ -95,7 +108,7 @@ class CredentialManager:
             )
 
         logger.debug("No API key found in any source")
-        return None
+        return None, None
 
     @classmethod
     def get_credentials(cls) -> dict[str, Any]:

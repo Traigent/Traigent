@@ -84,6 +84,41 @@ def _optional_float(payload: dict[str, Any], name: str) -> float | None:
     return None if value is None else float(value)
 
 
+def _optional_bool(payload: dict[str, Any], name: str) -> bool | None:
+    """``None`` when absent or null; a present ``false`` stays ``False``."""
+    value = payload.get(name)
+    return None if value is None else bool(value)
+
+
+def _optional_str(payload: dict[str, Any], name: str) -> str | None:
+    """``None`` when absent, null or blank; otherwise the value as ``str``."""
+    value = payload.get(name)
+    if value is None:
+        return None
+    text = str(value)
+    return text if text.strip() else None
+
+
+def _optional_str_list(payload: dict[str, Any], name: str) -> list[str] | None:
+    value = payload.get(name)
+    if value is None:
+        return None
+    return [str(item) for item in value]
+
+
+def _optional_ttl_breakdown(
+    payload: dict[str, Any], name: str
+) -> dict[str, int | None] | None:
+    """Per-TTL cache-write counts; each tier keeps null (unknown) vs 0."""
+    value = payload.get(name)
+    if not isinstance(value, dict):
+        return None
+    return {
+        str(tier): (None if count is None else int(count))
+        for tier, count in value.items()
+    }
+
+
 def _validate_observability_status(name: str, value: str) -> None:
     _validate_required_string(name, value, max_length=MAX_STATUS_LENGTH)
     if value not in OBSERVABILITY_STATUSES:
@@ -737,6 +772,11 @@ class TraceRecord:
     total_output_tokens: int | None = None
     total_tokens: int | None = None
     total_cost_usd: float | None = None
+    # Cost completeness (Schema CostRollupStatus).  ``total_cost_usd`` is null
+    # when the cost is unknown; ``priced_cost_usd`` is then a lower bound.
+    cost_status: str | None = None
+    priced_cost_usd: float | None = None
+    unpriced_observation_count: int | None = None
     total_latency_ms: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -750,6 +790,12 @@ class TraceRecord:
     execution_context: dict[str, Any] | None = None
     session: SessionRecord | None = None
     collaboration: TraceCollaborationState | None = None
+    # Scope the backend stored this trace under. Optional: present on
+    # responses from backends that return it, ``None`` otherwise. Lets a
+    # caller confirm which project a trace landed in when the scope was
+    # resolved from the API key rather than configured (#2605).
+    tenant_id: str | None = None
+    project_id: str | None = None
 
     @classmethod
     def from_dict(
@@ -782,6 +828,11 @@ class TraceRecord:
             total_output_tokens=_optional_int(payload, "total_output_tokens"),
             total_tokens=_optional_int(payload, "total_tokens"),
             total_cost_usd=_optional_float(payload, "total_cost_usd"),
+            cost_status=payload.get("cost_status"),
+            priced_cost_usd=_optional_float(payload, "priced_cost_usd"),
+            unpriced_observation_count=_optional_int(
+                payload, "unpriced_observation_count"
+            ),
             total_latency_ms=_optional_int(payload, "total_latency_ms"),
             created_at=from_iso(payload.get("created_at")),
             updated_at=from_iso(payload.get("updated_at")),
@@ -810,6 +861,8 @@ class TraceRecord:
                 if include_collaboration and isinstance(collaboration_payload, dict)
                 else None
             ),
+            tenant_id=_optional_str(payload, "tenant_id"),
+            project_id=_optional_str(payload, "project_id"),
         )
 
 
@@ -831,10 +884,16 @@ class SessionRecord:
     total_output_tokens: int | None = None
     total_tokens: int | None = None
     total_cost_usd: float | None = None
+    cost_status: str | None = None
+    priced_cost_usd: float | None = None
+    unpriced_observation_count: int | None = None
     total_latency_ms: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
     traces: list[TraceRecord] = field(default_factory=list)
+    # See TraceRecord.tenant_id / project_id (#2605).
+    tenant_id: str | None = None
+    project_id: str | None = None
 
     @classmethod
     def from_dict(
@@ -859,6 +918,11 @@ class SessionRecord:
             total_output_tokens=_optional_int(payload, "total_output_tokens"),
             total_tokens=_optional_int(payload, "total_tokens"),
             total_cost_usd=_optional_float(payload, "total_cost_usd"),
+            cost_status=payload.get("cost_status"),
+            priced_cost_usd=_optional_float(payload, "priced_cost_usd"),
+            unpriced_observation_count=_optional_int(
+                payload, "unpriced_observation_count"
+            ),
             total_latency_ms=_optional_int(payload, "total_latency_ms"),
             created_at=from_iso(payload.get("created_at")),
             updated_at=from_iso(payload.get("updated_at")),
@@ -874,6 +938,8 @@ class SessionRecord:
                 if include_traces
                 else []
             ),
+            tenant_id=_optional_str(payload, "tenant_id"),
+            project_id=_optional_str(payload, "project_id"),
         )
 
 
@@ -895,7 +961,24 @@ class ObservationRecord:
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
+    # Usage classes beyond input/output: ``None`` means NOT REPORTED (see
+    # ``unreported_usage_fields``), which is different from a reported ``0``.
+    cache_read_tokens: int | None = None
+    cache_creation_tokens: int | None = None
+    cache_creation_tokens_by_ttl: dict[str, int | None] | None = None
+    reasoning_tokens: int | None = None
+    unreported_usage_fields: list[str] | None = None
+    # ``cost_usd`` is None when the cost is UNKNOWN, never 0; ``cost_status`` says
+    # how complete it is and ``cost_source`` where it came from.
     cost_usd: float | None = None
+    cost_status: str | None = None
+    cost_source: str | None = None
+    cost_usd_declared: float | None = None
+    cost_usd_computed: float | None = None
+    priced_cost_usd: float | None = None
+    cost_mismatch: bool | None = None
+    priced_model: str | None = None
+    price_catalogue_version: str | None = None
     model_name: str | None = None
     tool_name: str | None = None
     input_data: Any = None
@@ -921,7 +1004,24 @@ class ObservationRecord:
             input_tokens=_optional_int(payload, "input_tokens"),
             output_tokens=_optional_int(payload, "output_tokens"),
             total_tokens=_optional_int(payload, "total_tokens"),
+            cache_read_tokens=_optional_int(payload, "cache_read_tokens"),
+            cache_creation_tokens=_optional_int(payload, "cache_creation_tokens"),
+            cache_creation_tokens_by_ttl=_optional_ttl_breakdown(
+                payload, "cache_creation_tokens_by_ttl"
+            ),
+            reasoning_tokens=_optional_int(payload, "reasoning_tokens"),
+            unreported_usage_fields=_optional_str_list(
+                payload, "unreported_usage_fields"
+            ),
             cost_usd=_optional_float(payload, "cost_usd"),
+            cost_status=payload.get("cost_status"),
+            cost_source=payload.get("cost_source"),
+            cost_usd_declared=_optional_float(payload, "cost_usd_declared"),
+            cost_usd_computed=_optional_float(payload, "cost_usd_computed"),
+            priced_cost_usd=_optional_float(payload, "priced_cost_usd"),
+            cost_mismatch=_optional_bool(payload, "cost_mismatch"),
+            priced_model=payload.get("priced_model"),
+            price_catalogue_version=payload.get("price_catalogue_version"),
             model_name=payload.get("model_name"),
             tool_name=payload.get("tool_name"),
             input_data=payload.get("input_data"),

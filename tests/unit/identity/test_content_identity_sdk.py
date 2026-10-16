@@ -599,7 +599,7 @@ def test_band_objective_withholds_the_evaluator_slot(tenant_a: Any) -> None:
     assert session["unavailable"]["evaluator"] == "evaluator_manifest_unavailable"
 
 
-# --- Evaluator honesty: every manifest field is KNOWN or no manifest (astra M2 r3)
+# --- Evaluator honesty: every manifest field is KNOWN or no manifest (M2 r3)
 
 
 def test_undeclared_dependency_versions_withhold_a_custom_evaluator(
@@ -723,7 +723,7 @@ def test_conflicting_example_ids_are_capped_and_flagged(
 
 
 def test_editing_a_row_between_runs_changes_version_and_root(tenant_a: Any) -> None:
-    """Regression (astra M2 P1): an identity cache keyed by object address kept
+    """Regression (M2 P1): an identity cache keyed by object address kept
     the old version and root after an in-place edit."""
     dataset = _dataset(ROWS)
     first = _run(dataset)
@@ -849,7 +849,7 @@ def test_clean_commit_with_declared_assets_is_complete(
 def test_sdk_enumerated_helpers_never_support_a_complete_claim(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Loaded-module enumeration cannot prove coverage (astra M2 P1)."""
+    """Loaded-module enumeration cannot prove coverage (M2 P1)."""
     agent = _load_agent(_agent_project(tmp_path), monkeypatch)
     declare_agent_assets(agent, prompts={}, tool_definitions={}, coverage="complete")
     base = collect_agent_build_base(agent, agent_id="agent_1")

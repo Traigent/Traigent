@@ -1010,22 +1010,26 @@ def get_global_parallel_config() -> ParallelConfig:
 
 
 def with_usage(
-    text: str,
+    text: Any,
     total_cost: float,
     input_tokens: int | None = None,
     output_tokens: int | None = None,
     response_time_ms: float | None = None,
     provider_usage: dict[str, Any] | None = None,
     model_costs: list[dict[str, Any]] | None = None,
-) -> str | dict[str, Any]:
+) -> Any:
     """Wrap a response with usage metadata if in optimization mode.
 
-    Returns text directly in production, or a dict with metadata
+    Returns the output unchanged in production, or a dict with metadata
     during optimization. The metadata is extracted and injected into
     metrics after cost calculation.
 
     Args:
-        text: The actual response content (must be a string)
+        text: The function's output, of any type -- a string, a dict, a
+            number, a list or any other value. It is returned unchanged in
+            production and carried unchanged under ``"text"`` during
+            optimization; built-in accuracy compares that value, not the
+            wrapper (Traigent#2522).
         total_cost: Pre-computed cost in USD (REQUIRED - not recalculated from tokens)
         input_tokens: Number of input tokens consumed (informational, for UI display).
             If only one token count is provided, the other defaults to 0.
@@ -1048,7 +1052,7 @@ def with_usage(
         In production: text unchanged
         During optimization: dict with structure:
             {
-                "text": str,
+                "text": <the output, unchanged>,
                 "__traigent_meta__": {
                     "total_cost": float,
                     "usage": {  # Optional
@@ -1059,12 +1063,11 @@ def with_usage(
             }
 
     Raises:
-        TypeError: If text is not a string or total_cost is not numeric
+        TypeError: If total_cost is not numeric
 
     Validation:
         The returned __traigent_meta__ structure is validated at runtime using
         type guards from traigent.core.meta_types.TraigentMetadata:
-        - text must be string (raises TypeError)
         - total_cost must be numeric (raises TypeError)
         - tokens must be integers if provided
         - negative values are clamped to 0 with warning
@@ -1141,12 +1144,13 @@ def with_usage(
         ...     ],
         ... )
     """
-    # Enforce string type
-    if not isinstance(text, str):
-        raise TypeError(
-            f"with_usage() requires text to be a string, got {type(text).__name__}. "
-            "Convert your response to a string before calling with_usage()."
-        )
+    # Any output type is accepted (Traigent#2522). An earlier string-only
+    # check made extractors (dict), classifiers (number) and tool agents
+    # (structured results) change their output contract to report cost, and it
+    # ran before the production passthrough, so it broke them outside
+    # optimization too. The wrapper below is recognised by its reserved
+    # ``__traigent_meta__`` key, not by the type of ``text``, so a structured
+    # value survives it intact for accuracy and metric functions.
 
     # Only wrap in dict during optimization
     if get_trial_context() is None:

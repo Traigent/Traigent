@@ -300,6 +300,183 @@ class TestSanitizeErrorMessage:
         assert "/Users/username" not in result
         assert "[PATH]" in result
 
+    @pytest.mark.parametrize(
+        ("msg", "leaked"),
+        [
+            ("auth failed: Authorization: Bearer abc123tokenvalue", "abc123tokenvalue"),
+            ("header Authorization: Basic dXNlcjpwYXNz sent", "dXNlcjpwYXNz"),
+            ("got Bearer abc123tokenvalue here", "abc123tokenvalue"),
+            ("bearer short-tok", "short-tok"),
+            ("connect password='hunter2' failed", "hunter2"),
+            ('connect password="hunter2" failed', "hunter2"),
+            ("connect pwd=hunter2 failed", "hunter2"),
+            ("connect passwd: hunter2 failed", "hunter2"),
+            ("PASSWORD='Hunter 2 x' failed", "Hunter 2"),
+            ("secret='s3cr3t' x", "s3cr3t"),
+            ("client_secret=abcdef123", "abcdef123"),
+            ("access_key=AKIDEXAMPLE1", "AKIDEXAMPLE1"),
+            ("apikey: 'k-12345'", "k-12345"),
+            ('{"api_key": "k-12345"}', "k-12345"),
+            ("db_password=hunter2", "hunter2"),
+            (r"Error in C:\Users\alice\proj\file.py", "alice"),
+            (r"Error in c:\users\Bob\x.py", "Bob"),
+            ("Error in C:/Users/alice/proj/file.py", "alice"),
+        ],
+    )
+    def test_additional_secret_shapes_redacted(self, msg, leaked):
+        """Bearer/Authorization, quoted key-value secrets, Windows user paths."""
+        result = self.ops.sanitize_error_message(msg)
+        assert leaked not in result
+        assert "REDACTED" in result or "[PATH]" in result
+
+    def test_windows_user_path_becomes_path_marker(self):
+        result = self.ops.sanitize_error_message(r"open C:\Users\alice\a\b.py failed")
+        assert result == "open [PATH] failed"
+
+    def test_windows_user_path_with_space_in_name(self):
+        result = self.ops.sanitize_error_message(
+            r"C:\Users\John Smith\data.csv not found"
+        )
+        assert "John" not in result
+        assert "Smith" not in result
+        assert "[PATH]" in result
+
+    def test_sentence_without_path_untouched(self):
+        msg = "The Users table is missing a column named John"
+        assert self.ops.sanitize_error_message(msg) == msg
+
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            "invalid password",
+            "invalid password for user",
+            "Token expired, please retry",
+            "secret not found in vault",
+            "Authorization failed",
+            "bearer of bad news",
+            r"Error in C:\Program Files\App\x.py",
+        ],
+    )
+    def test_ordinary_text_not_over_redacted(self, msg):
+        assert self.ops.sanitize_error_message(msg) == msg
+
+    @pytest.mark.parametrize(
+        ("msg", "leaked"),
+        [
+            ('password="a\\"b-tail" x', "b-tail"),
+            ("connect password='unterminated-secret", "unterminated-secret"),
+            ("mail pw=abc12345 x", "abc12345"),
+            ("Cookie: sid=abc123; other=zzz999", "zzz999"),
+            ("Set-Cookie: sid=abc123", "abc123"),
+            ("url https://user:s3cretpass@host/x", "s3cretpass"),
+            ("x-api-key: abc123token", "abc123token"),
+            ("Proxy-Authorization: Basic Zm9vYmFy", "Zm9vYmFy"),
+            ("key AKIAABCDEFGHIJKLMNOP leaked", "AKIAABCDEFGHIJKLMNOP"),
+            ('{"Authorization": "Basic dXNlcjpwYXNz"}', "dXNlcjpwYXNz"),
+            ("{'Authorization': 'Bearer abc123xyz'}", "abc123xyz"),
+            ('{"Cookie": "sid=abc123"}', "abc123"),
+            ("password=alpha;private-tail", "private-tail"),
+            ("password=alpha,private-tail", "private-tail"),
+            ('Cookie: sid="alpha"; other=bravo', "bravo"),
+            ('Cookie: sid="alpha"; other=bravo', "alpha"),
+            ("password=alpha)private-tail", "private-tail"),
+            ("password=alpha}private-tail", "private-tail"),
+            ("authentication rejected: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz"),
+            (r"C:\Users\Juan Carlos de la Cruz\file.txt", "Carlos"),
+            ("bAsIc dXNlcjpwYXNz", "dXNlcjpwYXNz"),
+            ("basic ajppajppajpp", "ajppajppajpp"),
+            ("auth failed: BASIC ajppajppajpp rejected", "ajppajppajpp"),
+            ("password=o'connor", "connor"),
+            ("https://private-token:password=abc123@host/path", "private-token"),
+            ("password=alpha]private-tail", "private-tail"),
+            ('password="hunter2\\', "hunter2"),
+            ("api_key_value=abc123", "abc123"),
+            ("password_value=hunter2", "hunter2"),
+            ("https://private-token@host/path", "private-token"),
+            ("https://alice:pw1@host/path", "alice"),
+            ("open /home/alice@example.com/file.py", "alice"),
+        ],
+    )
+    def test_more_secret_shapes_redacted(self, msg, leaked):
+        assert leaked not in self.ops.sanitize_error_message(msg)
+
+    def test_basic_token_cut_by_input_cap_is_redacted(self):
+        msg = " basic " + "ajpp" * 1025
+        assert "ajpp" not in self.ops.sanitize_error_message(msg)
+
+    def test_basic_credential_cut_to_few_chars_at_cap_edge_is_redacted(self):
+        msg = "Authorization: " + "x" * 4067 + "\nBasic " + "ajpp" * 100
+        out = self.ops.sanitize_error_message(msg)
+        assert "ajp" not in out
+        assert out.endswith("Basic [REDACTED]")
+
+    def test_basic_prose_before_long_text_is_unchanged(self):
+        msg = "basic usage of the API " + "x" * 5000
+        assert self.ops.sanitize_error_message(msg).startswith("basic usage of the API")
+
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            "HTTP 500 code 123456789 failed",
+            "trace id 4111111111111111 failed",
+            "user a@b.com not found",
+            "max_tokens=100 exceeded",
+            "Basic authentication required",
+            "basic usage of the API",
+            "basic example configuration",
+        ],
+    )
+    def test_error_codes_and_ids_survive(self, msg):
+        """Credential scrubbing must not eat numeric codes, ids or emails."""
+        assert self.ops.sanitize_error_message(msg) == msg
+
+    def test_windows_path_keeps_text_after_username(self):
+        result = self.ops.sanitize_error_message(
+            r"C:\Users\alice: not found code E1234"
+        )
+        assert "alice" not in result
+        assert result == "[PATH]: not found code E1234"
+
+    @pytest.mark.parametrize(
+        ("msg", "leaked"),
+        [
+            ("Authorization: Negotiate YIIabc123xyz", "YIIabc123xyz"),
+            (
+                'Authorization: Digest username="alice", response="deadbeef"',
+                "alice",
+            ),
+            (
+                'Authorization: Digest username="alice", response="deadbeef"',
+                "deadbeef",
+            ),
+            ('{"Authorization": "Negotiate YIIabc123xyz"}', "YIIabc123xyz"),
+        ],
+    )
+    def test_full_authorization_value_redacted(self, msg, leaked):
+        assert leaked not in self.ops.sanitize_error_message(msg)
+
+    def test_credentials_cut_by_input_cap_are_redacted(self):
+        msg = "https://alice:hunter2" + "x" * 5000 + "@host/path"
+        result = self.ops.sanitize_error_message(msg)
+        assert "hunter2" not in result
+        assert "alice" not in result
+
+    def test_short_url_without_userinfo_survives(self):
+        msg = "GET https://example.com"
+        assert self.ops.sanitize_error_message(msg) == msg
+
+    @pytest.mark.parametrize(
+        "text",
+        ["a." * 50_000, "a" * 100_000, "password " * 20_000, "Bearer " * 20_000],
+    )
+    def test_pathological_input_is_fast(self, text):
+        """No catastrophic backtracking: bounded input, linear patterns."""
+        import time
+
+        start = time.perf_counter()
+        self.ops.sanitize_error_message(text)
+        assert time.perf_counter() - start < 1.0
+
     def test_long_message_truncated(self):
         """Test long messages are truncated."""
         msg = "x" * 2000
@@ -392,6 +569,47 @@ class TestCreateTraigentSessionViaApi:
         ):
             with pytest.raises(AuthenticationError):
                 await self.ops.create_traigent_session_via_api(request)
+
+
+class TestQuotaRefusalSessionCreate:
+    """#2550: a quota refusal must not trigger the legacy retry or be re-wrapped."""
+
+    @pytest.mark.asyncio
+    async def test_quota_refusal_skips_legacy_retry_and_keeps_detail(self, monkeypatch):
+        from traigent.cloud.client import CloudServiceError
+        from traigent.cloud.session_types import SessionCreationFailureDetail
+
+        monkeypatch.setenv("TRAIGENT_SESSION_CONTRACT", "auto")
+        client = Mock()
+        client.auth_manager.augment_headers = AsyncMock(return_value={})
+        ops = ApiOperations(client)
+        request = SessionCreationRequest(
+            function_name="test_func",
+            configuration_space={"param": [1, 2, 3]},
+            objectives=["maximize"],
+            max_trials=10,
+        )
+        quota_exc = CloudServiceError("Session creation failed: HTTP 429")
+        quota_exc.session_creation_failure = (
+            SessionCreationFailureDetail.from_http_response(
+                429, '{"error_code": "quota_exceeded"}'
+            )
+        )
+        post = AsyncMock(side_effect=quota_exc)
+        with (
+            patch(
+                "traigent.cloud.api_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch("traigent.cloud.api_operations.AIOHTTP_AVAILABLE", True),
+            patch.object(ops, "_post_session_creation", new=post),
+            patch.object(ops, "_is_governed_request", return_value=False),
+        ):
+            with pytest.raises(CloudServiceError) as info:
+                await ops.create_traigent_session_via_api(request)
+
+        assert info.value is quota_exc
+        assert post.await_count == 1  # no legacy-contract retry
 
 
 class TestResolveMaxTrials:
@@ -1211,6 +1429,77 @@ class TestParseSessionResponse:
         assert session_id == "session_456"
         assert exp_id is None
         assert run_id is None
+
+
+# TraigentBackend #3735 / TraigentSchema #536 (session_create_response_schema.json):
+# the documented POST /api/v1/sessions shapes, hard-coded.
+_REAL_META = {
+    "experiment_id": "e-1",
+    "experiment_run_id": "r-1",
+    "total_configurations": 4,
+    "agent_id": None,
+}
+REAL_SCOPED_RESPONSE = {
+    "session_id": "s-1",
+    "status": "created",
+    "metadata": dict(_REAL_META),
+    "project_id": "p-1",
+    "tenant_id": "t-1",
+}
+REAL_LEGACY_SCOPED_RESPONSE = {
+    "success": True,
+    "message": "ok",
+    "session_id": "s-1",
+    "metadata": dict(_REAL_META),
+    "data": {"session_id": "s-1", "metadata": dict(_REAL_META)},
+    "project_id": "p-1",
+    "tenant_id": "t-1",
+}
+REAL_SCOPELESS_RESPONSE = {
+    "session_id": "s-1",
+    "status": "created",
+    "metadata": dict(_REAL_META),
+}
+
+
+class TestParseSessionResponseRealBackendShape:
+    """Pin ``_parse_session_response`` against the real backend response."""
+
+    @staticmethod
+    async def _parse(payload):
+        response = AsyncMock()
+        response.json = AsyncMock(return_value=payload)
+        return await ApiOperations(Mock())._parse_session_response(response)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "payload", [REAL_SCOPED_RESPONSE, REAL_LEGACY_SCOPED_RESPONSE]
+    )
+    async def test_top_level_scope_is_read(self, payload):
+        """Contract backend #3735 / schema #536: top-level project_id/tenant_id
+        (typed and legacy envelopes) land on the parsed result."""
+        result = await self._parse(payload)
+        assert tuple(result)[:3] == ("s-1", "e-1", "r-1")
+        assert result.project_id == "p-1"
+        assert result.tenant_id == "t-1"
+
+    @pytest.mark.asyncio
+    async def test_scopeless_response_leaves_scope_none(self):
+        """Contract backend #3735 / schema #536: omitted keys -> None."""
+        result = await self._parse(REAL_SCOPELESS_RESPONSE)
+        assert result.project_id is None
+        assert result.tenant_id is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("empty", ["", None, "  "])
+    async def test_empty_or_null_scope_is_none(self, empty):
+        """Contract backend #3735 / schema #536: empty/null ids normalize to
+        None so they can never reach the portal URL."""
+        result = await self._parse(
+            dict(REAL_SCOPED_RESPONSE, project_id=empty, tenant_id=empty)
+        )
+        assert result.project_id is None
+        assert result.tenant_id is None
 
 
 class TestUpdateConfigRunStatusSuccess:

@@ -10,7 +10,6 @@ are reserved for a future cloud release.
 from __future__ import annotations
 
 import copy
-
 import hashlib
 import unicodedata
 from collections.abc import Mapping, Sequence

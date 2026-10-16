@@ -14,16 +14,15 @@ sync fix).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 import requests
 
-from traigent.cloud.sync_manager import (
-    SyncManager,
-    build_experiment_url,
-)
+from traigent.cloud.sync_manager import SyncManager, build_experiment_url
 from traigent.config.types import TraigentConfig
 from traigent.storage.local_storage import OptimizationSession, TrialResult
 from traigent.utils.exceptions import TraigentStorageError
@@ -124,6 +123,56 @@ def test_build_experiment_url_omits_empty_context_query() -> None:
         )
         == "https://portal.traigent.ai/experiments/view/exp_123"
     )
+
+
+# Backend TraigentBackend #3735 / TraigentSchema #536 (session_create_response_schema.json):
+# POST /api/v1/sessions returns top-level optional non-empty ``project_id`` /
+# ``tenant_id`` (omitted, never null). Hard-coded from the documented example.
+_META = {
+    "experiment_id": "e-1",
+    "experiment_run_id": "r-1",
+    "total_configurations": 4,
+    "agent_id": None,
+}
+SCOPED_CREATE_PAYLOAD: dict[str, Any] = {
+    "session_id": "s-1",
+    "status": "created",
+    "metadata": dict(_META),
+    "project_id": "p-1",
+    "tenant_id": "t-1",
+}
+LEGACY_SCOPED_CREATE_PAYLOAD: dict[str, Any] = {
+    "success": True,
+    "message": "ok",
+    "session_id": "s-1",
+    "metadata": dict(_META),
+    "data": {"session_id": "s-1", "metadata": dict(_META)},
+    "project_id": "p-1",
+    "tenant_id": "t-1",
+}
+SCOPELESS_CREATE_PAYLOAD: dict[str, Any] = {
+    "session_id": "s-1",
+    "status": "created",
+    "metadata": dict(_META),
+}
+PORTAL = "https://portal.traigent.ai"
+SCOPED_URL = f"{PORTAL}/experiments/view/e-1?run_id=r-1&project_id=p-1&tenant_id=t-1"
+BARE_URL = f"{PORTAL}/experiments/view/e-1?run_id=r-1"
+
+
+def _session_router(create_payload: dict[str, Any]):
+    """POST side_effect: /sessions -> create_payload, then slots/results/finalize."""
+
+    def _router(url, *args, **kwargs):
+        if url.endswith("/sessions"):
+            return backend_response(payload=create_payload)
+        if url.endswith("/next-trial"):
+            return backend_response(payload={"suggestion": {"trial_id": "bt"}})
+        if url.endswith("/finalize"):
+            return backend_response(status_code=200, payload={"status": "finalized"})
+        return backend_response(payload={"id": "result"})
+
+    return _router
 
 
 class TestSyncManager:
@@ -571,6 +620,170 @@ class TestSyncManager:
         )
         assert result["configuration_runs"] == []
 
+    @staticmethod
+    def _session_with(
+        function_name: str = "traigent-runs/wrapper.py_wrapper_agent",
+        optimization_config: dict | None = None,
+        metadata: dict | None = None,
+    ) -> OptimizationSession:
+        return OptimizationSession(
+            session_id="meta_123",
+            function_name=function_name,
+            created_at="2025-01-01T00:00:00Z",
+            updated_at="2025-01-01T00:00:00Z",
+            status="completed",
+            total_trials=0,
+            completed_trials=0,
+            trials=[],
+            optimization_config=optimization_config or {},
+            metadata=metadata or {},
+        )
+
+    def test_convert_reads_dataset_size_and_evaluation_set_from_metadata(
+        self, sync_manager: SyncManager
+    ) -> None:
+        """Offline sessions persist these under metadata, not optimization_config."""
+        session = self._session_with(
+            metadata={"dataset_size": 18, "evaluation_set": "tuning"}
+        )
+
+        session_create = sync_manager.convert_session_to_traigent_format(session)[
+            "session_create"
+        ]
+
+        assert session_create["dataset_metadata"]["size"] == 18
+        assert session_create["metadata"]["evaluation_set"] == "tuning"
+
+    def test_convert_optimization_config_wins_over_metadata(
+        self, sync_manager: SyncManager
+    ) -> None:
+        session = self._session_with(
+            optimization_config={"dataset_size": 7, "evaluation_set": "holdout"},
+            metadata={"dataset_size": 18, "evaluation_set": "tuning"},
+        )
+
+        session_create = sync_manager.convert_session_to_traigent_format(session)[
+            "session_create"
+        ]
+
+        assert session_create["dataset_metadata"]["size"] == 7
+        assert session_create["metadata"]["evaluation_set"] == "holdout"
+
+    def test_convert_ignores_wrong_typed_metadata(
+        self, sync_manager: SyncManager
+    ) -> None:
+        session = self._session_with(
+            metadata={
+                "dataset_size": "18",
+                "evaluation_set": 5,
+                "function_display_name": ["x"],
+            }
+        )
+
+        session_create = sync_manager.convert_session_to_traigent_format(session)[
+            "session_create"
+        ]
+
+        assert session_create["dataset_metadata"]["size"] == 1
+        assert session_create["metadata"]["evaluation_set"] == "default"
+        assert session_create["function_name"] == session.function_name
+        assert "function_display_name" not in session_create["metadata"]
+
+    def test_convert_sends_stored_portal_name_not_bare_display_name(
+        self, sync_manager: SyncManager
+    ) -> None:
+        """function_name is the live path's portal name (agent identity)."""
+        session = self._session_with(
+            metadata={
+                "function_display_name": "run",
+                "portal_name": "opt:accuracy · model (abc12345)",
+            }
+        )
+
+        session_create = sync_manager.convert_session_to_traigent_format(session)[
+            "session_create"
+        ]
+
+        assert session_create["function_name"] == "opt:accuracy · model (abc12345)"
+        assert (
+            session_create["metadata"]["function_name"]
+            == "traigent-runs/wrapper.py_wrapper_agent"
+        )
+        assert session_create["metadata"]["function_display_name"] == "run"
+        assert "agent_key" not in session_create
+
+    def test_same_display_name_different_slug_gives_distinct_function_name(
+        self, sync_manager: SyncManager
+    ) -> None:
+        a = self._session_with(
+            metadata={"function_display_name": "run", "portal_name": "run (aaaa1111)"}
+        )
+        b = self._session_with(
+            metadata={"function_display_name": "run", "portal_name": "run (bbbb2222)"}
+        )
+
+        name_a = sync_manager.convert_session_to_traigent_format(a)["session_create"][
+            "function_name"
+        ]
+        name_b = sync_manager.convert_session_to_traigent_format(b)["session_create"][
+            "function_name"
+        ]
+
+        assert name_a != name_b
+
+    def test_old_file_without_portal_name_sends_exactly_session_function_name(
+        self, sync_manager: SyncManager
+    ) -> None:
+        session = self._session_with(metadata={"function_display_name": "run"})
+
+        session_create = sync_manager.convert_session_to_traigent_format(session)[
+            "session_create"
+        ]
+
+        assert session_create["function_name"] == session.function_name
+
+    def test_blank_or_wrong_typed_portal_name_falls_back(
+        self, sync_manager: SyncManager
+    ) -> None:
+        for bad in ("  ", 5, None, ["x"]):
+            session = self._session_with(metadata={"portal_name": bad})
+            session_create = sync_manager.convert_session_to_traigent_format(session)[
+                "session_create"
+            ]
+            assert session_create["function_name"] == session.function_name
+
+    def test_declared_agent_key_sent_top_level_only_when_valid(
+        self, sync_manager: SyncManager
+    ) -> None:
+        with_key = self._session_with(metadata={"agent_key": "  my-agent  "})
+        assert (
+            sync_manager.convert_session_to_traigent_format(with_key)["session_create"][
+                "agent_key"
+            ]
+            == "my-agent"
+        )
+        for bad in ("", "   ", 7, None):
+            session = self._session_with(metadata={"agent_key": bad})
+            assert (
+                "agent_key"
+                not in sync_manager.convert_session_to_traigent_format(session)[
+                    "session_create"
+                ]
+            )
+
+    def test_convert_keeps_derived_name_without_display_name(
+        self, sync_manager: SyncManager
+    ) -> None:
+        session = self._session_with()
+
+        session_create = sync_manager.convert_session_to_traigent_format(session)[
+            "session_create"
+        ]
+
+        assert session_create["function_name"] == session.function_name
+        assert session_create["metadata"]["function_name"] == session.function_name
+        assert "function_display_name" not in session_create["metadata"]
+
     def test_convert_session_to_traigent_format_with_cost(
         self, sync_manager: SyncManager
     ) -> None:
@@ -856,6 +1069,127 @@ class TestSyncManager:
         sync_manager._session.get.assert_not_called()
         sync_manager._session.put.assert_not_called()
 
+    @staticmethod
+    def _session_with_example_measures(measures: Any) -> OptimizationSession:
+        metadata: dict[str, Any] = {"latency": 120}
+        if measures is not None:
+            metadata["measures"] = measures
+        return OptimizationSession(
+            session_id="test_session_123",
+            function_name="test_function",
+            created_at="2025-01-01T12:00:00Z",
+            updated_at="2025-01-01T12:10:00Z",
+            status="completed",
+            total_trials=1,
+            completed_trials=1,
+            best_config={"model": "gpt-4"},
+            best_score=0.9,
+            baseline_score=0.5,
+            trials=[
+                TrialResult(
+                    trial_id=1,
+                    config={"model": "gpt-4"},
+                    score=0.9,
+                    timestamp="2025-01-01T12:00:00Z",
+                    metadata=metadata,
+                    error=None,
+                )
+            ],
+        )
+
+    def _sync_and_get_result_body(
+        self, sync_manager: SyncManager, session: OptimizationSession
+    ) -> dict[str, Any]:
+        sync_manager.storage.load_session.return_value = session
+        sync_manager._session.post.side_effect = [
+            create_response(),
+            backend_response(payload={"suggestion": {"trial_id": "bt-1"}}),
+            backend_response(payload={"id": "result-1"}),
+            backend_response(status_code=200, payload={"status": "finalized"}),
+        ]
+        result = sync_manager.sync_session_to_cloud("test_session_123")
+        assert result["status"] == "success"
+        return sync_manager._session.post.call_args_list[2].kwargs["json"]
+
+    def test_sync_uploads_content_free_per_example_measures(
+        self, sync_manager: SyncManager
+    ) -> None:
+        """Per-example measures upload with index ids and numeric-only metrics."""
+        session = self._session_with_example_measures(
+            [
+                {
+                    "example_id": "Alice_has_diabetes",
+                    "metrics": {
+                        "accuracy": 1.0,
+                        "tokens": 42,
+                        "cost": 0.001,
+                        "label": "Alice_has_diabetes",
+                        "flag": True,
+                        "bad": float("nan"),
+                        "nested": {"a": 1},
+                        "bad key!": 3,
+                    },
+                    "input": "Alice has diabetes",
+                    "output": "secret answer",
+                },
+                "not-a-dict",
+                {"example_id": "x", "metrics": "nope"},
+                {"example_id": "Bob_secret", "metrics": {"accuracy": 0.0}},
+            ]
+        )
+
+        body = self._sync_and_get_result_body(sync_manager, session)
+
+        assert body["measures"] == [
+            {
+                "example_id": "example_0",
+                "metrics": {"accuracy": 1.0, "tokens": 42, "cost": 0.001},
+            },
+            {"example_id": "example_3", "metrics": {"accuracy": 0.0}},
+        ]
+        # Flat aggregate fields are unchanged.
+        assert set(body) == {"trial_id", "config", "status", "metrics", "measures"}
+        assert "measures" not in body["metrics"]
+
+    def test_sync_per_example_measures_canary_no_customer_content(
+        self, sync_manager: SyncManager
+    ) -> None:
+        """Customer ids and string values never reach the serialized payload."""
+        session = self._session_with_example_measures(
+            [
+                {
+                    "example_id": "Alice_has_diabetes",
+                    "metrics": {
+                        "accuracy": 1.0,
+                        "verdict": "Alice_has_diabetes",
+                        "note": "patient notes SECRET_CANARY",
+                    },
+                    "output": "SECRET_CANARY",
+                }
+            ]
+        )
+
+        body = self._sync_and_get_result_body(sync_manager, session)
+
+        serialized = json.dumps(body)
+        assert "Alice_has_diabetes" not in serialized
+        assert "SECRET_CANARY" not in serialized
+        assert "patient" not in serialized
+        assert body["measures"] == [
+            {"example_id": "example_0", "metrics": {"accuracy": 1.0}}
+        ]
+
+    @pytest.mark.parametrize("absent", [None, [], "not-a-list", [{"metrics": 1}]])
+    def test_sync_without_usable_example_measures_payload_unchanged(
+        self, sync_manager: SyncManager, absent: Any
+    ) -> None:
+        """No usable per-example list => payload identical to the legacy shape."""
+        body = self._sync_and_get_result_body(
+            sync_manager, self._session_with_example_measures(absent)
+        )
+
+        assert set(body) == {"trial_id", "config", "status", "metrics"}
+
     def test_sync_session_to_cloud_create_failure_is_error(
         self, sync_manager: SyncManager, sample_session: OptimizationSession
     ) -> None:
@@ -989,7 +1323,7 @@ class TestSyncManager:
 
         result = sync_manager._sync_create_session({})
 
-        assert result == {"success": False, "error": "HTTP 500: boom"}
+        assert result == {"success": False, "error": "HTTP 500 | unknown"}
 
     def test_sync_create_session_missing_session_id(
         self, sync_manager: SyncManager
@@ -1113,7 +1447,7 @@ class TestSyncManager:
 
         assert result["success"] is False
         assert result["synced"] == 0
-        assert result["errors"] == ["trial 1: HTTP 500: bad"]
+        assert result["errors"] == ["trial 1: HTTP 500 | unknown"]
 
     def test_sync_session_results_next_trial_failure(
         self, sync_manager: SyncManager
@@ -1168,7 +1502,7 @@ class TestSyncManager:
 
         result = sync_manager._sync_finalize_session("sess-1", "run-1")
 
-        assert result == {"success": False, "error": "HTTP 409: conflict"}
+        assert result == {"success": False, "error": "HTTP 409 | unknown"}
 
     # Resume idempotency (no duplicate result rows on retry)
 
@@ -1689,3 +2023,148 @@ class TestSyncManager:
         # The base_url should have trailing slash removed
         assert not sync_manager.base_url.endswith("/")
         assert "http" in sync_manager.base_url
+
+    # ---- TRAIG-12: SDK portal links carry project_id/tenant_id ----------------
+
+    def _sync(self, sync_manager, session, payload, **kwargs):
+        sync_manager.storage.load_session.return_value = session
+        self._wire_persisting_sync_state(sync_manager, session)
+        sync_manager._session.post.side_effect = _session_router(payload)
+        with patch(
+            "traigent.cloud.sync_manager.BackendConfig.get_cloud_web_url",
+            return_value=f"{PORTAL}/",
+        ):
+            return sync_manager.sync_session_to_cloud("test_session_123", **kwargs)
+
+    @pytest.mark.parametrize(
+        "payload",
+        [SCOPED_CREATE_PAYLOAD, LEGACY_SCOPED_CREATE_PAYLOAD],
+        ids=["typed", "legacy"],
+    )
+    def test_offline_sync_url_carries_scope_from_real_create_response(
+        self, sync_manager, sample_session, payload
+    ) -> None:
+        """Contract backend #3735 / schema #536: top-level project/tenant ids
+        in the real create response reach the offline-sync cloud_url."""
+        result = self._sync(sync_manager, sample_session, payload)
+
+        assert result["status"] == "success"
+        assert result["project_id"] == "p-1"
+        assert result["tenant_id"] == "t-1"
+        assert result["cloud_url"] == SCOPED_URL
+        assert sample_session.sync_state["project_id"] == "p-1"
+        assert sample_session.sync_state["tenant_id"] == "t-1"
+
+    def test_offline_sync_scopeless_response_gives_bare_url(
+        self, sync_manager, sample_session
+    ) -> None:
+        """Contract backend #3735 / schema #536: keys omitted -> bare URL."""
+        result = self._sync(sync_manager, sample_session, SCOPELESS_CREATE_PAYLOAD)
+
+        assert result["status"] == "success"
+        assert result["project_id"] is None
+        assert result["tenant_id"] is None
+        assert result["cloud_url"] == BARE_URL
+
+    @pytest.mark.parametrize("empty", ["", None, "   "])
+    def test_offline_sync_empty_or_null_scope_not_added_to_url(
+        self, sync_manager, sample_session, empty
+    ) -> None:
+        """Contract backend #3735 / schema #536: empty or null ids are never
+        emitted by the backend; if one arrives it must not enter the URL."""
+        payload = dict(SCOPED_CREATE_PAYLOAD, project_id=empty, tenant_id=empty)
+        result = self._sync(sync_manager, sample_session, payload)
+
+        assert result["cloud_url"] == BARE_URL
+        assert "project_id" not in result["cloud_url"]
+        assert "tenant_id" not in result["cloud_url"]
+        assert result["project_id"] is None
+
+    def test_offline_sync_second_sync_keeps_scope_and_url(
+        self, sync_manager, sample_session
+    ) -> None:
+        """Contract backend #3735: an unchanged synced session is a no-op that
+        returns the persisted scoped cloud_url and does not clobber the scope."""
+        first = self._sync(sync_manager, sample_session, SCOPED_CREATE_PAYLOAD)
+        assert first["cloud_url"] == SCOPED_URL
+        sync_manager._session.post.reset_mock()
+
+        second = self._sync(sync_manager, sample_session, SCOPELESS_CREATE_PAYLOAD)
+
+        assert second["status"] == "already_synced"
+        assert second["cloud_url"] == SCOPED_URL
+        sync_manager._session.post.assert_not_called()
+        assert sample_session.sync_state["project_id"] == "p-1"
+        assert sample_session.sync_state["tenant_id"] == "t-1"
+
+    def test_offline_sync_partial_resume_reuses_scope_from_prior_state(
+        self, sync_manager, sample_session
+    ) -> None:
+        """Contract backend #3735: a partial retry reuses prior_state scope
+        (no re-create, so nothing else to read it from) and keeps the URL."""
+        payload_hash = sync_manager._compute_payload_hash(
+            sync_manager.convert_session_to_traigent_format(sample_session)
+        )
+        sample_session.sync_state = {
+            "status": "partial",
+            "payload_hash": payload_hash,
+            "cloud_session_id": "s-1",
+            "cloud_experiment_id": "e-1",
+            "cloud_experiment_run_id": "r-1",
+            "project_id": "p-1",
+            "tenant_id": "t-1",
+            "attempts": 1,
+        }
+
+        result = self._sync(sync_manager, sample_session, SCOPELESS_CREATE_PAYLOAD)
+
+        assert result["status"] == "success"
+        assert result["cloud_url"] == SCOPED_URL
+        urls = [c.args[0] for c in sync_manager._session.post.call_args_list]
+        assert f"{sync_manager.base_url}/sessions" not in urls
+        assert sample_session.sync_state["project_id"] == "p-1"
+
+    def test_offline_sync_failed_create_retry_does_not_keep_stale_scope(
+        self, sync_manager, sample_session
+    ) -> None:
+        """Contract backend #3735: when the prior attempt never created a session
+        (no cloud_session_id) a retry re-creates and the NEW response decides the
+        scope; a stale prior project/tenant must not survive a scopeless reply."""
+        payload_hash = sync_manager._compute_payload_hash(
+            sync_manager.convert_session_to_traigent_format(sample_session)
+        )
+        sample_session.sync_state = {
+            "status": "failed",
+            "payload_hash": payload_hash,
+            "project_id": "stale-p",
+            "tenant_id": "stale-t",
+            "attempts": 1,
+        }
+
+        result = self._sync(sync_manager, sample_session, SCOPELESS_CREATE_PAYLOAD)
+
+        assert result["cloud_url"] == BARE_URL
+        assert result["project_id"] is None
+        assert sample_session.sync_state["project_id"] is None
+        assert sample_session.sync_state["tenant_id"] is None
+
+    def test_offline_sync_force_resync_scopeless_then_scoped_and_back(
+        self, sync_manager, sample_session
+    ) -> None:
+        """Contract backend #3735: --force starts a fresh session; the scope
+        follows each create response, scopeless -> scoped -> scopeless, with no
+        stale empty or stale old scope carried between syncs."""
+        first = self._sync(sync_manager, sample_session, SCOPELESS_CREATE_PAYLOAD)
+        assert first["cloud_url"] == BARE_URL
+
+        second = self._sync(
+            sync_manager, sample_session, SCOPED_CREATE_PAYLOAD, force=True
+        )
+        assert second["cloud_url"] == SCOPED_URL
+        assert sample_session.sync_state["project_id"] == "p-1"
+
+        third = self._sync(
+            sync_manager, sample_session, SCOPELESS_CREATE_PAYLOAD, force=True
+        )
+        assert third["cloud_url"] == BARE_URL
+        assert sample_session.sync_state["project_id"] is None

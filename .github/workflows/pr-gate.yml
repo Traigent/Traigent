@@ -250,7 +250,7 @@ jobs:
         with:
           persist-credentials: false
           repository: Traigent/TraigentSchema
-          ref: df06e6dcb926620e69b542314fe0b35365247c49
+          ref: 91c9e5bb74479607677554b840e60ad78838c433
           path: TraigentSchema
           # No `token:` here on purpose. Traigent/TraigentSchema is PUBLIC, so
           # this clone needs no credential -- verified with an anonymous

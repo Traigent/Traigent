@@ -28,8 +28,8 @@ from typing import Any, Literal
 
 import click
 
-from traigent.config.provider_support import PROVIDER_SPECS
 from traigent.utils.diagnostics import (
+    PROVIDER_CREDENTIAL_MARKERS,
     DiagnosticReport,
     TraigentDiagnostics,
     describe_exception,
@@ -66,37 +66,11 @@ _STATUS_STYLE = {
 # Same prefixes `traigent auth whoami` accepts (traigent/cli/auth_commands.py).
 _TRAIGENT_KEY_PREFIXES = ("tg_", "uk_", "sk_", "ak_", "tk_")
 
-# Vendor API-key environment variables doctor checks for presence. Derived
-# from the SDK's canonical provider-support table
-# (`traigent.config.provider_support.PROVIDER_SPECS`, #1568) rather than a
-# hand-maintained literal, so this list cannot silently drift from what the
-# SDK actually key-manages -- a hardcoded 6-vendor list previously told a
-# HuggingFace user "no vendor API key found" even with HF_TOKEN set (#1778
-# "vendor completeness").
-_VENDOR_KEY_ENV_VARS: tuple[str, ...] = tuple(
-    dict.fromkeys(key for spec in PROVIDER_SPECS for key in spec.env_keys)
-)
-
-# Providers the canonical table marks "mapping_only" (recognized by the SDK,
-# but not key-managed through a single validated env var -- see
-# `ProviderSpec.env_keys` docs) still have a real, documented credential
-# convention doctor can check for presence: Bedrock authenticates through the
-# AWS credential chain and Azure OpenAI through an endpoint+key pair. Also
-# included: OpenRouter, which #1778 names explicitly but which the SDK
-# reaches only as an OpenAI-compatible client (see
-# `traigent/examples/providers/openrouter.py`), not as a provider_support.py
-# entry -- so it has no `ProviderSpec` to derive from at all. Presence-only,
-# same as every other check here: doctor never validates these credentials.
-_ADDITIONAL_VENDOR_CREDENTIAL_MARKERS: tuple[str, ...] = (
-    "AWS_ACCESS_KEY_ID",  # Bedrock
-    "AWS_PROFILE",  # Bedrock (profile-based auth, no static key in env)
-    "AZURE_OPENAI_API_KEY",  # Azure OpenAI
-    "OPENROUTER_API_KEY",  # OpenRouter
-)
-
-_ALL_VENDOR_KEY_MARKERS: tuple[str, ...] = (
-    _VENDOR_KEY_ENV_VARS + _ADDITIONAL_VENDOR_CREDENTIAL_MARKERS
-)
+# Vendor credential env vars doctor checks for presence: the canonical
+# provider-support table (#1568, so a HuggingFace user's HF_TOKEN counts) plus
+# the Bedrock/Azure/OpenRouter conventions. Shared with the diagnostics
+# Environment row so the Auth and Environment rows cannot disagree (#2504).
+_ALL_VENDOR_KEY_MARKERS: tuple[str, ...] = PROVIDER_CREDENTIAL_MARKERS
 
 
 @dataclass
@@ -461,6 +435,7 @@ def _run_scorer_checks(report: DoctorReport, scorer_spec: str | None) -> None:
 
 def _render_table(report: DoctorReport) -> None:
     from rich.console import Console
+    from rich.markup import escape
     from rich.table import Table
 
     console = Console()
@@ -471,7 +446,14 @@ def _render_table(report: DoctorReport) -> None:
 
     for check in report.checks:
         color, label = _STATUS_STYLE[check.status]
-        table.add_row(check.category, f"[{color}]{label}[/{color}]", check.message)
+        # Messages are plain text, not Rich markup: unescaped, the Chroma
+        # notice's "traigent[chroma]" rendered as "traigent" -- telling a user
+        # who had just installed traigent not to install it (#2504).
+        table.add_row(
+            escape(check.category),
+            f"[{color}]{label}[/{color}]",
+            escape(check.message),
+        )
 
     console.print("\n[bold blue]Traigent Doctor[/bold blue]\n")
     console.print(table)
@@ -479,7 +461,7 @@ def _render_table(report: DoctorReport) -> None:
     if report.recommendations:
         console.print("\n[bold]Recommendations:[/bold]")
         for rec in report.recommendations:
-            console.print(f"  • {rec}")
+            console.print(f"  • {escape(rec)}")
 
     summary = report.to_dict()["summary"]
     console.print(

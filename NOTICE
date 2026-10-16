@@ -18,6 +18,14 @@ This project depends on the following notable third-party libraries
 - LangChain (MIT License) - https://github.com/langchain-ai/langchain
 - OpenAI Python SDK (MIT License) - https://github.com/openai/openai-python
 - Anthropic Python SDK (MIT License) - https://github.com/anthropics/anthropic-sdk-python
+- OpenTelemetry Python API/SDK/proto/OTLP encoders (Apache License 2.0) -
+  https://github.com/open-telemetry/opentelemetry-python (extra: observability)
+- OpenInference instrumentors (Apache License 2.0; optional extras
+  observability-openai/-anthropic/-langchain/-bedrock) -
+  https://github.com/Arize-ai/openinference
+- protobuf (BSD-3-Clause), wrapt (BSD-2-Clause), dacite (MIT) - transitive
+  dependencies of the observability extras.
+  Versions and verification: docs/observability/otel-provenance.md
 
 For full license texts of dependencies, see their respective repositories.
 

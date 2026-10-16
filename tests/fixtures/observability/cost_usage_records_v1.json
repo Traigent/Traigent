@@ -1,0 +1,307 @@
+{
+  "_about": "Shared cost/usage parsing fixtures (contract: TraigentSchema cost-usage-fields @ 3a03958b9). Any SDK parsing observation, trace or session records must reproduce `expected` from `payload`: null means unknown, 0 means a reported zero, and completeness/provenance fields survive. Keep byte-identical across SDKs.",
+  "observations": [
+    {
+      "id": "usage_not_reported_cost_unknown",
+      "description": "null usage and null cost stay null (unknown), never zero",
+      "payload": {
+        "id": "o1",
+        "trace_id": "t1",
+        "type": "generation",
+        "name": "chat",
+        "status": "completed",
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "cache_read_tokens": null,
+        "cache_creation_tokens": null,
+        "reasoning_tokens": null,
+        "unreported_usage_fields": [
+          "cache_read_tokens",
+          "reasoning_tokens"
+        ],
+        "cost_usd": null,
+        "cost_status": "unpriced",
+        "cost_source": "none",
+        "cost_usd_declared": null,
+        "cost_usd_computed": null,
+        "priced_cost_usd": null,
+        "priced_model": null,
+        "price_catalogue_version": null
+      },
+      "expected": {
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "cache_read_tokens": null,
+        "cache_creation_tokens": null,
+        "reasoning_tokens": null,
+        "unreported_usage_fields": [
+          "cache_read_tokens",
+          "reasoning_tokens"
+        ],
+        "cost_usd": null,
+        "cost_status": "unpriced",
+        "cost_source": "none",
+        "cost_usd_declared": null,
+        "cost_usd_computed": null,
+        "priced_cost_usd": null,
+        "priced_model": null,
+        "price_catalogue_version": null,
+        "cost_mismatch": null
+      }
+    },
+    {
+      "id": "reported_zero_is_not_null",
+      "description": "a REPORTED zero (usage and cost) stays 0, distinct from null",
+      "payload": {
+        "id": "o2",
+        "trace_id": "t1",
+        "type": "generation",
+        "name": "chat",
+        "status": "completed",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_creation_tokens_by_ttl": {
+          "ephemeral_5m": 0,
+          "ephemeral_1h": null
+        },
+        "reasoning_tokens": 0,
+        "unreported_usage_fields": [],
+        "cost_usd": 0,
+        "cost_status": "priced",
+        "cost_source": "computed",
+        "cost_usd_computed": 0,
+        "priced_cost_usd": 0,
+        "priced_model": "m-1",
+        "price_catalogue_version": "2026-09-01"
+      },
+      "expected": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_creation_tokens_by_ttl": {
+          "ephemeral_5m": 0,
+          "ephemeral_1h": null
+        },
+        "reasoning_tokens": 0,
+        "unreported_usage_fields": [],
+        "cost_usd": 0.0,
+        "cost_status": "priced",
+        "cost_source": "computed",
+        "cost_usd_declared": null,
+        "cost_usd_computed": 0.0,
+        "priced_cost_usd": 0.0,
+        "priced_model": "m-1",
+        "price_catalogue_version": "2026-09-01",
+        "cost_mismatch": null
+      }
+    },
+    {
+      "id": "partial_cost_lower_bound",
+      "description": "partial pricing: total unknown, priced portion is a lower bound",
+      "payload": {
+        "id": "o3",
+        "trace_id": "t1",
+        "type": "generation",
+        "name": "chat",
+        "status": "completed",
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "cache_read_tokens": 40,
+        "reasoning_tokens": 5,
+        "cost_usd": null,
+        "cost_status": "partial",
+        "cost_source": "none",
+        "cost_usd_computed": null,
+        "priced_cost_usd": 0.0021,
+        "priced_model": "m-1",
+        "price_catalogue_version": "2026-09-01"
+      },
+      "expected": {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "cache_read_tokens": 40,
+        "reasoning_tokens": 5,
+        "cost_usd": null,
+        "cost_status": "partial",
+        "cost_source": "none",
+        "cost_usd_computed": null,
+        "priced_cost_usd": 0.0021,
+        "priced_model": "m-1",
+        "price_catalogue_version": "2026-09-01",
+        "cost_usd_declared": null,
+        "cost_mismatch": null
+      }
+    },
+    {
+      "id": "declared_cost_provenance_and_mismatch_false",
+      "description": "caller-declared cost, computed cost present and agreeing: provenance and cost_mismatch=false survive",
+      "payload": {
+        "id": "o4",
+        "trace_id": "t1",
+        "type": "generation",
+        "name": "chat",
+        "status": "completed",
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "cost_usd": 0.003,
+        "cost_status": "priced",
+        "cost_source": "declared",
+        "cost_usd_declared": 0.003,
+        "cost_usd_computed": 0.003,
+        "priced_cost_usd": 0.003,
+        "cost_mismatch": false
+      },
+      "expected": {
+        "cost_usd": 0.003,
+        "cost_status": "priced",
+        "cost_source": "declared",
+        "cost_usd_declared": 0.003,
+        "cost_usd_computed": 0.003,
+        "priced_cost_usd": 0.003,
+        "cost_mismatch": false
+      }
+    },
+    {
+      "id": "declared_cost_mismatch_true_partial_computation",
+      "description": "declared cost displayed while the server computation is only partial: priced_cost_usd differs from cost_usd",
+      "payload": {
+        "id": "o5",
+        "trace_id": "t1",
+        "type": "generation",
+        "name": "chat",
+        "status": "completed",
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "cost_usd": 0.01,
+        "cost_status": "priced",
+        "cost_source": "declared",
+        "cost_usd_declared": 0.01,
+        "cost_usd_computed": null,
+        "priced_cost_usd": 0.002,
+        "cost_mismatch": true
+      },
+      "expected": {
+        "cost_usd": 0.01,
+        "cost_status": "priced",
+        "cost_source": "declared",
+        "cost_usd_declared": 0.01,
+        "cost_usd_computed": null,
+        "priced_cost_usd": 0.002,
+        "cost_mismatch": true
+      }
+    },
+    {
+      "id": "legacy_row_without_cost_fields",
+      "description": "a legacy row carries none of the new fields: every one is None (not a fabricated default)",
+      "payload": {
+        "id": "o6",
+        "trace_id": "t1",
+        "type": "generation",
+        "name": "chat",
+        "status": "completed",
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "cost_usd": 0.5
+      },
+      "expected": {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "cost_usd": 0.5,
+        "cache_read_tokens": null,
+        "cache_creation_tokens": null,
+        "cache_creation_tokens_by_ttl": null,
+        "reasoning_tokens": null,
+        "unreported_usage_fields": null,
+        "cost_status": null,
+        "cost_source": null,
+        "cost_usd_declared": null,
+        "cost_usd_computed": null,
+        "priced_cost_usd": null,
+        "cost_mismatch": null,
+        "priced_model": null,
+        "price_catalogue_version": null
+      }
+    }
+  ],
+  "rollups": [
+    {
+      "id": "rollup_priced",
+      "payload": {
+        "total_cost_usd": 0.5,
+        "cost_status": "priced",
+        "priced_cost_usd": 0.5,
+        "unpriced_observation_count": 0
+      },
+      "expected": {
+        "total_cost_usd": 0.5,
+        "cost_status": "priced",
+        "priced_cost_usd": 0.5,
+        "unpriced_observation_count": 0
+      }
+    },
+    {
+      "id": "rollup_partial_lower_bound",
+      "payload": {
+        "total_cost_usd": null,
+        "cost_status": "partial",
+        "priced_cost_usd": 0.25,
+        "unpriced_observation_count": 2
+      },
+      "expected": {
+        "total_cost_usd": null,
+        "cost_status": "partial",
+        "priced_cost_usd": 0.25,
+        "unpriced_observation_count": 2
+      }
+    },
+    {
+      "id": "rollup_unpriced_unknown_not_zero",
+      "payload": {
+        "total_cost_usd": null,
+        "cost_status": "unpriced",
+        "priced_cost_usd": null,
+        "unpriced_observation_count": 3
+      },
+      "expected": {
+        "total_cost_usd": null,
+        "cost_status": "unpriced",
+        "priced_cost_usd": null,
+        "unpriced_observation_count": 3
+      }
+    },
+    {
+      "id": "rollup_zero_priced",
+      "payload": {
+        "total_cost_usd": 0,
+        "cost_status": "priced",
+        "priced_cost_usd": 0,
+        "unpriced_observation_count": 0
+      },
+      "expected": {
+        "total_cost_usd": 0.0,
+        "cost_status": "priced",
+        "priced_cost_usd": 0.0,
+        "unpriced_observation_count": 0
+      }
+    },
+    {
+      "id": "rollup_legacy_no_status",
+      "payload": {
+        "total_cost_usd": 1.5
+      },
+      "expected": {
+        "total_cost_usd": 1.5,
+        "cost_status": null,
+        "priced_cost_usd": null,
+        "unpriced_observation_count": null
+      }
+    }
+  ]
+}

@@ -272,45 +272,14 @@ def resolve_effective_parallel_config(
 
 
 # ---------------------------------------------------------------------------
-# Phase 7: Evaluator construction
-# ---------------------------------------------------------------------------
-
-
-def resolve_custom_evaluator(
-    custom_evaluator: Callable[..., Any] | None,
-    *,
-    mock_mode_config: dict[str, Any] | None,  # noqa: ARG001 - retained for API compat
-    decorator_custom_evaluator: Callable[..., Any] | None,
-) -> Callable[..., Any] | None:
-    """Resolve the effective custom evaluator.
-
-    The user-provided custom evaluator (from either the ``@optimize`` decorator
-    or the ``optimize()`` call) is always honoured. ``mock_mode_config`` is
-    accepted for backward compatibility with the public API but is otherwise
-    ignored: it previously combined with the now-retired ``TRAIGENT_MOCK_LLM``
-    env var to silently swap a user-supplied evaluator for ``LocalEvaluator``,
-    which was unsafe in production environments where the env var leaked.
-
-    Args:
-        custom_evaluator: Custom evaluator from optimize() call.
-        mock_mode_config: Ignored. Retained for backward-compatible signatures.
-        decorator_custom_evaluator: Custom evaluator from decorator.
-
-    Returns:
-        The custom evaluator to use, or None if LocalEvaluator should be used.
-    """
-    provided_custom_evaluator = custom_evaluator or decorator_custom_evaluator
-    return provided_custom_evaluator if provided_custom_evaluator is not None else None
-
-
-# ---------------------------------------------------------------------------
 # Surrogate (pre-screen) evaluator: a cheap second scorer over already
 # captured outputs. It NEVER re-executes the decorated function; the trial
 # lifecycle scores ``example_result.actual_output`` only. Resolution mirrors
-# ``resolve_custom_evaluator`` (optimize()-arg over decorator); the resolved
-# scorer is stashed on the evaluator instance so the trial-lifecycle seam can
-# reach it via the stable ``orchestrator.evaluator`` handle (the ``func`` that
-# reaches the seam is injection/effectuation-wrapped, so it is not a stable key).
+# the custom-evaluator choice made when the evaluator is built (optimize()-arg
+# over decorator); the resolved scorer is stashed on the evaluator instance so
+# the trial-lifecycle seam can reach it via the stable ``orchestrator.evaluator``
+# handle (the ``func`` that reaches the seam is injection/effectuation-wrapped,
+# so it is not a stable key).
 # ---------------------------------------------------------------------------
 
 _SURROGATE_ATTR = "_traigent_surrogate_evaluator"
@@ -742,7 +711,6 @@ def _create_local_evaluator(
     *,
     objectives: Sequence[str],
     execution_mode: str,
-    mock_mode_config: dict[str, Any] | None,
     metric_functions: dict[str, Callable[..., Any]] | None,
     scoring_function: Callable[..., Any] | None,
 ) -> tuple[BaseEvaluator, None]:
@@ -761,7 +729,6 @@ def _create_local_evaluator(
             max_workers=effective_workers,
             detailed=True,
             execution_mode=execution_mode,
-            mock_mode_config=mock_mode_config,
             metric_functions=effective_metric_fns or None,
         ),
         None,
@@ -777,7 +744,6 @@ def create_effective_evaluator(
     *,
     objectives: Sequence[str],
     execution_mode: str,
-    mock_mode_config: dict[str, Any] | None,
     metric_functions: dict[str, Callable[..., Any]] | None,
     scoring_function: Callable[..., Any] | None,
     decorator_custom_evaluator: Callable[..., Any] | None,
@@ -797,7 +763,6 @@ def create_effective_evaluator(
         effective_privacy_enabled: Whether privacy mode is enabled
         objectives: Objective names
         execution_mode: Execution mode string
-        mock_mode_config: Mock mode configuration
         metric_functions: Explicit metric functions
         scoring_function: Scoring function
         decorator_custom_evaluator: Custom evaluator from decorator
@@ -805,11 +770,8 @@ def create_effective_evaluator(
     Returns:
         Tuple of (evaluator, reserved auxiliary resource or None)
     """
-    effective_evaluator = resolve_custom_evaluator(
-        custom_evaluator,
-        mock_mode_config=mock_mode_config,
-        decorator_custom_evaluator=decorator_custom_evaluator,
-    )
+    # The optimize()-call evaluator wins over the decorator's.
+    effective_evaluator = custom_evaluator or decorator_custom_evaluator
 
     # Warn once when mock LLM mode is active and an output-based scorer is supplied.
     # Mock mode returns a canned constant string for every LLM call, so any evaluator
@@ -856,7 +818,6 @@ def create_effective_evaluator(
                 effective_thread_workers,
                 objectives=objectives,
                 execution_mode=execution_mode,
-                mock_mode_config=mock_mode_config,
                 metric_functions=metric_functions,
                 scoring_function=scoring_function,
             )

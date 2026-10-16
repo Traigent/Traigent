@@ -55,10 +55,10 @@ from traigent.config.types import (
 )
 from traigent.core.ci_approval import check_ci_approval
 from traigent.core.config_state_manager import (
-    ConfigStateManager,
-    OptimizationState,
-    detach_candidate_value,
-    snapshot_with_retry,
+    ConfigStateManager,  # Per-function configuration manager.
+)
+from traigent.core.config_state_manager import (
+    OptimizationState,  # Lifecycle state owned by that manager.
 )
 from traigent.core.cost_enforcement import is_cost_preapproved, normalize_cost_approved
 from traigent.core.execution_budget import ExecutionBudget
@@ -124,7 +124,6 @@ from traigent.utils.env_config import (
 )
 from traigent.utils.exceptions import (
     AuthenticationError,
-    CandidateIsolationError,
     ConfigurationError,
     OptimizationError,
     OverlappingOptimizationError,
@@ -134,6 +133,11 @@ from traigent.utils.exceptions import (
 from traigent.utils.function_identity import is_coroutine_callable
 from traigent.utils.incentives import show_upgrade_hint
 from traigent.utils.logging import get_logger
+from traigent.utils.removed_params import (
+    REMOVED_MOCK_PARAMETERS,
+    reject_removed_mock_parameters,
+    removed_mock_parameter_message,
+)
 from traigent.utils.validation import (
     validate_config_space,
     validate_dataset_path,
@@ -195,6 +199,11 @@ def _reject_removed_strategy_preset(
         raise TypeError(_removed_strategy_preset_message(strategy, parameter))
 
 
+_REMOVED_MOCK_PARAMETERS = REMOVED_MOCK_PARAMETERS
+_removed_mock_parameter_message = removed_mock_parameter_message
+_reject_removed_mock_parameters = reject_removed_mock_parameters
+
+
 def _reject_removed_strategy_constructor_kwargs(kwargs: Mapping[str, Any]) -> None:
     """Refuse the retired preset arguments passed to ``OptimizedFunction(...)``.
 
@@ -212,6 +221,15 @@ def _reject_removed_strategy_constructor_kwargs(kwargs: Mapping[str, Any]) -> No
     consumers are untouched.
     """
     _reject_removed_strategy_preset(kwargs.get("strategy"))
+    if "use_cloud_service" in kwargs:
+        raise TypeError(
+            "use_cloud_service was removed; remote cloud execution is not "
+            "available. Use execution_mode='local' or 'hybrid_api'."
+        )
+    if "framework_target" in kwargs:
+        raise TypeError(
+            "framework_target is not a parameter; did you mean framework_targets?"
+        )
     for parameter in ("strategy_params", "strategy_preset"):
         value = kwargs.get(parameter)
         if value is None:
@@ -874,6 +892,18 @@ def _decorator_only_optimize_params() -> frozenset[str]:
     )
 
 
+# Candidate runs (optimize(apply=False)) are withdrawn pending a redesign of
+# their config isolation under concurrent config changes (see optimize()'s
+# docstring). Every entry point that can carry an `apply` value through to a
+# run -- optimize(), optimize_sync(), and optimize_with_guidance() -- must
+# raise this before doing any work, so the message and wording never drift
+# between them.
+_APPLY_FALSE_WITHDRAWN_MESSAGE = (
+    "optimize(apply=False) (candidate runs) is temporarily unavailable; it "
+    "will return in a future release. Use apply=True (the default)."
+)
+
+
 class OptimizedFunction(Generic[_P, _R]):
     """Wrapper for functions decorated with @traigent.optimize.
 
@@ -940,6 +970,7 @@ class OptimizedFunction(Generic[_P, _R]):
         # the removed preset arguments into _decorator_runtime_overrides and
         # run as if they had not been passed.
         _reject_removed_strategy_constructor_kwargs(kwargs)
+        _reject_removed_mock_parameters(kwargs)
 
         # Extract decorator-provided metadata before core storage
         max_trials_explicit = kwargs.pop("_max_trials_explicit", None)
@@ -1125,9 +1156,6 @@ class OptimizedFunction(Generic[_P, _R]):
         except ValueError as exc:
             raise ValidationError(str(exc)) from exc
 
-    def _is_cloud_execution_mode(self) -> bool:
-        return False
-
     def _setup_configuration_space(self, configuration_space) -> None:
         """Setup configuration space."""
         try:
@@ -1232,9 +1260,6 @@ class OptimizedFunction(Generic[_P, _R]):
 
         self._store_callbacks(kwargs, sentinel)
 
-        self.use_cloud_service = self._store_optional_param(
-            kwargs, sentinel, "use_cloud_service", False, as_bool=True
-        )
         raw_cloud_fallback_policy = kwargs.pop("cloud_fallback_policy", sentinel)
         if (
             raw_cloud_fallback_policy is not sentinel
@@ -1250,9 +1275,6 @@ class OptimizedFunction(Generic[_P, _R]):
             )
         self.cloud_fallback_policy = "auto"
         kwargs["cloud_fallback_policy"] = self.cloud_fallback_policy
-        self.framework_target = self._store_optional_param(
-            kwargs, sentinel, "framework_target", None
-        )
 
         # Hybrid API evaluator configuration (execution_mode="hybrid_api")
         self.hybrid_api_endpoint = kwargs.pop("hybrid_api_endpoint", None)
@@ -1275,14 +1297,11 @@ class OptimizedFunction(Generic[_P, _R]):
 
         # Execution knobs
         provided_parallel = coerce_parallel_config(kwargs.pop("parallel_config", None))
-        combined_parallel, sources = merge_parallel_configs(
+        combined_parallel, _sources = merge_parallel_configs(
             [(provided_parallel, "decorator")]
         )
         self.parallel_config = combined_parallel
-        self.parallel_config_sources = sources
         kwargs["parallel_config"] = combined_parallel
-        if sources:
-            kwargs["_parallel_config_sources"] = sources
 
         self.privacy_enabled = self._store_optional_param(
             kwargs, sentinel, "privacy_enabled", False, as_bool=True
@@ -1293,10 +1312,6 @@ class OptimizedFunction(Generic[_P, _R]):
             kwargs["privacy_enabled"] = True
             self._privacy_alias_requested = False
 
-        # Mock mode configuration
-        self.mock_mode_config = self._store_optional_param(
-            kwargs, sentinel, "mock_mode_config", None
-        )
         self.max_examples = self._store_optional_param(
             kwargs, sentinel, "max_examples", None
         )
@@ -1370,12 +1385,8 @@ class OptimizedFunction(Generic[_P, _R]):
             "save_to",
             "callbacks",
             "parallel_config",
-            "_parallel_config_sources",
-            "use_cloud_service",
             "cloud_fallback_policy",
-            "framework_target",
             "privacy_enabled",
-            "mock_mode_config",
             "max_total_examples",
             "samples_include_pruned",
             "winner_stability_reps",
@@ -1395,9 +1406,6 @@ class OptimizedFunction(Generic[_P, _R]):
             for key, value in kwargs.items()
             if key not in excluded_runtime_keys
         }
-
-        # Cloud service client (initialized lazily)
-        self._cloud_client: Any | None = None
 
     def _initialize_provider_and_validate(self) -> None:
         """Initialize configuration provider and validate inputs."""
@@ -1494,7 +1502,7 @@ class OptimizedFunction(Generic[_P, _R]):
 
     @_best_config.setter
     def _best_config(self, value: dict[str, Any] | None) -> None:
-        self._csm._best_config = value
+        self._csm.best_config = value
 
     def _representative_seamless_config(
         self, configuration_space: dict[str, Any] | None = None
@@ -1754,6 +1762,7 @@ class OptimizedFunction(Generic[_P, _R]):
         # Bug A). Previously these were silently swallowed into the
         # optimizer's algorithm_config and had no effect. The rejected set is
         # now derived from the allowlist above, not hand-maintained (#1705).
+        _reject_removed_mock_parameters(algorithm_kwargs)
         decorator_only = _decorator_only_optimize_params()
         rejected = decorator_only.intersection(algorithm_kwargs)
         if rejected:
@@ -2211,20 +2220,14 @@ class OptimizedFunction(Generic[_P, _R]):
                 and the deadline are hard limits; the monetary cap is a lower bound
                 when cost is unobservable (see ``ExecutionBudget`` docs). ``None``
                 (default) leaves behavior unchanged.
-            apply: ``True`` (default, the historical behaviour) makes this an
-                *advancing* run: when it finishes, its winner is applied to
-                this wrapper (``apply_best_config``) and the run is recorded in
-                the wrapper's results history. Only one advancing run per
-                wrapper may be in flight; a second one raises
+            apply: ``True`` (default, the only supported value right now)
+                makes this an *advancing* run: when it finishes, its winner is
+                applied to this wrapper (``apply_best_config``) and the run is
+                recorded in the wrapper's results history. Only one advancing
+                run per wrapper may be in flight; a second one raises
                 :class:`~traigent.utils.exceptions.OverlappingOptimizationError`.
-                ``False`` makes this a *candidate* run: it returns the result
-                (``result.best_config`` is the candidate) WITHOUT applying it.
-                A candidate run executes on an isolated per-run copy of the
-                wrapper taken at rest, so it may run in parallel with other
-                candidate runs and with an advancing run, and none of its run
-                state (lifecycle state, results history, runtime overrides)
-                reaches the wrapper. Promote a candidate later, explicitly,
-                with ``apply_best_config(result)``.
+                ``False`` (*candidate* runs, which return a result without
+                applying it) is temporarily unavailable; see ``Raises`` below.
             **algorithm_kwargs: Additional algorithm-specific parameters.
                 For grid search (algorithm="grid"):
                     - parameter_order: dict[str, int | float] controlling iteration order.
@@ -2239,7 +2242,13 @@ class OptimizedFunction(Generic[_P, _R]):
             OptimizationError: If optimization fails
             OverlappingOptimizationError: If ``apply=True`` and another
                 advancing run is already in flight on this wrapper.
+            ConfigurationError: If ``apply=False``. Candidate runs are
+                temporarily unavailable pending a redesign of their config
+                isolation under concurrent config changes; use ``apply=True``
+                (the default).
         """
+        if not apply:
+            raise ConfigurationError(_APPLY_FALSE_WITHDRAWN_MESSAGE)
         run_kwargs: dict[str, Any] = {
             "algorithm": algorithm,
             "max_trials": max_trials,
@@ -2261,13 +2270,6 @@ class OptimizedFunction(Generic[_P, _R]):
             "algorithm_kwargs": algorithm_kwargs,
         }
         from traigent.utils.cost_calculator import cost_run_scope
-
-        if not apply:
-            # Candidate run: an isolated copy of the wrapper at rest. It takes
-            # no guard, so it neither blocks nor is blocked by other runs.
-            candidate = self._fork_for_candidate_run()
-            with cost_run_scope():
-                return await candidate._optimize_run(**run_kwargs)
 
         self._begin_advancing_run()
         try:
@@ -2298,7 +2300,7 @@ class OptimizedFunction(Generic[_P, _R]):
         budget: ExecutionBudget | None,
         algorithm_kwargs: dict[str, Any],
     ) -> OptimizationResult:
-        """Body of :meth:`optimize` for one run (advancing or candidate)."""
+        """Body of :meth:`optimize` for one advancing run."""
         logger.info(f"Starting optimization of {self.func.__name__}")
         _emit_cost_warning_once()
 
@@ -2332,15 +2334,6 @@ class OptimizedFunction(Generic[_P, _R]):
             from traigent.api.parameter_ranges import normalize_configuration_space
 
             configuration_space, _ = normalize_configuration_space(configuration_space)
-            if self._is_candidate_run:
-                # A candidate must not share the caller's override objects:
-                # a trial mutating a choice would change the caller's dict.
-                override = configuration_space
-                configuration_space = snapshot_with_retry(
-                    lambda: detach_candidate_value(
-                        override, "configuration_space (call-time override)"
-                    )
-                )
 
         # Issue #2298 direction 1: for seamless injection, fail closed ONCE,
         # before the first trial. A structural probe (AST compile + parameter
@@ -2467,13 +2460,17 @@ class OptimizedFunction(Generic[_P, _R]):
                 value raises ``TypeError``.
             progress_bar: ``True`` to force, ``False`` to suppress, ``None``
                 (default) auto-enables in interactive terminals.
-            apply: ``True`` (default) applies the winner to this wrapper;
-                ``False`` returns a candidate without applying it. See
-                :meth:`optimize`.
+            apply: ``True`` (default, the only supported value right now)
+                applies the winner to this wrapper. See :meth:`optimize`.
             **algorithm_kwargs: Additional algorithm parameters
 
         Returns:
             OptimizationResult with trial results and best configuration
+
+        Raises:
+            ConfigurationError: If ``apply=False``. Checked here, before any
+                event loop, coroutine or thread is created -- not deferred to
+                the underlying :meth:`optimize` call.
 
         Example:
             # Simple synchronous usage (no asyncio.run needed)
@@ -2483,6 +2480,9 @@ class OptimizedFunction(Generic[_P, _R]):
             # Equivalent async usage
             result = asyncio.run(my_function.optimize(max_trials=10))
         """
+        if not apply:
+            raise ConfigurationError(_APPLY_FALSE_WITHDRAWN_MESSAGE)
+
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -2650,7 +2650,6 @@ class OptimizedFunction(Generic[_P, _R]):
             effective_privacy_enabled=effective_privacy_enabled,
             objectives=self.objectives,
             execution_mode=self.execution_mode,
-            mock_mode_config=self.mock_mode_config,
             metric_functions=self.metric_functions,
             scoring_function=self.scoring_function,
             decorator_custom_evaluator=self.custom_evaluator,
@@ -2777,6 +2776,7 @@ class OptimizedFunction(Generic[_P, _R]):
         orchestrator.evaluator_definition_id = self.evaluator_definition_id
         orchestrator.task_type = self.task_type
         orchestrator.dataset_id = self.dataset_id
+        orchestrator.head_environment = self._csm.best_config_environment
         # RFC 0001 §3.4: forward the user-attached knob resolver so the
         # public optimize() path resolves Fixed/CVAR bindings in-trial.
         # Attribute seam (like promotion_gate): set
@@ -2851,10 +2851,8 @@ class OptimizedFunction(Generic[_P, _R]):
                 self._optimization_results = result
                 self._csm.append_optimization_result(result)
 
-                # Update current config to best found. A candidate run
-                # (optimize(apply=False)) runs on an isolated copy and never
-                # applies; promotion is the caller's explicit, later step.
-                if result.best_config and not self._is_candidate_run:
+                # Update current config to best found.
+                if result.best_config:
                     self._commit_best_config(result)
 
                 # Set state to OPTIMIZED on success
@@ -3199,6 +3197,11 @@ class OptimizedFunction(Generic[_P, _R]):
             optimizer_kwargs.pop("invocations_per_example", None)
             if max_trials:
                 optimizer_kwargs["max_trials"] = max_trials
+            # Forward the declared schema exactly as the local path does: from
+            # names alone the base optimizer cannot orient a custom objective
+            # and refuses to build (#2514).
+            if self.objective_schema is not None:
+                optimizer_kwargs["objective_schema"] = self.objective_schema
 
             optimizer = InteractiveOptimizer(
                 effective_config_space,
@@ -3285,37 +3288,6 @@ class OptimizedFunction(Generic[_P, _R]):
                     reason,
                 )
             return None
-
-    def _apply_mock_config_overrides(
-        self, algorithm: str, optimizer_kwargs: dict[str, Any]
-    ) -> str:
-        """No-op retained for backward compatibility.
-
-        Historically this method consulted ``self.mock_mode_config`` to
-        override the optimizer algorithm and to inject ``random_seed`` into
-        ``optimizer_kwargs``. As part of the F5 retirement of the mock-mode
-        flag, ``mock_mode_config`` is now fully inert: callers may still pass
-        the parameter through public APIs, but it must not change optimizer
-        selection or seeding. A stray production config in the past silently
-        rerouted real optimizations to a different algorithm with a fixed
-        seed, so we now ignore it entirely. Real seeding should go through
-        the normal ``algorithm_kwargs`` / ``random_seed`` parameter path.
-        """
-        mock_config = self.mock_mode_config
-        if not isinstance(mock_config, Mapping):
-            return algorithm
-
-        inert_keys = sorted(
-            key for key in ("optimizer", "sampler", "random_seed") if key in mock_config
-        )
-        if inert_keys:
-            logger.warning(
-                "mock_mode_config keys %s are inert post-F5 and no longer select "
-                "optimizers or seed runs; pass algorithm/random_seed via "
-                "decorated.optimize(algorithm=..., random_seed=...) instead.",
-                ", ".join(inert_keys),
-            )
-        return algorithm
 
     def _preflight_model_cost_coverage(
         self,
@@ -3760,9 +3732,6 @@ Remediation:
         if self.objective_schema is not None:
             optimizer_kwargs["objective_schema"] = self.objective_schema
 
-        # Apply mock config overrides if present
-        algorithm = self._apply_mock_config_overrides(algorithm, optimizer_kwargs)
-
         optimizer = get_optimizer(
             algorithm, effective_config_space, self.objectives, **optimizer_kwargs
         )
@@ -3861,226 +3830,6 @@ Remediation:
         finally:
             self._restore_hybrid_discovery_state(hybrid_discovery_state, evaluator)
 
-    async def _optimize_with_cloud_service(
-        self,
-        dataset: Dataset,
-        max_trials: int | None = None,
-        timeout: float | None = None,
-        **kwargs: Any,
-    ) -> OptimizationResult:
-        """Run optimization through the reserved Traigent Cloud path.
-
-        Remote cloud execution is not available yet. The cloud client is
-        expected to fail closed with guidance to use hybrid for portal-tracked
-        optimization.
-
-        Args:
-            dataset: Evaluation dataset
-            max_trials: Maximum number of trials
-            timeout: Optimization timeout
-            **kwargs: Additional arguments
-
-        Returns:
-            OptimizationResult from cloud service when the future path is implemented
-        """
-        from traigent.cloud.client import TraigentCloudClient
-
-        # Initialize cloud client if not already done
-        if self._cloud_client is None:
-            self._cloud_client = TraigentCloudClient(enable_fallback=False)
-
-        async with self._cloud_client as client:
-            # Extract configuration_space from kwargs if provided
-            config_space_override = kwargs.pop("configuration_space", None)
-            effective_config_space = self._resolve_cloud_config_space(
-                config_space_override
-            )
-            cloud_result = await self._execute_cloud_service_optimization(
-                client,
-                dataset,
-                effective_config_space,
-                max_trials,
-            )
-            cloud_payload = await self._extract_cloud_result_payload(cloud_result)
-            result = self._build_cloud_optimization_result(cloud_payload)
-
-            # Store results
-            self._optimization_results = result
-            self._csm.append_optimization_result(result)
-
-            # Update current config and best config (consistent with local optimization)
-            if result.best_config:
-                self.apply_best_config(result)
-
-            logger.info(
-                "Cloud optimization completed: %s trials, %.1f%% cost reduction",
-                cloud_payload["trials_count"],
-                cloud_payload["cost_reduction"] * 100,
-            )
-
-            return result
-
-    @staticmethod
-    async def _resolve_awaitable_value(value: Any) -> Any:
-        """Await values only when necessary."""
-        return await value if inspect.isawaitable(value) else value
-
-    def _resolve_cloud_config_space(
-        self, config_space_override: dict[str, Any] | None
-    ) -> dict[str, Any]:
-        """Resolve the configuration space used for cloud optimization."""
-        if config_space_override is not None:
-            return config_space_override
-        return self.configuration_space
-
-    async def _execute_cloud_service_optimization(
-        self,
-        client: Any,
-        dataset: Dataset,
-        effective_config_space: dict[str, Any],
-        max_trials: int | None,
-    ) -> Any:
-        """Run the cloud optimization request inside the configuration context."""
-        from traigent.config.context import ConfigurationSpaceContext
-
-        with ConfigurationSpaceContext(effective_config_space):
-            cloud_candidate = await client.optimize_function(
-                function_name=self.experiment_name,
-                dataset=dataset,
-                configuration_space=effective_config_space,
-                objectives=self.objectives,
-                max_trials=max_trials if max_trials is not None else DEFAULT_MAX_TRIALS,
-                local_function=self.func,
-            )
-            return await self._resolve_awaitable_value(cloud_candidate)
-
-    async def _resolve_cloud_result_attribute(
-        self, cloud_result: Any, attribute: str, default: Any
-    ) -> Any:
-        """Resolve a cloud-result attribute that may be awaitable."""
-        value = getattr(cloud_result, attribute, default)
-        return await self._resolve_awaitable_value(value)
-
-    @staticmethod
-    def _coerce_cloud_metric_map(raw_metrics: Any) -> dict[str, float]:
-        """Normalize cloud metrics into a string-to-float mapping."""
-        if not isinstance(raw_metrics, dict):
-            return {}
-
-        best_metrics: dict[str, float] = {}
-        for key, raw_value in raw_metrics.items():
-            try:
-                best_metrics[str(key)] = float(raw_value)
-            except (TypeError, ValueError):
-                continue
-        return best_metrics
-
-    @staticmethod
-    def _coerce_cloud_int(raw_value: Any, default: int = 0) -> int:
-        """Convert cloud numeric fields to ints with a stable fallback."""
-        try:
-            return int(raw_value)
-        except (TypeError, ValueError):
-            return default
-
-    @staticmethod
-    def _coerce_cloud_float(raw_value: Any, default: float = 0.0) -> float:
-        """Convert cloud numeric fields to floats with a stable fallback."""
-        try:
-            return float(raw_value)
-        except (TypeError, ValueError):
-            return default
-
-    @staticmethod
-    def _coerce_optional_cloud_int(raw_value: Any) -> int | None:
-        """Convert optional cloud integer fields when valid."""
-        return raw_value if isinstance(raw_value, int) else None
-
-    def _select_cloud_best_score(self, best_metrics: dict[str, float]) -> float:
-        """Resolve the best score using the primary objective when available."""
-        primary_objective = self.objectives[0] if self.objectives else None
-        if primary_objective and primary_objective in best_metrics:
-            return best_metrics[primary_objective]
-        if best_metrics:
-            return next(iter(best_metrics.values()))
-        return 0.0
-
-    async def _extract_cloud_result_payload(self, cloud_result: Any) -> dict[str, Any]:
-        """Normalize cloud result attributes into a local payload dict."""
-        best_config_raw = await self._resolve_cloud_result_attribute(
-            cloud_result, "best_config", {}
-        )
-        best_metrics_raw = await self._resolve_cloud_result_attribute(
-            cloud_result, "best_metrics", {}
-        )
-        trials_count_raw = await self._resolve_cloud_result_attribute(
-            cloud_result, "trials_count", 0
-        )
-        cost_reduction_raw = await self._resolve_cloud_result_attribute(
-            cloud_result, "cost_reduction", 0.0
-        )
-        optimization_time_raw = await self._resolve_cloud_result_attribute(
-            cloud_result, "optimization_time", 0.0
-        )
-        subset_used_raw = await self._resolve_cloud_result_attribute(
-            cloud_result, "subset_used", False
-        )
-        subset_size_raw = await self._resolve_cloud_result_attribute(
-            cloud_result, "subset_size", None
-        )
-
-        best_config = (
-            best_config_raw.copy() if isinstance(best_config_raw, dict) else {}
-        )
-        best_metrics = self._coerce_cloud_metric_map(best_metrics_raw)
-        return {
-            "best_config": best_config,
-            "best_metrics": best_metrics,
-            "trials_count": self._coerce_cloud_int(trials_count_raw),
-            "cost_reduction": self._coerce_cloud_float(cost_reduction_raw),
-            "optimization_time": self._coerce_cloud_float(optimization_time_raw),
-            "subset_used": bool(subset_used_raw),
-            "subset_size": self._coerce_optional_cloud_int(subset_size_raw),
-            "best_score": self._select_cloud_best_score(best_metrics),
-        }
-
-    def _build_cloud_optimization_result(self, cloud_result: Any) -> OptimizationResult:
-        """Convert a cloud result payload into a standard optimization result."""
-        from traigent.api.types import TrialResult, TrialStatus
-
-        best_config = cloud_result["best_config"]
-        best_metrics = cloud_result["best_metrics"]
-        optimization_time = cloud_result["optimization_time"]
-        mock_trial = TrialResult(
-            trial_id="cloud_best",
-            config=best_config,
-            metrics=best_metrics,
-            status=TrialStatus.COMPLETED,
-            duration=optimization_time,
-            timestamp=datetime.now(UTC),
-            metadata={},
-        )
-
-        return OptimizationResult(
-            trials=[mock_trial],  # Cloud service doesn't expose all trials
-            best_config=best_config,
-            best_score=cloud_result["best_score"],
-            optimization_id=f"cloud_{int(time.time())}",
-            duration=optimization_time,
-            convergence_info={},
-            status=OptimizationStatus.COMPLETED,
-            objectives=self.objectives,
-            algorithm="cloud_service",
-            timestamp=datetime.now(UTC),
-            metadata={
-                "cloud_service": True,
-                "cost_reduction": cloud_result["cost_reduction"],
-                "subset_used": cloud_result["subset_used"],
-                "subset_size": cloud_result["subset_size"],
-                "trials_count": cloud_result["trials_count"],
-            },
-        )
-
     def optimize_with_guidance(
         self,
         provider: Any,
@@ -4100,7 +3849,17 @@ Remediation:
         generation runs on ``rewrite_llm`` (a callable ``fn(prompt) -> str`` or an
         already-constructed client). Content never leaves the client. Returns the
         best ``OptimizationResult`` across rounds.
+
+        Raises:
+            ConfigurationError: If ``apply=False`` is forwarded through
+                ``**optimize_kwargs``. Checked here, first, before resolving
+                ``rewrite_llm``, loading the dataset, or touching any dataset
+                override -- not deferred to the ``optimize_sync`` call each
+                round makes internally.
         """
+        if not optimize_kwargs.get("apply", True):
+            raise ConfigurationError(_APPLY_FALSE_WITHDRAWN_MESSAGE)
+
         from traigent.generation import (
             DatasetGrowthOptions,
             ExampleSynthesizer,
@@ -4624,8 +4383,7 @@ Remediation:
     def apply_best_config(self, results: OptimizationResult | None = None) -> bool:
         """Apply best configuration from optimization results.
 
-        This is also how a candidate from ``optimize(apply=False)`` is
-        promoted. Promotion takes the same exclusive per-wrapper slot as an
+        Promotion takes the same exclusive per-wrapper slot as an
         ``optimize(apply=True)`` run and holds it across the commit, so it is
         atomic with run admission: while an applying run or another promotion
         holds the slot it raises
@@ -4650,15 +4408,11 @@ Remediation:
         )
 
     # ------------------------------------------------------------------
-    # Advancing run vs candidate runs (identity/concurrency decision,
-    # owner ruling "option A"): any number of isolated candidate runs per
-    # wrapper, at most one advancing run -- the one that changes what the
-    # wrapper serves.
+    # Advancing run / promotion exclusivity: at most one of an
+    # ``optimize(apply=True)`` run or an ``apply_best_config`` promotion may
+    # hold a wrapper's exclusive slot at a time -- the one that changes what
+    # the wrapper serves.
     # ------------------------------------------------------------------
-
-    @property
-    def _is_candidate_run(self) -> bool:
-        return bool(self.__dict__.get("_candidate_run", False))
 
     def _acquire_exclusive_slot(self, holder: str) -> None:
         """Claim this wrapper's single exclusive slot, or refuse.
@@ -4680,9 +4434,7 @@ Remediation:
                         f"Cannot start optimize() on {name!r}: {what}. Two runs or "
                         "promotions that both apply a winner to the same wrapper race "
                         "(the last to finish silently replaces the first), so only one "
-                        "may hold the wrapper at a time. Wait for it to finish, or use "
-                        "optimize(apply=False) to produce a candidate in parallel and "
-                        "promote it later with apply_best_config(result)."
+                        "may hold the wrapper at a time. Wait for it to finish."
                     )
                 else:
                     message = (
@@ -4700,28 +4452,11 @@ Remediation:
                     ],
                     details={"slot_holder": current, "requested_by": holder},
                 )
-            if holder == "run":
-                # Snapshot the wrapper AT REST before this run mutates it
-                # (transient objective/TVL overrides, lifecycle state, in-place
-                # edits of served config), so candidate runs forked while it is
-                # in flight start from the resting wrapper. A REAL detached
-                # copy, taken here: the detacher runs no user code, so it is
-                # safe under this lock. If the served state cannot be detached,
-                # the applying run still proceeds (its behaviour is unchanged);
-                # only candidate forks during it are refused, with the reason.
-                try:
-                    at_rest: Any = snapshot_with_retry(
-                        lambda: self._detached_view(self)
-                    )
-                except CandidateIsolationError as exc:
-                    at_rest = exc
-                self.__dict__["_at_rest_view"] = at_rest
             self.__dict__["_exclusive_slot"] = holder
 
     def _release_exclusive_slot(self) -> None:
         with _RUN_GUARD_LOCK:
             self.__dict__["_exclusive_slot"] = None
-            self.__dict__["_at_rest_view"] = None
 
     def _begin_advancing_run(self) -> None:
         """Claim the exclusive slot for an ``optimize(apply=True)`` run."""
@@ -4729,65 +4464,6 @@ Remediation:
 
     def _end_advancing_run(self) -> None:
         self._release_exclusive_slot()
-
-    def _fork_for_candidate_run(self) -> OptimizedFunction[_P, _R]:
-        """Return an isolated copy of this wrapper for one candidate run.
-
-        The candidate snapshot is taken at candidate start, under
-        ``_RUN_GUARD_LOCK``, as a real detached copy of the current, best and
-        default config and the search space (from the at-rest snapshot if an
-        applying run is in flight, else from this wrapper). The detacher runs
-        no user code, so holding the lock is safe; a concurrent in-place
-        mutation of the served config from another thread is retried (see
-        :func:`snapshot_with_retry`). The copy's injected callable is rebuilt
-        against the detached config after the lock is released. A candidate
-        holds no slot, so a refusal has nothing to release.
-        """
-        with _RUN_GUARD_LOCK:
-            source: Any = self
-            if self.__dict__.get("_exclusive_slot") == "run":
-                source = self.__dict__.get("_at_rest_view") or self
-            if isinstance(source, BaseException):
-                raise CandidateIsolationError(
-                    "Cannot start a candidate run while an optimize(apply=True) run "
-                    "is in flight on this wrapper: its at-rest snapshot could not "
-                    f"be isolated ({source})."
-                ) from source
-            fork = snapshot_with_retry(lambda: self._detached_view(source))
-        fork._setup_function_wrapper()
-        fork.__dict__["_candidate_run"] = True
-        return fork
-
-    def _detached_view(
-        self, source: OptimizedFunction[_P, _R]
-    ) -> OptimizedFunction[_P, _R]:
-        """Copy of ``source`` whose config and search space share nothing with it.
-
-        Built with ``object.__new__`` + ``__dict__.update`` (no ``__copy__`` /
-        ``__reduce__`` hook) and :func:`detach_candidate_value` (identity-typed
-        builtins only), so no user code runs; callers hold ``_RUN_GUARD_LOCK``.
-        The config-state manager is forked with detached values too. The
-        injected callable is NOT rebuilt here (the caller does that outside the
-        lock).
-        """
-        view = object.__new__(type(source))
-        view.__dict__.update(source.__dict__)
-        view.__dict__["_exclusive_slot"] = None
-        view.__dict__["_at_rest_view"] = None
-        view.__dict__["_candidate_run"] = False
-        source_space = source.__dict__.get("_configuration_space")
-        space = detach_candidate_value(source_space, "configuration_space")
-        view.__dict__["_configuration_space"] = space if space is not None else {}
-        view.__dict__["default_config"] = detach_candidate_value(
-            source.default_config, "default_config"
-        )
-        shares_space = source._csm.configuration_space is source_space
-        view.__dict__["_csm"] = source._csm.fork_detached(
-            setup_wrapper_callback=view._setup_function_wrapper,
-            configuration_space=view._configuration_space if shares_space else None,
-        )
-        view._csm.default_config = view.default_config
-        return view
 
     def export_config(
         self,

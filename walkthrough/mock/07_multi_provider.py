@@ -67,11 +67,6 @@ CONFIG_SPACE = {
     "temperature": [0.1, 0.5],
 }
 
-MOCK_MODE_CONFIG = {
-    "base_accuracy": 0.85,
-    "variance": 0.0,
-}
-
 
 def _lookup_provider(model_name: str) -> str:
     """Return the provider name for a given model from the local mapping.
@@ -111,7 +106,6 @@ def results_match_score(
     configuration_space=CONFIG_SPACE,
     injection_mode="context",
     offline=True,
-    mock_mode_config=MOCK_MODE_CONFIG,
 )
 def answer_with_any_provider(question: str) -> str:
     """Answer a question using the configured LLM provider and model.

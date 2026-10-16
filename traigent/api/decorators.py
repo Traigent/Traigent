@@ -54,22 +54,15 @@ if TYPE_CHECKING:
     from traigent.api.constraints import BoolExpr, Constraint
     from traigent.api.safety import CompoundSafetyConstraint, SafetyConstraint
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    PrivateAttr,
-    field_validator,
-    model_validator,
-)
-
 # Aliased on purpose. This module imports Traigent's own ``ValidationError`` from
 # ``traigent.utils.exceptions`` below, which binds that name for the rest of the
 # file, so a bare ``except ValidationError`` here would never catch a pydantic
 # failure. There are currently zero ``except ValidationError`` sites in this
 # module, so the shadowing is a latent trap for future code rather than a live
 # bug; the alias keeps the pydantic class reachable under an unambiguous name.
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from pydantic import ValidationError as PydanticValidationError
+from pydantic import field_validator, model_validator
 
 from traigent.api.functions import _GLOBAL_CONFIG
 from traigent.api.parameter_ranges import (
@@ -79,7 +72,9 @@ from traigent.api.parameter_ranges import (
     normalize_configuration_space,
 )
 from traigent.api.types import AgentDefinition
-from traigent.cloud.smart_pruning import SmartPruningOptions
+from traigent.cloud.smart_pruning import (
+    SmartPruningOptions,  # Public decorator option type.
+)
 from traigent.cloud.smart_pruning import (
     normalize_smart_pruning_options as _normalize_smart_pruning_options,
 )
@@ -104,8 +99,10 @@ from traigent.core.objectives import (
     normalize_objectives,
 )
 from traigent.core.optimized_function import (
+    _REMOVED_MOCK_PARAMETERS,
     OptimizedFunction,
     _reject_removed_strategy_preset,
+    _removed_mock_parameter_message,
 )
 from traigent.defaults import DEFAULT_MAX_TRIALS
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -130,7 +127,6 @@ __all__ = [
     "ExternalServiceEvaluator",
     "ExecutionOptions",
     "SmartPruningOptions",
-    "MockModeOptions",
     "optimize",
 ]
 
@@ -484,40 +480,6 @@ class ExecutionOptions(BaseModel):
         return v
 
 
-class MockModeOptions(BaseModel):
-    """Fine-grained configuration for mock mode behaviour.
-
-    .. deprecated::
-        **All MockModeOptions fields are inert in the current SDK.**
-        Mock mode is enabled by calling ``traigent.testing.enable_mock_mode_for_quickstart()``
-        from local tutorial or test code, not via this object. The
-        legacy ``TRAIGENT_MOCK_LLM=true`` env var remains available outside
-        production for shell fixtures and backwards compatibility, but
-        direct user-set env-var activation emits ``DeprecationWarning``. ``enabled``,
-        ``override_evaluator``, ``base_accuracy``, and ``variance`` are
-        retained on the schema for backwards compatibility so existing
-        serialized configs round-trip without breaking, but the
-        optimization pipeline ignores all of them. In mock mode the LLM
-        call layer is intercepted with canned/deterministic responses;
-        the scoring path (built-in metrics, custom evaluators, and the
-        ``LocalEvaluator`` accuracy calculator) is unchanged — there is
-        no random-score fabrication. Walkthrough scripts under
-        ``walkthrough/mock/`` use their own helper ``get_mock_accuracy``
-        for example scoring; that helper is example-only and is not part
-        of the SDK runtime behavior.
-
-        This deprecation is doc-only. The fields will be removed in a
-        future major version.
-    """
-
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
-
-    enabled: bool = True  # inert; see class docstring
-    override_evaluator: bool = True  # inert; see class docstring
-    base_accuracy: float = 0.75  # inert; see class docstring
-    variance: float = 0.25  # inert; see class docstring
-
-
 BundleModel = TypeVar("BundleModel", bound=BaseModel)
 # ParamSpec / TypeVar for the @optimize decorator's generic return type.
 _P = ParamSpec("_P")
@@ -813,8 +775,10 @@ def _warn_context_mode_param_shadowing(
        trial runs identically.
 
     Both emit a loud warning so the no-op is not silent. It is advisory (never
-    raises): a function that reads ``get_config()``/``current_config`` is detected
-    and skipped. When the source is unintrospectable (lambda / C-extension /
+    raises): a function that reads ``get_config()``/``get_trial_config()``/
+    ``current_config`` is detected and skipped (substring scan: an aliased import
+    such as ``from traigent import get_trial_config as gtc`` is not recognised).
+    When the source is unintrospectable (lambda / C-extension /
     notebook), the naive-default case is skipped rather than warned to avoid false
     positives (best-effort — noted limitation).
     """
@@ -854,7 +818,13 @@ def _warn_context_mode_param_shadowing(
     source_available = True
     try:
         source = inspect.getsource(func)
-        reads_config = "get_config" in source or "current_config" in source
+        # Public in-trial accessors: get_config(), get_trial_config() (#2476),
+        # get_current_config() / .current_config (matched by "current_config").
+        # Substring match, so an aliased import (``as gtc``) is not recognised.
+        reads_config = any(
+            accessor in source
+            for accessor in ("get_config", "get_trial_config", "current_config")
+        )
     except (OSError, TypeError):  # pragma: no cover - source unavailable
         source_available = False
 
@@ -873,9 +843,10 @@ def _warn_context_mode_param_shadowing(
             f"@traigent.optimize: the tuned variable(s) {shadowed} are declared as "
             f"parameters of '{func_name}', but injection_mode is CONTEXT (the default), "
             f"which does NOT override function parameters. Unless the body reads "
-            f"traigent.get_config(), every trial will run with the signature defaults "
-            f"and the optimization will silently sweep nothing (a false-positive 'best "
-            f"config'). To actually vary {shadowed}: read them via traigent.get_config() "
+            f"traigent.get_config() or traigent.get_trial_config(), every trial will "
+            f"run with the signature defaults and the optimization will silently sweep "
+            f"nothing (a false-positive 'best config'). To actually vary {shadowed}: "
+            f"read them via traigent.get_config() or traigent.get_trial_config() "
             f'inside the function, or use injection_mode="seamless" (zero code change) / '
             f'injection_mode="parameter".'
         )
@@ -884,9 +855,10 @@ def _warn_context_mode_param_shadowing(
         return
 
     # Phantom best_config (issue #1372 sibling): the tuned knobs are NEITHER
-    # function parameters NOR read via traigent.get_config()/current_config, yet
-    # a non-empty configuration_space was provided under CONTEXT mode. In CONTEXT
-    # mode the per-trial config is delivered ONLY through traigent.get_config();
+    # function parameters NOR read via get_config()/get_trial_config()/
+    # current_config, yet a non-empty configuration_space was provided under
+    # CONTEXT mode. In CONTEXT mode the per-trial config is delivered only
+    # through those accessors;
     # a body that never reads it runs every trial identically, so the optimizer
     # reports a confident "best config" for a sweep that never varied anything.
     # Only warn when we could actually confirm the body reads no config — if the
@@ -897,12 +869,13 @@ def _warn_context_mode_param_shadowing(
     message = (
         f"@traigent.optimize: injection_mode is CONTEXT (the default) and a "
         f"configuration_space was provided ({all_knobs}), but '{func_name}' neither "
-        f"reads traigent.get_config() nor accepts the tuned variable(s) as parameters. "
-        f"In CONTEXT mode the per-trial config is delivered ONLY via "
-        f"traigent.get_config(); since the body never reads it, every trial runs "
-        f"identically and the optimizer will report a confident 'best config' for a "
-        f"sweep that never varied anything (a phantom best_config). To actually apply "
-        f"the config: read the knob(s) via traigent.get_config() inside the function, "
+        f"reads traigent.get_config() / traigent.get_trial_config() nor accepts the "
+        f"tuned variable(s) as parameters. In CONTEXT mode the per-trial config is "
+        f"delivered only through those accessors; since the body never reads it, "
+        f"every trial runs identically and the optimizer will report a confident "
+        f"'best config' for a sweep that never varied anything (a phantom "
+        f"best_config). To actually apply the config: read the knob(s) via "
+        f"traigent.get_config() or traigent.get_trial_config() inside the function, "
         f'or use injection_mode="seamless" (zero code change) / '
         f'injection_mode="parameter".'
     )
@@ -1009,14 +982,12 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "samples_include_pruned": True,
     "winner_stability_reps": 0,
     "smart_pruning": None,
-    "mock_mode_config": None,
     "custom_evaluator": None,
     "scoring_function": None,
     "metric_functions": None,
     "evaluation": None,
     "injection": None,
     "execution": None,
-    "mock": None,
     "max_trials": DEFAULT_MAX_TRIALS,
     # NOTE: plateau_window / plateau_epsilon / semantic_saturation are
     # intentionally NOT listed here (issue #1692). They are early-stop
@@ -1096,6 +1067,7 @@ _REMOVED_PARAMETERS = frozenset(
         "trigger",
         "batch_size",
         "parallel_trials",
+        *_REMOVED_MOCK_PARAMETERS,
         *_JS_BRIDGE_REMOVED_PARAMETERS,
     )
 )
@@ -1147,6 +1119,8 @@ def _warn_for_legacy_execution_options(keys: set[str]) -> None:
 def _removed_parameter_message(parameter_name: str) -> str:
     if parameter_name in _JS_BRIDGE_REMOVED_PARAMETERS:
         return _JS_BRIDGE_REMOVED_MESSAGE
+    if parameter_name in _REMOVED_MOCK_PARAMETERS:
+        return _removed_mock_parameter_message(parameter_name)
     return (
         f"{parameter_name} parameter has been removed. Use supported arguments such as "
         "parallel_config or ExecutionOptions instead."
@@ -1216,7 +1190,6 @@ class LegacyOptimizeArgs:
     max_total_examples: int | None = None
     samples_include_pruned: bool | None = None
     winner_stability_reps: int | None = None
-    mock_mode_config: dict[str, Any] | None = None
     custom_evaluator: Callable[..., Any] | None = None
     scoring_function: Callable[..., Any] | None = None
     metric_functions: dict[str, Callable[..., Any]] | None = None
@@ -1224,7 +1197,6 @@ class LegacyOptimizeArgs:
     injection: InjectionOptions | dict[str, Any] | None = None
     execution: ExecutionOptions | dict[str, Any] | None = None
     evaluator: ExternalServiceEvaluator | dict[str, Any] | None = None
-    mock: MockModeOptions | dict[str, Any] | None = None
     algorithm: str | None = None
     offline: bool | None = None
     max_trials: int | None = None
@@ -1310,7 +1282,6 @@ class LegacyOptimizeArgs:
             ("max_total_examples", self.max_total_examples),
             ("samples_include_pruned", self.samples_include_pruned),
             ("winner_stability_reps", self.winner_stability_reps),
-            ("mock_mode_config", self.mock_mode_config),
             ("custom_evaluator", self.custom_evaluator),
             ("scoring_function", self.scoring_function),
             ("metric_functions", self.metric_functions),
@@ -1318,7 +1289,6 @@ class LegacyOptimizeArgs:
             ("injection", self.injection),
             ("execution", self.execution),
             ("evaluator", self.evaluator),
-            ("mock", self.mock),
             ("algorithm", self.algorithm),
             ("offline", self.offline),
             ("max_trials", self.max_trials),
@@ -1434,6 +1404,20 @@ def _apply_tvl_artifact(
     return configuration_space, objectives, constraints, default_config
 
 
+def _reject_removed_names_early(
+    runtime_overrides: Mapping[str, Any],
+    legacy: LegacyOptimizeArgs | dict[str, Any] | None,
+) -> None:
+    """Reject removed mock parameters even when later shortcuts would skip them."""
+    names = set(runtime_overrides)
+    if isinstance(legacy, LegacyOptimizeArgs):
+        names |= set(legacy.extra)
+    elif isinstance(legacy, dict):
+        names |= set(legacy)
+    for name in sorted(names & _REMOVED_MOCK_PARAMETERS):
+        raise TypeError(_removed_parameter_message(name))
+
+
 def _parse_legacy_args(
     legacy: LegacyOptimizeArgs | dict[str, Any] | None,
 ) -> LegacyOptimizeArgs | None:
@@ -1455,10 +1439,10 @@ def _build_settings_recorder(
 
     def record_option(key: str, value: Any, source: str) -> None:
         """Record a resolved option and track its configuration source."""
-        if value is None:
-            return
         if key in _REMOVED_PARAMETERS:
             raise TypeError(_removed_parameter_message(key))
+        if value is None:
+            return
         existing_source = provided_sources.get(key)
         if existing_source is not None:
             existing_value = combined_settings[key]
@@ -2539,7 +2523,6 @@ def optimize(  # NOSONAR(S107)
     effectuation: bool = False,
     execution: ExecutionOptions | dict[str, Any] | None = None,
     evaluator: ExternalServiceEvaluator | dict[str, Any] | None = None,
-    mock: MockModeOptions | dict[str, Any] | None = None,
     algorithm: str = "auto",
     offline: bool = False,
     strategy: str | None = None,
@@ -2642,7 +2625,7 @@ def optimize(  # NOSONAR(S107)
             statistically violated, the run halts with
             ``OptimizationResult.stop_reason == "safety_constraint"``. Below the
             evidence floor, or when satisfied, the run continues normally. See
-            traigent-smartopt#26.
+            ``traigent.api.safety`` for the available metrics.
 
         TVL integration:
             tvl_spec: Path to a TVL spec. When provided (and ``tvl`` opts allow it)
@@ -2699,19 +2682,6 @@ def optimize(  # NOSONAR(S107)
                 ``optimization/smart_pruning_schema.json``. The SDK sends it on
                 session creation and emits content-free intermediate reports only
                 for managed/cloud runs.
-
-        Mock mode options:
-            mock: Grouped mock-mode preferences (MockModeOptions or dict).
-            mock_mode_config: Legacy mock-mode dict. **Inert** — the SDK
-                no longer reads ``enabled``, ``override_evaluator``,
-                ``base_accuracy``, or ``variance`` from this dict. Use
-                ``traigent.testing.enable_mock_mode_for_quickstart()`` in
-                local tutorial or test code to enable mock mode. The legacy
-                ``TRAIGENT_MOCK_LLM`` env var remains supported outside
-                production for shell fixtures but emits ``DeprecationWarning``
-                when users set it directly. The parameter is retained for
-                config round-trip;
-                see the tracked fix.
 
         Cost safeguards:
             cost_limit: Maximum USD spending per optimization run. Defaults to
@@ -2869,6 +2839,10 @@ def optimize(  # NOSONAR(S107)
         Set TRAIGENT_DISABLED=1 environment variable to disable all optimization.
         The decorator becomes a pass-through that returns the original function.
     """
+    # Explicitly supplied removed parameters are rejected before any shortcut
+    # (including the TRAIGENT_DISABLED pass-through below).
+    _reject_removed_names_early(runtime_overrides, legacy)
+
     # Check if Traigent is disabled via environment variable
     # When disabled, @optimize becomes a no-op that returns the original function
     if is_traigent_disabled():
@@ -2925,7 +2899,6 @@ def optimize(  # NOSONAR(S107)
         "effectuation": effectuation,
         "execution": execution,
         "evaluator": evaluator,
-        "mock": mock,
         "algorithm": algorithm,
         "offline": offline,
         "smart_pruning": smart_pruning,
@@ -3036,7 +3009,6 @@ def optimize(  # NOSONAR(S107)
         combined_settings["winner_stability_reps"]
     )
     smart_pruning_value = combined_settings["smart_pruning"]
-    mock_mode_config = combined_settings["mock_mode_config"]
     custom_evaluator = combined_settings["custom_evaluator"]
     scoring_function = combined_settings["scoring_function"]
     metric_functions = combined_settings["metric_functions"]
@@ -3119,7 +3091,6 @@ def optimize(  # NOSONAR(S107)
     execution_bundle = _coerce_bundle(
         combined_settings["execution"], ExecutionOptions, "execution"
     )
-    mock_bundle = _coerce_bundle(combined_settings["mock"], MockModeOptions, "mock")
     tvl_bundle = _coerce_bundle(combined_settings["tvl"], TVLOptions, "tvl")
 
     # Resolve options from bundles
@@ -3276,14 +3247,6 @@ def optimize(  # NOSONAR(S107)
 
     if samples_include_pruned is None:
         samples_include_pruned = True
-
-    if mock_bundle:
-        mock_mode_config = _resolve_option(
-            "mock_mode_config",
-            mock_mode_config,
-            mock_bundle.model_dump(exclude_none=True),
-            defaults,
-        )
 
     _validate_objectives(objectives)
     execution_policy = _resolve_execution_policy_from_options(
@@ -3458,7 +3421,6 @@ def optimize(  # NOSONAR(S107)
             require_run_id=require_run_id_value,
             smart_pruning=smart_pruning_config,
             parallel_config=combined_parallel_config,
-            mock_mode_config=mock_mode_config,
             custom_evaluator=custom_evaluator,
             scoring_function=scoring_function,
             metric_functions=metric_functions,

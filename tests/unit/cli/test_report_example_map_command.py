@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
 
 from click.testing import CliRunner
 
@@ -26,19 +25,18 @@ def test_report_example_map_command_generates_output(tmp_path: Path):
     output = tmp_path / "example_map.json"
 
     runner = CliRunner()
-    with patch("traigent.cli.main.WORKSPACE_ROOT", tmp_path):
-        result = runner.invoke(
-            cli,
-            [
-                "report-example-map",
-                "--dataset",
-                str(dataset),
-                "--output",
-                str(output),
-                "--dataset-identifier",
-                "dataset_for_ids",
-            ],
-        )
+    result = runner.invoke(
+        cli,
+        [
+            "report-example-map",
+            "--dataset",
+            str(dataset),
+            "--output",
+            str(output),
+            "--dataset-identifier",
+            "dataset_for_ids",
+        ],
+    )
 
     assert result.exit_code == 0, result.output
     assert output.exists()
@@ -54,17 +52,16 @@ def test_report_example_map_command_fails_on_invalid_dataset(tmp_path: Path):
     output = tmp_path / "example_map.json"
 
     runner = CliRunner()
-    with patch("traigent.cli.main.WORKSPACE_ROOT", tmp_path):
-        result = runner.invoke(
-            cli,
-            [
-                "report-example-map",
-                "--dataset",
-                str(dataset),
-                "--output",
-                str(output),
-            ],
-        )
+    result = runner.invoke(
+        cli,
+        [
+            "report-example-map",
+            "--dataset",
+            str(dataset),
+            "--output",
+            str(output),
+        ],
+    )
 
     assert result.exit_code != 0
     assert "missing required 'input' field" in result.output.lower()
@@ -82,19 +79,48 @@ def test_report_example_map_command_defaults_to_resolved_dataset_path(
 
     runner = CliRunner()
     monkeypatch.chdir(tmp_path)
-    with patch("traigent.cli.main.WORKSPACE_ROOT", tmp_path):
-        result = runner.invoke(
-            cli,
-            [
-                "report-example-map",
-                "--dataset",
-                "dataset.jsonl",
-                "--output",
-                "example_map.json",
-            ],
-        )
+    result = runner.invoke(
+        cli,
+        [
+            "report-example-map",
+            "--dataset",
+            "dataset.jsonl",
+            "--output",
+            "example_map.json",
+        ],
+    )
 
     assert result.exit_code == 0, result.output
     payload = json.loads(output.read_text(encoding="utf-8"))
     expected_payload = build_example_content_map(dataset)
     assert payload["example_map"] == expected_payload["example_map"]
+
+
+def test_report_example_map_reads_project_files_outside_the_sdk_install(
+    tmp_path: Path, monkeypatch
+):
+    """#2511: on an installed SDK the old workspace root was site-packages, so
+    every project dataset was rejected. Paths resolve against the CWD."""
+    import traigent
+
+    sdk_root = Path(traigent.__file__).resolve().parents[1]
+    assert sdk_root not in tmp_path.resolve().parents  # a genuine outside dir
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "d.jsonl").write_text(
+        json.dumps({"input": {"q": "hi"}, "output": "x"}) + "\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "report-example-map",
+            "--dataset",
+            "data/d.jsonl",
+            "--output",
+            "results/curation/map.json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "results" / "curation" / "map.json").exists()

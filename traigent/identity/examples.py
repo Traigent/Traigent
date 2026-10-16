@@ -194,7 +194,7 @@ def identify_dataset(
 
     Always recomputed from the rows' CURRENT content, never cached on the
     dataset: a cache keyed by object identity kept an old version and root
-    after a row's expected output was edited in place (M2 review, astra P1).
+    after a row's expected output was edited in place (M2 review).
     Callers take one snapshot per optimization run
     (:func:`traigent.identity.run.prepare_content_identity_run`).
     """

@@ -7,9 +7,68 @@ depend on it even when the optional cloud package is unavailable.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+
+
+# Closed vocabulary of quota/limit error codes safe to render. Anything else
+# (including backend-invented strings) is shown as "unknown" so a quota
+# diagnostic can never carry backend or customer text (#2550).
+QUOTA_ERROR_CODES = frozenset(
+    {
+        "quota_exceeded",
+        "quota_limit_exceeded",
+        "plan_limit_exceeded",
+        "usage_limit_exceeded",
+    }
+)
+
+
+# Closed vocabulary of generic backend error codes that may appear in an SDK
+# error message. Anything else is rendered as "unknown" so backend-invented
+# text (which can echo customer content) never reaches an exception or a log
+# (#2552).
+SAFE_HTTP_ERROR_CODES = QUOTA_ERROR_CODES | frozenset(
+    {
+        "bad_request",
+        "conflict",
+        "forbidden",
+        "insufficient_permissions",
+        "internal_error",
+        "invalid_request",
+        "not_found",
+        "rate_limited",
+        "service_unavailable",
+        "session_not_found",
+        "unauthorized",
+        "validation_error",
+    }
+)
+
+
+def safe_http_error_summary(status_code: int | None, raw_body: str | None) -> str:
+    """Content-free summary of a backend HTTP error: status and closed code only.
+
+    Never includes the backend message or body text. The error code is shown
+    only when it is in ``SAFE_HTTP_ERROR_CODES``; otherwise ``unknown``.
+    """
+
+    code = "unknown"
+    if raw_body:
+        try:
+            parsed = json.loads(raw_body)
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict):
+            raw = parsed.get("error_code") or parsed.get("code")
+            if isinstance(raw, str) and raw.strip().lower() in SAFE_HTTP_ERROR_CODES:
+                code = raw.strip().lower()
+    parts = []
+    if status_code is not None:
+        parts.append(f"HTTP {status_code}")
+    parts.append(code)
+    return " | ".join(parts)
 
 
 class SessionCreationFailureReason(Enum):
@@ -31,6 +90,7 @@ class SessionCreationFailureClassification(Enum):
     NETWORK = "network"
     KEY_NOT_FOUND = "key-not-found"
     BACKEND_UNREACHABLE = "backend-unreachable"
+    QUOTA_EXCEEDED = "quota-exceeded"
     UNKNOWN = "unknown"
 
 
@@ -39,11 +99,21 @@ class SessionCreationFailureDetail:
     """Structured backend response details for failed session creation."""
 
     status_code: int | None = None
-    error_code: str | None = None
-    message: str | None = None
-    missing_permissions: tuple[str, ...] = ()
-    raw_body: str | None = None
+    error_code: str | None = field(default=None, repr=False)
+    message: str | None = field(default=None, repr=False)
+    missing_permissions: tuple[str, ...] = field(default=(), repr=False)
+    raw_body: str | None = field(default=None, repr=False)
     backend_url: str | None = None
+
+    def __repr__(self) -> str:
+        # Content-free: backend message, raw body, free-form code and permission
+        # strings can echo customer text (#2552).
+        return (
+            f"SessionCreationFailureDetail(status_code={self.status_code!r}, "
+            f"error_code={self.safe_error_code!r})"
+        )
+
+    __str__ = __repr__
 
     @classmethod
     def from_http_response(
@@ -86,23 +156,66 @@ class SessionCreationFailureDetail:
             backend_url=backend_url,
         )
 
+    @property
+    def is_quota_refusal(self) -> bool:
+        """True when the backend refused because a plan quota/limit was hit.
+
+        A quota refusal is a definitive, reachable-backend answer (typically
+        HTTP 429 or 402 with the closed ``quota_exceeded`` error code), never a
+        connectivity failure. Classification uses only the status and the
+        backend's closed ``error_code`` (message text is consulted only when the
+        backend sent no code).
+        """
+
+        code = (self.error_code or "").strip().lower()
+        if code:
+            # Every declared code is recognized (#2550). An undeclared code that
+            # merely contains "quota" counts as a refusal only on HTTP 402/429
+            # (rendered as "unknown" so its backend text is never echoed); on any
+            # other status it follows the normal connectivity path.
+            return code in QUOTA_ERROR_CODES or (
+                self.status_code in (402, 429) and "quota" in code
+            )
+        return (
+            self.status_code in (402, 429) and "quota" in (self.message or "").lower()
+        )
+
+    @property
+    def safe_quota_error_code(self) -> str:
+        """The error code if it is in the closed quota vocabulary, else 'unknown'."""
+
+        code = (self.error_code or "").strip().lower()
+        return code if code in QUOTA_ERROR_CODES else "unknown"
+
+    def quota_summary(self) -> str:
+        """Content-free quota-refusal summary: status and closed error code only."""
+
+        parts = []
+        if self.status_code is not None:
+            parts.append(f"HTTP {self.status_code}")
+        parts.append(self.safe_quota_error_code)
+        return " | ".join(parts)
+
+    @property
+    def safe_error_code(self) -> str:
+        """The error code if it is in the closed vocabulary, else 'unknown'."""
+
+        code = (self.error_code or "").strip().lower()
+        return code if code in SAFE_HTTP_ERROR_CODES else "unknown"
+
     def one_line_summary(self) -> str:
-        """Return a compact summary suitable for exception/log details."""
+        """Return a content-free summary: HTTP status and closed error code only.
+
+        Never includes the backend message, raw body or any other backend text
+        (it can echo customer content, #2552). ``message``/``raw_body`` stay on
+        the detail for classification only.
+        """
 
         parts: list[str] = []
         if self.status_code is not None:
             parts.append(f"HTTP {self.status_code}")
-        if self.error_code:
-            parts.append(self.error_code)
-        if self.message:
-            parts.append(self.message)
-        if self.missing_permissions:
-            parts.append(
-                "missing_permissions=" + ",".join(sorted(set(self.missing_permissions)))
-            )
-        if not parts and self.raw_body:
-            parts.append(self.raw_body[:200])
-        return " | ".join(parts) or "unknown"
+        parts.append(self.safe_error_code)
+        return " | ".join(parts)
 
 
 class SessionCreationHTTPError(Exception):
@@ -125,6 +238,9 @@ class SessionCreationResult:
     project_id: str | None = None
     tenant_id: str | None = None
     typed_legacy_session_create_400: bool = False
+    # The agent the backend bound this session to (API-key callers only; None
+    # for other principals and for backends that do not disclose it).
+    agent_id: str | None = None
     # Execution-path transparency (so a caller never mistakes a local run for a
     # managed/cloud one). ``execution_path`` is "connected" for a real backend
     # session and "local_fallback" for any local result. ``backend_fallback`` is
@@ -158,6 +274,7 @@ class SessionCreationResult:
         *,
         project_id: str | None = None,
         tenant_id: str | None = None,
+        agent_id: str | None = None,
     ) -> SessionCreationResult:
         """Factory for a successful backend session."""
         return cls(
@@ -165,6 +282,7 @@ class SessionCreationResult:
             backend_connected=True,
             project_id=project_id,
             tenant_id=tenant_id,
+            agent_id=agent_id,
             execution_path="connected",
             backend_fallback=False,
             degraded=False,

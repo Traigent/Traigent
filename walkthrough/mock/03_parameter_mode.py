@@ -27,17 +27,6 @@ traigent.initialize(offline=True, minimal_logging=True)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
-SIMULATED_BEST = {
-    "model": "gpt-3.5-turbo",
-    "temperature": 0.0,
-    "max_tokens": 50,
-    "use_system_prompt": True,
-    "accuracy": 0.9,
-}
-MOCK_MODE_CONFIG = {
-    "base_accuracy": SIMULATED_BEST["accuracy"],
-    "variance": 0.0,
-}
 OBJECTIVES = ["accuracy", "cost"]
 CONFIG_SPACE = {
     "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
@@ -77,7 +66,6 @@ def results_match_score(
     scoring_function=results_match_score,
     configuration_space=CONFIG_SPACE,
     offline=True,
-    mock_mode_config=MOCK_MODE_CONFIG,
 )
 def answer_with_control(question: str, config: dict) -> str:
     """Function with explicit configuration parameter."""

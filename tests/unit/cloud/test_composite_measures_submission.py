@@ -130,6 +130,7 @@ async def test_composite_measures_appear_in_posted_trial_metrics() -> None:
         patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
     ):
         mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+        ops.client._ensure_session = AsyncMock(return_value=mock_session)
         mock_aiohttp.ClientTimeout = Mock()
 
         result = await ops.submit_trial_result_via_session(
@@ -197,6 +198,7 @@ async def test_composite_metrics_pass_measuresdict_on_the_submission_path() -> N
         patch("traigent.cloud.trial_operations.logger") as mock_logger,
     ):
         mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+        ops.client._ensure_session = AsyncMock(return_value=mock_session)
         mock_aiohttp.ClientTimeout = Mock()
 
         await ops.submit_trial_result_via_session(
@@ -299,6 +301,7 @@ async def test_tuple_returning_function_metrics_reach_posted_body() -> None:
         patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
     ):
         mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+        ops.client._ensure_session = AsyncMock(return_value=mock_session)
         mock_aiohttp.ClientTimeout = Mock()
 
         result = await ops.submit_trial_result_via_session(

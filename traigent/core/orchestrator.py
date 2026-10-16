@@ -63,6 +63,7 @@ from traigent.core.cost_enforcement import (
     normalize_cost_approved,
     normalize_estimated_calls_per_example,
     resolve_fallback_trial_limit,
+    run_cost_limit_env_is_set,
     validate_cost_limit,
 )
 from traigent.core.cost_estimator import CostEstimator
@@ -450,6 +451,10 @@ class OptimizationOrchestrator:
         self._run_title: str | None = kwargs.pop("run_title", None)
         self._run_description: str | None = kwargs.pop("run_description", None)
         self._agent_key: str | None = kwargs.pop("agent_key", None)
+        # Best-config environment whose agent head is captured at step start,
+        # and the promotion precondition captured for the current run.
+        self.head_environment: str | None = None
+        self._promotion_precondition: dict[str, Any] | None = None
         self._smart_pruning: dict[str, Any] | None = kwargs.pop("smart_pruning", None)
         self._config_metrics_history: dict[str, dict[str, list[float]]] = {}
         self._incumbent_config_hash: str | None = None
@@ -845,14 +850,19 @@ class OptimizationOrchestrator:
                     else float(validate_cost_limit(cost_limit))
                 ),
                 approved=cost_approved,
+                # A named cap refuses a completed trial that reports no cost
+                # (stop-rules parity). Only the inherited default cap (no
+                # cost_limit and no TRAIGENT_RUN_COST_LIMIT) keeps the
+                # unknown-cost fallback.
+                limit_explicit=(cost_limit is not None or run_cost_limit_env_is_set()),
                 # The default unknown-cost trial cap honours its env override
                 # on this path too; it used to fall back to 10 here.
                 fallback_trial_limit=resolve_fallback_trial_limit(),
             )
         self.cost_enforcer = CostEnforcer(config=cost_config)
-        # Declared calls-per-example lever (issue #1750): scales the EMA seed
-        # so a multi-call agent's early trials don't read as guaranteed
-        # divergence against a single-call warm-start. Resolved once here
+        # Declared calls-per-example lever (issue #1750): scales the rough
+        # pre-trial figure used by the informational remaining-cost estimate
+        # (it does not seed the in-run mean estimate). Resolved once here
         # (whether cost_config came from the block above or from env-loaded
         # defaults inside CostEnforcer) and reused for the pre-run estimator.
         self._estimated_calls_per_example = normalize_estimated_calls_per_example(
@@ -3059,6 +3069,10 @@ class OptimizationOrchestrator:
         objectives_payload = self._build_session_objectives_payload()
         default_config_payload = self._build_session_default_config_payload()
         optimization_strategy_payload = self._backend_optimization_strategy_for_run()
+        self._promotion_precondition = None
+        head_environment_kwargs: dict[str, Any] = (
+            {"head_environment": self.head_environment} if self.head_environment else {}
+        )
         session_context = self.backend_session_manager.create_session(
             func=func,
             dataset=dataset,
@@ -3088,9 +3102,13 @@ class OptimizationOrchestrator:
             optimization_strategy=optimization_strategy_payload,
             task_type=getattr(self, "task_type", None),
             dataset_id=getattr(self, "dataset_id", None),
+            **head_environment_kwargs,
         )
         session_id: str | None = session_context.session_id
         self._active_session_id = session_id
+        self._promotion_precondition = self._promotion_precondition_from(
+            session_context
+        )
         self._bind_interactive_optimizer_session(
             session_id=session_id,
             function_name=experiment_display_name or descriptor.identifier,
@@ -3614,8 +3632,11 @@ class OptimizationOrchestrator:
             est_next_batch = est_per_trial * self._effective_batch_size(
                 remaining_trials
             )
+            # Tolerate float rounding so a budget that exactly funds the next
+            # batch (e.g. 0.30 - 0.20 = 0.0999... vs a 0.10 mean cost) is not
+            # blocked by representation error.
             if not math.isinf(snapshot.remaining_cost) and (
-                snapshot.remaining_cost < est_next_batch
+                snapshot.remaining_cost < est_next_batch - 1e-9
             ):
                 blocked_dimension = "cost"
 
@@ -4505,11 +4526,13 @@ class OptimizationOrchestrator:
                 logger.warning(
                     "⚠️  Optimization %s finished in LOCAL-ONLY mode "
                     "(source='local_fallback'): "
-                    "your config was rejected by the backend: %s. Results "
-                    "were computed and stored locally and are NOT on the cloud "
-                    "backend; metadata includes persistence_reason='rejected'.",
+                    "the backend rejected persistence of this run's config. "
+                    "Results were computed and stored locally and are NOT on the "
+                    "cloud backend; metadata includes persistence_reason='rejected'. "
+                    "The rejection detail is not logged; read "
+                    "result.metadata['persistence_rejection_reason'] on the "
+                    "customer side.",
                     self._optimization_id,
-                    rejection_reason,
                 )
             else:
                 logger.warning(
@@ -5267,6 +5290,27 @@ class OptimizationOrchestrator:
             trial_count=trial_count,
         )
 
+    @staticmethod
+    def _promotion_precondition_from(session_context: Any) -> dict[str, Any] | None:
+        """The agent head generation captured at step start, or None."""
+        agent_id = getattr(session_context, "agent_id", None)
+        generation = getattr(session_context, "head_generation", None)
+        environment = getattr(session_context, "head_environment", None)
+        if (
+            not isinstance(agent_id, str)
+            or not agent_id
+            or isinstance(generation, bool)
+            or not isinstance(generation, int)
+            or not isinstance(environment, str)
+            or not environment
+        ):
+            return None
+        return {
+            "agent_id": agent_id,
+            "environment": environment,
+            "generation": generation,
+        }
+
     def _build_result_metadata(
         self,
         session_summary: dict[str, Any] | None,
@@ -5298,6 +5342,13 @@ class OptimizationOrchestrator:
         # Only present for warm-started runs; absent otherwise.
         if self._warm_start_from:
             metadata["warm_start_from"] = self._warm_start_from
+
+        # Agent head generation read when this run's step started. A later
+        # publish sends this value, not a fresh read, so a head that moved in
+        # the meantime is refused instead of overwritten.
+        precondition = getattr(self, "_promotion_precondition", None)
+        if precondition:
+            metadata["promotion_precondition"] = dict(precondition)
 
         return metadata
 

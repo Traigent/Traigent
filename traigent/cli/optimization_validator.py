@@ -208,16 +208,9 @@ class OptimizationValidator:
     ) -> LocalEvaluator:
         """Create a LocalEvaluator with appropriate settings for mock or real mode."""
         execution_mode = self._local_evaluator_mode(func_info, is_mock_mode)
-        if is_mock_mode:
-            return LocalEvaluator(
-                metrics=func_info.objectives or ["accuracy"],
-                execution_mode=execution_mode,
-                mock_mode_config=getattr(func_info.func, "mock_mode_config", None),
-            )
         return LocalEvaluator(
-            metrics=func_info.objectives,
+            metrics=func_info.objectives or ["accuracy"],
             execution_mode=execution_mode,
-            mock_mode_config=getattr(func_info.func, "mock_mode_config", None),
         )
 
     def _local_evaluator_mode(

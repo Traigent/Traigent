@@ -37,7 +37,6 @@ def _call_create_evaluator(**overrides: Any) -> Any:
         "effective_privacy_enabled": False,
         "objectives": ["accuracy"],
         "execution_mode": "local",
-        "mock_mode_config": None,
         "metric_functions": None,
         "scoring_function": None,
         "decorator_custom_evaluator": None,

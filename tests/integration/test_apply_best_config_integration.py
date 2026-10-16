@@ -122,7 +122,6 @@ class TestApplyBestConfigIntegration:
                 "max_tokens": [100, 150, 200, 300],
             },
             objectives=["accuracy", "cost_per_1k", "latency"],
-            use_cloud_service=False,
             eval_dataset=sample_dataset_file,
             injection_mode="seamless",  # This will pass config as kwargs
         )
@@ -184,7 +183,6 @@ class TestApplyBestConfigIntegration:
                 },
                 objectives=["accuracy", "latency"],
                 execution_mode="hybrid",
-                use_cloud_service=True,
                 eval_dataset=sample_dataset_file,
             )
 
@@ -229,7 +227,6 @@ class TestApplyBestConfigIntegration:
                 },
                 objectives=["accuracy"],
                 execution_mode="hybrid",
-                use_cloud_service=False,  # SaaS mode
                 eval_dataset=sample_dataset_file,
             )
 
@@ -294,17 +291,8 @@ class TestApplyBestConfigIntegration:
             return f"{model}:{text.upper()}"
 
         modes = [
-            {
-                "execution_mode": "edge_analytics",
-                "use_cloud_service": False,
-                "name": "edge_analytics",
-            },
-            {"execution_mode": "hybrid", "use_cloud_service": False, "name": "hybrid"},
-            {
-                "execution_mode": "hybrid",
-                "use_cloud_service": True,
-                "name": "hybrid_service_flag",
-            },
+            {"execution_mode": "edge_analytics", "name": "edge_analytics"},
+            {"execution_mode": "hybrid", "name": "hybrid"},
         ]
 
         results = {}
@@ -315,7 +303,6 @@ class TestApplyBestConfigIntegration:
                 configuration_space={"model": ["gpt-4o-mini", "GPT-4o"]},
                 objectives=["accuracy"],
                 execution_mode=mode_config["execution_mode"],
-                use_cloud_service=mode_config["use_cloud_service"],
                 eval_dataset=sample_dataset_file,
             )
 
@@ -507,7 +494,6 @@ class TestModeSpecificBehavior:
             func=sensitive_function,
             configuration_space={"model": ["gpt-4o-mini", "GPT-4o"]},
             objectives=["accuracy"],
-            use_cloud_service=False,
         )
 
         opt_func._optimization_results = sample_optimization_result
@@ -541,7 +527,6 @@ class TestModeSpecificBehavior:
                 configuration_space={"model": ["gpt-4o-mini", "GPT-4o"]},
                 objectives=["accuracy"],
                 execution_mode="hybrid",
-                use_cloud_service=True,  # Standard mode
             )
 
             opt_func._optimization_results = sample_optimization_result

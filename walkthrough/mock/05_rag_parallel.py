@@ -28,17 +28,6 @@ traigent.initialize(offline=True, minimal_logging=True)
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
-SIMULATED_BEST = {
-    "k": 3,
-    "retrieval_method": "keyword",
-    "model": "gpt-3.5-turbo",
-    "temperature": 0.7,
-    "accuracy": 0.8344,
-}
-MOCK_MODE_CONFIG = {
-    "base_accuracy": SIMULATED_BEST["accuracy"],
-    "variance": 0.0,
-}
 OBJECTIVES = ["accuracy", "cost"]
 CONFIG_SPACE = {
     "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
@@ -81,7 +70,6 @@ def semantic_similarity_score(
     configuration_space=CONFIG_SPACE,
     injection_mode="context",  # default, added explicitly for clarity
     offline=True,
-    mock_mode_config=MOCK_MODE_CONFIG,
 )
 def rag_qa(question: str) -> str:
     """RAG question answering with configurable retrieval."""

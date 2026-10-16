@@ -258,7 +258,7 @@ def test_add_agent_span_works_with_restored_thread_context() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F1 — add_agent_span returns a receipt (spine-trail st_696dca8f2855)
+# F1 — add_agent_span returns a receipt
 #
 # These do NOT change what is dropped (see #1649 regression above); they make
 # the drop observable to the caller instead of DEBUG-only.
