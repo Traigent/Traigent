@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import subprocess
 import importlib.util
 import sys
@@ -940,10 +941,10 @@ def test_availability_request_validates_and_is_closed(store, idx, schemas):
 
 
 def test_vendored_contract_files_equal_schema_2244144():
-    schema = Path(
-        "/home/nimrod/TraigentProjects/core_project/worktrees/TraigentSchema/"
-        "pillar-legend/traigent_schema/schemas/legend"
-    )
+    schema_root = os.environ.get("TRAIGENT_SCHEMA_DIR")
+    if not schema_root:
+        pytest.skip("TRAIGENT_SCHEMA_DIR not set")
+    schema = Path(schema_root) / "traigent_schema" / "schemas" / "legend"
     head = (
         subprocess.run(
             ["git", "-C", str(schema), "rev-parse", "--short=7", "HEAD"],

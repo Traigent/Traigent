@@ -199,10 +199,7 @@ import tests.test_process_record_verifier as pv
 from traigent_schema.certification import TrustAnchorKeyV1
 from traigent_schema.certification.relying_party_verifier import VerificationContext
 
-OUT = Path(
-    "/home/nimrod/TraigentProjects/core_project/worktrees/Traigent/"
-    "certify-agent-quality/tests/fixtures/certification"
-)
+OUT = Path("tests/fixtures/certification")  # run from the repo root
 
 
 def _anchor_dict(anchor: TrustAnchorKeyV1) -> dict:
