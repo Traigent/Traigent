@@ -14,7 +14,15 @@ from pathlib import Path
 import pytest
 
 from .canaries import distinct_identities, distinct_pairs
-from .pins import BASELINE, PRE_EXPANSION_PAIRS, REGISTER, load_dispositions
+from .pins import (
+    BASELINE,
+    PRE_EXPANSION_PAIRS,
+    REGISTER,
+    load_anchor,
+    load_dispositions,
+    ratchet_problems,
+    reference_problem,
+)
 from .scenario import ScenarioResult, run_scenario
 
 # The run is mocked at every transport; the marker only selects connected mode.
@@ -151,3 +159,25 @@ def test_new_pairs_vs_pre_expansion_baseline_are_known(
 ) -> None:
     new_pairs = distinct_pairs(scenario.leaks) - set(PRE_EXPANSION_PAIRS)
     assert new_pairs <= {(route, kind) for route, _l, _f, kind in REGISTER}
+
+
+def test_live_leaks_hold_against_origin_develop_anchor(
+    scenario: ScenarioResult,
+) -> None:
+    """The authority is origin/develop, not the manifest this PR may have edited.
+
+    Fails (never skips) when git or the ref is unreadable.
+    """
+
+    problems = ratchet_problems(
+        distinct_identities(scenario.leaks),
+        load_anchor(),
+        REGISTER,
+        load_dispositions(),
+    )
+    assert not problems, "\n".join(problems)
+
+
+def test_disposition_references_are_validated() -> None:
+    for entry in load_dispositions():
+        assert reference_problem(entry.get("reference", "")) is None, entry

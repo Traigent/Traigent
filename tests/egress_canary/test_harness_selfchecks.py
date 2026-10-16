@@ -344,3 +344,72 @@ def test_scenario_result_type_is_report_renderable(tmp_path: Path) -> None:
     result: ScenarioResult = run_scenario(tmp_path, trials=2, direct_paths=False)
     text = render_report(result, 0)
     assert "## Leaks by route" in text and "## Routes captured" in text
+
+
+_A = ("POST /api/v1/sessions", "body.value", "$.a", "agent_name")
+_B = ("POST /api/v1/sessions", "body.value", "$.b", "run_title")
+_NEW = ("POST /api/v1/sessions", "body.value", "$.new", "metadata_value")
+
+
+def _disp(identity, reference):
+    r, loc, fp, kind = identity
+    return {
+        "route": r,
+        "location": loc,
+        "field_path": fp,
+        "kind": kind,
+        "reason": "fixed",
+        "reference": reference,
+    }
+
+
+def test_edited_manifest_hiding_an_addition_still_fails() -> None:
+    from .pins import ratchet_problems
+
+    anchor = {_A, _B}
+    live = {_A, _B, _NEW}
+    # The PR edits the working-tree manifest to include the new leak...
+    edited_register = {_A, _B, _NEW}
+    problems = ratchet_problems(live, anchor, edited_register, [])
+    assert any("new leak not in" in p for p in problems)
+    # ...and it passes only against a (wrongly) self-referential anchor.
+    assert ratchet_problems(live, live, edited_register, []) == []
+
+
+def test_bogus_disposition_reference_fails() -> None:
+    from .pins import ratchet_problems
+
+    ids = {"S1"}
+    for bad in (
+        "because",
+        "INV:S999",
+        "no/such/file.py:3",
+        "tests/egress_canary/pins.py:999999",
+        "",
+    ):
+        problems = ratchet_problems({_A}, {_A, _B}, {_A}, [_disp(_B, bad)], ids=ids)
+        assert any("invalid disposition" in p for p in problems), bad
+    for good in ("INV:S1", "tests/egress_canary/pins.py:1"):
+        assert ratchet_problems({_A}, {_A, _B}, {_A}, [_disp(_B, good)], ids=ids) == []
+    assert any(
+        "without disposition" in p for p in ratchet_problems({_A}, {_A, _B}, {_A}, [])
+    )
+
+
+def test_first_introduction_requires_exact_manifest_match() -> None:
+    from .pins import ratchet_problems
+
+    assert ratchet_problems({_A}, None, {_A}, []) == []
+    assert ratchet_problems({_A, _NEW}, None, {_A}, [])
+    assert ratchet_problems({_A}, None, {_A, _B}, [])
+
+
+def test_unreadable_authority_fails_not_skips(monkeypatch) -> None:
+    from . import pins
+
+    def boom(*a, **k):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(pins.subprocess, "run", boom)
+    with pytest.raises(pins.AnchorUnavailable):
+        pins.load_anchor()
