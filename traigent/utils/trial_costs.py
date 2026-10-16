@@ -18,12 +18,17 @@ __all__ = [
     "known_spend_lower_bound",
     "lift_flagged_cost_to_floor",
     "row_has_measured_cost",
+    "row_reports_zero_provider_attempts",
     "trial_cost_unknown",
     "unmeasured_example_ids",
 ]
 
 # Keys under which a per-example result row may carry a measured cost.
 COST_ROW_KEYS = ("input_cost", "output_cost", "total_cost", "cost")
+
+#: A failed row that sets this to ``0`` explicitly reports that no provider call
+#: was attempted, so it has no spend to measure (see :func:`trial_cost_unknown`).
+ZERO_ATTEMPTS_KEY = "provider_attempts"
 
 
 def coerce_finite_cost(value: Any) -> float | None:
@@ -83,6 +88,19 @@ def _iter_cost_mappings(source: Any) -> Any:
             yield from _iter_cost_mappings(item)
 
 
+def row_reports_zero_provider_attempts(row: Any) -> bool:
+    """True only when a row explicitly reports ``provider_attempts == 0``."""
+    if not isinstance(row, Mapping):
+        return False
+    attempts = row.get(ZERO_ATTEMPTS_KEY)
+    return (
+        isinstance(attempts, (int, float))
+        and not isinstance(attempts, bool)
+        and math.isfinite(attempts)
+        and attempts == 0
+    )
+
+
 def row_has_measured_cost(row: Any) -> bool:
     """True when a result row carries a finite numeric cost and no unknown flag."""
     if not isinstance(row, Mapping) or is_cost_unmeasured(row):
@@ -105,10 +123,13 @@ def trial_cost_unknown(
     * rows exist but none is measured (e.g. every example errored): the
       trial's spend is unknown, never a fabricated $0.
 
-    A failed row without a cost is skipped (an error before any usage is not
-    evidence that the rest of the spend is unknown). ``successes`` is aligned
-    with ``rows``; when omitted or misaligned every row counts as successful.
-    No rows at all means nothing ran: not unknown.
+    * a *failed* row has no measured cost, unless it reports a cost explicitly
+      (``0`` included) or reports ``provider_attempts == 0``: an error does not
+      prove nothing was spent (a provider call can succeed and the evaluator
+      raise afterwards), so a failed row with no cost telemetry is unknown.
+
+    ``successes`` is aligned with ``rows``; when omitted or misaligned every
+    row counts as successful. No rows at all means nothing ran: not unknown.
     """
     rows = list(rows)
     if not rows:
@@ -118,21 +139,25 @@ def trial_cost_unknown(
     else:
         flags = [bool(flag) for flag in successes]
     measured = 0
+    zero_attempts = 0
     for row, ok in zip(rows, flags, strict=True):
         if isinstance(row, Mapping) and is_cost_unmeasured(row):
             return True
         if row_has_measured_cost(row):
             measured += 1
-        elif ok:
+        elif not ok and row_reports_zero_provider_attempts(row):
+            zero_attempts += 1
+        else:
             return True
-    return measured == 0
+    return measured == 0 and zero_attempts == 0
 
 
 def unmeasured_example_ids(example_results: Any, limit: int = 5) -> list[str]:
     """Ids (or ``#index``) of the examples whose usage was not captured.
 
     Uses the same per-row rule as :func:`trial_cost_unknown`: a row flagged
-    ``cost_unmeasured``, or a successful row with no measured cost. Only the
+    ``cost_unmeasured``, or a row with no measured cost (a failed row that
+    reports zero provider attempts excepted). Only the
     example id or position is returned, never example content. At most
     ``limit`` entries; ``[]`` when the rows are not readable.
     """
@@ -155,7 +180,10 @@ def unmeasured_example_ids(example_results: Any, limit: int = 5) -> list[str]:
         if not isinstance(metrics, Mapping):
             continue
         flagged = is_cost_unmeasured(metrics)
-        if flagged or (bool(ok) and not row_has_measured_cost(metrics)):
+        no_cost = not row_has_measured_cost(metrics) and not (
+            not bool(ok) and row_reports_zero_provider_attempts(metrics)
+        )
+        if flagged or no_cost:
             found.append(str(example_id) if example_id else f"#{index}")
             if len(found) >= limit:
                 break
@@ -205,10 +233,25 @@ def known_spend_lower_bound(*sources: Any) -> float:
             bound = coerce_finite_cost(cost_mapping.get("cost_lower_bound"))
             if bound is not None and bound >= 0:
                 bounds.append(bound)
+            # Every alias counts, not only the first one found: ``{"cost": 0,
+            # "total_cost": 0.4}`` reports 0.4, and a zero alias must not
+            # mask it.
             costs = extract_trial_cost_fields(cost_mapping)
-            cost = coerce_finite_cost(costs.get("cost"))
-            if cost is not None and cost >= 0:
-                costs_seen.append(cost)
+            aliases = [
+                *(costs.get(field) for field in TRIAL_COST_FIELDS),
+                *(cost_mapping.get(field) for field in TRIAL_COST_FIELDS),
+                cost_mapping.get("total_example_cost"),
+            ]
+            for alias in aliases:
+                cost = coerce_finite_cost(alias)
+                if cost is not None and cost >= 0:
+                    costs_seen.append(cost)
+            parts = [
+                coerce_finite_cost(cost_mapping.get("input_cost")),
+                coerce_finite_cost(cost_mapping.get("output_cost")),
+            ]
+            if all(part is not None and part >= 0 for part in parts):
+                costs_seen.append(sum(p for p in parts if p is not None))
     candidates = bounds + costs_seen
     return max(candidates) if candidates else 0.0
 

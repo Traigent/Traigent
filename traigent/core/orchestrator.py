@@ -2122,37 +2122,42 @@ class OptimizationOrchestrator:
             else []
         )
 
-        if self.cost_enforcer is not None:
-            if trial_result.status == TrialStatus.CANCELLED:
-                if trial_cost is not None:
+        # The shared budget is debited even when strict mode rejects the trial:
+        # the known floor was spent, so the ledger must show it (a flagged
+        # trial stays "untracked"). ``finally`` only orders the debit before
+        # the error propagates; it does not swallow it.
+        try:
+            if self.cost_enforcer is not None:
+                if trial_result.status == TrialStatus.CANCELLED:
+                    if trial_cost is not None:
+                        await self.cost_enforcer.track_cost_async(
+                            cost=trial_cost,
+                            permit=effective_permit,
+                            trial_failed=True,
+                            trial_id=trial_result.trial_id,
+                            cost_unmeasured=flagged,
+                            unmeasured_examples=missing_examples,
+                        )
+                else:
                     await self.cost_enforcer.track_cost_async(
                         cost=trial_cost,
                         permit=effective_permit,
-                        trial_failed=True,
+                        trial_failed=trial_result.status == TrialStatus.FAILED,
                         trial_id=trial_result.trial_id,
                         cost_unmeasured=flagged,
                         unmeasured_examples=missing_examples,
                     )
-            else:
-                await self.cost_enforcer.track_cost_async(
+        finally:
+            if (budget := getattr(self, "execution_budget", None)) is not None:
+                budget.debit_trial(
                     cost=trial_cost,
-                    permit=effective_permit,
-                    trial_failed=trial_result.status == TrialStatus.FAILED,
+                    examples=self._examples_of(trial_result),
+                    # A flagged trial is charged its known floor but stays
+                    # "untracked": the ledger is then a minimum, not exact.
+                    untracked=trial_cost is None
+                    or is_cost_unmeasured(trial_result.metrics),
                     trial_id=trial_result.trial_id,
-                    cost_unmeasured=flagged,
-                    unmeasured_examples=missing_examples,
                 )
-
-        if (budget := getattr(self, "execution_budget", None)) is not None:
-            budget.debit_trial(
-                cost=trial_cost,
-                examples=self._examples_of(trial_result),
-                # A flagged trial is charged its known floor but stays
-                # "untracked": the ledger is then a minimum, not exact.
-                untracked=trial_cost is None
-                or is_cost_unmeasured(trial_result.metrics),
-                trial_id=trial_result.trial_id,
-            )
 
         return trial_cost
 

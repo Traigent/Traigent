@@ -92,7 +92,10 @@ def _wrapper(rows: list[dict[str, Any]]) -> CustomEvaluatorWrapper:
         ([{"total_cost": 0.0}], None, False),  # a measured zero stays measured
         ([{"total_cost": 0.25}, {}], None, True),  # successful row, no cost
         ([{}, {}], None, True),  # nothing captured
-        ([{"total_cost": 0.25}, {}], [True, False], False),  # failed row skipped
+        # failed row with no cost telemetry: unknown (the provider call may
+        # have succeeded before the evaluator raised); round 20
+        ([{"total_cost": 0.25}, {}], [True, False], True),
+        ([{"total_cost": 0.25}, {"provider_attempts": 0}], [True, False], False),
         ([{}, {}], [False, False], True),  # every example errored
         ([{"total_cost": 0.25, "cost_unmeasured": 1.0}], None, True),  # flagged
         ([{"total_cost": float("nan")}], None, True),  # non-finite is not a cost

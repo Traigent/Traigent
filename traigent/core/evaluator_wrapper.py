@@ -273,6 +273,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         original_prompt = self._reconstruct_original_prompt(example)
         response_text = self._extract_response_text(example_result.actual_output)
         llm_metrics = None
+        any_unmeasured_call = False
         for position, response in enumerate(captured_responses):
             metrics = self._extract_llm_metrics(
                 response=response,
@@ -283,6 +284,10 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 response_text=response_text if position == 0 else None,
             )
             if not self._has_llm_measurement(metrics):
+                # A call with no usage is an unknown spend, and it stays
+                # unknown even when another call in the same example was
+                # measured: the example total is then only a floor (#2517).
+                any_unmeasured_call = True
                 continue
             if llm_metrics is None:
                 llm_metrics = metrics
@@ -292,6 +297,8 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         if llm_metrics is None:
             # Captured responses without usage are not a measured $0.
             return None
+        if any_unmeasured_call:
+            llm_metrics.cost.unmeasured = True
 
         logger.debug(
             f"Captured LLM metrics for example {example_index}: "
@@ -364,6 +371,12 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             if safe_get_nested_attr(llm_metrics, "cost.unmeasured", False):
                 # Unknown cost: leave the cost keys out, flag it (#2517).
                 example_result.metrics["cost_unmeasured"] = 1.0
+                # The part that WAS measured stays a floor, never a total.
+                known = safe_get_nested_attr(
+                    llm_metrics, "cost.total_cost", 0.0
+                ) + safe_get_nested_attr(llm_metrics, "cost.known_cost", 0.0)
+                if known > 0:
+                    example_result.metrics["cost_lower_bound"] = known
             else:
                 example_result.metrics["input_cost"] = safe_get_nested_attr(
                     llm_metrics, "cost.input_cost", 0.0

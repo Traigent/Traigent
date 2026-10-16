@@ -14,6 +14,7 @@ from traigent.api.decorators import EvaluationOptions, ExecutionOptions
 from traigent.core.cost_enforcement import (
     CostEnforcer,
     CostEnforcerConfig,
+    CostTrackingRequiredError,
 )
 from traigent.utils.exceptions import OptimizationError
 
@@ -32,9 +33,20 @@ def _dataset(tmp_path: Path) -> str:
     return str(path)
 
 
-def _run(tmp_path: Path, monkeypatch, *, wrap: bool, objectives, **extra):
+def _run(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    wrap: bool,
+    objectives,
+    env: dict[str, str] | None = None,
+    **extra,
+):
     for key in _COST_ENV:
         monkeypatch.delenv(key, raising=False)
+    # Set AFTER the clean-up above, so a test's own explicit limit survives.
+    for key, value in (env or {}).items():
+        monkeypatch.setenv(key, value)
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
     monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
     monkeypatch.setenv("TRAIGENT_DATASET_ROOT", str(tmp_path))
@@ -100,12 +112,28 @@ def test_flagged_trial_counts_as_unmeasured_and_charges_floor(
     assert "example_4" in caplog.text
 
 
-def test_cost_limit_only_run_continues_charges_floor_and_warns(
+def test_explicit_cost_limit_with_unmeasured_example_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A NAMED limit cannot bound a trial whose spend is unknown: strict raises."""
+    with pytest.raises(OptimizationError) as exc:
+        _run(
+            tmp_path,
+            monkeypatch,
+            wrap=False,
+            objectives=["accuracy"],
+            env={"TRAIGENT_RUN_COST_LIMIT": "5.0"},
+        )
+    assert isinstance(exc.value.__cause__, CostTrackingRequiredError)
+    assert "Cost limit $5.00" in str(exc.value)
+
+
+def test_default_cost_limit_run_continues_charges_floor_and_warns(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    monkeypatch.setenv("TRAIGENT_RUN_COST_LIMIT", "5.0")
+    # No TRAIGENT_RUN_COST_LIMIT: the inherited default only bounds known spend.
     with caplog.at_level(logging.WARNING):
         result = _run(tmp_path, monkeypatch, wrap=False, objectives=["accuracy"])
     assert len(result.trials) == 2
@@ -122,6 +150,7 @@ def test_unmeasured_example_ids_never_return_content() -> None:
         {"example_id": "c", "metrics": {}, "success": False},
         {"example_id": "", "metrics": {"cost_unmeasured": 1.0}, "success": True},
     ]
-    assert unmeasured_example_ids(rows) == ["b", "#3"]
+    # a failed row with no cost telemetry is unknown too (round 20)
+    assert unmeasured_example_ids(rows) == ["b", "c", "#3"]
     assert unmeasured_example_ids(rows, limit=1) == ["b"]
     assert unmeasured_example_ids(None) == []
