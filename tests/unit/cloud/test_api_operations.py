@@ -400,6 +400,14 @@ class TestSanitizeErrorMessage:
     def test_more_secret_shapes_redacted(self, msg, leaked):
         assert leaked not in self.ops.sanitize_error_message(msg)
 
+    def test_basic_token_cut_by_input_cap_is_redacted(self):
+        msg = " basic " + "ajpp" * 1025
+        assert "ajpp" not in self.ops.sanitize_error_message(msg)
+
+    def test_basic_prose_before_long_text_is_unchanged(self):
+        msg = "basic usage of the API " + "x" * 5000
+        assert self.ops.sanitize_error_message(msg).startswith("basic usage of the API")
+
     @pytest.mark.parametrize(
         "msg",
         [
