@@ -136,7 +136,7 @@ class SyncManager:
         # X-API-Key only — Authorization: Bearer is reserved for JWTs.
         self.headers = {"X-API-Key": api_key} if api_key else {}
         # Always create requests session for synchronous operations
-        self._session = gate_session(requests.Session())
+        self._session = gate_session(requests.Session(), origins=[self.base_url])
         if api_key:
             self._session.headers.update(self.headers)
         self._request_timeout = self._resolve_request_timeout()

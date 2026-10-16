@@ -107,7 +107,8 @@ class OptimizerDirectClient:
                 },
                 timeout=aiohttp.ClientTimeout(total=30),
                 trust_env=True,
-            )
+            ),
+            origins=[self.endpoint],
         )
         # Start background flush task
         self._flush_task = asyncio.create_task(self._periodic_flush())

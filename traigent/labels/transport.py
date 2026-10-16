@@ -99,7 +99,11 @@ class LabelTransport:
         timeout = aiohttp.ClientTimeout(total=_TIMEOUT_SECONDS)
         try:
             async with (
-                gate_session(aiohttp.ClientSession(trust_env=True)) as session,
+                gate_session(
+                    aiohttp.ClientSession(trust_env=True),
+                    origins=[self._base],
+                    strict=True,
+                ) as session,
                 session.request(
                     method,
                     f"{self._base}/labels{path}",

@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, unquote, urlparse, urlunparse
 
 # Import and re-export BackendClientConfig for backward compatibility
-from traigent.labels.transport_gate import gate_session
+from traigent.labels.transport_gate import client_origins, gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.api_operations import ApiOperations, TraigentSessionApiResult
 from traigent.cloud.auth import (
@@ -1462,7 +1462,8 @@ class BackendIntegratedClient:
                     # Trace context travels only on per-request headers.
                     headers=_strip_trace_context_headers(headers),
                     trust_env=True,
-                )
+                ),
+                origins=client_origins(self),
             )
             self._register_session_finalizer(self._session)
         return self
@@ -1514,7 +1515,8 @@ class BackendIntegratedClient:
                 # long-lived session-default headers.
                 headers=_strip_trace_context_headers(headers),
                 trust_env=True,
-            )
+            ),
+            origins=client_origins(self),
         )
 
     def _loop_pools(self) -> dict[int, tuple[weakref.ref[Any], Any]]:

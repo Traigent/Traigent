@@ -93,17 +93,23 @@ def _origin(url: str) -> tuple[str, str, int] | None:
         return None
 
 
-def applies_to(method: str, url: str) -> bool:
-    """True only for a configured-backend origin AND a known optimization route.
+def applies_to(
+    method: str, url: str, extra_origins: frozenset[tuple[str, str, int]] = frozenset()
+) -> bool:
+    """True only for a backend origin AND a known optimization route.
 
-    Evaluated before anything is parsed or serialized, so other hosts and other routes
-    (auth, observability, multipart uploads, ...) are never touched.
+    The origin is a configured backend or one of ``extra_origins`` (the per-client API
+    base a gated session was created for). Evaluated before anything is parsed or
+    serialized, so other hosts and other routes (auth, observability, multipart uploads,
+    ...) are never touched.
     """
     if current_mode() == "off":
         return False
     try:
         origin = _origin(str(url))
-        if origin is None or origin not in backend_origins():
+        if origin is None or (
+            origin not in extra_origins and origin not in backend_origins()
+        ):
             return False
     except Exception:  # noqa: BLE001 - cannot establish the backend origin: not ours
         return False
@@ -161,6 +167,7 @@ def inspect_outgoing(
     body: bytes | str | None,
     *,
     body_present: bool | None = None,
+    extra_origins: frozenset[tuple[str, str, int]] = frozenset(),
 ) -> dict[str, int] | None:
     """Classify one outgoing request from its FINAL bytes; counts, or ``None`` if skipped.
 
@@ -171,7 +178,7 @@ def inspect_outgoing(
     if mode == "off":
         return None
     refuse = mode == "refuse"
-    if not applies_to(method, str(url)):
+    if not applies_to(method, str(url), extra_origins):
         return None
     try:
         parts = urlsplit(str(url))
@@ -227,6 +234,38 @@ def _derived(base: type, tag: str, build: Any) -> type:
         return _CLASS_CACHE[key]
 
 
+def client_origins(client: Any) -> list[str]:
+    """API-base URLs a backend client object is configured with (duck-typed, str only).
+
+    Used to gate a session created for ``client`` against ITS base, not just the global one.
+    """
+    found: list[str] = []
+    config = getattr(client, "backend_config", None)
+    for owner, names in (
+        (config, ("api_base_url", "backend_base_url")),
+        (client, ("api_base_url", "base_url")),
+    ):
+        for name in names:
+            value = getattr(owner, name, None) if owner is not None else None
+            if isinstance(value, str) and value:
+                found.append(value)
+    return found
+
+
+def _instance_origins(client: Any) -> frozenset[tuple[str, str, int]]:
+    """Origins registered for THIS gated instance (its own API base); never global."""
+    return getattr(client, "_traigent_gate_origins", frozenset())
+
+
+def _check_strict(client: Any, url: str) -> None:
+    """A strict instance (content-less) fails closed on any origin it was not built for."""
+    if not getattr(client, "_traigent_gate_strict", False) or current_mode() == "off":
+        return
+    origin = _origin(str(url))
+    if origin is None or origin not in (_instance_origins(client) | backend_origins()):
+        raise TransportGateRefusal("unrecognised_origin", {"violation": 1})
+
+
 def _build_aiohttp(base: type) -> type:
     from aiohttp import payload
 
@@ -239,9 +278,11 @@ def _build_aiohttp(base: type) -> type:
             if base_url is not None and not urlsplit(url).scheme:
                 url = str(base_url).rstrip("/") + "/" + url.lstrip("/")
             url = _with_params(url, kwargs.get("params"))
+            _check_strict(self, url)
+            extra = _instance_origins(self)
             body: bytes | None = None
             unreadable = False
-            if applies_to(str(method), url):
+            if applies_to(str(method), url, extra):
                 try:
                     data = kwargs.get("data")
                     if kwargs.get("json") is not None and data is None:
@@ -272,7 +313,11 @@ def _build_aiohttp(base: type) -> type:
                         _errors[type(exc).__name__] += 1
                     unreadable = True
                 inspect_outgoing(
-                    str(method), url, body, body_present=unreadable or None
+                    str(method),
+                    url,
+                    body,
+                    body_present=unreadable or None,
+                    extra_origins=extra,
                 )
             return await super()._request(method, str_or_url, **kwargs)
 
@@ -289,11 +334,13 @@ def _build_requests(base: type) -> type:
             if isinstance(body, str):
                 body = body.encode("utf-8")
             readable = body is None or isinstance(body, (bytes, bytearray))
+            _check_strict(self, str(request.url))
             inspect_outgoing(
                 str(request.method),
                 str(request.url),
                 bytes(body) if isinstance(body, (bytes, bytearray)) else None,
                 body_present=None if readable else True,
+                extra_origins=_instance_origins(self),
             )
             return super().send(request, **kwargs)
 
@@ -314,11 +361,13 @@ def _build_httpx_sync(base: type) -> type:
 
         def send(self, request: Any, **kwargs: Any) -> Any:
             body, unreadable = _httpx_body(request)
+            _check_strict(self, str(request.url))
             inspect_outgoing(
                 str(request.method),
                 str(request.url),
                 body,
                 body_present=True if unreadable else None,
+                extra_origins=_instance_origins(self),
             )
             return super().send(request, **kwargs)
 
@@ -332,11 +381,13 @@ def _build_httpx_async(base: type) -> type:
 
         async def send(self, request: Any, **kwargs: Any) -> Any:
             body, unreadable = _httpx_body(request)
+            _check_strict(self, str(request.url))
             inspect_outgoing(
                 str(request.method),
                 str(request.url),
                 body,
                 body_present=True if unreadable else None,
+                extra_origins=_instance_origins(self),
             )
             return await super().send(request, **kwargs)
 
@@ -354,24 +405,43 @@ def _is_instance(obj: Any, module: str, name: str) -> bool:
         return False
 
 
-def gate_session(client: Any) -> Any:
+def gate_session(
+    client: Any,
+    *,
+    origins: Iterable[str] | None = None,
+    strict: bool = False,
+) -> Any:
     """Gate ONE SDK-created client instance in place and return it.
 
     Re-classes the instance so its send funnel inspects requests. Mocks and unknown
     objects are returned untouched; ``TRAIGENT_TRANSPORT_GATE=off`` disables gating.
+
+    ``origins`` are the URLs (API bases) this instance sends to; they are inspected in
+    addition to the configured backend, for THIS instance only (no global state), so a
+    per-client API base is gated like the default one. ``strict`` makes the instance fail
+    closed on any other origin (content-less sessions).
     """
-    if current_mode() == "off" or getattr(type(client), "_traigent_gated", False):
+    if current_mode() == "off":
         return client
-    if _is_instance(client, "aiohttp", "ClientSession"):
-        object.__setattr__(
-            client, "__class__", _derived(type(client), "aiohttp", _build_aiohttp)
-        )
-    elif _is_instance(client, "requests", "Session"):
-        client.__class__ = _derived(type(client), "requests", _build_requests)
-    elif _is_instance(client, "httpx", "AsyncClient"):
-        client.__class__ = _derived(type(client), "httpx-async", _build_httpx_async)
-    elif _is_instance(client, "httpx", "Client"):
-        client.__class__ = _derived(type(client), "httpx", _build_httpx_sync)
+    if not getattr(type(client), "_traigent_gated", False):
+        if _is_instance(client, "aiohttp", "ClientSession"):
+            object.__setattr__(
+                client, "__class__", _derived(type(client), "aiohttp", _build_aiohttp)
+            )
+        elif _is_instance(client, "requests", "Session"):
+            client.__class__ = _derived(type(client), "requests", _build_requests)
+        elif _is_instance(client, "httpx", "AsyncClient"):
+            client.__class__ = _derived(type(client), "httpx-async", _build_httpx_async)
+        elif _is_instance(client, "httpx", "Client"):
+            client.__class__ = _derived(type(client), "httpx", _build_httpx_sync)
+    if getattr(type(client), "_traigent_gated", False):
+        parsed = frozenset(o for u in (origins or ()) if (o := _origin(str(u))))
+        if parsed:
+            object.__setattr__(
+                client, "_traigent_gate_origins", _instance_origins(client) | parsed
+            )
+        if strict:
+            object.__setattr__(client, "_traigent_gate_strict", True)
     return client
 
 

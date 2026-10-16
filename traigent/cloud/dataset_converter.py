@@ -173,7 +173,8 @@ class DatasetConverter:
                 aiohttp.ClientSession(
                     timeout=aiohttp.ClientTimeout(total=60),
                     trust_env=True,
-                )
+                ),
+                origins=[self.backend_base_url],
             )
         return self
 

@@ -442,7 +442,8 @@ async def resilient_backend_request(
             aiohttp.ClientSession(
                 timeout=request_timeout,
                 trust_env=True,
-            )
+            ),
+            origins=[url],
         ) as session:
             async with session.request(
                 method,

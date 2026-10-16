@@ -686,6 +686,14 @@ class ApiOperations:
         self._content_less_ctx = (cache, principal, local_keys, used_cache)
         return payload
 
+    def _gate_origins(self) -> list[str]:
+        """This client's own API base: the origin its gated sessions send to."""
+        api_base = (
+            self.client.backend_config.api_base_url
+            or BackendConfig.get_backend_api_url()
+        )
+        return [api_base] if isinstance(api_base, str) else []
+
     def _content_less_principal(self) -> str:
         """Digest of (backend URL, credential preview): scopes the local ref cache."""
         try:
@@ -900,7 +908,9 @@ class ApiOperations:
             cast(Any, aiohttp).ClientSession(
                 connector=connector,
                 trust_env=True,
-            )
+            ),
+            origins=self._gate_origins(),
+            strict=content_less_ctx is not None,
         ) as session:
             api_base = (
                 self.client.backend_config.api_base_url
@@ -1065,7 +1075,8 @@ class ApiOperations:
                 cast(Any, aiohttp).ClientSession(
                     connector=self._build_connector(),
                     trust_env=True,
-                )
+                ),
+                origins=self._gate_origins(),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1204,7 +1215,8 @@ class ApiOperations:
                 cast(Any, aiohttp).ClientSession(
                     connector=connector,
                     trust_env=True,
-                )
+                ),
+                origins=self._gate_origins(),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1393,7 +1405,8 @@ class ApiOperations:
                 cast(Any, aiohttp).ClientSession(
                     connector=connector,
                     trust_env=True,
-                )
+                ),
+                origins=self._gate_origins(),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1467,7 +1480,8 @@ class ApiOperations:
                 cast(Any, aiohttp).ClientSession(
                     connector=connector,
                     trust_env=True,
-                )
+                ),
+                origins=self._gate_origins(),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url

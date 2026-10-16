@@ -15,7 +15,7 @@ from collections.abc import Coroutine
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NoReturn, TypeVar, cast
 
-from traigent.labels.transport_gate import gate_session
+from traigent.labels.transport_gate import client_origins, gate_session
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.backend_bridges import SessionExperimentMapping
 from traigent.cloud.client import (
@@ -1586,7 +1586,8 @@ class SessionOperations:
                 aiohttp.ClientSession(
                     connector=connector,
                     trust_env=True,
-                )
+                ),
+                origins=client_origins(self.client),
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url

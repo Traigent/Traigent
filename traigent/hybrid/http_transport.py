@@ -127,7 +127,8 @@ class HTTPTransport:
                         timeout=httpx.Timeout(self.timeout),
                         limits=limits,
                         http2=use_http2,
-                    )
+                    ),
+                    origins=[self.base_url],
                 )
                 self._closed = False
 

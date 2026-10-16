@@ -17,7 +17,7 @@ from importlib import import_module
 from typing import Any, NoReturn, cast
 from urllib.parse import urlparse
 
-from traigent.labels.transport_gate import gate_session
+from traigent.labels.transport_gate import client_origins, gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 
 # Capture the genuine, unpatched ClientSession class at module-load time — before
@@ -872,7 +872,8 @@ class TraigentCloudClient(BaseTraigentClient):
                 # on per-request headers (see _get_headers / _inject_trace_context).
                 headers=_strip_trace_context_headers(await self.auth.get_headers()),
                 trust_env=True,
-            )
+            ),
+            origins=client_origins(self),
         )
         self._register_session_finalizer(self._aio_session)
         return self
@@ -926,7 +927,8 @@ class TraigentCloudClient(BaseTraigentClient):
                     # long-lived session-default headers.
                     headers=_strip_trace_context_headers(headers),
                     trust_env=True,
-                )
+                ),
+                origins=client_origins(self),
             )
             self._register_session_finalizer(self._aio_session)
             return self._aio_session

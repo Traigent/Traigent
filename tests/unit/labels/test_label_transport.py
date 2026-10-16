@@ -431,3 +431,205 @@ def test_label_routes_pass_the_gate_only_when_sealed(vectors: dict) -> None:
     finally:
         gate.set_mode(None)
         gate.set_allowed_origins(None)
+
+
+# --------------------------------- per-client API base: the real path, no hand-set origins
+
+
+def _refuse_mode():
+    from traigent.labels import transport_gate as gate
+
+    gate.set_mode("refuse")
+    gate.set_allowed_origins(
+        None
+    )  # the configured backends only; the test server is NOT one
+    return gate
+
+
+def test_label_transport_gates_its_own_non_default_base(vectors: dict) -> None:
+    """A LabelTransport built for a per-client base is gated at THAT origin."""
+    from traigent.labels import seal_label
+
+    envelope = seal_label(
+        bytes.fromhex(vectors["keys"]["project_public_hex"]),
+        NAME,
+        tenant_ref=vectors["refs"]["tenant_ref"],
+        project_ref=vectors["refs"]["project_ref"],
+        purpose="label",
+        object_ref=AGENT_REF,
+        key_epoch=1,
+        revision=1,
+    )
+
+    async def go(fake, base):
+        transport = LabelTransport(base, _headers)
+        assert base.startswith("http://127.0.0.1")  # not the configured backend
+        # a plaintext name where an opaque ref belongs: refused before it is sent
+        with pytest.raises(gate.TransportGateRefusal):
+            await transport.write_label(
+                object_ref=NAME,
+                purpose="label",
+                base_revision=0,
+                epoch=1,
+                envelope=envelope,
+            )
+        with pytest.raises(gate.TransportGateRefusal):
+            await transport.read_labels([NAME])
+        refused_puts = [c for c in fake.calls if c[0] in ("PUT", "POST")]
+        # a sealed, well-formed request to the same origin passes
+        await transport.read_labels([AGENT_REF])
+        written = await transport.write_label(
+            object_ref=AGENT_REF,
+            purpose="label",
+            base_revision=0,
+            epoch=1,
+            envelope=envelope,
+        )
+        return refused_puts, written
+
+    gate = _refuse_mode()
+    try:
+        fake, (refused_puts, written) = asyncio.run(_with_server(vectors, go))
+    finally:
+        gate.set_mode(None)
+    assert refused_puts == []
+    assert written["object_ref"] == AGENT_REF
+
+
+def test_strict_session_fails_closed_on_an_unregistered_origin(vectors: dict) -> None:
+    import aiohttp
+
+    from traigent.labels import transport_gate as gate
+
+    async def go(fake_a, base_a):
+        async def inner(fake_b, base_b):
+            session = gate.gate_session(
+                aiohttp.ClientSession(), origins=[base_a], strict=True
+            )
+            async with session:
+                with pytest.raises(gate.TransportGateRefusal):
+                    await session.get(f"{base_b}/labels/binding-list")
+                ok = await session.get(f"{base_a}/labels/binding-list")
+                assert ok.status == 200
+            return fake_b.calls
+
+        _fb, calls_b = await _with_server(vectors, inner)
+        return calls_b
+
+    gate.set_mode("report")  # even outside refuse mode a strict session fails closed
+    try:
+        _fa, calls_b = asyncio.run(_with_server(vectors, go))
+    finally:
+        gate.set_mode(None)
+    assert calls_b == []
+
+
+def test_api_operations_gates_the_per_client_base(
+    vectors: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ApiOperations built with a non-default api base: refuse blocks plaintext there."""
+    for name in ("TRAIGENT_OFFLINE", "TRAIGENT_OFFLINE_MODE"):
+        monkeypatch.setenv(name, "false")
+    from traigent.cloud.api_operations import ApiOperations
+    from traigent.labels import transport_gate as gate
+
+    N = NAME
+
+    async def go(fake, base):
+        client = MagicMock()
+        client.backend_config.api_base_url = base
+        client.no_egress = False
+        ops = ApiOperations(client)
+        bad = {
+            "function_name": "f",
+            "configuration_space": {N: {"type": "categorical", "choices": [N]}},
+            "objectives": [{"name": N, "orientation": "maximize", "weight": 1.0}],
+            "dataset_metadata": {"size": 1},
+            "max_trials": 1,
+        }
+        with pytest.raises(gate.TransportGateRefusal):
+            await ops._post_session_creation(bad, {}, None)
+        return None
+
+    sessions: list[str] = []
+
+    async def sessions_handler(request: web.Request) -> web.Response:
+        sessions.append(request.path)
+        return web.json_response({"session_id": "s"}, status=500)
+
+    async def main():
+        fake = FakeLabelBackend(vectors)
+        app = fake.app()
+        app.router.add_post("/api/v1/sessions", sessions_handler)
+        async with TestServer(app) as server:
+            base = f"http://{server.host}:{server.port}/api/v1"
+            await go(fake, base)
+            # control: report mode lets the same request through, so the refusal above
+            # came from the gate at this origin, not from an unreachable server
+            gate.set_mode("report")
+            client = MagicMock()
+            client.backend_config.api_base_url = base
+            client.no_egress = False
+            from traigent.cloud.api_operations import ApiOperations as Ops
+
+            try:
+                await Ops(client)._post_session_creation(
+                    {"function_name": "f", "configuration_space": {}, "objectives": []},
+                    {},
+                    None,
+                )
+            except Exception:  # noqa: BLE001 - the 500 is expected; only reachability matters
+                pass
+
+    gate_ = _refuse_mode()
+    try:
+        asyncio.run(main())
+    finally:
+        gate_.set_mode(None)
+    assert sessions == ["/api/v1/sessions"]  # only the control reached the server
+
+
+def test_other_session_factories_register_their_own_base(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every gated session factory that talks to a per-client base registers it."""
+    for name in ("TRAIGENT_OFFLINE", "TRAIGENT_OFFLINE_MODE"):
+        monkeypatch.setenv(name, "false")
+    import requests
+
+    from traigent.cloud.sync_manager import SyncManager
+    from traigent.config.types import TraigentConfig
+    from traigent.labels.transport_gate import _instance_origins, _origin
+
+    manager = SyncManager(TraigentConfig(), api_key="uk_" + "a" * 43)
+    origin = _origin(manager.base_url)
+    assert isinstance(manager.session, requests.Session)
+    assert origin in _instance_origins(manager.session)
+
+    async def factories():
+        from traigent.cloud.backend_client import (
+            BackendClientConfig,
+            BackendIntegratedClient,
+        )
+        from traigent.cloud.client import TraigentCloudClient
+
+        base = "http://127.0.0.1:9"
+        cloud = TraigentCloudClient(api_key="uk_" + "a" * 43, base_url=base)
+        cloud.auth = MagicMock(get_headers=AsyncMock(return_value={"X-API-Key": "k"}))
+        session = await cloud._ensure_session()
+        assert _origin(cloud.api_base_url) in _instance_origins(session)
+        await cloud.close()
+
+        backend = BackendIntegratedClient(
+            api_key="uk_" + "a" * 43,
+            backend_config=BackendClientConfig(backend_base_url=base),
+        )
+        backend.auth_manager = MagicMock()
+        backend.auth_manager.auth.get_headers = AsyncMock(
+            return_value={"X-API-Key": "k"}
+        )
+        built = await backend._build_http_session()
+        assert _origin(base) in _instance_origins(built)
+        await built.close()
+
+    asyncio.run(factories())
