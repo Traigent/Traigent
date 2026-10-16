@@ -22,6 +22,7 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
+from traigent.api.functions import with_usage
 from traigent.cli.main import cli
 from traigent.config.types import TraigentConfig
 from traigent.core.orchestrator import OptimizationOrchestrator
@@ -45,8 +46,11 @@ ROWS: list[dict[str, Any]] = [
 WRONG_INDEX = 2
 
 
-def upper_agent(text: str) -> str:
-    return text.upper()
+def upper_agent(text: str) -> Any:
+    # The agent makes no model call, so its cost is a measured $0 reported via
+    # with_usage. The explicit TRAIGENT_RUN_COST_LIMIT below stays in force:
+    # an unreported cost would be refused, not recorded as $0.
+    return with_usage(text.upper(), total_cost=0.0)
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
