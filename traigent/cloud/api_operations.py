@@ -123,6 +123,7 @@ class TraigentSessionApiResult(tuple):
     tenant_id: str | None
     warm_start_transfer: dict[str, Any] | None
     agent_id: str | None
+    legend: dict[str, Any] | None
 
     def __new__(
         cls,
@@ -134,9 +135,13 @@ class TraigentSessionApiResult(tuple):
         tenant_id: str | None = None,
         warm_start_transfer: dict[str, Any] | None = None,
         agent_id: str | None = None,
+        legend: dict[str, Any] | None = None,
     ):
         obj = super().__new__(cls, (session_id, experiment_id, experiment_run_id))
         obj.agent_id = agent_id
+        # The Backend's closed Pillar Legend block (opaque refs, only when its flag
+        # is on). Retained verbatim; absent => None => nothing Legend-related runs.
+        obj.legend = legend
         obj.project_id = project_id
         obj.tenant_id = tenant_id
         obj.warm_start_transfer = warm_start_transfer
@@ -903,6 +908,10 @@ class ApiOperations:
         if not isinstance(warm_start_transfer, dict):
             warm_start_transfer = None
 
+        legend_block = metadata.get("legend")
+        if not isinstance(legend_block, dict):
+            legend_block = None
+
         logger.info(
             f"✅ Created Traigent session: {session_id} "
             f"(exp: {experiment_id}, run: {experiment_run_id})"
@@ -916,6 +925,7 @@ class ApiOperations:
             warm_start_transfer=warm_start_transfer,
             # Disclosed by the backend for API-key callers; null/absent otherwise.
             agent_id=self._optional_context_id(metadata.get("agent_id")),
+            legend=legend_block,
         )
 
     @staticmethod

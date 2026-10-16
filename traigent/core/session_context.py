@@ -3,6 +3,7 @@
 # Traceability: CONC-Layer-Core CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-ORCH-LIFECYCLE REQ-CLOUD-009 REQ-ORCH-003 SYNC-CloudHybrid
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -34,3 +35,6 @@ class SessionContext:
     agent_id: str | None = None
     head_generation: int | None = None
     head_environment: str | None = None
+    # The Backend's closed Pillar Legend block (opaque refs), or None. Legend run
+    # binding is driven only by this block: None => no Legend work at all.
+    legend: dict[str, Any] | None = None

@@ -1600,6 +1600,7 @@ class BackendSessionManager:
 
         bound_agent_id: str | None = None
         head_generation: int | None = None
+        legend_block: dict[str, Any] | None = None
         if self._backend_client:
             evaluation_set_name = getattr(dataset, "name", None) or "default_evaluation"
             self._warn_if_dataset_unlinked(dataset, dataset_id)
@@ -1760,6 +1761,9 @@ class BackendSessionManager:
                 if owning_context:
                     self._session_owning_context[session_id] = owning_context
                 bound_agent_id = result.agent_id
+                # Pillar Legend: only the Backend's own block, verbatim; privacy
+                # withholding of identity is applied where it would be used.
+                legend_block = getattr(result, "legend", None)
                 head_generation = self._capture_agent_head_generation(
                     bound_agent_id, head_environment
                 )
@@ -1809,6 +1813,7 @@ class BackendSessionManager:
             agent_id=bound_agent_id,
             head_generation=head_generation,
             head_environment=head_environment if head_generation is not None else None,
+            legend=legend_block if isinstance(legend_block, dict) else None,
         )
 
     def _capture_agent_head_generation(

@@ -510,6 +510,11 @@ class TrialLifecycle:
         logger.debug(f"Running trial {trial_id}: {config}")
         evaluation_config = prepare_evaluation_config(config)
 
+        # Pillar Legend: re-check the configuration this trial will actually
+        # evaluate, immediately before any evaluator or model call. A strict
+        # refusal propagates (nothing has been invoked yet). No binder => no-op.
+        await self._admit_legend_trial(config, evaluation_config, backend_trial_id)
+
         # Phase 2: Setup progress tracking and budget
         progress_callback, progress_state = self._create_progress_tracking(
             optuna_trial_id, dataset, trial_id, session_id
@@ -534,6 +539,25 @@ class TrialLifecycle:
                 span=span,
                 on_evaluation_dispatch=on_evaluation_dispatch,
             )
+
+    async def _admit_legend_trial(
+        self,
+        config: Any,
+        evaluation_config: dict[str, Any],
+        backend_trial_id: Any,
+    ) -> None:
+        """Admit this trial's observed configuration when Legend run binding is on."""
+        binder = getattr(self._orchestrator, "_legend_binder", None)
+        if binder is None or not isinstance(config, dict):
+            return
+        raw_block = config.get("_traigent_legend_trial")
+        if raw_block is None or not isinstance(backend_trial_id, str):
+            return
+        from traigent.legend.run_binding import admit_trial_config
+
+        await asyncio.to_thread(
+            admit_trial_config, binder, backend_trial_id, raw_block, evaluation_config
+        )
 
     async def _execute_trial_with_tracing(
         self,

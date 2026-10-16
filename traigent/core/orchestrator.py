@@ -1125,6 +1125,11 @@ class OptimizationOrchestrator:
         self._optimization_id = str(uuid.uuid4())
         # Content identity v1 snapshot for the run in progress (see optimize()).
         self._content_identity_run: Any = None
+        # Pillar Legend run binding: typed options (attribute seam set by the
+        # optimized function) and the per-run binder, which exists only when the
+        # Backend's session-create response advertised Legend.
+        self.legend_options: Any = None
+        self._legend_binder: Any = None
         self._stop_reason: StopReason | None = None
         # #1404: bounded auto-retry budget for transient vendor errors (429/503)
         # before the run loop gives up. Cumulative per category so the run always
@@ -3106,6 +3111,7 @@ class OptimizationOrchestrator:
         )
         session_id: str | None = session_context.session_id
         self._active_session_id = session_id
+        self._start_legend_binding(session_context, session_id, default_config_payload)
         self._promotion_precondition = self._promotion_precondition_from(
             session_context
         )
@@ -3130,6 +3136,48 @@ class OptimizationOrchestrator:
         )
 
         return session_id
+
+    def _start_legend_binding(
+        self,
+        session_context: Any,
+        session_id: str | None,
+        default_config: dict[str, Any] | None,
+    ) -> None:
+        """Admit the run's observed identities BEFORE any evaluator or model call.
+
+        Driven only by the Backend's ``legend`` block on the session-create response:
+        absent or off => nothing happens (no extra call, no extra work).
+        """
+        self._legend_binder = None
+        raw_block = getattr(session_context, "legend", None)
+        if not isinstance(raw_block, dict):
+            return
+        from traigent.legend.run_binding import (
+            LegendOptions,
+            pillars_from_content_identity,
+            start_binder,
+        )
+
+        options = LegendOptions.coerce(self.legend_options)
+        binder = start_binder(
+            session_id=session_id,
+            raw_block=raw_block,
+            options=options,
+            privacy_enabled=bool(
+                getattr(self.traigent_config, "privacy_enabled", False)
+            ),
+        )
+        if binder is None:
+            return
+        wire: dict[str, Any] | None = None
+        run = getattr(self, "_content_identity_run", None)
+        if run is not None:
+            try:
+                wire = run.session_wire(default_config)
+            except Exception as exc:  # noqa: BLE001 - identity must never block a run
+                logger.debug("Legend identity envelope omitted: %s", type(exc).__name__)
+        binder.admit_run(pillars_from_content_identity(wire, default_config))
+        self._legend_binder = binder
 
     def _bind_interactive_optimizer_session(
         self,

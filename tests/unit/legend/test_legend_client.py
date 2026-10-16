@@ -124,8 +124,11 @@ def test_query_as_of_is_validated_sent_and_kept_across_pages(keys, schemas):
     assert t.requests[-1]["as_of_ledger_position"] == 7
     if p1.next_page_cursor:
         query(
-            r.entity_ref, page_size=1, page_cursor=p1.next_page_cursor,
-            as_of_ledger_position=7, transport=t,
+            r.entity_ref,
+            page_size=1,
+            page_cursor=p1.next_page_cursor,
+            as_of_ledger_position=7,
+            transport=t,
         )
         assert t.requests[-1]["as_of_ledger_position"] == 7
         assert t.requests[-1]["page_cursor"] == p1.next_page_cursor

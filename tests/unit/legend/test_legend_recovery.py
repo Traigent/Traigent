@@ -953,10 +953,16 @@ def test_vendored_contract_files_equal_schema_9d71d82():
         "/home/nimrod/TraigentProjects/core_project/worktrees/TraigentSchema/"
         "pillar-legend/traigent_schema/schemas/legend"
     )
-    head = subprocess.run(
-        ["git", "-C", str(schema), "rev-parse", "--short=7", "HEAD"],
-        capture_output=True, text=True, timeout=30,
-    ).stdout.strip() if schema.is_dir() else ""
+    head = (
+        subprocess.run(
+            ["git", "-C", str(schema), "rev-parse", "--short=7", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout.strip()
+        if schema.is_dir()
+        else ""
+    )
     assert head in ("", "9d71d82") or head.startswith("9d71d8"), head
     if not schema.is_dir():
         pytest.skip("Schema worktree not present")

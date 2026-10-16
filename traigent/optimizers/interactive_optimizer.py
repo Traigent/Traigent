@@ -451,6 +451,15 @@ class InteractiveOptimizer(BaseOptimizer):
         config = dict(suggestion.config or {})
         config["_traigent_backend_trial_id"] = suggestion.trial_id
         config["_traigent_cloud_trial_number"] = suggestion.trial_number
+        # Pillar Legend: the Backend's closed per-trial block (opaque refs), present
+        # only when it advertised Legend. Stripped from the evaluated config like
+        # every ``_traigent*`` key; absent => the config is exactly as before.
+        suggestion_meta = getattr(suggestion, "metadata", None)
+        legend_trial = (
+            suggestion_meta.get("legend") if isinstance(suggestion_meta, dict) else None
+        )
+        if isinstance(legend_trial, dict):
+            config["_traigent_legend_trial"] = legend_trial
         subset = getattr(suggestion, "dataset_subset", None)
         subset_indices = getattr(subset, "indices", None)
         if subset_indices:

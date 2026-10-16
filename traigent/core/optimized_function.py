@@ -39,7 +39,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Generic, ParamSpec, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, ParamSpec, TypeVar, cast
 
 from traigent.api.types import OptimizationResult, OptimizationStatus
 from traigent.config import SeamlessParameterProvider, get_provider
@@ -143,6 +143,9 @@ from traigent.utils.validation import (
     validate_dataset_path,
     validate_objectives,
 )
+
+if TYPE_CHECKING:
+    from traigent.legend.run_binding import LegendOptions
 
 logger = get_logger(__name__)
 
@@ -1377,6 +1380,10 @@ class OptimizedFunction(Generic[_P, _R]):
             kwargs, sentinel, "warm_start_from", None
         )
 
+        # Pillar Legend typed options (never an optimizer kwarg). Enablement is
+        # decided only by the Backend's session-create ``legend`` block.
+        self.legend = self._store_optional_param(kwargs, sentinel, "legend", None)
+
         self.kwargs = kwargs
         excluded_runtime_keys = {
             "algorithm",
@@ -1400,6 +1407,7 @@ class OptimizedFunction(Generic[_P, _R]):
             # Safety constraints
             "safety_constraints",
             "warm_start_from",
+            "legend",
         }
         self._decorator_runtime_overrides = {
             key: value
@@ -2179,6 +2187,7 @@ class OptimizedFunction(Generic[_P, _R]):
         progress_bar: bool | None = None,
         budget: ExecutionBudget | None = None,
         apply: bool = True,
+        legend: LegendOptions | Mapping[str, Any] | None = None,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization on the function.
@@ -2267,6 +2276,7 @@ class OptimizedFunction(Generic[_P, _R]):
             "strategy_params": strategy_params,
             "progress_bar": progress_bar,
             "budget": budget,
+            "legend": legend,
             "algorithm_kwargs": algorithm_kwargs,
         }
         from traigent.utils.cost_calculator import cost_run_scope
@@ -2277,6 +2287,17 @@ class OptimizedFunction(Generic[_P, _R]):
                 return await self._optimize_run(**run_kwargs)
         finally:
             self._end_advancing_run()
+
+    def _legend_run_kwargs(
+        self, legend: LegendOptions | Mapping[str, Any] | None
+    ) -> dict[str, Any]:
+        """``{"legend": options}`` when options were given (call or decorator), else ``{}``."""
+        from traigent.legend.run_binding import LegendOptions
+
+        effective = LegendOptions.coerce(
+            legend if legend is not None else getattr(self, "legend", None)
+        )
+        return {"legend": effective} if effective is not None else {}
 
     async def _optimize_run(
         self,
@@ -2299,6 +2320,7 @@ class OptimizedFunction(Generic[_P, _R]):
         progress_bar: bool | None,
         budget: ExecutionBudget | None,
         algorithm_kwargs: dict[str, Any],
+        legend: LegendOptions | Mapping[str, Any] | None = None,
     ) -> OptimizationResult:
         """Body of :meth:`optimize` for one advancing run."""
         logger.info(f"Starting optimization of {self.func.__name__}")
@@ -2397,6 +2419,7 @@ class OptimizedFunction(Generic[_P, _R]):
                     configuration_space=configuration_space,
                     algorithm_kwargs=algorithm_kwargs,
                     execution_budget=budget,
+                    **self._legend_run_kwargs(legend),
                 )
                 # Inside the run scope: a cost objective that measured no
                 # usage at all recorded $0 everywhere, which is an absent
@@ -2433,6 +2456,7 @@ class OptimizedFunction(Generic[_P, _R]):
         progress_bar: bool | None = None,
         budget: ExecutionBudget | None = None,
         apply: bool = True,
+        legend: LegendOptions | Mapping[str, Any] | None = None,
         **algorithm_kwargs: Any,
     ) -> OptimizationResult:
         """Run optimization synchronously (convenience wrapper).
@@ -2507,6 +2531,7 @@ class OptimizedFunction(Generic[_P, _R]):
             progress_bar=progress_bar,
             budget=budget,
             apply=apply,
+            **({"legend": legend} if legend is not None else {}),
             **algorithm_kwargs,
         )
 
@@ -2711,6 +2736,7 @@ class OptimizedFunction(Generic[_P, _R]):
         artifact_fingerprint_payload: dict[str, dict[str, Any]],
         requested_algorithm: str | None = None,
         execution_budget: ExecutionBudget | None = None,
+        legend: LegendOptions | None = None,
     ) -> OptimizationOrchestrator:
         """Build the optimization orchestrator with all configuration."""
         orchestrator_kwargs = collect_orchestrator_kwargs(
@@ -2792,6 +2818,10 @@ class OptimizedFunction(Generic[_P, _R]):
         # orchestrator seam reads it via getattr(self, "execution_budget", None).
         if execution_budget is not None:
             orchestrator.execution_budget = execution_budget
+        # Pillar Legend typed options, forwarded explicitly (never via optimizer
+        # kwargs). They only matter if the Backend advertises Legend for the session.
+        if legend is not None:
+            orchestrator.legend_options = legend
         return orchestrator
 
     async def _run_and_finalize_optimization(
@@ -3138,6 +3168,7 @@ class OptimizedFunction(Generic[_P, _R]):
         save_to: str | None,
         requested_algorithm: str | None = None,
         execution_budget: ExecutionBudget | None = None,
+        legend: LegendOptions | None = None,
     ) -> OptimizationResult | None:
         """Try cloud-brain execution, returning None for allowed local fallback."""
 
@@ -3247,6 +3278,7 @@ class OptimizedFunction(Generic[_P, _R]):
                 artifact_fingerprint_payload=artifact_fingerprint_payload,
                 requested_algorithm=requested_algorithm,
                 execution_budget=execution_budget,
+                legend=legend,
             )
             orchestrator._cloud_guidance_client = cloud_client
             return await self._run_and_finalize_optimization(
@@ -3529,6 +3561,7 @@ Remediation:
         configuration_space: dict[str, Any] | None,
         algorithm_kwargs: dict[str, Any],
         execution_budget: ExecutionBudget | None = None,
+        legend: LegendOptions | None = None,
     ) -> OptimizationResult:
         """Execute optimization assuming objective schema is already resolved.
 
@@ -3696,6 +3729,7 @@ Remediation:
             save_to,
             requested_algorithm=algorithm,
             execution_budget=execution_budget,
+            legend=legend,
         )
         if cloud_result is not None:
             return cloud_result
@@ -3756,6 +3790,7 @@ Remediation:
             artifact_fingerprint_payload=artifact_fingerprint_payload,
             requested_algorithm=algorithm,
             execution_budget=execution_budget,
+            legend=legend,
         )
 
         # An explicitly sized run (max_trials or max_total_examples set by the

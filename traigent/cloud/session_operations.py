@@ -830,11 +830,18 @@ class SessionOperations:
                     optimization_goal=optimization_goal,
                     metadata=local_record_metadata,
                 )
+                # Pillar Legend: pass the Backend's block through only when it sent
+                # one, so the legacy call shape is unchanged otherwise.
+                legend_block = getattr(session_api_result, "legend", None)
+                legend_kwargs = (
+                    {"legend": legend_block} if isinstance(legend_block, dict) else {}
+                )
                 return SessionCreationResult.connected(
                     session_id=session_id,
                     project_id=owning_context.get("project_id"),
                     tenant_id=owning_context.get("tenant_id"),
                     agent_id=bound_agent_id,
+                    **legend_kwargs,
                 )
 
             except ValidationException:

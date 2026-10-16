@@ -241,6 +241,9 @@ class SessionCreationResult:
     # The agent the backend bound this session to (API-key callers only; None
     # for other principals and for backends that do not disclose it).
     agent_id: str | None = None
+    # The Backend's closed Pillar Legend block from the create response (opaque refs;
+    # None unless the Backend advertised Legend for this session).
+    legend: dict[str, Any] | None = None
     # Execution-path transparency (so a caller never mistakes a local run for a
     # managed/cloud one). ``execution_path`` is "connected" for a real backend
     # session and "local_fallback" for any local result. ``backend_fallback`` is
@@ -275,6 +278,7 @@ class SessionCreationResult:
         project_id: str | None = None,
         tenant_id: str | None = None,
         agent_id: str | None = None,
+        legend: dict[str, Any] | None = None,
     ) -> SessionCreationResult:
         """Factory for a successful backend session."""
         return cls(
@@ -283,6 +287,7 @@ class SessionCreationResult:
             project_id=project_id,
             tenant_id=tenant_id,
             agent_id=agent_id,
+            legend=legend,
             execution_path="connected",
             backend_fallback=False,
             degraded=False,

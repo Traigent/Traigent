@@ -2548,6 +2548,7 @@ def optimize(  # NOSONAR(S107)
     grow_dataset: dict[str, Any] | None = None,
     skill_train: dict[str, Any] | None = None,
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
+    legend: Any = None,
     **runtime_overrides: Any,
 ) -> Callable[
     [Callable[_P, _R]], OptimizedFunction[_P, _R]
@@ -3465,6 +3466,13 @@ def optimize(  # NOSONAR(S107)
             skill_train=skill_train,
             **combined_runtime_overrides,
         )
+        if legend is not None:
+            # Typed Pillar Legend options (``traigent.legend.run_binding.LegendOptions``
+            # or a mapping). They do not enable anything by themselves: only the
+            # Backend's session-create ``legend`` block does.
+            from traigent.legend.run_binding import LegendOptions
+
+            optimized_func.legend = LegendOptions.coerce(legend)
         optimized_func.execution_policy = execution_policy
         optimized_func.external_service_evaluator = external_service_evaluator
         optimized_func.hybrid_api_options = hybrid_api_options
