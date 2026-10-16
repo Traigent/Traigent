@@ -460,6 +460,16 @@ class InteractiveOptimizer(BaseOptimizer):
         )
         if isinstance(legend_trial, dict):
             config["_traigent_legend_trial"] = legend_trial
+            # Fingerprint of the configuration exactly as suggested (before the
+            # ``_traigent*`` keys above), so the pre-evaluation recheck can tell whether
+            # what runs is what the Backend digested.
+            try:
+                from traigent.utils import fp2
+
+                suggested_cfg = dict(suggestion.config or {})
+                config["_traigent_legend_suggested"] = str(fp2.digest(suggested_cfg))
+            except Exception:  # noqa: BLE001 - an unfingerprintable config stays unconfirmed
+                pass
         subset = getattr(suggestion, "dataset_subset", None)
         subset_indices = getattr(subset, "indices", None)
         if subset_indices:

@@ -41,6 +41,9 @@ from traigent.legend import _contract as c
 from traigent.legend.bundle import pack_tree, unpack_tree
 from traigent.legend.errors import LegendError
 from traigent.legend.pillars import (
+    AgentManifestSource,
+    AgentSource,
+    EvaluatorSource,
     ConfigurationSource,
     DatasetSource,
     Pillar,
@@ -52,7 +55,20 @@ from traigent.utils import fp2
 
 DEFAULT_MAX_FILE_BYTES: Final = 5 * 1024 * 1024
 DEFAULT_MAX_TOTAL_BYTES: Final = 64 * 1024 * 1024
-_ALWAYS_SKIP_DIRS: Final = frozenset({".git", "__pycache__"})
+# The SDK's own runtime output (``.traigent/`` run logs, caches) and tool caches are never part
+# of an agent's source: they change on every run and would make the fingerprint unstable.
+_ALWAYS_SKIP_DIRS: Final = frozenset(
+    {
+        ".git",
+        "__pycache__",
+        ".traigent",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".venv",
+        "node_modules",
+    }
+)
 _GIT_TIMEOUT_S: Final = 30
 
 
@@ -126,7 +142,13 @@ def _list_files(root: Path) -> list[str]:
             timeout=_GIT_TIMEOUT_S,
             check=True,
         ).stdout
-        return sorted({p for p in out.decode("utf-8").split("\0") if p})
+        return sorted(
+            {
+                p
+                for p in out.decode("utf-8").split("\0")
+                if p and not _ALWAYS_SKIP_DIRS.intersection(Path(p).parts[:-1])
+            }
+        )
     except (OSError, subprocess.SubprocessError, UnicodeDecodeError):
         found = []
         for base, dirs, names in os.walk(root):
@@ -508,6 +530,12 @@ def export(source: Any) -> tuple[Pillar, dict[str, Any]]:
                 "coverage_insufficient", "search space definition missing"
             )
         return compute_pillar(c.KIND_SEARCH_SPACE, source), {}
+    if isinstance(source, AgentSource | AgentManifestSource | EvaluatorSource):
+        # These carry only a callable / manifest: a digest, not recoverable files.
+        raise LegendError(
+            "coverage_insufficient",
+            "source carries only a digest; use AgentStateSource or EvaluatorFilesSource",
+        )
     raise LegendError("coverage_insufficient", "source carries no recoverable content")
 
 

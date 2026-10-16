@@ -130,6 +130,14 @@ MULTISET_ROOT_RE: Final = re.compile(r"msr1:(k[0-9a-f]{16}):[0-9a-f]{64}")
 
 QUERY_MAX_PAGE_SIZE: Final = 100
 
+# Live Backend routes (under the API base URL; TraigentBackend pillar_legend_routes.py).
+ROUTE_DECLARE: Final = "/legend/declare"
+ROUTE_QUERY: Final = "/legend/query"
+ROUTE_RECORD_CAPTURE: Final = "/legend/record-capture"
+ROUTE_RECORD_RESTORE: Final = "/legend/record-restore"
+ROUTE_RECORD_AVAILABILITY: Final = "/legend/record-availability"
+ROUTE_ADMISSION_FMT: Final = "/sessions/{session_id}/legend/admission"
+
 # Recovery state / restore grades / store statuses (pillar_legend_v0.json)
 RECOVERY_STORED_UNVERIFIED: Final = "stored_unverified"
 RECOVERY_ROUND_TRIP_VERIFIED: Final = "round_trip_verified"

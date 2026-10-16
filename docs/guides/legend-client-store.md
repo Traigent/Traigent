@@ -50,6 +50,7 @@ Return the status; do not raise for storage faults and do not put exception text
 - **Credentials.** Take them from the customer's own secret store or workload identity. Never hard-code them, never log keys or fingerprints with them, never return them in statuses.
 - **Concurrency.** Several captures may `put` at once; keys are content-derived, so safe concurrency is exactly the atomic create-if-absent above.
 - **Large blobs.** `put` receives a stream; prefer multipart or streamed upload when the storage supports it, and keep the length and digest to check in `get`. A short read on download is `truncated`.
+- **Which source to capture.** `capture()` needs recoverable files. `AgentStateSource` (a root plus declared assets) and `EvaluatorFilesSource` capture an agent / evaluator; `ConfigurationSource`, `DatasetSource` and `SearchSpaceSource` capture their kinds. `AgentSource`, `AgentManifestSource` and `EvaluatorSource` carry only a digest, so `capture()` refuses them with `coverage_insufficient`. The source bundle skips the SDK's own `.traigent/` output and tool caches, so run logs never change a fingerprint.
 - **Backend-keyed kinds.** A `search_space`, and an `evaluator` whose authoritative format is keyed or unknown, have fingerprints derived with a key held by the Backend, so the client cannot recompute them and restore tops out at `substituted` without a server-origin match report (`traigent/legend/recovery.py`, grade selection in `restore`). Your store is not at fault; do not try to "fix" the grade.
 
 ## Check your work

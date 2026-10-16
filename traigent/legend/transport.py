@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol, TypeVar
+from urllib.parse import quote
 
 from traigent.legend import _contract as c
 from traigent.legend.errors import LegendError
@@ -39,6 +40,10 @@ class DeclareResult:
     entity_ref: str
     created: bool
     event_ref: str
+    # The event's ledger position (the value ``as_of_ledger_position`` is taken from) and
+    # whether this is a replay of an earlier request with the same idempotency key.
+    ledger_position: int | None = None
+    replayed: bool = False
 
 
 @dataclass(frozen=True)
@@ -111,7 +116,7 @@ class InMemoryTransport:
             first, result = self._by_idem[idem]
             if first["request_digest"] != body["request_digest"]:
                 raise LegendError("conflicting_idempotency_payload")
-            return result
+            return replace(result, replayed=True)
         entity_ref = body["entity_ref"]
         known_entity = entity_ref is not None and entity_ref in self.entities
         if entity_ref is not None and not known_entity:
@@ -185,7 +190,13 @@ class InMemoryTransport:
         if "change_reason" in body:
             event["change_reason"] = body["change_reason"]
         self.events.append(event)
-        result = DeclareResult(version_ref, entity_ref, created, event["event_ref"])
+        result = DeclareResult(
+            version_ref,
+            entity_ref,
+            created,
+            event["event_ref"],
+            event["ledger_position"],
+        )
         self._by_idem[idem] = (body, result)
         return result
 
@@ -256,3 +267,82 @@ class InMemoryTransport:
             else None
         )
         return QueryResult(tuple(page), nxt)
+
+
+class BackendLegendTransport:
+    """Every Legend route over the SDK's existing authenticated backend client.
+
+    Implements :class:`LegendTransport` (declare, query), :class:`CaptureTransport`
+    (record-capture / -restore / -availability) and run admission, so the Legend client
+    (``declare``, ``query``, ``capture``, ``restore``, ``record_availability``) works end to
+    end against a real Backend. ``client.legend_post_sync(suffix, body)`` owns auth, URL
+    sanitising, bounded timeouts and transient retry; this class only picks routes and
+    shapes results. Errors are closed :class:`LegendError` codes.
+    """
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    def _call(self, suffix: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
+        try:
+            data = self._client.legend_post_sync(suffix, dict(body))
+        except LegendError:
+            raise
+        except Exception:  # noqa: BLE001 - auth/network detail is never surfaced
+            raise LegendError("store_unavailable") from None
+        if not isinstance(data, Mapping):
+            raise LegendError("internal_error")
+        return data
+
+    def declare(self, payload: Mapping[str, Any]) -> DeclareResult:
+        data = self._call(c.ROUTE_DECLARE, payload)
+        try:
+            position = data.get("ledger_position")
+            return DeclareResult(
+                str(data["version_ref"]),
+                str(data["entity_ref"]),
+                bool(data.get("created_version", data.get("created"))),
+                str(data["event_ref"]),
+                position if type(position) is int else None,
+                data.get("replayed") is True,
+            )
+        except (KeyError, TypeError):
+            raise LegendError("internal_error") from None
+
+    def query(self, payload: Mapping[str, Any]) -> QueryResult:
+        data = self._call(c.ROUTE_QUERY, payload)
+        refs, cursor = data.get("version_refs"), data.get("next_page_cursor")
+        if not isinstance(refs, list | tuple) or not all(
+            isinstance(r, str) for r in refs
+        ):
+            raise LegendError("internal_error")
+        if cursor is not None and not isinstance(cursor, str):
+            raise LegendError("internal_error")
+        return QueryResult(tuple(refs), cursor)
+
+    def _record(self, route: str, payload: Mapping[str, Any]) -> str:
+        data = self._call(route, payload)
+        event_ref = data.get("event_ref")
+        if not isinstance(event_ref, str):
+            raise LegendError("internal_error")
+        return event_ref
+
+    def record_capture(self, payload: Mapping[str, Any]) -> str:
+        return self._record(c.ROUTE_RECORD_CAPTURE, payload)
+
+    def record_restore(self, payload: Mapping[str, Any]) -> str:
+        return self._record(c.ROUTE_RECORD_RESTORE, payload)
+
+    def record_availability(self, payload: Mapping[str, Any]) -> str:
+        return self._record(c.ROUTE_RECORD_AVAILABILITY, payload)
+
+    def admit(self, session_id: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
+        route = c.ROUTE_ADMISSION_FMT.format(session_id=quote(session_id, safe=""))
+        return self._call(route, body)
+
+
+def transport_for_client(client: Any) -> BackendLegendTransport | None:
+    """The authenticated HTTP transport for ``client``, or ``None`` if it cannot POST."""
+    if client is not None and callable(getattr(client, "legend_post_sync", None)):
+        return BackendLegendTransport(client)
+    return None

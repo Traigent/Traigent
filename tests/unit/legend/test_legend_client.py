@@ -394,7 +394,7 @@ def test_alias_round_trip(tmp_path):
         a.set("x", c.KIND_AGENT, "not-a-ref")
 
 
-def test_store_put_is_crash_safe_between_meta_and_blob(tmp_path, monkeypatch):
+def test_store_failed_publish_leaves_nothing_visible(tmp_path, monkeypatch):
     import io
     import os
 
@@ -405,16 +405,75 @@ def test_store_put_is_crash_safe_between_meta_and_blob(tmp_path, monkeypatch):
     real_link = os.link
 
     def crash(*_a, **_k):
-        raise OSError("simulated crash after the meta was published")
+        raise OSError("simulated crash at the publish step")
 
     monkeypatch.setattr(os, "link", crash)
     assert store.put(c.KIND_AGENT, fp, io.BytesIO(b"payload")) == "unreachable"
     monkeypatch.setattr(os, "link", real_link)
-    files = sorted(p.suffix for p in (tmp_path / "s").rglob("*") if p.is_file())
-    assert files == [".meta"]  # an orphan meta, and no leaked temp files
+    # no entry, no header, no temp file: nothing of the failed put is visible
+    assert [p for p in (tmp_path / "s").rglob("*") if p.is_file()] == []
     assert store.has(c.KIND_AGENT, fp) == "missing"
     assert store.get(c.KIND_AGENT, fp, tmp_path / "out") == "missing"
-    # the retry (even with different bytes: no blob was ever published) succeeds cleanly
+    # the retry, even with different bytes, is a clean first write
     assert store.put(c.KIND_AGENT, fp, io.BytesIO(b"other")) == "stored_unverified"
     assert store.get(c.KIND_AGENT, fp, tmp_path / "out") == "retrieved"
     assert store.put(c.KIND_AGENT, fp, io.BytesIO(b"payload")) == "store_key_conflict"
+
+
+def test_store_concurrent_different_byte_puts_have_one_consistent_winner(tmp_path):
+    import io
+    import threading
+
+    from traigent.legend import LocalDirectoryStore
+    from traigent.legend.store import BUNDLE_NAME
+
+    store = LocalDirectoryStore(tmp_path / "s")
+    for n in range(150):
+        fp = "rmf0:sha256:" + f"{n:064x}"
+        barrier = threading.Barrier(2)
+        out: dict[str, str] = {}
+
+        def writer(
+            tag: str,
+            fp: str = fp,
+            barrier: threading.Barrier = barrier,
+            out: dict[str, str] = out,
+        ) -> None:
+            barrier.wait()
+            out[tag] = store.put(c.KIND_AGENT, fp, io.BytesIO(tag.encode() * 64))
+
+        threads = [threading.Thread(target=writer, args=(t,)) for t in ("a", "b")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+        assert sorted(out.values()) == ["store_key_conflict", "stored_unverified"], out
+        dest = tmp_path / f"o{n}"
+        # the stored entry is exactly one writer's bytes, never a mix: it reads back clean
+        assert store.get(c.KIND_AGENT, fp, dest) == "retrieved"
+        winner = [t for t, st in out.items() if st == "stored_unverified"][0]
+        assert (dest / BUNDLE_NAME).read_bytes() == winner.encode() * 64
+
+
+def test_source_bundle_skips_sdk_runtime_dirs_and_agent_source_refuses_clearly(
+    tmp_path,
+):
+    from traigent.legend import AgentSource
+    from traigent.legend.exporters import _list_files, export
+
+    root = tmp_path / "agent"
+    (root / ".traigent" / "optimization_logs").mkdir(parents=True)
+    (root / ".traigent" / "optimization_logs" / "run.json").write_text("{}")
+    (root / ".pytest_cache").mkdir()
+    (root / ".pytest_cache" / "x").write_text("x")
+    (root / "main.py").write_text("print(1)\n")
+    assert _list_files(root) == [
+        "main.py"
+    ]  # non-git root: run logs never enter the bundle
+    (root / ".traigent" / "optimization_logs" / "run2.json").write_text("{}")
+    assert _list_files(root) == ["main.py"]  # and a new log does not move the file set
+
+    with pytest.raises(LegendError) as err:
+        export(AgentSource(lambda q: q, "agent_x", {}))
+    assert err.value.code == "coverage_insufficient"
+    assert "AgentStateSource" in str(err.value)

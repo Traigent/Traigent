@@ -26,6 +26,7 @@ from traigent.evaluators.base import (
 )
 from traigent.legend import _contract as c
 from traigent.legend import (
+    AgentManifestSource,
     ConfigurationSource,
     InMemoryTransport,
     LegendError,
@@ -405,6 +406,11 @@ async def test_strict_refusal_leaves_the_evaluator_uncalled() -> None:
 
 
 # ----------------------------------------------------------------------- per trial
+def sugg(cfg: dict[str, Any]) -> str:
+    """Fingerprint of a suggested config, as the interactive optimizer records it."""
+    return compute_pillar(c.KIND_CONFIGURATION, ConfigurationSource(cfg)).fingerprint
+
+
 def _trial_block(
     trial_n: int, cfg_ref: str, extra_run: list[tuple[str, str]]
 ) -> dict[str, Any]:
@@ -428,6 +434,7 @@ async def test_multi_trial_observations_are_distinct_and_complete() -> None:
         {
             "param1": 1,
             "_traigent_backend_trial_id": "t_1",
+            "_traigent_legend_suggested": sugg({"param1": 1}),
             "_traigent_legend_trial": _trial_block(
                 1, s1.version_ref, [("run_base_configuration", run_cfg)]
             ),
@@ -435,6 +442,7 @@ async def test_multi_trial_observations_are_distinct_and_complete() -> None:
         {
             "param1": 2,
             "_traigent_backend_trial_id": "t_2",
+            "_traigent_legend_suggested": sugg({"param1": 2}),
             "_traigent_legend_trial": _trial_block(
                 2, s2.version_ref, [("run_base_configuration", run_cfg)]
             ),
@@ -479,6 +487,7 @@ async def test_per_trial_recheck_catches_a_config_changed_after_suggestion() -> 
         {
             "param1": 2,  # what actually runs differs from what was suggested (param1=1)
             "_traigent_backend_trial_id": "t_1",
+            "_traigent_legend_suggested": sugg({"param1": 1}),
             "_traigent_legend_trial": _trial_block(
                 1, suggested.version_ref, [("run_base_configuration", vref(7))]
             ),
@@ -579,6 +588,7 @@ async def test_no_names_or_paths_cross_the_wire(tmp_path: Path) -> None:
         {
             "param1": 1,
             "_traigent_backend_trial_id": "t_1",
+            "_traigent_legend_suggested": sugg({"param1": 1}),
             "_traigent_legend_trial": _trial_block(
                 1, vref(3), [("run_base_configuration", vref(7))]
             ),
@@ -677,6 +687,7 @@ async def test_unobserved_slot_leaves_the_run_unadmitted_when_permitted() -> Non
         {
             "param1": 1,
             "_traigent_backend_trial_id": "t_1",
+            "_traigent_legend_suggested": sugg({"param1": 1}),
             "_traigent_legend_trial": _trial_block(
                 1, vref(3), [("run_base_configuration", vref(7)), ("dataset", vref(8))]
             ),
@@ -746,14 +757,75 @@ def test_trial_candidate_is_derived_from_the_executed_build_never_the_suggestion
     assert [a for a in server.admissions if "trial_id" in a] == []
     assert binder.unadmitted_reason == "local_observation_incomplete"
     binder.unadmitted_reason = None
+    # derivable now, but the Backend names no entity and gave no candidate suggestion to
+    # compare with: still not admitted (the proposal is never copied)
+    suggested = {c.KIND_CONFIGURATION: sugg({"param1": 2})}
     binder.admit_trial(
-        trial_id="t_1", trial_block=tb, observed={**cfg, c.KIND_AGENT: pillar}
+        trial_id="t_1",
+        trial_block=tb,
+        observed={**cfg, c.KIND_AGENT: pillar},
+        suggested=suggested,
+    )
+    assert [a for a in server.admissions if "trial_id" in a] == []
+    # with the advertised entity named, the executed candidate is declared under it
+    proposal = declare(
+        c.KIND_AGENT,
+        AgentManifestSource(_manifest()),
+        transport=server,
+    )
+    tb2 = parse_block(
+        {
+            **block(
+                [("run_base_configuration", vref(7))],
+                trial=(
+                    f"trialref_{1:032x}",
+                    [
+                        ("trial_configuration", "trial", vref(3)),
+                        ("trial_candidate", "trial", proposal.version_ref),
+                    ],
+                ),
+            ),
+        }
+    )
+    assert tb2 is not None
+    raw = block(
+        [("run_base_configuration", vref(7))],
+        trial=(
+            f"trialref_{1:032x}",
+            [
+                ("trial_configuration", "trial", vref(3)),
+                ("trial_candidate", "trial", proposal.version_ref),
+            ],
+        ),
+    )
+    for b in raw["bindings"]:
+        if b["binding_role"] == "trial_candidate":
+            b["entity_ref"] = proposal.entity_ref
+    tb3 = parse_block(raw)
+    assert tb3 is not None
+    binder.admit_trial(
+        trial_id="t_1",
+        trial_block=tb3,
+        observed={**cfg, c.KIND_AGENT: pillar},
+        suggested=suggested,
     )
     sent = [a for a in server.admissions if "trial_id" in a][0]["trial_observed"]
     roles = {o["binding_role"]: o["version_ref"] for o in sent}
-    assert roles["trial_candidate"] not in (vref(4),)
+    cand = server.versions[roles["trial_candidate"]]
     assert (
-        server.versions[roles["trial_candidate"]]["fingerprint"] == pillar.fingerprint
+        cand["fingerprint"] == pillar.fingerprint
+    )  # what executed, not the suggestion
+    assert cand["entity_ref"] == proposal.entity_ref
+
+
+def _manifest() -> dict[str, Any]:
+    from traigent.identity.agent_build import collect_agent_build_base
+
+    def agent(q: str) -> str:
+        return q
+
+    return collect_agent_build_base(agent, agent_id="agent_x").manifest(
+        "sha256:" + "0" * 64
     )
 
 
@@ -779,6 +851,7 @@ async def test_parallel_refusal_finalizes_the_issued_trial_as_not_executed() -> 
         {
             "param1": 2,  # differs from the suggestion => strict refusal pre-evaluation
             "_traigent_backend_trial_id": "issued_1",
+            "_traigent_legend_suggested": sugg({"param1": 1}),
             "_traigent_legend_trial": _trial_block(
                 1, suggested.version_ref, [("run_base_configuration", vref(7))]
             ),
@@ -933,6 +1006,7 @@ async def test_sequential_refusal_finalizes_the_issued_trial_as_not_executed() -
         {
             "param1": 2,
             "_traigent_backend_trial_id": "issued_1",
+            "_traigent_legend_suggested": sugg({"param1": 1}),
             "_traigent_legend_trial": _trial_block(
                 1, suggested.version_ref, [("run_base_configuration", vref(7))]
             ),
@@ -970,3 +1044,218 @@ async def test_sequential_refusal_finalizes_the_issued_trial_as_not_executed() -
     assert len(refused) == 1 and refused[0].status == TrialStatus.CANCELLED
     assert refused[0].metadata["backend_trial_id_acquired"] is True
     assert [cfg.get("param1") for cfg in evaluator.configs] == [1]  # drifted never ran
+
+
+# ----------------------------------------------- D1/D2: entity-scoped declare semantics
+def _entity_block(
+    server: FakeServer, cfg: dict[str, Any]
+) -> tuple[DeclareResult, dict[str, Any]]:
+    """The Backend's trial proposal: a version in its own entity, entity named in the block."""
+    proposal = _config_ref(server, cfg)
+    blk = _trial_block(1, proposal.version_ref, [("run_base_configuration", vref(7))])
+    for b in blk["bindings"]:
+        if b["binding_role"] == "trial_configuration":
+            b["entity_ref"] = proposal.entity_ref
+    return proposal, blk
+
+
+def _admit_one(
+    server: FakeServer, mode: str, blk: dict[str, Any], cfg: dict[str, Any]
+) -> None:
+    from traigent.legend.run_binding import (
+        admit_trial_config,
+        pillars_from_content_identity,
+    )
+
+    binder = start_binder(
+        session_id="sess_1",
+        raw_block=block([("run_base_configuration", vref(7))]),
+        options=LegendOptions(mode=mode, transport=server),
+        privacy_enabled=False,
+    )
+    assert binder is not None
+    binder.admit_run(pillars_from_content_identity(None, {"param1": 1}))
+    admit_trial_config(binder, "t_1", blk, cfg, None, sugg(cfg))
+
+
+def test_declared_under_the_advertised_entity_matches_in_strict_mode() -> None:
+    server = FakeServer()
+    proposal, blk = _entity_block(server, {"param1": 3})
+    entities_before = len(server.entities)
+    _admit_one(server, "strict", blk, {"param1": 3})
+    sent = [a for a in server.admissions if "trial_id" in a][0]["trial_observed"]
+    ref = [
+        o["version_ref"] for o in sent if o["binding_role"] == "trial_configuration"
+    ][0]
+    assert ref == proposal.version_ref  # same fingerprint, same entity => same version
+    assert (
+        len(server.entities) == entities_before + 1
+    )  # only the run's own, no stray one
+
+
+def test_genuine_drift_under_the_advertised_entity_is_refused_or_recorded_as_a_child() -> (
+    None
+):
+    server = FakeServer()
+    proposal, blk = _entity_block(server, {"param1": 3})
+    with pytest.raises(LegendError) as err:
+        _admit_one(server, "strict", blk, {"param1": 4})
+    assert err.value.code == "manifest_mismatch"
+    _admit_one(server, "permitted", blk, {"param1": 4})
+    sent = [a for a in server.admissions if "trial_id" in a][0]["trial_observed"]
+    ref = [
+        o["version_ref"] for o in sent if o["binding_role"] == "trial_configuration"
+    ][0]
+    assert ref != proposal.version_ref
+    assert (
+        server.versions[ref]["entity_ref"] == proposal.entity_ref
+    )  # same-entity child
+    link = [
+        e
+        for e in server.events
+        if e.get("previous_version_ref") == proposal.version_ref
+    ]
+    assert link and link[0]["version_ref"] == ref  # the drift is recorded, not silent
+
+
+def test_without_a_named_entity_a_matching_suggestion_stands_and_drift_is_not_silent() -> (
+    None
+):
+    server = FakeServer()
+    proposal = _config_ref(server, {"param1": 3})
+    blk = _trial_block(1, proposal.version_ref, [("run_base_configuration", vref(7))])
+    n_declares = server.calls.count("declare")
+    _admit_one(server, "strict", blk, {"param1": 3})
+    # match confirmed by fingerprint equality with the suggestion: no extra trial declare
+    sent = [a for a in server.admissions if "trial_id" in a][0]["trial_observed"]
+    assert {o["version_ref"] for o in sent if o["slot_scope"] == "trial"} == {
+        proposal.version_ref
+    }
+    assert server.calls.count("declare") == n_declares + 1  # only the run base's
+    with pytest.raises(LegendError):
+        _admit_drift_strict(server, blk)
+
+
+def _admit_drift_strict(server: FakeServer, blk: dict[str, Any]) -> None:
+    from traigent.legend.run_binding import (
+        admit_trial_config,
+        pillars_from_content_identity,
+    )
+
+    binder = start_binder(
+        session_id="sess_1",
+        raw_block=block([("run_base_configuration", vref(7))]),
+        options=LegendOptions(transport=server),
+        privacy_enabled=False,
+    )
+    assert binder is not None
+    binder.admit_run(pillars_from_content_identity(None, {"param1": 1}))
+    admit_trial_config(binder, "t_1", blk, {"param1": 4}, None, sugg({"param1": 3}))
+
+
+def test_entity_reuse_via_the_alias_map_dedupes_across_declares(tmp_path: Path) -> None:
+    from traigent.legend import AliasMap
+
+    server = FakeServer()
+    first = _config_ref(server, {"param1": 5})
+    aliases = AliasMap(tmp_path / "aliases.json")
+    aliases.set("prod config", c.KIND_CONFIGURATION, first.entity_ref)
+    entity = aliases.resolve("prod config", c.KIND_CONFIGURATION)
+    again = declare(
+        c.KIND_CONFIGURATION,
+        ConfigurationSource({"param1": 5}),
+        entity=entity,
+        transport=server,
+    )
+    assert again.version_ref == first.version_ref and again.created is False
+    assert len(server.entities) == 1  # no new entity minted
+    bare = _config_ref(server, {"param1": 5})  # no entity: starts another one
+    assert bare.entity_ref != first.entity_ref and len(server.entities) == 2
+
+
+# ----------------------------------------------- D3: the Legend client over HTTP end to end
+def test_legend_client_works_end_to_end_over_the_backend_transport(
+    tmp_path: Path, schemas: Any
+) -> None:
+    from traigent.legend import (
+        BackendLegendTransport,
+        CaptureIndex,
+        LocalDirectoryStore,
+        capture,
+        query,
+        record_availability,
+        restore,
+    )
+
+    server = FakeServer()
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    class Client:
+        def legend_post_sync(
+            self, suffix: str, payload: dict[str, Any]
+        ) -> dict[str, Any]:
+            posts.append((suffix, json.loads(json.dumps(payload))))
+            if suffix == "/legend/declare":
+                r = server.declare(payload)
+                return {
+                    "version_ref": r.version_ref,
+                    "entity_ref": r.entity_ref,
+                    "event_ref": r.event_ref,
+                    "ledger_position": r.ledger_position,
+                    "created_version": r.created,
+                    "replayed": r.replayed,
+                }
+            if suffix == "/legend/query":
+                q = server.query(payload)
+                return {
+                    "version_refs": list(q.version_refs),
+                    "next_page_cursor": q.next_page_cursor,
+                }
+            handler = {
+                "/legend/record-capture": server.record_capture,
+                "/legend/record-restore": server.record_restore,
+                "/legend/record-availability": server.record_availability,
+            }[suffix]
+            return {"event_ref": handler(payload)}
+
+    http = BackendLegendTransport(Client())
+    store = LocalDirectoryStore(tmp_path / "store")
+    idx = CaptureIndex()
+    first = declare(c.KIND_CONFIGURATION, ConfigurationSource({"a": 1}), transport=http)
+    assert isinstance(first.ledger_position, int) and first.replayed is False
+    page = query(
+        first.entity_ref, as_of_ledger_position=first.ledger_position, transport=http
+    )
+    assert page.version_refs == (first.version_ref,)
+    rec = capture(
+        first.version_ref,
+        ConfigurationSource({"a": 1}),
+        store=store,
+        transport=http,
+        index=idx,
+    )
+    assert rec.recovery_state == "round_trip_verified"
+    res = restore(
+        first.version_ref, tmp_path / "dest", store=store, transport=http, index=idx
+    )
+    assert res.grade == "exact"
+    assert record_availability(
+        first.version_ref, rec.manifest_fingerprint, "available", transport=http
+    )
+    routes = [r for r, _ in posts]
+    assert routes[0] == "/legend/declare" and "/legend/query" in routes
+    for route in (
+        "/legend/record-capture",
+        "/legend/record-restore",
+        "/legend/record-availability",
+    ):
+        assert route in routes
+    shapes = {
+        "/legend/declare": "DeclareRequestV0",
+        "/legend/query": "QueryRequestV0",
+        "/legend/record-capture": "RecordCaptureRequestV0",
+        "/legend/record-restore": "RecordRestoreRequestV0",
+        "/legend/record-availability": "RecordAvailabilityRequestV0",
+    }
+    for route, body in posts:
+        schemas.validate("legend_requests_v0.json", shapes[route], body)

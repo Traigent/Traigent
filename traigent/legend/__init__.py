@@ -57,6 +57,7 @@ from traigent.legend.recovery import (
 )
 from traigent.legend.store import ClientStore, LocalDirectoryStore
 from traigent.legend.transport import (
+    BackendLegendTransport,
     CaptureTransport,
     DeclareResult,
     InMemoryTransport,
@@ -68,6 +69,7 @@ __all__ = [
     "ActivationResult",
     "AgentStateExport",
     "AgentStateSource",
+    "BackendLegendTransport",
     "Bundle",
     "CaptureIndex",
     "CaptureRecord",

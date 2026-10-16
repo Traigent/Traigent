@@ -8,7 +8,6 @@ of an existing key with different bytes is a closed error, never an overwrite.
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import tempfile
@@ -62,75 +61,82 @@ def check_key(kind: str, manifest_fingerprint: str) -> None:
 
 
 class LocalDirectoryStore:
-    """Reference store: one content-addressed pair of files per key under ``root``."""
+    """Reference store: ONE file per key under ``root`` (header line + bytes).
+
+    The entry is ``"<sha256> <length>\\n" + bytes``, written to a temp file, fsynced and
+    published by a hard link (create-if-absent). Digest, length and bytes therefore become
+    visible together or not at all, and a concurrent writer can never replace the winner's
+    header: there is no second file to race on.
+    """
 
     def __init__(self, root: str | os.PathLike[str]) -> None:
         self.root = Path(root)
 
-    def _paths(self, kind: str, fp: str) -> tuple[Path, Path]:
+    def _entry(self, kind: str, fp: str) -> Path:
         check_key(kind, fp)
         namespace, _, digest = fp.rpartition(":sha256:")
-        base = self.root / kind / namespace / digest
-        return base.with_suffix(".blob"), base.with_suffix(".meta")
+        return (self.root / kind / namespace / digest).with_suffix(".entry")
+
+    @staticmethod
+    def encode(data: bytes) -> bytes:
+        return (
+            f"{hashlib.sha256(data).hexdigest()} {len(data)}\n".encode("ascii") + data
+        )
+
+    @staticmethod
+    def _split(raw: bytes) -> tuple[str, int, bytes] | None:
+        head, sep, body = raw.partition(b"\n")
+        parts = head.split(b" ")
+        if not sep or len(parts) != 2 or not parts[1].isdigit():
+            return None
+        try:
+            return parts[0].decode("ascii"), int(parts[1]), body
+        except UnicodeDecodeError:
+            return None
 
     def put(self, kind: str, manifest_fingerprint: str, stream: BinaryIO) -> PutStatus:
-        blob, meta = self._paths(kind, manifest_fingerprint)
+        path = self._entry(kind, manifest_fingerprint)
+        data = stream.read()
+        digest = hashlib.sha256(data).hexdigest()
         try:
-            blob.parent.mkdir(parents=True, exist_ok=True)
-            data = stream.read()
-            digest = hashlib.sha256(data).hexdigest()
-            if blob.exists():
-                if self._existing_digest(meta) != digest:
-                    return "store_key_conflict"
-                return "stored_unverified"
-            # Crash-safe order: the meta is published ATOMICALLY (temp + rename) BEFORE the
-            # blob appears, and the blob is published atomically by a hard link. Readers key
-            # on the blob, so an orphan meta (crash between the two) is invisible to has/get
-            # and is simply replaced by the next put.
-            fd, tmp = tempfile.mkstemp(dir=blob.parent, suffix=".tmp")
-            mfd, mtmp = tempfile.mkstemp(dir=blob.parent, suffix=".tmp")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists():  # same key: identical bytes are fine, else a conflict
+                return self._same(path, digest)
+            fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
             try:
                 with os.fdopen(fd, "wb") as handle:
-                    handle.write(data)
-                with os.fdopen(mfd, "w") as handle:
-                    handle.write(json.dumps({"sha256": digest, "length": len(data)}))
-                os.replace(mtmp, meta)
+                    handle.write(self.encode(data))
+                    handle.flush()
+                    os.fsync(handle.fileno())  # durable before it becomes visible
                 try:
-                    os.link(tmp, blob)  # fails if a concurrent put won the key
+                    os.link(tmp, path)  # atomic publish; fails if a concurrent put won
                 except FileExistsError:
-                    if self._existing_digest(meta) != digest:
-                        return "store_key_conflict"
+                    return self._same(path, digest)
             finally:
-                for leftover in (tmp, mtmp):
-                    try:
-                        os.unlink(leftover)
-                    except FileNotFoundError:
-                        pass
+                os.unlink(tmp)
             return "stored_unverified"
         except PermissionError:
             return "permission_denied"
         except OSError:
             return "unreachable"
 
-    @staticmethod
-    def _existing_digest(meta: Path) -> str | None:
-        try:
-            value = json.loads(meta.read_text()).get("sha256")
-            return value if isinstance(value, str) else None
-        except (OSError, ValueError, AttributeError):
-            return None
+    def _same(self, path: Path, digest: str) -> PutStatus:
+        split = self._split(path.read_bytes())
+        return (
+            "stored_unverified"
+            if split is not None and split[0] == digest
+            else "store_key_conflict"
+        )
 
     def get(self, kind: str, manifest_fingerprint: str, dest_dir: Path) -> GetStatus:
-        blob, meta = self._paths(kind, manifest_fingerprint)
+        path = self._entry(kind, manifest_fingerprint)
         try:
-            if not blob.exists():
+            if not path.exists():
                 return "missing"
-            data = blob.read_bytes()
-            try:
-                info = json.loads(meta.read_text())
-                digest, length = info["sha256"], int(info["length"])
-            except (OSError, ValueError, KeyError, TypeError):
+            split = self._split(path.read_bytes())
+            if split is None:
                 return "corrupted"
+            digest, length, data = split
             Path(dest_dir).mkdir(parents=True, exist_ok=True)
             (Path(dest_dir) / BUNDLE_NAME).write_bytes(data)
             if len(data) < length:
@@ -144,8 +150,11 @@ class LocalDirectoryStore:
             return "unreachable"
 
     def has(self, kind: str, manifest_fingerprint: str) -> HasStatus:
-        blob, _ = self._paths(kind, manifest_fingerprint)
         try:
-            return "available" if blob.exists() else "missing"
+            return (
+                "available"
+                if self._entry(kind, manifest_fingerprint).exists()
+                else "missing"
+            )
         except OSError:
             return "unknown"

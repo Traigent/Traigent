@@ -32,19 +32,22 @@ import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
-from urllib.parse import quote
 
 from traigent.legend import _contract as c
 from traigent.legend import payloads
 from traigent.legend.errors import LegendError
 from traigent.legend.pillars import ConfigurationSource, Pillar, compute_pillar
-from traigent.legend.transport import DeclareResult, with_retries
+from traigent.legend.transport import (  # noqa: F401 - re-exported
+    BackendLegendTransport,
+    DeclareResult,
+    transport_for_client,
+    with_retries,
+)
 
 MODE_STRICT = "strict"
 MODE_PERMITTED = "permitted"
 MODES = frozenset({MODE_STRICT, MODE_PERMITTED})
 
-ROUTE_DECLARE = "/legend/declare"
 SCOPE_RUN = "run"
 SCOPE_TRIAL = "trial"
 
@@ -175,6 +178,13 @@ class LegendBlock:
     run_ref: str
     trial_ref: str | None
     bindings: tuple[tuple[SlotKey, str], ...]  # ((role, scope, slot), version_ref)
+    # Optional entity of each advertised version (opaque ref), when the Backend names it.
+    # Declaring the observed identity UNDER that entity makes a matching fingerprint
+    # resolve to the advertised version itself.
+    entities: tuple[tuple[SlotKey, str], ...] = ()
+
+    def entity_of(self, key: SlotKey) -> str | None:
+        return dict(self.entities).get(key)
 
     def refs(self) -> dict[SlotKey, str]:
         return dict(self.bindings)
@@ -198,6 +208,7 @@ def parse_block(raw: Any) -> LegendBlock | None:
     if len(items) > _MAX_BINDINGS:
         return None
     parsed: list[tuple[SlotKey, str]] = []
+    entities: list[tuple[SlotKey, str]] = []
     seen: set[SlotKey] = set()
     for item in items:
         if not isinstance(item, Mapping):
@@ -218,7 +229,12 @@ def parse_block(raw: Any) -> LegendBlock | None:
             return None
         seen.add(key)
         parsed.append((key, ref))
-    return LegendBlock(run_ref, trial_ref, tuple(parsed))
+        entity = item.get("entity_ref")
+        if entity is not None:
+            if not isinstance(entity, str) or not c.ENTITY_REF_RE.fullmatch(entity):
+                return None
+            entities.append((key, entity))
+    return LegendBlock(run_ref, trial_ref, tuple(parsed), tuple(entities))
 
 
 def pillars_from_content_identity(
@@ -370,6 +386,8 @@ class LegendRunBinder:
         entity = declared.entity_ref if declared is not None else None
         result = self._declare(pillar, entity=entity)
         if declared is None or result.version_ref == declared.version_ref:
+            if declared is None and entity is None:
+                self._note_new_entity(pillar.kind, result)
             return result, False
         if self._mode == MODE_STRICT:
             raise LegendError(CODE_DRIFT, "observed identity differs from declared")
@@ -387,6 +405,14 @@ class LegendRunBinder:
             change_reason="unspecified",
         )
         return child, True
+
+    def _note_new_entity(self, kind: str, result: DeclareResult) -> None:
+        """An observation declared without any entity minted (or adopted) one.
+
+        Documented path to reuse an entity across runs: resolve it from the local alias map
+        (``AliasMap.resolve``) and pass it as ``DeclaredVersion.entity_ref``, or have the
+        Backend name it in the block; otherwise each fresh fingerprint starts an entity."""
+        self._run_entities.setdefault(kind, result.entity_ref)
 
     # -- admission ------------------------------------------------------------------------
 
@@ -449,7 +475,11 @@ class LegendRunBinder:
                     )
                 run_refs[key] = advertised  # Backend-attested, never SDK-observed
                 continue
-            result, _drifted = self._observe(observed[kind], want)
+            entity = self._block.entity_of(key)
+            baseline = want or (
+                DeclaredVersion(advertised, entity) if entity is not None else None
+            )
+            result, _drifted = self._observe(observed[kind], baseline)
             run_refs[key] = result.version_ref
             self._run_entities[kind] = result.entity_ref
         self._run_observed = run_refs
@@ -465,6 +495,7 @@ class LegendRunBinder:
         trial_id: str,
         trial_block: LegendBlock,
         observed: Mapping[str, Pillar],
+        suggested: Mapping[str, str] | None = None,
     ) -> None:
         """Re-check what this trial will actually execute, then admit it.
 
@@ -477,6 +508,7 @@ class LegendRunBinder:
             raise LegendError("invalid_request", "trial id must be an opaque id")
         if trial_block.trial_ref is None:
             raise LegendError("invalid_request", "trial block carries no trial ref")
+        suggested = suggested or {}
         if not self.run_admitted:
             return  # the run base never froze; a trial cannot be admitted (reason kept)
         for key, _ref in trial_block.bindings:
@@ -498,10 +530,30 @@ class LegendRunBinder:
                 ]  # exactly what was admitted
                 continue
             kind = _KIND_BY_ROLE[role]
-            result = self._declare(observed[kind], entity=self._run_entities.get(kind))
-            if result.version_ref != advertised and self._mode == MODE_STRICT:
-                raise LegendError(CODE_DRIFT, "trial differs from its suggestion")
-            trial_observed[key] = result.version_ref
+            pillar = observed[kind]
+            entity = trial_block.entity_of(key)
+            if entity is not None:
+                # Declared UNDER the advertised entity: the same fingerprint resolves to
+                # the advertised version; a different one is drift (strict refuses,
+                # permitted records a same-entity child).
+                result, _drift = self._observe(
+                    pillar, DeclaredVersion(advertised, entity)
+                )
+                trial_observed[key] = result.version_ref
+            elif suggested.get(kind) is not None:
+                if pillar.fingerprint == suggested[kind]:
+                    # Entity not named: the identity is CONFIRMED by digest equality with
+                    # the very suggestion the Backend digested, so its version stands.
+                    trial_observed[key] = advertised
+                elif self._mode == MODE_STRICT:
+                    raise LegendError(CODE_DRIFT, "trial differs from its suggestion")
+                else:
+                    result = self._declare(pillar, entity=self._run_entities.get(kind))
+                    trial_observed[key] = result.version_ref
+            else:
+                # no entity and no suggestion fingerprint: cannot be compared
+                self._incomplete(CODE_INCOMPLETE)
+                return
         self._post(
             {
                 "run_observed": _observation_items(self._run_observed),
@@ -580,6 +632,7 @@ def admit_trial_config(
     raw_trial_block: Any,
     evaluation_config: Mapping[str, Any],
     candidate: Pillar | None = None,
+    suggested_fingerprint: str | None = None,
 ) -> None:
     """Re-check and admit one trial's ACTUAL configuration and executed candidate.
 
@@ -599,7 +652,14 @@ def admit_trial_config(
         pass
     if candidate is not None:
         observed[c.KIND_AGENT] = candidate
-    binder.admit_trial(trial_id=trial_id, trial_block=block, observed=observed)
+    suggested = (
+        {c.KIND_CONFIGURATION: suggested_fingerprint}
+        if isinstance(suggested_fingerprint, str)
+        else None
+    )
+    binder.admit_trial(
+        trial_id=trial_id, trial_block=block, observed=observed, suggested=suggested
+    )
 
 
 class LegendTrialRefused(LegendError):
@@ -643,48 +703,3 @@ def closed_error_code(status: int, body: Any) -> str:
     if status == 409:
         return "conflicting_report"
     return "internal_error"
-
-
-class BackendLegendTransport:
-    """Declare + admission over the SDK's existing authenticated backend client.
-
-    ``client.legend_post_sync(suffix, body)`` owns auth, URL sanitising, bounded
-    timeouts and transient retry; this class only chooses routes and shapes results.
-    """
-
-    def __init__(self, client: Any) -> None:
-        self._client = client
-
-    def _call(self, suffix: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
-        try:
-            data = self._client.legend_post_sync(suffix, dict(body))
-        except LegendError:
-            raise
-        except Exception:  # noqa: BLE001 - auth/network detail is never surfaced
-            raise LegendError("store_unavailable") from None
-        if not isinstance(data, Mapping):
-            raise LegendError("internal_error")
-        return data
-
-    def declare(self, payload: Mapping[str, Any]) -> DeclareResult:
-        data = self._call(ROUTE_DECLARE, payload)
-        try:
-            return DeclareResult(
-                str(data["version_ref"]),
-                str(data["entity_ref"]),
-                bool(data.get("created_version", data.get("created"))),
-                str(data["event_ref"]),
-            )
-        except (KeyError, TypeError):
-            raise LegendError("internal_error") from None
-
-    def admit(self, session_id: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
-        suffix = f"/sessions/{quote(session_id, safe='')}/legend/admission"
-        return self._call(suffix, body)
-
-
-def transport_for_client(client: Any) -> RunBindingTransport | None:
-    """The authenticated HTTP transport for ``client``, or ``None`` if it cannot POST."""
-    if client is not None and callable(getattr(client, "legend_post_sync", None)):
-        return BackendLegendTransport(client)
-    return None

@@ -97,7 +97,8 @@ def _tree_hash(root: Path) -> str:
 
 
 def _blob(store: LocalDirectoryStore, fp: str, kind: str) -> tuple[Path, Path]:
-    return store._paths(kind, fp)
+    entry = store._entry(kind, fp)  # single-file layout: header + bytes in one entry
+    return entry, entry
 
 
 # ---------------------------------------------------------------- store
@@ -135,15 +136,9 @@ class _ForgetfulStore:
 
 class _OverwritingStore(LocalDirectoryStore):
     def put(self, kind, fp, stream):
-        blob, meta = self._paths(kind, fp)
-        blob.parent.mkdir(parents=True, exist_ok=True)
-        data = stream.read()
-        blob.write_bytes(data)
-        meta.write_text(
-            json.dumps(
-                {"sha256": hashlib.sha256(data).hexdigest(), "length": len(data)}
-            )
-        )
+        entry = self._entry(kind, fp)
+        entry.parent.mkdir(parents=True, exist_ok=True)
+        entry.write_bytes(self.encode(stream.read()))
         return "stored_unverified"
 
 
@@ -265,15 +260,11 @@ def test_truncated_bytes_fail(store, tmp_path, idx):
 
 
 def test_wrong_bytes_fail_even_if_store_is_consistent(store, tmp_path, idx):
-    rec, (blob, meta) = _captured_config(store, idx)
-    data = bytearray(blob.read_bytes())
+    rec, (blob, _meta) = _captured_config(store, idx)
+    _head, _sep, body = blob.read_bytes().partition(b"\n")
+    data = bytearray(body)
     data[-3] ^= 0xFF  # flips a byte in the last representation
-    blob.write_bytes(bytes(data))
-    meta.write_text(
-        json.dumps(
-            {"sha256": hashlib.sha256(bytes(data)).hexdigest(), "length": len(data)}
-        )
-    )
+    blob.write_bytes(store.encode(bytes(data)))  # header rewritten consistently
     res = restore(rec, tmp_path / "o", store=store, index=idx)
     assert (
         res.grade == "failed"
