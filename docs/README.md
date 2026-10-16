@@ -56,6 +56,7 @@ def answer_question(question: str) -> str:
 - **[Evaluation](guides/evaluation.md)** - Evaluation best practices and troubleshooting
 - **[Parallel Configuration](guides/parallel-configuration.md)** - Concurrency settings and tuning
 - **[Secrets Management](guides/secrets_management.md)** - Securely manage API keys
+- **[Implementing a ClientStore](guides/legend-client-store.md)** - Guide for coding agents: customer-side storage for Pillar Legend captures
 
 ### 🔧 [API Reference](api-reference/)
 - **[Complete Function Specification](api-reference/complete-function-specification.md)** - Full API documentation
