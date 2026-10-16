@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/tvl_governance_schema.json",
+  "title": "TvlGovernanceDTO",
+  "description": "Content-free TVL 1.1 governance summary (RFC 0001, property P8): identifies WHICH calibrated variables, certificates, and policies governed a session \u2014 never their values, evidence, prompts, or signal contents. Certificates use the per-CVAR decision vocabulary shared with guarantee_certificate_schema.json (one ontology, two scopes: per-CVAR value certification here, per-config selection there). Echoed by the backend from an ALLOWLIST it constructs server-side; never caller-metadata passthrough.",
+  "type": "object",
+  "properties": {
+    "cvars": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "x-content-class": "legacy_content",
+            "x-content-note": "INV S1-39 (LEAK): name",
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+          },
+          "type": {
+            "x-content-class": "legacy_content",
+            "x-content-note": "INV-GAP: was closed_enum; contract has no enum/const, so the value is not provably content-free",
+            "type": "string",
+            "pattern": "^(bool|int|float|str|enum\\[(str|int|float)\\]|tuple\\[.{1,64}\\]|callable\\[[A-Za-z0-9_.-]{1,64}\\])$",
+            "description": "Declared TVL value type (closed grammar) \u2014 never a value."
+          },
+          "governed": {
+            "x-content-class": "closed_enum",
+            "type": "boolean",
+            "description": "DECLARED governance (per-CVAR require_calibration, pinned certificate, or certificate-backed target) \u2014 never inferred from runtime evidence."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "certificates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "cvar_name",
+          "decision"
+        ],
+        "properties": {
+          "cvar_name": {
+            "x-content-class": "legacy_content",
+            "x-content-note": "INV S5-7 (LEAK): cvar_name",
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+          },
+          "decision": {
+            "x-content-class": "closed_enum",
+            "type": "string",
+            "enum": [
+              "CERTIFIED_SELECTION",
+              "NO_DECISION",
+              "BEST_EFFORT_UNCERTIFIED"
+            ]
+          },
+          "freshness_hash": {
+            "x-content-class": "digest",
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "Lowercase sha256 hex of the canonical freshness context (hash only \u2014 the context itself never crosses)."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "policies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "x-content-class": "legacy_content",
+            "x-content-note": "INV S1-23 (LEAK): name",
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+          },
+          "strategy": {
+            "x-content-class": "closed_enum",
+            "type": "string",
+            "enum": [
+              "cascade"
+            ],
+            "description": "v1 policy-strategy registry (mirrors the tvl lints); extending it is a schema change, not free text."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

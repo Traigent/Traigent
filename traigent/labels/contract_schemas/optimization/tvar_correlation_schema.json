@@ -1,0 +1,124 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "TVAR Correlation Schema",
+  "description": "Defines a server-provided association hint between tuned variables or between agent type and tuned variable.",
+  "version": "1.0.0",
+  "definitions": {
+    "TvarValue": {
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV-GAP no-route: not inventoried (free string (union type)): TvarValue",
+      "description": "Compact scalar tuned-variable value.",
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 512
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "boolean"
+        }
+      ]
+    },
+    "CorrelationSide": {
+      "type": "object",
+      "description": "One side of a tuned-variable association.",
+      "properties": {
+        "type": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": ["tvar", "agent_type"]
+        },
+        "name": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV-GAP no-route: not inventoried (free string): name",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "value": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV-GAP no-route: not inventoried (free string (union type)): value",
+          "$ref": "#/definitions/TvarValue"
+        }
+      },
+      "required": ["type", "name"],
+      "additionalProperties": false
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV-GAP: was closed_enum; contract has no enum/const, so the value is not provably content-free",
+      "type": "string",
+      "description": "Version of this association hint contract."
+    },
+    "kind": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": ["tvar_tvar", "agent_type_tvar"]
+    },
+    "a": {
+      "$ref": "#/definitions/CorrelationSide"
+    },
+    "b": {
+      "$ref": "#/definitions/CorrelationSide"
+    },
+    "metric": {
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV-GAP no-route: not inventoried (free string): metric",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "strength": {
+      "x-content-class": "number",
+      "type": "number",
+      "minimum": -1,
+      "maximum": 1
+    },
+    "direction": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": ["positive", "negative", "none"]
+    },
+    "support_n": {
+      "x-content-class": "number",
+      "type": "integer",
+      "minimum": 0
+    },
+    "confidence": {
+      "allOf": [
+        { "$ref": "../common_types_schema.json#/definitions/Confidence" }
+      ]
+    },
+    "interpretation": {
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV-GAP no-route: not inventoried (free string): interpretation",
+      "type": "string",
+      "maxLength": 512,
+      "description": "Short, content-free interpretation."
+    },
+    "generated_at": {
+      "x-content-class": "timestamp",
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "schema_version",
+    "kind",
+    "a",
+    "b",
+    "metric",
+    "strength",
+    "support_n",
+    "confidence"
+  ],
+  "additionalProperties": false
+}

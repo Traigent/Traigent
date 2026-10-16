@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "Example Set Schema",
+  "description": "Defines a collection of input-output examples used for training, testing, or evaluation",
+  "version": "1.0.0",
+  "definitions": {
+    "Example": {
+      "type": "object",
+      "description": "Individual example containing input and expected output",
+      "properties": {
+        "example_id": {
+          "type": "string",
+          "description": "Unique identifier for the individual example",
+          "x-identifier": true
+        },
+        "input": {
+          "type": "string",
+          "description": "Input text or prompt for the example",
+          "x-content": true,
+          "x-privacy-classification": "user_content"
+        },
+        "output": {
+          "type": "string",
+          "description": "Expected or reference output for the input",
+          "x-content": true,
+          "x-privacy-classification": "user_content"
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Additional metadata associated with the example",
+          "additionalProperties": true
+        }
+      },
+      "required": ["example_id", "input", "output"],
+      "additionalProperties": false
+    }
+  },
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier for the example set",
+      "x-identifier": true
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable name for the example set"
+    },
+    "description": {
+      "type": "string",
+      "description": "Detailed description of the example set's purpose and contents"
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Example"
+      },
+      "description": "Collection of input-output examples"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of when the example set was created"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of the last modification to the example set"
+    }
+  },
+  "required": ["id", "name", "description", "examples"],
+  "additionalProperties": false
+}

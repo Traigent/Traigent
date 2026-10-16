@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/datasets/evaluator_config_schema.json",
+  "type": "object",
+  "title": "Evaluator Configuration Schema",
+  "description": "Defines the configuration for evaluating model outputs and measuring performance",
+  "version": "1.0.0",
+  "definitions": {
+    "AgentType": {
+      "$ref": "https://schemas.traigent.ai/agents/agent_types_schema.json#/definitions/AgentType"
+    },
+    "ContextType": {
+      "type": "string",
+      "enum": [
+        "text",
+        "code",
+        "conversation",
+        "structured",
+        "mixed",
+        "markdown"
+      ],
+      "description": "Types of context for evaluation:\n- text: Plain text context\n- code: Programming code context\n- conversation: Conversational context\n- structured: Structured data context\n- mixed: Multiple context types"
+    },
+    "ContextSource": {
+      "type": "string",
+      "enum": [
+        "custom",
+        "dataset",
+        "api",
+        "file",
+        "generated"
+      ],
+      "description": "Sources of evaluation context:\n- custom: User-provided context\n- dataset: From a dataset\n- api: From an external API\n- file: From a file\n- generated: Automatically generated"
+    }
+  },
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier for this evaluator configuration",
+      "x-identifier": true
+    },
+    "dataset_id": {
+      "type": "string",
+      "description": "Canonical reference to the evaluation dataset this evaluator is associated with",
+      "x-reference": true
+    },
+    "eval_dataset_id": {
+      "type": "string",
+      "description": "DEPRECATED: use dataset_id instead. Legacy alias for the evaluation dataset identifier.",
+      "x-reference": true,
+      "x-deprecated": "Use dataset_id instead. eval_dataset_id will be removed after 2026-Q4."
+    },
+    "evaluation_set_id": {
+      "type": "string",
+      "description": "DEPRECATED: use dataset_id instead. Legacy alias for the evaluation dataset identifier.",
+      "x-reference": true,
+      "x-deprecated": "Use dataset_id instead. evaluation_set_id will be removed after 2026-Q4."
+    },
+    "benchmark_id": {
+      "type": "string",
+      "description": "DEPRECATED: use dataset_id instead. Compatibility alias for the evaluation dataset identifier.",
+      "x-reference": true,
+      "x-deprecated": "Use dataset_id instead. benchmark_id will be removed after 2026-Q4."
+    },
+    "model_parameters_id": {
+      "type": "string",
+      "description": "Reference to the model parameters configuration",
+      "x-reference": true
+    },
+    "instructions": {
+      "type": "string",
+      "description": "Detailed instructions guiding the evaluation process"
+    },
+    "context_type": {
+      "$ref": "#/definitions/ContextType",
+      "description": "Type of context used in evaluation"
+    },
+    "context_source": {
+      "$ref": "#/definitions/ContextSource",
+      "description": "Source of the evaluation context"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of when this configuration was created"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of the last modification to this configuration"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Additional metadata about the evaluator configuration",
+      "properties": {
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Tags for categorizing and filtering configurations"
+        },
+        "version": {
+          "type": "string",
+          "description": "Version of the evaluator configuration",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "id",
+    "model_parameters_id",
+    "instructions",
+    "context_type",
+    "context_source"
+  ],
+  "anyOf": [
+    {
+      "required": ["dataset_id"]
+    },
+    {
+      "required": ["eval_dataset_id"]
+    },
+    {
+      "required": ["evaluation_set_id"]
+    },
+    {
+      "required": ["benchmark_id"]
+    }
+  ],
+  "additionalProperties": false
+}

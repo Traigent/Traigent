@@ -1,0 +1,441 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/session_aggregation_schema.json",
+  "title": "SessionAggregationDTO",
+  "description": "Session-level rollup for a finalized optimization run (Traigent#1720/#1724 g2:agg-summary). Folded into POST /sessions/{id}/finalize as a top-level field and echoed back in the finalize response so the SDK can confirm the backend actually persisted it (never a pseudo-trial, never a local-only shim). CONTENT-FREE CONTRACT: every field is numeric, a metric-name label, a config identity (a config dict or a config HASH), or an anchored version token. Example inputs, prompts, expected outputs, and LLM responses are NEVER carried here — the producer builds this by an explicit allowlist, not by forwarding an internal summary object, and the server rebuilds it by the same allowlist, dropping any unknown key.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "selection_mode": {
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV-GAP: was closed_enum; contract has no enum/const, so the value is not provably content-free",
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*\\s)[A-Za-z0-9_][A-Za-z0-9_.:-]{0,63}$",
+      "description": "How the session winner was selected (e.g. aggregated_mean). A bounded label, never free text."
+    },
+    "primary_objective": {
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV S5-12 (LEAK): primary_objective",
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*\\s)[A-Za-z0-9_][A-Za-z0-9_.:-]{0,63}$",
+      "description": "Name of the primary objective (a declared objective label, not content). Bounded label."
+    },
+    "metrics": {
+      "x-content-key-class": "legacy_content",
+      "x-content-note": "INV S5-13 (LEAK): keys of metrics",
+      "type": "object",
+      "description": "Sanitized session-level rollup metrics: metric-name label -> numeric value. Keys are bounded labels (propertyNames) so content cannot be smuggled into a key.",
+      "propertyNames": {
+        "x-content-class": "legacy_content",
+        "x-content-note": "INV S5-13 (LEAK): metrics",
+        "pattern": "^(?![\\s\\S]*\\s)[A-Za-z0-9_][A-Za-z0-9_.:-]{0,63}$"
+      },
+      "additionalProperties": {
+        "x-content-class": "legacy_content",
+        "x-content-note": "INV S5-13 (LEAK): metrics",
+        "type": "number"
+      }
+    },
+    "samples_per_config": {
+      "x-content-key-class": "legacy_content",
+      "x-content-note": "INV S5-14 (LEAK): keys of samples_per_config",
+      "type": "object",
+      "description": "Per-configuration sample counts, keyed by config HASH (not content). Keys are bounded labels (propertyNames).",
+      "propertyNames": {
+        "x-content-class": "legacy_content",
+        "x-content-note": "INV S5-14 (LEAK): samples_per_config",
+        "pattern": "^(?![\\s\\S]*\\s)[A-Za-z0-9_][A-Za-z0-9_.:-]{0,63}$"
+      },
+      "additionalProperties": {
+        "x-content-class": "legacy_content",
+        "x-content-note": "INV S5-14 (LEAK): samples_per_config",
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "total_examples": {
+      "x-content-class": "number",
+      "type": "integer",
+      "minimum": 0
+    },
+    "trials_completed": {
+      "x-content-class": "number",
+      "type": "integer",
+      "minimum": 0
+    },
+    "successful_trials": {
+      "x-content-class": "number",
+      "type": "integer",
+      "minimum": 0
+    },
+    "success_rate": {
+      "x-content-class": "number",
+      "type": "number"
+    },
+    "best_weighted_config": {
+      "x-content-key-class": "legacy_content",
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV S5-15 (LEAK): best_weighted_config",
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "The weighted-best configuration dict, or null. Config VALUES are already on the optimization wire — including, by the documented dataflow exception, prompt text a customer makes a tuned variable — so values are intentionally unconstrained here. Under SDK privacy mode this field is omitted (null) entirely, mirroring trial-config redaction; that is the control for customers who do not want config egress."
+    },
+    "best_weighted_score": {
+      "x-content-class": "number",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "statistical_significance": {
+      "x-content-key-class": "legacy_content",
+      "x-content-note": "INV S5-16 (OPEN): keys of statistical_significance",
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Per-objective numeric statistical-significance badges; content-free. Keys are bounded objective/metric labels (propertyNames — content cannot be smuggled into a key); each value is a fixed badge object of integer trial-index lists, an anchored badge_name label, and an integer shared-example count. additionalProperties:false on the badge object rejects any nested content (prompts, outputs, LLM responses).",
+      "propertyNames": {
+        "x-content-class": "legacy_content",
+        "x-content-note": "INV S5-16 (OPEN): statistical_significance",
+        "pattern": "^(?![\\s\\S]*\\s)[A-Za-z0-9_][A-Za-z0-9_.:-]{0,63}$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "winners": {
+            "type": "array",
+            "items": {
+              "x-content-class": "number",
+              "type": "integer"
+            }
+          },
+          "top_group": {
+            "type": "array",
+            "items": {
+              "x-content-class": "number",
+              "type": "integer"
+            }
+          },
+          "rest_group": {
+            "type": "array",
+            "items": {
+              "x-content-class": "number",
+              "type": "integer"
+            }
+          },
+          "badge_name": {
+            "x-content-class": "legacy_content",
+            "x-content-note": "INV-GAP: was closed_enum; contract has no enum/const, so the value is not provably content-free",
+            "type": "string",
+            "pattern": "^(?![\\s\\S]*\\s)[A-Za-z0-9_][A-Za-z0-9_.:-]{0,63}$"
+          },
+          "n_shared_examples": {
+            "x-content-class": "number",
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "execution_time": {
+      "x-content-class": "number",
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "sdk_version": {
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV-GAP: was closed_enum; contract has no enum/const, so the value is not provably content-free",
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*\\s)[A-Za-z0-9][A-Za-z0-9+_.-]{0,63}$",
+      "description": "Anchored version token — never free text."
+    },
+    "selection": {
+      "description": "OPTIONAL selection receipt (R3). CLIENT-ATTESTED, SERVER-BOUND: records the SDK's selection decision and binds it to the session's own trials (provenance and referential consistency); it does NOT recompute statistics. Discriminated on `disposition`. `accepted` is the form a client sends and the form the Backend persists when binding succeeds. `rejected_inconsistent` is Backend-written: when a submitted `selection` fails this schema or server binding, the Backend persists this form with a content-free reason instead (never a partial claim). STRUCTURAL FAILURES ARE CLASSIFIED, NEVER FATAL: a `selection` value that fails this schema (missing or extra field, wrong type, bad pattern, bad `attestation`; a number's value is classified as `non_finite`/`out_of_range` instead) does not fail the finalize request; the Backend persists `{disposition: rejected_inconsistent, reason: invalid_receipt}` and the rest of the finalize proceeds. A client MAY send a rejected form (this schema accepts it in the finalize request), but it carries no claim: the Backend ignores a client-sent `rejected_inconsistent` and persists no `selection` for that finalize. Any rejected form in a response was written by the Backend. CONTENT-FREE SCOPE: the `selection` block carries only ids, counts, a digest, bounded numbers, bounded labels and closed enums; it adds no free-text field. This does NOT make the enclosing SessionAggregationDTO content-free — other properties (e.g. best_weighted_config) may carry configuration values. FINITENESS IS BACKEND-ENFORCED: JSON Schema `number` does not exclude non-finite values, and common parsers produce them (Python json.loads accepts `NaN`/`Infinity` and turns `1e999` into inf); the Backend rejects any non-finite number in the receipt with reason `non_finite`, ahead of every numeric bound (see precedence) -- including NaN/Infinity in an INTEGER-typed field (eligible_trial_count, n_configs, n_shared_examples), which is `non_finite`, not `invalid_receipt`. REJECTION PRECEDENCE (the Backend reports the first reason that applies, in this order): (1) `invalid_receipt` — the `selection` value fails this schema's structure (missing or extra field, wrong type, bad pattern, bad `attestation`, unknown `disposition`, wrong array length other than the list checks in 2–3); failures of a number's VALUE are not structural and are classified by 4–5 instead; (2) `exceeds_max_trials` — eligible_trial_ids has more than 10000 items; (3) `duplicate_ids` — eligible_trial_ids repeats an id; (4) `non_finite` — any number in the receipt is NaN or ±Infinity (this takes precedence over every numeric bound); (5) `out_of_range` — a finite number violates this schema's numeric bounds (minimum/maximum/const on a number, e.g. p_value, effective_alpha, n_configs, n_shared_examples, eligible_trial_count) or a Backend-only numeric relation (ci95 low <= high, n_configs <= eligible_trial_count); (6) `non_canonical_order` — the ids are unique but not sorted ascending by Unicode code point AND eligible_trial_ids_digest equals the digest of the canonical (sorted) list; (7) `count_mismatch` — eligible_trial_count != len(eligible_trial_ids); (8) `digest_mismatch` — eligible_trial_ids_digest differs from the canonical digest (this includes an unsorted list whose digest was computed over the unsorted order); (9) binding reasons — `unknown_trial`, `winner_not_eligible`, `winner_not_best`, `runner_up_not_eligible`, `runner_up_is_winner`. Unsorted ids are rejected, never normalised.",
+      "oneOf": [
+        {
+          "$ref": "#/definitions/SelectionAccepted"
+        },
+        {
+          "$ref": "#/definitions/SelectionRejectedInconsistent"
+        }
+      ]
+    }
+  },
+  "definitions": {
+    "SelectionLabel": {
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV-GAP: was closed_enum; contract has no enum/const, so the value is not provably content-free",
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*\\s)[A-Za-z0-9_][A-Za-z0-9_.:-]{0,63}$",
+      "description": "Bounded label, never free text."
+    },
+    "SelectionTrialId": {
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV-GAP: was closed_enum; contract has no enum/const, so the value is not provably content-free",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^(?![\\s\\S]*\\s)[A-Za-z0-9._-]{1,128}$",
+      "description": "BACKEND trial_id (the id the SDK submitted results under); same token charset and length as CertifiedSelectionReport.trial_id. The leading `(?![\\s\\S]*\\s)` guard rejects any whitespace, including a trailing newline that `$` alone admits in Python `re`; ECMA-262 compatible. The Backend enforces that it belongs to this session and tenant."
+    },
+    "SelectionAccepted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "disposition",
+        "winner_trial_id",
+        "eligible_trial_ids",
+        "eligible_trial_count",
+        "eligible_trial_ids_digest"
+      ],
+      "description": "Accepted selection receipt. BACKEND-ENFORCED (not expressible in JSON Schema): every id belongs to this session's trials for this tenant; winner_trial_id is a completed trial of this session and is in eligible_trial_ids (else `winner_not_eligible`) -- it is the SDK's own selection and is NOT required to equal a trial the server would rank best, because the SDK ranks by configuration average, weighted objectives and tie-breaks the server does not replicate; the receipt therefore evidences which eligible trial the SDK selected, not which configuration was shipped and not that the ranking was correct; STRICT (certified-selection) SESSIONS: the server itself decides the winner, so a receipt is accepted only if winner_trial_id equals the server's certified winner; with no certified winner, or a different one, the Backend persists `winner_not_eligible` (the Python SDK sends no receipt in strict mode); eligible_trial_ids is sorted ascending by Unicode code point (canonical order; unsorted ids are rejected with `non_canonical_order` or `digest_mismatch`, never normalised — see the precedence on `selection`); eligible_trial_count == len(eligible_trial_ids); eligible_trial_ids_digest is recomputed from eligible_trial_ids by the preimage rule on that field and must match; every number is finite.",
+      "properties": {
+        "disposition": {
+          "x-content-class": "closed_enum",
+          "const": "accepted"
+        },
+        "attestation": {
+          "x-content-class": "closed_enum",
+          "const": "client_attested_server_bound",
+          "description": "Evidence class. Server-set on the persisted form; a request may omit it, and if present it must equal this value."
+        },
+        "selection_reason": {
+          "description": "The SDK's selection reason (the SDK result's reason code field), or null. Bounded label. When absent or null, the certificate must say that no selection reason was supplied; it must never infer one.",
+          "oneOf": [
+            {
+              "$ref": "#/definitions/SelectionLabel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "winner_trial_id": {
+          "$ref": "#/definitions/SelectionTrialId"
+        },
+        "eligible_trial_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10000,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/SelectionTrialId"
+          },
+          "description": "The ranking-eligible trial ids, unique, sorted ascending by Unicode code point (canonical; Backend-enforced — an unsorted list is rejected, never re-sorted). maxItems matches the Backend MAX_TRIALS bound."
+        },
+        "eligible_trial_count": {
+          "x-content-class": "number",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000,
+          "description": "Count of eligible_trial_ids. Backend enforces equality with len(eligible_trial_ids)."
+        },
+        "eligible_trial_ids_digest": {
+          "x-content-class": "digest",
+          "type": "string",
+          "pattern": "^(?![\\s\\S]*\\s)sha256:[0-9a-f]{64}$",
+          "description": "`sha256:` followed by the LOWERCASE hex SHA-256 of an exactly defined preimage: the UTF-8 bytes of `json.dumps(ids, separators=(\",\", \":\"), ensure_ascii=False)` where `ids` is eligible_trial_ids sorted ascending by Unicode code point (Python `sorted()` on str). No whitespace, no trailing newline, no domain tag. Because SelectionTrialId is ASCII-only, code-point order equals UTF-16 code-unit order, so the JavaScript equivalent is the UTF-8 bytes of `JSON.stringify([...ids].sort())`. Example: [\"trial_a\", \"trial_b\"] -> preimage `[\"trial_a\",\"trial_b\"]`. Additional evidence, never a substitute for the list; the Backend recomputes and compares it (mismatch -> `digest_mismatch`)."
+        },
+        "margin": {
+          "description": "Winner-vs-runner-up margin, or null when no comparison was made.",
+          "oneOf": [
+            {
+              "$ref": "#/definitions/SelectionMargin"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "SelectionMargin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "winner_trial_id",
+        "runner_up_trial_id",
+        "delta",
+        "ci95",
+        "p_value",
+        "verdict",
+        "test",
+        "n_shared_examples",
+        "effective_alpha",
+        "n_configs"
+      ],
+      "description": "Statistical margin of the winner over the runner-up, projected from the Python SDK's compute_best_config_margin payload (traigent/core/stat_significance.py); not recomputed server-side. The SDK returns NO margin (send null or omit `margin`) when there are fewer than two distinct scored configs, so every margin names a runner-up and has n_configs >= 2. Shape depends on `verdict` (enforced below with if/then): `clear` / `statistical_tie` — a paired test ran on shared per-example scores: delta, ci95 and p_value are numbers and n_shared_examples >= 1. `na` — no p-value: winner and runner-up share fewer than the SDK's minimum number of shared examples, or none, so no test ran: ci95 and p_value are null, n_shared_examples is 0, and delta is the aggregate primary-score difference (number, or null if unavailable). BACKEND-ENFORCED (not expressible in JSON Schema): winner_trial_id equals the receipt's winner_trial_id (the SDK falls back to another trial when it cannot find the requested winner, so the margin must name the trial it was computed for; mismatch -> `winner_not_best`); runner_up_trial_id is in eligible_trial_ids and differs from winner_trial_id; ci95[0] <= ci95[1]; n_configs <= eligible_trial_count (n_configs counts DISTINCT configs among the scored eligible trials, so it may be smaller than the trial count); every number is finite.",
+      "properties": {
+        "winner_trial_id": {
+          "$ref": "#/definitions/SelectionTrialId",
+          "description": "The trial the SDK computed this margin for (the SDK margin payload's own winner_trial_id). Required in every verdict. The Backend rejects with `winner_not_best` when it differs from the receipt's winner_trial_id."
+        },
+        "runner_up_trial_id": {
+          "$ref": "#/definitions/SelectionTrialId"
+        },
+        "delta": {
+          "x-content-class": "number",
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Winner minus runner-up on the primary objective. A number for clear/statistical_tie; number or null for na."
+        },
+        "ci95": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "x-content-class": "number",
+            "type": "number"
+          },
+          "description": "Confidence interval [lo, hi] on delta at level (1 - effective_alpha) — NOT a fixed 95% interval; the SDK applies the multiplicity-corrected effective_alpha to both the CI level and the p-value threshold. The name `ci95` is kept because it is the SDK margin payload's own key, so the SDK projects without renaming; the name is historical. Null exactly when verdict is na. lo <= hi is Backend-enforced."
+        },
+        "p_value": {
+          "x-content-class": "number",
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Two-sided p-value in [0, 1]; null exactly when verdict is na."
+        },
+        "verdict": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "clear",
+            "statistical_tie",
+            "na"
+          ]
+        },
+        "test": {
+          "$ref": "#/definitions/SelectionLabel"
+        },
+        "n_shared_examples": {
+          "x-content-class": "number",
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of shared examples the paired test ran on: >= 1 for clear/statistical_tie. For na the SDK reports 0 even when the two trials share some examples below its minimum."
+        },
+        "effective_alpha": {
+          "x-content-class": "number",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Multiplicity-corrected significance level: alpha / max(1, n_configs - 1)."
+        },
+        "n_configs": {
+          "x-content-class": "number",
+          "type": "integer",
+          "minimum": 2,
+          "description": "Number of DISTINCT configs among the scored eligible trials (>= 2 whenever a margin exists). Backend enforces n_configs <= eligible_trial_count."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "verdict"
+            ],
+            "properties": {
+              "verdict": {
+                "enum": [
+                  "clear",
+                  "statistical_tie"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "delta": {
+                "type": "number"
+              },
+              "ci95": {
+                "type": "array"
+              },
+              "p_value": {
+                "type": "number"
+              },
+              "n_shared_examples": {
+                "minimum": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "verdict"
+            ],
+            "properties": {
+              "verdict": {
+                "const": "na"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "ci95": {
+                "type": "null"
+              },
+              "p_value": {
+                "type": "null"
+              },
+              "n_shared_examples": {
+                "const": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "SelectionRejectedInconsistent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "disposition",
+        "reason"
+      ],
+      "description": "Backend-written form persisted when a submitted `selection` fails this schema or server binding. Content-free: a closed reason enum only. A `selection` that fails this schema structurally is persisted as `reason: invalid_receipt` and the rest of the finalize proceeds (the finalize never fails on the receipt). Accepted by this schema in a request, but the Backend ignores a client-sent `rejected_inconsistent` and persists no `selection` for that finalize. REJECTION PRECEDENCE (the Backend reports the first reason that applies, in this order): (1) `invalid_receipt` — the `selection` value fails this schema's structure (missing or extra field, wrong type, bad pattern, bad `attestation`, unknown `disposition`, wrong array length other than the list checks in 2–3); failures of a number's VALUE are not structural and are classified by 4–5 instead; (2) `exceeds_max_trials` — eligible_trial_ids has more than 10000 items; (3) `duplicate_ids` — eligible_trial_ids repeats an id; (4) `non_finite` — any number in the receipt is NaN or ±Infinity (this takes precedence over every numeric bound); (5) `out_of_range` — a finite number violates this schema's numeric bounds (minimum/maximum/const on a number, e.g. p_value, effective_alpha, n_configs, n_shared_examples, eligible_trial_count) or a Backend-only numeric relation (ci95 low <= high, n_configs <= eligible_trial_count); (6) `non_canonical_order` — the ids are unique but not sorted ascending by Unicode code point AND eligible_trial_ids_digest equals the digest of the canonical (sorted) list; (7) `count_mismatch` — eligible_trial_count != len(eligible_trial_ids); (8) `digest_mismatch` — eligible_trial_ids_digest differs from the canonical digest (this includes an unsorted list whose digest was computed over the unsorted order); (9) binding reasons — `unknown_trial`, `winner_not_eligible`, `winner_not_best`, `runner_up_not_eligible`, `runner_up_is_winner`. Unsorted ids are rejected, never normalised.",
+      "properties": {
+        "disposition": {
+          "x-content-class": "closed_enum",
+          "const": "rejected_inconsistent"
+        },
+        "reason": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV S5-3 (OPEN): reason",
+          "type": "string",
+          "enum": [
+            "invalid_receipt",
+            "unknown_trial",
+            "winner_not_best",
+            "winner_not_eligible",
+            "runner_up_not_eligible",
+            "runner_up_is_winner",
+            "count_mismatch",
+            "duplicate_ids",
+            "non_canonical_order",
+            "non_finite",
+            "out_of_range",
+            "exceeds_max_trials",
+            "digest_mismatch"
+          ]
+        }
+      }
+    }
+  }
+}

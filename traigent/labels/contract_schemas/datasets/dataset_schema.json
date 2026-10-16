@@ -1,0 +1,187 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/datasets/dataset_schema.json",
+  "title": "Dataset Schema",
+  "description": "Canonical public dataset resource for evaluation workloads.",
+  "version": "1.0.0",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier for this evaluation set instance",
+      "x-identifier": true
+    },
+    "parent_dataset_id": {
+      "type": "string",
+      "description": "Optional identifier of the dataset instance this revision was derived from.",
+      "x-identifier": true
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Optional positive revision number for this dataset instance."
+    },
+    "name": {
+      "type": "string",
+      "description": "Technical name of the evaluation set (machine-friendly)",
+      "pattern": "^[a-zA-Z0-9_-]+$"
+    },
+    "label": {
+      "type": "string",
+      "description": "Human-readable name of the evaluation set"
+    },
+    "description": {
+      "type": "string",
+      "description": "Detailed description of the evaluation set's purpose and methodology"
+    },
+    "type": {
+      "$ref": "./evaluation_set_schema.json#/definitions/EvaluationSetType",
+      "description": "Format type of the evaluation set"
+    },
+    "use_case": {
+      "$ref": "./evaluation_set_schema.json#/definitions/UseCase",
+      "description": "Primary use case this evaluation set is designed to evaluate"
+    },
+    "agent_type": {
+      "$ref": "https://schemas.traigent.ai/agents/agent_types_schema.json#/definitions/AgentType",
+      "description": "Type of agent this evaluation set is designed to evaluate"
+    },
+    "examples_count": {
+      "type": "integer",
+      "description": "Total number of examples in the evaluation set",
+      "minimum": 0
+    },
+    "files": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "$ref": "./evaluation_set_schema.json#/definitions/EvaluationSetFile"
+      },
+      "description": "Files associated with this evaluation set for evaluation"
+    },
+    "generator_config": {
+      "$ref": "https://schemas.traigent.ai/datasets/generator_config_schema.json#",
+      "description": "Configuration for example generation"
+    },
+    "evaluator_config": {
+      "$ref": "https://schemas.traigent.ai/datasets/evaluator_config_schema.json#",
+      "description": "Configuration for example evaluation"
+    },
+    "examples": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "./evaluation_set_schema.json#/definitions/EvaluationSetExample"
+      },
+      "description": "Examples associated with this evaluation set"
+    },
+    "splits": {
+      "type": "object",
+      "description": "Optional split policy and per-example assignments for this evaluation set. Selection gates candidate acceptance. Test is locked until run finalization.",
+      "additionalProperties": false,
+      "required": [
+        "policy",
+        "assignments"
+      ],
+      "properties": {
+        "policy": {
+          "type": "object",
+          "description": "Policy used to assign examples to train, selection, and test splits.",
+          "additionalProperties": false,
+          "required": [
+            "strategy",
+            "locked_test"
+          ],
+          "properties": {
+            "strategy": {
+              "type": "string",
+              "enum": [
+                "explicit",
+                "hash"
+              ],
+              "description": "Split assignment strategy."
+            },
+            "seed": {
+              "type": "integer",
+              "description": "Optional deterministic seed for hash-based split assignment."
+            },
+            "locked_test": {
+              "type": "boolean",
+              "description": "Whether the test split is locked. Test is locked until run finalization."
+            }
+          }
+        },
+        "assignments": {
+          "type": "object",
+          "description": "example_id -> split. Selection gates candidate acceptance.",
+          "additionalProperties": {
+            "type": "string",
+            "enum": [
+              "train",
+              "selection",
+              "test"
+            ]
+          }
+        }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of when this evaluation set was created"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of the last modification to this evaluation set"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Additional metadata about the evaluation set",
+      "properties": {
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Tags for categorizing and filtering evaluation sets"
+        },
+        "version": {
+          "type": "string",
+          "description": "Version of the evaluation set",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "source": {
+          "type": "string",
+          "description": "Source or origin of the evaluation set data"
+        },
+        "license": {
+          "type": "string",
+          "description": "License under which the evaluation set is distributed"
+        }
+      },
+      "additionalProperties": true
+    },
+    "current_version": {
+      "oneOf": [
+        {
+          "$ref": "./dataset_version_schema.json#/definitions/DatasetVersionV1"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The current DatasetVersionV1 record for this dataset (dataset_version_schema.json): a labeled, immutable snapshot of this dataset's example membership, carrying the content-addressable content_digest for the examples it snapshots. OPTIONAL and ADDITIVE: absent or null means no versioned snapshot has been created for this dataset yet (e.g. a legacy dataset predating this field). Old readers that VALIDATE against the previous schema reject a payload carrying this key (closed object); producers MUST OMIT the key -- never emit null -- until every consumer has upgraded to a schema version that knows it; readers that ignore unknown keys are unaffected."
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "label",
+    "description",
+    "type",
+    "examples_count"
+  ],
+  "additionalProperties": false
+}

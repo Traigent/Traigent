@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/labels/label_envelope_schema.json",
+  "title": "Label Envelope",
+  "description": "A label sealed with HPKE (RFC 9180 base mode, DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 / AES-256-GCM) to the project public key of `key_epoch`. Packed form (used for digests and storage) is `version(1 byte) || key_epoch(4 bytes, big-endian) || enc(32) || ciphertext`; this JSON form carries the same four parts with base64url for the binary parts. The plaintext is a UTF-8 label padded ISO/IEC 7816-4 style (0x80 then zeros) to a bucket of 32/64/128/256 bytes, so `ciphertext` is bucket + 16 bytes (48/80/144/272 bytes). AAD is NOT transmitted: both sides rebuild the RFC 8785 canonical JSON of {schema_version, tenant_ref, project_ref, purpose, object_ref, key_epoch, revision}. The object content `revision` IS bound into the AAD (the new revision, base_revision + 1, on a write; the revision the reader requested on a read), so a ciphertext cannot be replayed under another revision; the envelope itself carries no revision field. HPKE info is the fixed ASCII string `traigent.label.v1`. Only the label service stores this value; the Director never receives it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "key_epoch",
+    "enc",
+    "ciphertext"
+  ],
+  "properties": {
+    "version": {
+      "$ref": "label_common_schema.json#/definitions/SchemaVersion"
+    },
+    "key_epoch": {
+      "$ref": "label_common_schema.json#/definitions/Epoch"
+    },
+    "enc": {
+      "$ref": "label_common_schema.json#/definitions/Enc"
+    },
+    "ciphertext": {
+      "x-content-class": "encrypted_blob",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "minLength": 64,
+      "maxLength": 363,
+      "description": "AEAD ciphertext||tag, unpadded base64url. Decoded length is exactly 48, 80, 144 or 272 bytes (padding bucket + 16-byte tag)."
+    }
+  }
+}

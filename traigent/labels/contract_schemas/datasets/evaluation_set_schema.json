@@ -1,0 +1,288 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/datasets/evaluation_set_schema.json",
+  "type": "object",
+  "title": "Evaluation Set Schema",
+  "description": "Defines the structure and configuration of a evaluation set for evaluating model performance",
+  "version": "1.0.0",
+  "definitions": {
+    "UseCase": {
+      "type": "string",
+      "enum": [
+        "question-answering",
+        "summarization",
+        "translation",
+        "code-generation",
+        "chat",
+        "classification",
+        "generation",
+        "extraction",
+        "other"
+      ],
+      "description": "Types of use cases for evaluation sets:\n- question-answering: Evaluates ability to provide accurate answers to questions\n- summarization: Tests text summarization capabilities\n- translation: Assesses language translation accuracy\n- code-generation: Evaluates code generation and modification abilities\n- chat: Tests conversational abilities and dialogue management\n- classification: Assesses text classification capabilities\n- generation: Evaluates text generation abilities\n- extraction: Tests information extraction capabilities\n- other: Other evaluation set types not covered above"
+    },
+    "EvaluationSetType": {
+      "type": "string",
+      "enum": ["input-only", "input-output", "multi-turn conversation", "other"],
+      "description": "Types of evaluation set formats:\n- input-only: evaluation set requires only input prompts\n- input-output: evaluation set requires both input and output prompts\n- multi-turn: evaluation set requires multiple input-output pairs"
+    },
+    "EvaluationSetFile": {
+      "type": "object",
+      "description": "Represents a file associated with the evaluation set",
+      "properties": {
+        "file_id": {
+          "type": "string",
+          "description": "Unique identifier for the file",
+          "x-identifier": true
+        },
+        "filename": {
+          "type": "string",
+          "description": "Name of the file with extension"
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Path to the file relative to evaluation set directory"
+        },
+        "file_size": {
+          "type": "integer",
+          "description": "Size of the file in bytes",
+          "minimum": 0
+        },
+        "evaluation_set_id": {
+          "type": "string",
+          "description": "Unique identifier for the evaluation set"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of when this file was created"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the last modification to this file"
+        }
+      },
+      "required": [
+        "file_id",
+        "filename",
+        "file_path"
+      ],
+      "additionalProperties": false
+    },
+    "EvaluationSetExample": {
+      "type": "object",
+      "properties": {
+        "example_id": {
+          "type": "string",
+          "description": "Unique identifier for the example"
+        },
+        "input_text": {
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "The input text or question given to the agent"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "A sequence of inputs representing a multi-turn conversation"
+            }
+          ],
+          "description": "The input text/question given to the agent. Can be a single string or a list of strings for multi-turn interaction",
+          "x-content": true,
+          "x-privacy-classification": "user_content"
+        },
+        "expected_output": {
+          "type": "string",
+          "description": "The expected output or answer from the agent",
+          "optional": true,
+          "x-content": true,
+          "x-privacy-classification": "user_content"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Tags to categorize the example (may include difficulty)",
+          "optional": true
+        },
+        "explanation": {
+          "type": "string",
+          "description": "Explanation of what this example is testing",
+          "optional": true
+        },
+        "difficulty": {
+          "type": "string",
+          "description": "Difficulty level of the example (easy, medium, hard)",
+          "optional": true
+        },
+        "confidence": {
+          "allOf": [
+            { "$ref": "../common_types_schema.json#/definitions/Confidence" }
+          ],
+          "description": "Confidence as a 0-1 ratio for the expected output (platform convention; FE clamps to [0,1])",
+          "optional": true
+        },
+        "status": {
+          "type": "string",
+          "description": "Current status of the example",
+          "optional": true
+        },
+        "score": {
+          "type": "number",
+          "description": "Score as a 0-1 ratio for the example (platform convention; FE clamps to [0,1])",
+          "minimum": 0,
+          "maximum": 1,
+          "optional": true
+        }
+      },
+      "required": ["example_id", "input_text"]
+    }
+  },
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier for this evaluation set instance",
+      "x-identifier": true
+    },
+    "name": {
+      "type": "string",
+      "description": "Technical name of the evaluation set (machine-friendly)",
+      "pattern": "^[a-zA-Z0-9_-]+$"
+    },
+    "label": {
+      "type": "string",
+      "description": "Human-readable name of the evaluation set"
+    },
+    "description": {
+      "type": "string",
+      "description": "Detailed description of the evaluation set's purpose and methodology"
+    },
+    "type": {
+      "$ref": "#/definitions/EvaluationSetType",
+      "description": "Format type of the evaluation set"
+    },
+    "use_case": {
+      "$ref": "#/definitions/UseCase",
+      "description": "Primary use case this evaluation set is designed to evaluate"
+    },
+    "agent_type": {
+      "$ref": "https://schemas.traigent.ai/agents/agent_types_schema.json#/definitions/AgentType",
+      "description": "Type of agent this evaluation set is designed to evaluate"
+    },
+    "examples_count": {
+      "type": "integer",
+      "description": "Total number of examples in the evaluation set",
+      "minimum": 0
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/EvaluationSetFile"
+      },
+      "description": "Files associated with this evaluation set for evaluation"
+    },
+    "generator_config": {
+      "$ref": "https://schemas.traigent.ai/datasets/generator_config_schema.json#",
+      "description": "Configuration for example generation"
+    },
+    "evaluator_config": {
+      "$ref": "https://schemas.traigent.ai/datasets/evaluator_config_schema.json#",
+      "description": "Configuration for example evaluation"
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/EvaluationSetExample"
+      },
+      "description": "Examples associated with this evaluation set"
+    },
+    "splits": {
+      "type": "object",
+      "description": "Optional split policy and per-example assignments for this evaluation set. Selection gates candidate acceptance. Test is locked until run finalization.",
+      "additionalProperties": false,
+      "required": ["policy", "assignments"],
+      "properties": {
+        "policy": {
+          "type": "object",
+          "description": "Policy used to assign examples to train, selection, and test splits.",
+          "additionalProperties": false,
+          "required": ["strategy", "locked_test"],
+          "properties": {
+            "strategy": {
+              "type": "string",
+              "enum": ["explicit", "hash"],
+              "description": "Split assignment strategy."
+            },
+            "seed": {
+              "type": "integer",
+              "description": "Optional deterministic seed for hash-based split assignment."
+            },
+            "locked_test": {
+              "type": "boolean",
+              "description": "Whether the test split is locked. Test is locked until run finalization."
+            }
+          }
+        },
+        "assignments": {
+          "type": "object",
+          "description": "example_id -> split. Selection gates candidate acceptance.",
+          "additionalProperties": {
+            "type": "string",
+            "enum": ["train", "selection", "test"]
+          }
+        }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of when this evaluation set was created"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of the last modification to this evaluation set"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Additional metadata about the evaluation set",
+      "properties": {
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Tags for categorizing and filtering evaluation sets"
+        },
+        "version": {
+          "type": "string",
+          "description": "Version of the evaluation set",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "source": {
+          "type": "string",
+          "description": "Source or origin of the evaluation set data"
+        },
+        "license": {
+          "type": "string",
+          "description": "License under which the evaluation set is distributed"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "label",
+    "description",
+    "type",
+    "examples_count"    
+  ],
+  "additionalProperties": false
+}

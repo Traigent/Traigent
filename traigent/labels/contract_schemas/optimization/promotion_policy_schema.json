@@ -1,0 +1,135 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "Promotion Policy Schema",
+  "description": "Defines the promotion policy for epsilon-Pareto selection of optimal configurations.",
+  "version": "0.10.0",
+  "definitions": {
+    "ChanceConstraint": {
+      "type": "object",
+      "description": "Probabilistic constraint requiring a metric to meet a threshold with specified confidence",
+      "required": [
+        "name",
+        "threshold",
+        "confidence"
+      ],
+      "properties": {
+        "name": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV S1-23 (LEAK): name",
+          "type": "string",
+          "description": "Name of the metric this constraint applies to",
+          "pattern": "^[a-zA-Z_][a-zA-Z0-9_.-]*$"
+        },
+        "threshold": {
+          "x-content-class": "number",
+          "type": "number",
+          "description": "Minimum acceptable metric value"
+        },
+        "confidence": {
+          "x-content-class": "number",
+          "type": "number",
+          "description": "Required probability of meeting the threshold (0 to 1)",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "properties": {
+    "dominance": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "epsilon_pareto"
+      ],
+      "default": "epsilon_pareto",
+      "description": "Dominance criterion for comparing configurations"
+    },
+    "alpha": {
+      "x-content-class": "number",
+      "type": "number",
+      "description": "Significance level for statistical tests",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.05
+    },
+    "min_effect": {
+      "x-content-key-class": "legacy_content",
+      "x-content-note": "INV-GAP: was closed_enum; contract has no enum/const, so the value is not provably content-free (keys)",
+      "type": "object",
+      "description": "Minimum practical effect size per metric (metric_name -> threshold)",
+      "patternProperties": {
+        "^[a-zA-Z_][a-zA-Z0-9_.-]*$": {
+          "x-content-class": "number",
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "adjust": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "none",
+        "BH"
+      ],
+      "default": "none",
+      "description": "Multiple comparison adjustment method (BH = Benjamini-Hochberg)"
+    },
+    "chance_constraints": {
+      "type": "array",
+      "description": "Probabilistic constraints on metric outcomes",
+      "items": {
+        "$ref": "#/definitions/ChanceConstraint"
+      }
+    },
+    "tie_breakers": {
+      "x-content-key-class": "legacy_content",
+      "x-content-note": "INV-GAP: was closed_enum; contract has no enum/const, so the value is not provably content-free (keys)",
+      "type": "object",
+      "description": "Tie-breaking strategy per metric when configurations are statistically equivalent",
+      "patternProperties": {
+        "^[a-zA-Z_][a-zA-Z0-9_.-]*$": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "min_abs_deviation",
+            "custom"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "require_calibration": {
+      "type": "object",
+      "description": "TVL 1.1 strict evidence mode (RFC 0001 \u00a73.5/\u00a73.6): when enabled, promotion requires certificate-backed evidence; runs without a certified selection end with reason_code NO_CERTIFIED_SELECTION instead of a raw best. hash_covered_context selects EXTENSION keys only \u2014 the mandatory freshness-context core is implicit and not configurable. Field semantics mirror tvl/spec/grammar/tvl.schema.json \u00a7promotion_policy (same required/enum members); this copy additionally pins items.type and uniqueItems as wire hardening.",
+      "required": [
+        "enabled"
+      ],
+      "properties": {
+        "enabled": {
+          "x-content-class": "closed_enum",
+          "type": "boolean"
+        },
+        "hash_covered_context": {
+          "type": "array",
+          "items": {
+            "x-content-class": "closed_enum",
+            "type": "string",
+            "enum": [
+              "stage_versions",
+              "model_versions",
+              "budget_assumptions",
+              "cost_assumptions"
+            ]
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

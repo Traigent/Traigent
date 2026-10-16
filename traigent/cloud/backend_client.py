@@ -89,6 +89,7 @@ from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env
 from traigent.evaluators.base import Dataset
+from traigent.labels.transport_gate import install_transport_gate
 from traigent.security.session_manager import SessionManager as SecuritySessionManager
 from traigent.utils.exceptions import RetryableError
 from traigent.utils.logging import get_logger
@@ -135,6 +136,10 @@ except ImportError:  # pragma: no cover - optional dependency for offline mode
 logger = get_logger(__name__)
 _ALLOWED_EXAMPLE_FEATURE_KINDS = frozenset({"simhash_v1"})
 _JSON_CONTENT_TYPE = "application/json"
+
+# Phase 2 (content-less design): classify final request bodies, report mode only
+# unless TRAIGENT_TRANSPORT_GATE=refuse/off. Never changes the wire in report mode.
+install_transport_gate()
 _SDK_USER_AGENT = get_sdk_user_agent()
 _AGENT_ID_HEADER = "X-Traigent-Agent-Id"
 _EXPECTED_HEAD_GENERATION_HEADER = "X-Traigent-Expected-Head-Generation"

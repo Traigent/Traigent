@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/labels/label_member_key_schema.json",
+  "title": "Label Member Key Registration",
+  "description": "Member key registration (a user or machine publishes a per-user X25519 public key) and the admin-signed binding the service stores after out-of-band fingerprint approval. Machine members (SDK/CI/coding agent) default to write-only: the project public key suffices and they receive no wrap. Trust in a member key comes only from an admin-signed `member_key` binding: a registration carries no self-signature (the schema has no signature field), and the approving admin compares the key fingerprint with the member out-of-band before signing. Until an admin signs, the service stores the key as `pending` and no client wraps or encrypts to it.",
+  "definitions": {
+    "MemberKeyRegistration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "project_ref",
+        "key_id",
+        "public_key",
+        "algorithm",
+        "member_kind",
+        "requested_access"
+      ],
+      "properties": {
+        "version": {
+          "$ref": "label_common_schema.json#/definitions/SchemaVersion"
+        },
+        "project_ref": {
+          "$ref": "label_common_schema.json#/definitions/ProjectRef"
+        },
+        "key_id": {
+          "$ref": "label_common_schema.json#/definitions/KeyId"
+        },
+        "public_key": {
+          "$ref": "label_common_schema.json#/definitions/PublicKey"
+        },
+        "algorithm": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "x25519"
+          ]
+        },
+        "member_kind": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "human",
+            "machine"
+          ]
+        },
+        "requested_access": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "write_only",
+            "read_write"
+          ],
+          "description": "Machine members default to write_only."
+        }
+      }
+    },
+    "MemberKeyApproval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "status",
+        "access",
+        "updated_at"
+      ],
+      "properties": {
+        "version": {
+          "$ref": "label_common_schema.json#/definitions/SchemaVersion"
+        },
+        "status": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "pending",
+            "approved",
+            "revoked"
+          ]
+        },
+        "access": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "write_only",
+            "read_write"
+          ]
+        },
+        "binding": {
+          "$ref": "label_key_binding_schema.json#/definitions/KeyBinding"
+        },
+        "updated_at": {
+          "$ref": "label_common_schema.json#/definitions/Timestamp"
+        }
+      },
+      "description": "binding is present once status is approved; its purpose MUST be member_key."
+    }
+  },
+  "$ref": "#/definitions/MemberKeyRegistration"
+}

@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/certified_selection_schema.json",
+  "title": "CertifiedSelectionReport",
+  "description": "CLIENT-ATTESTED, CONTENT-FREE certified-selection report (RFC 0001 P8) sent by an SDK at session finalize when strict evidence mode (promotion_policy.require_calibration) certified a winner locally. The server CANNOT verify the certificates (their evidence never crosses the wire); it cross-checks per-CVAR coverage against the session's create-time governance and binds the winner to ITS OWN trial record — the winner's config/metrics come from the server's trial store, never from this report. NEVER carries configurations, metric values, calibrated values, value hashes, evidence counts, pool hashes, or target details: a hash of a low-entropy calibrated value is dictionary-invertible, so only the certificate's issued (freshness-context) hash crosses.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "trial_id",
+    "certificates",
+    "attestation"
+  ],
+  "properties": {
+    "trial_id": {
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV-GAP: was opaque_ref; contract has no ref pattern, so the value is not provably content-free",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._-]{1,128}$",
+      "description": "The BACKEND trial_id of the certified incumbent (the id the SDK submitted results under). The server resolves the winner from its own record for this id; the trial must exist and have completed."
+    },
+    "certificates": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "description": "Per-CVAR certificate decisions backing the selection. Mirrors tvl_governance.certificates[] (one ontology). Server-side coverage rule: every CVAR declared governed at session create MUST appear here with decision CERTIFIED_SELECTION, or the report is rejected (fail-closed).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "cvar_name",
+          "decision",
+          "freshness_hash"
+        ],
+        "properties": {
+          "cvar_name": {
+            "x-content-class": "legacy_content",
+            "x-content-note": "INV S5-7 (LEAK): cvar_name",
+            "type": "string",
+            "maxLength": 256,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+          },
+          "decision": {
+            "x-content-class": "closed_enum",
+            "type": "string",
+            "enum": [
+              "CERTIFIED_SELECTION",
+              "NO_DECISION",
+              "BEST_EFFORT_UNCERTIFIED"
+            ],
+            "description": "Shared certificate-decision vocabulary. A certified winner requires CERTIFIED_SELECTION for every governed CVAR; the other values exist so a client can be honest about partial state, but any governed CVAR below CERTIFIED_SELECTION makes the report incomplete and the server rejects it."
+          },
+          "freshness_hash": {
+            "x-content-class": "digest",
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "The certificate's issued hash: lowercase sha256 hex over the canonical freshness context (RFC 0001 §3.5). The context itself never crosses the wire. REQUIRED here (a certified report must bind freshness) even though tvl_governance.certificates[] keeps it optional — declaration-time entries (e.g. NO_DECISION at create) may not have one yet."
+          }
+        }
+      },
+      "uniqueItems": true
+    },
+    "attestation": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "sdk_client_attested"
+      ],
+      "description": "REQUIRED provenance marker: this report is attested by the client SDK, NOT verified by the server. v1 has exactly one value; extending the vocabulary is a schema change."
+    }
+  }
+}

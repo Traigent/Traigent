@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/rate_limit_info_schema.json",
+  "title": "Rate Limit Info DTO",
+  "description": "Canonical 429 (Too Many Requests) response body, standardized in BE#670. Composes error_envelope_schema.json (Shape A) and constrains `error_code` to RATE_LIMIT_EXCEEDED with a rate-limit `details` block. Accompanying response headers are documented in `x-response-headers`: `Retry-After` is always set; `X-RateLimit-Limit` / `X-RateLimit-Remaining` / `X-RateLimit-Reset` are set only when the limiter is configured to include headers.",
+  "allOf": [
+    {
+      "$ref": "./error_envelope_schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "error_code": {
+          "x-content-class": "closed_enum",
+          "const": "RATE_LIMIT_EXCEEDED"
+        },
+        "details": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "scope": {
+              "x-content-class": "legacy_content",
+              "x-content-note": "INV-GAP S1,S3,S5,O2,H1: not inventoried (free string): scope",
+              "type": "string",
+              "minLength": 1,
+              "description": "Rate-limit scope the breach applies to (e.g. \"global\")."
+            },
+            "retry_after": {
+              "x-content-class": "number",
+              "type": "integer",
+              "minimum": 1,
+              "description": "Seconds the client should wait before retrying (mirrors the Retry-After header)."
+            },
+            "limit": {
+              "x-content-class": "legacy_content",
+              "x-content-note": "INV-GAP S1,S3,S5,O2,H1: not inventoried (free string): limit",
+              "type": "string",
+              "minLength": 1,
+              "description": "Configured limit window, e.g. \"100 per minute\" (present only when the limiter includes headers)."
+            },
+            "reset_time": {
+              "x-content-class": "timestamp",
+              "type": "string",
+              "format": "date-time",
+              "description": "When the window resets, ISO-8601 UTC (present only when the limiter includes headers)."
+            }
+          },
+          "required": ["scope", "retry_after"]
+        }
+      },
+      "required": ["error_code", "details"]
+    }
+  ],
+  "x-response-headers": {
+    "Retry-After": {
+      "description": "Seconds to wait before retrying. Always set on a 429.",
+      "schema": { "type": "integer", "minimum": 1 }
+    },
+    "X-RateLimit-Limit": {
+      "description": "Configured limit window, e.g. \"100 per minute\". Set only when the limiter includes headers.",
+      "schema": { "type": "string" }
+    },
+    "X-RateLimit-Remaining": {
+      "description": "Remaining requests in the window (\"0\" on a 429). Set only when the limiter includes headers.",
+      "schema": { "type": "string" }
+    },
+    "X-RateLimit-Reset": {
+      "description": "Unix epoch seconds when the window resets. Set only when the limiter includes headers.",
+      "schema": { "type": "string" }
+    }
+  }
+}

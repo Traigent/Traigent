@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/hybrid_api_options_schema.json",
+  "title": "Hybrid API Options",
+  "description": "Optional external-service evaluator configuration for SDK optimize requests. This bundle replaces user-facing hybrid_api execution-mode selection and is meaningful only when an external evaluator is configured.",
+  "type": "object",
+  "x-privacy-classification": "sdk_runtime_metadata",
+  "properties": {
+    "endpoint": {
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV-GAP S1,S3,S5,O2,H1: not inventoried (free string): endpoint",
+      "type": "string",
+      "format": "uri",
+      "maxLength": 2048,
+      "description": "External evaluator endpoint URI."
+    },
+    "transport_type": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": ["http", "mcp", "auto"],
+      "default": "auto",
+      "description": "Transport used to call the external evaluator. auto lets the SDK choose the available transport."
+    },
+    "batch_size": {
+      "x-content-class": "number",
+      "type": "integer",
+      "minimum": 1,
+      "default": 1,
+      "description": "Number of evaluations sent in one request."
+    },
+    "batch_parallelism": {
+      "x-content-class": "number",
+      "type": "integer",
+      "minimum": 1,
+      "default": 1,
+      "description": "Maximum number of evaluator batches in flight at once."
+    },
+    "keep_alive": {
+      "x-content-class": "closed_enum",
+      "type": "boolean",
+      "default": true,
+      "description": "Whether the SDK should keep the external evaluator connection warm."
+    },
+    "heartbeat_interval": {
+      "x-content-class": "number",
+      "type": "number",
+      "minimum": 0,
+      "default": 30,
+      "description": "Seconds between external evaluator heartbeat checks."
+    },
+    "timeout": {
+      "x-content-class": "number",
+      "type": ["number", "null"],
+      "minimum": 0,
+      "default": null,
+      "description": "Optional evaluator request timeout in seconds. null uses the SDK default."
+    },
+    "auth_header": {
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV-GAP S1,S3,S5,O2,H1: not inventoried (free string): auth_header",
+      "type": ["string", "null"],
+      "maxLength": 4096,
+      "default": null,
+      "x-privacy-classification": "auth_sensitive",
+      "description": "Optional authorization header value or secret reference used for evaluator calls."
+    },
+    "auto_discover_tvars": {
+      "x-content-class": "closed_enum",
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the SDK should ask the external evaluator to discover tunable variables."
+    },
+    "tunable_id": {
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV-GAP: was opaque_ref; contract has no ref pattern, so the value is not provably content-free",
+      "type": ["string", "null"],
+      "maxLength": 255,
+      "default": null,
+      "description": "Optional external evaluator tunable identifier."
+    }
+  },
+  "additionalProperties": false
+}

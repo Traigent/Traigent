@@ -1,0 +1,136 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/common_types_schema.json",
+  "title": "Canonical Shared Types",
+  "description": "Canonical definitions for shared logical fields (foreign-key identifiers and timestamps). Reference these instead of re-modeling ids/timestamps ad-hoc per schema, to stop cross-schema drift (#137). ForeignKeyId accepts BOTH server-generated UUID4 ids and SDK-generated trial_<hex> ids (the two real id populations).",
+  "definitions": {
+    "ForeignKeyId": {
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV-GAP: was closed_enum; contract has no enum/const, so the value is not provably content-free",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "description": "Canonical foreign-key identifier. NOT format:uuid — accepts UUID4 (server) and trial_<hex>/<optimization_id>_<n> (SDK). A format:uuid constraint on these fields rejects real SDK ids (422)."
+    },
+    "Timestamp": {
+      "x-content-class": "timestamp",
+      "type": "string",
+      "format": "date-time",
+      "description": "Canonical ISO-8601 / RFC-3339 timestamp."
+    },
+    "NullableTimestamp": {
+      "x-content-class": "timestamp",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "description": "Canonical nullable timestamp."
+    },
+    "Priority": {
+      "type": "string",
+      "enum": [
+        "low",
+        "normal",
+        "high"
+      ],
+      "description": "Canonical categorical priority vocabulary (low < normal < high). Reference this instead of re-spelling the enum per schema (#313); use PriorityWithCritical where a fourth 'critical' tier is offered. Note: 'normal' is the canonical middle rank — schemas that emit 'medium' are drifted spellings of the same tier."
+    },
+    "PriorityWithCritical": {
+      "type": "string",
+      "enum": [
+        "low",
+        "normal",
+        "high",
+        "critical"
+      ],
+      "description": "Canonical categorical priority vocabulary with an escalation tier (low < normal < high < critical). Superset of Priority (#313). Distinct from the integer 'priority' rank-order fields, which are numeric ordering, not this severity vocabulary."
+    },
+    "Confidence": {
+      "x-content-class": "number",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Canonical numeric confidence score, [0, 1] (#314). This is the canonical wire form for 'confidence' going forward — new contracts use this numeric form, not a qualitative bucket. See ConfidenceLabel for the derived qualitative bucketing of this same score, and its documented thresholds."
+    },
+    "ConfidenceLabel": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "description": "Canonical coarse confidence bucket, DERIVED from a numeric Confidence score (#314, owner decision 2026-07-18: numeric is canonical, this qualitative enum is the derived label). Documented thresholds: confidence < 0.34 -> 'low'; 0.34 <= confidence < 0.67 -> 'medium'; confidence >= 0.67 -> 'high'. These cut-points are the target emitter convention introduced with this definition (the owner decision on #314 asks for documented thresholds but does not fix their values); JSON Schema cannot enforce the score-to-label mapping, so a payload's label is validated for enum membership only. Existing client-safe analytics surfaces (e.g. decision_payload_schema.json) that intentionally expose only this coarse bucket — never the raw numeric score, to avoid leaking proprietary scoring signals — reference this definition instead of re-spelling the enum. Emitters migrate to it opportunistically; this is not a big-bang rename of the 'confidence' field."
+    },
+    "CacheReadTokens": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Canonical count of input tokens served from a provider prompt cache, billed at a discounted cache-read rate. NULLABLE BY DESIGN: null means the provider did not report the field, which is NOT the same as zero. Defaulting a silent provider to 0 makes 'no cache dimension reported' indistinguishable from 'no cache was used' and yields a confidently wrong cost (Amazon Nova omits the keys entirely rather than reporting 0). Consumers that need to know why a count is null read unreported_usage_fields. Normalized from usage.prompt_tokens_details.cached_tokens (OpenAI Chat Completions), usage.input_tokens_details.cached_tokens (OpenAI Responses), usage.cache_read_input_tokens (Anthropic), usage.cacheReadInputTokens (Bedrock Converse), usageMetadata.cachedContentTokenCount (Gemini). NOTE ON DISJOINTNESS: Bedrock reports cache reads DISJOINTLY from inputTokens, while OpenAI reports them as a SUBSET of prompt_tokens — a cost calculation must know which convention produced the numbers, so producers normalize to the disjoint convention (input_tokens excludes cache_read_tokens)."
+    },
+    "CacheCreationTokens": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Canonical count of input tokens written into a provider prompt cache, billed at a PREMIUM over fresh input (so cache accounting errors run in both directions and cannot be dismissed as a conservative margin). Nullable with the same absent-is-not-zero semantics as CacheReadTokens. Normalized from usage.cache_creation_input_tokens (Anthropic) and usage.cacheWriteInputTokens (Bedrock Converse); providers with automatic caching (OpenAI, Gemini) do not report a cache-write count and leave this null. CARRIES NO TTL TIER, AND THE PREMIUM DEPENDS ON ONE: Anthropic prices a 5-minute cache write at 1.25x base input and a 1-hour write at 2x. A consumer that multiplies this count by a single configured rate is therefore assuming a tier, and is wrong by 60% on the other one. Use the accompanying CacheCreationTokensByTtl split when present; when it is absent, a pricing path MUST either know the tier out-of-band or refuse to price the write — it must not silently apply the 5-minute rate. Spelling note: this is the concept some provider docs call 'cache write'; the name matches the vocabulary already established in harness_session_record.json rather than introducing a third spelling."
+    },
+    "CacheCreationTokensByTtl": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ephemeral_5m": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Cache-write tokens on the 5-minute TTL tier. Anthropic prices these at 1.25x base input."
+        },
+        "ephemeral_1h": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Cache-write tokens on the 1-hour TTL tier. Anthropic prices these at 2x base input — 60% above the 5-minute tier, which is why the tier cannot be assumed."
+        }
+      },
+      "description": "Per-TTL breakdown of CacheCreationTokens, when the provider reports one. Anthropic returns usage.cache_creation.{ephemeral_5m_input_tokens,ephemeral_1h_input_tokens} and a single request may contain BOTH tiers; Bedrock Converse reports only an untiered aggregate. WHY THIS EXISTS: cache writes are priced per tier (1.25x base input at 5 minutes, 2x at 1 hour), so a consumer multiplying an untiered total by one rate is assuming a tier and is 60% wrong whenever the other is in play. Absent means the tier split is UNKNOWN, not that it is all one tier — a pricing path handed an untiered total in a deployment that prices the two tiers differently must refuse to price the write rather than pick one. The individual counts are nullable with the same absent-is-not-zero semantics as CacheReadTokens, and their sum need not equal CacheCreationTokens when the provider reported only some tiers."
+    },
+    "ReasoningTokens": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Canonical count of output-side reasoning (thinking) tokens the provider reported separately. NULLABLE BY DESIGN with the same absent-is-not-zero semantics as CacheReadTokens: null means the provider did not report the field, which is not the same as zero reasoning tokens. Whether reasoning tokens are already included in output_tokens is provider- and catalogue-specific; a pricing path must follow its price row's declared semantics and must not add them to output_tokens on assumption."
+    },
+    "ObservationCostStatus": {
+      "type": "string",
+      "enum": ["priced", "unpriced", "partial", "not_applicable"],
+      "description": "Completeness of the cost DISPLAYED for one observation (cost_usd); cost_source says where that cost came from (declared, computed or none), so a status does not by itself imply server pricing. priced: the displayed cost is complete and known (server-computed from a catalogue, or caller-declared when server computation is partial or unavailable). unpriced: no usable price row (unknown or ambiguous model, or a token class with no price) -- cost is UNKNOWN, never zero. partial: the displayed cost covers only some of the usage (some token classes priced, at least one not); priced_cost_usd carries the server-priced portion only. not_applicable: the observation carries no usage to price."
+    },
+    "CostRollupStatus": {
+      "type": "string",
+      "enum": ["priced", "unpriced", "partial", "not_applicable"],
+      "description": "Server-computed cost state of a trace, session or analytics rollup (same vocabulary as ObservationCostStatus). priced: total_cost_usd is known. unpriced: cost is UNKNOWN and total_cost_usd is null, never 0. partial: some cost is priced and some is not; total_cost_usd is null and priced_cost_usd carries a lower bound (\"at least\"). not_applicable: nothing to price. A row that carries no cost_status is a legacy row whose numeric total is caller-declared."
+    },
+    "ObservationCostSource": {
+      "type": "string",
+      "enum": ["declared", "computed", "none"],
+      "description": "Where the displayed cost_usd came from: declared (caller-supplied), computed (server price catalogue), or none (cost unknown)."
+    },
+    "UnreportedUsageFields": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "cache_read_tokens",
+          "cache_creation_tokens",
+          "cache_creation_tokens_by_ttl",
+          "reasoning_tokens"
+        ]
+      },
+      "maxItems": 32,
+      "uniqueItems": true,
+      "x-privacy-classification": "sdk_runtime_metadata",
+      "description": "Names of canonical usage fields the provider did not report for this record, e.g. [\"cache_read_tokens\", \"cache_creation_tokens\"]. Disambiguates the two reasons a count is null: the provider stayed silent (field listed here) versus the producer never populated the dimension at all (field absent from this list). Without it a null is unattributable, and cost consumers cannot tell a genuine unknown from a producer that predates the field."
+    }
+  }
+}

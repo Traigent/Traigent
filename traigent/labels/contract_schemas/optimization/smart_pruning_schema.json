@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/smart_pruning_schema.json",
+  "title": "Smart Pruning Schema",
+  "description": "Optional session-create smart pruning policy. Clients provide a coarse label and may override selected parameters; omitted parameters are derived cloud-side from the label.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "label"
+  ],
+  "properties": {
+    "label": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "aggressive",
+        "balanced",
+        "conservative"
+      ],
+      "description": "Cloud-side pruning profile used to derive omitted smart-pruning parameters."
+    },
+    "min_completed_trials": {
+      "x-content-class": "number",
+      "type": "integer",
+      "minimum": 1
+    },
+    "warmup_steps": {
+      "x-content-class": "number",
+      "type": "integer",
+      "minimum": 0
+    },
+    "epsilon": {
+      "x-content-class": "number",
+      "type": "number",
+      "minimum": 0
+    },
+    "cost_threshold": {
+      "x-content-class": "number",
+      "type": "number",
+      "minimum": 0
+    },
+    "confidence": {
+      "x-content-class": "number",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "exclusiveMaximum": 1
+    },
+    "min_samples_per_config": {
+      "x-content-class": "number",
+      "type": "integer",
+      "minimum": 1
+    },
+    "warmup_trials": {
+      "x-content-class": "number",
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

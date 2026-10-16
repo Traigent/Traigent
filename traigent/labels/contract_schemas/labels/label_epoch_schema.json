@@ -1,0 +1,125 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/labels/label_epoch_schema.json",
+  "title": "Label Key Epoch And Rotation",
+  "description": "Project key epoch records and the re-encryption job of a rotation. Rotation protects FUTURE writes only: a new epoch key pair is published (signed project_key binding), re-wrapped to remaining members, writers switch to the new public key, and the service refuses writes under older epochs. Old-epoch labels are re-encrypted by an admin browser (crash-resumable, keyed by object revision) or stay readable only to holders of the old epoch key. Deleting a wrap alone does not revoke a cached key.",
+  "definitions": {
+    "EpochRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "project_ref",
+        "epoch",
+        "status",
+        "reason",
+        "project_key_id",
+        "created_at"
+      ],
+      "properties": {
+        "version": {
+          "$ref": "label_common_schema.json#/definitions/SchemaVersion"
+        },
+        "project_ref": {
+          "$ref": "label_common_schema.json#/definitions/ProjectRef"
+        },
+        "epoch": {
+          "$ref": "label_common_schema.json#/definitions/Epoch"
+        },
+        "status": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "current",
+            "retired"
+          ]
+        },
+        "reason": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "bootstrap",
+            "scheduled",
+            "member_revoked",
+            "key_compromise",
+            "admin_rotated"
+          ]
+        },
+        "project_key_id": {
+          "$ref": "label_common_schema.json#/definitions/KeyId"
+        },
+        "created_at": {
+          "$ref": "label_common_schema.json#/definitions/Timestamp"
+        },
+        "retired_at": {
+          "x-content-class": "timestamp",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      }
+    },
+    "RotationRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "project_ref",
+        "from_epoch",
+        "to_epoch",
+        "state",
+        "objects_total",
+        "objects_reencrypted",
+        "started_at",
+        "updated_at"
+      ],
+      "properties": {
+        "version": {
+          "$ref": "label_common_schema.json#/definitions/SchemaVersion"
+        },
+        "project_ref": {
+          "$ref": "label_common_schema.json#/definitions/ProjectRef"
+        },
+        "from_epoch": {
+          "$ref": "label_common_schema.json#/definitions/Epoch"
+        },
+        "to_epoch": {
+          "$ref": "label_common_schema.json#/definitions/Epoch"
+        },
+        "state": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "started",
+            "wraps_published",
+            "reencrypting",
+            "completed",
+            "abandoned"
+          ]
+        },
+        "objects_total": {
+          "$ref": "label_common_schema.json#/definitions/Count"
+        },
+        "objects_reencrypted": {
+          "$ref": "label_common_schema.json#/definitions/Count"
+        },
+        "started_at": {
+          "$ref": "label_common_schema.json#/definitions/Timestamp"
+        },
+        "updated_at": {
+          "$ref": "label_common_schema.json#/definitions/Timestamp"
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/definitions/EpochRecord"
+    },
+    {
+      "$ref": "#/definitions/RotationRecord"
+    }
+  ]
+}

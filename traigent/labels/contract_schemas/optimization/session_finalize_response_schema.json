@@ -1,0 +1,282 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/session_finalize_response_schema.json",
+  "title": "SessionFinalizeResponseDTO",
+  "description": "Finalization result of an optimization session. FAIL-CLOSED CONTRACT (RFC 0001 \u00a73.6 / root Rule 1): when the session's promotion_policy declares a strict evidence mode (require_calibration.enabled) and no certified selection evidence exists, best_config is EMPTY and reason_code is NO_CERTIFIED_SELECTION \u2014 the server never synthesizes a raw best for strict sessions. CLOSED TAXONOMY (v4.5.0, enforced by oneOf): every response carries EXACTLY ONE of selection_basis (a winner and how it was selected) or reason_code (an honest no-winner and why) \u2014 producers must emit selection_basis=objective_best for non-strict winners and NO_RANKING_ELIGIBLE_TRIALS for empty non-strict sessions.",
+  "type": "object",
+  "required": [
+    "session_id",
+    "best_config",
+    "total_trials"
+  ],
+  "properties": {
+    "session_id": {
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV-GAP: was opaque_ref; contract has no ref pattern, so the value is not provably content-free",
+      "type": "string"
+    },
+    "best_config": {
+      "x-content-key-class": "legacy_content",
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV S5-22 (LEAK): best_config",
+      "type": "object",
+      "description": "The selected configuration; EMPTY ({}) when reason_code is set."
+    },
+    "best_config_refs": {
+      "$ref": "../labels/label_common_schema.json#/definitions/ConfigRefMap",
+      "description": "Content-less selected configuration as knob_ref -> choice_ref|number (phase 2, additive). Present instead of the name-keyed best_config for content-less clients; best_config is then EMPTY ({})."
+    },
+    "best_metric_values": {
+      "$ref": "../labels/label_common_schema.json#/definitions/MetricValueMap",
+      "description": "Content-less best metrics keyed by metric_ref. Present instead of the name-keyed best_metrics."
+    },
+    "best_metrics": {
+      "x-content-key-class": "legacy_content",
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV S5-23 (LEAK): best_metrics",
+      "type": "object"
+    },
+    "reason_code": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "NO_CERTIFIED_SELECTION",
+        "NO_RANKING_ELIGIBLE_TRIALS"
+      ],
+      "description": "Present ONLY on honest no-winner results; consumers must not treat best_config as deployable when set."
+    },
+    "selection_basis": {
+      "x-content-class": "closed_enum",
+      "type": "string",
+      "enum": [
+        "certified_selection",
+        "objective_best"
+      ],
+      "description": "How the winner was selected, present ONLY when best_config is non-empty (mutually exclusive with reason_code — ENFORCED by the allOf conditionals below). certified_selection: a strict session's winner backed by a client-attested certified-selection report, server-bound to its own trial record. objective_best: a non-strict raw objective winner. Consumers (FE) key off this field — never infer certification from tvl_governance internals."
+    },
+    "selection_attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "description": "Content-free provenance of a certified selection (present IFF selection_basis=certified_selection — ENFORCED by the allOf conditionals below). HONESTY CONTRACT: the server cross-checked trial binding and per-CVAR coverage but did NOT verify the certificates' evidence — display as client-attested, never as server-verified.",
+      "properties": {
+        "type": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "client_attested"
+          ]
+        },
+        "attested_by": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV-GAP: was closed_enum; contract has no enum/const, so the value is not provably content-free",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$",
+          "description": "Attesting client identifier (e.g. python_sdk)."
+        },
+        "sdk_version": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV-GAP: was closed_enum; contract has no enum/const, so the value is not provably content-free",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9+_.-]{0,63}$",
+          "description": "Anchored version token — never free text (P8: no room for value/evidence snippets)."
+        }
+      }
+    },
+    "tvl_governance": {
+      "$ref": "https://schemas.traigent.ai/optimization/tvl_governance_schema.json"
+    },
+    "session_aggregation": {
+      "$ref": "https://schemas.traigent.ai/optimization/session_aggregation_schema.json",
+      "description": "OPTIONAL session-level rollup, echoed back IFF the finalize request carried a session_aggregation the server persisted (Traigent#1720/#1724 g2:agg-summary). Its presence is the SDK's confirmation that the rollup was actually stored — absence means an older backend dropped it, and the SDK reports persistence as degraded rather than succeeded."
+    },
+    "total_trials": {
+      "x-content-class": "number",
+      "type": "integer",
+      "minimum": 0
+    },
+    "successful_trials": {
+      "x-content-class": "number",
+      "type": "integer",
+      "minimum": 0
+    },
+    "total_duration": {
+      "x-content-class": "number",
+      "type": "number",
+      "minimum": 0
+    },
+    "cost_savings": {
+      "x-content-class": "number",
+      "type": "number"
+    },
+    "stop_reason": {
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV-GAP: was closed_enum; contract has no enum/const, so the value is not provably content-free",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "metadata": {
+      "x-content-key-class": "legacy_content",
+      "x-content-class": "legacy_content",
+      "x-content-note": "INV S5-31 (LEAK): metadata",
+      "type": "object",
+      "properties": {
+        "strategy_preset": {
+          "$ref": "https://schemas.traigent.ai/optimization/strategy_preset_schema.json",
+          "description": "Optional advisory strategy preset metadata recorded for this session."
+        },
+        "warm_start_transfer": {
+          "$ref": "./warm_start_transfer_schema.json"
+        }
+      },
+      "additionalProperties": true
+    },
+    "full_history": {
+      "type": "array",
+      "description": "Per-trial history, present only when the finalize request set include_full_history.",
+      "items": {
+        "x-content-key-class": "legacy_content",
+        "x-content-class": "legacy_content",
+        "x-content-note": "INV-GAP S5: not inventoried (free object/array): full_history",
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "x-content-class": "legacy_content",
+            "x-content-note": "INV-GAP: was opaque_ref; contract has no ref pattern, so the value is not provably content-free",
+            "type": "string"
+          },
+          "trial_id": {
+            "x-content-class": "legacy_content",
+            "x-content-note": "INV-GAP: was opaque_ref; contract has no ref pattern, so the value is not provably content-free",
+            "type": "string"
+          },
+          "trial_number": {
+            "x-content-class": "number",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "config": {
+            "x-content-key-class": "legacy_content",
+            "x-content-class": "legacy_content",
+            "x-content-note": "INV S5-31 (LEAK): config",
+            "type": "object"
+          },
+          "metrics": {
+            "x-content-key-class": "legacy_content",
+            "x-content-class": "legacy_content",
+            "x-content-note": "INV S5-31 (LEAK): metrics",
+            "type": "object"
+          },
+          "duration": {
+            "x-content-class": "number",
+            "type": "number"
+          },
+          "status": {
+            "x-content-class": "legacy_content",
+            "x-content-note": "INV-GAP: was closed_enum; contract has no enum/const, so the value is not provably content-free",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_message": {
+            "x-content-class": "legacy_content",
+            "x-content-note": "INV S5-32 (LEAK): error_message",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "required": [
+        "selection_basis"
+      ]
+    },
+    {
+      "required": [
+        "reason_code"
+      ]
+    }
+  ],
+  "allOf": [
+    {
+      "description": "selection_basis requires a NON-EMPTY winner.",
+      "if": {
+        "required": [
+          "selection_basis"
+        ]
+      },
+      "then": {
+        "properties": {
+          "best_config": {
+            "minProperties": 1
+          }
+        }
+      }
+    },
+    {
+      "description": "reason_code (honest no-winner) requires an EMPTY best_config — the fail-closed Phase 7 contract, now enforced.",
+      "if": {
+        "required": [
+          "reason_code"
+        ]
+      },
+      "then": {
+        "properties": {
+          "best_config": {
+            "maxProperties": 0
+          }
+        }
+      }
+    },
+    {
+      "description": "selection_attestation appears IFF the basis is certified_selection (forward direction).",
+      "if": {
+        "required": [
+          "selection_attestation"
+        ]
+      },
+      "then": {
+        "required": [
+          "selection_basis"
+        ],
+        "properties": {
+          "selection_basis": {
+            "const": "certified_selection"
+          }
+        }
+      }
+    },
+    {
+      "description": "certified_selection basis REQUIRES the attestation (reverse direction) — a certified winner is never unattributed.",
+      "if": {
+        "properties": {
+          "selection_basis": {
+            "const": "certified_selection"
+          }
+        },
+        "required": [
+          "selection_basis"
+        ]
+      },
+      "then": {
+        "required": [
+          "selection_attestation"
+        ]
+      }
+    }
+  ]
+}

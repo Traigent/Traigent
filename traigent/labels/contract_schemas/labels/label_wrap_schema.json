@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/labels/label_wrap_schema.json",
+  "title": "Label Key Wraps",
+  "description": "Two wrap envelopes. MemberWrap (flow b): the epoch project private key sealed with HPKE base mode (same suite as labels) to a member's VERIFIED public key; HPKE info = RFC 8785 canonical JSON {tenant_ref, project_ref, epoch, recipient_key_id, purpose:\"member_wrap\", version}, empty AAD; ciphertext is 32-byte key + 16-byte tag = 48 bytes. No member secret is needed by the admin. RecoveryWrap (flow c): key = HKDF-SHA256(recovery secret, info `traigent.label.recovery.v1`), AES-256-GCM with a random 96-bit nonce, AAD = canonical {tenant_ref, project_ref, epoch, subject, purpose:\"recovery_wrap\", version}; `subject` says whether it wraps the tenant root signing key (epoch 0) or an epoch project private key, and is bound into the AAD so one kind of wrap cannot be replayed as the other. Recovery secrets never appear in any payload.",
+  "definitions": {
+    "MemberWrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "epoch",
+        "recipient_key_id",
+        "enc",
+        "ciphertext"
+      ],
+      "properties": {
+        "version": {
+          "$ref": "label_common_schema.json#/definitions/SchemaVersion"
+        },
+        "epoch": {
+          "$ref": "label_common_schema.json#/definitions/Epoch"
+        },
+        "recipient_key_id": {
+          "$ref": "label_common_schema.json#/definitions/KeyId"
+        },
+        "enc": {
+          "$ref": "label_common_schema.json#/definitions/Enc"
+        },
+        "ciphertext": {
+          "x-content-class": "encrypted_blob",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "minLength": 64,
+          "maxLength": 64,
+          "description": "48 bytes (32-byte X25519 private key + 16-byte tag), unpadded base64url."
+        }
+      }
+    },
+    "RecoveryWrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "epoch",
+        "subject",
+        "nonce",
+        "ciphertext"
+      ],
+      "properties": {
+        "version": {
+          "$ref": "label_common_schema.json#/definitions/SchemaVersion"
+        },
+        "epoch": {
+          "x-content-class": "number",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "0 for the root signing key, otherwise the project key epoch."
+        },
+        "subject": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "root_key",
+            "project_key"
+          ]
+        },
+        "nonce": {
+          "$ref": "label_common_schema.json#/definitions/Nonce12"
+        },
+        "ciphertext": {
+          "x-content-class": "encrypted_blob",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "minLength": 64,
+          "maxLength": 64,
+          "description": "48 bytes (32-byte private key seed + 16-byte tag), unpadded base64url."
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/definitions/MemberWrap"
+    },
+    {
+      "$ref": "#/definitions/RecoveryWrap"
+    }
+  ]
+}

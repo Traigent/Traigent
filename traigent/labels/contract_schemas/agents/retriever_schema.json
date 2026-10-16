@@ -1,0 +1,125 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "title": "Retriever Schema",
+    "description": "Defines the configuration and behavior of an information retrieval component in the system",
+    "version": "1.0.0",
+    "definitions": {
+      "RetrieverType": {
+        "type": "string",
+        "enum": [
+          "vector",
+          "keyword",
+          "hybrid",
+          "semantic",
+          "fuzzy"
+        ],
+        "description": "Types of retrieval methods available:\n- vector: Vector-based similarity search\n- keyword: Traditional keyword matching\n- hybrid: Combination of multiple methods\n- semantic: Meaning-based retrieval\n- fuzzy: Approximate string matching"
+      },
+      "RetrieverConfig": {
+        "type": "object",
+        "description": "Configuration settings for the retriever",
+        "properties": {
+          "collection_name": {
+            "type": "string",
+            "description": "Identifier of the collection or index to search within"
+          },
+          "top_k": {
+            "type": "integer",
+            "description": "Number of top results to retrieve",
+            "minimum": 1,
+            "default": 5
+          },
+          "similarity_threshold": {
+            "type": "number",
+            "description": "Minimum similarity score for inclusion in results",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.7
+          },
+          "search_params": {
+            "type": "object",
+            "description": "Additional search parameters specific to the retriever type",
+            "additionalProperties": true
+          }
+        },
+        "required": ["collection_name", "top_k"],
+        "additionalProperties": false
+      }
+    },
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Unique identifier for the retriever instance",
+        "x-identifier": true
+      },
+      "type": {
+        "$ref": "#/definitions/RetrieverType",
+        "description": "Type of retrieval method to use"
+      },
+      "config": {
+        "$ref": "#/definitions/RetrieverConfig",
+        "description": "Detailed configuration settings for the retriever"
+      },
+      "name": {
+        "type": "string",
+        "description": "Human-readable name for the retriever configuration"
+      },
+      "description": {
+        "type": "string",
+        "description": "Detailed explanation of the retriever's purpose and behavior"
+      },
+      "files": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "description": "Path to an individual file for retrieval"
+        },
+        "description": "Collection of file paths to search within",
+        "minItems": 1
+      },
+      "metadata": {
+        "type": "object",
+        "description": "Additional metadata for the retriever configuration",
+        "properties": {
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tags for categorizing and filtering retrievers"
+          },
+          "version_info": {
+            "type": "object",
+            "properties": {
+              "index_version": {
+                "type": "string",
+                "description": "Version of the index being used"
+              },
+              "model_version": {
+                "type": "string",
+                "description": "Version of any underlying models"
+              }
+            }
+          }
+        },
+        "additionalProperties": true
+      },
+      "created_at": {
+        "type": "string",
+        "format": "date-time",
+        "description": "ISO 8601 timestamp of when the retriever was created"
+      },
+      "updated_at": {
+        "type": "string",
+        "format": "date-time",
+        "description": "ISO 8601 timestamp of the last modification to the retriever"
+      }
+    },
+    "required": [
+      "id",
+      "type",
+      "config"
+    ],
+    "additionalProperties": true
+  }

@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/intermediate_report_schema.json",
+  "title": "Intermediate Report Schema",
+  "description": "Per-trial intermediate-report contract. The top-level schema validates the SDK request; IntermediateReportResponse carries the cloud pruning decision returned to the SDK.",
+  "allOf": [
+    {
+      "$ref": "#/definitions/IntermediateReportRequest"
+    }
+  ],
+  "definitions": {
+    "IntermediateReportRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_id",
+        "trial_id",
+        "running_score",
+        "examples_attempted"
+      ],
+      "properties": {
+        "session_id": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV-GAP: was opaque_ref; contract has no ref pattern, so the value is not provably content-free",
+          "type": "string"
+        },
+        "trial_id": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV-GAP: was opaque_ref; contract has no ref pattern, so the value is not provably content-free",
+          "type": "string"
+        },
+        "running_score": {
+          "x-content-class": "number",
+          "type": "number"
+        },
+        "examples_attempted": {
+          "x-content-class": "number",
+          "type": "integer",
+          "minimum": 0
+        },
+        "partial_cost_usd": {
+          "x-content-class": "number",
+          "type": "number",
+          "minimum": 0
+        },
+        "objective_ref": {
+          "$ref": "../labels/label_common_schema.json#/definitions/MetricRef",
+          "description": "Content-less opaque reference of the objective metric, sent instead of objective_name (phase 2, additive)."
+        },
+        "objective_name": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV S4-5 (LEAK): objective_name",
+          "type": "string"
+        }
+      }
+    },
+    "IntermediateReportResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "prune",
+        "prune_reason"
+      ],
+      "properties": {
+        "prune": {
+          "x-content-class": "closed_enum",
+          "type": "boolean"
+        },
+        "prune_reason": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV S4-8 (OPEN): prune_reason",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

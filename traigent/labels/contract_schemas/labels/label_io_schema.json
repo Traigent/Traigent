@@ -1,0 +1,138 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/labels/label_io_schema.json",
+  "title": "Label Write And Read",
+  "description": "Label service request/response bodies. tenant_ref comes from authentication and project_ref from the route; both are bound into the envelope AAD but are not repeated here. A write carries `base_revision` (the object's last-seen revision, 0 to create) and the epoch; the new revision is base_revision + 1 and is the revision bound into the AAD, so the service refuses stale writes (non-current base_revision) and writes under a retired epoch with 409 `stale_revision` / `stale_epoch`. Readers reject a ciphertext whose AAD revision differs from the revision they requested, and any revision below their locally retained per-object maximum. Storage rollback against a reader with no prior state is outside the v1 guarantee.",
+  "definitions": {
+    "LabelWriteRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "object_ref",
+        "purpose",
+        "base_revision",
+        "epoch",
+        "envelope"
+      ],
+      "properties": {
+        "object_ref": {
+          "$ref": "label_common_schema.json#/definitions/ObjectRef"
+        },
+        "purpose": {
+          "$ref": "label_common_schema.json#/definitions/Purpose"
+        },
+        "base_revision": {
+          "$ref": "label_common_schema.json#/definitions/Revision"
+        },
+        "epoch": {
+          "$ref": "label_common_schema.json#/definitions/Epoch"
+        },
+        "envelope": {
+          "$ref": "label_envelope_schema.json"
+        }
+      },
+      "description": "envelope.key_epoch MUST equal epoch."
+    },
+    "LabelWriteResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "object_ref",
+        "purpose",
+        "revision",
+        "epoch",
+        "updated_at"
+      ],
+      "properties": {
+        "object_ref": {
+          "$ref": "label_common_schema.json#/definitions/ObjectRef"
+        },
+        "purpose": {
+          "$ref": "label_common_schema.json#/definitions/Purpose"
+        },
+        "revision": {
+          "$ref": "label_common_schema.json#/definitions/Revision"
+        },
+        "epoch": {
+          "$ref": "label_common_schema.json#/definitions/Epoch"
+        },
+        "updated_at": {
+          "$ref": "label_common_schema.json#/definitions/Timestamp"
+        }
+      }
+    },
+    "LabelReadResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "object_ref",
+        "purpose",
+        "revision",
+        "epoch",
+        "envelope",
+        "updated_at"
+      ],
+      "properties": {
+        "object_ref": {
+          "$ref": "label_common_schema.json#/definitions/ObjectRef"
+        },
+        "purpose": {
+          "$ref": "label_common_schema.json#/definitions/Purpose"
+        },
+        "revision": {
+          "$ref": "label_common_schema.json#/definitions/Revision"
+        },
+        "epoch": {
+          "$ref": "label_common_schema.json#/definitions/Epoch"
+        },
+        "envelope": {
+          "$ref": "label_envelope_schema.json"
+        },
+        "updated_at": {
+          "$ref": "label_common_schema.json#/definitions/Timestamp"
+        }
+      }
+    },
+    "LabelListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "next_cursor"
+      ],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "$ref": "#/definitions/LabelReadResponse"
+          }
+        },
+        "next_cursor": {
+          "x-content-class": "opaque_ref",
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 41,
+          "description": "Opaque pagination cursor reference (`cursorref_<32 lowercase hex>`, the server's reference convention), null on the last page.",
+          "pattern": "^cursorref_[0-9a-f]{32}$"
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/definitions/LabelWriteRequest"
+    },
+    {
+      "$ref": "#/definitions/LabelWriteResponse"
+    },
+    {
+      "$ref": "#/definitions/LabelReadResponse"
+    },
+    {
+      "$ref": "#/definitions/LabelListResponse"
+    }
+  ]
+}

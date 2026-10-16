@@ -1,0 +1,362 @@
+{
+  "x-content-class": "legacy_content",
+  "x-content-key-class": "legacy_content",
+  "x-content-note": "INV-GAP (implicit-open, reclassified by review): object accepts properties it does not declare (additionalProperties omitted or true); extra names and values are unclassified",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/optimization/session_identity_binding_response_schema.json",
+  "title": "Session Identity Binding Response",
+  "description": "GET /api/v1/sessions/{session_id}/identity-binding (content identity M3 PR-5-lite). Success envelope (response_handler.success_response): {success, message, data} where data is SessionIdentityBindingResponseV1 -- TraigentBackend src/routes/traigent_session_routes.py get_session_identity_binding, serialized by src/services/content_identity/run_binding.py RunIdentityBindingService.read (_run_binding_json / _trial_binding_json / _stored_members). Returns exactly what the Backend STORED when the session and its trials sent content_identity: record_state is 'draft' in Release 1 (RunIdentityBindingRowV1.record_state / TrialIdentityBindingRowV1 carry no completion state of their own yet). No identity rule is evaluated here -- this is a read of stored facts, never a verdict. NOT the same shape as execution/run_identity_binding_v1_schema.json's RunIdentityBindingV1: that is the future normalized, certificate-oriented record (agent/dataset/evaluator/trials assembled from server-witnessed facts); this is the raw run_identity_bindings / trial_identity_bindings ROW as stored today, columns and all (rejection_reason, declared, facts, agent_key, ...). The Row* names here are deliberately distinct so the two are never confused. Declared ahead of Backend parity tests: x-asserted-against-backend false on the catalog operation until TraigentBackend feat/content-identity-run-binding lands on develop.",
+  "version": "1.0.0",
+  "definitions": {
+    "RunIdentityBindingRecordStateV1": {
+      "$ref": "../datasets/content_identity_v1_schema.json#/definitions/RecordStateV1"
+    },
+    "RunIdentityBindingRejectionReasonV1": {
+      "x-content-class": "closed_enum",
+      "description": "Closed vocabulary of why the declared content_identity block was not accepted as evidence (TraigentBackend src/services/content_identity/run_binding.py REASON_*). A rejection never fails the run: the binding is still stored, as record_state draft. content_identity_too_large: the declared block exceeded the server's byte cap and was discarded (declared is null). content_identity_not_an_object: the value was not a JSON object (declared is null). wire_schema_invalid: the value was an object but failed SessionContentIdentityWireV1 / TrialContentIdentityWireV1 (declared is still stored, raw). wire_schema_unavailable: the wire contract itself could not be loaded server-side; fails closed to draft rather than 5xx.",
+      "type": ["string", "null"],
+      "enum": [
+        "content_identity_too_large",
+        "content_identity_not_an_object",
+        "wire_schema_invalid",
+        "wire_schema_unavailable",
+        null
+      ]
+    },
+    "MemberListWireV1": {
+      "description": "One SERVER-STORED member list a binding points at, recomputed on every load (ContentIdentityMemberListStore.load / RunIdentityBindingService._stored_members). members are MultisetMemberV1, in canonical order (sorted by (example_id, example_version)), so a consumer can recompute root from server data alone without trusting root, distinct_count or total_count on their own.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "members_ref",
+        "scheme",
+        "key_id",
+        "root",
+        "distinct_count",
+        "total_count",
+        "conflicting_example_ids",
+        "members_source",
+        "members",
+        "provenance"
+      ],
+      "properties": {
+        "members_ref": {
+          "$ref": "../datasets/content_identity_v1_schema.json#/definitions/MemberListRefV1"
+        },
+        "scheme": {
+          "$ref": "../datasets/content_identity_v1_schema.json#/definitions/ContentIdentitySchemeV1"
+        },
+        "key_id": {
+          "$ref": "../datasets/content_identity_v1_schema.json#/definitions/KeyIdV1"
+        },
+        "root": {
+          "$ref": "../datasets/content_identity_v1_schema.json#/definitions/MultisetRootV1",
+          "description": "dataset_root on the run binding, or evaluated_root on a trial binding -- always equal to the root of the binding this list is served from."
+        },
+        "distinct_count": {
+          "x-content-class": "number",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "total_count": {
+          "x-content-class": "number",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "conflicting_example_ids": {
+          "$ref": "../datasets/content_identity_v1_schema.json#/definitions/ConflictingExampleIdsV1"
+        },
+        "members_source": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": ["server_computed", "client_submitted"],
+          "description": "Provenance of the stored list itself (ContentIdentityMemberList.members_source): server_computed when the Backend minted it (e.g. from a hosted dataset version), client_submitted when it was accepted from a declared block whose stated root the server verified."
+        },
+        "members": {
+          "$ref": "../datasets/content_identity_v1_schema.json#/definitions/MultisetMembersV1"
+        },
+        "provenance": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "const": "server_recorded",
+          "description": "Always server_recorded: this whole object is the server's own read of a stored row, never a copy of what a client sent."
+        }
+      }
+    },
+    "MemberListLoadErrorV1": {
+      "description": "The rare case where the stored member list a binding points at no longer recomputes or cannot be found (ContentIdentityMemberList integrity failure, or the row is gone). RunIdentityBindingService._stored_members never serves a partial or unverified member list; this narrower shape is what is served instead. status is a stable code (an exception's .code, or its class name when it has none) but its exact closed vocabulary is NOT pinned by this contract yet -- x-asserted-against-backend is false for the whole operation, and this branch in particular has no Backend test coverage as of M3 PR-5-lite.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["members_ref", "status"],
+      "properties": {
+        "members_ref": {
+          "$ref": "../datasets/content_identity_v1_schema.json#/definitions/MemberListRefV1"
+        },
+        "status": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV-GAP S9: not inventoried (free string): status",
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable failure code, e.g. MemberListNotFound, or an integrity-error reason. Never a raw exception message."
+        }
+      }
+    },
+    "MemberListOrUnservedV1": {
+      "description": "null when the binding has no stored member list yet (no dataset_member_list_id / evaluated_member_list_id); the full MemberListWireV1 on the normal path; MemberListLoadErrorV1 only if the stored list fails to load (see that definition).",
+      "anyOf": [
+        { "type": "null" },
+        { "$ref": "#/definitions/MemberListWireV1" },
+        { "$ref": "#/definitions/MemberListLoadErrorV1" }
+      ]
+    },
+    "RunIdentityBindingRowV1": {
+      "description": "run_identity_bindings row (TraigentBackend src/models/run_identity_binding.py RunIdentityBinding), as served by _run_binding_json plus the resolved dataset_members. Every key is always present; most are nullable, reflecting the draft-by-default, append-only, one-row-per-run contract.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "experiment_run_id",
+        "scheme",
+        "key_id",
+        "record_state",
+        "rejection_reason",
+        "agent_id",
+        "agent_key",
+        "base_build_digest",
+        "base_head_generation",
+        "dataset_members_ref",
+        "dataset_root",
+        "dataset_version_id",
+        "facts",
+        "declared",
+        "created_at",
+        "completed_at",
+        "dataset_members"
+      ],
+      "properties": {
+        "experiment_run_id": {
+          "$ref": "../common_types_schema.json#/definitions/ForeignKeyId",
+          "x-reference": "../evaluation/experiment_run_schema.json#/properties/id"
+        },
+        "scheme": {
+          "$ref": "../datasets/content_identity_v1_schema.json#/definitions/ContentIdentitySchemeV1"
+        },
+        "key_id": {
+          "anyOf": [
+            { "$ref": "../datasets/content_identity_v1_schema.json#/definitions/KeyIdV1" },
+            { "type": "null" }
+          ],
+          "description": "Null until a schema-valid content_identity block names a key_id (draft bindings created from an invalid/oversized/absent block never set it)."
+        },
+        "record_state": {
+          "$ref": "#/definitions/RunIdentityBindingRecordStateV1",
+          "description": "Always 'draft' in Release 1: 'complete' needs the Director-captured base_head_generation (Release 2)."
+        },
+        "rejection_reason": {
+          "$ref": "#/definitions/RunIdentityBindingRejectionReasonV1"
+        },
+        "agent_id": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV-GAP: was opaque_ref; contract has no ref pattern, so the value is not provably content-free",
+          "type": ["string", "null"],
+          "maxLength": 512,
+          "description": "The resolved, server-owned agent row id. Null when the declared agent id is a fallback label (no registered build) or the agent slot is unavailable/rejected."
+        },
+        "agent_key": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV S9-2 (LEAK): agent_key",
+          "type": ["string", "null"],
+          "maxLength": 128,
+          "description": "The declared agent identity key the base_build_digest was recomputed against, whether or not it resolved to a registered agent row."
+        },
+        "base_build_digest": {
+          "anyOf": [
+            {
+              "$ref": "../agents/agent_version_manifest_v1_schema.json#/definitions/Sha256DigestV1"
+            },
+            { "type": "null" }
+          ],
+          "description": "Server-RECOMPUTED digest of the base agent build manifest. Never trusted from the client's declared value alone; equal to it only because the server recomputed and it matched."
+        },
+        "base_head_generation": {
+          "x-content-class": "number",
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Server-captured Director head-table generation at run creation (Director W3). Always null in Release 1 -- nothing captures it yet."
+        },
+        "dataset_members_ref": {
+          "anyOf": [
+            { "$ref": "../datasets/content_identity_v1_schema.json#/definitions/MemberListRefV1" },
+            { "type": "null" }
+          ]
+        },
+        "dataset_root": {
+          "anyOf": [
+            { "$ref": "../datasets/content_identity_v1_schema.json#/definitions/MultisetRootV1" },
+            { "type": "null" }
+          ],
+          "description": "The server's own recomputed multiset root of the bound dataset. Null whenever the dataset slot was withheld, refused (e.g. unregistered key_id, root mismatch) or absent."
+        },
+        "dataset_version_id": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV-GAP: was opaque_ref; contract has no ref pattern, so the value is not provably content-free",
+          "type": ["string", "null"],
+          "minLength": 1,
+          "x-reference": "../datasets/dataset_version_schema.json#/definitions/DatasetVersionV1/properties/id",
+          "description": "The ONE hosted dataset version whose server-computed root equals dataset_root, when exactly one exists. Null when the dataset is not hosted, no version resolves, or more than one candidate is ambiguous (see facts.dataset.dataset_version)."
+        },
+        "facts": {
+          "x-content-key-class": "legacy_content",
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV S9-4 (OPEN): facts",
+          "type": "object",
+          "additionalProperties": true,
+          "description": "The server's own, versioned account of what it established (facts.version is FACTS_VERSION). Every sub-fact is labelled provenance 'server_recorded' or 'declared'; the label is computed server-side and never copied from the client. Open-ended and evolving with the binder (key_id, agent, dataset, evaluator, base_head_generation, record_state, wire, and, on a trial, trial_id/evaluated/trial_origin) -- not itself a closed contract yet."
+        },
+        "declared": {
+          "x-content-key-class": "legacy_content",
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV S9-4 (OPEN): declared",
+          "type": ["object", "null"],
+          "additionalProperties": true,
+          "description": "The client's raw content_identity block, kept verbatim up to the server's size cap -- a DECLARATION, never evidence. Null when the value was too large to keep, was not a JSON object, or no content_identity was sent. NOT guaranteed to match SessionContentIdentityWireV1: a value that failed wire-schema validation (rejection_reason wire_schema_invalid) is still stored here exactly as sent."
+        },
+        "created_at": {
+          "$ref": "../common_types_schema.json#/definitions/Timestamp"
+        },
+        "completed_at": {
+          "$ref": "../common_types_schema.json#/definitions/NullableTimestamp",
+          "description": "Always null in Release 1 (record_state never reaches 'complete' yet)."
+        },
+        "dataset_members": {
+          "$ref": "#/definitions/MemberListOrUnservedV1"
+        }
+      }
+    },
+    "TrialIdentityBindingRowV1": {
+      "description": "trial_identity_bindings row (TraigentBackend src/models/run_identity_binding.py TrialIdentityBinding), as served by _trial_binding_json plus the resolved evaluated_members. One row per configuration run (trial) whose submitted result carried metadata.content_identity under an already-bound run.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "configuration_run_id",
+        "experiment_run_id",
+        "trial_origin",
+        "rejection_reason",
+        "candidate_build_digest",
+        "evaluated_members_ref",
+        "evaluated_root",
+        "observed_provider_versions",
+        "facts",
+        "declared",
+        "created_at",
+        "evaluated_members"
+      ],
+      "properties": {
+        "configuration_run_id": {
+          "$ref": "../common_types_schema.json#/definitions/ForeignKeyId",
+          "x-reference": "../evaluation/configuration_run_schema.json#/properties/id"
+        },
+        "experiment_run_id": {
+          "$ref": "../common_types_schema.json#/definitions/ForeignKeyId",
+          "x-reference": "../evaluation/experiment_run_schema.json#/properties/id"
+        },
+        "trial_origin": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": ["server_issued", "client_submitted"],
+          "description": "server_issued: the trial id came from POST .../next-trial. client_submitted: a client-sequenced trial (trial_sequencing='client')."
+        },
+        "rejection_reason": {
+          "$ref": "#/definitions/RunIdentityBindingRejectionReasonV1"
+        },
+        "candidate_build_digest": {
+          "anyOf": [
+            {
+              "$ref": "../agents/agent_version_manifest_v1_schema.json#/definitions/Sha256DigestV1"
+            },
+            { "type": "null" }
+          ]
+        },
+        "evaluated_members_ref": {
+          "anyOf": [
+            { "$ref": "../datasets/content_identity_v1_schema.json#/definitions/MemberListRefV1" },
+            { "type": "null" }
+          ]
+        },
+        "evaluated_root": {
+          "anyOf": [
+            { "$ref": "../datasets/content_identity_v1_schema.json#/definitions/MultisetRootV1" },
+            { "type": "null" }
+          ]
+        },
+        "observed_provider_versions": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "$ref": "../execution/content_identity_wire_v1_schema.json#/definitions/WireObservedProviderVersionV1"
+          },
+          "description": "Recorded verbatim from the declared block's observed_provider_versions once it validates; [] otherwise (never absent)."
+        },
+        "facts": {
+          "x-content-key-class": "legacy_content",
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV S9-4 (OPEN): facts",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "declared": {
+          "x-content-key-class": "legacy_content",
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV S9-4 (OPEN): declared",
+          "type": ["object", "null"],
+          "additionalProperties": true
+        },
+        "created_at": {
+          "$ref": "../common_types_schema.json#/definitions/Timestamp"
+        },
+        "evaluated_members": {
+          "$ref": "#/definitions/MemberListOrUnservedV1"
+        }
+      }
+    },
+    "SessionIdentityBindingResponseV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["session_id", "binding", "trials"],
+      "properties": {
+        "session_id": {
+          "x-content-class": "legacy_content",
+          "x-content-note": "INV-GAP: was opaque_ref; contract has no ref pattern, so the value is not provably content-free",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "binding": {
+          "$ref": "#/definitions/RunIdentityBindingRowV1"
+        },
+        "trials": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/TrialIdentityBindingRowV1" },
+          "description": "Ordered by (created_at, configuration_run_id). Empty when the run has a binding but no trial has sent content_identity yet."
+        }
+      }
+    }
+  },
+  "x-backend-obligations": [
+    "A session/trial whose content_identity failed validation is still stored as a draft binding with rejection_reason set; identity problems never fail the run.",
+    "dataset_members / evaluated_members are the server's OWN reload of the stored list, recomputed on every read; a consumer MUST recompute root from members rather than trust root, distinct_count or total_count on their own.",
+    "declared is the client's raw block and MUST NOT be treated as verified: only facts (provenance server_recorded) and the top-level server columns are the server's own account.",
+    "The read never evaluates or returns an identity RULE verdict; it is a stored-facts read only."
+  ],
+  "allOf": [
+    {
+      "$ref": "https://schemas.traigent.ai/success_envelope_schema.json"
+    }
+  ],
+  "properties": {
+    "data": {
+      "$ref": "#/definitions/SessionIdentityBindingResponseV1"
+    }
+  }
+}

@@ -1,0 +1,164 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/labels/label_key_binding_schema.json",
+  "title": "Label Key Binding",
+  "description": "A signed binding of a public key to a tenant/project/epoch/purpose. Signature = Ed25519 over `traigent.label.binding.v1` NUL || RFC 8785 canonical JSON of every other field. The tenant root key is the trust anchor: its SHA-256 fingerprint is pinned OUTSIDE Traigent (committed Traigent config, admin browser profile), so the root has no binding. Clients verify root -> admin_identity -> project_key (epoch) -> member_key before encrypting, wrapping or unwrapping, and refuse on any mismatch. admin_identity bindings are tenant-wide: project_ref and epoch are null.",
+  "definitions": {
+    "KeyBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "tenant_ref",
+        "project_ref",
+        "epoch",
+        "purpose",
+        "key_id",
+        "public_key",
+        "not_before",
+        "signer_key_id",
+        "signature"
+      ],
+      "properties": {
+        "version": {
+          "$ref": "label_common_schema.json#/definitions/SchemaVersion"
+        },
+        "tenant_ref": {
+          "$ref": "label_common_schema.json#/definitions/TenantRef"
+        },
+        "project_ref": {
+          "oneOf": [
+            {
+              "$ref": "label_common_schema.json#/definitions/ProjectRef"
+            },
+            {
+              "x-content-class": "opaque_ref",
+              "type": "null"
+            }
+          ],
+          "description": "null for the tenant-wide admin_identity binding."
+        },
+        "epoch": {
+          "oneOf": [
+            {
+              "$ref": "label_common_schema.json#/definitions/Epoch"
+            },
+            {
+              "x-content-class": "number",
+              "type": "null"
+            }
+          ],
+          "description": "null for the tenant-wide admin_identity binding."
+        },
+        "purpose": {
+          "x-content-class": "closed_enum",
+          "type": "string",
+          "enum": [
+            "admin_identity",
+            "project_key",
+            "member_key"
+          ],
+          "description": "What the bound key is for. admin_identity: Ed25519 key signed by the tenant root key. project_key: X25519 project public key for `epoch`, signed by an admin. member_key: X25519 member public key, signed by an admin."
+        },
+        "key_id": {
+          "$ref": "label_common_schema.json#/definitions/KeyId"
+        },
+        "public_key": {
+          "$ref": "label_common_schema.json#/definitions/PublicKey"
+        },
+        "not_before": {
+          "$ref": "label_common_schema.json#/definitions/Timestamp"
+        },
+        "signer_key_id": {
+          "$ref": "label_common_schema.json#/definitions/KeyId"
+        },
+        "signature": {
+          "$ref": "label_common_schema.json#/definitions/Signature"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "purpose": {
+                "const": "admin_identity"
+              }
+            },
+            "required": [
+              "purpose"
+            ]
+          },
+          "then": {
+            "properties": {
+              "project_ref": {
+                "type": "null"
+              },
+              "epoch": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "project_ref": {
+                "type": "string"
+              },
+              "epoch": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "KeyBindingList": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "tenant_ref",
+        "bindings",
+        "revoked_key_ids",
+        "sequence",
+        "signer_key_id",
+        "signature"
+      ],
+      "properties": {
+        "version": {
+          "$ref": "label_common_schema.json#/definitions/SchemaVersion"
+        },
+        "tenant_ref": {
+          "$ref": "label_common_schema.json#/definitions/TenantRef"
+        },
+        "bindings": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "$ref": "#/definitions/KeyBinding"
+          }
+        },
+        "revoked_key_ids": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "$ref": "label_common_schema.json#/definitions/KeyId"
+          }
+        },
+        "sequence": {
+          "x-content-class": "number",
+          "type": "integer",
+          "minimum": 0,
+          "description": "Monotonic list sequence; clients reject a lower sequence than they retained."
+        },
+        "signer_key_id": {
+          "$ref": "label_common_schema.json#/definitions/KeyId"
+        },
+        "signature": {
+          "$ref": "label_common_schema.json#/definitions/Signature"
+        }
+      },
+      "description": "Signed binding list with revocations (admin identity rotation = new key signed by root, old key listed in revoked_key_ids). Signature covers every other field."
+    }
+  },
+  "$ref": "#/definitions/KeyBinding"
+}

@@ -1,0 +1,192 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/datasets/dataset_version_schema.json",
+  "title": "Dataset Version V1",
+  "description": "An immutable, content-addressable snapshot of a dataset's examples. Introduced in R3 to give certification and evaluation-run contracts a stable identity for the specific example set a run consumed, independent of the mutable `dataset` resource's `revision` counter (dataset_schema.json). Consumer: Backend PR 2.1 (release R3) mints one of these per dataset and returns `current_version` on the dataset response; no run or certificate contract pins a version in this PR. This is a new, additive contract, referenced only by dataset_schema.json#/properties/current_version (optional, nullable; producers MUST OMIT that key until consumers upgrade -- see its description); the compatibility rules for this record are stated on `content_digest` below. Nothing in the certification family's process-record V1 digest-domain registry (traigent_schema/schemas/certification/process_record_v1_schema.json) changes as a result of this file.",
+  "version": "1.0.0",
+  "definitions": {
+    "DatasetVersionContentDigestDomainV1": {
+      "description": "Fixed domain-separation tag for the dataset-version content digest. The digest construction is sha256 over UTF8(domain) || 0x00 || jcs_v1(preimage) -- the same role-digest idiom the certification family uses (see traigent_schema.certification.evaluator_quality_verifier._role_digest and traigent_schema.fp2 for the jcs_v1 canonicalization).",
+      "type": "string",
+      "const": "traigent.dataset_version.content.v1"
+    },
+    "DatasetVersionExampleProjectionV1": {
+      "description": "One preimage entry: an example projected to its content fields only. Field names match EvaluationSetExample (datasets/evaluation_set_schema.json#/definitions/EvaluationSetExample): input_text and expected_output. Only these two fields are hashed -- example_id is used solely to order the preimage (see DatasetVersionV1.content_digest) and does not itself appear in the hashed payload, and annotation-only fields (tags, explanation, difficulty, confidence, status, score) are excluded so re-tagging an example never changes its dataset version's content digest. This digest identifies the CONTENT of the examples the version CONTAINS; MEMBERSHIP is fixed by the producer when it mints the version (e.g. the Backend hashes the persisted examples the version lists -- if an example's status excludes it from the version, it is not in the preimage). The dataset_schema.json `splits` field (train/selection/test policy + assignments) is a usage attribute of a run, not content, and is NOT part of this digest; a later receipt (R4 build-level receipts) pins the split assignment separately.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "input_text"
+      ],
+      "properties": {
+        "input_text": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ],
+          "description": "Mirrors EvaluationSetExample.input_text exactly: a single string or an ordered list of strings for multi-turn input."
+        },
+        "expected_output": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mirrors EvaluationSetExample.expected_output. Absent on the source example is represented as null here, so the digest is defined even when some examples in the set have no expected_output."
+        }
+      }
+    },
+    "DatasetVersionSnapshotRowV1": {
+      "description": "One row of DatasetVersionV1.content_snapshot: an example as persisted at mint time, WITH its example_id (unlike DatasetVersionExampleProjectionV1, which is the hashed projection and deliberately excludes example_id). content_digest is computed by calling traigent_schema.content_identity.compute_dataset_version_content_digest directly on the list of these rows -- the function itself strips example_id from the hashed payload and uses it only to order the preimage; callers must NOT pre-strip it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "example_id",
+        "input_text"
+      ],
+      "properties": {
+        "example_id": {
+          "type": "string",
+          "description": "The example's identifier at mint time. Orders the content_digest preimage (see DatasetVersionV1.content_digest); not itself part of the hashed payload."
+        },
+        "input_text": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ],
+          "description": "Mirrors DatasetVersionExampleProjectionV1.input_text exactly."
+        },
+        "expected_output": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mirrors DatasetVersionExampleProjectionV1.expected_output."
+        }
+      }
+    },
+    "DatasetVersionV1": {
+      "description": "An immutable dataset version resource, keyed by `id`, referencing the mutable dataset it snapshots via `dataset_id`. Matches the Backend's real dataset-version wire shape (src/routes/dataset_version_routes.py:_build_version_payload): a labeled snapshot of a dataset's example membership, not a row keyed by the dataset's `revision` counter -- `revision` is an OPTIONAL field carried only by producers that additionally store versions as rows with a monotonic counter (dataset_schema.json#/properties/revision is a separate, mutable-dataset concept and is NOT the same value).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "dataset_id",
+        "version_label",
+        "example_ids",
+        "example_count",
+        "created_at"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for this dataset version.",
+          "x-identifier": true
+        },
+        "dataset_id": {
+          "type": "string",
+          "description": "Reference to the parent dataset resource (dataset_schema.json).",
+          "x-reference": true
+        },
+        "version_label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Producer-assigned label for this version, unique per dataset_id (the Backend rejects a second version with the same label for the same dataset)."
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "OPTIONAL. Monotonic version number per dataset, when the producer stores versions as rows with their own counter. Absent for producers (including today's Backend, which stores versions inside the dataset's metadata as an appended list) that have no such counter -- absence does not imply revision 1, only that no counter is tracked. Distinct from dataset_schema.json#/properties/revision, which counts revisions of the mutable dataset resource itself, not versions of this record."
+        },
+        "description": {
+          "type": ["string", "null"],
+          "description": "Producer-supplied free-text description of this version, or null if none was given."
+        },
+        "example_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Membership at mint time: the distinct example ids, sorted ascending by Unicode code point (duplicates collapsed). This ordering is for listing only; the content digest re-orders its preimage by its own rule (see content_digest)."
+        },
+        "example_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The number of examples in example_ids at mint time (len(example_ids))."
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Producer-supplied free-form metadata captured at mint time."
+        },
+        "created_by": {
+          "type": ["string", "null"],
+          "description": "Identifier of the user or principal that created this version, or null if unknown/unauthenticated."
+        },
+        "content_digest": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "sha256:<hex> over UTF8('traigent.dataset_version.content.v1') || 0x00 || jcs_v1(preimage). preimage is the ordered list of this version's examples, each projected per DatasetVersionExampleProjectionV1, ordered by a sort key that is a pure function of content: (example_id encoded as UTF-16 code units big-endian, then the jcs_v1 canonical UTF-8 bytes of that same example's own DatasetVersionExampleProjectionV1 projection), each compared as unsigned byte sequences, ascending. A producer reproduces this ordering by comparing example_id as UTF-16 code units first, and breaking ties on the JCS bytes of the projected {input_text, expected_output} object -- never on the position the example held in whatever list the producer enumerated it from. Two examples that share an example_id and have byte-identical projections therefore always sort adjacent regardless of input order, and both remain in the preimage: duplicates are preserved, never collapsed, because collapsing would make the digest blind to a duplicated-row data-quality bug, which is exactly the class of defect a content identity exists to catch. Two examples that share an example_id but differ in projection sort by their own content, not by producer enumeration order, so the digest of a given logical example set never depends on how the producer happened to iterate it. example_id MUST be encodable text (Unicode scalar values only; a lone surrogate is rejected by every runtime with a typed error, never hashed), so the UTF-16 code-unit order is defined for every accepted id. This field is OPTIONAL and ADDITIVE: it is null for every dataset version created before this contract existed, and because this schema is new there are no old readers of it; the compatibility rule for the field that carries this record (dataset_schema.json `current_version`: producers MUST OMIT the key, never emit null, until every consumer has upgraded) is stated there. New readers MUST treat null as \"no content identity available\" -- never as empty content or as equal to any other null. Computed offline by traigent_schema.content_identity.compute_dataset_version_content_digest; this schema does not require callers to populate it."
+        },
+        "content_digest_domain": {
+          "oneOf": [
+            {
+              "type": "string",
+              "const": "traigent.dataset_version.content.v1"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The domain content_digest was computed under, so a reader can recompute or re-verify the digest offline even after a future v2 domain exists. OPTIONAL and ADDITIVE: null (or omitted) means the domain is not recorded (legacy rows, or content_digest itself is null); when content_digest is non-null and this field is populated, it MUST equal DatasetVersionContentDigestDomainV1's const, `traigent.dataset_version.content.v1` -- the only domain this schema version defines."
+        },
+        "content_snapshot": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/DatasetVersionSnapshotRowV1"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The complete immutable hash input persisted at mint time: one row per persisted example row. When two example rows share an example_id, the snapshot carries both rows, so the row count can exceed len(example_ids); the digest keeps every row. Producers MAY omit it from list responses and MUST return it from the version detail/snapshot endpoint; null for legacy rows. content_digest is computed by calling compute_dataset_version_content_digest on exactly this list."
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of when this dataset version was created."
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/definitions/DatasetVersionV1"
+    }
+  ]
+}
