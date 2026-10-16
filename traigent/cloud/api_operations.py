@@ -360,7 +360,7 @@ def _basic_b64_replace(match: "re.Match[str]") -> str:
     ):
         try:
             decoded = base64.b64decode(candidate, validate=True)
-        except (binascii.Error, ValueError):
+        except (binascii.Error, ValueError):  # silent-ok: not base64, try next
             continue
         if b":" in decoded:
             return "Basic [REDACTED]"
