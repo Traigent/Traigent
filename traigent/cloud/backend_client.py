@@ -1236,7 +1236,7 @@ class BackendIntegratedClient:
             ).rstrip("/")
             url = f"{backend_origin}/api/v1/auth/me/interaction-policy"
 
-            async with aiohttp.ClientSession(trust_env=True) as session:
+            async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
                 async with session.get(
                     url,
                     headers=headers,
@@ -2180,6 +2180,7 @@ class BackendIntegratedClient:
 
         def _get_head() -> Any:
             try:
+                preflight_requests("GET", url, params=params)
                 response = requests.get(  # nosec B113 - timeout is provided
                     url,
                     params=params,
@@ -2329,6 +2330,7 @@ class BackendIntegratedClient:
 
         def _get_best_config() -> Any:
             try:
+                preflight_requests("GET", url, params=params or None)
                 response = requests.get(  # nosec B113 - timeout is provided
                     url,
                     params=params or None,

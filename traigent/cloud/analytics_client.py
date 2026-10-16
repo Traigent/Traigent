@@ -62,6 +62,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
+from traigent.labels.transport_gate import gate_session
 from traigent.cloud.dtos import (
     ExperimentGroupDetailDTO,
     ExperimentGroupsPageDTO,
@@ -2282,10 +2283,12 @@ class BackendAnalyticsClient:
             # outlive the span and go stale. Trace context rides per-request
             # via _request_headers(). Strip defensively to enforce the
             # invariant even if a future _auth_headers() ever leaked one.
-            self._client = httpx.AsyncClient(
-                base_url=self.backend_url,
-                headers=_strip_trace_context_headers(headers),
-                timeout=self.timeout,
+            self._client = gate_session(
+                httpx.AsyncClient(
+                    base_url=self.backend_url,
+                    headers=_strip_trace_context_headers(headers),
+                    timeout=self.timeout,
+                )
             )
         return self._client
 

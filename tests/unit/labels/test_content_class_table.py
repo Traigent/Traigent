@@ -1,25 +1,33 @@
-"""The compact content-class table is generated from TraigentSchema and pinned."""
+"""The compact content-class table is generated from TraigentSchema and pinned.
+
+CI/local setup for exact regeneration: check out TraigentSchema at the pinned commit
+and export its path, e.g.
+
+    TRAIGENT_SCHEMA_DIR=/path/to/TraigentSchema pytest tests/unit/labels/test_content_class_table.py
+
+When the variable is set the tests REQUIRE that the checkout's manifest is the pinned
+one and that regenerating gives exactly the shipped table (they fail, never skip).
+When it is unset only the sha256/provenance pin runs.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import importlib.util
 import json
-import subprocess
+import os
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 TABLE = ROOT / "traigent" / "labels" / "content_class_table.json"
-SCHEMA_WT = Path(
-    "/home/nimrod/TraigentProjects/core_project/worktrees/TraigentSchema/content-less"
-)
+SCHEMA_DIR = os.environ.get("TRAIGENT_SCHEMA_DIR")
 PINNED_SCHEMA_COMMIT = "9af17d84b0f3a202fdc12cc4bde082e6295a71d9"
 PINNED_MANIFEST_SHA256 = (
     "197ccd7e7d712938b716f416588338f6ee44ede6cde15a609584683a328a7a71"
 )
-PINNED_TABLE_SHA256 = "2ec9f9825cbc72d111aa98c491ef150c230cb09c94f12f7dc2524bb56c0a2fa5"
+PINNED_TABLE_SHA256 = "91ff6dcda53aa43b9c0513503b8709dcf99a34eac59e2b99180da2a64d960af2"
 
 
 def test_table_sha256_and_provenance_are_pinned() -> None:
@@ -33,48 +41,20 @@ def test_table_sha256_and_provenance_are_pinned() -> None:
     assert not (ROOT / "traigent" / "labels" / "contract_schemas").exists()
 
 
-def _git(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603
-        ["git", "-C", str(SCHEMA_WT), *args],  # noqa: S607
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
+@pytest.mark.skipif(not SCHEMA_DIR, reason="TRAIGENT_SCHEMA_DIR not set")
+def test_schema_checkout_manifest_is_the_pinned_one() -> None:
+    manifest = Path(SCHEMA_DIR or "") / "docs" / "content-class-manifest.json"
+    assert hashlib.sha256(manifest.read_bytes()).hexdigest() == PINNED_MANIFEST_SHA256
 
 
-@pytest.mark.skipif(not SCHEMA_WT.exists(), reason="TraigentSchema worktree absent")
-def test_manifest_at_the_pinned_schema_commit_matches_the_pin() -> None:
-    shown = subprocess.run(  # noqa: S603
-        [
-            "git",
-            "-C",
-            str(SCHEMA_WT),
-            "show",
-            f"{PINNED_SCHEMA_COMMIT}:docs/content-class-manifest.json",
-        ],  # noqa: S607
-        capture_output=True,
-        timeout=30,
-        check=False,
-    )
-    if shown.returncode:
-        pytest.skip("pinned Schema commit not present in this checkout")
-    assert hashlib.sha256(shown.stdout).hexdigest() == PINNED_MANIFEST_SHA256
-
-
-@pytest.mark.skipif(not SCHEMA_WT.exists(), reason="TraigentSchema worktree absent")
-def test_table_regenerates_from_the_schema_worktree_when_it_is_at_the_pin() -> None:
-    manifest = SCHEMA_WT / "docs" / "content-class-manifest.json"
-    if hashlib.sha256(manifest.read_bytes()).hexdigest() != PINNED_MANIFEST_SHA256:
-        pytest.skip(
-            "Schema worktree moved past the pinned manifest; regenerate and re-pin"
-        )
+@pytest.mark.skipif(not SCHEMA_DIR, reason="TRAIGENT_SCHEMA_DIR not set")
+def test_table_regenerates_exactly_from_the_schema_checkout() -> None:
     spec = importlib.util.spec_from_file_location(
         "gen_cct", ROOT / "scripts" / "generate_content_class_table.py"
     )
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    fresh = mod.build(SCHEMA_WT)
-    shipped = json.loads(TABLE.read_text("utf-8"))
-    assert fresh["nodes"] == shipped["nodes"] and fresh["routes"] == shipped["routes"]
+    assert mod.render(Path(SCHEMA_DIR or ""), PINNED_SCHEMA_COMMIT) == TABLE.read_text(
+        "utf-8"
+    )

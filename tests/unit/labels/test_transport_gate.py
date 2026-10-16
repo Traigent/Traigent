@@ -352,3 +352,86 @@ async def test_aiohttp_other_verbs_reach_the_gate_but_have_no_gated_route(verb) 
         ]  # table has no such route: not inspected, not blocked
     finally:
         cls._request = original
+
+
+def test_undeclared_path_parameters_are_refused_not_guessed() -> None:
+    gate.set_mode("refuse")
+    ok_body = json.dumps({"x": 1}).encode()
+    for sid in (
+        "prompt_hello-world",
+        "sess_0123456789ab",
+        "00000000-0000-4000-8000-000000000001",
+    ):
+        with pytest.raises(TransportGateRefusal) as err:
+            inspect_outgoing(
+                "POST", f"{BACKEND}/api/v1/sessions/{sid}/results", ok_body
+            )
+        assert err.value.counts.get("legacy_content", 0) >= 1
+        assert sid not in str(err.value)
+    gate.set_mode("report")
+    c = inspect_outgoing(
+        "POST", f"{BACKEND}/api/v1/sessions/prompt_hello-world/results", ok_body
+    )
+    assert c and c["legacy_content"] >= 1
+
+
+def test_every_client_construction_site_is_gated_or_allowlisted() -> None:
+    """AST census of HTTP client construction and module-level requests calls."""
+    import ast
+    from pathlib import Path as P
+
+    root = P(__file__).resolve().parents[3] / "traigent"
+    # Sites that can never talk to the configured Traigent backend (third parties,
+    # customer-defined endpoints, MCP stdio transport). Each needs a reason.
+    allow = {
+        "integrations/langfuse/client.py": "Langfuse API, third party",
+        "integrations/observability/workflow_traces.py": "separate observability product, own endpoint",
+        "integrations/llms/nous_auth.py": "Nous provider auth, third party",
+        "connectors/http.py": "customer-defined connector endpoint",
+        "utils/retry.py": "generic retry helper, caller-supplied URL docs example",
+        "cloud/production_mcp_client.py": "MCP transport session, not HTTP to the backend",
+    }
+
+    def ctor(name: str) -> bool:
+        return name.endswith(("ClientSession", "AsyncClient")) or name in (
+            "requests.Session",
+            "httpx.Client",
+        )
+
+    ungated: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        if rel.startswith("labels/") or rel in allow:
+            continue
+        src = path.read_text("utf-8")
+        tree = ast.parse(src)
+        parents = {c: n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}
+        for n in ast.walk(tree):
+            if not isinstance(n, ast.Call):
+                continue
+            name = ast.unparse(n.func)
+            parent = parents.get(n)
+            if ctor(name) and not (
+                isinstance(parent, ast.Call)
+                and ast.unparse(parent.func) == "gate_session"
+            ):
+                ungated.append(f"{rel}:{n.lineno} {name}")
+            if name in (
+                "requests.get",
+                "requests.post",
+                "requests.put",
+                "requests.patch",
+                "requests.delete",
+                "requests.request",
+            ):
+                fn = n
+                while fn in parents and not isinstance(
+                    fn, (ast.FunctionDef, ast.AsyncFunctionDef)
+                ):
+                    fn = parents[fn]
+                body = ast.get_source_segment(src, fn) or ""
+                if "preflight_requests(" not in body:
+                    ungated.append(
+                        f"{rel}:{n.lineno} {name} without preflight_requests"
+                    )
+    assert not ungated, "ungated HTTP client construction:\n" + "\n".join(ungated)

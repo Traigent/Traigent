@@ -31,12 +31,6 @@ _WORST = ("violation", "legacy_content", "unclassified")
 _MAX_DEPTH = 64
 _MAX_NODES = 200_000
 _V1BETA = re.compile(r"^/api/v1beta/projects/[^/]+")
-# Server-issued id shapes accepted for an undeclared path parameter: a UUID, or a
-# short lowercase kind prefix followed by an id-like token (sess_..., trial-..., ...).
-_SERVER_ID = re.compile(
-    r"^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-    r"|[a-z]{2,12}[-_][0-9A-Za-z-]{6,64})$"
-)
 
 
 class TableError(RuntimeError):
@@ -267,13 +261,11 @@ def classify_request(
     w = _Walker(table)
     for name, value in path_values.items():
         node = route["path"].get(name)
-        if node is not None:
-            w.walk(value, node, ("path", name))
+        if node is None or node.get("unknown"):
+            # No Schema class for this path parameter: not provably content-free.
+            w.record(("path", name), "legacy_content")
         else:
-            w.record(
-                ("path", name),
-                "opaque_ref" if _SERVER_ID.match(value) else "unclassified",
-            )
+            w.walk(value, node, ("path", name))
     for name, value in parse_qsl(query, keep_blank_values=True):
         node = route["query"].get(name)
         if node is None:
