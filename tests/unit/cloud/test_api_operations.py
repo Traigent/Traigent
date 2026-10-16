@@ -404,6 +404,12 @@ class TestSanitizeErrorMessage:
         msg = " basic " + "ajpp" * 1025
         assert "ajpp" not in self.ops.sanitize_error_message(msg)
 
+    def test_basic_credential_cut_to_few_chars_at_cap_edge_is_redacted(self):
+        msg = "Authorization: " + "x" * 4067 + "\nBasic " + "ajpp" * 100
+        out = self.ops.sanitize_error_message(msg)
+        assert "ajp" not in out
+        assert out.endswith("Basic [REDACTED]")
+
     def test_basic_prose_before_long_text_is_unchanged(self):
         msg = "basic usage of the API " + "x" * 5000
         assert self.ops.sanitize_error_message(msg).startswith("basic usage of the API")

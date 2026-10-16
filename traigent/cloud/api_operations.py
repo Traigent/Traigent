@@ -368,8 +368,9 @@ def _basic_b64_replace(match: "re.Match[str]") -> str:
 
 
 # A ``Basic <token>`` that runs to the very end of input cut by the cap is a
-# truncated credential whatever it decodes to.
-_BASIC_CUT_TAIL_RE = re.compile(r"\bBasic\s+[A-Za-z0-9+/]{8,}={0,2}\Z", re.IGNORECASE)
+# truncated credential whatever it decodes to or how few characters survive
+# (a bare trailing ``Basic `` is redacted too).
+_BASIC_CUT_TAIL_RE = re.compile(r"\bBasic\s+[A-Za-z0-9+/]*={0,2}\Z", re.IGNORECASE)
 _URL_USERINFO_RE = re.compile(r"(?<=://)[^/\s@?#]+(?=@)")
 _URL_CUT_AUTHORITY_RE = re.compile(r"(?<=://)[^/\s@?#]+\Z")
 # Windows forbids these characters in a file name; a user name may hold up to
