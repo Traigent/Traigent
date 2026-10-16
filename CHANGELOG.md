@@ -77,14 +77,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `__cause__`) instead of ranking the unpriced model cheapest. Remedy: report usage with `traigent.with_usage(...)`, or give
   per-token prices through `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` /
   `TRAIGENT_CUSTOM_MODEL_PRICING_FILE`; set
-  `TRAIGENT_STRICT_COST_ACCOUNTING=false` only to accept $0 for unpriced calls.
-  A trial whose cost is only partly measured (some example reported no usage)
-  stops the run the same way, and the error names up to 5 such examples. Fix it
+  `TRAIGENT_STRICT_COST_ACCOUNTING=false` only to turn the error into a warning:
+  the unpriced call stays flagged `cost_unmeasured` and is never recorded as $0.
+  A trial whose cost is only partly measured (some example reported no usage,
+  or a call inside one example reported none) stops the run the same way, and
+  the error names up to 5 such examples. A failed example with no cost
+  telemetry counts as unmeasured too, unless it reports a cost (`0` included)
+  or `provider_attempts: 0`. Fix it
   by wrapping a path that makes no model call in
   `traigent.with_usage(value, total_cost=0)`, adding a price for an unpriced
   model (`TRAIGENT_CUSTOM_MODEL_PRICING_JSON` / `_FILE`), or setting
-  `TRAIGENT_STRICT_COST_ACCOUNTING=false`. Without a cost objective the run
-  continues with a warning.
+  `TRAIGENT_STRICT_COST_ACCOUNTING=false`. Without a cost objective and without
+  an explicit cost limit the run continues with a warning; an explicit cost
+  limit fails closed the same way, because it cannot bound an unknown spend.
   Spend that was reported for a trial flagged `cost_unmeasured` (its
   `cost_lower_bound`) is charged to `cost_limit`, `ExecutionBudget` and the
   cost enforcer as a minimum; the trial keeps its `cost_unmeasured` flag and its

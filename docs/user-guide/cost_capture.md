@@ -117,9 +117,11 @@ trial the failed-trial score instead of scoring it on quality alone. A
 constraint written as `metrics.get("cost", 0) <= limit` still accepts unmeasured
 trials ([#2446](https://github.com/Traigent/Traigent/issues/2446), item 3);
 write `metrics.get("cost") is not None and metrics["cost"] <= limit` instead.
-Workflow spans omit `cost_usd` for an unmeasured trial and for a failed or
-pruned trial that recorded no cost, and run summaries (`get_summary()`,
-`experiment_stats`) withhold `total_cost` and report `cost_unmeasured_trials`
+Workflow spans for an unmeasured trial, and for a failed or pruned trial that
+recorded no cost, send the known spend as `cost_usd` (`0.0` when none was
+reported) together with the metadata flag `traigent.cost_unmeasured: true`; the
+flag, not the number, says the cost is not a measurement. Run summaries
+(`get_summary()`, `experiment_stats`) withhold `total_cost` and report `cost_unmeasured_trials`
 and `cost_lower_bound` when any trial's cost is unmeasured.
 
 A run that stops before the grid is exhausted records why in
