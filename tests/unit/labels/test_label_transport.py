@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -28,12 +29,12 @@ from traigent.labels.transport import (
 
 from .conftest import FIXTURES
 
-SCHEMA_WT = Path(
-    "/home/nimrod/TraigentProjects/core_project/worktrees/TraigentSchema/content-less"
-)
+SCHEMA_DIR = os.environ.get("TRAIGENT_SCHEMA_DIR")
+SCHEMA_WT = Path(SCHEMA_DIR or "")
 LABELS_DIR = SCHEMA_WT / "traigent_schema" / "schemas" / "labels"
 pytestmark = pytest.mark.skipif(
-    not LABELS_DIR.exists(), reason="TraigentSchema worktree absent"
+    not SCHEMA_DIR or not LABELS_DIR.exists(),
+    reason="TRAIGENT_SCHEMA_DIR not set or TraigentSchema worktree absent",
 )
 
 NAME = "Alice_has_diabetes"  # a customer-chosen name: content, sealed before it leaves

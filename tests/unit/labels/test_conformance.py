@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 import pytest
@@ -32,9 +33,8 @@ from traigent.labels.trust_anchor import TrustAnchor
 
 from .conftest import FIXTURES
 
-SCHEMA_WT = Path(
-    "/home/nimrod/TraigentProjects/core_project/worktrees/TraigentSchema/content-less"
-)
+SCHEMA_DIR = os.environ.get("TRAIGENT_SCHEMA_DIR")
+SCHEMA_WT = Path(SCHEMA_DIR or "")
 BUNDLE = (
     Path(__file__).resolve().parents[3] / "traigent" / "labels" / "contract_schemas"
 )
@@ -51,7 +51,10 @@ def _x(hex_: str) -> X25519PrivateKey:
 # --- pins against the Schema worktree ------------------------------------------------
 
 
-@pytest.mark.skipif(not SCHEMA_WT.exists(), reason="TraigentSchema worktree absent")
+@pytest.mark.skipif(
+    not SCHEMA_DIR or not SCHEMA_WT.exists(),
+    reason="TRAIGENT_SCHEMA_DIR not set or TraigentSchema worktree absent",
+)
 def test_fixtures_are_pinned_to_the_schema_worktree() -> None:
     pairs = {
         "label_vectors_v0.json": SCHEMA_WT
