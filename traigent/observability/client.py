@@ -620,6 +620,11 @@ class _TraceState:
     # that frozen snapshot -- never this dict -- is what threads through to
     # the transport (finding 2/A8/M4 snapshot immutability).
     content_history: dict[str, set[str]] = field(default_factory=dict)
+    # Number of snapshots captured from this trace so far (#2609). Advanced by
+    # `_build_fallback_descriptor`, under the client lock, so a snapshot's
+    # `capture_sequence` is its capture order whatever order the (lock-free)
+    # transport submissions later run in. One int per trace; never on the wire.
+    snapshot_sequence: int = 0
 
     def mark_content_history(self, entity_key: str, field_name: str) -> None:
         self.content_history.setdefault(entity_key, set()).add(field_name)
@@ -696,6 +701,11 @@ class _TraceFallbackDescriptor:
     had_prior_input_data: bool
     had_prior_output_data: bool
     observations: tuple[_ObservationFallbackDescriptor, ...]
+    # Capture order of this snapshot within its trace (#2609); the transport
+    # uses it, never the payload, to tell which of two same-trace snapshots is
+    # the newer. ``None`` for a caller that did not capture it (no ordering
+    # known: the transport then treats the submission as the newest).
+    capture_sequence: int | None = None
 
 
 def _build_fallback_descriptor(state: _TraceState) -> _TraceFallbackDescriptor:
@@ -745,12 +755,14 @@ def _build_fallback_descriptor(state: _TraceState) -> _TraceFallbackDescriptor:
                 ),
             )
         )
+    state.snapshot_sequence += 1
     return _TraceFallbackDescriptor(
         had_prior_input_data=state.had_prior_content(_TRACE_CONTENT_KEY, "input_data"),
         had_prior_output_data=state.had_prior_content(
             _TRACE_CONTENT_KEY, "output_data"
         ),
         observations=tuple(observation_descriptors),
+        capture_sequence=state.snapshot_sequence,
     )
 
 
@@ -829,6 +841,9 @@ class _BufferedPayload:
     # Content digest of the encoded payload; lets the transport skip a
     # snapshot identical to the one it last delivered for the item (#2604).
     digest: bytes = b""
+    # Capture order of the snapshot (see `_TraceFallbackDescriptor.
+    # capture_sequence`), resolved to an int at admission (#2609).
+    generation: int = 0
 
 
 class _SyncBatchTransport:
@@ -905,6 +920,10 @@ class _SyncBatchTransport:
         # delivered per item (LRU, bounded by max_queue_size). Forgetting a
         # delivered digest only costs a redundant resend, never a lost update.
         self._inflight_digests: dict[str, bytes] = {}
+        # Generation of the in-flight batch's snapshots (bounded by the batch,
+        # cleared with it): a rejected update only supersedes a queued or
+        # in-flight snapshot of a lower generation (#2609).
+        self._inflight_generations: dict[str, int] = {}
         self._delivered_digests: OrderedDict[str, bytes] = OrderedDict()
         self._oldest_inflight_started_at: float | None = None
         self._active_send_completion: threading.Event | None = None
@@ -937,6 +956,9 @@ class _SyncBatchTransport:
         deadline: float | None = None,
         state: _TraceFallbackDescriptor | None = None,
     ) -> bool:
+        # Capture order of this snapshot within its item, or None when the
+        # caller (a direct transport user) has none: it is then the newest.
+        capture_sequence = getattr(state, "capture_sequence", None)
         try:
             buffered_payload = self._prepare_payload(payload, state=state)
         except TypeError as exc:
@@ -945,7 +967,10 @@ class _SyncBatchTransport:
                 f"'{item_id}' is not JSON serializable: {exc}; dropped"
             )
             self._reject_update(
-                "payload_not_json_serializable", message, item_id=item_id
+                "payload_not_json_serializable",
+                message,
+                item_id=item_id,
+                generation=capture_sequence,
             )
             logger.warning(
                 "Observability transport dropped payload '%s' because "
@@ -968,6 +993,7 @@ class _SyncBatchTransport:
                 item_id=item_id,
                 item_bytes=item_bytes,
                 max_batch_bytes=self.max_batch_bytes,
+                generation=capture_sequence,
             )
             logger.warning(
                 "Observability transport dropped payload '%s' because "
@@ -995,6 +1021,7 @@ class _SyncBatchTransport:
                 item_id=item_id,
                 observation_count=buffered_payload.observation_count,
                 max_observations=max_observations,
+                generation=capture_sequence,
             )
             logger.warning(
                 "Observability transport dropped payload '%s' because it has %d "
@@ -1039,7 +1066,12 @@ class _SyncBatchTransport:
                 self._ensure_timer_locked()
             else:
                 self._buffer.pop(item_id, None)
-                self._buffer[item_id] = buffered_payload
+                self._buffer[item_id] = replace(
+                    buffered_payload,
+                    generation=self._resolve_generation_locked(
+                        item_id, capture_sequence
+                    ),
+                )
                 self._stats["submitted_items"] += 1
                 self._stats["pending_items"] = len(self._buffer)
 
@@ -1290,6 +1322,7 @@ class _SyncBatchTransport:
                             break
                         self._buffer.popitem(last=False)
                         self._inflight_digests[item_id] = buffered.digest
+                        self._inflight_generations[item_id] = buffered.generation
                         # Once a send starts, the backend may end up holding
                         # this snapshot whatever the outcome (a timeout after
                         # commit, an exception escaping the send), so the
@@ -1422,6 +1455,7 @@ class _SyncBatchTransport:
                 self._oldest_inflight_started_at = None
                 self._superseded_inflight_ids.clear()
                 self._inflight_digests.clear()
+                self._inflight_generations.clear()
             self._stats["pending_items"] = len(self._buffer) + self._inflight_items
             if completion is not None and self._active_send_completion is completion:
                 self._active_send_completion = None
@@ -1520,7 +1554,13 @@ class _SyncBatchTransport:
             # The sender receives already prepared snapshots. Retain those exact
             # payloads; do not re-redact them using mutable live trace state.
             retained = OrderedDict(
-                (item_id, self._buffered_payload(payload))
+                (
+                    item_id,
+                    replace(
+                        self._buffered_payload(payload),
+                        generation=self._inflight_generations.get(item_id, 0),
+                    ),
+                )
                 for item_id, payload in batch_items
                 if item_id not in self._buffer
                 and item_id not in self._superseded_inflight_ids
@@ -1617,8 +1657,26 @@ class _SyncBatchTransport:
                 self._warnings = self._warnings[-50:]
             return self._queue_health_event_locked("warning", {"message": message})
 
+    def _resolve_generation_locked(self, item_id: str, generation: int | None) -> int:
+        """Return ``generation``, or for a submission with no capture order a
+        value above every snapshot of ``item_id`` currently known (it is the
+        newest, as it was before capture order existed)."""
+        if generation is not None:
+            return generation
+        queued = self._buffer.get(item_id)
+        return 1 + max(
+            queued.generation if queued is not None else 0,
+            self._inflight_generations.get(item_id, 0),
+        )
+
     def _reject_update(
-        self, event_type: str, message: str, *, item_id: str, **details: Any
+        self,
+        event_type: str,
+        message: str,
+        *,
+        item_id: str,
+        generation: int | None = None,
+        **details: Any,
     ) -> None:
         """Drop a submitted snapshot that can never be delivered, and the older
         snapshot of the same item it was meant to replace (#2601).
@@ -1629,12 +1687,20 @@ class _SyncBatchTransport:
         application has already moved past, so it is evicted too. If that older
         snapshot is already in flight it cannot be recalled, but it is marked so
         a failed send does not put it back into the buffer.
+
+        Only snapshots captured before the rejected one are superseded
+        (#2609): submissions run outside the client's capture lock, so a newer
+        valid snapshot of the item may already be queued or in flight when an
+        older, rejected one reaches here, and it must survive.
         """
         with self._lock:
-            evicted = self._buffer.pop(item_id, None) is not None
+            rejected = self._resolve_generation_locked(item_id, generation)
+            queued = self._buffer.get(item_id)
+            evicted = queued is not None and queued.generation < rejected
             if evicted:
+                del self._buffer[item_id]
                 self._stats["pending_items"] = len(self._buffer) + self._inflight_items
-            if self._inflight_items:
+            if self._inflight_generations.get(item_id, rejected) < rejected:
                 self._superseded_inflight_ids.add(item_id)
             event = self._record_drop_locked(
                 event_type,
@@ -1997,10 +2063,16 @@ class ObservabilityClient:
             content_mode is not None or self.config.content_mode_explicit
         )
         with self._lock:
+            previous = self._trace_states.get(trace_id)
             self._trace_states[trace_id] = _TraceState(
                 trace=trace,
                 resolved_content_mode=effective_content_mode,
                 content_mode_locked=content_mode_locked,
+                # Restarting a trace id keeps its capture order monotonic: the
+                # transport may still hold a snapshot of the earlier state.
+                snapshot_sequence=(
+                    previous.snapshot_sequence if previous is not None else 0
+                ),
             )
 
         self._queue_trace_snapshot(trace_id)

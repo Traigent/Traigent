@@ -195,3 +195,161 @@ def test_a_rejection_with_nothing_in_flight_does_not_block_a_later_retry():
     assert result.success is False
     assert result.items_pending == 1
     assert list(transport._buffer) == ["trace_x"]
+
+
+# A rejected snapshot may only evict snapshots captured BEFORE it. The client
+# captures a snapshot under its lock but submits it after releasing the lock,
+# so an older, oversized snapshot's rejection can run after a newer valid
+# snapshot of the same trace was admitted, or even sent.
+
+
+def _race_client(sender) -> ObservabilityClient:
+    return ObservabilityClient(
+        ObservabilityConfig(
+            backend_origin="http://localhost:5000",
+            api_key="test-key",  # pragma: allowlist secret
+            content_mode="record",
+            batch_size=100,
+            max_buffer_age=999.0,
+            max_batch_bytes=8192,
+            enable_atexit_flush=False,
+        ),
+        sender=sender,
+    )
+
+
+def _pause_first_rejection(client: ObservabilityClient):
+    """Pause the first rejection (the older, oversized snapshot's) on entry."""
+    transport = client._transport
+    original = transport._reject_update
+    entered = threading.Event()
+    release = threading.Event()
+    calls = {"count": 0}
+
+    def paused_reject(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            entered.set()
+            assert release.wait(timeout=5.0)
+        return original(*args, **kwargs)
+
+    transport._reject_update = paused_reject
+    return entered, release
+
+
+def _record_oversized_in_thread(client, trace_id):
+    errors: list[BaseException] = []
+
+    def record() -> None:
+        try:
+            client.record_observation(
+                trace_id,
+                name="o1",
+                observation_id="o1",
+                output_data="x" * 16384,
+            )
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            errors.append(exc)
+
+    thread = threading.Thread(target=record)
+    thread.start()
+    return thread, errors
+
+
+def _delivered_outputs(requests: list[list[dict]]) -> list[object]:
+    return [
+        observation.get("output_data")
+        for request in requests
+        for trace in request
+        if trace["id"] == "trace_race"
+        for observation in trace.get("observations", [])
+        if observation["id"] == "o1"
+    ]
+
+
+def test_older_rejected_snapshot_does_not_evict_a_newer_queued_snapshot():
+    requests: list[list[dict]] = []
+    client = _race_client(requests.append)
+    trace_id = client.start_trace("race", trace_id="trace_race")
+    entered, release = _pause_first_rejection(client)
+
+    older, errors = _record_oversized_in_thread(client, trace_id)
+    try:
+        assert entered.wait(timeout=5.0)  # X1 captured, rejection paused
+        # X2: the same observation's output replaced by a small, valid value.
+        client.record_observation(
+            trace_id, name="o1", observation_id="o1", output_data="small"
+        )
+        assert list(client._transport._buffer) == ["trace_race"]
+    finally:
+        release.set()
+        older.join(timeout=5.0)
+    assert not older.is_alive()
+    assert errors == []
+
+    # X1's rejection must not have deleted the newer X2.
+    assert list(client._transport._buffer) == ["trace_race"]
+    client._transport.flush(timeout=5.0)
+
+    assert _delivered_outputs(requests) == ["small"]
+
+
+def test_older_rejected_snapshot_keeps_a_newer_failed_inflight_snapshot_retained():
+    entered_send = threading.Event()
+    release_send = threading.Event()
+    requests: list[list[dict]] = []
+    attempts = {"count": 0}
+
+    def sender(traces):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            entered_send.set()
+            assert release_send.wait(timeout=5.0)
+            raise AuthenticationError("invalid credentials")  # not retried
+        requests.append(traces)
+
+    client = _race_client(sender)
+    trace_id = client.start_trace("race", trace_id="trace_race")
+    entered, release = _pause_first_rejection(client)
+
+    older, errors = _record_oversized_in_thread(client, trace_id)
+    flusher = threading.Thread(
+        target=lambda: client._transport.flush(timeout=10.0), name="flusher"
+    )
+    try:
+        assert entered.wait(timeout=5.0)
+        client.record_observation(
+            trace_id, name="o1", observation_id="o1", output_data="small"
+        )
+        flusher.start()
+        assert entered_send.wait(timeout=5.0)  # X2 is in flight
+        release.set()  # now X1's late rejection runs
+        older.join(timeout=5.0)
+        assert not older.is_alive()
+    finally:
+        release.set()
+        release_send.set()
+        flusher.join(timeout=5.0)
+    assert not flusher.is_alive()
+    assert errors == []
+
+    # X2's send failed; it is newer than the rejected X1, so it is retained
+    # and the next explicit flush delivers it.
+    assert list(client._transport._buffer) == ["trace_race"]
+    client._transport.flush(timeout=5.0)
+    assert _delivered_outputs(requests) == ["small"]
+
+
+def test_restarted_trace_id_keeps_capture_order_so_its_rejection_still_evicts():
+    requests: list[list[dict]] = []
+    client = _race_client(requests.append)
+    trace_id = client.start_trace("first", trace_id="trace_race")
+    client.record_observation(trace_id, name="o1", observation_id="o1")
+    assert list(client._transport._buffer) == ["trace_race"]
+
+    # Restart the same id with an oversized input: genuinely newer, rejected.
+    client.start_trace("again", trace_id="trace_race", input_data="x" * 16384)
+
+    assert list(client._transport._buffer) == []
+    client._transport.flush(timeout=5.0)
+    assert requests == []
