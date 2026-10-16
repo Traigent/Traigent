@@ -145,8 +145,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `HybridAPIEvaluator` treats that flag, an omitted or negative cost, and a
   failed row with no reported cost as unknown: the trial carries `cost_unmeasured`
   and no cost total, a per-item `metrics.cost_unmeasured` from the service can no
-  longer overwrite that verdict, and the optimization logger, outcome matrix and
-  workflow spans never write `0.0` for it (a workflow span sends the known spend floor as `cost_usd` and marks it with `metadata["traigent.cost_unmeasured"] = true`). Run summaries
+  longer overwrite that verdict, and the optimization logger and outcome matrix
+  never write `0.0` for it. A workflow span sends the known spend floor (0.0 when
+  none was reported) as `cost_usd`, always with
+  `metadata["traigent.cost_unmeasured"] = true` so consumers can tell it apart
+  from a measured cost. Run summaries
   (`get_summary()`, `experiment_stats`) withhold `total_cost` when a trial is
   unmeasured and report `cost_unmeasured_trials` / `cost_lower_bound`.
 
