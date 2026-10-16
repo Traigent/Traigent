@@ -1,0 +1,528 @@
+{
+  "_comment": "TEST-ONLY vectors; key seed is public, see the test module.",
+  "test_public_key_raw_b64": "9zXAfiafigpI0nm7zmOLmakmRtw2xmHFAVJ+eILrik0=",
+  "trusted_key_id": "test-only-legend-key-1",
+  "canonical_subject_json": "{\"as_of\":\"2026-10-15T10:00:00Z\",\"commitments\":{\"evaluated_subset_root\":null,\"evaluation_protocol\":null,\"recovery_manifest_fingerprint\":\"rmf0:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"run_tuple_digest\":null,\"trial_ref\":null},\"coverage_status\":\"complete\",\"digest_alg\":\"traigent-fp2-sha256\",\"issued_at\":\"2026-10-15T10:00:01Z\",\"ledger_cutoff_position\":5,\"policy_version\":\"legend.claims.v0\",\"predicate_digest\":\"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"schema_version\":\"traigent.legend_claim_subject.v0\",\"statement\":{\"evidence_source\":\"client_sdk_reported\",\"source_label\":\"client-reported (SDK-computed)\",\"text\":\"The client's SDK reported a capture of this version, with the stated coverage.\",\"type\":\"captured\"},\"supporting_event_refs\":[\"eventref_0123456789abcdef0123456789abcdef\"],\"version\":{\"fingerprint\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"fingerprint_scheme\":\"agent_build_digest_v1\",\"key_id\":null,\"kind\":\"agent\",\"version_ref\":\"versionref_0123456789abcdef0123456789abcdef\"}}",
+  "digest_alg": "traigent-fp2-sha256",
+  "canonicalization": [
+    {
+      "input_json": "{\"n\":-0}",
+      "digest_alg": "traigent-fp2-sha256",
+      "canonical": "{\"n\":0}",
+      "digest": "sha256:f3013f933b9fb80ab6d995e7ad9da36f683837ba1d81e950c943d40111eac2f0",
+      "in_w3c_jcs_sha256_profile": true
+    },
+    {
+      "input_json": "{\"n\":-0.0}",
+      "digest_alg": "traigent-fp2-sha256",
+      "canonical": "{\"n\":0}",
+      "digest": "sha256:f3013f933b9fb80ab6d995e7ad9da36f683837ba1d81e950c943d40111eac2f0",
+      "in_w3c_jcs_sha256_profile": false
+    },
+    {
+      "input_json": "{\"n\":0}",
+      "digest_alg": "traigent-fp2-sha256",
+      "canonical": "{\"n\":0}",
+      "digest": "sha256:f3013f933b9fb80ab6d995e7ad9da36f683837ba1d81e950c943d40111eac2f0",
+      "in_w3c_jcs_sha256_profile": true
+    },
+    {
+      "input_json": "{\"n\":5.0}",
+      "digest_alg": "traigent-fp2-sha256",
+      "canonical": "{\"n\":5}",
+      "digest": "sha256:11d0a8967009cbcdf468f09e5b09e73e7119b528c35a0e0b23f2ae052786b8fa",
+      "in_w3c_jcs_sha256_profile": false
+    },
+    {
+      "input_json": "{\"n\":1e21}",
+      "digest_alg": "traigent-fp2-sha256",
+      "canonical": "{\"n\":1e+21}",
+      "digest": "sha256:f1ee2b60ee95a3170fdc07a577e5f3514ced26867443d69da265acadead81007",
+      "in_w3c_jcs_sha256_profile": false
+    },
+    {
+      "input_json": "{\"n\":1e-7}",
+      "digest_alg": "traigent-fp2-sha256",
+      "canonical": "{\"n\":1e-7}",
+      "digest": "sha256:747d6d23b64d1b2d579adb832b44de31c91c875bbef7a8e397f5d183a746b54b",
+      "in_w3c_jcs_sha256_profile": false
+    },
+    {
+      "input_json": "{\"n\":0.1}",
+      "digest_alg": "traigent-fp2-sha256",
+      "canonical": "{\"n\":0.1}",
+      "digest": "sha256:c20c34ed16c837e86b4dcdb33f98c274c9f7da1231f64302082d2cd50743f951",
+      "in_w3c_jcs_sha256_profile": false
+    },
+    {
+      "input_json": "{\"n\":9007199254740991}",
+      "digest_alg": "traigent-fp2-sha256",
+      "canonical": "{\"n\":9007199254740991}",
+      "digest": "sha256:e1da48c6a6089f06ecb4e0a2259e658e3786b2420f52baccdf929ec6460d7b41",
+      "in_w3c_jcs_sha256_profile": true
+    }
+  ],
+  "valid": {
+    "statement": {
+      "subject": {
+        "schema_version": "traigent.legend_claim_subject.v0",
+        "policy_version": "legend.claims.v0",
+        "digest_alg": "traigent-fp2-sha256",
+        "statement": {
+          "type": "captured",
+          "text": "The client's SDK reported a capture of this version, with the stated coverage.",
+          "evidence_source": "client_sdk_reported",
+          "source_label": "client-reported (SDK-computed)"
+        },
+        "version": {
+          "version_ref": "versionref_0123456789abcdef0123456789abcdef",
+          "kind": "agent",
+          "fingerprint_scheme": "agent_build_digest_v1",
+          "key_id": null,
+          "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "commitments": {
+          "recovery_manifest_fingerprint": "rmf0:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "run_tuple_digest": null,
+          "trial_ref": null,
+          "evaluated_subset_root": null,
+          "evaluation_protocol": null
+        },
+        "coverage_status": "complete",
+        "supporting_event_refs": [
+          "eventref_0123456789abcdef0123456789abcdef"
+        ],
+        "ledger_cutoff_position": 5,
+        "as_of": "2026-10-15T10:00:00Z",
+        "issued_at": "2026-10-15T10:00:01Z",
+        "predicate_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "signature": {
+        "domain": "traigent.legend_claim_subject.signature.v0",
+        "algorithm": "ed25519",
+        "key_id": "test-only-legend-key-1",
+        "encoding": "base64",
+        "value": "PHZGf0TtjB/wny7F7Yf6nbgd1KqpfFLan27LKjzx69+oEeNOjCWkhvjRdblUf8pgrZ2eHzzz/w5eoqm+rD7MBg=="
+      }
+    },
+    "expect": "VERIFIED"
+  },
+  "valid_evaluated": {
+    "witnessed_discrimination_none_weak_text": {
+      "statement": {
+        "subject": {
+          "schema_version": "traigent.legend_claim_subject.v0",
+          "policy_version": "legend.claims.v0",
+          "digest_alg": "traigent-fp2-sha256",
+          "statement": {
+            "type": "evaluated_traigent_witnessed",
+            "text": "Traigent evaluated this version; the evaluation was not shown able to fail.",
+            "evidence_source": "traigent_witnessed",
+            "source_label": "witnessed by Traigent"
+          },
+          "version": {
+            "version_ref": "versionref_0123456789abcdef0123456789abcdef",
+            "kind": "agent",
+            "fingerprint_scheme": "agent_build_digest_v1",
+            "key_id": null,
+            "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "commitments": {
+            "recovery_manifest_fingerprint": null,
+            "run_tuple_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "trial_ref": null,
+            "evaluated_subset_root": "msr1:k0123456789abcdef:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "evaluation_protocol": "holdout",
+            "evaluation_outcome": "pass",
+            "discrimination": "none",
+            "discrimination_event_ref": null
+          },
+          "coverage_status": null,
+          "supporting_event_refs": [
+            "eventref_0123456789abcdef0123456789abcdef"
+          ],
+          "ledger_cutoff_position": 5,
+          "as_of": "2026-10-15T10:00:00Z",
+          "issued_at": "2026-10-15T10:00:01Z",
+          "predicate_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "signature": {
+          "domain": "traigent.legend_claim_subject.signature.v0",
+          "algorithm": "ed25519",
+          "key_id": "test-only-legend-key-1",
+          "encoding": "base64",
+          "value": "/CUhHoTvtMtrWdlzlFOKElmWvvOwaN/zewiRLrfBE5iL4CM1zrrAAR1il1v49aStiWGnQkXCYyk4oC061raMAw=="
+        }
+      },
+      "expect": "VERIFIED"
+    },
+    "witnessed_discrimination_control_strong_text": {
+      "statement": {
+        "subject": {
+          "schema_version": "traigent.legend_claim_subject.v0",
+          "policy_version": "legend.claims.v0",
+          "digest_alg": "traigent-fp2-sha256",
+          "statement": {
+            "type": "evaluated_traigent_witnessed",
+            "text": "This version was evaluated by Traigent.",
+            "evidence_source": "traigent_witnessed",
+            "source_label": "witnessed by Traigent"
+          },
+          "version": {
+            "version_ref": "versionref_0123456789abcdef0123456789abcdef",
+            "kind": "agent",
+            "fingerprint_scheme": "agent_build_digest_v1",
+            "key_id": null,
+            "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "commitments": {
+            "recovery_manifest_fingerprint": null,
+            "run_tuple_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "trial_ref": null,
+            "evaluated_subset_root": "msr1:k0123456789abcdef:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "evaluation_protocol": "holdout",
+            "evaluation_outcome": "pass",
+            "discrimination": "control",
+            "discrimination_event_ref": "eventref_0123456789abcdef0123456789abcdef"
+          },
+          "coverage_status": null,
+          "supporting_event_refs": [
+            "eventref_0123456789abcdef0123456789abcdef"
+          ],
+          "ledger_cutoff_position": 5,
+          "as_of": "2026-10-15T10:00:00Z",
+          "issued_at": "2026-10-15T10:00:01Z",
+          "predicate_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "signature": {
+          "domain": "traigent.legend_claim_subject.signature.v0",
+          "algorithm": "ed25519",
+          "key_id": "test-only-legend-key-1",
+          "encoding": "base64",
+          "value": "UQWAXDr7hKg61dcKhzRbeUAzAV3iB4Iyh88JHu32E9gGP/qr1OwHH/B2Ruv9skIcl9jVT5vj/Ynz/tH1QmI2Dg=="
+        }
+      },
+      "expect": "VERIFIED"
+    }
+  },
+  "negative": {
+    "tampered_subject": {
+      "statement": {
+        "subject": {
+          "schema_version": "traigent.legend_claim_subject.v0",
+          "policy_version": "legend.claims.v0",
+          "digest_alg": "traigent-fp2-sha256",
+          "statement": {
+            "type": "captured",
+            "text": "The client's SDK reported a capture of this version, with the stated coverage.",
+            "evidence_source": "client_sdk_reported",
+            "source_label": "client-reported (SDK-computed)"
+          },
+          "version": {
+            "version_ref": "versionref_0123456789abcdef0123456789abcdef",
+            "kind": "agent",
+            "fingerprint_scheme": "agent_build_digest_v1",
+            "key_id": null,
+            "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "commitments": {
+            "recovery_manifest_fingerprint": "rmf0:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "run_tuple_digest": null,
+            "trial_ref": null,
+            "evaluated_subset_root": null,
+            "evaluation_protocol": null
+          },
+          "coverage_status": "complete",
+          "supporting_event_refs": [
+            "eventref_0123456789abcdef0123456789abcdef"
+          ],
+          "ledger_cutoff_position": 6,
+          "as_of": "2026-10-15T10:00:00Z",
+          "issued_at": "2026-10-15T10:00:01Z",
+          "predicate_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "signature": {
+          "domain": "traigent.legend_claim_subject.signature.v0",
+          "algorithm": "ed25519",
+          "key_id": "test-only-legend-key-1",
+          "encoding": "base64",
+          "value": "PHZGf0TtjB/wny7F7Yf6nbgd1KqpfFLan27LKjzx69+oEeNOjCWkhvjRdblUf8pgrZ2eHzzz/w5eoqm+rD7MBg=="
+        }
+      },
+      "expect": "SIGNATURE_INVALID"
+    },
+    "wrong_domain_process_record": {
+      "statement": {
+        "subject": {
+          "schema_version": "traigent.legend_claim_subject.v0",
+          "policy_version": "legend.claims.v0",
+          "digest_alg": "traigent-fp2-sha256",
+          "statement": {
+            "type": "captured",
+            "text": "The client's SDK reported a capture of this version, with the stated coverage.",
+            "evidence_source": "client_sdk_reported",
+            "source_label": "client-reported (SDK-computed)"
+          },
+          "version": {
+            "version_ref": "versionref_0123456789abcdef0123456789abcdef",
+            "kind": "agent",
+            "fingerprint_scheme": "agent_build_digest_v1",
+            "key_id": null,
+            "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "commitments": {
+            "recovery_manifest_fingerprint": "rmf0:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "run_tuple_digest": null,
+            "trial_ref": null,
+            "evaluated_subset_root": null,
+            "evaluation_protocol": null
+          },
+          "coverage_status": "complete",
+          "supporting_event_refs": [
+            "eventref_0123456789abcdef0123456789abcdef"
+          ],
+          "ledger_cutoff_position": 5,
+          "as_of": "2026-10-15T10:00:00Z",
+          "issued_at": "2026-10-15T10:00:01Z",
+          "predicate_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "signature": {
+          "domain": "traigent.process_record.issuer_signature.v1",
+          "algorithm": "ed25519",
+          "key_id": "test-only-legend-key-1",
+          "encoding": "base64",
+          "value": "+OjmWALeKzfc9fVO54ng2lKDa9owK98EAjPRndC+PjPU4IvOLC6uEquRPOp4MRlDq72G1mt+PpvEfPj0WPJ2CQ=="
+        }
+      },
+      "expect": "DOMAIN"
+    },
+    "wrong_domain_signature_under_legend_label": {
+      "statement": {
+        "subject": {
+          "schema_version": "traigent.legend_claim_subject.v0",
+          "policy_version": "legend.claims.v0",
+          "digest_alg": "traigent-fp2-sha256",
+          "statement": {
+            "type": "captured",
+            "text": "The client's SDK reported a capture of this version, with the stated coverage.",
+            "evidence_source": "client_sdk_reported",
+            "source_label": "client-reported (SDK-computed)"
+          },
+          "version": {
+            "version_ref": "versionref_0123456789abcdef0123456789abcdef",
+            "kind": "agent",
+            "fingerprint_scheme": "agent_build_digest_v1",
+            "key_id": null,
+            "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "commitments": {
+            "recovery_manifest_fingerprint": "rmf0:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "run_tuple_digest": null,
+            "trial_ref": null,
+            "evaluated_subset_root": null,
+            "evaluation_protocol": null
+          },
+          "coverage_status": "complete",
+          "supporting_event_refs": [
+            "eventref_0123456789abcdef0123456789abcdef"
+          ],
+          "ledger_cutoff_position": 5,
+          "as_of": "2026-10-15T10:00:00Z",
+          "issued_at": "2026-10-15T10:00:01Z",
+          "predicate_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "signature": {
+          "domain": "traigent.legend_claim_subject.signature.v0",
+          "algorithm": "ed25519",
+          "key_id": "test-only-legend-key-1",
+          "encoding": "base64",
+          "value": "+OjmWALeKzfc9fVO54ng2lKDa9owK98EAjPRndC+PjPU4IvOLC6uEquRPOp4MRlDq72G1mt+PpvEfPj0WPJ2CQ=="
+        }
+      },
+      "expect": "SIGNATURE_INVALID"
+    },
+    "unknown_key_id": {
+      "statement": {
+        "subject": {
+          "schema_version": "traigent.legend_claim_subject.v0",
+          "policy_version": "legend.claims.v0",
+          "digest_alg": "traigent-fp2-sha256",
+          "statement": {
+            "type": "captured",
+            "text": "The client's SDK reported a capture of this version, with the stated coverage.",
+            "evidence_source": "client_sdk_reported",
+            "source_label": "client-reported (SDK-computed)"
+          },
+          "version": {
+            "version_ref": "versionref_0123456789abcdef0123456789abcdef",
+            "kind": "agent",
+            "fingerprint_scheme": "agent_build_digest_v1",
+            "key_id": null,
+            "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "commitments": {
+            "recovery_manifest_fingerprint": "rmf0:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "run_tuple_digest": null,
+            "trial_ref": null,
+            "evaluated_subset_root": null,
+            "evaluation_protocol": null
+          },
+          "coverage_status": "complete",
+          "supporting_event_refs": [
+            "eventref_0123456789abcdef0123456789abcdef"
+          ],
+          "ledger_cutoff_position": 5,
+          "as_of": "2026-10-15T10:00:00Z",
+          "issued_at": "2026-10-15T10:00:01Z",
+          "predicate_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "signature": {
+          "domain": "traigent.legend_claim_subject.signature.v0",
+          "algorithm": "ed25519",
+          "key_id": "test-only-other-key",
+          "encoding": "base64",
+          "value": "PHZGf0TtjB/wny7F7Yf6nbgd1KqpfFLan27LKjzx69+oEeNOjCWkhvjRdblUf8pgrZ2eHzzz/w5eoqm+rD7MBg=="
+        }
+      },
+      "expect": "UNKNOWN_KEY"
+    },
+    "unknown_digest_alg": {
+      "statement": {
+        "subject": {
+          "schema_version": "traigent.legend_claim_subject.v0",
+          "policy_version": "legend.claims.v0",
+          "digest_alg": "jcs-sha256",
+          "statement": {
+            "type": "captured",
+            "text": "The client's SDK reported a capture of this version, with the stated coverage.",
+            "evidence_source": "client_sdk_reported",
+            "source_label": "client-reported (SDK-computed)"
+          },
+          "version": {
+            "version_ref": "versionref_0123456789abcdef0123456789abcdef",
+            "kind": "agent",
+            "fingerprint_scheme": "agent_build_digest_v1",
+            "key_id": null,
+            "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "commitments": {
+            "recovery_manifest_fingerprint": "rmf0:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "run_tuple_digest": null,
+            "trial_ref": null,
+            "evaluated_subset_root": null,
+            "evaluation_protocol": null
+          },
+          "coverage_status": "complete",
+          "supporting_event_refs": [
+            "eventref_0123456789abcdef0123456789abcdef"
+          ],
+          "ledger_cutoff_position": 5,
+          "as_of": "2026-10-15T10:00:00Z",
+          "issued_at": "2026-10-15T10:00:01Z",
+          "predicate_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "signature": {
+          "domain": "traigent.legend_claim_subject.signature.v0",
+          "algorithm": "ed25519",
+          "key_id": "test-only-legend-key-1",
+          "encoding": "base64",
+          "value": "Syz+uVQgWT8k5AQPl9kFhE1ol21D1T3kxYt2A8J4aE7UIhhUoHKmuoGwCk6c68zuUg/+xCisNOC4zx3YRa9HAA=="
+        }
+      },
+      "expect": "DIGEST_ALG"
+    },
+    "witnessed_strong_text_without_discrimination": {
+      "statement": {
+        "subject": {
+          "schema_version": "traigent.legend_claim_subject.v0",
+          "policy_version": "legend.claims.v0",
+          "digest_alg": "traigent-fp2-sha256",
+          "statement": {
+            "type": "evaluated_traigent_witnessed",
+            "text": "This version was evaluated by Traigent.",
+            "evidence_source": "traigent_witnessed",
+            "source_label": "witnessed by Traigent"
+          },
+          "version": {
+            "version_ref": "versionref_0123456789abcdef0123456789abcdef",
+            "kind": "agent",
+            "fingerprint_scheme": "agent_build_digest_v1",
+            "key_id": null,
+            "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "commitments": {
+            "recovery_manifest_fingerprint": null,
+            "run_tuple_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "trial_ref": null,
+            "evaluated_subset_root": "msr1:k0123456789abcdef:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "evaluation_protocol": "holdout",
+            "evaluation_outcome": "pass",
+            "discrimination": "none",
+            "discrimination_event_ref": null
+          },
+          "coverage_status": null,
+          "supporting_event_refs": [
+            "eventref_0123456789abcdef0123456789abcdef"
+          ],
+          "ledger_cutoff_position": 5,
+          "as_of": "2026-10-15T10:00:00Z",
+          "issued_at": "2026-10-15T10:00:01Z",
+          "predicate_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "signature": {
+          "domain": "traigent.legend_claim_subject.signature.v0",
+          "algorithm": "ed25519",
+          "key_id": "test-only-legend-key-1",
+          "encoding": "base64",
+          "value": "RHnWq2D/vVIMUygYIYeV5WNK5eOV4P6YtUwa2QbWfU2xw9O/dXSVVOYDmDUv7K+2yfWXhGjRbGDmn6ts0w40Dg=="
+        }
+      },
+      "expect": "SCHEMA"
+    },
+    "wrong_algorithm": {
+      "statement": {
+        "subject": {
+          "schema_version": "traigent.legend_claim_subject.v0",
+          "policy_version": "legend.claims.v0",
+          "digest_alg": "traigent-fp2-sha256",
+          "statement": {
+            "type": "captured",
+            "text": "The client's SDK reported a capture of this version, with the stated coverage.",
+            "evidence_source": "client_sdk_reported",
+            "source_label": "client-reported (SDK-computed)"
+          },
+          "version": {
+            "version_ref": "versionref_0123456789abcdef0123456789abcdef",
+            "kind": "agent",
+            "fingerprint_scheme": "agent_build_digest_v1",
+            "key_id": null,
+            "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "commitments": {
+            "recovery_manifest_fingerprint": "rmf0:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "run_tuple_digest": null,
+            "trial_ref": null,
+            "evaluated_subset_root": null,
+            "evaluation_protocol": null
+          },
+          "coverage_status": "complete",
+          "supporting_event_refs": [
+            "eventref_0123456789abcdef0123456789abcdef"
+          ],
+          "ledger_cutoff_position": 5,
+          "as_of": "2026-10-15T10:00:00Z",
+          "issued_at": "2026-10-15T10:00:01Z",
+          "predicate_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "signature": {
+          "domain": "traigent.legend_claim_subject.signature.v0",
+          "algorithm": "ecdsa_p256_sha256",
+          "key_id": "test-only-legend-key-1",
+          "encoding": "base64",
+          "value": "PHZGf0TtjB/wny7F7Yf6nbgd1KqpfFLan27LKjzx69+oEeNOjCWkhvjRdblUf8pgrZ2eHzzz/w5eoqm+rD7MBg=="
+        }
+      },
+      "expect": "ALGORITHM"
+    }
+  }
+}

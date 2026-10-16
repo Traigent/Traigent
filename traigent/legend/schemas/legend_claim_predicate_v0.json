@@ -1,0 +1,932 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/legend/v0/legend_claim_predicate_v0.json",
+  "title": "Legend Claim Predicate V0",
+  "description": "Evidence-source-labelled predicates the claims compiler may sign. Closed schema (additionalProperties false everywhere, closed enums, no free text): any new field or enum value ships as a new schema_version published alongside this one; consumers dispatch on schema_version. Normative text: docs/identity/pillar-legend-v0.md. Every string pattern ends with the portable end anchor (?![\\s\\S]) rather than $.",
+  "version": "0.1.0",
+  "definitions": {
+    "PredicateType": {
+      "type": "string",
+      "enum": [
+        "declared",
+        "captured",
+        "restorable_now",
+        "restore_verified_client_reported",
+        "restore_verified_backend_matched",
+        "bound_to_run",
+        "evaluated_client_reported",
+        "evaluated_traigent_witnessed"
+      ]
+    },
+    "PredicateSubject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version_ref",
+        "kind",
+        "fingerprint_scheme",
+        "key_id",
+        "fingerprint"
+      ],
+      "properties": {
+        "version_ref": {
+          "$ref": "./pillar_legend_v0.json#/definitions/VersionRef"
+        },
+        "kind": {
+          "$ref": "./pillar_legend_v0.json#/definitions/EntityKind"
+        },
+        "fingerprint_scheme": {
+          "$ref": "./pillar_legend_v0.json#/definitions/FingerprintScheme"
+        },
+        "key_id": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/KeyId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fingerprint": {
+          "$ref": "./pillar_legend_v0.json#/definitions/Fingerprint"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "agent"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "agent_build_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "configuration"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "applied_config_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evaluation_dataset"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "dataset_multiset_root_v1",
+                  "dataset_content_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evaluator"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "evaluator_version_digest_v1",
+                  "judge_config_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "search_space"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "search_space_ssp1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "agent_build_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "applied_config_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "dataset_content_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "dataset_multiset_root_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "$ref": "./pillar_legend_v0.json#/definitions/KeyId"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/MultisetRoot"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "evaluator_version_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "judge_config_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "search_space_ssp1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "$ref": "./pillar_legend_v0.json#/definitions/KeyId"
+              },
+              "fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/SearchSpaceId"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ClaimPredicateV0": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "predicate_type",
+        "subject",
+        "evidence_source",
+        "supporting_event_refs",
+        "recovery_manifest_fingerprint",
+        "coverage_status",
+        "run_tuple_digest",
+        "trial_ref",
+        "evaluated_subset_root",
+        "evaluation_protocol",
+        "ledger_cutoff_position",
+        "as_of",
+        "policy_version"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "./pillar_legend_v0.json#/definitions/SchemaVersion"
+        },
+        "predicate_type": {
+          "$ref": "#/definitions/PredicateType"
+        },
+        "subject": {
+          "$ref": "#/definitions/PredicateSubject"
+        },
+        "evidence_source": {
+          "$ref": "./pillar_legend_v0.json#/definitions/EvidenceSource"
+        },
+        "supporting_event_refs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "./pillar_legend_v0.json#/definitions/EventRef"
+          }
+        },
+        "recovery_manifest_fingerprint": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/ManifestFingerprint"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "coverage_status": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/CoverageStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "run_tuple_digest": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trial_ref": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/TrialRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evaluated_subset_root": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/MultisetRoot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evaluation_protocol": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/EvaluationProtocol"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ledger_cutoff_position": {
+          "$ref": "./pillar_legend_v0.json#/definitions/LedgerPosition"
+        },
+        "as_of": {
+          "$ref": "./pillar_legend_v0.json#/definitions/Timestamp"
+        },
+        "policy_version": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}(?![\\s\\S])"
+        },
+        "evaluation_outcome": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail"
+          ],
+          "description": "Present only on evaluated_* predicates. Only a verdict (pass or fail) is signed; not_exercised, inconclusive and void evaluations issue no evaluated_* claim."
+        },
+        "discrimination": {
+          "$ref": "./pillar_legend_v0.json#/definitions/Discrimination"
+        },
+        "discrimination_event_ref": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/EventRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "description": "One signed-statement predicate. A signature authenticates the statement, not the truth of a client assertion; render the evidence_source beside every predicate. Later evidence is a NEW statement.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "declared"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence_source": {
+                "type": "string",
+                "enum": [
+                  "client_reported"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "captured"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence_source": {
+                "type": "string",
+                "enum": [
+                  "client_sdk_reported"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "restorable_now"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence_source": {
+                "type": "string",
+                "enum": [
+                  "client_sdk_reported"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "restore_verified_client_reported"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence_source": {
+                "type": "string",
+                "enum": [
+                  "client_sdk_reported"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "restore_verified_backend_matched"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence_source": {
+                "type": "string",
+                "enum": [
+                  "server_recorded"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "bound_to_run"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence_source": {
+                "type": "string",
+                "enum": [
+                  "server_recorded"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "evaluated_client_reported"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence_source": {
+                "type": "string",
+                "enum": [
+                  "client_reported"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "evaluated_traigent_witnessed"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence_source": {
+                "type": "string",
+                "enum": [
+                  "traigent_witnessed"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "restore_verified_client_reported"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage_status": {
+                "const": "complete"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "restore_verified_backend_matched"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage_status": {
+                "const": "complete"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "evaluated_client_reported"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evaluated_subset_root": {
+                "$ref": "./pillar_legend_v0.json#/definitions/MultisetRoot"
+              },
+              "evaluation_protocol": {
+                "$ref": "./pillar_legend_v0.json#/definitions/EvaluationProtocol"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "evaluated_traigent_witnessed"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evaluated_subset_root": {
+                "$ref": "./pillar_legend_v0.json#/definitions/MultisetRoot"
+              },
+              "evaluation_protocol": {
+                "$ref": "./pillar_legend_v0.json#/definitions/EvaluationProtocol"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "captured"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "recovery_manifest_fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/ManifestFingerprint"
+              },
+              "coverage_status": {
+                "$ref": "./pillar_legend_v0.json#/definitions/CoverageStatus"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "restorable_now"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "recovery_manifest_fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/ManifestFingerprint"
+              },
+              "coverage_status": {
+                "$ref": "./pillar_legend_v0.json#/definitions/CoverageStatus"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "restore_verified_client_reported"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "recovery_manifest_fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/ManifestFingerprint"
+              },
+              "coverage_status": {
+                "$ref": "./pillar_legend_v0.json#/definitions/CoverageStatus"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "restore_verified_backend_matched"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "recovery_manifest_fingerprint": {
+                "$ref": "./pillar_legend_v0.json#/definitions/ManifestFingerprint"
+              },
+              "coverage_status": {
+                "$ref": "./pillar_legend_v0.json#/definitions/CoverageStatus"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "bound_to_run"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "run_tuple_digest": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "evaluated_client_reported"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "run_tuple_digest": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "const": "evaluated_traigent_witnessed"
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "run_tuple_digest": {
+                "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "enum": [
+                  "evaluated_client_reported",
+                  "evaluated_traigent_witnessed"
+                ]
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "required": [
+              "evaluation_outcome",
+              "discrimination",
+              "discrimination_event_ref"
+            ]
+          },
+          "else": {
+            "properties": {
+              "evaluation_outcome": false,
+              "discrimination": false,
+              "discrimination_event_ref": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "discrimination": {
+                "const": "none"
+              }
+            },
+            "required": [
+              "discrimination"
+            ]
+          },
+          "then": {
+            "properties": {
+              "discrimination_event_ref": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "if": {
+              "required": [
+                "discrimination"
+              ]
+            },
+            "then": {
+              "properties": {
+                "discrimination_event_ref": {
+                  "$ref": "./pillar_legend_v0.json#/definitions/EventRef"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/definitions/ClaimPredicateV0"
+    }
+  ]
+}

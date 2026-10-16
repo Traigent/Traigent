@@ -431,6 +431,27 @@
         "policy_version": {
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9._-]{0,63}(?![\\s\\S])"
+        },
+        "evaluation_outcome": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail"
+          ],
+          "description": "Present only on evaluated_* predicates. Only a verdict (pass or fail) is signed; not_exercised, inconclusive and void evaluations issue no evaluated_* claim."
+        },
+        "discrimination": {
+          "$ref": "./pillar_legend_v0.json#/definitions/Discrimination"
+        },
+        "discrimination_event_ref": {
+          "oneOf": [
+            {
+              "$ref": "./pillar_legend_v0.json#/definitions/EventRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "description": "One signed-statement predicate. A signature authenticates the statement, not the truth of a client assertion; render the evidence_source beside every predicate. Later evidence is a NEW statement.",
@@ -834,6 +855,68 @@
             "properties": {
               "run_tuple_digest": {
                 "$ref": "./pillar_legend_v0.json#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "predicate_type": {
+                "enum": [
+                  "evaluated_client_reported",
+                  "evaluated_traigent_witnessed"
+                ]
+              }
+            },
+            "required": [
+              "predicate_type"
+            ]
+          },
+          "then": {
+            "required": [
+              "evaluation_outcome",
+              "discrimination",
+              "discrimination_event_ref"
+            ]
+          },
+          "else": {
+            "properties": {
+              "evaluation_outcome": false,
+              "discrimination": false,
+              "discrimination_event_ref": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "discrimination": {
+                "const": "none"
+              }
+            },
+            "required": [
+              "discrimination"
+            ]
+          },
+          "then": {
+            "properties": {
+              "discrimination_event_ref": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "if": {
+              "required": [
+                "discrimination"
+              ]
+            },
+            "then": {
+              "properties": {
+                "discrimination_event_ref": {
+                  "$ref": "./pillar_legend_v0.json#/definitions/EventRef"
+                }
               }
             }
           }

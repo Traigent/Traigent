@@ -1,0 +1,2356 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.traigent.ai/legend/v0/pillar_legend_v0.json",
+  "title": "Pillar Legend V0",
+  "description": "Declared pillar versions and their append-only event ledger (entity, version, six event types, axes). Closed schema (additionalProperties false everywhere, closed enums, no free text): any new field or enum value ships as a new schema_version published alongside this one; consumers dispatch on schema_version. Normative text: docs/identity/pillar-legend-v0.md. Every string pattern ends with the portable end anchor (?![\\s\\S]) rather than $.",
+  "version": "0.1.0",
+  "definitions": {
+    "SchemaVersion": {
+      "type": "string",
+      "const": "0"
+    },
+    "EntityKind": {
+      "type": "string",
+      "enum": [
+        "agent",
+        "configuration",
+        "evaluation_dataset",
+        "evaluator",
+        "search_space"
+      ]
+    },
+    "FingerprintScheme": {
+      "type": "string",
+      "enum": [
+        "agent_build_digest_v1",
+        "applied_config_digest_v1",
+        "dataset_content_digest_v1",
+        "dataset_multiset_root_v1",
+        "evaluator_version_digest_v1",
+        "judge_config_digest_v1",
+        "search_space_ssp1"
+      ]
+    },
+    "KeyId": {
+      "type": "string",
+      "pattern": "^k[0-9a-f]{16}(?![\\s\\S])",
+      "description": "Tenant key version id (content-identity-v1 section 3): 'k' + 16 lowercase hex. Probabilistic (64 bits): lookups are tenant-scoped."
+    },
+    "Sha256Digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "RepresentationCommitment": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])",
+      "description": "sha256: + hex SHA-256(UTF8('traigent.legend.representation_commitment.v0') || 0x00 || jcs_v1({'representations': [d0, d1, ...]})) where d_i are the manifest's representation digests in manifest (ordinal) order. The SDK derives it locally from its manifest; the Backend compares it with the cited identity_verified proof and persists it as immutable capture metadata. The manifest itself never leaves the client."
+    },
+    "Sha256Hex": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "UnkeyedFingerprint": {
+      "$ref": "#/definitions/Sha256Digest"
+    },
+    "MultisetRoot": {
+      "type": "string",
+      "pattern": "^msr1:k[0-9a-f]{16}:[0-9a-f]{64}(?![\\s\\S])",
+      "description": "Order-free multiset root; kid is the second colon field and MUST equal key_id."
+    },
+    "SearchSpaceId": {
+      "type": "string",
+      "pattern": "^ssp1:k[0-9a-f]{16}:[0-9a-f]{64}(?![\\s\\S])",
+      "description": "Keyed search-space fingerprint; kid MUST equal key_id."
+    },
+    "Fingerprint": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/Sha256Digest"
+        },
+        {
+          "$ref": "#/definitions/MultisetRoot"
+        },
+        {
+          "$ref": "#/definitions/SearchSpaceId"
+        }
+      ]
+    },
+    "ManifestFingerprint": {
+      "type": "string",
+      "pattern": "^rmf0:sha256:[0-9a-f]{64}(?![\\s\\S])",
+      "description": "Scheme-qualified recovery-manifest fingerprint (the store key): 'rmf0:sha256:' + hex SHA-256(UTF8('traigent.recovery_manifest.v0') || 0x00 || jcs_v1(RecoveryManifestV0))."
+    },
+    "LedgerPosition": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "description": "Server-assigned, strictly increasing per (tenant, project) ledger. Total order of events; signed predicates cite a prefix by position. recorded_at is human time and is never used to order."
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 32,
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]{1,6})?Z(?![\\s\\S])",
+      "description": "RFC 3339 UTC timestamp (trailing Z, no offsets, ASCII digits, strict end anchor). The pattern bounds each field; calendar validity (for example 30 February) still requires consumers to parse the value."
+    },
+    "EntityRef": {
+      "type": "string",
+      "pattern": "^entityref_[0-9a-f]{32}(?![\\s\\S])",
+      "minLength": 42,
+      "maxLength": 42
+    },
+    "VersionRef": {
+      "type": "string",
+      "pattern": "^versionref_[0-9a-f]{32}(?![\\s\\S])",
+      "minLength": 43,
+      "maxLength": 43
+    },
+    "EventRef": {
+      "type": "string",
+      "pattern": "^eventref_[0-9a-f]{32}(?![\\s\\S])",
+      "minLength": 41,
+      "maxLength": 41
+    },
+    "RunRef": {
+      "type": "string",
+      "pattern": "^runref_[0-9a-f]{32}(?![\\s\\S])",
+      "minLength": 39,
+      "maxLength": 39
+    },
+    "TrialRef": {
+      "type": "string",
+      "pattern": "^trialref_[0-9a-f]{32}(?![\\s\\S])",
+      "minLength": 41,
+      "maxLength": 41
+    },
+    "ActorRef": {
+      "type": "string",
+      "pattern": "^actorref_[0-9a-f]{32}(?![\\s\\S])",
+      "minLength": 41,
+      "maxLength": 41
+    },
+    "IdempotencyKey": {
+      "type": "string",
+      "pattern": "^idk_[0-9a-f]{32}(?![\\s\\S])",
+      "description": "Fresh opaque request key (128 random bits), minted once per LOGICAL declaration/record and reused unchanged on every retry of that same request. Scope: (tenant, project, endpoint). Never derived from content, so repeated legitimate movements A->B, B->A, A->B each get their own key."
+    },
+    "RequestDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])",
+      "description": "sha256: + hex SHA-256(UTF8('traigent.legend.request.v0') || 0x00 || jcs_v1(body)) over the VALIDATED client request body, excluding ONLY idempotency_key and request_digest. Every input reference (entity_ref, version_ref, ...) is part of the body. An optional field that is absent differs from the same field present as null. The Backend recomputes the digest before comparing keys. Same key + equal recomputed digest = retry (the original result is returned); same key + different digest = conflicting_idempotency_payload."
+    },
+    "ConformanceKey": {
+      "type": "string",
+      "pattern": "^rmfc0:sha256:[0-9a-f]{64}(?![\\s\\S])",
+      "description": "Reserved synthetic namespace for store-conformance self-test artifacts (the store has no delete, so they persist). Disjoint from ManifestFingerprint: no event, predicate or instruction may reference one."
+    },
+    "IdentitySource": {
+      "type": "string",
+      "enum": [
+        "client_declared",
+        "sdk_fingerprinted"
+      ]
+    },
+    "DeclareProvenance": {
+      "type": "string",
+      "enum": [
+        "explicit",
+        "implicit_run",
+        "implicit_legacy"
+      ]
+    },
+    "ChangeReason": {
+      "type": "string",
+      "enum": [
+        "code",
+        "prompt",
+        "configuration",
+        "dataset_content",
+        "dependency",
+        "rollback",
+        "unspecified"
+      ]
+    },
+    "EventType": {
+      "type": "string",
+      "enum": [
+        "identity_verified",
+        "authority_linked",
+        "declared",
+        "captured",
+        "restore_verified",
+        "bound_to_run",
+        "evaluated",
+        "availability_changed"
+      ]
+    },
+    "EventOrigin": {
+      "type": "string",
+      "enum": [
+        "client",
+        "server"
+      ]
+    },
+    "EvidenceSource": {
+      "type": "string",
+      "enum": [
+        "client_reported",
+        "client_sdk_reported",
+        "server_recorded",
+        "traigent_witnessed"
+      ]
+    },
+    "RecoveryState": {
+      "type": "string",
+      "enum": [
+        "none",
+        "stored_unverified",
+        "round_trip_verified"
+      ]
+    },
+    "EvaluationState": {
+      "type": "string",
+      "enum": [
+        "none",
+        "client_reported",
+        "traigent_witnessed"
+      ]
+    },
+    "AvailabilityStatus": {
+      "type": "string",
+      "enum": [
+        "available",
+        "missing",
+        "corrupted",
+        "retired"
+      ]
+    },
+    "AvailabilityState": {
+      "type": "string",
+      "enum": [
+        "unknown",
+        "available",
+        "missing",
+        "corrupted",
+        "retired"
+      ]
+    },
+    "SourceAuthority": {
+      "type": "string",
+      "enum": [
+        "agent_builds",
+        "evaluator_versions",
+        "dataset_versions",
+        "evaluator_version_manifests",
+        "run_search_space_records",
+        "run_identity_bindings",
+        "none"
+      ]
+    },
+    "MatchResult": {
+      "type": "string",
+      "enum": [
+        "not_applicable",
+        "not_checked",
+        "match",
+        "mismatch"
+      ]
+    },
+    "RestoreOutcome": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "partial",
+        "substituted",
+        "failed"
+      ]
+    },
+    "CoverageComponent": {
+      "type": "string",
+      "enum": [
+        "code",
+        "prompts",
+        "helper_modules",
+        "tool_definitions",
+        "applied_config",
+        "dependency_lock",
+        "dataset_members",
+        "dataset_order",
+        "evaluator_code",
+        "judge_config",
+        "objectives",
+        "search_space_definition",
+        "runtime"
+      ]
+    },
+    "CoverageStatus": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial"
+      ]
+    },
+    "Coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "covered",
+        "missing"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/definitions/CoverageStatus"
+        },
+        "covered": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 13,
+          "items": {
+            "$ref": "#/definitions/CoverageComponent"
+          }
+        },
+        "missing": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 13,
+          "items": {
+            "$ref": "#/definitions/CoverageComponent"
+          }
+        }
+      },
+      "description": "complete requires missing = []; partial requires at least one missing component. covered and missing are disjoint (consumer check).",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "complete"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "missing": {
+                "maxItems": 0
+              },
+              "covered": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "partial"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "missing": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "BindingRole": {
+      "type": "string",
+      "enum": [
+        "base_agent",
+        "run_base_configuration",
+        "dataset",
+        "search_set",
+        "evaluator",
+        "search_space",
+        "trial_candidate",
+        "trial_configuration"
+      ]
+    },
+    "SlotScope": {
+      "type": "string",
+      "enum": [
+        "run",
+        "trial"
+      ]
+    },
+    "EvaluationProtocol": {
+      "type": "string",
+      "enum": [
+        "full_dataset",
+        "holdout",
+        "sampled_subset",
+        "search_set"
+      ]
+    },
+    "ClientStoreStatus": {
+      "type": "string",
+      "enum": [
+        "retrieved",
+        "store_key_conflict",
+        "not_captured",
+        "stored_unverified",
+        "round_trip_verified",
+        "missing",
+        "truncated",
+        "corrupted",
+        "unreachable",
+        "permission_denied",
+        "conformance_failed"
+      ]
+    },
+    "LegendErrorCode": {
+      "type": "string",
+      "enum": [
+        "store_key_conflict",
+        "invalid_request",
+        "unknown_ref",
+        "foreign_ref",
+        "flag_disabled",
+        "conflicting_report",
+        "conflicting_idempotency_payload",
+        "store_not_configured",
+        "store_unavailable",
+        "conformance_failed",
+        "manifest_mismatch",
+        "coverage_insufficient",
+        "restore_failed",
+        "internal_error"
+      ]
+    },
+    "LegendVersionV0": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "version_ref",
+        "entity_ref",
+        "kind",
+        "fingerprint_scheme",
+        "key_id",
+        "fingerprint",
+        "initial_parent_version_ref",
+        "identity_source",
+        "declared_at"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/definitions/SchemaVersion"
+        },
+        "version_ref": {
+          "$ref": "#/definitions/VersionRef"
+        },
+        "entity_ref": {
+          "$ref": "#/definitions/EntityRef"
+        },
+        "kind": {
+          "$ref": "#/definitions/EntityKind"
+        },
+        "fingerprint_scheme": {
+          "$ref": "#/definitions/FingerprintScheme"
+        },
+        "key_id": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/KeyId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fingerprint": {
+          "$ref": "#/definitions/Fingerprint"
+        },
+        "initial_parent_version_ref": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/VersionRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "identity_source": {
+          "$ref": "#/definitions/IdentitySource"
+        },
+        "declared_at": {
+          "$ref": "#/definitions/Timestamp"
+        }
+      },
+      "description": "Immutable (entity, scheme, key_id, fingerprint) version; initial_parent_version_ref is fixed at first declaration and is the only parent edge that must be acyclic and same-entity. Dedup key (tenant, project, entity, scheme, key_id, fingerprint); tenant and project come from the canonical request context, never the wire.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "agent"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "agent_build_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "configuration"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "applied_config_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evaluation_dataset"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "dataset_multiset_root_v1",
+                  "dataset_content_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evaluator"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "evaluator_version_digest_v1",
+                  "judge_config_digest_v1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "search_space"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fingerprint_scheme": {
+                "type": "string",
+                "enum": [
+                  "search_space_ssp1"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "agent_build_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "applied_config_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "dataset_content_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "dataset_multiset_root_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "$ref": "#/definitions/KeyId"
+              },
+              "fingerprint": {
+                "$ref": "#/definitions/MultisetRoot"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "evaluator_version_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "judge_config_digest_v1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "type": "null"
+              },
+              "fingerprint": {
+                "$ref": "#/definitions/Sha256Digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "search_space_ssp1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key_id": {
+                "$ref": "#/definitions/KeyId"
+              },
+              "fingerprint": {
+                "$ref": "#/definitions/SearchSpaceId"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "fingerprint_scheme": {
+                "const": "search_space_ssp1"
+              }
+            },
+            "required": [
+              "fingerprint_scheme"
+            ]
+          },
+          "then": {
+            "properties": {
+              "identity_source": {
+                "const": "client_declared"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "LegendEntityV0": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "entity_ref",
+        "kind",
+        "source_authority",
+        "created_at"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/definitions/SchemaVersion"
+        },
+        "entity_ref": {
+          "$ref": "#/definitions/EntityRef"
+        },
+        "kind": {
+          "$ref": "#/definitions/EntityKind"
+        },
+        "source_authority": {
+          "$ref": "#/definitions/SourceAuthority"
+        },
+        "created_at": {
+          "$ref": "#/definitions/Timestamp"
+        }
+      },
+      "description": "Opaque tenant/project-scoped catalogue entity. Human names stay client-side in a local alias file; the wire carries no name."
+    },
+    "DeclaredEventV0": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "event_ref",
+        "version_ref",
+        "actor_ref",
+        "origin",
+        "evidence_source",
+        "ledger_position",
+        "recorded_at",
+        "idempotency_key",
+        "request_digest",
+        "event_type",
+        "provenance",
+        "identity_source"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/definitions/SchemaVersion"
+        },
+        "event_ref": {
+          "$ref": "#/definitions/EventRef"
+        },
+        "version_ref": {
+          "$ref": "#/definitions/VersionRef"
+        },
+        "actor_ref": {
+          "$ref": "#/definitions/ActorRef"
+        },
+        "origin": {
+          "type": "string",
+          "enum": [
+            "client",
+            "server"
+          ]
+        },
+        "evidence_source": {
+          "type": "string",
+          "enum": [
+            "client_reported"
+          ]
+        },
+        "ledger_position": {
+          "$ref": "#/definitions/LedgerPosition"
+        },
+        "recorded_at": {
+          "$ref": "#/definitions/Timestamp"
+        },
+        "idempotency_key": {
+          "$ref": "#/definitions/IdempotencyKey"
+        },
+        "request_digest": {
+          "$ref": "#/definitions/RequestDigest"
+        },
+        "event_type": {
+          "type": "string",
+          "const": "declared"
+        },
+        "provenance": {
+          "$ref": "#/definitions/DeclareProvenance"
+        },
+        "identity_source": {
+          "$ref": "#/definitions/IdentitySource"
+        },
+        "previous_version_ref": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/VersionRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "change_reason": {
+          "$ref": "#/definitions/ChangeReason"
+        }
+      },
+      "description": "A version was declared. Server-origin only for implicit_legacy backfill. Never witnessed.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "origin": {
+                "const": "server"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "provenance": {
+                "const": "implicit_legacy"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "provenance": {
+                "const": "implicit_legacy"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "identity_source": {
+                "const": "client_declared"
+              },
+              "origin": {
+                "const": "server"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "CapturedEventV0": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "event_ref",
+        "version_ref",
+        "actor_ref",
+        "origin",
+        "evidence_source",
+        "ledger_position",
+        "recorded_at",
+        "idempotency_key",
+        "request_digest",
+        "event_type",
+        "recovery_manifest_fingerprint",
+        "coverage",
+        "recovery_state",
+        "conformance_passed",
+        "exporter_version",
+        "backend_keyed",
+        "identity_verification_ref",
+        "representation_commitment",
+        "identity_digests_reproduced"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/definitions/SchemaVersion"
+        },
+        "event_ref": {
+          "$ref": "#/definitions/EventRef"
+        },
+        "version_ref": {
+          "$ref": "#/definitions/VersionRef"
+        },
+        "actor_ref": {
+          "$ref": "#/definitions/ActorRef"
+        },
+        "origin": {
+          "type": "string",
+          "const": "client"
+        },
+        "evidence_source": {
+          "type": "string",
+          "enum": [
+            "client_sdk_reported"
+          ]
+        },
+        "ledger_position": {
+          "$ref": "#/definitions/LedgerPosition"
+        },
+        "recorded_at": {
+          "$ref": "#/definitions/Timestamp"
+        },
+        "idempotency_key": {
+          "$ref": "#/definitions/IdempotencyKey"
+        },
+        "request_digest": {
+          "$ref": "#/definitions/RequestDigest"
+        },
+        "event_type": {
+          "type": "string",
+          "const": "captured"
+        },
+        "recovery_manifest_fingerprint": {
+          "$ref": "#/definitions/ManifestFingerprint"
+        },
+        "coverage": {
+          "$ref": "#/definitions/Coverage"
+        },
+        "recovery_state": {
+          "type": "string",
+          "enum": [
+            "stored_unverified",
+            "round_trip_verified"
+          ]
+        },
+        "conformance_passed": {
+          "type": "boolean"
+        },
+        "exporter_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?![\\s\\S])",
+          "maxLength": 32
+        },
+        "backend_keyed": {
+          "type": "boolean"
+        },
+        "identity_verification_ref": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/EventRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "representation_commitment": {
+          "$ref": "#/definitions/RepresentationCommitment"
+        },
+        "identity_digests_reproduced": {
+          "type": "boolean"
+        }
+      },
+      "description": "A capture was stored under the manifest fingerprint. Put-ack alone is stored_unverified; round_trip_verified needs conformance_passed and a per-capture isolated round trip.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "recovery_state": {
+                "const": "round_trip_verified"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "conformance_passed": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "backend_keyed": {
+                "const": true
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "backend_keyed",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "identity_verification_ref": {
+                "$ref": "#/definitions/EventRef"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "RestoreVerifiedEventV0": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "event_ref",
+        "version_ref",
+        "actor_ref",
+        "origin",
+        "evidence_source",
+        "ledger_position",
+        "recorded_at",
+        "idempotency_key",
+        "request_digest",
+        "event_type",
+        "kind",
+        "recovery_manifest_fingerprint",
+        "outcome",
+        "coverage",
+        "isolated_destination",
+        "representation_digests_match",
+        "pillar_fingerprint_match",
+        "historical_key_available",
+        "dependencies_verified",
+        "verified_artifact_digest",
+        "backend_keyed",
+        "backend_match_result"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/definitions/SchemaVersion"
+        },
+        "event_ref": {
+          "$ref": "#/definitions/EventRef"
+        },
+        "version_ref": {
+          "$ref": "#/definitions/VersionRef"
+        },
+        "actor_ref": {
+          "$ref": "#/definitions/ActorRef"
+        },
+        "origin": {
+          "type": "string",
+          "enum": [
+            "client",
+            "server"
+          ]
+        },
+        "evidence_source": {
+          "type": "string",
+          "enum": [
+            "client_sdk_reported",
+            "server_recorded"
+          ]
+        },
+        "ledger_position": {
+          "$ref": "#/definitions/LedgerPosition"
+        },
+        "recorded_at": {
+          "$ref": "#/definitions/Timestamp"
+        },
+        "idempotency_key": {
+          "$ref": "#/definitions/IdempotencyKey"
+        },
+        "request_digest": {
+          "$ref": "#/definitions/RequestDigest"
+        },
+        "event_type": {
+          "type": "string",
+          "const": "restore_verified"
+        },
+        "kind": {
+          "$ref": "#/definitions/EntityKind"
+        },
+        "recovery_manifest_fingerprint": {
+          "$ref": "#/definitions/ManifestFingerprint"
+        },
+        "outcome": {
+          "$ref": "#/definitions/RestoreOutcome"
+        },
+        "coverage": {
+          "$ref": "#/definitions/Coverage"
+        },
+        "isolated_destination": {
+          "type": "boolean",
+          "const": true
+        },
+        "representation_digests_match": {
+          "type": "boolean"
+        },
+        "pillar_fingerprint_match": {
+          "type": "boolean"
+        },
+        "historical_key_available": {
+          "type": "boolean"
+        },
+        "dependencies_verified": {
+          "type": "boolean"
+        },
+        "verified_artifact_digest": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Sha256Digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "backend_keyed": {
+          "type": "boolean"
+        },
+        "backend_match_result": {
+          "$ref": "#/definitions/MatchResult"
+        }
+      },
+      "description": "Restore into an isolated destination re-hashed. Client origin: client_sdk_reported, no Backend result. Server origin: the Backend's own server-side recompute of the same manifest (backend_match_result match|mismatch), the only way a Backend-keyed pillar (search_space) reaches exact.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "exact"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                }
+              },
+              "representation_digests_match": {
+                "const": true
+              },
+              "pillar_fingerprint_match": {
+                "const": true
+              },
+              "historical_key_available": {
+                "const": true
+              },
+              "dependencies_verified": {
+                "const": true
+              },
+              "verified_artifact_digest": {
+                "$ref": "#/definitions/Sha256Digest"
+              },
+              "backend_match_result": {
+                "enum": [
+                  "not_applicable",
+                  "match"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "origin": {
+                "const": "client"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence_source": {
+                "const": "client_sdk_reported"
+              },
+              "backend_match_result": {
+                "enum": [
+                  "not_applicable",
+                  "not_checked"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "origin": {
+                "const": "server"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence_source": {
+                "const": "server_recorded"
+              },
+              "backend_match_result": {
+                "enum": [
+                  "match",
+                  "mismatch"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "backend_keyed": {
+                "const": true
+              },
+              "outcome": {
+                "const": "exact"
+              }
+            },
+            "required": [
+              "backend_keyed",
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "origin": {
+                "const": "server"
+              },
+              "backend_match_result": {
+                "const": "match"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "search_space"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "backend_keyed": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "exact"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "backend_match_result": {
+                "const": "mismatch"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "partial",
+                  "substituted",
+                  "failed"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "agent"
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "covered": {
+                    "allOf": [
+                      {
+                        "contains": {
+                          "const": "code"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "prompts"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "helper_modules"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "tool_definitions"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "applied_config"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "runtime"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "configuration"
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "covered": {
+                    "allOf": [
+                      {
+                        "contains": {
+                          "const": "applied_config"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evaluation_dataset"
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "covered": {
+                    "allOf": [
+                      {
+                        "contains": {
+                          "const": "dataset_members"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "dataset_order"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "evaluator"
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "covered": {
+                    "allOf": [
+                      {
+                        "contains": {
+                          "const": "evaluator_code"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "judge_config"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "objectives"
+                        }
+                      },
+                      {
+                        "contains": {
+                          "const": "helper_modules"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "search_space"
+              },
+              "coverage": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "coverage"
+            ]
+          },
+          "then": {
+            "properties": {
+              "coverage": {
+                "properties": {
+                  "covered": {
+                    "allOf": [
+                      {
+                        "contains": {
+                          "const": "search_space_definition"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "BoundToRunEventV0": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "event_ref",
+        "version_ref",
+        "actor_ref",
+        "origin",
+        "evidence_source",
+        "ledger_position",
+        "recorded_at",
+        "idempotency_key",
+        "request_digest",
+        "event_type",
+        "run_ref",
+        "trial_ref",
+        "slot_scope",
+        "binding_role",
+        "binding_slot",
+        "run_tuple_digest"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/definitions/SchemaVersion"
+        },
+        "event_ref": {
+          "$ref": "#/definitions/EventRef"
+        },
+        "version_ref": {
+          "$ref": "#/definitions/VersionRef"
+        },
+        "actor_ref": {
+          "$ref": "#/definitions/ActorRef"
+        },
+        "origin": {
+          "type": "string",
+          "const": "server"
+        },
+        "evidence_source": {
+          "type": "string",
+          "enum": [
+            "server_recorded"
+          ]
+        },
+        "ledger_position": {
+          "$ref": "#/definitions/LedgerPosition"
+        },
+        "recorded_at": {
+          "$ref": "#/definitions/Timestamp"
+        },
+        "idempotency_key": {
+          "$ref": "#/definitions/IdempotencyKey"
+        },
+        "request_digest": {
+          "$ref": "#/definitions/RequestDigest"
+        },
+        "event_type": {
+          "type": "string",
+          "const": "bound_to_run"
+        },
+        "run_ref": {
+          "$ref": "#/definitions/RunRef"
+        },
+        "trial_ref": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/TrialRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "slot_scope": {
+          "$ref": "#/definitions/SlotScope"
+        },
+        "binding_role": {
+          "$ref": "#/definitions/BindingRole"
+        },
+        "binding_slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1023
+        },
+        "run_tuple_digest": {
+          "$ref": "#/definitions/Sha256Digest"
+        }
+      },
+      "description": "Emitted atomically when an execution context (run, trial|null) freezes: one event per slot the context consumes, all carrying that context's FINAL tuple digest. trial_ref is the CONTEXT's trial (null = run-base context); slot_scope says where the slot lives. Slots before start_execution are proposals and emit nothing.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "binding_role": {
+                "enum": [
+                  "trial_candidate",
+                  "trial_configuration"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "slot_scope": {
+                "const": "trial"
+              },
+              "trial_ref": {
+                "$ref": "#/definitions/TrialRef"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "binding_role": {
+                "enum": [
+                  "base_agent",
+                  "run_base_configuration",
+                  "dataset",
+                  "search_set",
+                  "search_space"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "slot_scope": {
+                "const": "run"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "slot_scope": {
+                "const": "trial"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "trial_ref": {
+                "$ref": "#/definitions/TrialRef"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "IdentityVerifiedEventV0": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "event_ref",
+        "version_ref",
+        "actor_ref",
+        "origin",
+        "evidence_source",
+        "ledger_position",
+        "recorded_at",
+        "idempotency_key",
+        "request_digest",
+        "event_type",
+        "representation_commitment",
+        "backend_recomputed",
+        "result"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/definitions/SchemaVersion"
+        },
+        "event_ref": {
+          "$ref": "#/definitions/EventRef"
+        },
+        "version_ref": {
+          "$ref": "#/definitions/VersionRef"
+        },
+        "actor_ref": {
+          "$ref": "#/definitions/ActorRef"
+        },
+        "origin": {
+          "type": "string",
+          "const": "server"
+        },
+        "evidence_source": {
+          "type": "string",
+          "enum": [
+            "server_recorded"
+          ]
+        },
+        "ledger_position": {
+          "$ref": "#/definitions/LedgerPosition"
+        },
+        "recorded_at": {
+          "$ref": "#/definitions/Timestamp"
+        },
+        "idempotency_key": {
+          "$ref": "#/definitions/IdempotencyKey"
+        },
+        "request_digest": {
+          "$ref": "#/definitions/RequestDigest"
+        },
+        "event_type": {
+          "type": "string",
+          "const": "identity_verified"
+        },
+        "representation_commitment": {
+          "$ref": "#/definitions/RepresentationCommitment"
+        },
+        "backend_recomputed": {
+          "type": "boolean"
+        },
+        "result": {
+          "type": "string",
+          "enum": [
+            "match",
+            "mismatch"
+          ]
+        }
+      },
+      "description": "Pre-capture server verification bound to the version and the exporter's representation commitment (sha256 over the ordered representation digests). For Backend-keyed kinds the Backend recomputes the keyed identity; a capture manifest that claims complete coverage cites this event. Breaks the capture/server_match circularity."
+    },
+    "EvaluatedEventV0": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "event_ref",
+        "version_ref",
+        "actor_ref",
+        "origin",
+        "evidence_source",
+        "ledger_position",
+        "recorded_at",
+        "idempotency_key",
+        "request_digest",
+        "event_type",
+        "run_ref",
+        "trial_ref",
+        "run_tuple_digest",
+        "evaluated_subset_root",
+        "evaluation_protocol",
+        "evaluation_outcome",
+        "void_cause",
+        "discrimination",
+        "discrimination_event_ref",
+        "control_run"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/definitions/SchemaVersion"
+        },
+        "event_ref": {
+          "$ref": "#/definitions/EventRef"
+        },
+        "version_ref": {
+          "$ref": "#/definitions/VersionRef"
+        },
+        "actor_ref": {
+          "$ref": "#/definitions/ActorRef"
+        },
+        "origin": {
+          "type": "string",
+          "enum": [
+            "client",
+            "server"
+          ]
+        },
+        "evidence_source": {
+          "type": "string",
+          "enum": [
+            "client_reported",
+            "traigent_witnessed"
+          ]
+        },
+        "ledger_position": {
+          "$ref": "#/definitions/LedgerPosition"
+        },
+        "recorded_at": {
+          "$ref": "#/definitions/Timestamp"
+        },
+        "idempotency_key": {
+          "$ref": "#/definitions/IdempotencyKey"
+        },
+        "request_digest": {
+          "$ref": "#/definitions/RequestDigest"
+        },
+        "event_type": {
+          "type": "string",
+          "const": "evaluated"
+        },
+        "run_ref": {
+          "$ref": "#/definitions/RunRef"
+        },
+        "trial_ref": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/TrialRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "run_tuple_digest": {
+          "$ref": "#/definitions/Sha256Digest"
+        },
+        "evaluated_subset_root": {
+          "$ref": "#/definitions/MultisetRoot"
+        },
+        "evaluation_protocol": {
+          "$ref": "#/definitions/EvaluationProtocol"
+        },
+        "evaluation_outcome": {
+          "$ref": "#/definitions/EvaluationOutcome"
+        },
+        "void_cause": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/VoidCause"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "discrimination": {
+          "$ref": "#/definitions/Discrimination"
+        },
+        "discrimination_event_ref": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/EventRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "control_run": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/ControlRunEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "description": "Evaluation evidence bound to the exact run tuple. client origin => client_reported; traigent_witnessed only from server origin. evaluation_outcome is one of five states; void_cause is non-null exactly when the outcome is void. discrimination names the evidence that this check could have failed; discrimination_event_ref is non-null exactly when discrimination is not none and names an earlier evaluated event (a control-run event for control). A non-null control_run marks the event itself as a control run record (its discrimination is none).",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "origin": {
+                "const": "client"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence_source": {
+                "const": "client_reported"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "origin": {
+                "const": "server"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence_source": {
+                "const": "traigent_witnessed"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "evaluation_outcome": {
+                "const": "void"
+              }
+            },
+            "required": [
+              "evaluation_outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "void_cause": {
+                "$ref": "#/definitions/VoidCause"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "void_cause": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "discrimination": {
+                "const": "none"
+              }
+            },
+            "required": [
+              "discrimination"
+            ]
+          },
+          "then": {
+            "properties": {
+              "discrimination_event_ref": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "discrimination_event_ref": {
+                "$ref": "#/definitions/EventRef"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "control_run": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "control_run"
+            ]
+          },
+          "then": {
+            "properties": {
+              "discrimination": {
+                "const": "none"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "AvailabilityChangedEventV0": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "event_ref",
+        "version_ref",
+        "actor_ref",
+        "origin",
+        "evidence_source",
+        "ledger_position",
+        "recorded_at",
+        "idempotency_key",
+        "request_digest",
+        "event_type",
+        "recovery_manifest_fingerprint",
+        "status"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/definitions/SchemaVersion"
+        },
+        "event_ref": {
+          "$ref": "#/definitions/EventRef"
+        },
+        "version_ref": {
+          "$ref": "#/definitions/VersionRef"
+        },
+        "actor_ref": {
+          "$ref": "#/definitions/ActorRef"
+        },
+        "origin": {
+          "type": "string",
+          "const": "client"
+        },
+        "evidence_source": {
+          "type": "string",
+          "enum": [
+            "client_sdk_reported"
+          ]
+        },
+        "ledger_position": {
+          "$ref": "#/definitions/LedgerPosition"
+        },
+        "recorded_at": {
+          "$ref": "#/definitions/Timestamp"
+        },
+        "idempotency_key": {
+          "$ref": "#/definitions/IdempotencyKey"
+        },
+        "request_digest": {
+          "$ref": "#/definitions/RequestDigest"
+        },
+        "event_type": {
+          "type": "string",
+          "const": "availability_changed"
+        },
+        "recovery_manifest_fingerprint": {
+          "$ref": "#/definitions/ManifestFingerprint"
+        },
+        "status": {
+          "$ref": "#/definitions/AvailabilityStatus"
+        }
+      },
+      "description": "Current availability of a capture. Revokes currently-restorable predicates; never erases that a capture happened at T."
+    },
+    "AuthorityLinkedEventV0": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "event_ref",
+        "version_ref",
+        "actor_ref",
+        "origin",
+        "evidence_source",
+        "ledger_position",
+        "recorded_at",
+        "idempotency_key",
+        "request_digest",
+        "event_type",
+        "source_authority"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/definitions/SchemaVersion"
+        },
+        "event_ref": {
+          "$ref": "#/definitions/EventRef"
+        },
+        "version_ref": {
+          "$ref": "#/definitions/VersionRef"
+        },
+        "actor_ref": {
+          "$ref": "#/definitions/ActorRef"
+        },
+        "origin": {
+          "type": "string",
+          "const": "server"
+        },
+        "evidence_source": {
+          "type": "string",
+          "enum": [
+            "server_recorded"
+          ]
+        },
+        "ledger_position": {
+          "$ref": "#/definitions/LedgerPosition"
+        },
+        "recorded_at": {
+          "$ref": "#/definitions/Timestamp"
+        },
+        "idempotency_key": {
+          "$ref": "#/definitions/IdempotencyKey"
+        },
+        "request_digest": {
+          "$ref": "#/definitions/RequestDigest"
+        },
+        "event_type": {
+          "type": "string",
+          "const": "authority_linked"
+        },
+        "source_authority": {
+          "type": "string",
+          "enum": [
+            "agent_builds",
+            "evaluator_versions",
+            "dataset_versions",
+            "evaluator_version_manifests",
+            "run_search_space_records"
+          ]
+        }
+      },
+      "description": "Append-only association of a version with an authoritative source row found later. The version row is never updated. Grouping key (internal): (kind, authoritative entity id) where the authority has one (agent id, evaluator id, dataset id); Legend-only otherwise."
+    },
+    "LegendEventV0": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/IdentityVerifiedEventV0"
+        },
+        {
+          "$ref": "#/definitions/AuthorityLinkedEventV0"
+        },
+        {
+          "$ref": "#/definitions/DeclaredEventV0"
+        },
+        {
+          "$ref": "#/definitions/CapturedEventV0"
+        },
+        {
+          "$ref": "#/definitions/RestoreVerifiedEventV0"
+        },
+        {
+          "$ref": "#/definitions/BoundToRunEventV0"
+        },
+        {
+          "$ref": "#/definitions/EvaluatedEventV0"
+        },
+        {
+          "$ref": "#/definitions/AvailabilityChangedEventV0"
+        }
+      ]
+    },
+    "AxisState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity_source",
+        "authority_linked",
+        "recovery_state",
+        "restorable_now",
+        "evaluation_state"
+      ],
+      "properties": {
+        "identity_source": {
+          "$ref": "#/definitions/IdentitySource"
+        },
+        "authority_linked": {
+          "type": "boolean"
+        },
+        "recovery_state": {
+          "$ref": "#/definitions/RecoveryState"
+        },
+        "restorable_now": {
+          "type": "boolean"
+        },
+        "evaluation_state": {
+          "$ref": "#/definitions/EvaluationState"
+        }
+      },
+      "description": "Derived read model, never written, recomputed from a ledger prefix: identity_source immutable from first declaration; recovery_state = strongest historical proof over all captures (round_trip_verified > stored_unverified > none); restorable_now = at least one capture with latest availability available (per-manifest availability, no singular version availability); evaluation_state = strongest source present (traigent_witnessed > client_reported > none)."
+    },
+    "EvaluationOutcome": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail",
+        "not_exercised",
+        "inconclusive",
+        "void"
+      ],
+      "description": "Five result states of an evaluation (aligned with the W3C Agent Conformance CG Reporting Format v0.1 state names, mapped to Traigent evidence): pass and fail are verdicts; not_exercised means the check did not run on the stated subset; inconclusive means it ran and produced no verdict (this is also the value a pre-outcome legacy event maps to: occurrence recorded, verdict unrecorded); void means the result is withdrawn and carries a closed void_cause. Only pass and fail may be signed in an evaluated_* claim."
+    },
+    "VoidCause": {
+      "type": "string",
+      "enum": [
+        "evidence_does_not_hold",
+        "evaluator_version_mismatch",
+        "run_context_drifted",
+        "input_unavailable",
+        "withdrawn_by_producer"
+      ],
+      "description": "Closed cause for a void evaluation. A Traigent set; not a claim of equality with any external vocabulary."
+    },
+    "Discrimination": {
+      "type": "string",
+      "enum": [
+        "shown_by_run",
+        "control",
+        "prior_run",
+        "none"
+      ],
+      "description": "Could this check have failed? shown_by_run: another evaluated event of the same run returned fail. control: a control run on a known-bad input returned fail under the same evaluator version. prior_run: an earlier evaluated event of the same evaluator returned fail. none: no such evidence; the claim may say only that an evaluation happened."
+    },
+    "ControlKind": {
+      "type": "string",
+      "enum": [
+        "known_bad_input",
+        "known_good_input",
+        "empty_input",
+        "mutated_input"
+      ]
+    },
+    "ControlRunEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "control_kind",
+        "expected_verdict",
+        "observed_verdict",
+        "evaluator_version_ref",
+        "run_ref"
+      ],
+      "properties": {
+        "control_kind": {
+          "$ref": "#/definitions/ControlKind"
+        },
+        "expected_verdict": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail"
+          ]
+        },
+        "observed_verdict": {
+          "$ref": "#/definitions/EvaluationOutcome"
+        },
+        "evaluator_version_ref": {
+          "$ref": "#/definitions/VersionRef"
+        },
+        "run_ref": {
+          "$ref": "#/definitions/RunRef"
+        }
+      },
+      "description": "Closed control-run evidence: the evaluator was run on a constructed input whose verdict is known, so a later claim can state the check was able to fail. No input or output text is carried."
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/definitions/LegendEntityV0"
+    },
+    {
+      "$ref": "#/definitions/LegendVersionV0"
+    },
+    {
+      "$ref": "#/definitions/LegendEventV0"
+    }
+  ]
+}

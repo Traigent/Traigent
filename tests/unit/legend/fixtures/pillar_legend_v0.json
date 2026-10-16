@@ -1859,7 +1859,12 @@
         "trial_ref",
         "run_tuple_digest",
         "evaluated_subset_root",
-        "evaluation_protocol"
+        "evaluation_protocol",
+        "evaluation_outcome",
+        "void_cause",
+        "discrimination",
+        "discrimination_event_ref",
+        "control_run"
       ],
       "properties": {
         "schema_version": {
@@ -1925,9 +1930,45 @@
         },
         "evaluation_protocol": {
           "$ref": "#/definitions/EvaluationProtocol"
+        },
+        "evaluation_outcome": {
+          "$ref": "#/definitions/EvaluationOutcome"
+        },
+        "void_cause": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/VoidCause"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "discrimination": {
+          "$ref": "#/definitions/Discrimination"
+        },
+        "discrimination_event_ref": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/EventRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "control_run": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/ControlRunEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
-      "description": "Evaluation evidence bound to the exact run tuple. client origin => client_reported; traigent_witnessed only from server origin.",
+      "description": "Evaluation evidence bound to the exact run tuple. client origin => client_reported; traigent_witnessed only from server origin. evaluation_outcome is one of five states; void_cause is non-null exactly when the outcome is void. discrimination names the evidence that this check could have failed; discrimination_event_ref is non-null exactly when discrimination is not none and names an earlier evaluated event (a control-run event for control). A non-null control_run marks the event itself as a control run record (its discrimination is none).",
       "allOf": [
         {
           "if": {
@@ -1957,6 +1998,77 @@
             "properties": {
               "evidence_source": {
                 "const": "traigent_witnessed"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "evaluation_outcome": {
+                "const": "void"
+              }
+            },
+            "required": [
+              "evaluation_outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "void_cause": {
+                "$ref": "#/definitions/VoidCause"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "void_cause": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "discrimination": {
+                "const": "none"
+              }
+            },
+            "required": [
+              "discrimination"
+            ]
+          },
+          "then": {
+            "properties": {
+              "discrimination_event_ref": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "discrimination_event_ref": {
+                "$ref": "#/definitions/EventRef"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "control_run": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "control_run"
+            ]
+          },
+          "then": {
+            "properties": {
+              "discrimination": {
+                "const": "none"
               }
             }
           }
@@ -2154,6 +2266,80 @@
         }
       },
       "description": "Derived read model, never written, recomputed from a ledger prefix: identity_source immutable from first declaration; recovery_state = strongest historical proof over all captures (round_trip_verified > stored_unverified > none); restorable_now = at least one capture with latest availability available (per-manifest availability, no singular version availability); evaluation_state = strongest source present (traigent_witnessed > client_reported > none)."
+    },
+    "EvaluationOutcome": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail",
+        "not_exercised",
+        "inconclusive",
+        "void"
+      ],
+      "description": "Five result states of an evaluation (aligned with the W3C Agent Conformance CG Reporting Format v0.1 state names, mapped to Traigent evidence): pass and fail are verdicts; not_exercised means the check did not run on the stated subset; inconclusive means it ran and produced no verdict (this is also the value a pre-outcome legacy event maps to: occurrence recorded, verdict unrecorded); void means the result is withdrawn and carries a closed void_cause. Only pass and fail may be signed in an evaluated_* claim."
+    },
+    "VoidCause": {
+      "type": "string",
+      "enum": [
+        "evidence_does_not_hold",
+        "evaluator_version_mismatch",
+        "run_context_drifted",
+        "input_unavailable",
+        "withdrawn_by_producer"
+      ],
+      "description": "Closed cause for a void evaluation. A Traigent set; not a claim of equality with any external vocabulary."
+    },
+    "Discrimination": {
+      "type": "string",
+      "enum": [
+        "shown_by_run",
+        "control",
+        "prior_run",
+        "none"
+      ],
+      "description": "Could this check have failed? shown_by_run: another evaluated event of the same run returned fail. control: a control run on a known-bad input returned fail under the same evaluator version. prior_run: an earlier evaluated event of the same evaluator returned fail. none: no such evidence; the claim may say only that an evaluation happened."
+    },
+    "ControlKind": {
+      "type": "string",
+      "enum": [
+        "known_bad_input",
+        "known_good_input",
+        "empty_input",
+        "mutated_input"
+      ]
+    },
+    "ControlRunEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "control_kind",
+        "expected_verdict",
+        "observed_verdict",
+        "evaluator_version_ref",
+        "run_ref"
+      ],
+      "properties": {
+        "control_kind": {
+          "$ref": "#/definitions/ControlKind"
+        },
+        "expected_verdict": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail"
+          ]
+        },
+        "observed_verdict": {
+          "$ref": "#/definitions/EvaluationOutcome"
+        },
+        "evaluator_version_ref": {
+          "$ref": "#/definitions/VersionRef"
+        },
+        "run_ref": {
+          "$ref": "#/definitions/RunRef"
+        }
+      },
+      "description": "Closed control-run evidence: the evaluator was run on a constructed input whose verdict is known, so a later claim can state the check was able to fail. No input or output text is carried."
     }
   },
   "oneOf": [

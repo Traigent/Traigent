@@ -939,7 +939,7 @@ def test_availability_request_validates_and_is_closed(store, idx, schemas):
     assert record_availability(ref, rec.manifest_fingerprint, "available") is None
 
 
-def test_vendored_contract_files_equal_schema_9d71d82():
+def test_vendored_contract_files_equal_schema_2244144():
     schema = Path(
         "/home/nimrod/TraigentProjects/core_project/worktrees/TraigentSchema/"
         "pillar-legend/traigent_schema/schemas/legend"
@@ -954,12 +954,16 @@ def test_vendored_contract_files_equal_schema_9d71d82():
         if schema.is_dir()
         else ""
     )
-    assert head in ("", "9d71d82") or head.startswith("9d71d8"), head
+    assert head in ("", "2244144") or head.startswith("224414"), head
     if not schema.is_dir():
         pytest.skip("Schema worktree not present")
     fixtures = Path(__file__).parent / "fixtures"
     for f in fixtures.glob("*.json"):
         assert f.read_bytes() == (schema / f.name).read_bytes(), f.name
+    # The runtime copies the claim verifier loads must equal the vendored fixtures.
+    shipped = Path(__file__).parents[3] / "traigent" / "legend" / "schemas"
+    for f in shipped.glob("*.json"):
+        assert f.read_bytes() == (fixtures / f.name).read_bytes(), f.name
 
 
 # ------------------------------------------------- review fixes (terra)
