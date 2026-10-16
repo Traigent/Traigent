@@ -146,7 +146,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   failed row with no reported cost as unknown: the trial carries `cost_unmeasured`
   and no cost total, a per-item `metrics.cost_unmeasured` from the service can no
   longer overwrite that verdict, and the optimization logger, outcome matrix and
-  workflow spans write `null`/omit the cost instead of `0.0`. Run summaries
+  workflow spans never write `0.0` for it (a workflow span sends the known spend floor as `cost_usd` and marks it with `metadata["traigent.cost_unmeasured"] = true`). Run summaries
   (`get_summary()`, `experiment_stats`) withhold `total_cost` when a trial is
   unmeasured and report `cost_unmeasured_trials` / `cost_lower_bound`.
 
@@ -421,9 +421,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   records `$0` and warns (`UNPRICED_MODEL_RUNTIME`). Runs without a cost objective are
   unchanged. Two more ways a cost run recorded `$0` are covered: a response that carries
   token counts but no model name to price them now fails the same way, and a cost-objective
-  run that captured no LLM usage at all fails too (`COST_OBJECTIVE_NO_USAGE_CAPTURED` as a
-  warning when not strict, and in mock-LLM runs, which have no spend to measure), because
-  an unmeasured `$0` is not a cheap configuration;
+  run that captured no LLM usage at all fails too, because an unmeasured `$0` is not a
+  cheap configuration. Strict mode raises `CostTrackingRequiredError` at the first such
+  trial, mock-LLM runs included (mock mode never bypasses cost enforcement); fix it with
+  `traigent.with_usage(value, total_cost=0)` for a path that makes no model call, custom
+  pricing (`TRAIGENT_CUSTOM_MODEL_PRICING_JSON`), or `TRAIGENT_STRICT_COST_ACCOUNTING=false`,
+  under which the run only warns (`COST_OBJECTIVE_NO_USAGE_CAPTURED`);
   `result.metadata["pricing"]["usage_captured"]` reports whether any usage was measured.
   `cost_per_1k` now counts as a cost objective. The LangChain and Pydantic AI callback
   handlers read the setting when constructed, so set

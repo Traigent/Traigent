@@ -394,7 +394,11 @@ async def test_captured_tokens_with_no_model_name_are_zero_when_not_strict(
 
 @pytest.mark.asyncio
 async def test_cost_objective_with_no_usage_captured_fails_closed() -> None:
-    """No tokens on any trial: the $0 cost column is unmeasured, not cheap."""
+    """No tokens on any trial: the $0 cost column is unmeasured, not cheap.
+
+    The trial-level strict check stops the run at the first such trial with
+    the remedies in the message.
+    """
 
     @optimize(
         eval_dataset=[{"input": {"question": "q"}, "expected_output": "A"}],
@@ -405,19 +409,17 @@ async def test_cost_objective_with_no_usage_captured_fails_closed() -> None:
     def fn(question: str = "", temperature: float = 0.1, **_cfg):
         return "A"
 
-    # The suite runs with TRAIGENT_MOCK_LLM=true, and a mock run has no spend
-    # to measure, so the guard only warns there; switch it off to exercise the
-    # real-run path.
-    with (
-        warnings.catch_warnings(),
-        patch("traigent.core.optimized_function.is_mock_llm", return_value=False),
-    ):
+    with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         with pytest.raises(Exception) as exc_info:  # noqa: B017 - must fail closed
             await fn.optimize(progress_bar=False)
 
     text = _error_chain_text(exc_info.value)
-    assert "no LLM usage was captured" in text
+    assert "CostTrackingRequiredError" in text
+    assert "Cost extraction failed" in text
+    assert "strict cost accounting is on because 'cost' is an objective" in text
+    assert "traigent.with_usage(value, total_cost=0)" in text
+    assert "TRAIGENT_CUSTOM_MODEL_PRICING_JSON" in text
     assert "TRAIGENT_STRICT_COST_ACCOUNTING=false" in text
     assert is_strict_cost_accounting() is False
 
@@ -473,16 +475,41 @@ def test_cost_per_1k_counts_as_a_cost_objective() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mock_llm_run_warns_instead_of_failing_without_usage(
+async def test_mock_llm_run_without_usage_fails_closed_under_strict(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A mock run has no spend to measure, so the guard warns rather than fails.
+    """Mock mode does NOT bypass cost enforcement (GFR-COST-MOCK-NO-BYPASS-001).
 
-    Strict is on (cost objective, env unset) and nothing is captured — the
-    real-run path would raise. The pre-run cost preflight already skips mock
-    mode for the same reason.
+    Strict is on (cost objective, env unset) and nothing is captured, so the
+    first trial raises ``CostTrackingRequiredError`` even under
+    ``TRAIGENT_MOCK_LLM=true``.
     """
     monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+
+    @optimize(
+        eval_dataset=[{"input": {"question": "q"}, "expected_output": "A"}],
+        objectives=["accuracy", "cost"],
+        configuration_space={"temperature": [0.1]},
+        offline=True,
+    )
+    def fn(question: str = "", temperature: float = 0.1, **_cfg):
+        return "A"
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(Exception) as exc_info:  # noqa: B017 - must fail closed
+            await fn.optimize(progress_bar=False)
+
+    assert "CostTrackingRequiredError" in _error_chain_text(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_mock_llm_run_without_usage_warns_when_strict_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The documented opt-out still downgrades the mock run to a warning."""
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    monkeypatch.setenv("TRAIGENT_STRICT_COST_ACCOUNTING", "false")
 
     @optimize(
         eval_dataset=[{"input": {"question": "q"}, "expected_output": "A"}],
@@ -498,7 +525,57 @@ async def test_mock_llm_run_warns_instead_of_failing_without_usage(
         result = await fn.optimize(progress_bar=False)
 
     assert result.trials
-    pricing = result.metadata["pricing"]
-    assert pricing["strict_cost_accounting"] is True
-    assert pricing["usage_captured"] is False
+    assert result.metadata["pricing"]["usage_captured"] is False
     assert "COST_OBJECTIVE_NO_USAGE_CAPTURED" in result.warning_codes
+
+
+@pytest.mark.asyncio
+async def test_default_cost_limit_does_not_fail_a_run_that_reports_no_cost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """r19 intent: a DEFAULT (non-explicit) cost limit bounds known spend only.
+
+    With no ``TRAIGENT_RUN_COST_LIMIT`` the limit is not explicit, so trials
+    that report no cost complete instead of being refused.
+    """
+    monkeypatch.delenv("TRAIGENT_RUN_COST_LIMIT", raising=False)
+
+    @optimize(
+        eval_dataset=[{"input": {"question": "q"}, "expected_output": "A"}],
+        objectives=["accuracy"],
+        configuration_space={"temperature": [0.1]},
+        offline=True,
+    )
+    def fn(question: str = "", temperature: float = 0.1, **_cfg):
+        return "A"
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = await fn.optimize(progress_bar=False)
+
+    assert result.trials
+    assert all(t.status.value == "completed" for t in result.trials)
+
+
+@pytest.mark.asyncio
+async def test_explicit_cost_limit_still_refuses_a_run_that_reports_no_cost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Control for the default-limit test: an explicit cap fails closed."""
+    monkeypatch.setenv("TRAIGENT_RUN_COST_LIMIT", "100")
+
+    @optimize(
+        eval_dataset=[{"input": {"question": "q"}, "expected_output": "A"}],
+        objectives=["accuracy"],
+        configuration_space={"temperature": [0.1]},
+        offline=True,
+    )
+    def fn(question: str = "", temperature: float = 0.1, **_cfg):
+        return "A"
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(Exception) as exc_info:  # noqa: B017 - must fail closed
+            await fn.optimize(progress_bar=False)
+
+    assert "completed without a reported cost" in _error_chain_text(exc_info.value)
