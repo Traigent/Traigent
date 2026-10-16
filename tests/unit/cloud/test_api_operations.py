@@ -384,6 +384,8 @@ class TestSanitizeErrorMessage:
             ("authentication rejected: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz"),
             (r"C:\Users\Juan Carlos de la Cruz\file.txt", "Carlos"),
             ("bAsIc dXNlcjpwYXNz", "dXNlcjpwYXNz"),
+            ("basic ajppajppajpp", "ajppajppajpp"),
+            ("auth failed: BASIC ajppajppajpp rejected", "ajppajppajpp"),
             ("password=o'connor", "connor"),
             ("https://private-token:password=abc123@host/path", "private-token"),
             ("password=alpha]private-tail", "private-tail"),
@@ -406,6 +408,8 @@ class TestSanitizeErrorMessage:
             "user a@b.com not found",
             "max_tokens=100 exceeded",
             "Basic authentication required",
+            "basic usage of the API",
+            "basic example configuration",
         ],
     )
     def test_error_codes_and_ids_survive(self, msg):

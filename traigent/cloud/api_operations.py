@@ -6,6 +6,8 @@ including session creation, status updates, and configuration run management.
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-AGENTS REQ-CLOUD-009 REQ-AGNT-013
 
+import base64
+import binascii
 import re
 import time
 from typing import TYPE_CHECKING, Any, NoReturn, cast
@@ -340,6 +342,22 @@ _BASIC_RE = re.compile(
     r"\bBasic\s+(?=[A-Za-z0-9+/]*(?-i:[A-Z0-9+/=]))[A-Za-z0-9+/]{8,}={0,2}",
     re.IGNORECASE,
 )
+# Case-insensitive companion: a lowercase-only credential (``basic ajppajppajpp``)
+# has no capital/digit/symbol, so it is redacted only when the token is valid
+# base64 that decodes to ``user:pass`` (contains ``:``). Prose such as
+# "basic usage of the API" does not decode to a colon-bearing string and stays.
+_BASIC_B64_RE = re.compile(r"\bBasic\s+(?P<tok>[A-Za-z0-9+/]{8,}={0,2})", re.IGNORECASE)
+
+
+def _basic_b64_replace(match: "re.Match[str]") -> str:
+    token = match.group("tok")
+    try:
+        decoded = base64.b64decode(token + "=" * (-len(token) % 4), validate=True)
+    except (binascii.Error, ValueError):
+        return match.group(0)
+    return "Basic [REDACTED]" if b":" in decoded else match.group(0)
+
+
 _URL_USERINFO_RE = re.compile(r"(?<=://)[^/\s@?#]+(?=@)")
 _URL_CUT_AUTHORITY_RE = re.compile(r"(?<=://)[^/\s@?#]+\Z")
 # Windows forbids these characters in a file name; a user name may hold up to
@@ -372,6 +390,7 @@ def _scrub_error_text(text: str) -> str:
     text = _AUTH_HEADER_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
     text = _COOKIE_HEADER_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
     text = _BASIC_RE.sub("Basic [REDACTED]", text)
+    text = _BASIC_B64_RE.sub(_basic_b64_replace, text)
     text = _BEARER_RE.sub("Bearer [REDACTED]", text)
     text = _SECRET_KV_RE.sub(lambda m: f"{m.group('key')}[REDACTED]", text)
     text = redact_embedded_credentials(text)
