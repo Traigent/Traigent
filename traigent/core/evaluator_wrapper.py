@@ -587,8 +587,12 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 if row_has_measured_cost(row)
             )
             if any(row_has_measured_cost(row) for row in all_metrics):
-                if aggregated.get("total_cost") is None:
-                    aggregated["total_cost"] = reported
+                # Always the combined per-row spend: the plain sum above only
+                # saw rows reporting ``total_cost`` and would drop a row that
+                # reports ``cost``. ``known_spend_lower_bound`` takes the max
+                # across one row's aliases (trial_costs.py), so a row echoing
+                # the same spend as ``cost`` and ``total_cost`` counts once.
+                aggregated["total_cost"] = reported
             else:
                 for metric in _LLM_COST_METRICS:
                     if aggregated.get(metric) is None:

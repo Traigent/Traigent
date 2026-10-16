@@ -291,3 +291,20 @@ def test_all_zero_attempt_rows_materialize_zero() -> None:
         [{"provider_attempts": 0}, {"provider_attempts": 0}], [False, False]
     )
     assert aggregated["total_cost"] == 0.0
+
+
+def test_mixed_aliases_with_zero_attempt_row_sum_all_spend() -> None:
+    aggregated = _wrapper_aggregate(
+        [{"total_cost": 0.10}, {"cost": 0.25}, {"provider_attempts": 0}],
+        [True, True, False],
+    )
+    assert not aggregated.get("cost_unmeasured")
+    assert aggregated["total_cost"] == pytest.approx(0.35)
+
+
+def test_row_echoing_spend_under_two_aliases_counts_once() -> None:
+    aggregated = _wrapper_aggregate(
+        [{"cost": 0.25, "total_cost": 0.25}, {"provider_attempts": 0}],
+        [True, False],
+    )
+    assert aggregated["total_cost"] == pytest.approx(0.25)
