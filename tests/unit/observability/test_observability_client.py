@@ -6431,9 +6431,8 @@ class TestFinding2RealTransportInterleavingRegression:
             index = next(call_index)
             if index == paused_call_index:
                 entered_pause.set()
-                assert proceed.wait(timeout=5.0), (
-                    "test never released the paused transport submission"
-                )
+                release_message = "test never released the paused transport submission"
+                assert proceed.wait(timeout=5.0), release_message
                 scrub_armed["on"] = True
             return real_prepare_payload(self, payload, state=state)
 
@@ -6468,9 +6467,8 @@ class TestFinding2RealTransportInterleavingRegression:
         )
         paused_thread.start()
 
-        assert entered_pause.wait(timeout=5.0), (
-            "paused submission never reached the transport prepare step"
-        )
+        pause_message = "paused submission never reached the transport prepare step"
+        assert entered_pause.wait(timeout=5.0), pause_message
 
         # Mutate the SAME trace from this (the main) thread while the
         # first observation's snapshot submission is paused: complete it,
@@ -6525,15 +6523,15 @@ class TestFinding2RealTransportInterleavingRegression:
 
         observations = final_payload.get("observations", [])
         observation_ids = {obs["id"] for obs in observations}
-        assert observation_ids == {first_observation_id}, (
-            f"expected only the frozen observation, got {observation_ids}"
-        )
+        ids_message = f"expected only the frozen observation, got {observation_ids}"
+        assert observation_ids == {first_observation_id}, ids_message
         matching = next(
             obs for obs in observations if obs["id"] == first_observation_id
         )
-        assert matching["status"] == "running", (
+        status_message = (
             f"expected the FROZEN pre-mutation status, got {matching['status']!r}"
         )
+        assert matching["status"] == "running", status_message
 
 
 def test_observability_client_sends_multi_tag_filters_as_repeated_keys():
