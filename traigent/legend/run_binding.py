@@ -252,6 +252,7 @@ def parse_block(raw: Any) -> LegendBlock | None:
             isinstance(scheme, str)
             and isinstance(fingerprint, str)
             and 0 < len(fingerprint) <= 256
+            and isinstance(source, str)
             and source in _ADVERTISABLE_SOURCES
         ):  # malformed or absent proposal details are ignored, never trusted
             proposals.append((key, (scheme, fingerprint, source)))

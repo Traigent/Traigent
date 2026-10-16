@@ -248,6 +248,28 @@ def test_parse_block_absent_off_and_malformed_are_none() -> None:
     assert ok is not None and ok.trial_ref is None and len(ok.bindings) == 1
 
 
+@pytest.mark.parametrize("bad", [{}, [], 5])
+@pytest.mark.parametrize("field", ["identity_source", "fingerprint"])
+def test_malformed_advertised_proposal_detail_is_ignored_not_raised(
+    field: str, bad: Any
+) -> None:
+    """A non-string proposal detail is ignored; it never raises during parsing."""
+    item = {
+        "binding_role": "run_base_configuration",
+        "slot_scope": "run",
+        "binding_slot": 0,
+        "version_ref": vref(2),
+        "fingerprint_scheme": c.SCHEME_BY_KIND[c.KIND_AGENT],
+        "fingerprint": "sha256:" + "a" * 64,
+        "identity_source": c.IDENTITY_SDK_FINGERPRINTED,
+    }
+    item[field] = bad
+    parsed = parse_block({**block(), "bindings": [item]})
+    assert parsed is not None
+    assert len(parsed.bindings) == 1
+    assert parsed.proposals == ()
+
+
 def test_options_validate_refs_and_mode() -> None:
     assert LegendOptions.coerce(None) is None
     opts = LegendOptions.coerce(
