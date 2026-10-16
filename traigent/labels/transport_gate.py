@@ -274,7 +274,9 @@ def _check_strict(client: Any, url: str) -> None:
         raise TransportGateRefusal("unrecognised_origin", {"violation": 1})
 
 
-_REDIRECT_STATUSES = frozenset({300, 301, 302, 303, 307, 308})
+def _is_redirect_status(status: int) -> bool:
+    """Every 3xx (including 304/305/306): a strict session never returns one to a caller."""
+    return 300 <= int(status) < 400
 
 
 def _is_strict(client: Any) -> bool:
@@ -346,7 +348,7 @@ def _build_aiohttp(base: type) -> type:
                 return await super()._request(method, str_or_url, **kwargs)
             kwargs["allow_redirects"] = False
             response = await super()._request(method, str_or_url, **kwargs)
-            if response.status in _REDIRECT_STATUSES:
+            if _is_redirect_status(response.status):
                 response.release()
                 raise _refuse_redirect()
             return response
@@ -376,7 +378,7 @@ def _build_requests(base: type) -> type:
                 return super().send(request, **kwargs)
             kwargs["allow_redirects"] = False
             response = super().send(request, **kwargs)
-            if response.status_code in _REDIRECT_STATUSES:
+            if _is_redirect_status(response.status_code):
                 response.close()
                 raise _refuse_redirect()
             return response
@@ -410,7 +412,7 @@ def _build_httpx_sync(base: type) -> type:
                 return super().send(request, **kwargs)
             kwargs["follow_redirects"] = False
             response = super().send(request, **kwargs)
-            if response.status_code in _REDIRECT_STATUSES:
+            if _is_redirect_status(response.status_code):
                 response.close()
                 raise _refuse_redirect()
             return response
@@ -437,7 +439,7 @@ def _build_httpx_async(base: type) -> type:
                 return await super().send(request, **kwargs)
             kwargs["follow_redirects"] = False
             response = await super().send(request, **kwargs)
-            if response.status_code in _REDIRECT_STATUSES:
+            if _is_redirect_status(response.status_code):
                 await response.aclose()
                 raise _refuse_redirect()
             return response

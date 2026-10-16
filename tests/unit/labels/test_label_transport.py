@@ -815,3 +815,146 @@ def test_origin_normalisation() -> None:
     assert _origin("http://127.0.0.1:9") == ("http", "127.0.0.1", 9)
     assert _origin("not a url") is None
     assert _origin("http://example.com:99999") is None
+
+
+# ----------------------------------------- every 3xx is refused; httpx caller overrides
+
+
+@pytest.mark.parametrize("status", [304, 305, 306])
+def test_strict_aiohttp_refuses_and_releases_any_3xx(status: int) -> None:
+    import aiohttp
+
+    from traigent.labels import transport_gate as gate
+
+    async def plain(request: web.Request) -> web.Response:
+        return web.Response(status=status)
+
+    async def main():
+        app = web.Application()
+        app.router.add_route("*", "/{tail:.*}", plain)
+        async with TestServer(app) as server:
+            base = f"http://{server.host}:{server.port}"
+            session = gate.gate_session(
+                aiohttp.ClientSession(), origins=[base], strict=True
+            )
+            async with session:
+                with pytest.raises(gate.TransportGateRefusal) as err:
+                    await session.get(f"{base}/x")
+            return err.value
+
+    gate.set_mode("report")
+    try:
+        err = asyncio.run(main())
+    finally:
+        gate.set_mode(None)
+    assert err.route == "redirect_refused"
+
+
+def _http_servers():
+    """(target, redirector, base) plain threaded servers; the redirector answers 307."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    seen: list[str] = []
+
+    class Target(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            seen.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        do_PUT = do_POST = do_GET
+
+        def log_message(self, *a: object) -> None:
+            pass
+
+    class Redirector(Target):
+        def do_GET(self) -> None:  # noqa: N802
+            self.send_response(self.server.status)  # type: ignore[attr-defined]
+            if self.server.status != 305:  # type: ignore[attr-defined]
+                self.send_header("Location", f"http://127.0.0.1:{target.server_port}/x")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        do_PUT = do_POST = do_GET
+
+    target = HTTPServer(("127.0.0.1", 0), Target)
+    first = HTTPServer(("127.0.0.1", 0), Redirector)
+    first.status = 307  # type: ignore[attr-defined]
+    for s in (target, first):
+        threading.Thread(target=s.serve_forever, daemon=True).start()
+    return target, first, f"http://127.0.0.1:{first.server_port}", seen
+
+
+def _stop(*servers) -> None:
+    for s in servers:
+        s.shutdown()
+        s.server_close()
+
+
+@pytest.mark.parametrize("status", [304, 305])
+def test_strict_httpx_and_requests_refuse_304_and_305(status: int) -> None:
+    import httpx
+    import requests
+
+    from traigent.labels import transport_gate as gate
+
+    target, first, base, seen = _http_servers()
+    first.status = status
+    gate.set_mode("report")
+    try:
+        for client in (
+            gate.gate_session(httpx.Client(), origins=[base], strict=True),
+            gate.gate_session(requests.Session(), origins=[base], strict=True),
+        ):
+            with pytest.raises(gate.TransportGateRefusal) as err:
+                client.get(f"{base}/a")
+            assert err.value.route == "redirect_refused"
+    finally:
+        gate.set_mode(None)
+        _stop(target, first)
+    assert seen == []
+
+
+def test_strict_httpx_caller_overrides_cannot_follow_a_redirect() -> None:
+    import httpx
+
+    from traigent.labels import transport_gate as gate
+
+    target, first, base, seen = _http_servers()
+    gate.set_mode("report")
+
+    def sync_cases() -> None:
+        client = gate.gate_session(httpx.Client(), origins=[base], strict=True)
+        # 1. follow_redirects=True on the call
+        with pytest.raises(gate.TransportGateRefusal):
+            client.get(f"{base}/a", follow_redirects=True, headers={"X-API-Key": "k"})
+        # 2. build_request + send(follow_redirects=True)
+        request = client.build_request("GET", f"{base}/a", headers={"X-API-Key": "k"})
+        with pytest.raises(gate.TransportGateRefusal):
+            client.send(request, follow_redirects=True)
+        # 3. streaming: refused, and the stream is closed
+        with pytest.raises(gate.TransportGateRefusal):
+            with client.stream("GET", f"{base}/a", follow_redirects=True):
+                pytest.fail("a redirected stream must not be handed to the caller")
+
+    async def async_cases() -> None:
+        client = gate.gate_session(httpx.AsyncClient(), origins=[base], strict=True)
+        async with client:
+            with pytest.raises(gate.TransportGateRefusal):
+                await client.get(f"{base}/a", follow_redirects=True)
+            request = client.build_request("GET", f"{base}/a")
+            with pytest.raises(gate.TransportGateRefusal):
+                await client.send(request, follow_redirects=True)
+            with pytest.raises(gate.TransportGateRefusal):
+                async with client.stream("GET", f"{base}/a", follow_redirects=True):
+                    pytest.fail("a redirected stream must not be handed to the caller")
+
+    try:
+        sync_cases()
+        asyncio.run(async_cases())
+    finally:
+        gate.set_mode(None)
+        _stop(target, first)
+    assert seen == []  # the redirect target never saw a request
