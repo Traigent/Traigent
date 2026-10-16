@@ -51,8 +51,12 @@ def build_declaration_payload(
     change_reason: str | None,
     initial_parent_version_ref: str | None = None,
     idempotency_key: str | None = None,
+    provenance: str = c.PROVENANCE_EXPLICIT,
 ) -> dict[str, Any]:
     """``DeclareRequestV0``.
+
+    ``provenance`` defaults to ``explicit`` (a caller declaring a version on purpose); the run
+    binder passes ``implicit_run`` for what a run merely observed.
 
     ``initial_parent_version_ref`` is honoured by the server only on the version's FIRST
     declaration (send ``None`` otherwise); ``previous_version_ref`` (where the declarer
@@ -67,13 +71,15 @@ def build_declaration_payload(
             raise LegendError("invalid_request", f"{what} must be an opaque ref")
     if change_reason is not None and change_reason not in c.CHANGE_REASONS:
         raise LegendError("invalid_request", "change_reason is not in the closed list")
+    if provenance not in c.CLIENT_PROVENANCES:
+        raise LegendError("invalid_request", "provenance is not client-sendable")
     body: dict[str, Any] = {
         "schema_version": c.SCHEMA_VERSION,
         "entity_ref": entity_ref,
         **pillar.wire_identity(),
         "initial_parent_version_ref": initial_parent_version_ref,
         "identity_source": pillar.identity_source,
-        "provenance": c.PROVENANCE_EXPLICIT,
+        "provenance": provenance,
     }
     if previous_version_ref is not None:
         body["previous_version_ref"] = previous_version_ref

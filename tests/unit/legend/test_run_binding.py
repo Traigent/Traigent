@@ -101,6 +101,20 @@ class FakeServer(InMemoryTransport):
         if self._fail_declare > 0:
             self._fail_declare -= 1
             raise LegendError("store_unavailable")
+        # The Backend's rule (Schema contract pillar-legend-v0.md): a version's
+        # identity_source is immutable, the first declaration wins, a different one is refused.
+        key = (
+            payload["entity_ref"],
+            payload["fingerprint_scheme"],
+            payload["key_id"],
+            payload["fingerprint"],
+        )
+        ref = self._by_identity.get(key)
+        if (
+            ref is not None
+            and self.versions[ref]["identity_source"] != payload["identity_source"]
+        ):
+            raise LegendError("invalid_request")
         return super().declare(payload)
 
     def admit(self, session_id: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -1338,3 +1352,164 @@ async def test_matching_suggestion_fingerprint_does_not_substitute_for_the_adver
     assert err.value.__cause__.code == "local_observation_incomplete"
     assert not [a for a in server.admissions if "trial_id" in a]
     assert proposal.version_ref not in json.dumps(server.admissions)
+
+
+# ------------------------------------- D7: advertised versions carry the source the SDK declares
+def _backend_proposal(
+    server: FakeServer, pillar: Any, source: str, entity: str | None = None
+) -> DeclareResult:
+    """What the Backend does when it advertises a version: an implicit run declaration."""
+    from dataclasses import replace
+
+    from traigent.legend import payloads
+
+    body = payloads.build_declaration_payload(
+        replace(pillar, identity_source=source),
+        entity_ref=entity,
+        previous_version_ref=None,
+        change_reason=None,
+        provenance=c.PROVENANCE_IMPLICIT_RUN,
+    )
+    return server.declare(body)
+
+
+_D7_WIRE = {
+    "agent": {"build_digest": "sha256:" + "a" * 64},
+    "dataset": {
+        "dataset_root": "msr1:k" + "b" * 16 + ":" + "c" * 64,
+        "key_id": "k" + "b" * 16,
+    },
+    "evaluator": {"version_digest": "sha256:" + "d" * 64},
+}
+_D7_ROLES = {
+    c.KIND_AGENT: "base_agent",
+    c.KIND_DATASET: "dataset",
+    c.KIND_EVALUATOR: "evaluator",
+    c.KIND_CONFIGURATION: "run_base_configuration",
+}
+
+
+def _d7_admit_run(server: FakeServer, source: str) -> dict[str, DeclareResult]:
+    from traigent.legend.run_binding import pillars_from_content_identity
+
+    pillars = pillars_from_content_identity(_D7_WIRE, {"param1": 1})
+    proposals = {k: _backend_proposal(server, p, source) for k, p in pillars.items()}
+    blk = block([(_D7_ROLES[k], r.version_ref) for k, r in proposals.items()])
+    for b in blk["bindings"]:
+        kind = next(k for k, role in _D7_ROLES.items() if role == b["binding_role"])
+        b["entity_ref"] = proposals[kind].entity_ref
+    binder = start_binder(
+        session_id="sess_1",
+        raw_block=blk,
+        options=LegendOptions(mode="strict", transport=server),
+        privacy_enabled=False,
+    )
+    assert binder is not None
+    binder.admit_run(pillars)
+    return proposals
+
+
+def test_d7_run_declares_of_advertised_versions_succeed_for_every_kind() -> None:
+    """The SDK computed all four digests: the Backend advertises them as sdk_fingerprinted,
+    so the run-time declaration under the advertised entity returns the advertised version."""
+    server = FakeServer()
+    proposals = _d7_admit_run(server, c.IDENTITY_SDK_FINGERPRINTED)
+    sent = {
+        o["binding_role"]: o["version_ref"]
+        for o in server.admissions[0]["run_observed"]
+    }
+    for kind, role in _D7_ROLES.items():
+        assert sent[role] == proposals[kind].version_ref
+    assert {d["provenance"] for d in server.declare_attempts} == {
+        c.PROVENANCE_IMPLICIT_RUN
+    }  # the binder declares what the run observed
+
+
+def test_d7_a_mismatched_source_is_still_refused() -> None:
+    """Rule intact: advertise client_declared (the old Backend) and the SDK's
+    sdk_fingerprinted re-declaration is refused, never silently retried."""
+    server = FakeServer()
+    with pytest.raises(LegendError) as err:
+        _d7_admit_run(server, c.IDENTITY_CLIENT_DECLARED)
+    assert err.value.code == "invalid_request"
+    sources = {
+        d["identity_source"]
+        for d in server.declare_attempts
+        if d["entity_ref"] is not None
+    }
+    assert sources == {
+        c.IDENTITY_SDK_FINGERPRINTED
+    }  # one attempt per slot, no alternate
+
+
+def test_d7_trial_configuration_declare_matches_the_advertised_source() -> None:
+    server = FakeServer()
+    cfg = compute_pillar(c.KIND_CONFIGURATION, ConfigurationSource({"param1": 3}))
+    proposal = _backend_proposal(server, cfg, c.IDENTITY_SDK_FINGERPRINTED)
+    blk = _trial_block(
+        1,
+        proposal.version_ref,
+        [("run_base_configuration", vref(7))],
+        entity=proposal.entity_ref,
+    )
+    _admit_one(server, "strict", blk, {"param1": 3})
+    sent = [a for a in server.admissions if "trial_id" in a][0]["trial_observed"]
+    assert [
+        o["version_ref"] for o in sent if o["binding_role"] == "trial_configuration"
+    ] == [proposal.version_ref]
+    bad = FakeServer()
+    old = _backend_proposal(bad, cfg, c.IDENTITY_CLIENT_DECLARED)
+    blk = _trial_block(
+        1, old.version_ref, [("run_base_configuration", vref(7))], entity=old.entity_ref
+    )
+    with pytest.raises(LegendError) as err:
+        _admit_one(bad, "strict", blk, {"param1": 3})
+    assert err.value.code == "invalid_request"
+
+
+def test_d7_hosted_dataset_is_identity_drift_not_a_source_mismatch() -> None:
+    """A hosted dataset is advertised under dataset_content_digest_v1 (client_declared); the SDK
+    observes a different scheme (dataset_multiset_root_v1). Different scheme = different
+    version in that entity: strict refuses as drift, permitted records a same-entity child."""
+    from traigent.legend.run_binding import pillars_from_content_identity
+
+    def run(mode: str) -> FakeServer:
+        server = FakeServer()
+        hosted = server.declare(
+            {
+                **__import__("traigent.legend.payloads", fromlist=["x"]).seal(
+                    {
+                        "schema_version": c.SCHEMA_VERSION,
+                        "entity_ref": None,
+                        "kind": c.KIND_DATASET,
+                        "fingerprint_scheme": "dataset_content_digest_v1",
+                        "key_id": None,
+                        "fingerprint": "sha256:" + "e" * 64,
+                        "initial_parent_version_ref": None,
+                        "identity_source": c.IDENTITY_CLIENT_DECLARED,
+                        "provenance": c.PROVENANCE_IMPLICIT_RUN,
+                    },
+                    None,
+                )
+            }
+        )
+        blk = block([("dataset", hosted.version_ref)])
+        blk["bindings"][0]["entity_ref"] = hosted.entity_ref
+        binder = start_binder(
+            session_id="sess_1",
+            raw_block=blk,
+            options=LegendOptions(mode=mode, transport=server),
+            privacy_enabled=False,
+        )
+        assert binder is not None
+        binder.admit_run(
+            pillars_from_content_identity({"dataset": _D7_WIRE["dataset"]}, None)
+        )
+        return server
+
+    with pytest.raises(LegendError) as err:
+        run("strict")
+    assert err.value.code == "manifest_mismatch"
+    server = run("permitted")
+    child = server.admissions[0]["run_observed"][0]["version_ref"]
+    assert server.versions[child]["fingerprint_scheme"] == "dataset_multiset_root_v1"

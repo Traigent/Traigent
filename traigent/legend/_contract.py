@@ -38,6 +38,9 @@ KEYED_SCHEMES: Final = frozenset({"dataset_multiset_root_v1", "search_space_ssp1
 IDENTITY_SDK_FINGERPRINTED: Final = "sdk_fingerprinted"
 IDENTITY_CLIENT_DECLARED: Final = "client_declared"
 PROVENANCE_EXPLICIT: Final = "explicit"
+PROVENANCE_IMPLICIT_RUN: Final = "implicit_run"
+# Client-sendable provenance values; ``implicit_legacy`` is server-only (backfill).
+CLIENT_PROVENANCES: Final = frozenset({PROVENANCE_EXPLICIT, PROVENANCE_IMPLICIT_RUN})
 
 CHANGE_REASONS: Final = frozenset(
     {

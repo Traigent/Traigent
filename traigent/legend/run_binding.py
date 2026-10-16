@@ -367,6 +367,7 @@ class LegendRunBinder:
             change_reason=change_reason,
             initial_parent_version_ref=initial_parent,
             idempotency_key=key,
+            provenance=c.PROVENANCE_IMPLICIT_RUN,
         )
         self.calls += 1
         result = with_retries(lambda: self._transport.declare(payload))
