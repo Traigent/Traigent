@@ -80,19 +80,31 @@ SIMULATED_COST_NOTICE = (
 )
 
 
+def _costs_are_simulated() -> bool:
+    """True when this run's costs are simulated, not provider-reported spend.
+
+    That is the case for the offline stand-in LLM AND for mock mode
+    (``TRAIGENT_MOCK_LLM``, the default of ``run.py``), whether or not
+    ``langchain_openai`` imports: mock mode simulates the usage either way.
+    """
+    from traigent.utils.env_config import is_mock_llm
+
+    return _USING_FALLBACK_LLM or is_mock_llm()
+
+
 def simulated_cost_provenance() -> dict[str, str]:
     """Marker merged into exported results next to the cost totals.
 
-    Empty with the real ``langchain_openai`` client, so nothing changes there.
+    Empty for a real run (real client, mock mode off), so nothing changes there.
     """
-    if not _USING_FALLBACK_LLM:
+    if not _costs_are_simulated():
         return {}
     return {"cost_source": COST_SOURCE_SIMULATED}
 
 
 def print_simulated_cost_notice() -> None:
-    """Print one clear line before results when the stand-in LLM was used."""
-    if _USING_FALLBACK_LLM:
+    """Print one clear line before results when the costs are simulated."""
+    if _costs_are_simulated():
         print(SIMULATED_COST_NOTICE)
 
 

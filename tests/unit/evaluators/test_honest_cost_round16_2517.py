@@ -60,7 +60,8 @@ def test_advanced_example_labels_simulated_cost(example: str, tmp_path: Path) ->
     assert "total_cost" in exported
 
 
-def test_marker_absent_with_real_client() -> None:
+def test_marker_absent_with_real_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("traigent.utils.env_config.is_mock_llm", lambda: False)
     path = ADVANCED / RUNNERS[0] / "local_search.py"
     sys.path.insert(0, str(path.parent))
     try:
