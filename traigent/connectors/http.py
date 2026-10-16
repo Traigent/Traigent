@@ -19,6 +19,8 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
+from traigent.labels.transport_gate import gate_session
+
 
 @dataclass(frozen=True, slots=True, repr=False)
 class ConnectionCredentials:
@@ -230,10 +232,12 @@ class HttpKernel:
 
             async def run_call() -> HttpResponse:
                 transport = self._new_transport()
-                async with httpx.AsyncClient(
-                    cookies=CookieJar(policy=_RejectCookies()),
-                    follow_redirects=False,
-                    transport=transport,
+                async with gate_session(
+                    httpx.AsyncClient(
+                        cookies=CookieJar(policy=_RejectCookies()),
+                        follow_redirects=False,
+                        transport=transport,
+                    )
                 ) as client:
                     try:
                         return await self._request_async(
