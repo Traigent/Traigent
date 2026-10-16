@@ -606,8 +606,10 @@ class TestConnectedGridDecoratorToWire:
             monkeypatch, tmp_path / "2", {"eval_dataset": v2, "dataset_id": "ds-42"}
         )
         assert p1["dataset_id"] == p2["dataset_id"] == "ds-42"
-        assert p1["dataset_metadata"]["name"] == "support"
-        assert p2["dataset_metadata"]["name"] == "support-renamed"
+        # The connected path is privacy mode: the customer-chosen dataset label
+        # must not ride in dataset_metadata (identity travels as dataset_id).
+        assert "name" not in p1["dataset_metadata"]
+        assert "name" not in p2["dataset_metadata"]
 
     @pytest.mark.asyncio
     async def test_anonymous_inline_data_sends_no_identity_and_warns_once(

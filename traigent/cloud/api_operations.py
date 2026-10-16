@@ -30,6 +30,7 @@ from traigent.cloud.models import (
     SessionCreationResponse,
     TrialResultSubmission,
     session_content_identity_to_wire,
+    dataset_metadata_to_wire,
     session_dataset_identity_to_wire,
     session_identity_v2_to_wire,
     session_narrative_to_wire,
@@ -669,7 +670,7 @@ class ApiOperations:
         experiment records the FE hydrates."""
         metadata = dict(session_request.metadata or {})
         evaluation_set = metadata.get("evaluation_set", "default")
-        dataset_metadata = dict(session_request.dataset_metadata or {})
+        dataset_metadata = dict(dataset_metadata_to_wire(session_request) or {})
         # The typed path requires a positive dataset size.
         size = dataset_metadata.get("size")
         if not isinstance(size, int) or size <= 0:
@@ -762,7 +763,7 @@ class ApiOperations:
             "problem_statement": session_request.function_name,
             "dataset": {
                 "examples": [],  # Privacy mode - no actual data sent
-                "metadata": session_request.dataset_metadata,
+                "metadata": dataset_metadata_to_wire(session_request),
             },
             "search_space": session_request.configuration_space,
             "optimization_config": {

@@ -425,6 +425,32 @@ def _clean_derived_label(value: Any) -> str | None:
     return cleaned
 
 
+_PRIVACY_STRIPPED_DATASET_KEYS = ("name", "description")
+
+
+def dataset_metadata_to_wire(session_request: Any) -> dict[str, Any] | None:
+    """The ``dataset_metadata`` object a session-create may put on the wire.
+
+    In privacy mode (``dataset_metadata["privacy_mode"]`` / ``["privacy_safe"]``
+    truthy, or ``billing_tier == "privacy"``) the customer-chosen dataset
+    ``name`` and ``description`` are customer content and are dropped; counts
+    and other structural fields stay. Outside privacy mode the metadata is
+    returned unchanged. The request itself is never mutated, so the declared
+    identity derivation (``session_dataset_identity_to_wire``) is unaffected.
+    """
+    raw = getattr(session_request, "dataset_metadata", None)
+    if not isinstance(raw, dict):
+        return raw
+    privacy = (
+        bool(raw.get("privacy_mode"))
+        or bool(raw.get("privacy_safe"))
+        or getattr(session_request, "billing_tier", None) == "privacy"
+    )
+    if not privacy:
+        return raw
+    return {k: v for k, v in raw.items() if k not in _PRIVACY_STRIPPED_DATASET_KEYS}
+
+
 def _derive_default_dataset_id(session_request: Any) -> str | None:
     """Derive a stable dataset id from a declared LABEL only -- never from
     example content. Two labels checked, in order:

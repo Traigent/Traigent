@@ -25,6 +25,7 @@ from traigent.utils.hashing import generate_benchmark_hash, generate_experiment_
 from traigent.utils.logging import get_logger
 
 from .models import (
+    dataset_metadata_to_wire,
     AgentSpecification,
     OptimizationRequest,
     SessionCreationRequest,
@@ -192,7 +193,7 @@ class SDKBackendBridge:
             "function_name": session_request.function_name,
             "configuration_space": session_request.configuration_space,
             "objectives": session_request.objectives,
-            "dataset_metadata": session_request.dataset_metadata,
+            "dataset_metadata": dataset_metadata_to_wire(session_request),
             "max_trials": session_request.max_trials,
             "optimization_strategy": session_request.optimization_strategy,
             "user_id": session_request.user_id,
