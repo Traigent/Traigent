@@ -743,9 +743,9 @@ class TraigentHandler(BaseCallbackHandler):
     ) -> float | None:
         """Estimate cost for LLM call via the canonical cost_from_tokens().
 
-        In default mode, unknown models return 0.0 with a warning (the
-        runtime-unpriced-model machinery attaches the result-level warning).
-        A failed estimate returns ``None`` -- unknown, never a measured $0.
+        In default mode an unknown model returns ``None`` (with a warning from
+        the runtime-unpriced-model machinery): unknown, never a measured $0.
+        A failed estimate returns ``None`` as well.
         When TRAIGENT_STRICT_COST_ACCOUNTING=true, unknown models raise.
         """
         strict_cost_accounting = self._strict_cost_accounting
@@ -781,6 +781,17 @@ class TraigentHandler(BaseCallbackHandler):
                         model,
                     )
                     return est_total
+
+            if not strict_cost_accounting and total_cost <= 0.0 and total_tokens > 0:
+                # Tokens were reported but no price table covers the model: the
+                # zero is the absence of a price, not a free call. Unknown
+                # (``None``) so the call is flagged unmeasured (#2517).
+                from traigent.utils.cost_calculator import (
+                    record_unpriced_runtime_model,
+                )
+
+                record_unpriced_runtime_model(model)
+                return None
 
             return total_cost
         except Exception:

@@ -120,9 +120,7 @@ def test_failed_row_classification(rows, successes, unknown) -> None:
 
 def test_failed_row_without_telemetry_is_named_as_unmeasured() -> None:
     results = [
-        SimpleNamespace(
-            example_id="ok", metrics={"total_cost": 0.2}, success=True
-        ),
+        SimpleNamespace(example_id="ok", metrics={"total_cost": 0.2}, success=True),
         SimpleNamespace(example_id="boom", metrics={}, success=False),
         SimpleNamespace(
             example_id="none", metrics={"provider_attempts": 0}, success=False

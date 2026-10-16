@@ -588,9 +588,11 @@ class ExampleMetrics:
         ``measured`` answers "was anything extracted"; this answers the narrower
         "is ``cost.total_cost`` spend rather than a placeholder zero". Cost
         aggregation, ranking and display must filter on this, never on the
-        magnitude of ``total_cost``.
+        magnitude of ``total_cost``. Usage that no price table covers
+        (``cost.unpriced``) is not a measured cost either: its ``$0`` is the
+        absence of a price. Whatever part WAS priced stays a floor.
         """
-        return self.measured and not self.cost.unmeasured
+        return self.measured and not self.cost.unmeasured and not self.cost.unpriced
 
 
 class MetricsTracker:
@@ -978,6 +980,12 @@ class MetricsTracker:
         cost_lower_bound = sum(
             float(m.cost.total_cost) for m in cost_measured_metrics
         ) + sum(float(m.cost.known_cost) for m in self.example_metrics)
+        # The priced part of an example that also had unpriced usage is spend.
+        cost_lower_bound += sum(
+            float(m.cost.total_cost)
+            for m in measured_metrics
+            if m.cost.unpriced and not m.cost.unmeasured
+        )
 
         # True when ANY measured example's token counts were fabricated from
         # character length (``LocalEvaluator._estimate_string_tokens``, #2263)
@@ -1283,9 +1291,15 @@ class MetricsTracker:
             # Scalars inside ``metrics``: the summary_stats schema allows a
             # number next to the describe() dicts, but no extra top-level keys.
             summary_metrics["cost_unmeasured"] = 1.0
-            lower_bound = sum(
-                float(m.cost.total_cost) for m in cost_measured_metrics
-            ) + sum(float(m.cost.known_cost) for m in all_metrics)
+            lower_bound = (
+                sum(float(m.cost.total_cost) for m in cost_measured_metrics)
+                + sum(float(m.cost.known_cost) for m in all_metrics)
+                + sum(
+                    float(m.cost.total_cost)
+                    for m in measured_metrics
+                    if m.cost.unpriced and not m.cost.unmeasured
+                )
+            )
             if lower_bound > 0:
                 summary_metrics["cost_lower_bound"] = lower_bound
 

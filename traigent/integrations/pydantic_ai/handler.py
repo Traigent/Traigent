@@ -301,7 +301,7 @@ class PydanticAIHandler:
                 self._model_name or "unknown",
                 strict=strict_cost_accounting,
             )
-            return float(input_cost + output_cost)
+            total_cost = float(input_cost + output_cost)
         except Exception:
             if strict_cost_accounting:
                 raise
@@ -309,6 +309,14 @@ class PydanticAIHandler:
                 "Cost estimation failed for model %s", self._model_name, exc_info=True
             )
             return None
+        if not strict_cost_accounting and total_cost <= 0.0:
+            # Tokens were reported but no price table covers the model: the
+            # zero is the absence of a price, not a free call (#2517).
+            from traigent.utils.cost_calculator import record_unpriced_runtime_model
+
+            record_unpriced_runtime_model(self._model_name or "unknown")
+            return None
+        return total_cost
 
     @staticmethod
     def _extract_model_name(agent: Any) -> str:

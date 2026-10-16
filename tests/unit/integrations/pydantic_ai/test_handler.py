@@ -358,7 +358,7 @@ class TestPydanticAIHandler:
         with patch.dict(
             "os.environ", {"TRAIGENT_STRICT_COST_ACCOUNTING": "true"}, clear=False
         ):
-            assert non_strict_handler._estimate_cost(100, 50) == 0.0
+            assert non_strict_handler._estimate_cost(100, 50) is None
 
         with patch.dict(
             "os.environ", {"TRAIGENT_STRICT_COST_ACCOUNTING": "true"}, clear=False

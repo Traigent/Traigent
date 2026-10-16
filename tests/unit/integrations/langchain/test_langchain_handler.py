@@ -899,12 +899,10 @@ class TestCostEstimation:
         cost = handler._estimate_cost("claude-3-haiku", 1000, 500)
         assert cost > 0, "Should return positive cost for known model"
 
-    def test_estimate_cost_unknown_model_returns_zero(self, handler):
-        """Test _estimate_cost returns 0.0 for unknown model (strict=False)."""
+    def test_estimate_cost_unknown_model_returns_none(self, handler):
+        """An unknown model is an unknown cost (None), never a measured $0."""
         cost = handler._estimate_cost("unknown-model-xyz-123", 1000, 500)
-        assert cost == pytest.approx(0.0), (
-            "Unknown model should return 0.0 with strict=False"
-        )
+        assert cost is None, "Unknown model must be unmeasured with strict=False"
 
     def test_estimate_cost_unknown_model_raises_in_strict_mode(self):
         """Strict cost accounting raises for unknown model pricing."""
@@ -927,7 +925,7 @@ class TestCostEstimation:
             side_effect=Exception("Test error"),
         ):
             cost = handler._estimate_cost("gpt-4o", 1000, 500)
-            assert cost == pytest.approx(0.0), "Should return 0.0 on exception"
+            assert cost is None, "A failed estimate is unknown, never $0"
 
     def test_estimate_cost_case_insensitive(self, handler):
         """Test that model matching is case-insensitive."""
@@ -950,7 +948,7 @@ class TestCostEstimation:
         ):
             assert (
                 non_strict_handler._estimate_cost("unknown-model-xyz-123", 1000, 500)
-                == 0.0
+                is None
             )
 
         with patch.dict(

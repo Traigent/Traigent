@@ -1283,7 +1283,9 @@ class LangfuseClient:
         per_agent_costs: dict[str, float] = {}
         per_agent_latencies: dict[str, float] = {}
         per_agent_tokens: dict[str, int] = {}
-        cost_unmeasured = False
+        # A truncated observation fetch cannot give a complete total: whatever
+        # was fetched is a floor, never the trace's cost (#2517).
+        cost_unmeasured = observations_partial
         unmeasured_agents: set[str] = set()
 
         for obs in observations:

@@ -1822,8 +1822,20 @@ class LocalEvaluator(BaseEvaluator):
         eval_input_tokens = 0
         eval_output_tokens = 0
         eval_tokens = 0
+        judge_unmeasured = False
         for response in eval_responses:
             metrics = extract_llm_metrics(response=response, model_name=None)
+            # A judge call whose usage was not captured is an unknown spend,
+            # not a free one: it makes this example's cost unmeasured (#2517).
+            judge_unmeasured = judge_unmeasured or not (
+                metrics.measured
+                and not metrics.cost.unmeasured
+                and (
+                    metrics.tokens.total_tokens
+                    or metrics.cost.total_cost
+                    or metrics.cost.cost_explicit
+                )
+            )
             eval_input_cost += metrics.cost.input_cost
             eval_output_cost += metrics.cost.output_cost
             eval_total_cost += metrics.cost.total_cost
@@ -1836,6 +1848,9 @@ class LocalEvaluator(BaseEvaluator):
             example_metric.cost.unpriced = (
                 example_metric.cost.unpriced or metrics.cost.unpriced
             )
+
+        if judge_unmeasured and example_metric.measured:
+            self._mark_example_cost_unmeasured_by_judge(example_metric, example_result)
 
         if not eval_total_cost and eval_tokens == 0:
             # Nothing priced and nothing tokenized: there is no judge spend to
@@ -1907,6 +1922,31 @@ class LocalEvaluator(BaseEvaluator):
             )
             example_result.metrics["total_tokens"] = example_metric.tokens.total_tokens
             example_result.metrics["evaluation_cost"] = eval_total_cost
+
+    @staticmethod
+    def _mark_example_cost_unmeasured_by_judge(
+        example_metric: ExampleMetrics, example_result: Any
+    ) -> None:
+        """An unmeasured judge call makes the whole example's cost unknown.
+
+        The agent's own measured spend stays as a known floor
+        (``cost.known_cost``), never as a total; the cost keys already copied
+        into the row and custom metrics are withdrawn so nothing downstream
+        reads the partial sum as the example's cost.
+        """
+        if not example_metric.cost.unmeasured:
+            example_metric.cost.known_cost += example_metric.cost.total_cost
+            example_metric.cost.unmeasured = True
+        floor = float(example_metric.cost.known_cost)
+        cost_keys = ("input_cost", "output_cost", "total_cost", "cost")
+        for key in cost_keys:
+            example_metric.custom_metrics.pop(key, None)
+        if example_result is not None:
+            for key in cost_keys:
+                example_result.metrics.pop(key, None)
+            example_result.metrics["cost_unmeasured"] = 1.0
+            if floor > 0:
+                example_result.metrics["cost_lower_bound"] = floor
 
     def _log_dual_scorer_notice_once(self) -> None:
         """Emit a single run-level notice when both scorers appear (issue #1845).
