@@ -78,11 +78,39 @@ def set_mode(mode: str | None) -> None:
 
 
 def _origin(url: str) -> tuple[str, str, int] | None:
-    parts = urlsplit(url)
-    if not parts.scheme or not parts.hostname:
+    """(scheme, host, port) of ``url``; ``None`` for anything unparseable.
+
+    An invalid URL (bad port, bad netloc) is not ours to judge: it returns ``None`` so the
+    HTTP library raises its own native error.
+    """
+    try:
+        parts = urlsplit(url)
+        if not parts.scheme or not parts.hostname:
+            return None
+        default = 443 if parts.scheme == "https" else 80
+        return parts.scheme.lower(), parts.hostname.lower(), parts.port or default
+    except ValueError:
         return None
-    default = 443 if parts.scheme == "https" else 80
-    return parts.scheme.lower(), parts.hostname.lower(), parts.port or default
+
+
+def applies_to(method: str, url: str) -> bool:
+    """True only for a configured-backend origin AND a known optimization route.
+
+    Evaluated before anything is parsed or serialized, so other hosts and other routes
+    (auth, observability, multipart uploads, ...) are never touched.
+    """
+    if current_mode() == "off":
+        return False
+    try:
+        origin = _origin(str(url))
+        if origin is None or origin not in backend_origins():
+            return False
+    except Exception:  # noqa: BLE001 - cannot establish the backend origin: not ours
+        return False
+    try:
+        return get_table().find(method, urlsplit(str(url)).path) is not None
+    except Exception:  # noqa: BLE001 - backend origin but no table: let the caller decide
+        return True
 
 
 def set_allowed_origins(urls: Iterable[str] | None) -> None:
@@ -143,10 +171,9 @@ def inspect_outgoing(
     if mode == "off":
         return None
     refuse = mode == "refuse"
+    if not applies_to(method, str(url)):
+        return None
     try:
-        origin = _origin(str(url))
-        if origin is None or origin not in backend_origins():
-            return None
         parts = urlsplit(str(url))
         table = get_table()
         has_body = bool(body) or bool(body_present)
@@ -154,8 +181,6 @@ def inspect_outgoing(
         if body:
             parsed = json.loads(body)
         elif body_present:
-            if table.find(method, parts.path) is None:
-                return None
             raise ValueError("unreadable body")
         result = classify_request(
             table, method, parts.path, parts.query, parsed, has_body=has_body
@@ -216,7 +241,7 @@ def _build_aiohttp(base: type) -> type:
             url = _with_params(url, kwargs.get("params"))
             body: bytes | None = None
             unreadable = False
-            if current_mode() != "off":
+            if applies_to(str(method), url):
                 try:
                     data = kwargs.get("data")
                     if kwargs.get("json") is not None and data is None:
@@ -361,8 +386,7 @@ def preflight_requests(method: str, url: str, **kwargs: Any) -> None:
     try:
         import requests
 
-        origin = _origin(str(url))
-        if origin is None or origin not in backend_origins():
+        if not applies_to(method, str(url)):
             return
         prepared = requests.Request(
             method.upper(),

@@ -76,6 +76,28 @@ def _resolve(node: ast.AST, alias: dict[str, str]) -> str | None:
     return name
 
 
+def _preceded_by_preflight(
+    stmt: ast.AST, parents: dict[ast.AST, ast.AST], alias: dict[str, str]
+) -> bool:
+    """The statement just before ``stmt`` in the same block is a preflight_requests call."""
+    parent = parents.get(stmt)
+    if parent is None:
+        return False
+    for field in ("body", "orelse", "finalbody", "handlers"):
+        block = getattr(parent, field, None)
+        if isinstance(block, list) and stmt in block:
+            i = block.index(stmt)
+            if i == 0:
+                return False
+            prev = block[i - 1]
+            return (
+                isinstance(prev, ast.Expr)
+                and isinstance(prev.value, ast.Call)
+                and _resolve(prev.value.func, alias) == PREFLIGHT
+            )
+    return False
+
+
 def census(src: str, rel: str = "<src>") -> list[str]:
     tree = ast.parse(src)
     alias = _aliases(tree)
@@ -92,15 +114,11 @@ def census(src: str, rel: str = "<src>") -> list[str]:
             ):
                 problems.append(f"{rel}:{n.lineno} {canon} not wrapped in gate_session")
         elif canon in CALLS:
-            fn: ast.AST | None = n
-            while fn is not None and not isinstance(
-                fn, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)
-            ):
-                fn = parents.get(fn)
-            scope = fn if fn is not None else tree
-            if not any(
-                isinstance(c, ast.Call) and _resolve(c.func, alias) == PREFLIGHT
-                for c in ast.walk(scope)
-            ):
-                problems.append(f"{rel}:{n.lineno} {canon} without preflight_requests")
+            stmt: ast.AST = n
+            while not isinstance(stmt, ast.stmt):
+                stmt = parents[stmt]
+            if not _preceded_by_preflight(stmt, parents, alias):
+                problems.append(
+                    f"{rel}:{n.lineno} {canon} not immediately preceded by preflight_requests"
+                )
     return problems

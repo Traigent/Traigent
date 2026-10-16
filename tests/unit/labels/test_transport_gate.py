@@ -401,7 +401,8 @@ def test_third_party_hosts_are_excluded_by_the_origin_filter() -> None:
 
 
 def test_every_client_construction_site_is_gated() -> None:
-    """AST census (alias-aware) over all of traigent/: no allowlist."""
+    """AST census (alias-aware) over all of traigent/: no allowlist. See ``_census`` for the
+    documented residual (dynamic factories)."""
     from pathlib import Path as P
 
     from ._census import census
@@ -446,3 +447,79 @@ def test_census_accepts_gated_forms() -> None:
     )
     assert census(ok) == []
     assert census("from mcp import ClientSession\n\ns = ClientSession(1)\n") == []
+
+
+def test_tv0_prefixed_uuid_session_id_is_accepted() -> None:
+    gate.set_mode("refuse")
+    uid = "00000000-0000-4000-8000-000000000001"
+    for sid in (uid, f"tv0_{uid}"):
+        c = inspect_outgoing(
+            "GET", f"{BACKEND}/api/v1/hybrid/sessions/{sid}/status", None
+        )
+        assert c is not None and not any(
+            c.get(k, 0) for k in ("legacy_content", "unclassified", "violation")
+        ), sid
+    for bad in (f"tv1_{uid}", f"tv0_{uid}x", "tv0_prompt_hello-world"):
+        with pytest.raises(TransportGateRefusal):
+            inspect_outgoing(
+                "GET", f"{BACKEND}/api/v1/hybrid/sessions/{bad}/status", None
+            )
+
+
+def test_unrelated_routes_and_bodies_are_never_parsed_in_refuse_mode() -> None:
+    gate.set_mode("refuse")
+    for body in (
+        b"not-json",
+        b"",
+        b"--boundary\r\nContent-Disposition: form-data\r\n",
+        None,
+    ):
+        assert inspect_outgoing("POST", f"{BACKEND}/auth/validate", body) is None
+        assert (
+            inspect_outgoing(
+                "POST", f"{BACKEND}/auth/validate", None, body_present=True
+            )
+            is None
+        )
+        assert inspect_outgoing("POST", "https://customer.example/x", body) is None
+    # a known optimization route with the same garbage still fails closed
+    with pytest.raises(TransportGateRefusal):
+        inspect_outgoing("POST", URL, b"not-json")
+
+
+def test_invalid_non_backend_urls_keep_the_native_error_path() -> None:
+    gate.set_mode("refuse")
+    for url in (
+        "https://host.example:99999/api/v1/sessions",
+        "http://[::1/x",
+        "https://a b/",
+    ):
+        assert inspect_outgoing("POST", url, _session_body()) is None
+        gate.preflight_requests("POST", url, json={"function_name": CANARY})
+    requests = pytest.importorskip("requests")
+    gate.set_mode("refuse")
+    s = gate.gate_session(requests.Session())
+    with pytest.raises(requests.exceptions.RequestException) as err:
+        s.post("https://host.example:99999/api/v1/sessions", json={"a": 1}, timeout=1)
+    assert not isinstance(err.value, TransportGateRefusal)
+
+
+def test_dynamic_factories_are_a_documented_residual_of_the_census() -> None:
+    """A client built via getattr/importlib is invisible to the static census.
+
+    The runtime gate protects only clients passed through ``gate_session``; an ungated
+    dynamically built client is NOT inspected. This pins that limit so it stays honest.
+    """
+    import importlib
+
+    pytest.importorskip("requests")
+    from ._census import census
+
+    src = "import importlib\nm = importlib.import_module('requests')\ns = getattr(m, 'Session')()\n"
+    assert census(src) == []  # static census cannot see it (documented residual)
+    ungated = importlib.import_module("requests").Session()
+    assert not getattr(type(ungated), "_traigent_gated", False)
+    gate.set_mode("refuse")
+    gated = gate.gate_session(ungated)  # the SDK-created path is protected once gated
+    with pytest.raises(TransportGateRefusal):
+        gated.post(URL, json={"function_name": CANARY}, timeout=1)
