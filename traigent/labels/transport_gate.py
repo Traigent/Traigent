@@ -25,6 +25,7 @@ untouched.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import threading
@@ -88,7 +89,12 @@ def _origin(url: str) -> tuple[str, str, int] | None:
         if not parts.scheme or not parts.hostname:
             return None
         default = 443 if parts.scheme == "https" else 80
-        return parts.scheme.lower(), parts.hostname.lower(), parts.port or default
+        host = parts.hostname.lower().rstrip(".")
+        try:  # one spelling per IP address (compressed IPv6, no brackets)
+            host = str(ipaddress.ip_address(host))
+        except ValueError:
+            pass
+        return parts.scheme.lower(), host, parts.port or default
     except ValueError:
         return None
 
@@ -262,8 +268,25 @@ def _check_strict(client: Any, url: str) -> None:
     if not getattr(client, "_traigent_gate_strict", False) or current_mode() == "off":
         return
     origin = _origin(str(url))
-    if origin is None or origin not in (_instance_origins(client) | backend_origins()):
+    # Strict means THIS instance's registered origins only: a process-wide configured
+    # backend that this session was not built for is not accepted either.
+    if origin is None or origin not in _instance_origins(client):
         raise TransportGateRefusal("unrecognised_origin", {"violation": 1})
+
+
+_REDIRECT_STATUSES = frozenset({300, 301, 302, 303, 307, 308})
+
+
+def _is_strict(client: Any) -> bool:
+    return bool(getattr(client, "_traigent_gate_strict", False)) and (
+        current_mode() != "off"
+    )
+
+
+def _refuse_redirect() -> TransportGateRefusal:
+    """A strict session never follows a redirect: it would carry the body and credentials
+    to an origin the gate has not inspected."""
+    return TransportGateRefusal("redirect_refused", {"violation": 1})
 
 
 def _build_aiohttp(base: type) -> type:
@@ -319,7 +342,14 @@ def _build_aiohttp(base: type) -> type:
                     body_present=unreadable or None,
                     extra_origins=extra,
                 )
-            return await super()._request(method, str_or_url, **kwargs)
+            if not _is_strict(self):
+                return await super()._request(method, str_or_url, **kwargs)
+            kwargs["allow_redirects"] = False
+            response = await super()._request(method, str_or_url, **kwargs)
+            if response.status in _REDIRECT_STATUSES:
+                response.release()
+                raise _refuse_redirect()
+            return response
 
     GatedClientSession.__name__ = f"Gated{base.__name__}"
     return GatedClientSession
@@ -342,7 +372,14 @@ def _build_requests(base: type) -> type:
                 body_present=None if readable else True,
                 extra_origins=_instance_origins(self),
             )
-            return super().send(request, **kwargs)
+            if not _is_strict(self):
+                return super().send(request, **kwargs)
+            kwargs["allow_redirects"] = False
+            response = super().send(request, **kwargs)
+            if response.status_code in _REDIRECT_STATUSES:
+                response.close()
+                raise _refuse_redirect()
+            return response
 
     GatedRequestsSession.__name__ = f"Gated{base.__name__}"
     return GatedRequestsSession
@@ -369,7 +406,14 @@ def _build_httpx_sync(base: type) -> type:
                 body_present=True if unreadable else None,
                 extra_origins=_instance_origins(self),
             )
-            return super().send(request, **kwargs)
+            if not _is_strict(self):
+                return super().send(request, **kwargs)
+            kwargs["follow_redirects"] = False
+            response = super().send(request, **kwargs)
+            if response.status_code in _REDIRECT_STATUSES:
+                response.close()
+                raise _refuse_redirect()
+            return response
 
     GatedHttpxClient.__name__ = f"Gated{base.__name__}"
     return GatedHttpxClient
@@ -389,7 +433,14 @@ def _build_httpx_async(base: type) -> type:
                 body_present=True if unreadable else None,
                 extra_origins=_instance_origins(self),
             )
-            return await super().send(request, **kwargs)
+            if not _is_strict(self):
+                return await super().send(request, **kwargs)
+            kwargs["follow_redirects"] = False
+            response = await super().send(request, **kwargs)
+            if response.status_code in _REDIRECT_STATUSES:
+                await response.aclose()
+                raise _refuse_redirect()
+            return response
 
     GatedHttpxAsyncClient.__name__ = f"Gated{base.__name__}"
     return GatedHttpxAsyncClient

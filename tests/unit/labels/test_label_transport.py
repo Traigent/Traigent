@@ -633,3 +633,185 @@ def test_other_session_factories_register_their_own_base(
         await built.close()
 
     asyncio.run(factories())
+
+
+# ------------------------------------------------ strict sessions: redirects, own origins
+
+
+class _Recorder:
+    """A tiny aiohttp server that records every request (method, path, headers)."""
+
+    def __init__(self) -> None:
+        self.seen: list[tuple[str, str, dict[str, str]]] = []
+
+    async def handle(self, request: web.Request) -> web.Response:
+        self.seen.append((request.method, request.path, dict(request.headers)))
+        return web.json_response({"success": True, "data": {"items": []}})
+
+    def app(self) -> web.Application:
+        app = web.Application()
+        app.router.add_route("*", "/{tail:.*}", self.handle)
+        return app
+
+
+def _redirecting_app(location_base: str, status: int) -> web.Application:
+    async def redirect(request: web.Request) -> web.Response:
+        return web.Response(
+            status=status, headers={"Location": f"{location_base}{request.path}"}
+        )
+
+    app = web.Application()
+    app.router.add_route("*", "/{tail:.*}", redirect)
+    return app
+
+
+@pytest.mark.parametrize("status", [307, 308])
+def test_strict_session_refuses_a_cross_origin_redirect(
+    vectors: dict, status: int
+) -> None:
+    from traigent.labels import transport_gate as gate
+
+    rec = _Recorder()
+
+    async def main():
+        async with TestServer(rec.app()) as target:
+            tbase = f"http://{target.host}:{target.port}"
+            async with TestServer(_redirecting_app(tbase, status)) as first:
+                base = f"http://{first.host}:{first.port}/api/v1"
+
+                async def secret_headers() -> dict[str, str]:
+                    return {"X-API-Key": "uk_must_not_travel"}
+
+                transport = LabelTransport(base, secret_headers)
+                with pytest.raises(gate.TransportGateRefusal) as read_err:
+                    await transport.read_labels([AGENT_REF])
+                with pytest.raises(gate.TransportGateRefusal) as bin_err:
+                    await transport.read_binding_list()
+                return read_err.value, bin_err.value
+
+    gate.set_mode("report")
+    try:
+        errors = asyncio.run(main())
+    finally:
+        gate.set_mode(None)
+    assert rec.seen == []  # the redirect target saw no request and no headers
+    for err in errors:
+        assert err.route == "redirect_refused"
+        assert "uk_must_not_travel" not in str(err)
+
+
+def test_strict_httpx_and_requests_sessions_refuse_redirects() -> None:
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    import httpx
+    import requests
+
+    from traigent.labels import transport_gate as gate
+
+    seen: list[str] = []
+
+    class Target(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            seen.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+
+        do_PUT = do_POST = do_GET
+
+        def log_message(self, *a: object) -> None:
+            pass
+
+    class Redirector(Target):
+        def do_GET(self) -> None:  # noqa: N802
+            self.send_response(307)
+            self.send_header("Location", f"http://127.0.0.1:{target.server_port}/x")
+            self.end_headers()
+
+        do_PUT = do_POST = do_GET
+
+    target = HTTPServer(("127.0.0.1", 0), Target)
+    first = HTTPServer(("127.0.0.1", 0), Redirector)
+    threads = [
+        threading.Thread(target=s.serve_forever, daemon=True) for s in (target, first)
+    ]
+    for t in threads:
+        t.start()
+    base = f"http://127.0.0.1:{first.server_port}"
+    gate.set_mode("report")
+    try:
+        sync_client = gate.gate_session(httpx.Client(), origins=[base], strict=True)
+        with pytest.raises(gate.TransportGateRefusal) as e1:
+            sync_client.get(f"{base}/a", headers={"X-API-Key": "k"})
+        sess = gate.gate_session(requests.Session(), origins=[base], strict=True)
+        with pytest.raises(gate.TransportGateRefusal) as e2:
+            sess.get(f"{base}/a", headers={"X-API-Key": "k"})
+
+        async def amain():
+            client = gate.gate_session(httpx.AsyncClient(), origins=[base], strict=True)
+            async with client:
+                with pytest.raises(gate.TransportGateRefusal) as e3:
+                    await client.get(f"{base}/a", headers={"X-API-Key": "k"})
+            return e3.value
+
+        e3 = asyncio.run(amain())
+    finally:
+        gate.set_mode(None)
+        for s in (target, first):
+            s.shutdown()
+            s.server_close()
+    assert seen == []
+    assert {e1.value.route, e2.value.route, e3.route} == {"redirect_refused"}
+
+
+def test_strict_is_strict_to_the_instance_not_the_process_backend(
+    vectors: dict,
+) -> None:
+    """A second origin that IS a configured backend for the process is still refused."""
+    import aiohttp
+
+    from traigent.labels import transport_gate as gate
+
+    rec = _Recorder()
+
+    async def main():
+        async with TestServer(rec.app()) as other:
+            other_base = f"http://{other.host}:{other.port}"
+            async with TestServer(rec.app()) as own:
+                own_base = f"http://{own.host}:{own.port}"
+                gate.set_allowed_origins([other_base])  # configured for the process
+                assert gate._origin(other_base) in gate.backend_origins()
+                session = gate.gate_session(
+                    aiohttp.ClientSession(), origins=[own_base], strict=True
+                )
+                async with session:
+                    with pytest.raises(gate.TransportGateRefusal) as err:
+                        await session.get(f"{other_base}/api/v1/labels/binding-list")
+                    ok = await session.get(f"{own_base}/api/v1/labels/binding-list")
+                    assert ok.status == 200
+                return err.value
+
+    gate.set_mode("report")
+    try:
+        err = asyncio.run(main())
+    finally:
+        gate.set_mode(None)
+        gate.set_allowed_origins(None)
+    assert err.route == "unrecognised_origin"
+    assert len(rec.seen) == 1  # only the request to its own origin was ever sent
+
+
+def test_origin_normalisation() -> None:
+    from traigent.labels.transport_gate import _origin
+
+    assert _origin("HTTPS://Example.COM/api/v1/") == ("https", "example.com", 443)
+    assert _origin("https://example.com:443") == ("https", "example.com", 443)
+    assert _origin("http://example.com") == ("http", "example.com", 80)
+    assert _origin("http://example.com:80/x/y?z=1") == ("http", "example.com", 80)
+    assert _origin("http://[::1]:8080/a") == ("http", "::1", 8080)
+    assert _origin("http://[::1]/") == ("http", "::1", 80)
+    assert _origin("http://[0:0:0:0:0:0:0:1]/") == ("http", "::1", 80)
+    assert _origin("http://EXAMPLE.com./a") == ("http", "example.com", 80)
+    assert _origin("http://127.0.0.1:9") == ("http", "127.0.0.1", 9)
+    assert _origin("not a url") is None
+    assert _origin("http://example.com:99999") is None
