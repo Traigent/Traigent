@@ -5,6 +5,7 @@ PYTHONPATH=<worktree> python -m tests.egress_canary.report <out.md>
 
 from __future__ import annotations
 
+import re
 import sys
 import tempfile
 from collections import Counter, defaultdict
@@ -13,6 +14,35 @@ from pathlib import Path
 from .canaries import CANARIES, Leak, distinct_pairs, forms
 from .harness import CapturedRequest
 from .scenario import ScenarioResult, run_scenario
+
+
+_SECRET_PATTERNS = (
+    re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{6,}"),
+    re.compile(r"\b(?:uk|tg|sk|pk|ghp|xox[bap])[-_][A-Za-z0-9_-]{16,}"),
+    re.compile(
+        r"(?i)((?:api[_-]?key|token|password|secret|authorization)[\"']?\s*[:=]\s*[\"']?)[^\s,;'\"]{4,}"
+    ),
+)
+
+
+def scrub(text: str) -> str:
+    """Redact credential-shaped substrings from anything rendered."""
+
+    out = text
+    for pattern in _SECRET_PATTERNS:
+        out = pattern.sub(
+            lambda m: (m.group(1) + "<redacted>") if m.lastindex else "<redacted>", out
+        )
+    return out
+
+
+def error_type(err: str | None) -> str | None:
+    """Exception type name only; raw exception text is never rendered."""
+
+    if err is None:
+        return None
+    head = err.split(":", 1)[0].strip()
+    return head if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", head) else "Exception"
 
 
 def render_report(result: ScenarioResult, pinned: int | None = None) -> str:
@@ -33,7 +63,9 @@ def render_report(result: ScenarioResult, pinned: int | None = None) -> str:
     add("")
     add(f"- distinct (route, canary kind) leak pairs: **{len(pairs)}**")
     if pinned is not None:
-        add(f"- pinned in the ratchet test: {pinned}")
+        add(
+            f"- leak identities (route, location, field path, kind) pinned in leak_manifest.json: {pinned}"
+        )
     add(
         f"- captured requests: {len(result.requests)} across {len(result.routes)} routes"
     )
@@ -41,7 +73,7 @@ def render_report(result: ScenarioResult, pinned: int | None = None) -> str:
         f"- canary kinds planted: {len(CANARIES)}; encoded forms searched per canary: {len(forms(next(iter(CANARIES.values()))))}"
     )
     add(
-        f"- optimize() run: source={result.result_source!r}, error={result.optimization_error!r}"
+        f"- optimize() run: source={result.result_source!r}, error type={error_type(result.optimization_error)!r} (raw text omitted)"
     )
     add(f"- non-captured socket attempts: {len(result.guard_violations)}")
     add("")
@@ -80,13 +112,33 @@ def render_report(result: ScenarioResult, pinned: int | None = None) -> str:
     add("## Direct-path exercisers")
     add("")
     for name, err in result.exerciser_outcomes.items():
-        add(f"- `{name}`: {'ran' if err is None else 'FAILED: ' + err}")
+        add(
+            f"- `{name}`: {'ran' if err is None else 'FAILED (' + str(error_type(err)) + '; raw text omitted)'}"
+        )
     if result.unhandled_routes:
         add("")
         add(
             "Routes the fake backend had no handler for: "
             + ", ".join(f"`{r}`" for r in result.unhandled_routes)
         )
+    add("")
+    add("## Failure-path injection")
+    add("")
+    add(
+        "| Exerciser | Method | Route pattern | Injected | Consumed | Matching requests | Retry expected |"
+    )
+    add("|---|---|---|---|---|---|---|")
+    for f in result.faults:
+        add(
+            f"| `{f.owner}` | {f.method} | `{f.path_regex}` | {f.outcomes} | {f.consumed} "
+            f"| {f.matches} | {f.expects_retry} |"
+        )
+    add("")
+    add(
+        f"- offline optimize(): {result.offline_optimize_requests} request(s) during the run "
+        f"(must be 0); {result.offline_synced_sessions} local session(s) replayed through SyncManager; "
+        f"error type={error_type(result.offline_error)!r}"
+    )
     add("")
     add("## Notes")
     add("")
@@ -97,20 +149,23 @@ def render_report(result: ScenarioResult, pinned: int | None = None) -> str:
         "- A pair is a leak when any encoded form of a canary (raw, lowercase, slug, URL-encoded, base64, hex, unsalted sha256/md5, sha256 prefix) appears in path, query, header, or body."
     )
     add(
+        "- The socket guard is an in-process guard (Python-level patches): subprocesses and native/direct-socket code are out of scope and are not observed."
+    )
+    add(
         "- Exercisers pass canaries directly as arguments to cloud-client entry points that a default `optimize()` run does not reach; a clean exerciser proves the SDK transmits the value as given, not that real callers pass it."
     )
-    return "\n".join(lines) + "\n"
+    return scrub("\n".join(lines) + "\n")
 
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print("usage: python -m tests.egress_canary.report <out.md>", file=sys.stderr)
         return 2
-    from .pins import PINNED_LEAK_PAIRS
+    from .pins import REGISTER
 
     with tempfile.TemporaryDirectory() as tmp:
         result = run_scenario(Path(tmp))
-    Path(argv[1]).write_text(render_report(result, PINNED_LEAK_PAIRS), encoding="utf-8")
+    Path(argv[1]).write_text(render_report(result, len(REGISTER)), encoding="utf-8")
     print(f"wrote {argv[1]}: {len(distinct_pairs(result.leaks))} leak pairs")
     return 0
 

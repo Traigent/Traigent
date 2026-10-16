@@ -123,6 +123,37 @@ def test_socket_guard_blocks_and_records_unmocked_connects() -> None:
     assert socket.getaddrinfo is original_getaddrinfo
 
 
+def test_socket_guard_is_in_process_only_subprocess_sockets_are_out_of_scope() -> None:
+    """Documented limitation: the guard patches Python objects in this process.
+
+    A child process (or native code opening its own socket) does not inherit the
+    patches, so the guard neither blocks nor records it.  The harness is an
+    in-process guard, not a network sandbox; this test pins that boundary so a
+    future reader does not mistake a clean run for proof about subprocesses.
+    """
+
+    import subprocess
+    import sys
+
+    code = (
+        "import socket;"
+        "orig=socket.socket.connect;"
+        "print(orig.__module__ if hasattr(orig,'__module__') else 'native')"
+    )
+    with EgressCapture() as cap:
+        out = subprocess.run(  # noqa: S603
+            [sys.executable, "-I", "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        # In this process connect is the guard; in the child it is the stock one.
+        assert socket.socket.connect.__module__ != "socket"
+    assert "tests.egress_canary" not in out.stdout
+    assert cap.guard_violations == []  # the child's sockets are invisible to us
+
+
 def test_dns_for_the_fake_backend_host_is_answered_locally() -> None:
     with EgressCapture() as cap:
         infos = socket.getaddrinfo("backend.example.test", 443)
@@ -195,6 +226,86 @@ def test_detector_finds_each_encoded_form(form: str) -> None:
         leaks = find_leaks([req], {kind: value})
         assert leaks, f"{form} not found in {location}"
         assert {leak.location for leak in leaks} == {location}
+
+
+@pytest.mark.parametrize("algo", ["sha256", "md5"])
+@pytest.mark.parametrize("length", [8, 12, 16, 24, 32, 63])
+def test_detector_finds_digest_prefixes_from_8_characters(
+    algo: str, length: int
+) -> None:
+    from .harness import CapturedRequest
+
+    value = "cnryPrefix_Qa1B-2cDe3Fg4"
+    digest = getattr(hashlib, algo)(value.encode()).hexdigest()[:length]
+    req = CapturedRequest(
+        "t",
+        "POST",
+        "https://x/y",
+        "/y",
+        "",
+        (),
+        json.dumps({"checksum": f"v1:{digest}:end"}).encode(),
+    )
+    assert find_leaks([req], {"k": value}), f"{algo} prefix of {length} not found"
+    # 7 characters is below the documented floor (too short to be distinctive).
+    short = getattr(hashlib, algo)(value.encode()).hexdigest()[:7]
+    below = CapturedRequest(
+        "t", "POST", "https://x/y", "/y", "", (), json.dumps({"c": short}).encode()
+    )
+    assert find_leaks([below], {"k": value}) == []
+
+
+@pytest.mark.parametrize("algo", ["sha256", "md5"])
+def test_detector_finds_base64_of_the_digest(algo: str) -> None:
+    from .harness import CapturedRequest
+
+    value = "cnryPrefix_Qa1B-2cDe3Fg4"
+    raw = getattr(hashlib, algo)(value.encode()).digest()
+    for enc in (
+        base64.b64encode(raw).decode(),
+        base64.urlsafe_b64encode(raw).decode().rstrip("="),
+    ):
+        req = CapturedRequest(
+            "t", "POST", "https://x/y", "/y", "", (), json.dumps({"d": enc}).encode()
+        )
+        assert find_leaks([req], {"k": value}), f"{algo} base64 digest not found"
+
+
+def test_report_never_renders_raw_exception_text(tmp_path: Path) -> None:
+    secret = "Bearer abcdef0123456789SECRETTOKEN uk_" + "b" * 43
+    result = run_scenario(tmp_path, trials=2, direct_paths=False)
+    result.optimization_error = f"RuntimeError: auth failed with {secret}"
+    result.offline_error = f"ValueError: api_key=hunter2hunter2 {secret}"
+    result.exerciser_outcomes = {"x": f"RuntimeError: {secret}"}
+    text = render_report(result, 0)
+    for needle in ("SECRETTOKEN", "hunter2", "b" * 43, "auth failed"):
+        assert needle not in text
+    assert "RuntimeError" in text
+
+
+def test_scrubber_redacts_credential_shapes() -> None:
+    from .report import scrub
+
+    for raw in (
+        "Authorization: Bearer abcdef0123456789",
+        "token=abcd1234efgh",
+        "key uk_" + "c" * 40,
+    ):
+        assert "abcd" not in scrub(raw) and "c" * 40 not in scrub(raw)
+
+
+def test_fault_injection_serves_each_outcome_once_then_recovers() -> None:
+    import requests
+
+    with EgressCapture() as cap:
+        cap.backend.inject("POST", r"/api/v1/sessions$", [503, "connection"])
+        url = "https://backend.example.test/api/v1/sessions"
+        assert requests.post(url, json={"a": 1}, timeout=5).status_code == 503
+        with pytest.raises(requests.ConnectionError):
+            requests.post(url, json={"a": 1}, timeout=5)
+        assert requests.post(url, json={"a": 1}, timeout=5).status_code == 201
+    assert len(cap.requests) == 3
+    assert cap.backend.faults[0].consumed == 2
 
 
 def test_detector_has_no_false_positive_on_clean_traffic() -> None:

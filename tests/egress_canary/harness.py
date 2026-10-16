@@ -40,6 +40,24 @@ class EgressGuardError(RuntimeError):
     """Raised when code reaches a real socket instead of a captured transport."""
 
 
+def _connection_error(transport: str) -> Exception:
+    """The connection-level exception each client library raises."""
+
+    if transport == "aiohttp":
+        import aiohttp
+
+        return aiohttp.ClientConnectionError("injected connection error")
+    if transport == "requests":
+        import requests
+
+        return requests.ConnectionError("injected connection error")
+    if transport == "httpx":
+        import httpx
+
+        return httpx.ConnectError("injected connection error")
+    return urllib.error.URLError("injected connection error")
+
+
 @dataclass(frozen=True)
 class CapturedRequest:
     transport: str
@@ -221,6 +239,28 @@ def _body_bytes(data: Any, json_obj: Any = None, serializer: Any = None) -> byte
     return repr(data).encode()
 
 
+@dataclass
+class Fault:
+    """Controlled failure for requests matching ``method`` + ``path_regex``.
+
+    ``outcomes`` are consumed one per matching request, in order; an ``int`` is
+    an HTTP status returned instead of the normal handler, ``"connection"``
+    raises the transport's connection error.  After the list is exhausted the
+    normal handler answers, so a retry eventually succeeds.
+    """
+
+    method: str
+    path_regex: str
+    outcomes: list[int | str]
+    consumed: int = 0
+    #: Requests that matched this fault's route while it was active.
+    matches: int = 0
+    #: Exerciser that armed it (filled when retired).
+    owner: str = ""
+    #: True when the SDK path under test is expected to resend after a failure.
+    expects_retry: bool = True
+
+
 class FakeBackend:
     """Stateful, schema-plausible fake of the Traigent optimization backend.
 
@@ -235,6 +275,8 @@ class FakeBackend:
         self.sessions: dict[str, dict[str, Any]] = {}
         self.unhandled: list[str] = []
         self._session_counter = 0
+        self.faults: list[Fault] = []
+        self.fault_log: list[Fault] = []
 
     @staticmethod
     def _pick(spec: Any, trial_number: int) -> Any:
@@ -253,6 +295,41 @@ class FakeBackend:
                 return spec[(trial_number - 1) % 2]
             return spec[(trial_number - 1) % len(spec)]
         return spec
+
+    def inject(
+        self,
+        method: str,
+        path_regex: str,
+        outcomes: list[int | str],
+        *,
+        expects_retry: bool = True,
+    ) -> Fault:
+        fault = Fault(
+            method.upper(), path_regex, list(outcomes), expects_retry=expects_retry
+        )
+        with self._lock:
+            self.faults.append(fault)
+        return fault
+
+    def retire_faults(self, owner: str) -> None:
+        """Move armed faults to ``fault_log`` so they cannot bleed into the next run."""
+
+        with self._lock:
+            for fault in self.faults:
+                fault.owner = owner
+            self.fault_log.extend(self.faults)
+            self.faults = []
+
+    def next_fault(self, method: str, path: str) -> int | str | None:
+        with self._lock:
+            for fault in self.faults:
+                if fault.method == method and re.search(fault.path_regex, path):
+                    fault.matches += 1
+                    if fault.consumed < len(fault.outcomes):
+                        out = fault.outcomes[fault.consumed]
+                        fault.consumed += 1
+                        return out
+        return None
 
     def handle(
         self, method: str, path: str, query: str, body: bytes
@@ -386,6 +463,8 @@ class FakeBackend:
                 return 200, {"added": 1, "skipped": 0, "invalid": 0}
             if method == "GET" and "/example-sets/" in p:
                 return 200, {"id": "exs-canary", "name": "exs", "description": ""}
+            if method == "POST" and p.endswith("/optimize"):
+                return 200, {"status": "ok"}
             if p.endswith("/features"):
                 return 200, {"ok": True}
             if "/hybrid/optimizer/" in p:
@@ -426,6 +505,11 @@ class EgressCapture:
         )
         with self._lock:
             self.requests.append(cap)
+        fault = self.backend.next_fault(cap.method, cap.path)
+        if fault == "connection":
+            raise _connection_error(transport)
+        if isinstance(fault, int):
+            return fault, {"error": "injected fault"}
         return self.backend.handle(cap.method, cap.path, cap.query, body)
 
     # -- guards ------------------------------------------------------------

@@ -10,7 +10,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, quote, unquote
 
-from .harness import CapturedRequest
+from .harness import CapturedRequest, normalize_path
 
 #: kind -> canary value.  Fixed (not random) so the ratchet is deterministic.
 #: Mixed case, underscore and hyphen so lowercase/slug/url forms all differ.
@@ -31,7 +31,23 @@ CANARIES: dict[str, str] = {
     "metadata_key": "cnryMetaKey_Nb2J-7rKs5Yf4",
     "metadata_value": "cnryMetaVal_Uz6L-3tDq9Ah2",
     "exception_message": "cnryExc_Sa8W-5eGm1Op7",
+    "default_config_value": "cnryDefCfg_Kt4R-9mNx2Wq6",
+    "constraint_name": "cnryConstr_Yp6V-2dHb8Es3",
+    "evaluator_id": "cnryEvalId_Ag1Z-7oLj5Tf9",
+    "dataset_identity": "cnryDsId_Mu3Q-4cRy8Xn1",
+    "function_name": "cnryFunc_Eb9K-6sPw2Ih4",
+    "constraint_knob": "cnryCKnob_Wf4P_8aLz3Rq7",
+    "offline_replay": "cnryReplay_Ox7D-1vJm5Gc3",
 }
+
+
+#: Shortest truncated-digest prefix (hex characters) the detector searches for.
+MIN_DIGEST_PREFIX = 8
+
+_DIGESTS = (
+    ("sha256", lambda b: hashlib.sha256(b).digest()),
+    ("md5", lambda b: hashlib.md5(b, usedforsecurity=False).digest()),  # noqa: S324
+)
 
 
 def _b64_needles(raw: bytes) -> set[str]:
@@ -68,8 +84,20 @@ def forms(value: str) -> dict[str, str]:
         "md5_lower": hashlib.md5(  # noqa: S324 - detector, not security use
             value.lower().encode(), usedforsecurity=False
         ).hexdigest(),
-        "sha256_prefix16": hashlib.sha256(raw_b).hexdigest()[:16],
     }
+    # Truncated digests (and md5/sha256 of the lowercase form) of every length
+    # from MIN_DIGEST_PREFIX up to the full digest; base64 of the raw digest.
+    for algo_name, digester in _DIGESTS:
+        for variant, data in (("", raw_b), ("_lower", value.lower().encode())):
+            digest = digester(data)
+            hexd = digest.hex()
+            for n in range(MIN_DIGEST_PREFIX, len(hexd) + 1):
+                out.setdefault(f"{algo_name}{variant}_prefix{n}", hexd[:n])
+            b64 = base64.b64encode(digest).decode().rstrip("=")
+            out[f"{algo_name}{variant}_b64"] = b64
+            out[f"{algo_name}{variant}_b64url"] = b64.replace("+", "-").replace(
+                "/", "_"
+            )
     for i, needle in enumerate(sorted(_b64_needles(raw_b))):
         out[f"base64#{i}"] = needle
     return out
@@ -86,6 +114,15 @@ class Leak:
     @property
     def pair(self) -> tuple[str, str]:
         return (self.route, self.kind)
+
+    @property
+    def identity(self) -> tuple[str, str, str, str]:
+        """``(route, location, field_path, canary_kind)`` -- what the manifest pins."""
+
+        field_path = self.field_path
+        if self.location == "path":
+            field_path = normalize_path(field_path)
+        return (self.route, self.location, field_path, self.kind)
 
 
 def _walk(obj: object, path: str = "$") -> Iterator[tuple[str, str, str]]:
@@ -178,6 +215,10 @@ def find_leaks(
     return sorted(
         leaks.values(), key=lambda x: (x.route, x.kind, x.location, x.field_path)
     )
+
+
+def distinct_identities(leaks: Iterable[Leak]) -> set[tuple[str, str, str, str]]:
+    return {leak.identity for leak in leaks}
 
 
 def distinct_pairs(leaks: Iterable[Leak]) -> set[tuple[str, str]]:

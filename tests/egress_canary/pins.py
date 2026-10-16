@@ -1,15 +1,41 @@
-"""Ratchet pins.  Lower these only by fixing leaks; never raise them.
+"""Ratchet pins, loaded from the checked-in manifest.
 
-``PINNED_LEAK_PAIRS`` is the number of distinct (route, canary kind) pairs the
-canary run finds on the wire.  ``BASELINE_PAIRS`` lists them, so a fix that is
-offset by a new leak (same count, different pair) is still caught.
+leak_manifest.json pins leak *identities* (route, location, field_path,
+canary kind), not counts: a leak that moves to another field or location on
+the same route is a removal plus an addition and fails.  register only
+shrinks; each removal needs an entry in leak_dispositions.json.
 """
 
 from __future__ import annotations
 
-PINNED_LEAK_PAIRS = 43
+import json
+from pathlib import Path
 
-BASELINE_PAIRS: tuple[tuple[str, str], ...] = (
+Identity = tuple[str, str, str, str]
+
+_HERE = Path(__file__).parent
+
+
+def _ids(rows: list[dict[str, str]]) -> set[Identity]:
+    return {(r["route"], r["location"], r["field_path"], r["kind"]) for r in rows}
+
+
+def load_manifest() -> tuple[set[Identity], set[Identity]]:
+    data = json.loads((_HERE / "leak_manifest.json").read_text(encoding="utf-8"))
+    return _ids(data["baseline"]), _ids(data["register"])
+
+
+def load_dispositions() -> list[dict[str, str]]:
+    data = json.loads((_HERE / "leak_dispositions.json").read_text(encoding="utf-8"))
+    return list(data["dispositions"])
+
+
+BASELINE, REGISTER = load_manifest()
+
+#: The 43 (route, kind) pairs measured before the coverage expansion (default
+#: config, identity fields, offline replay, failure paths). Kept so the report
+#: can state which pairs are new.
+PRE_EXPANSION_PAIRS: tuple[tuple[str, str], ...] = (
     ("GET /api/v1/best-configs/{id}", "agent_name"),
     ("POST /api/v1/best-configs", "agent_name"),
     ("POST /api/v1/best-configs", "choice_value"),

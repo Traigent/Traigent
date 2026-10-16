@@ -1,0 +1,4 @@
+{
+ "_comment": "Audit trail for removals from leak_manifest.json 'register'. Each entry: route, location, field_path, kind, reason, reference (PR/commit). An entry whose identity still leaks, or that is not a removal from 'baseline', fails the test.",
+ "dispositions": []
+}
