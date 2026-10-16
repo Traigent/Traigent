@@ -33,7 +33,7 @@ PYPROJECT_PATH = _REPO_ROOT / "pyproject.toml"
 # package -> (extra or None for core, vulnerable, first fixed, next major, advisory)
 FLOORS: dict[str, tuple[str | None, str, str, str, str]] = {
     "yarl": (None, "1.24.2", "1.24.5", "2.0.0", "AIKIDO-2026-181733"),
-    "filelock": (None, "3.29.4", "3.29.5", "4.0.0", "AIKIDO-2026-181731"),
+    "filelock": (None, "4.0.8", "4.0.9", "5.0.0", "AIKIDO-2026-444439"),
     "h2": ("hybrid", "4.3.0", "4.4.1", "5.0.0", "GHSA-6hr6-w5qg-qmwg"),
 }
 
@@ -141,7 +141,7 @@ def test_installed_distribution_satisfies_the_declared_floor(package: str) -> No
 #
 # A lockfile check and an `import traigent` do not exercise any of the
 # behaviour these releases changed: h2 4.4 altered protocol-error handling,
-# yarl changed host validation, filelock 3.30-3.32 changed soft/strict
+# yarl changed host validation, filelock 3.30-3.32 and 4.x changed soft/strict
 # locking. These two tests cover the paths the SDK actually uses.
 
 

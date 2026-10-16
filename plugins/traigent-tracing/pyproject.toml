@@ -44,9 +44,9 @@ dev = [
 tracing = "traigent_tracing:TracingPlugin"
 
 [project.urls]
-Homepage = "https://github.com/traigent/traigent-tracing"
-Documentation = "https://docs.traigent.io/plugins/tracing"
-Repository = "https://github.com/traigent/traigent-tracing"
+Homepage = "https://github.com/Traigent/Traigent"
+Documentation = "https://traigent.github.io/Traigent/"
+Repository = "https://github.com/Traigent/Traigent"
 
 [tool.hatch.build.targets.wheel]
 packages = ["traigent_tracing"]

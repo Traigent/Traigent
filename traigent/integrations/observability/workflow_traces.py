@@ -364,16 +364,25 @@ class TraceIngestionResponse:
     ``spans_ingested_reported`` is False when the backend response carried no
     non-negative integer ``spans_ingested``; ``spans_ingested`` is then 0 and
     must not be read as "the backend ingested zero spans". A directly
-    constructed response is treated as stating its ``spans_ingested``.
+    constructed response states its count only when ``spans_ingested`` is
+    passed: ``TraceIngestionResponse(success=True)`` is unreported, while
+    ``spans_ingested=0`` states zero. After construction ``spans_ingested`` is
+    always an int and ``spans_ingested_reported`` always a bool.
     """
 
     success: bool
     graph_id: str | None = None
-    spans_ingested: int = 0
+    spans_ingested: int | None = None
     trace_id: str | None = None
     error: str | None = None
-    spans_ingested_reported: bool = True
+    spans_ingested_reported: bool | None = None
     skipped_duplicates: int = 0
+
+    def __post_init__(self) -> None:
+        if self.spans_ingested_reported is None:
+            self.spans_ingested_reported = self.spans_ingested is not None
+        if self.spans_ingested is None:
+            self.spans_ingested = 0
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TraceIngestionResponse:

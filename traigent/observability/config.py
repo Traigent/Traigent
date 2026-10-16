@@ -23,6 +23,12 @@ MAX_QUEUE_SIZE = 1_000_000
 MAX_BATCH_BYTES = 10 * 1024 * 1024
 MAX_BUFFER_AGE_SECONDS = 3600.0
 MAX_TIMEOUT_SECONDS = 600.0
+# Backend ingest contract (POST .../observability/ingest): one request may carry
+# at most this many traces (422 above it) and this many observations, nested
+# children included (413 above it). The transport cuts every request to fit,
+# whatever ``batch_size`` is (#2600).
+INGEST_MAX_TRACES_PER_REQUEST = 100
+INGEST_MAX_OBSERVATIONS_PER_REQUEST = 1000
 OBSERVABILITY_CONTENT_MODES = frozenset({"metadata", "redacted", "record"})
 
 _EXECUTION_CONTEXT_ENV_VARS = {
@@ -60,6 +66,32 @@ def nonblank_credential(value: str | None) -> bool:
 
 def _read_observability_offline_mode() -> bool:
     return is_backend_offline() or is_truthy(os.getenv("TRAIGENT_DISABLE_TELEMETRY"))
+
+
+# Every environment variable that `_read_observability_offline_mode` honours
+# (the first two via `is_backend_offline`), in the order they are reported.
+_OFFLINE_MODE_ENV_VARS = (
+    "TRAIGENT_OFFLINE_MODE",
+    "TRAIGENT_OFFLINE",
+    "TRAIGENT_DISABLE_TELEMETRY",
+)
+
+
+def describe_offline_mode_cause() -> str:
+    """Name what put observability into offline mode, for user-facing messages.
+
+    Reports each offline environment variable that is currently truthy, so a
+    message never blames a variable the user did not set (#2603). When none
+    is set, offline mode came from ``ObservabilityConfig(offline_mode=True)``.
+    """
+    causes = [
+        f"{name}={os.environ[name].strip()}"
+        for name in _OFFLINE_MODE_ENV_VARS
+        if is_truthy(os.environ.get(name))
+    ]
+    if causes:
+        return " and ".join(causes)
+    return "ObservabilityConfig.offline_mode=True"
 
 
 _CONTENT_MODE_RANK: dict[str, int] = {"metadata": 0, "redacted": 1, "record": 2}
@@ -374,6 +406,16 @@ def _read_default_execution_context() -> dict[str, str | None]:
 @dataclass
 class ObservabilityConfig:
     """Configuration for SDK-side observability delivery.
+
+    ``batch_size`` is how many buffered traces trigger a background flush.
+    Each ingest request still carries at most
+    :data:`INGEST_MAX_TRACES_PER_REQUEST` traces and
+    :data:`INGEST_MAX_OBSERVATIONS_PER_REQUEST` observations (the backend's
+    limits), so a larger flush is sent as several requests. A single trace with
+    more observations than that cannot be accepted by the backend and is
+    dropped locally with reason ``too_many_observations``. ``max_batch_bytes``
+    should stay at or below the backend's ingest body limit (5 MiB unless the
+    deployment changed it); a request above that limit is rejected with 413.
 
     ``health_callback`` receives batch-level local-drop and warning snapshots
     after internal transport locks are released. It may run on background

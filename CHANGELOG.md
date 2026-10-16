@@ -8,6 +8,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`TraceRecord` and `SessionRecord` expose `tenant_id` and `project_id`
+  (#2605).** Both are optional and filled from the backend's trace and session
+  read responses, so a caller can confirm which project its traces landed in
+  when the scope was resolved from the API key. They are `None` when the
+  response does not carry them.
 - **Export a run's failing examples as a regression dataset.**
   `OptimizationResult.failing_examples(threshold=0.5, mode="all_configs")`
   returns the ids of examples that failed in every trial (or, with
@@ -131,6 +136,71 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Observability ingest requests now fit the backend's per-request limits
+  (#2600).** The transport used to cut requests only by `batch_size` (up to
+  10,000) and bytes. The backend accepts at most 100 traces (422 above it) and
+  1,000 observations, nested children included (413 above it), so batches
+  above either limit failed and were retained and re-sent unchanged on every
+  flush. Each request now carries at most 100 traces and 1,000 observations.
+  `batch_size` above 100 is still accepted; it sets how many buffered traces
+  trigger a background flush, and that flush is sent as several requests. A
+  single trace with more than 1,000 observations can never be accepted, so it
+  is now dropped locally (`dropped_by_reason["too_many_observations"]`, named
+  in `FlushResult.errors`) instead of blocking the traces batched with it.
+  These limits apply only to the SDK's own ingest path; a custom `sender=`
+  receives batches cut by `batch_size` and `max_batch_bytes` as before.
+- **A rejected trace update no longer lets an older snapshot of the same trace
+  go out (#2601).** When an update was dropped (`payload_too_large`, not JSON
+  serializable, or `too_many_observations`), the older snapshot already queued
+  for that trace was still sent, and the backend stored a stale partial trace
+  behind a successful flush. That older snapshot is now dropped with the
+  update; if it is already being sent it cannot be recalled, but a failed send
+  no longer queues it for a retry. The trace id is named in
+  `FlushResult.errors` as before.
+- **`flush()` / `close()` no longer re-send traces the backend already has
+  (#2604).** Every flush re-submitted the latest snapshot of every trace the
+  client had started, and each was sent again. A snapshot identical to the one
+  last delivered for that trace is now skipped
+  (`get_stats()["skipped_unchanged_items"]`); a changed or never-delivered
+  trace is sent as before, and so is any trace whose last delivery came back
+  with backend warnings. The transport remembers delivered snapshots for the
+  most recent `max_queue_size` traces (10,000 by default); beyond that, older
+  traces are sent again on the next flush, as before. `FlushResult.items_sent`
+  no longer counts skipped repeats. The client still keeps every trace it
+  started in memory; that is unchanged.
+- **Suppressed observability delivery is now reported (#2602).** With offline
+  mode, `TRAIGENT_DISABLE_TELEMETRY`, or no credential, `flush()` and
+  `close()` returned `success=True, items_sent=0` and no warning, the same as
+  a real delivery. `success` stays `True` so telemetry never breaks the host
+  application, but `warnings` now names the cause and says no traces were
+  sent.
+- **Offline-mode errors from observability control-plane calls name the real
+  cause (#2603).** `submit_feedback`, `add_comment` and the `list_*` / `get_*`
+  calls said "skipped because TRAIGENT_OFFLINE_MODE=true" even when
+  `TRAIGENT_DISABLE_TELEMETRY`, `TRAIGENT_OFFLINE` or
+  `ObservabilityConfig(offline_mode=True)` caused it. The message now names
+  each offline variable that is set, or the config flag.
+- **Dead and non-public links removed from published surfaces (#2598).** The
+  PyPI Documentation URL and the docs site's `site_url` pointed at a domain
+  that does not resolve; both now use the docs site
+  (https://traigent.github.io/Traigent/). The "API keys detected in code"
+  warning linked a domain Traigent does not own; it now links the secret
+  management guide. The docs nav's dead "JavaScript SDK" entry is removed
+  until JS SDK docs are published, and doc links to a dead community forum and to
+  repositories the public cannot open were removed. A new offline test fails
+  if any of these come back.
+- **`Dataset.to_jsonl` keeps an existing file's permission bits when it
+  replaces it.** Re-exporting over an owner-only (`0600`) file under a `022`
+  umask used to leave it `0644`. A new file still follows the umask, like
+  `open(..., "w")`. Owner and group are those of a new file, as before.
+- **The outcome-matrix merge warning no longer logs trial ids.** A trial id
+  is a free-form string set by whoever built the result and can carry content,
+  so the warning now names the trial by its matrix column index.
+- **`TraceIngestionResponse(success=True)` without `spans_ingested` is now an
+  unconfirmed count, not a confirmed zero**, so `submit_traces` no longer warns
+  that every span went missing. Pass `spans_ingested=0` to state zero. The
+  two fields are annotated `int | None` / `bool | None` so an omitted value is
+  detectable; after construction they are always an `int` and a `bool`.
 - **An unmeasured cost is no longer stored, shown or ranked as $0 (#2517, #2518, #2446).**
   When no LLM usage is captured for an example (for example a raw provider
   client the interceptors do not wrap), the local lane used to estimate tokens
@@ -1544,7 +1614,7 @@ work correctly or fail loudly.
   `docs/api-reference/telemetry.md`. (Backfilled 2026-08-14, same provenance.)
 
 ### Removed
-- **Breaking in 0.12.0:** removed Python-orchestrated JavaScript optimization through the temporary JS bridge. `ExecutionOptions.runtime`, all `ExecutionOptions.js_*` fields, `traigent.bridges.*`, and `traigent.evaluators.JSEvaluator` are no longer available. JavaScript/TypeScript users should migrate to native `@traigent/sdk` optimization with `optimize(spec)(agentFn)` and `await wrapped.optimize(...)`; see https://github.com/Traigent/traigent-js/blob/main/docs/getting-started/minimal-integration.md and https://github.com/Traigent/traigent-js/blob/main/docs/MIGRATION_FROM_PYTHON.md.
+- **Breaking in 0.12.0:** removed Python-orchestrated JavaScript optimization through the temporary JS bridge. `ExecutionOptions.runtime`, all `ExecutionOptions.js_*` fields, `traigent.bridges.*`, and `traigent.evaluators.JSEvaluator` are no longer available. JavaScript/TypeScript users should migrate to native `@traigent/sdk` optimization with `optimize(spec)(agentFn)` and `await wrapped.optimize(...)`; see the JS SDK's `docs/getting-started/minimal-integration.md` and `docs/MIGRATION_FROM_PYTHON.md`.
 
 ### Fixed
 - **`BenchmarkClient` now attributes generation to the active project** (#1066). It read

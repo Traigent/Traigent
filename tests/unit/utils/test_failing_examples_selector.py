@@ -176,6 +176,24 @@ class TestThresholdSemantics:
         )
         assert select_failing_example_ids(matrix) == ["errored"]
 
+    def test_error_with_success_true_overrides_a_passing_score(self) -> None:
+        # The error alone must fail the cell: success=True and a passing score
+        # do not clear a recorded error.
+        matrix = _matrix(
+            TWO_TRIALS,
+            [
+                (
+                    "errored",
+                    _both(
+                        _cell(score=1.0, success=True, error="boom"),
+                        _cell(score=1.0, success=True, error="boom"),
+                    ),
+                ),
+                ("clean", _both(_cell(score=1.0), _cell(score=1.0))),
+            ],
+        )
+        assert select_failing_example_ids(matrix) == ["errored"]
+
     def test_error_without_any_score_is_a_failure(self) -> None:
         matrix = _matrix(
             TWO_TRIALS,

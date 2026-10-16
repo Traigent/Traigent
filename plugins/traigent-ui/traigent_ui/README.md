@@ -2,8 +2,7 @@
 
 This plugin provides utilities for managing LLM optimization problems and Streamlit-based UI components.
 
-> **Note**: The Streamlit playground has been moved to the TraigentDemo repository.
-> See https://github.com/Traigent/TraigentDemo for the interactive playground.
+> **Note**: The Streamlit playground has been moved out of this repository.
 
 ## 🚀 Quick Start
 

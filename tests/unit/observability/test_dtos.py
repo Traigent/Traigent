@@ -12,7 +12,6 @@ from traigent.observability.dtos import (
     TraceRecord,
 )
 
-
 RecordFactory = Callable[[dict[str, Any]], Any]
 
 
@@ -181,3 +180,61 @@ def test_negative_control_the_fixtures_detect_dropped_fields():
     record = ObservationRecord.from_dict(stripped)
     assert record.cost_status != partial["expected"]["cost_status"]
     assert record.priced_cost_usd != partial["expected"]["priced_cost_usd"]
+
+
+# #2605: the backend's trace/session read responses carry the scope the data
+# was stored under; the records must keep it so a caller can confirm which
+# project its traces landed in.
+def test_trace_record_keeps_backend_tenant_and_project_ids() -> None:
+    payload = {
+        **_trace_payload(),
+        "tenant_id": "tenant_a",
+        "project_id": "project_b",
+        "session": {
+            **_session_payload(),
+            "tenant_id": "tenant_a",
+            "project_id": "project_b",
+        },
+    }
+
+    record = TraceRecord.from_dict(payload)
+
+    assert record.tenant_id == "tenant_a"
+    assert record.project_id == "project_b"
+    assert record.session is not None
+    assert record.session.tenant_id == "tenant_a"
+    assert record.session.project_id == "project_b"
+
+
+def test_session_record_keeps_ids_on_session_and_nested_traces() -> None:
+    payload = {
+        **_session_payload(),
+        "tenant_id": "tenant_a",
+        "project_id": "project_b",
+        "traces": [
+            {**_trace_payload(), "tenant_id": "tenant_a", "project_id": "project_b"}
+        ],
+    }
+
+    record = SessionRecord.from_dict(payload)
+
+    assert (record.tenant_id, record.project_id) == ("tenant_a", "project_b")
+    assert (record.traces[0].tenant_id, record.traces[0].project_id) == (
+        "tenant_a",
+        "project_b",
+    )
+
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+@pytest.mark.parametrize("factory", [TraceRecord.from_dict, SessionRecord.from_dict])
+def test_records_default_scope_ids_to_none_when_absent_or_blank(
+    factory: RecordFactory, value: str | None
+) -> None:
+    base = _trace_payload() if factory == TraceRecord.from_dict else _session_payload()
+
+    absent = factory(base)
+    blank = factory({**base, "tenant_id": value, "project_id": value})
+
+    for record in (absent, blank):
+        assert record.tenant_id is None
+        assert record.project_id is None

@@ -492,6 +492,24 @@ class TestTraceIngestionResponseCounts:
         assert resp.spans_ingested_reported is True
         assert resp.skipped_duplicates == 0
 
+    def test_direct_construction_without_a_count_is_unreported(self) -> None:
+        from traigent.integrations.observability.workflow_traces import (
+            TraceIngestionResponse,
+        )
+
+        resp = TraceIngestionResponse(success=True)
+        assert resp.spans_ingested == 0
+        assert resp.spans_ingested_reported is False
+
+    def test_direct_construction_with_a_stated_zero_is_reported(self) -> None:
+        from traigent.integrations.observability.workflow_traces import (
+            TraceIngestionResponse,
+        )
+
+        resp = TraceIngestionResponse(success=True, spans_ingested=0)
+        assert resp.spans_ingested == 0
+        assert resp.spans_ingested_reported is True
+
 
 class TestSubmitTracesIngestCounts:
     @pytest.mark.asyncio
@@ -541,6 +559,25 @@ class TestSubmitTracesIngestCounts:
         assert not any(lvl >= logging.WARNING for lvl, _ in msgs), msgs
         assert any("count unconfirmed" in msg and "2" in msg for _, msg in msgs), msgs
         assert not any(msg.startswith("Backend ingested") for _, msg in msgs), msgs
+
+    @pytest.mark.asyncio
+    async def test_constructor_default_response_is_unconfirmed_not_a_shortfall(
+        self, caplog
+    ) -> None:
+        import logging
+
+        from traigent.integrations.observability.workflow_traces import (
+            TraceIngestionResponse,
+        )
+
+        await _submit(
+            [TraceIngestionResponse(success=True)],
+            [_FakeSpan(trace_id="t1") for _ in range(2)],
+            caplog,
+        )
+        msgs = _span_msgs(caplog)
+        assert not any(lvl >= logging.WARNING for lvl, _ in msgs), msgs
+        assert any("count unconfirmed" in msg and "2" in msg for _, msg in msgs), msgs
 
     @pytest.mark.asyncio
     async def test_counts_aggregate_across_config_runs(self, caplog) -> None:
