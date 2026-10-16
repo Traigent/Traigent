@@ -10,6 +10,7 @@ import time
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 from urllib.parse import urlparse
 
+from traigent.labels.transport_gate import gate_session
 from traigent.cloud.auth import AuthenticationError
 from traigent.cloud.client import (
     CloudEgressBlockedError,
@@ -836,9 +837,11 @@ class ApiOperations:
         """Send the session creation request and handle responses."""
 
         self._raise_if_backend_egress_disabled("create session")
-        async with cast(Any, aiohttp).ClientSession(
-            connector=connector,
-            trust_env=True,
+        async with gate_session(
+            cast(Any, aiohttp).ClientSession(
+                connector=connector,
+                trust_env=True,
+            )
         ) as session:
             api_base = (
                 self.client.backend_config.api_base_url
@@ -951,9 +954,11 @@ class ApiOperations:
             headers = await self.client.auth_manager.augment_headers(
                 {"Content-Type": _JSON_CONTENT_TYPE}
             )
-            async with cast(Any, aiohttp).ClientSession(
-                connector=self._build_connector(),
-                trust_env=True,
+            async with gate_session(
+                cast(Any, aiohttp).ClientSession(
+                    connector=self._build_connector(),
+                    trust_env=True,
+                )
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1088,9 +1093,11 @@ class ApiOperations:
                 {"Content-Type": _JSON_CONTENT_TYPE}
             )
 
-            async with cast(Any, aiohttp).ClientSession(
-                connector=connector,
-                trust_env=True,
+            async with gate_session(
+                cast(Any, aiohttp).ClientSession(
+                    connector=connector,
+                    trust_env=True,
+                )
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1275,9 +1282,11 @@ class ApiOperations:
                 {"Content-Type": _JSON_CONTENT_TYPE}
             )
 
-            async with cast(Any, aiohttp).ClientSession(
-                connector=connector,
-                trust_env=True,
+            async with gate_session(
+                cast(Any, aiohttp).ClientSession(
+                    connector=connector,
+                    trust_env=True,
+                )
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url
@@ -1347,9 +1356,11 @@ class ApiOperations:
 
             connector = self._build_connector()
 
-            async with cast(Any, aiohttp).ClientSession(
-                connector=connector,
-                trust_env=True,
+            async with gate_session(
+                cast(Any, aiohttp).ClientSession(
+                    connector=connector,
+                    trust_env=True,
+                )
             ) as session:
                 api_base = (
                     self.client.backend_config.api_base_url

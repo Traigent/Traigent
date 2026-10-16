@@ -17,6 +17,7 @@ from importlib import import_module
 from typing import Any, NoReturn, cast
 from urllib.parse import urlparse
 
+from traigent.labels.transport_gate import gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 
 # Capture the genuine, unpatched ClientSession class at module-load time — before
@@ -862,14 +863,16 @@ class TraigentCloudClient(BaseTraigentClient):
             logger.warning("aiohttp not available, will use fallback optimization")
             return self
 
-        self._aio_session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=self.timeout),
-            # Session-default headers are long-lived: never freeze a
-            # traceparent/tracestate into them (it would stamp every later
-            # request with a stale span context). Trace context travels only
-            # on per-request headers (see _get_headers / _inject_trace_context).
-            headers=_strip_trace_context_headers(await self.auth.get_headers()),
-            trust_env=True,
+        self._aio_session = gate_session(
+            aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=self.timeout),
+                # Session-default headers are long-lived: never freeze a
+                # traceparent/tracestate into them (it would stamp every later
+                # request with a stale span context). Trace context travels only
+                # on per-request headers (see _get_headers / _inject_trace_context).
+                headers=_strip_trace_context_headers(await self.auth.get_headers()),
+                trust_env=True,
+            )
         )
         self._register_session_finalizer(self._aio_session)
         return self
@@ -916,12 +919,14 @@ class TraigentCloudClient(BaseTraigentClient):
                     "Client session not initialized and aiohttp not available"
                 )
 
-            self._aio_session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=self.timeout),
-                # Same rule as __aenter__: no stale trace context in
-                # long-lived session-default headers.
-                headers=_strip_trace_context_headers(headers),
-                trust_env=True,
+            self._aio_session = gate_session(
+                aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    # Same rule as __aenter__: no stale trace context in
+                    # long-lived session-default headers.
+                    headers=_strip_trace_context_headers(headers),
+                    trust_env=True,
+                )
             )
             self._register_session_finalizer(self._aio_session)
             return self._aio_session

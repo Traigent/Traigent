@@ -88,17 +88,20 @@ PRE_EXPANSION_PAIRS: tuple[tuple[str, str], ...] = (
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ANCHOR_REF = "origin/develop"
+#: Paths the ratchet reads from the anchor ref. Module constants so that renaming a file
+#: cannot silently re-enter first-introduction mode; ``test_anchor_paths_*`` pins them.
 _MANIFEST_REL = "tests/egress_canary/leak_manifest.json"
+_DISPOSITIONS_REL = "tests/egress_canary/leak_dispositions.json"
 
 
 class AnchorUnavailable(RuntimeError):
     """The authority (origin/develop) cannot be read: the ratchet must fail."""
 
 
-def _git(*args: str) -> subprocess.CompletedProcess[str]:
+def _git(*args: str, repo: Path = _REPO_ROOT) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(  # noqa: S603
-            ["git", "-C", str(_REPO_ROOT), *args],  # noqa: S607
+            ["git", "-C", str(repo), *args],  # noqa: S607
             capture_output=True,
             text=True,
             timeout=30,
@@ -108,21 +111,68 @@ def _git(*args: str) -> subprocess.CompletedProcess[str]:
         raise AnchorUnavailable(f"git unavailable: {type(exc).__name__}") from exc
 
 
-def load_anchor() -> set[Identity] | None:
-    """Register on ``origin/develop``; ``None`` when the file is not there yet.
+def anchor_blob_state(
+    rel: str, repo: Path = _REPO_ROOT, ref: str = _ANCHOR_REF
+) -> bool:
+    """True if ``rel`` is a blob on ``ref``, False if cleanly absent.
+
+    ``git ls-tree`` distinguishes the two: exit 0 and empty output is "absent". A
+    nonzero exit, any stderr, or output that is not exactly one blob entry for ``rel``
+    (unreadable or corrupt object, bad ref) raises: never treated as "absent".
+    """
+
+    res = _git("ls-tree", ref, "--", rel, repo=repo)
+    if res.returncode or res.stderr.strip():
+        raise AnchorUnavailable(f"git ls-tree {ref} -- {rel} failed")
+    out = res.stdout.strip()
+    if not out:
+        return False
+    meta, _, name = out.partition("\t")
+    if name != rel or meta.split()[:2] != ["100644", "blob"]:
+        raise AnchorUnavailable(f"unexpected tree entry for {rel}")
+    return True
+
+
+def load_anchor(
+    repo: Path = _REPO_ROOT, ref: str = _ANCHOR_REF, rel: str = _MANIFEST_REL
+) -> set[Identity] | None:
+    """Register on ``ref``; ``None`` when the file is cleanly absent (first introduction).
 
     Raises ``AnchorUnavailable`` when git or the ref cannot be read -- never
     silently falls back to the editable working-tree copy.
     """
 
-    if _git("rev-parse", "--verify", "--quiet", f"{_ANCHOR_REF}^{{commit}}").returncode:
-        raise AnchorUnavailable(f"{_ANCHOR_REF} is not a readable ref (git fetch?)")
-    if _git("cat-file", "-e", f"{_ANCHOR_REF}:{_MANIFEST_REL}").returncode:
+    if _git(
+        "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", repo=repo
+    ).returncode:
+        raise AnchorUnavailable(f"{ref} is not a readable ref (git fetch?)")
+    if not anchor_blob_state(rel, repo, ref):
         return None
-    shown = _git("show", f"{_ANCHOR_REF}:{_MANIFEST_REL}")
+    shown = _git("show", f"{ref}:{rel}", repo=repo)
     if shown.returncode:
         raise AnchorUnavailable("git show of the anchor manifest failed")
     return _ids(json.loads(shown.stdout)["register"])
+
+
+#: Inventory sections (INVENTORY-v1) each canary route belongs to. A disposition citing
+#: ``INV:<id>`` must cite one of its own route's sections.
+ROUTE_INVENTORY_IDS: dict[str, frozenset[str]] = {
+    "POST /api/v1/sessions": frozenset({"S1"}),
+    "POST /api/v1/sessions/{id}/next-trial": frozenset({"S2"}),
+    "POST /api/v1/sessions/{id}/results": frozenset({"S3"}),
+    "POST /api/v1/sessions/{id}/intermediate-report": frozenset({"S4"}),
+    "POST /api/v1/sessions/{id}/finalize": frozenset({"S5"}),
+    "POST /api/v1/optimize": frozenset({"S12"}),
+    "PUT /api/v1/configuration-runs/{id}/status": frozenset({"C1"}),
+    "PUT /api/v1/configuration-runs/{id}/measures": frozenset({"C2"}),
+    "POST /api/v1/hybrid/sessions": frozenset({"H1"}),
+    "POST /api/v1/hybrid/optimizer/{id}/batch": frozenset({"H8"}),
+    "POST /api/v1/best-configs": frozenset({"B1"}),
+    "GET /api/v1/best-configs/{id}": frozenset({"B2"}),
+    "POST /api/v1/example-sets": frozenset({"E1"}),
+    "POST /api/v1/example-sets/{id}/upload": frozenset({"E1"}),
+}
+_WINDOW = 5
 
 
 def inventory_ids() -> set[str]:
@@ -131,23 +181,43 @@ def inventory_ids() -> set[str]:
 
 
 def reference_problem(
-    reference: str, repo_root: Path = _REPO_ROOT, ids: set[str] | None = None
+    reference: str,
+    repo_root: Path = _REPO_ROOT,
+    ids: set[str] | None = None,
+    identity: Identity | None = None,
 ) -> str | None:
-    """None when ``reference`` is ``INV:<known id>`` or an existing ``file:line``."""
+    """None when ``reference`` is valid and, given ``identity``, is about THAT identity.
+
+    ``INV:<id>`` must be a known id and one of the identity's own route sections.
+    ``<file>:<line>`` must exist and the cited line (+/- a few lines) must mention a
+    token of the identity's own field path: an unrelated existing line fails.
+    """
 
     ref = reference.strip()
     if ref.startswith("INV:"):
         known = inventory_ids() if ids is None else ids
-        return None if ref[4:] in known else f"unknown inventory id {ref[4:]!r}"
+        if ref[4:] not in known:
+            return f"unknown inventory id {ref[4:]!r}"
+        if identity is not None and ref[4:] not in ROUTE_INVENTORY_IDS.get(
+            identity[0], frozenset()
+        ):
+            return f"{ref[4:]} is not an inventory section of {identity[0]}"
+        return None
     m = re.fullmatch(r"([\w./-]+):(\d+)", ref)
     if not m:
         return "reference must be 'INV:<id>' or '<repo-relative file>:<line>'"
     path = (repo_root / m.group(1)).resolve()
     if repo_root.resolve() not in path.parents or not path.is_file():
         return f"no such file in the repo: {m.group(1)}"
-    lines = len(path.read_text(encoding="utf-8", errors="replace").splitlines())
-    if not 1 <= int(m.group(2)) <= lines:
-        return f"{m.group(1)} has {lines} lines, not {m.group(2)}"
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    line_no = int(m.group(2))
+    if not 1 <= line_no <= len(lines):
+        return f"{m.group(1)} has {len(lines)} lines, not {m.group(2)}"
+    if identity is not None:
+        tokens = [t for t in re.split(r"[^A-Za-z0-9_]+", identity[2]) if len(t) >= 3]
+        window = "\n".join(lines[max(0, line_no - 1 - _WINDOW) : line_no + _WINDOW])
+        if not any(t in window for t in tokens):
+            return f"{m.group(1)}:{line_no} does not mention the field {identity[2]!r}"
     return None
 
 
@@ -179,7 +249,7 @@ def ratchet_problems(
         if entry is None:
             problems.append(f"leak gone without disposition: {gone}")
             continue
-        bad = reference_problem(entry.get("reference", ""), repo_root, ids)
+        bad = reference_problem(entry.get("reference", ""), repo_root, ids, gone)
         if bad or not entry.get("reason", "").strip():
             problems.append(f"invalid disposition for {gone}: {bad or 'empty reason'}")
     return problems

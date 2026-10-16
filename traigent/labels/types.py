@@ -11,8 +11,9 @@ construction validates (fail closed). They are additive; nothing existing is ret
 
 from __future__ import annotations
 
-import importlib
+import ast
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -87,12 +88,14 @@ class KeyMaterial(_Checked):
 
 
 class CodeIdentifier(_Checked):
-    """A code identifier verified against the local code it names.
+    """A code identifier verified against local code WITHOUT importing or running it.
 
-    Two forms: ``module:qualname`` (resolved by importing the module and walking the
-    qualname; the resolved object's own ``__module__``/``__qualname__`` must agree) or a
-    repo-relative file path (must exist under ``root``). Use :meth:`verified`; plain
-    construction only checks syntax and is for values already verified elsewhere.
+    Two forms: ``module:qualname`` or a repo-relative file path. ``module:qualname`` is
+    resolved statically: the module's source file is located on the search path (never
+    by importing, so no package ``__init__`` or import hook runs), parsed with ``ast``,
+    and the qualname must name a class or function defined in it. A caller that already
+    holds the loaded object passes it to :meth:`of` instead. Plain construction only
+    checks syntax and is for values already verified elsewhere.
     """
 
     @classmethod
@@ -100,27 +103,64 @@ class CodeIdentifier(_Checked):
         if not (_CODE_ID.match(value) or _REL_PATH.match(value)):
             raise ContentClassError("not a code identifier")
 
+    @staticmethod
+    def _find_source(module_name: str, search: list[Path]) -> Path | None:
+        parts = module_name.split(".")
+        for base in search:
+            target = base.joinpath(*parts)
+            for candidate in (target.with_suffix(".py"), target / "__init__.py"):
+                if candidate.is_file():
+                    return candidate
+        return None
+
+    @staticmethod
+    def _defines(tree: ast.AST, qualname: str) -> bool:
+        scope: Any = tree
+        for part in qualname.split("."):
+            body = getattr(scope, "body", None)
+            if body is None:
+                return False
+            for stmt in body:
+                if (
+                    isinstance(
+                        stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                    )
+                    and stmt.name == part
+                ):
+                    scope = stmt
+                    break
+            else:
+                return False
+        return True
+
     @classmethod
-    def verified(cls, identifier: str, *, root: Path | None = None) -> CodeIdentifier:
+    def verified(
+        cls,
+        identifier: str,
+        *,
+        root: Path | None = None,
+        search_paths: list[Path] | None = None,
+    ) -> CodeIdentifier:
         cls._check(identifier)
         match = _CODE_ID.match(identifier)
         if match:
             module_name, qualname = match.groups()
+            search = (
+                [Path(p) for p in search_paths]
+                if search_paths is not None
+                else (
+                    [root] if root is not None else [Path(p or ".") for p in sys.path]
+                )
+            )
+            source = cls._find_source(module_name, [p.resolve() for p in search])
+            if source is None:
+                raise ContentClassError("code identifier module source not found")
             try:
-                obj: Any = importlib.import_module(module_name)
-            except Exception as exc:  # noqa: BLE001 - any import failure is a refusal
-                raise ContentClassError(
-                    "code identifier module is not importable"
-                ) from exc
-            for part in qualname.split("."):
-                if not hasattr(obj, part):
-                    raise ContentClassError("code identifier does not name local code")
-                obj = getattr(obj, part)
-            owner = getattr(obj, "__module__", None)
-            if owner is not None and owner != module_name:
-                # Re-exports are fine only if the qualname still agrees.
-                if getattr(obj, "__qualname__", qualname) != qualname:
-                    raise ContentClassError("code identifier does not match its target")
+                tree = ast.parse(source.read_text(encoding="utf-8"))
+            except (OSError, SyntaxError, ValueError) as exc:
+                raise ContentClassError("code identifier source is unreadable") from exc
+            if not cls._defines(tree, qualname):
+                raise ContentClassError("code identifier does not name local code")
             return cls(identifier)
         base = (root or Path.cwd()).resolve()
         target = (base / identifier).resolve()
@@ -132,7 +172,7 @@ class CodeIdentifier(_Checked):
 
     @classmethod
     def of(cls, obj: Any) -> CodeIdentifier:
-        """Identifier of a local function or class (``module:qualname``), verified."""
+        """Identifier of an already-loaded function or class. Never imports anything."""
         module = getattr(obj, "__module__", None)
         qualname = getattr(obj, "__qualname__", None)
         if (
@@ -142,7 +182,14 @@ class CodeIdentifier(_Checked):
             or "<lambda>" in qualname
         ):
             raise ContentClassError("object has no stable code identifier")
-        return cls.verified(f"{module}:{qualname}")
+        loaded: Any = sys.modules.get(module)
+        if loaded is not None:
+            cur: Any = loaded
+            for part in qualname.split("."):
+                cur = getattr(cur, part, None)
+            if cur is not obj:
+                raise ContentClassError("object is not reachable under its own name")
+        return cls(f"{module}:{qualname}")
 
 
 class EncryptedBlob(dict):  # type: ignore[type-arg]

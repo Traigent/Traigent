@@ -193,11 +193,16 @@ def test_opaque_ref_digest_key_material() -> None:
     assert "Alice" not in repr(OpaqueRef(OBJ))
 
 
-def test_code_identifier_is_verified_against_local_code(tmp_path: Path) -> None:
-    ident = CodeIdentifier.verified("traigent.labels.envelope:pad")
+def test_code_identifier_is_verified_statically_against_local_code(
+    tmp_path: Path,
+) -> None:
+    root = Path(__file__).resolve().parents[3]
+    ident = CodeIdentifier.verified("traigent.labels.envelope:pad", search_paths=[root])
     assert ident == "traigent.labels.envelope:pad"
     assert CodeIdentifier.of(pad) == ident
-    assert CodeIdentifier.verified("traigent.labels.envelope:RevisionGuard.check")
+    assert CodeIdentifier.verified(
+        "traigent.labels.envelope:RevisionGuard.check", search_paths=[root]
+    )
     for bad in (
         "traigent.labels.envelope:nope",
         "traigent.no_such_module:pad",
@@ -205,7 +210,7 @@ def test_code_identifier_is_verified_against_local_code(tmp_path: Path) -> None:
         "Alice has diabetes",
     ):
         with pytest.raises(ContentClassError):
-            CodeIdentifier.verified(bad)
+            CodeIdentifier.verified(bad, search_paths=[root])
     (tmp_path / "pkg").mkdir()
     (tmp_path / "pkg" / "m.py").write_text("x = 1\n")
     assert CodeIdentifier.verified("pkg/m.py", root=tmp_path)
@@ -214,6 +219,43 @@ def test_code_identifier_is_verified_against_local_code(tmp_path: Path) -> None:
             CodeIdentifier.verified(bad, root=tmp_path)
     with pytest.raises(ContentClassError):
         CodeIdentifier.of(lambda: 1)
+
+
+def test_code_identifier_never_executes_or_imports_the_module(tmp_path: Path) -> None:
+    import sys
+
+    marker = tmp_path / "executed.txt"
+    pkg = tmp_path / "sidefx"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text(f"open({str(marker)!r}, 'w').write('pkg')\n")
+    (pkg / "mod.py").write_text(
+        f"open({str(marker)!r}, 'w').write('mod')\n\n\nclass K:\n    def m(self):\n        pass\n\n\ndef fn():\n    pass\n"
+    )
+    assert CodeIdentifier.verified("sidefx.mod:fn", search_paths=[tmp_path])
+    assert CodeIdentifier.verified("sidefx.mod:K.m", search_paths=[tmp_path])
+    with pytest.raises(ContentClassError):
+        CodeIdentifier.verified("sidefx.mod:missing", search_paths=[tmp_path])
+    assert not marker.exists(), "verification executed module code"
+    assert "sidefx" not in sys.modules and "sidefx.mod" not in sys.modules
+
+
+def test_guarded_open_refuses_replay_and_advances_only_after_success() -> None:
+    from traigent.labels.envelope import open_label_guarded
+
+    sk = X25519PrivateKey.generate()
+    guard = RevisionGuard()
+    kw = {"purpose": "label", "object_ref": OBJ, **REFS}
+    v1, v2 = _env(sk, "old", revision=1), _env(sk, "new", revision=2)
+    assert open_label_guarded(guard, sk, v1, revision=1, **kw) == "old"
+    assert open_label_guarded(guard, sk, v2, revision=2, **kw) == "new"
+    with pytest.raises(LabelCryptoError, match="stale"):  # replay of the older triple
+        open_label_guarded(guard, sk, v1, revision=1, **kw)
+    # a forged/failed read must not advance the retained maximum
+    with pytest.raises(LabelCryptoError):
+        open_label_guarded(
+            guard, sk, {**v2, "ciphertext": v1["ciphertext"]}, revision=9, **kw
+        )
+    assert open_label_guarded(guard, sk, v2, revision=2, **kw) == "new"
 
 
 def test_encrypted_blob_accepts_only_envelopes() -> None:

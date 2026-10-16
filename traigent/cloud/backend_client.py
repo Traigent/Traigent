@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, unquote, urlparse, urlunparse
 
 # Import and re-export BackendClientConfig for backward compatibility
+from traigent.labels.transport_gate import gate_session
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 from traigent.cloud.api_operations import ApiOperations, TraigentSessionApiResult
 from traigent.cloud.auth import (
@@ -89,7 +90,7 @@ from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.config.backend_config import BackendConfig
 from traigent.config.project import read_optional_project_env
 from traigent.evaluators.base import Dataset
-from traigent.labels.transport_gate import install_transport_gate
+from traigent.labels.transport_gate import preflight_requests
 from traigent.security.session_manager import SessionManager as SecuritySessionManager
 from traigent.utils.exceptions import RetryableError
 from traigent.utils.logging import get_logger
@@ -136,10 +137,6 @@ except ImportError:  # pragma: no cover - optional dependency for offline mode
 logger = get_logger(__name__)
 _ALLOWED_EXAMPLE_FEATURE_KINDS = frozenset({"simhash_v1"})
 _JSON_CONTENT_TYPE = "application/json"
-
-# Phase 2 (content-less design): classify final request bodies, report mode only
-# unless TRAIGENT_TRANSPORT_GATE=refuse/off. Never changes the wire in report mode.
-install_transport_gate()
 _SDK_USER_AGENT = get_sdk_user_agent()
 _AGENT_ID_HEADER = "X-Traigent-Agent-Id"
 _EXPECTED_HEAD_GENERATION_HEADER = "X-Traigent-Expected-Head-Generation"
@@ -1457,13 +1454,15 @@ class BackendIntegratedClient:
                 # Keep the running loop's pool: in-flight requests may be using it.
                 return self
             await self._retire_primary_pool()
-            self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=self.timeout),
-                # Session-default headers are long-lived: never freeze a
-                # traceparent/tracestate into them (stale span context).
-                # Trace context travels only on per-request headers.
-                headers=_strip_trace_context_headers(headers),
-                trust_env=True,
+            self._session = gate_session(
+                aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    # Session-default headers are long-lived: never freeze a
+                    # traceparent/tracestate into them (stale span context).
+                    # Trace context travels only on per-request headers.
+                    headers=_strip_trace_context_headers(headers),
+                    trust_env=True,
+                )
             )
             self._register_session_finalizer(self._session)
         return self
@@ -1508,12 +1507,14 @@ class BackendIntegratedClient:
         headers.setdefault("Content-Type", _JSON_CONTENT_TYPE)
         headers.setdefault("User-Agent", _SDK_USER_AGENT)
 
-        return aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=self.timeout),
-            # Same rule as __aenter__: no stale trace context in
-            # long-lived session-default headers.
-            headers=_strip_trace_context_headers(headers),
-            trust_env=True,
+        return gate_session(
+            aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=self.timeout),
+                # Same rule as __aenter__: no stale trace context in
+                # long-lived session-default headers.
+                headers=_strip_trace_context_headers(headers),
+                trust_env=True,
+            )
         )
 
     def _loop_pools(self) -> dict[int, tuple[weakref.ref[Any], Any]]:
@@ -2255,6 +2256,7 @@ class BackendIntegratedClient:
 
         def _post_best_config() -> Any:
             try:
+                preflight_requests("POST", url, json=payload)
                 response = requests.post(  # nosec B113 - timeout is provided
                     url,
                     json=payload,
@@ -2406,6 +2408,7 @@ class BackendIntegratedClient:
         # host and accept key material from it. A (connect, read) timeout pair
         # bounds a stalled Backend; the body is a few hundred bytes, so the
         # read limit effectively bounds the whole answer.
+        preflight_requests("POST", url)
         response = requests.post(  # nosec B113 - timeout is provided
             url,
             headers=headers,
@@ -2478,6 +2481,7 @@ class BackendIntegratedClient:
 
         def _post_example_features() -> Any:
             try:
+                preflight_requests("POST", url, json=payload)
                 response = requests.post(  # nosec B113 - timeout is provided
                     url,
                     json=payload,

@@ -24,11 +24,9 @@ pytestmark = pytest.mark.backend_online
 def refuse_gate():
     gate.set_mode("refuse")
     gate.clear_refusals()
-    gate.install_transport_gate()
     try:
         yield
     finally:
-        gate.uninstall_transport_gate()
         gate.set_mode(None)
 
 

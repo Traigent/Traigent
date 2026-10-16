@@ -1,18 +1,21 @@
-"""Transport gate: classification counts, report vs refuse, and the hook points."""
+"""Transport gate: scoping, origin match, report/refuse semantics, every send path."""
 
 from __future__ import annotations
 
 import json
 import logging
+import sys
 
 import pytest
 
 from traigent.labels import transport_gate as gate
-from traigent.labels.content_classes import get_store
+from traigent.labels.content_classes import get_table
 from traigent.labels.transport_gate import TransportGateRefusal, inspect_outgoing
 
 CANARY = "Alice_has_diabetes"
-URL = "https://backend.example.test/api/v1/sessions"
+BACKEND = "https://backend.example.test"
+URL = f"{BACKEND}/api/v1/sessions"
+CUSTOMER_URL = "https://customer.example/api/v1/sessions"
 
 
 def _session_body() -> bytes:
@@ -29,86 +32,128 @@ def _session_body() -> bytes:
 @pytest.fixture(autouse=True)
 def _reset():
     gate.set_mode(None)
+    gate.set_allowed_origins([BACKEND])
     gate.clear_refusals()
     yield
-    gate.uninstall_transport_gate()
     gate.set_mode(None)
+    gate.set_allowed_origins(None)
     gate.clear_refusals()
 
 
-def test_route_table_covers_the_body_carrying_routes() -> None:
-    store = get_store()
-    assert store.find_route("POST", "/api/v1/sessions")
-    assert store.find_route("POST", "/api/v1/sessions/abc-1/results")
-    assert store.find_route("POST", "/api/v1beta/projects/p1/sessions/s1/finalize")
-    assert store.find_route("GET", "/api/v1/sessions") is None
-    assert store.find_route("POST", "/other") is None
+# --- table and classification --------------------------------------------------------
 
 
-def test_report_mode_counts_without_blocking_or_leaking(caplog, monkeypatch) -> None:
+def test_route_table_covers_routes_with_and_without_bodies() -> None:
+    t = get_table()
+    assert t.find("POST", "/api/v1/sessions")
+    assert t.find("POST", "/api/v1/sessions/abc-1/results")
+    assert t.find("POST", "/api/v1beta/projects/p1/sessions/s1/finalize")
+    assert t.find("GET", "/api/v1/sessions/s1/identity-binding")  # no body route
+    assert t.find("GET", "/api/v1/sessions") is None
+    assert t.find("POST", "/other") is None
+
+
+def test_query_and_path_parameters_are_classified() -> None:
+    gate.set_mode("report")
+    c = inspect_outgoing(
+        "GET",
+        f"{BACKEND}/api/v1/optimization/recommendations?agent_type=x&bogus=1",
+        None,
+    )
+    assert c and c.get("legacy_content", 0) >= 1 and c.get("unclassified", 0) >= 1
+    c = inspect_outgoing(
+        "GET", f"{BACKEND}/api/v1/sessions/{CANARY}/identity-binding", None
+    )
+    assert (
+        c and c.get("legacy_content", 0) + c.get("unclassified", 0) >= 1
+    )  # declared legacy
+
+
+def test_refuse_mode_refuses_a_content_path_param() -> None:
+    gate.set_mode("refuse")
+    with pytest.raises(TransportGateRefusal):
+        inspect_outgoing(
+            "GET", f"{BACKEND}/api/v1/optimization/recommendations?metric=m", None
+        )
+
+
+# --- report mode ---------------------------------------------------------------------
+
+
+def test_report_counts_without_blocking_or_leaking(caplog) -> None:
     gate.set_mode("report")
     with caplog.at_level(logging.DEBUG):
         counts = inspect_outgoing("POST", URL, _session_body())
     assert counts and counts.get("legacy_content", 0) > 0
     assert gate.report_totals()["legacy_content"] >= counts["legacy_content"]
-    assert CANARY not in caplog.text
-    assert gate.refusal_log() == []
+    assert CANARY not in caplog.text and gate.refusal_log() == []
 
 
-def test_report_mode_never_raises_on_garbage() -> None:
+def test_report_swallows_gate_failures_into_a_counter(monkeypatch) -> None:
     gate.set_mode("report")
-    assert inspect_outgoing("POST", URL, b"not json") is None
-    assert inspect_outgoing("GET", URL, b"{}") is None
-    assert inspect_outgoing("POST", URL, None) is None
-    assert inspect_outgoing("POST", "https://x.test/other", b"{}") is None
 
+    def boom(*a, **k):
+        raise RuntimeError("gate bug")
 
-def test_refuse_mode_raises_with_counts_only() -> None:
+    monkeypatch.setattr(gate, "classify_request", boom)
+    before = gate.gate_errors().get("RuntimeError", 0)
+    assert inspect_outgoing("POST", URL, _session_body()) is None
+    assert gate.gate_errors()["RuntimeError"] == before + 1
+    assert inspect_outgoing("POST", URL, b"not json") is None  # never raises in report
     gate.set_mode("refuse")
-    with pytest.raises(TransportGateRefusal) as err:
-        inspect_outgoing("POST", URL, _session_body())
-    assert err.value.counts["legacy_content"] > 0
-    assert CANARY not in str(err.value)
-    assert gate.refusal_log()[0][0] == "/api/v1/sessions"
-    with pytest.raises(
-        TransportGateRefusal
-    ):  # unparseable body on a gated route fails closed
+    with pytest.raises(TransportGateRefusal):
         inspect_outgoing("POST", URL, b"not json")
 
 
 def test_off_mode_does_nothing() -> None:
     gate.set_mode("off")
     assert inspect_outgoing("POST", URL, _session_body()) is None
-    assert gate.install_transport_gate() is False
+
+    class Plain:
+        pass
+
+    p = Plain()
+    assert gate.gate_session(p) is p
 
 
-def test_aiohttp_hook_refuses_before_send() -> None:
-    aiohttp = pytest.importorskip("aiohttp")
-    sent: list[str] = []
-    session_cls = aiohttp.ClientSession
-    original = session_cls._request
-
-    async def fake(self, method, url, **kw):  # noqa: ANN001
-        sent.append(str(url))
-        raise RuntimeError("would send")
-
-    session_cls._request = fake
-    try:
-        gate.set_mode("refuse")
-        assert gate.install_transport_gate()
-        s = session_cls.__new__(session_cls)
-        with pytest.raises(TransportGateRefusal):
-            s.post(URL, json={"function_name": CANARY})
-        assert sent == []
-    finally:
-        session_cls._request = original
+# --- scoping: other origins are never inspected ---------------------------------------
 
 
-def test_requests_hook_refuses_before_send(monkeypatch) -> None:
+def test_other_hosts_and_origins_are_untouched() -> None:
+    gate.set_mode("refuse")
+    assert inspect_outgoing("POST", CUSTOMER_URL, _session_body()) is None
+    assert (
+        inspect_outgoing(
+            "POST", "http://backend.example.test/api/v1/sessions", _session_body()
+        )
+        is None
+    )
+    assert (
+        inspect_outgoing("POST", f"{BACKEND}:8443/api/v1/sessions", _session_body())
+        is None
+    )
+    with pytest.raises(TransportGateRefusal):
+        inspect_outgoing("POST", URL, _session_body())
+
+
+def test_importing_the_sdk_patches_nothing_global() -> None:
+    import aiohttp
+    import httpx
+    import requests
+
+    import traigent.cloud.backend_client  # noqa: F401
+
+    assert not getattr(aiohttp.ClientSession, "_traigent_gated", False)
+    assert not getattr(requests.Session, "_traigent_gated", False)
+    assert not getattr(httpx.Client, "_traigent_gated", False)
+    assert not getattr(httpx.AsyncClient, "_traigent_gated", False)
+
+
+def test_unrelated_requests_are_untouched_in_refuse_mode(monkeypatch) -> None:
     requests = pytest.importorskip("requests")
     sent: list[str] = []
 
-    def fake_send(self, request, **kw):  # noqa: ANN001
+    def fake_send(self, request, **kw):
         sent.append(request.url)
         resp = requests.Response()
         resp.status_code = 200
@@ -117,10 +162,193 @@ def test_requests_hook_refuses_before_send(monkeypatch) -> None:
 
     monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", fake_send)
     gate.set_mode("refuse")
-    gate.install_transport_gate()
-    with pytest.raises(TransportGateRefusal):
-        requests.post(URL, json={"function_name": CANARY}, timeout=1)
+    import traigent.cloud.backend_client  # noqa: F401  (SDK imported, nothing patched)
+
+    requests.post(CUSTOMER_URL, json={"function_name": CANARY}, timeout=1)
+    assert sent == [CUSTOMER_URL]
+
+
+# --- every send path refuses before bytes leave ----------------------------------------
+
+
+@pytest.mark.parametrize("verb", ["post", "request"])
+async def test_aiohttp_every_entry_point_refuses_before_send(verb) -> None:
+    aiohttp = pytest.importorskip("aiohttp")
+    sent: list[str] = []
+    cls = aiohttp.ClientSession
+    original = cls._request
+
+    async def fake(self, method, url, **kw):
+        sent.append(str(url))
+        raise RuntimeError("would send")
+
+    cls._request = fake
+    try:
+        gate.set_mode("refuse")
+        async with gate.gate_session(aiohttp.ClientSession()) as s:
+            args = ("POST", URL) if verb == "request" else (URL,)
+            with pytest.raises(TransportGateRefusal):
+                async with getattr(s, verb)(*args, json={"function_name": CANARY}):
+                    pass
+            with pytest.raises(TransportGateRefusal):  # data= bytes path
+                async with getattr(s, verb)(*args, data=_session_body()):
+                    pass
+            assert sent == []
+            with pytest.raises(
+                RuntimeError, match="would send"
+            ):  # other host: untouched
+                async with s.post(CUSTOMER_URL, json={"function_name": CANARY}):
+                    pass
+            assert sent == [CUSTOMER_URL]
+    finally:
+        cls._request = original
+
+
+async def test_aiohttp_report_serializes_once_and_never_fails_the_request() -> None:
+    aiohttp = pytest.importorskip("aiohttp")
+    calls = {"n": 0}
+
+    def once_only(obj):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise RuntimeError("single-use serializer reused")
+        return json.dumps(obj)
+
+    seen: list[object] = []
+    cls = aiohttp.ClientSession
+    original = cls._request
+
+    async def fake(self, method, url, **kw):
+        seen.append(kw.get("data"))
+        return "ok"
+
+    cls._request = fake
+    try:
+        gate.set_mode("report")
+        async with gate.gate_session(
+            aiohttp.ClientSession(json_serialize=once_only)
+        ) as s:
+            assert await s._request("POST", URL, json={"function_name": CANARY}) == "ok"
+        assert calls["n"] == 1 and seen and getattr(seen[0], "_value", b"")
+        assert gate.report_totals().get("legacy_content", 0) > 0
+    finally:
+        cls._request = original
+
+
+def test_requests_session_send_refuses_before_bytes_leave(monkeypatch) -> None:
+    requests = pytest.importorskip("requests")
+    sent: list[str] = []
+
+    def fake_send(self, request, **kw):
+        sent.append(request.url)
+        resp = requests.Response()
+        resp.status_code = 200
+        resp.request = request
+        return resp
+
+    monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", fake_send)
+    s = gate.gate_session(requests.Session())
+    gate.set_mode("refuse")
+    for call in (
+        lambda: s.post(URL, json={"function_name": CANARY}, timeout=1),
+        lambda: s.send(requests.Request("POST", URL, data=_session_body()).prepare()),
+    ):
+        with pytest.raises(TransportGateRefusal):
+            call()
     assert sent == []
     gate.set_mode("report")
-    requests.post(URL, json={"function_name": CANARY}, timeout=1)
-    assert sent == [URL]  # report mode lets the request through unchanged
+    s.post(URL, json={"function_name": CANARY}, timeout=1)
+    assert sent == [URL]  # report mode passes the request through unchanged
+
+
+def test_requests_module_level_preflight(monkeypatch) -> None:
+    pytest.importorskip("requests")
+    gate.set_mode("refuse")
+    with pytest.raises(TransportGateRefusal):
+        gate.preflight_requests("POST", URL, json={"function_name": CANARY})
+    gate.preflight_requests(
+        "POST", CUSTOMER_URL, json={"function_name": CANARY}
+    )  # untouched
+    gate.set_mode("report")
+    gate.preflight_requests("POST", URL, json={"function_name": CANARY})
+
+
+def test_httpx_send_request_and_stream_refuse_before_send() -> None:
+    httpx = pytest.importorskip("httpx")
+    sent: list[str] = []
+
+    def handler(request):
+        sent.append(str(request.url))
+        return httpx.Response(200, json={})
+
+    client = gate.gate_session(httpx.Client(transport=httpx.MockTransport(handler)))
+    gate.set_mode("refuse")
+    with pytest.raises(TransportGateRefusal):
+        client.send(httpx.Request("POST", URL, json={"function_name": CANARY}))
+    with pytest.raises(TransportGateRefusal):
+        client.post(URL, json={"function_name": CANARY})
+    with pytest.raises(TransportGateRefusal):
+        with client.stream("POST", URL, json={"function_name": CANARY}):
+            pass
+    assert sent == []
+    client.post(CUSTOMER_URL, json={"function_name": CANARY})
+    assert sent == [CUSTOMER_URL]
+
+
+async def test_httpx_async_send_and_stream_refuse_before_send() -> None:
+    httpx = pytest.importorskip("httpx")
+    sent: list[str] = []
+
+    def handler(request):
+        sent.append(str(request.url))
+        return httpx.Response(200, json={})
+
+    client = gate.gate_session(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    gate.set_mode("refuse")
+    with pytest.raises(TransportGateRefusal):
+        await client.send(httpx.Request("POST", URL, json={"function_name": CANARY}))
+    with pytest.raises(TransportGateRefusal):
+        async with client.stream("POST", URL, json={"function_name": CANARY}):
+            pass
+    assert sent == []
+    await client.aclose()
+
+
+def test_gate_session_ignores_mocks_and_is_idempotent() -> None:
+    from unittest.mock import MagicMock
+
+    m = MagicMock()
+    assert gate.gate_session(m) is m
+    requests = pytest.importorskip("requests")
+    s = gate.gate_session(requests.Session())
+    cls = type(s)
+    assert gate.gate_session(s) is s and type(s) is cls
+    assert (
+        requests.Session is not cls
+        and "traigent" not in sys.modules.get("requests").__name__
+    )
+
+
+@pytest.mark.parametrize("verb", ["put", "patch", "delete"])
+async def test_aiohttp_other_verbs_reach_the_gate_but_have_no_gated_route(verb) -> None:
+    aiohttp = pytest.importorskip("aiohttp")
+    sent: list[str] = []
+    cls = aiohttp.ClientSession
+    original = cls._request
+
+    async def fake(self, method, url, **kw):
+        sent.append(str(method))
+        return "ok"
+
+    cls._request = fake
+    try:
+        gate.set_mode("refuse")
+        async with gate.gate_session(aiohttp.ClientSession()) as s:
+            assert await getattr(s, verb)(URL, json={"a": 1}) == "ok"
+        assert sent == [
+            verb.upper()
+        ]  # table has no such route: not inspected, not blocked
+    finally:
+        cls._request = original

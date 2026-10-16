@@ -180,4 +180,12 @@ def test_live_leaks_hold_against_origin_develop_anchor(
 
 def test_disposition_references_are_validated() -> None:
     for entry in load_dispositions():
-        assert reference_problem(entry.get("reference", "")) is None, entry
+        identity = (
+            entry["route"],
+            entry["location"],
+            entry["field_path"],
+            entry["kind"],
+        )
+        assert (
+            reference_problem(entry.get("reference", ""), identity=identity) is None
+        ), entry

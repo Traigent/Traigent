@@ -347,7 +347,7 @@ def test_scenario_result_type_is_report_renderable(tmp_path: Path) -> None:
 
 
 _A = ("POST /api/v1/sessions", "body.value", "$.a", "agent_name")
-_B = ("POST /api/v1/sessions", "body.value", "$.b", "run_title")
+_B = ("POST /api/v1/sessions", "body.value", "$.run_title", "run_title")
 _NEW = ("POST /api/v1/sessions", "body.value", "$.new", "metadata_value")
 
 
@@ -389,7 +389,7 @@ def test_bogus_disposition_reference_fails() -> None:
     ):
         problems = ratchet_problems({_A}, {_A, _B}, {_A}, [_disp(_B, bad)], ids=ids)
         assert any("invalid disposition" in p for p in problems), bad
-    for good in ("INV:S1", "tests/egress_canary/pins.py:1"):
+    for good in ("INV:S1", "tests/egress_canary/canaries.py:25"):
         assert ratchet_problems({_A}, {_A, _B}, {_A}, [_disp(_B, good)], ids=ids) == []
     assert any(
         "without disposition" in p for p in ratchet_problems({_A}, {_A, _B}, {_A}, [])
@@ -413,3 +413,85 @@ def test_unreadable_authority_fails_not_skips(monkeypatch) -> None:
     monkeypatch.setattr(pins.subprocess, "run", boom)
     with pytest.raises(pins.AnchorUnavailable):
         pins.load_anchor()
+
+
+def test_unrelated_disposition_reference_fails() -> None:
+    """A real file:line that says nothing about the removed identity is not evidence."""
+
+    from .pins import ratchet_problems
+
+    ids = {"S1", "S3"}
+    for unrelated in ("pyproject.toml:1", "tests/egress_canary/pins.py:1", "INV:S3"):
+        problems = ratchet_problems(
+            {_A}, {_A, _B}, {_A}, [_disp(_B, unrelated)], ids=ids
+        )
+        assert any("invalid disposition" in p for p in problems), unrelated
+
+
+def test_anchor_paths_are_module_constants_and_real_files() -> None:
+    from . import pins
+
+    assert pins._MANIFEST_REL == "tests/egress_canary/leak_manifest.json"
+    assert pins._DISPOSITIONS_REL == "tests/egress_canary/leak_dispositions.json"
+    for rel in (pins._MANIFEST_REL, pins._DISPOSITIONS_REL):
+        assert (pins._REPO_ROOT / rel).is_file(), rel
+    assert pins.ROUTE_INVENTORY_IDS
+    for route in {r for r, *_ in pins.BASELINE}:
+        assert route in pins.ROUTE_INVENTORY_IDS, route
+
+
+def _repo_with_ref(tmp_path: Path, files: dict[str, str]) -> Path:
+    import subprocess
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+
+    def git(*a: str) -> str:
+        return subprocess.run(  # noqa: S603
+            ["git", "-C", str(tmp_path), *a],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        ).stdout
+
+    git("init", "-q")
+    git("config", "user.email", "t@example.invalid")
+    git("config", "user.name", "t")
+    for rel, text in files.items():
+        f = tmp_path / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text)
+    git("add", "-A")
+    git("commit", "-q", "-m", "x", "--allow-empty")
+    git("update-ref", "refs/remotes/origin/develop", "HEAD")
+    return tmp_path
+
+
+def test_anchor_absent_vs_present_vs_corrupt(tmp_path: Path) -> None:
+    import json as _json
+    import subprocess
+
+    from . import pins
+
+    rel = pins._MANIFEST_REL
+    body = _json.dumps({"register": []})
+    present = _repo_with_ref(tmp_path / "present", {rel: body})
+    assert pins.load_anchor(present) == set()
+    absent = _repo_with_ref(tmp_path / "absent", {"other.txt": "x"})
+    assert pins.load_anchor(absent) is None  # cleanly absent: first introduction
+
+    # Corrupt the tree object: ls-tree must fail closed, not report "absent".
+    tree = subprocess.run(  # noqa: S603
+        ["git", "-C", str(present), "rev-parse", "origin/develop^{tree}"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    ).stdout.strip()
+    obj = present / ".git" / "objects" / tree[:2] / tree[2:]
+    obj.chmod(0o644)
+    obj.write_bytes(b"garbage")
+    with pytest.raises(pins.AnchorUnavailable):
+        pins.load_anchor(present)
+    with pytest.raises(pins.AnchorUnavailable):
+        pins.load_anchor(tmp_path / "absent", ref="origin/no-such-ref")

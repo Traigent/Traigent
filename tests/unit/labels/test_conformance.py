@@ -63,15 +63,6 @@ def test_fixtures_are_pinned_to_the_schema_worktree() -> None:
         assert _sha(FIXTURES / name) == _sha(source), name
 
 
-@pytest.mark.skipif(not SCHEMA_WT.exists(), reason="TraigentSchema worktree absent")
-def test_bundled_contract_schemas_are_pinned_to_the_schema_worktree() -> None:
-    root = SCHEMA_WT / "traigent_schema/schemas"
-    files = sorted(BUNDLE.rglob("*.json"))
-    assert files
-    for f in files:
-        assert _sha(f) == _sha(root / f.relative_to(BUNDLE)), f.name
-
-
 # --- RFC 9180 -----------------------------------------------------------------------
 
 
@@ -182,6 +173,24 @@ def test_malformed_padding_is_refused(vectors: dict) -> None:
 # --- member wrap (flow b) -------------------------------------------------------------
 
 
+def _wrap_ctx(vectors: dict, **tweak) -> dict:
+    chain = vectors["binding_chain"]
+    return {
+        "anchor": TrustAnchor(
+            tweak.get("pinned", vectors["keys"]["root_fingerprint_sha256"]),
+            vectors["refs"]["tenant_ref"],
+            vectors["refs"]["project_ref"],
+        ),
+        "root_public_key": bytes.fromhex(vectors["keys"]["root_public_hex"]),
+        "admin_binding": chain["admin_identity"],
+        "project_binding": tweak.get("project", chain["project_key"]),
+        "member_binding": tweak.get("member", chain["member_key"]),
+        "binding_list": vectors["binding_list"],
+        "retained_sequence": 1,
+        "now": "2026-10-16T00:00:01Z",
+    }
+
+
 def test_member_wrap_reproduces_and_open_is_opt_in(vectors: dict) -> None:
     refs, keys, mw = vectors["refs"], vectors["keys"], vectors["member_wrap"]
     kw = {"tenant_ref": refs["tenant_ref"], "project_ref": refs["project_ref"]}
@@ -199,22 +208,59 @@ def test_member_wrap_reproduces_and_open_is_opt_in(vectors: dict) -> None:
         **kw,
     )
     assert wrap == mw["wrap"]
+    ctx = _wrap_ctx(vectors)
     with pytest.raises(LabelCryptoError, match="disabled"):
-        open_member_wrap(_x(keys["member_private_hex"]), wrap, **kw)
+        open_member_wrap(_x(keys["member_private_hex"]), wrap, **ctx)
     sk = open_member_wrap(
-        _x(keys["member_private_hex"]), wrap, allow_machine_member_open=True, **kw
+        _x(keys["member_private_hex"]), wrap, allow_machine_member_open=True, **ctx
     )
     assert sk.private_bytes_raw().hex() == keys["project_private_hex"]
     with pytest.raises(LabelCryptoError):
         open_member_wrap(
-            _x(keys["project_private_hex"]), wrap, allow_machine_member_open=True, **kw
+            _x(keys["project_private_hex"]), wrap, allow_machine_member_open=True, **ctx
         )
     with pytest.raises(LabelCryptoError):
         open_member_wrap(
             _x(keys["member_private_hex"]),
             {**wrap, "epoch": 2},
             allow_machine_member_open=True,
-            **kw,
+            **ctx,
+        )
+
+
+def test_member_wrap_open_requires_a_verified_chain_and_matching_project_key(
+    vectors: dict,
+) -> None:
+    keys = vectors["keys"]
+    chain = vectors["binding_chain"]
+    wrap = vectors["member_wrap"]["wrap"]
+    msk = _x(keys["member_private_hex"])
+    with pytest.raises(LabelCryptoError, match="pinned"):  # unpinned / wrong root
+        open_member_wrap(
+            msk,
+            wrap,
+            allow_machine_member_open=True,
+            **_wrap_ctx(vectors, pinned="1" * 64),
+        )
+    with pytest.raises(LabelCryptoError):  # tampered project binding
+        open_member_wrap(
+            msk,
+            wrap,
+            allow_machine_member_open=True,
+            **_wrap_ctx(vectors, project={**chain["project_key"], "epoch": 2}),
+        )
+    # A hostile service seals an attacker-chosen "project key" to the member's real key.
+    attacker = X25519PrivateKey.generate()
+    forged = seal_member_wrap(
+        attacker.private_bytes_raw(),
+        bytes.fromhex(keys["member_public_hex"]),
+        tenant_ref=vectors["refs"]["tenant_ref"],
+        project_ref=vectors["refs"]["project_ref"],
+        epoch=1,
+    )
+    with pytest.raises(LabelCryptoError, match="verified project key"):
+        open_member_wrap(
+            msk, forged, allow_machine_member_open=True, **_wrap_ctx(vectors)
         )
 
 

@@ -1,51 +1,54 @@
-"""Single transport gate for the SDK's cloud send paths (phase 2: "report" mode).
+"""Transport gate for the SDK's own cloud clients (phase 2: "report" mode by default).
 
-The gate classifies the FINAL serialized request body against the Schema content-class
-annotations (``content_classes``). Modes (env ``TRAIGENT_TRANSPORT_GATE``):
+The gate classifies the FINAL request (path parameters, query string, serialized body)
+against the Schema content classes (``content_classes``). Modes (env
+``TRAIGENT_TRANSPORT_GATE``):
 
-* ``off``    - not installed.
-* ``report`` - DEFAULT. Logs a closed count summary locally (class -> count, route
-  template; never a value, key or path) and never blocks or changes the request.
-* ``refuse`` - raises :class:`TransportGateRefusal` BEFORE the request is handed to the
-  transport when any value is ``legacy_content``/``unclassified``/``violation``.
-  Intended for tests now and for phase 4 enforcement.
+* ``off``    - sessions are not gated.
+* ``report`` - DEFAULT. Counts values per class into process-local totals and a debug
+  log (class -> count, route template; never a value, key or path). Never blocks, never
+  changes the request, and any gate failure is swallowed into :func:`gate_errors`.
+* ``refuse`` - raises :class:`TransportGateRefusal` BEFORE any bytes leave when a value
+  is ``legacy_content``/``unclassified``/``violation``. For tests now, phase-4
+  enforcement later.
 
-Hook points (one wrapper per client library the SDK sends with; all funnel into
-:func:`inspect_outgoing`): ``aiohttp.ClientSession.request/post/put/patch/delete``,
-``requests.Session.send`` (final prepared body) and ``httpx.Client/AsyncClient.request``.
-They sit ABOVE the lowest send layer, so a test that replaces the low-level send still
-exercises the gate. Only paths that match a body-carrying route of the optimization
-endpoint inventory are classified; anything else passes through untouched.
+Scope: nothing is monkeypatched globally. :func:`gate_session` re-classes ONE
+SDK-created client instance (aiohttp ``ClientSession``, ``requests.Session``,
+``httpx.Client``/``AsyncClient``) so that its single send funnel inspects the request,
+and :func:`preflight_requests` covers the SDK's few module-level ``requests.post``
+calls. Only requests to the configured Traigent backend origin (scheme, host, port) are
+inspected; every other request, including a customer's own call to any other host, is
+untouched.
 """
 
 # Traceability: CONC-Layer-Core CONC-Quality-Security FUNC-SECURITY
 
 from __future__ import annotations
 
-import functools
 import json
 import os
 import threading
 from collections import Counter
+from collections.abc import Iterable
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from traigent.utils.logging import get_logger
 
-from .content_classes import BLOCKING, SchemaStoreError, classify_body, get_store
+from .content_classes import BLOCKING, classify_request, get_table
 
 logger = get_logger(__name__)
 
 MODE_ENV = "TRAIGENT_TRANSPORT_GATE"
 MODES = ("off", "report", "refuse")
-_BODY_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
-_lock = threading.Lock()
-_installed = False
-_originals: list[tuple[Any, str, Any]] = []
 _mode_override: str | None = None
+_origins_override: frozenset[tuple[str, str, int]] | None = None
 _totals: Counter[str] = Counter()
+_errors: Counter[str] = Counter()
 _refusals: list[tuple[str, dict[str, int]]] = []
+_lock = threading.Lock()
+_CLASS_CACHE: dict[tuple[type, str], type] = {}
 
 
 class TransportGateRefusal(RuntimeError):
@@ -56,6 +59,9 @@ class TransportGateRefusal(RuntimeError):
         self.counts = dict(counts)
         blocked = {k: v for k, v in counts.items() if k in BLOCKING}
         super().__init__(f"transport gate refused {route}: {blocked}")
+
+
+# --- mode, origin, counters -------------------------------------------------------
 
 
 def current_mode() -> str:
@@ -71,9 +77,42 @@ def set_mode(mode: str | None) -> None:
     _mode_override = mode
 
 
+def _origin(url: str) -> tuple[str, str, int] | None:
+    parts = urlsplit(url)
+    if not parts.scheme or not parts.hostname:
+        return None
+    default = 443 if parts.scheme == "https" else 80
+    return parts.scheme.lower(), parts.hostname.lower(), parts.port or default
+
+
+def set_allowed_origins(urls: Iterable[str] | None) -> None:
+    """Pin the inspected origins (tests). ``None`` returns to the configured backend."""
+    global _origins_override
+    _origins_override = (
+        None if urls is None else frozenset(o for u in urls if (o := _origin(u)))
+    )
+
+
+def backend_origins() -> frozenset[tuple[str, str, int]]:
+    if _origins_override is not None:
+        return _origins_override
+    from traigent.config.backend_config import BackendConfig
+
+    urls = [BackendConfig.get_backend_url(), BackendConfig.get_cloud_backend_url()]
+    configured = BackendConfig.get_configured_backend_url()
+    if configured:
+        urls.append(configured)
+    return frozenset(o for u in urls if (o := _origin(u)))
+
+
 def report_totals() -> dict[str, int]:
-    """Process-lifetime class -> count totals of everything the gate has seen (report mode)."""
+    """Process-lifetime class -> count totals of everything inspected."""
     return dict(_totals)
+
+
+def gate_errors() -> dict[str, int]:
+    """Closed counters of gate-internal failures swallowed in report mode."""
+    return dict(_errors)
 
 
 def refusal_log() -> list[tuple[str, dict[str, int]]]:
@@ -85,32 +124,56 @@ def clear_refusals() -> None:
     _refusals.clear()
 
 
-def inspect_outgoing(
-    method: str, url: str, body: bytes | str | None
-) -> dict[str, int] | None:
-    """Classify one outgoing request; returns the counts, or ``None`` if not classifiable.
+# --- core -------------------------------------------------------------------------
 
-    Raises :class:`TransportGateRefusal` in refuse mode. In report mode never raises.
+
+def inspect_outgoing(
+    method: str,
+    url: str,
+    body: bytes | str | None,
+    *,
+    body_present: bool | None = None,
+) -> dict[str, int] | None:
+    """Classify one outgoing request from its FINAL bytes; counts, or ``None`` if skipped.
+
+    ``body_present`` lets a caller say "there is a body I cannot read" (``body=None``):
+    refuse mode then refuses (cannot classify); report mode skips it.
     """
     mode = current_mode()
-    if mode == "off" or method.upper() not in _BODY_METHODS or not body:
+    if mode == "off":
         return None
     refuse = mode == "refuse"
     try:
-        route = get_store().find_route(method, urlsplit(str(url)).path)
-        if route is None:
+        origin = _origin(str(url))
+        if origin is None or origin not in backend_origins():
             return None
-        template, schema = route
-        parsed = json.loads(body)
-        counts = dict(classify_body(parsed, schema, get_store()))
-    except (SchemaStoreError, ValueError, KeyError, RecursionError) as exc:
+        parts = urlsplit(str(url))
+        table = get_table()
+        has_body = bool(body) or bool(body_present)
+        parsed: Any = None
+        if body:
+            parsed = json.loads(body)
+        elif body_present:
+            if table.find(method, parts.path) is None:
+                return None
+            raise ValueError("unreadable body")
+        result = classify_request(
+            table, method, parts.path, parts.query, parsed, has_body=has_body
+        )
+    except TransportGateRefusal:
+        raise
+    except Exception as exc:  # noqa: BLE001 - report mode must never fail a request
         if refuse:
             raise TransportGateRefusal("unclassifiable", {"violation": 1}) from exc
-        logger.debug(
-            "transport gate could not classify a request (%s)", type(exc).__name__
-        )
+        with _lock:
+            _errors[type(exc).__name__] += 1
         return None
-    _totals.update(counts)
+    if result is None:
+        return None
+    template, counter = result
+    counts = dict(counter)
+    with _lock:
+        _totals.update(counts)
     logger.debug("transport gate [%s] %s %s", mode, template, counts)
     if refuse and any(counts.get(c, 0) for c in BLOCKING):
         _refusals.append((template, counts))
@@ -118,107 +181,208 @@ def inspect_outgoing(
     return counts
 
 
-def _json_bytes(obj: Any, dumps: Any = None) -> bytes:
-    return (dumps or json.dumps)(obj).encode("utf-8")
-
-
-def _body_from_kwargs(kwargs: dict[str, Any], dumps: Any = None) -> bytes | str | None:
-    if kwargs.get("json") is not None:
-        return _json_bytes(kwargs["json"], dumps)
-    data = kwargs.get("data", kwargs.get("content"))
-    if isinstance(data, (bytes, bytearray, str)):
-        return bytes(data) if isinstance(data, bytearray) else data
-    return None
-
-
-def _wrap(owner: Any, name: str, make: Any) -> None:
-    original = getattr(owner, name)
-    _originals.append((owner, name, original))
-    setattr(owner, name, make(original))
-
-
-def install_transport_gate() -> bool:
-    """Idempotently wrap the SDK's send libraries. Returns False when mode is ``off``."""
-    global _installed
-    if current_mode() == "off":
-        return False
-    with _lock:
-        if _installed:
-            return True
-        _install_aiohttp()
-        _install_requests()
-        _install_httpx()
-        _installed = True
-    return True
-
-
-def uninstall_transport_gate() -> None:
-    global _installed
-    with _lock:
-        for owner, name, original in reversed(_originals):
-            setattr(owner, name, original)
-        _originals.clear()
-        _installed = False
-
-
-def _install_aiohttp() -> None:
+def _with_params(url: str, params: Any) -> str:
+    if not params:
+        return url
     try:
-        import aiohttp
-    except ImportError:  # pragma: no cover
+        extra = urlencode(params, doseq=True)
+    except (TypeError, ValueError):
+        return url
+    return url + ("&" if "?" in url else "?") + extra
+
+
+# --- per-instance scoping -----------------------------------------------------------
+
+
+def _derived(base: type, tag: str, build: Any) -> type:
+    key = (base, tag)
+    with _lock:
+        if key not in _CLASS_CACHE:
+            _CLASS_CACHE[key] = build(base)
+        return _CLASS_CACHE[key]
+
+
+def _build_aiohttp(base: type) -> type:
+    from aiohttp import payload
+
+    class GatedClientSession(base):  # type: ignore[valid-type, misc]
+        _traigent_gated = True
+
+        async def _request(self, method: Any, str_or_url: Any, **kwargs: Any) -> Any:
+            url = str(str_or_url)
+            base_url = getattr(self, "_base_url", None)
+            if base_url is not None and not urlsplit(url).scheme:
+                url = str(base_url).rstrip("/") + "/" + url.lstrip("/")
+            url = _with_params(url, kwargs.get("params"))
+            body: bytes | None = None
+            unreadable = False
+            if current_mode() != "off":
+                try:
+                    data = kwargs.get("data")
+                    if kwargs.get("json") is not None and data is None:
+                        # Serialize ONCE, exactly as aiohttp would, and hand the same
+                        # payload on: no second serialization.
+                        sb = getattr(self, "_json_serialize_bytes", None)
+                        if sb is not None:
+                            pl = payload.JsonBytesPayload(kwargs["json"], dumps=sb)
+                        else:
+                            pl = payload.JsonPayload(
+                                kwargs["json"], dumps=self._json_serialize
+                            )
+                        kwargs = {k: v for k, v in kwargs.items() if k != "json"}
+                        kwargs["data"] = pl
+                        data = pl
+                    if isinstance(data, (bytes, bytearray)):
+                        body = bytes(data)
+                    elif isinstance(data, str):
+                        body = data.encode("utf-8")
+                    elif data is not None:
+                        value = getattr(data, "_value", None)
+                        if isinstance(value, (bytes, bytearray)):
+                            body = bytes(value)
+                        else:
+                            unreadable = True
+                except Exception as exc:  # noqa: BLE001
+                    with _lock:
+                        _errors[type(exc).__name__] += 1
+                    unreadable = True
+                inspect_outgoing(
+                    str(method), url, body, body_present=unreadable or None
+                )
+            return await super()._request(method, str_or_url, **kwargs)
+
+    GatedClientSession.__name__ = f"Gated{base.__name__}"
+    return GatedClientSession
+
+
+def _build_requests(base: type) -> type:
+    class GatedRequestsSession(base):  # type: ignore[valid-type, misc]
+        _traigent_gated = True
+
+        def send(self, request: Any, **kwargs: Any) -> Any:
+            body = request.body
+            if isinstance(body, str):
+                body = body.encode("utf-8")
+            readable = body is None or isinstance(body, (bytes, bytearray))
+            inspect_outgoing(
+                str(request.method),
+                str(request.url),
+                bytes(body) if isinstance(body, (bytes, bytearray)) else None,
+                body_present=None if readable else True,
+            )
+            return super().send(request, **kwargs)
+
+    GatedRequestsSession.__name__ = f"Gated{base.__name__}"
+    return GatedRequestsSession
+
+
+def _httpx_body(request: Any) -> tuple[bytes | None, bool]:
+    try:
+        return bytes(request.content), False
+    except Exception:  # noqa: BLE001 - streaming body not yet read
+        return None, True
+
+
+def _build_httpx_sync(base: type) -> type:
+    class GatedHttpxClient(base):  # type: ignore[valid-type, misc]
+        _traigent_gated = True
+
+        def send(self, request: Any, **kwargs: Any) -> Any:
+            body, unreadable = _httpx_body(request)
+            inspect_outgoing(
+                str(request.method),
+                str(request.url),
+                body,
+                body_present=True if unreadable else None,
+            )
+            return super().send(request, **kwargs)
+
+    GatedHttpxClient.__name__ = f"Gated{base.__name__}"
+    return GatedHttpxClient
+
+
+def _build_httpx_async(base: type) -> type:
+    class GatedHttpxAsyncClient(base):  # type: ignore[valid-type, misc]
+        _traigent_gated = True
+
+        async def send(self, request: Any, **kwargs: Any) -> Any:
+            body, unreadable = _httpx_body(request)
+            inspect_outgoing(
+                str(request.method),
+                str(request.url),
+                body,
+                body_present=True if unreadable else None,
+            )
+            return await super().send(request, **kwargs)
+
+    GatedHttpxAsyncClient.__name__ = f"Gated{base.__name__}"
+    return GatedHttpxAsyncClient
+
+
+def _is_instance(obj: Any, module: str, name: str) -> bool:
+    """isinstance against a library class; False if the library or class is unusable
+    (not installed, or replaced by a test double that is not a type)."""
+    try:
+        mod = __import__(module)
+        return isinstance(obj, getattr(mod, name))
+    except (ImportError, AttributeError, TypeError):
+        return False
+
+
+def gate_session(client: Any) -> Any:
+    """Gate ONE SDK-created client instance in place and return it.
+
+    Re-classes the instance so its send funnel inspects requests. Mocks and unknown
+    objects are returned untouched; ``TRAIGENT_TRANSPORT_GATE=off`` disables gating.
+    """
+    if current_mode() == "off" or getattr(type(client), "_traigent_gated", False):
+        return client
+    if _is_instance(client, "aiohttp", "ClientSession"):
+        object.__setattr__(
+            client, "__class__", _derived(type(client), "aiohttp", _build_aiohttp)
+        )
+    elif _is_instance(client, "requests", "Session"):
+        client.__class__ = _derived(type(client), "requests", _build_requests)
+    elif _is_instance(client, "httpx", "AsyncClient"):
+        client.__class__ = _derived(type(client), "httpx-async", _build_httpx_async)
+    elif _is_instance(client, "httpx", "Client"):
+        client.__class__ = _derived(type(client), "httpx", _build_httpx_sync)
+    return client
+
+
+def preflight_requests(method: str, url: str, **kwargs: Any) -> None:
+    """Inspect a module-level ``requests.<method>(url, ...)`` call before it is made.
+
+    The body is prepared exactly as ``requests`` will prepare it (deterministic JSON
+    encoding); the caller then makes its normal call.
+    """
+    if current_mode() == "off":
         return
-    cls = aiohttp.ClientSession
-
-    def verb(original: Any, fixed_method: str | None) -> Any:
-        @functools.wraps(original)
-        def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
-            if fixed_method:
-                method, url = fixed_method, args[0] if args else kwargs.get("url", "")
-            else:
-                method = args[0] if args else kwargs.get("method", "")
-                url = args[1] if len(args) > 1 else kwargs.get("url", "")
-            body = _body_from_kwargs(kwargs, getattr(self, "_json_serialize", None))
-            inspect_outgoing(str(method), str(url), body)
-            return original(self, *args, **kwargs)
-
-        return wrapper
-
-    _wrap(cls, "request", lambda o: verb(o, None))
-    for name in ("post", "put", "patch", "delete"):
-        _wrap(cls, name, lambda o, n=name: verb(o, n.upper()))
-
-
-def _install_requests() -> None:
     try:
         import requests
-    except ImportError:  # pragma: no cover
-        return
 
-    def make(original: Any) -> Any:
-        @functools.wraps(original)
-        def send(self: Any, request: Any, **kwargs: Any) -> Any:
-            body = request.body
-            if isinstance(body, (bytes, str)):
-                inspect_outgoing(str(request.method), str(request.url), body)
-            return original(self, request, **kwargs)
-
-        return send
-
-    _wrap(requests.Session, "send", make)
-
-
-def _install_httpx() -> None:
-    try:
-        import httpx
-    except ImportError:  # pragma: no cover
-        return
-
-    def make(original: Any) -> Any:
-        @functools.wraps(original)
-        def request(self: Any, method: str, url: Any, *args: Any, **kwargs: Any) -> Any:
-            inspect_outgoing(str(method), str(url), _body_from_kwargs(kwargs))
-            return original(self, method, url, *args, **kwargs)
-
-        return request
-
-    _wrap(httpx.Client, "request", make)
-    _wrap(httpx.AsyncClient, "request", make)
+        origin = _origin(str(url))
+        if origin is None or origin not in backend_origins():
+            return
+        prepared = requests.Request(
+            method.upper(),
+            url,
+            params=kwargs.get("params"),
+            data=kwargs.get("data"),
+            json=kwargs.get("json"),
+        ).prepare()
+        body = prepared.body
+        readable = body is None or isinstance(body, (bytes, str, bytearray))
+        inspect_outgoing(
+            method,
+            str(prepared.url),
+            body.encode() if isinstance(body, str) else (bytes(body) if body else None),
+            body_present=None if readable else True,
+        )
+    except TransportGateRefusal:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        if current_mode() == "refuse":
+            raise TransportGateRefusal("unclassifiable", {"violation": 1}) from exc
+        with _lock:
+            _errors[type(exc).__name__] += 1

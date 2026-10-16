@@ -18,6 +18,7 @@ from urllib.parse import quote, urlencode
 
 import requests  # Always needed for synchronous operations
 
+from traigent.labels.transport_gate import gate_session
 from traigent.cloud.api_operations import _typed_configuration_space
 from traigent.cloud.client import raise_if_cloud_egress_disabled
 from traigent.cloud.models import (
@@ -135,7 +136,7 @@ class SyncManager:
         # X-API-Key only — Authorization: Bearer is reserved for JWTs.
         self.headers = {"X-API-Key": api_key} if api_key else {}
         # Always create requests session for synchronous operations
-        self._session = requests.Session()
+        self._session = gate_session(requests.Session())
         if api_key:
             self._session.headers.update(self.headers)
         self._request_timeout = self._resolve_request_timeout()

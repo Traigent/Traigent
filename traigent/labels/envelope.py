@@ -145,6 +145,37 @@ def open_label(
     return unpad(padded)
 
 
+def open_label_guarded(
+    guard: RevisionGuard,
+    sk_project: X25519PrivateKey,
+    envelope: dict[str, Any],
+    *,
+    tenant_ref: str,
+    project_ref: str,
+    purpose: str,
+    object_ref: str,
+    revision: int,
+) -> str:
+    """Open with replay protection: this is the reader entry point.
+
+    Refuses a revision below the retained per-object maximum BEFORE decrypting, and
+    advances the retained maximum only after the ciphertext authenticated and decrypted,
+    so a failed or forged read cannot move the guard.
+    """
+    guard.check(object_ref, revision)
+    text = open_label(
+        sk_project,
+        envelope,
+        tenant_ref=tenant_ref,
+        project_ref=project_ref,
+        purpose=purpose,
+        object_ref=object_ref,
+        revision=revision,
+    )
+    guard.accept(object_ref, revision)
+    return text
+
+
 class RevisionGuard:
     """Per-object retained maximum revision: rejects a revision below it (rollback)."""
 

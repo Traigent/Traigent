@@ -209,6 +209,9 @@ def _body_bytes(data: Any, json_obj: Any = None, serializer: Any = None) -> byte
         return bytes(data)
     if isinstance(data, str):
         return data.encode()
+    payload_value = getattr(data, "_value", None)  # aiohttp BytesPayload / JsonPayload
+    if isinstance(payload_value, bytes | bytearray):
+        return bytes(payload_value)
     if isinstance(data, dict):
         return urlencode(data).encode()
     if isinstance(data, list | tuple):
