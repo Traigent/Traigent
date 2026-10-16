@@ -242,7 +242,7 @@ def test_environment_is_default_and_never_production_when_unset() -> None:
     ) == ("default")
 
 
-@pytest.mark.parametrize("bad", ["prod", "dev", "Alice_has_diabetes", "live"])
+@pytest.mark.parametrize("bad", ["Alice_has_diabetes", "live", "production2", "prd"])
 def test_environment_outside_the_enum_is_refused_without_echo(bad: str) -> None:
     for env, explicit in (({}, bad), ({"ENVIRONMENT": bad}, None)):
         with pytest.raises(cl.ContentLessRefusal) as info:
@@ -344,3 +344,21 @@ def test_refs_are_scoped_to_the_credential() -> None:
     assert cache.lookup("principal-b", keys) == {}
     cache.forget("principal-a")
     assert cache.lookup("principal-a", keys) == {}
+
+
+@pytest.mark.parametrize(
+    ("alias", "expected"),
+    [
+        ("prod", "production"),
+        ("PROD", "production"),
+        ("dev", "development"),
+        ("stage", "staging"),
+        ("STG", "staging"),
+        ("testing", "test"),
+        (" Testing ", "test"),
+    ],
+)
+def test_environment_aliases(alias: str, expected: str) -> None:
+    assert cl.resolve_environment(alias, {}) == expected
+    assert cl.resolve_environment(None, {"ENVIRONMENT": alias}) == expected
+    assert cl.resolve_environment(None, {"TRAIGENT_ENV": alias}) == expected

@@ -846,6 +846,23 @@ class SyncManager:
                     "ids on this machine."
                 ) from None
 
+            from traigent.cloud import content_less as _content_less
+
+            if _content_less.replay_refused(getattr(session, "metadata", None)):
+                # Nothing is converted or sent: the replay body is a legacy identity body.
+                return {
+                    "session_id": session_id,
+                    "function_name": session.function_name,
+                    "status": "error",
+                    "error_code": _content_less.REPLAY_UNSUPPORTED,
+                    "dry_run": dry_run,
+                    "data_converted": False,
+                    "errors": [
+                        "Content-less sessions cannot be replayed yet "
+                        f"({_content_less.REPLAY_UNSUPPORTED})."
+                    ],
+                }
+
             # Convert to Traigent format
             traigent_data = self.convert_session_to_traigent_format(session)
             payload_hash = self._compute_payload_hash(traigent_data)

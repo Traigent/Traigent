@@ -36,6 +36,14 @@ logger = get_logger(__name__)
 
 CAPABILITY = "content_less_v1"
 ENVIRONMENTS = ("production", "staging", "development", "test", "default")
+#: Common spellings accepted for the closed enum (case-insensitive). Anything else is refused.
+ENVIRONMENT_ALIASES = {
+    "prod": "production",
+    "dev": "development",
+    "stage": "staging",
+    "stg": "staging",
+    "testing": "test",
+}
 
 #: Closed local refusal codes (a subset of OptimizationRefusalCode plus two local ones).
 BACKEND_UPGRADE_REQUIRED = "backend_upgrade_required"
@@ -82,6 +90,10 @@ LEGACY_TOP_LEVEL = (
 )
 LEGACY_DATASET_METADATA = ("name",)
 LEGACY_METADATA = ("evaluation_set", "function_display_name", "function_slug")
+
+#: Offline / local session-record metadata key persisting that the run opted in.
+RECORD_KEY = "content_less_mode"
+REPLAY_UNSUPPORTED = "content_less_replay_unsupported"
 
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 
@@ -168,7 +180,7 @@ def resolve_environment(
 
     Precedence: explicit > TRAIGENT_ENVIRONMENT > OTel ``deployment.environment.name`` >
     ENVIRONMENT > legacy TRAIGENT_ENV > ``default`` (with a one-time warning). The first
-    non-blank source decides; its value (stripped, lower-cased) must be in the closed enum,
+    non-blank source decides; its value (stripped, lower-cased, alias-mapped) must be in the closed enum,
     otherwise the create is refused locally. ``production`` is only ever sent when one of
     these sources says so; it is never guessed.
     """
@@ -185,6 +197,7 @@ def resolve_environment(
         if candidate is None or not str(candidate).strip():
             continue
         value = str(candidate).strip().lower()
+        value = ENVIRONMENT_ALIASES.get(value, value)
         if value not in ENVIRONMENTS:
             raise ContentLessRefusal(INVALID_ENVIRONMENT)
         return value
@@ -399,3 +412,91 @@ def require_capability(result: Mapping[str, Any]) -> None:
     caps = result.get("capabilities")
     if not isinstance(caps, list) or CAPABILITY not in caps:
         raise ContentLessRefusal(BACKEND_UPGRADE_REQUIRED)
+
+
+# ------------------------------------------- shared by every session-create serializer
+
+
+def prepare_payload(
+    payload: dict[str, Any],
+    request: Any,
+    principal: str,
+    env: Mapping[str, str] | None = None,
+) -> tuple[Any, ...]:
+    """Rewrite ``payload`` to the content-less shape; returns the response context.
+
+    The context is ``(cache, principal, local_keys, used_cache)`` for
+    :func:`accept_response` / :func:`forget_refused`.
+    """
+    local_keys = local_keys_for(request, payload.get("metadata") or {})
+    cache = RefCache()
+    cached = cache.lookup(principal, local_keys)
+    used_cache = apply_to_payload(
+        payload, options=options_of(request), cached_refs=cached, env=env
+    )
+    return (cache, principal, local_keys, used_cache)
+
+
+def accept_response(result: Any, ctx: tuple[Any, ...]) -> dict[str, str]:
+    """Refuse a Backend without ``content_less_v1``; cache and return the refs it issued."""
+    if not isinstance(result, dict):
+        raise ContentLessRefusal(BACKEND_UPGRADE_REQUIRED)
+    require_capability(result)
+    cache, principal, local_keys, _used = ctx
+    metadata = (
+        result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+    )
+    tenant_id = result.get("tenant_id") or metadata.get("tenant_id")
+    project_id = result.get("project_id") or metadata.get("project_id")
+    refs = refs_from_response(result)
+    if refs and tenant_id and project_id:
+        cache.store(principal, str(tenant_id), str(project_id), local_keys, refs)
+    return refs
+
+
+def label_texts(request: Any) -> dict[str, str | None]:
+    """The human names behind a session's refs, for the label service writer only.
+
+    These strings are customer-chosen names: they are never put on a session request.
+    """
+    from traigent.cloud.models import _derive_default_dataset_id
+
+    explicit = getattr(request, "dataset_id", None)
+    dataset = (
+        explicit.strip()
+        if isinstance(explicit, str) and explicit.strip()
+        else _derive_default_dataset_id(request)
+    )
+    evaluation_set = (getattr(request, "metadata", None) or {}).get("evaluation_set")
+    evaluator = getattr(request, "evaluator_id", None) or getattr(
+        request, "evaluator_definition_id", None
+    )
+    agent = getattr(request, "agent_key", None)
+    return {
+        "agent": agent if isinstance(agent, str) else None,
+        "dataset": dataset,
+        "evaluation_set": evaluation_set if isinstance(evaluation_set, str) else None,
+        "evaluator": evaluator if isinstance(evaluator, str) else None,
+    }
+
+
+def forget_refused(ctx: tuple[Any, ...]) -> None:
+    """A cached reference was refused (404): drop the scope's cached refs."""
+    cache, principal, _keys, used_cache = ctx
+    if used_cache:
+        cache.forget(principal)
+
+
+def replay_refused(session_metadata: Mapping[str, Any] | None) -> bool:
+    """True when an offline session must not be replayed (`traigent sync`).
+
+    Replay builds a legacy identity body and cannot mint or resolve refs, nor verify the
+    capability, so a record made in content-less mode (or any replay while
+    ``TRAIGENT_CONTENT_LESS`` is set) is refused with the closed code
+    ``content_less_replay_unsupported``.
+    """
+    if is_enabled(None):
+        return True
+    return bool(
+        isinstance(session_metadata, Mapping) and session_metadata.get(RECORD_KEY)
+    )

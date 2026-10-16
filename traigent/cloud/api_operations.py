@@ -495,6 +495,7 @@ class ApiOperations:
                 remember_cost_budget_armed_session(
                     self.client, result[0], session_payload.get("budget")
                 )
+                await self._send_content_less_labels(session_request, result)
                 return result
             except CloudServiceError as typed_exc:
                 # auto-contract fallback: a failed TYPED create may retry the
@@ -937,8 +938,9 @@ class ApiOperations:
         """Parse the JSON success payload returned by the session endpoint."""
 
         result = await response.json()
+        issued_refs: dict[str, str] = {}
         if content_less_ctx is not None:
-            self._accept_content_less_response(result, content_less_ctx)
+            issued_refs = self._accept_content_less_response(result, content_less_ctx)
         metadata = result.get("metadata", {})
         if not isinstance(metadata, dict):
             metadata = {}
@@ -981,7 +983,7 @@ class ApiOperations:
             f"✅ Created Traigent session: {session_id} "
             f"(exp: {experiment_id}, run: {experiment_run_id})"
         )
-        return TraigentSessionApiResult(
+        parsed = TraigentSessionApiResult(
             session_id,
             experiment_id,
             experiment_run_id,
@@ -991,25 +993,40 @@ class ApiOperations:
             # Disclosed by the backend for API-key callers; null/absent otherwise.
             agent_id=self._optional_context_id(metadata.get("agent_id")),
         )
+        if issued_refs:
+            cast(Any, parsed).content_less_refs = issued_refs
+        return parsed
+
+    async def _send_content_less_labels(
+        self, session_request: SessionCreationRequest, result: Any
+    ) -> None:
+        """Human names go only through the label service writer (when configured)."""
+        refs = getattr(result, "content_less_refs", None)
+        if not isinstance(refs, dict) or not refs:
+            return
+        from traigent.labels.transport import send_session_labels
+
+        api_base = (
+            self.client.backend_config.api_base_url
+            or BackendConfig.get_backend_api_url()
+        )
+
+        async def _headers() -> dict[str, str]:
+            return cast(
+                dict[str, str],
+                await self.client.auth_manager.augment_headers(
+                    {"Content-Type": _JSON_CONTENT_TYPE}
+                ),
+            )
+
+        await send_session_labels(
+            content_less_session.label_texts(session_request), refs, api_base, _headers
+        )
 
     @staticmethod
-    def _accept_content_less_response(result: Any, ctx: Any) -> None:
-        """Refuse a Backend without ``content_less_v1``; cache the refs it issued."""
-        if not isinstance(result, dict):
-            raise content_less_session.ContentLessRefusal(
-                content_less_session.BACKEND_UPGRADE_REQUIRED
-            )
-        content_less_session.require_capability(result)
-        cache, principal, local_keys, _used = ctx
-        tenant_id = result.get("tenant_id") or (result.get("metadata") or {}).get(
-            "tenant_id"
-        )
-        project_id = result.get("project_id") or (result.get("metadata") or {}).get(
-            "project_id"
-        )
-        refs = content_less_session.refs_from_response(result)
-        if refs and tenant_id and project_id:
-            cache.store(principal, str(tenant_id), str(project_id), local_keys, refs)
+    def _accept_content_less_response(result: Any, ctx: Any) -> dict[str, str]:
+        """Refuse a Backend without ``content_less_v1``; cache and return the refs it issued."""
+        return content_less_session.accept_response(result, ctx)
 
     @staticmethod
     def _optional_context_id(value: Any) -> str | None:

@@ -539,6 +539,14 @@ class SessionOperations:
         # the declared dataset identity the live create would send, so a later
         # `traigent sync` can send the same identity instead of none.
         local_record_metadata = _with_declared_dataset_identity(metadata, dataset_id)
+        from traigent.cloud import content_less as _content_less
+
+        if _content_less.is_enabled(content_less):
+            # Replay (`traigent sync`) of this record is refused: it would post a legacy body.
+            local_record_metadata = {
+                **(local_record_metadata or {}),
+                _content_less.RECORD_KEY: True,
+            }
 
         # Phase 8 (review round 2): the local-availability fallback is for
         # NON-governed sessions only. A governed/strict session that cannot

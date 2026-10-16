@@ -1581,6 +1581,13 @@ class BackendSessionManager:
             # them later. Best-effort — a storage failure yields session_id
             # None exactly like the legacy behavior.
             self._warn_if_dataset_unlinked(dataset, dataset_id)
+            from traigent.cloud import content_less as content_less_session
+
+            offline_content_less_kwargs: dict[str, Any] = (
+                {"content_less_active": True}
+                if content_less_session.is_enabled(content_less)
+                else {}
+            )
             local_session_id = self._create_offline_local_session(
                 function_identifier=function_identifier,
                 function_display_name=function_display_name,
@@ -1590,6 +1597,7 @@ class BackendSessionManager:
                 experiment_display_name=experiment_display_name,
                 function_slug=function_slug,
                 agent_key=agent_key,
+                **offline_content_less_kwargs,
             )
             return SessionContext(
                 session_id=local_session_id,
@@ -1864,6 +1872,7 @@ class BackendSessionManager:
         experiment_display_name: str | None = None,
         function_slug: str | None = None,
         agent_key: str | None = None,
+        content_less_active: bool = False,
     ) -> str | None:
         """Create the syncable LOCAL session for a no-egress run (#1939).
 
@@ -1920,6 +1929,10 @@ class BackendSessionManager:
             }
             if isinstance(agent_key, str) and agent_key.strip():
                 metadata["agent_key"] = agent_key.strip()
+            if content_less_active:
+                from traigent.cloud import content_less as content_less_session
+
+                metadata[content_less_session.RECORD_KEY] = True
             # Persist the identity the live create would have declared (explicit
             # id, else a real label, else none) so `traigent sync` sends it.
             from traigent.cloud.models import (  # local: traigent.cloud is optional
