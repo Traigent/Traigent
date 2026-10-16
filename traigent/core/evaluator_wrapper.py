@@ -33,6 +33,8 @@ from traigent.utils.logging import get_logger
 from traigent.utils.trial_costs import (
     is_cost_unmeasured,
     known_spend_lower_bound,
+    row_has_measured_cost,
+    row_reports_zero_provider_attempts,
     trial_cost_unknown,
 )
 
@@ -570,6 +572,16 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                     aggregated[metric] = None
                 else:
                     aggregated.pop(metric, None)
+        elif any(
+            row_reports_zero_provider_attempts(row) and not row_has_measured_cost(row)
+            for row in all_metrics
+        ):
+            # Rows that explicitly report zero provider attempts spent nothing:
+            # that is an established, measured zero, so materialize it for the
+            # cost keys no row reported (a sum over no rows would omit them).
+            for metric in _LLM_COST_METRICS:
+                if aggregated.get(metric) is None:
+                    aggregated[metric] = 0.0
 
         measured_rows = sum(
             1

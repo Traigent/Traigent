@@ -1203,6 +1203,20 @@ def cost_from_tokens(
     return 0.0, 0.0
 
 
+def model_pricing_resolves(model: str) -> bool:
+    """True when a price (an explicit custom ``0`` rate included) resolves for ``model``.
+
+    Decides "unpriced" from lookup success, never from the dollar amount: a
+    model priced at a custom rate of zero is a measured $0, an unknown model is
+    not (#2517).
+    """
+    try:
+        cost_from_tokens(1, 1, model, strict=True)
+    except (UnknownModelError, RuntimeError):
+        return False
+    return True
+
+
 def model_has_nonzero_price_coverage(model_name: str) -> bool:
     """Return whether a model resolves to non-zero pricing via the real path."""
     try:

@@ -1718,6 +1718,10 @@ class LocalEvaluator(BaseEvaluator):
                 # scalar metric-function values, for consistency.
                 target_metrics = example_results[index].metrics
                 for metric_key in produced_metric_keys:
+                    if metric_key not in example_metric.custom_metrics:
+                        # Withdrawn by the judge fold: the example's cost is
+                        # unknown, so a cost key is not transferred (#2517).
+                        continue
                     target_metrics[metric_key] = example_metric.custom_metrics[
                         metric_key
                     ]
@@ -1849,7 +1853,9 @@ class LocalEvaluator(BaseEvaluator):
                 example_metric.cost.unpriced or metrics.cost.unpriced
             )
 
-        if judge_unmeasured and example_metric.measured:
+        if judge_unmeasured:
+            # Independent of the agent's own measured state: an unknown judge
+            # spend makes the example's cost unknown whatever else was seen.
             self._mark_example_cost_unmeasured_by_judge(example_metric, example_result)
 
         if not eval_total_cost and eval_tokens == 0:

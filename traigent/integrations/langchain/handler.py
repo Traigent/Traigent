@@ -754,6 +754,7 @@ class TraigentHandler(BaseCallbackHandler):
             from traigent.utils.cost_calculator import (
                 _estimation_cost_from_tokens,
                 cost_from_tokens,
+                model_pricing_resolves,
             )
 
             input_cost, output_cost = cost_from_tokens(
@@ -782,10 +783,16 @@ class TraigentHandler(BaseCallbackHandler):
                     )
                     return est_total
 
-            if not strict_cost_accounting and total_cost <= 0.0 and total_tokens > 0:
-                # Tokens were reported but no price table covers the model: the
+            if (
+                not strict_cost_accounting
+                and total_cost <= 0.0
+                and total_tokens > 0
+                and not model_pricing_resolves(model)
+            ):
+                # Tokens were reported but no price resolves for the model: the
                 # zero is the absence of a price, not a free call. Unknown
-                # (``None``) so the call is flagged unmeasured (#2517).
+                # (``None``) so the call is flagged unmeasured (#2517). A price
+                # that resolves to zero (explicit custom rate) stays a measured $0.
                 from traigent.utils.cost_calculator import (
                     record_unpriced_runtime_model,
                 )
