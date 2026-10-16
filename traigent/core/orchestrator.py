@@ -121,6 +121,7 @@ from traigent.core.selection_receipt import build_selection_receipt
 from traigent.core.stat_significance import compute_significance
 from traigent.core.stop_condition_manager import StopConditionManager
 from traigent.core.trial_lifecycle import TrialLifecycle
+from traigent.legend.run_binding import LegendTrialRefused
 from traigent.core.utils import extract_examples_attempted
 from traigent.core.workflow_trace_manager import WorkflowTraceManager
 from traigent.evaluators.base import BaseEvaluator, Dataset
@@ -2682,6 +2683,7 @@ class OptimizationOrchestrator:
         - None for trials cancelled due to cost limit
         """
         terminal_completion: CloudBrainOptimizationComplete | None = None
+        legend_refusal: LegendTrialRefused | None = None
         submit_to_backend = True
         # _handle_trial_result increments trial_count on every item, so anchor
         # synthetic cancelled/failed IDs once for contiguous batch numbering.
@@ -2713,6 +2715,26 @@ class OptimizationOrchestrator:
                         error_message="Trial cancelled: cost limit reached",
                     )
                     # For cancelled trials, permit is denied (no permit acquired)
+                # Pillar Legend refused this trial BEFORE any evaluator call: it is
+                # not a failed evaluation. Finalize the ISSUED backend trial as
+                # not-executed (same id, so no new slot is allocated) and abort the
+                # run once the batch is drained.
+                elif isinstance(result, LegendTrialRefused):
+                    legend_refusal = legend_refusal or result
+                    trial_result = TrialResult(
+                        trial_id=result.backend_trial_id,
+                        config=config,
+                        metrics={},
+                        status=TrialStatus.CANCELLED,
+                        duration=0.0,
+                        timestamp=datetime.now(UTC),
+                        error_message=f"Trial not executed: Legend admission refused ({result.code})",
+                        metadata={
+                            "backend_trial_id_acquired": True,
+                            "backend_trial_id_source": "cloud_brain",
+                            "legend_refusal": result.code,
+                        },
+                    )
                 # Handle exceptions from gather (P4 fix)
                 elif isinstance(result, BaseException):
                     logger.warning(
@@ -2763,6 +2785,8 @@ class OptimizationOrchestrator:
                 raise
         if terminal_completion is not None:
             raise terminal_completion
+        if legend_refusal is not None:
+            raise legend_refusal
         return trial_count
 
     def _apply_cap_and_prevent_excess(
@@ -3156,6 +3180,7 @@ class OptimizationOrchestrator:
             LegendOptions,
             pillars_from_content_identity,
             start_binder,
+            transport_for_client,
         )
 
         options = LegendOptions.coerce(self.legend_options)
@@ -3166,6 +3191,7 @@ class OptimizationOrchestrator:
             privacy_enabled=bool(
                 getattr(self.traigent_config, "privacy_enabled", False)
             ),
+            fallback_transport=transport_for_client(self.backend_client),
         )
         if binder is None:
             return

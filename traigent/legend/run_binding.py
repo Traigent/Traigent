@@ -32,6 +32,7 @@ import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+from urllib.parse import quote
 
 from traigent.legend import _contract as c
 from traigent.legend import payloads
@@ -43,6 +44,7 @@ MODE_STRICT = "strict"
 MODE_PERMITTED = "permitted"
 MODES = frozenset({MODE_STRICT, MODE_PERMITTED})
 
+ROUTE_DECLARE = "/legend/declare"
 SCOPE_RUN = "run"
 SCOPE_TRIAL = "trial"
 
@@ -70,6 +72,10 @@ _OPAQUE_ID_RE = re.compile(r"[A-Za-z0-9_.\-]{1,128}")
 
 #: Closed local refusal codes (besides the contract's own).
 CODE_DRIFT = "manifest_mismatch"
+CODE_INCOMPLETE = "local_observation_incomplete"
+CODE_NOTHING = "local_nothing_to_admit"
+#: Roles only the Backend can attest (an immutable effective search space identity).
+_ATTESTED_ROLES = frozenset({"search_space"})
 CODE_NO_TRANSPORT = "local_transport_unavailable"
 CODE_PRIVACY = "local_privacy_withholds_identity"
 
@@ -304,6 +310,8 @@ class LegendRunBinder:
         self._run_observed: dict[SlotKey, str] = {}
         self._run_entities: dict[str, str] = {}
         self.run_tuple_digest: str | None = None
+        self.run_admitted = False
+        self.unadmitted_reason: str | None = None
         self.calls = 0
 
     @property
@@ -391,43 +399,65 @@ class LegendRunBinder:
             raise LegendError("internal_error", "admission returned no digest")
         return data
 
+    def _incomplete(self, reason: str) -> bool:
+        """An observation cannot be completed: strict refuses; otherwise stay unadmitted.
+
+        Never fills a slot from the Backend's proposal. Returns True (unadmitted)."""
+        if self._mode == MODE_STRICT:
+            raise LegendError(CODE_INCOMPLETE, "observation is incomplete")
+        self.unadmitted_reason = reason
+        return True
+
     def admit_run(self, observed: Mapping[str, Pillar]) -> None:
-        """Admit the run-base context. Call BEFORE any evaluator or model invocation."""
+        """Admit the run-base context. Call BEFORE any evaluator or model invocation.
+
+        Every advertised run slot must be OBSERVED here (a pillar the SDK holds), except
+        ``search_space``, which the Backend alone can attest (it identifies the immutable
+        effective search space). Anything else missing is never copied from the Backend's
+        proposal: strict refuses, permitted leaves the run unadmitted.
+        """
         declared = self._options.declared if self._options is not None else {}
-        run_refs: dict[SlotKey, str] = {}
-        for key, advertised in self._block.bindings:
-            role, scope, slot = key
-            if scope != SCOPE_RUN:
-                continue
+        run_keys = [(k, ref) for k, ref in self._block.bindings if k[1] == SCOPE_RUN]
+        if not run_keys:
+            self._incomplete(CODE_NOTHING)
+            return
+        for (role, _scope, _slot), _ref in run_keys:
             kind = _KIND_BY_ROLE[role]
-            pillar = observed.get(kind) if RUN_ROLE_BY_KIND.get(kind) == role else None
-            want = declared.get(kind)
-            if pillar is None:
-                # not observable here (e.g. a Backend-minted search space): the
-                # Backend's own proposal stands, checked against a declaration if any
-                if want is not None and want.version_ref != advertised:
-                    if self._mode == MODE_STRICT:
-                        raise LegendError(
-                            CODE_DRIFT, "observed identity differs from declared"
-                        )
-                run_refs[key] = advertised
-                continue
-            result, _drifted = self._observe(pillar, want)
-            run_refs[key] = result.version_ref
-            if kind == c.KIND_CONFIGURATION:
-                self._run_entities[kind] = result.entity_ref
-        # A declaration for a kind the run neither observes nor advertises cannot be
-        # honoured: refuse in strict mode rather than run unchecked.
-        covered = {
-            _KIND_BY_ROLE[role] for (role, scope, _s) in run_refs if scope == SCOPE_RUN
-        }
+            observable = role in _ATTESTED_ROLES or (
+                RUN_ROLE_BY_KIND.get(kind) == role and kind in observed
+            )
+            if not observable:
+                self._incomplete(CODE_INCOMPLETE)
+                return
+        # A declaration for a kind the run does not carry cannot be honoured.
+        covered = {_KIND_BY_ROLE[role] for (role, _s, _n), _r in run_keys}
         if self._mode == MODE_STRICT and any(k not in covered for k in declared):
             raise LegendError(CODE_DRIFT, "declared pillar is not part of the run")
+        run_refs: dict[SlotKey, str] = {}
+        for key, advertised in run_keys:
+            role = key[0]
+            kind = _KIND_BY_ROLE[role]
+            want = declared.get(kind)
+            if role in _ATTESTED_ROLES:
+                if (
+                    want is not None
+                    and want.version_ref != advertised
+                    and self._mode == MODE_STRICT
+                ):
+                    raise LegendError(
+                        CODE_DRIFT, "observed identity differs from declared"
+                    )
+                run_refs[key] = advertised  # Backend-attested, never SDK-observed
+                continue
+            result, _drifted = self._observe(observed[kind], want)
+            run_refs[key] = result.version_ref
+            self._run_entities[kind] = result.entity_ref
         self._run_observed = run_refs
         data = self._post(
             {"run_observed": _observation_items(run_refs), "mode": self._mode}
         )
         self.run_tuple_digest = str(data["run_tuple_digest"])
+        self.run_admitted = True
 
     def admit_trial(
         self,
@@ -436,32 +466,39 @@ class LegendRunBinder:
         trial_block: LegendBlock,
         observed: Mapping[str, Pillar],
     ) -> None:
-        """Re-check the configuration this trial will actually evaluate, then admit it.
+        """Re-check what this trial will actually execute, then admit it.
 
-        ``observed`` maps a pillar kind to what is about to run (normally only the
-        configuration). Inherited run slots are the ones already admitted. Strict mode
-        refuses a trial whose observation differs from the Backend's proposal for it.
+        ``observed`` maps a pillar kind to what is about to run: the configuration and
+        the executed candidate (agent) identity. Inherited run slots are the ones already
+        admitted. A trial slot with no observation is never filled from the Backend's
+        suggestion: strict refuses, permitted leaves the trial unadmitted.
         """
         if not isinstance(trial_id, str) or not _OPAQUE_ID_RE.fullmatch(trial_id):
             raise LegendError("invalid_request", "trial id must be an opaque id")
         if trial_block.trial_ref is None:
             raise LegendError("invalid_request", "trial block carries no trial ref")
+        if not self.run_admitted:
+            return  # the run base never froze; a trial cannot be admitted (reason kept)
+        for key, _ref in trial_block.bindings:
+            role, scope, _slot = key
+            kind = _KIND_BY_ROLE[role]
+            if scope == SCOPE_RUN:
+                if key not in self._run_observed:
+                    self._incomplete(CODE_INCOMPLETE)
+                    return
+            elif not (TRIAL_ROLE_BY_KIND.get(kind) == role and kind in observed):
+                self._incomplete(CODE_INCOMPLETE)
+                return
         trial_observed: dict[SlotKey, str] = {}
         for key, advertised in trial_block.bindings:
-            role, scope, slot = key
+            role, scope, _slot = key
             if scope == SCOPE_RUN:
-                # frozen at run admission: report exactly what was admitted
-                trial_observed[key] = self._run_observed.get(key, advertised)
+                trial_observed[key] = self._run_observed[
+                    key
+                ]  # exactly what was admitted
                 continue
             kind = _KIND_BY_ROLE[role]
-            pillar = (
-                observed.get(kind) if TRIAL_ROLE_BY_KIND.get(kind) == role else None
-            )
-            if pillar is None:
-                trial_observed[key] = advertised
-                continue
-            entity = self._run_entities.get(kind)
-            result = self._declare(pillar, entity=entity)
+            result = self._declare(observed[kind], entity=self._run_entities.get(kind))
             if result.version_ref != advertised and self._mode == MODE_STRICT:
                 raise LegendError(CODE_DRIFT, "trial differs from its suggestion")
             trial_observed[key] = result.version_ref
@@ -512,18 +549,43 @@ def start_binder(
     )
 
 
+def candidate_pillar(
+    identity_run: Any, evaluation_config: Mapping[str, Any]
+) -> Pillar | None:
+    """The agent build the trial will EXECUTE (applied config included), or ``None``.
+
+    Derived from the run's content-identity snapshot at the execution seam; ``None``
+    when there is no snapshot or the build cannot be stated honestly."""
+    if identity_run is None:
+        return None
+    try:
+        version, _reason = identity_run._version_for(dict(evaluation_config))
+    except Exception:  # noqa: BLE001 - identity never blocks a run
+        return None
+    digest = version.get("build_digest") if isinstance(version, Mapping) else None
+    if not isinstance(digest, str):
+        return None
+    return Pillar(
+        c.KIND_AGENT,
+        c.SCHEME_BY_KIND[c.KIND_AGENT],
+        None,
+        digest,
+        c.IDENTITY_SDK_FINGERPRINTED,
+    )
+
+
 def admit_trial_config(
     binder: LegendRunBinder,
     trial_id: str,
     raw_trial_block: Any,
     evaluation_config: Mapping[str, Any],
+    candidate: Pillar | None = None,
 ) -> None:
-    """Re-check and admit one trial's ACTUAL configuration (the one about to be evaluated).
+    """Re-check and admit one trial's ACTUAL configuration and executed candidate.
 
     A trial block that is not the Backend's enabled trial block (or carries no trial
-    ref) means the Backend did not issue a Legend context for this trial: nothing to
-    admit. A configuration that cannot be fingerprinted is refused in strict mode (it
-    cannot be shown to match) and left to the Backend's proposal in permitted mode.
+    ref) means the Backend issued no Legend context for this trial: nothing to admit.
+    An identity that cannot be derived stays missing (never taken from the suggestion).
     """
     block = parse_block(raw_trial_block)
     if block is None or block.trial_ref is None:
@@ -534,8 +596,95 @@ def admit_trial_config(
             c.KIND_CONFIGURATION, ConfigurationSource(dict(evaluation_config))
         )
     except LegendError:
-        if binder.mode == MODE_STRICT:
-            raise LegendError(
-                CODE_DRIFT, "trial configuration cannot be fingerprinted"
-            ) from None
+        pass
+    if candidate is not None:
+        observed[c.KIND_AGENT] = candidate
     binder.admit_trial(trial_id=trial_id, trial_block=block, observed=observed)
+
+
+class LegendTrialRefused(LegendError):
+    """A Legend refusal before a trial's evaluation; carries the ISSUED backend trial id."""
+
+    def __init__(self, code: str, backend_trial_id: str) -> None:
+        super().__init__(code, "trial refused by Legend admission")
+        self.backend_trial_id = backend_trial_id
+
+
+#: Closed contract error codes the Backend may answer with.
+CLOSED_CODES = frozenset(
+    {
+        "invalid_request",
+        "unknown_ref",
+        "foreign_ref",
+        "flag_disabled",
+        "conflicting_report",
+        "manifest_mismatch",
+        "conflicting_idempotency_payload",
+        "store_unavailable",
+        "store_not_configured",
+        "internal_error",
+    }
+)
+
+
+def closed_error_code(status: int, body: Any) -> str:
+    """A closed code from an error response: the body's own if closed, else the status's."""
+    if isinstance(body, Mapping):
+        for field_name in ("error_code", "code", "error"):
+            value = body.get(field_name)
+            if isinstance(value, str) and value in CLOSED_CODES:
+                return value
+    if status == 400:
+        return "invalid_request"
+    if status in (401, 403):
+        return "foreign_ref"
+    if status == 404:
+        return "unknown_ref"
+    if status == 409:
+        return "conflicting_report"
+    return "internal_error"
+
+
+class BackendLegendTransport:
+    """Declare + admission over the SDK's existing authenticated backend client.
+
+    ``client.legend_post_sync(suffix, body)`` owns auth, URL sanitising, bounded
+    timeouts and transient retry; this class only chooses routes and shapes results.
+    """
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    def _call(self, suffix: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
+        try:
+            data = self._client.legend_post_sync(suffix, dict(body))
+        except LegendError:
+            raise
+        except Exception:  # noqa: BLE001 - auth/network detail is never surfaced
+            raise LegendError("store_unavailable") from None
+        if not isinstance(data, Mapping):
+            raise LegendError("internal_error")
+        return data
+
+    def declare(self, payload: Mapping[str, Any]) -> DeclareResult:
+        data = self._call(ROUTE_DECLARE, payload)
+        try:
+            return DeclareResult(
+                str(data["version_ref"]),
+                str(data["entity_ref"]),
+                bool(data.get("created_version", data.get("created"))),
+                str(data["event_ref"]),
+            )
+        except (KeyError, TypeError):
+            raise LegendError("internal_error") from None
+
+    def admit(self, session_id: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
+        suffix = f"/sessions/{quote(session_id, safe='')}/legend/admission"
+        return self._call(suffix, body)
+
+
+def transport_for_client(client: Any) -> RunBindingTransport | None:
+    """The authenticated HTTP transport for ``client``, or ``None`` if it cannot POST."""
+    if client is not None and callable(getattr(client, "legend_post_sync", None)):
+        return BackendLegendTransport(client)
+    return None

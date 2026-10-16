@@ -2205,6 +2205,83 @@ class BackendIntegratedClient:
             raise CloudServiceError("Agent-head response carried a negative generation")
         return generation
 
+    def _build_api_url(self, suffix: str) -> str | None:
+        """``api_base_url`` + ``suffix`` (sanitized like the other sync URL builders)."""
+        parsed = urlparse(self.api_base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+        if (
+            parsed.username
+            or parsed.password
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        return cast(
+            str,
+            urlunparse(
+                parsed._replace(
+                    path=f"{parsed.path.rstrip('/')}{suffix}",
+                    params="",
+                    query="",
+                    fragment="",
+                )
+            ),
+        )
+
+    def legend_post_sync(self, suffix: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """POST a closed Pillar Legend body with the SDK's own backend auth.
+
+        ``suffix`` is ``/legend/declare`` or ``/sessions/<id>/legend/admission``.
+        Bounded timeout, transient-failure retry (the body, and so its idempotency
+        key, is unchanged on every attempt), fail-closed auth. Raises
+        :class:`traigent.legend.errors.LegendError` with a closed code only; a
+        response body is never echoed.
+        """
+        from traigent.legend.errors import LegendError
+        from traigent.legend.run_binding import closed_error_code
+
+        self._raise_if_backend_egress_disabled("legend request")
+        try:
+            import requests
+        except ImportError as exc:  # pragma: no cover - requests is required
+            raise CloudServiceError("requests is unavailable") from exc
+        url = self._build_api_url(suffix)
+        if not url:
+            raise LegendError("store_unavailable")
+        headers = self._get_sync_auth_headers(target="backend")
+
+        def _post() -> Any:
+            try:
+                response = requests.post(  # nosec B113 - timeout is provided
+                    url,
+                    json=payload,
+                    headers=headers,
+                    timeout=min(self.timeout, 30.0),
+                )
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                ConnectionError,
+                TimeoutError,
+            ) as exc:
+                raise _SyncBackendTransientError(
+                    "Legend request transport failed"
+                ) from exc
+            _raise_for_transient_backend_response(response, "Legend request")
+            return response
+
+        response = _run_sync_backend_request_with_retry("Legend request", _post)
+        if response.status_code >= 400:
+            body: Any = None
+            try:
+                body = response.json()
+            except Exception:  # noqa: BLE001 - unreadable body => status-derived code
+                body = None
+            raise LegendError(closed_error_code(response.status_code, body))
+        return self._extract_backend_data(response)
+
     def publish_best_config_sync(
         self,
         spec: dict[str, Any],

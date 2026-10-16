@@ -653,3 +653,271 @@ def test_backend_block_is_carried_verbatim_and_absent_stays_none() -> None:
     assert TraigentSessionApiResult("s", "e", "r").legend is None
     assert SessionCreationResult.connected("s", legend=blk).legend == blk
     assert SessionCreationResult.connected("s").legend is None
+
+
+# ----------------------------------------------------------------- never fill from proposals
+@pytest.mark.asyncio
+async def test_unobserved_slot_is_never_copied_from_the_proposal_strict_refuses() -> (
+    None
+):
+    server = FakeServer()
+    # a dataset slot is advertised but this run has no key grant, so none is observed
+    adv = block([("run_base_configuration", vref(7)), ("dataset", vref(8))])
+    with pytest.raises(LegendError) as err:
+        await _run(adv, LegendOptions(transport=server), [{"param1": 1}])
+    assert err.value.code == "local_observation_incomplete"
+    assert server.calls == []  # no declaration, no admission: nothing was written
+
+
+@pytest.mark.asyncio
+async def test_unobserved_slot_leaves_the_run_unadmitted_when_permitted() -> None:
+    server = FakeServer()
+    adv = block([("run_base_configuration", vref(7)), ("dataset", vref(8))])
+    plan = [
+        {
+            "param1": 1,
+            "_traigent_backend_trial_id": "t_1",
+            "_traigent_legend_trial": _trial_block(
+                1, vref(3), [("run_base_configuration", vref(7)), ("dataset", vref(8))]
+            ),
+        }
+    ]
+    ev, orch, _ = await _run(
+        adv, LegendOptions(mode="permitted", transport=server), plan
+    )
+    assert ev.count == 2  # the run proceeds (baseline + one trial)
+    assert server.calls == [] and server.admissions == []
+    assert orch._legend_binder is not None
+    assert orch._legend_binder.unadmitted_reason == "local_observation_incomplete"
+    assert vref(8) not in json.dumps(server.admissions)
+
+
+@pytest.mark.asyncio
+async def test_search_space_is_backend_attested_and_everything_else_observed() -> None:
+    server = FakeServer()
+    adv = block([("run_base_configuration", vref(7)), ("search_space", vref(9))])
+    await _run(adv, LegendOptions(mode="permitted", transport=server), [{"param1": 1}])
+    obs = {
+        o["binding_role"]: o["version_ref"]
+        for o in server.admissions[0]["run_observed"]
+    }
+    assert obs["search_space"] == vref(9)
+    assert obs["run_base_configuration"] != vref(7)  # observed, not the proposal
+
+
+def test_trial_candidate_is_derived_from_the_executed_build_never_the_suggestion() -> (
+    None
+):
+    from traigent.legend.run_binding import candidate_pillar
+
+    class _Run:
+        def _version_for(self, cfg):  # type: ignore[no-untyped-def]
+            return {
+                "agent_id": "a",
+                "build_digest": "sha256:" + "a" * 64,
+                "manifest": {},
+            }, None
+
+    assert candidate_pillar(None, {"x": 1}) is None  # no snapshot => missing
+    pillar = candidate_pillar(_Run(), {"x": 1})
+    assert pillar is not None and pillar.fingerprint == "sha256:" + "a" * 64
+
+    server = FakeServer()
+    binder = _binder_for(server, [("run_base_configuration", vref(7))])
+    from traigent.legend.run_binding import pillars_from_content_identity
+
+    binder.admit_run(pillars_from_content_identity(None, {"param1": 1}))
+    tb = parse_block(
+        block(
+            [("run_base_configuration", vref(7))],
+            trial=(
+                f"trialref_{1:032x}",
+                [
+                    ("trial_configuration", "trial", vref(3)),
+                    ("trial_candidate", "trial", vref(4)),
+                ],
+            ),
+        )
+    )
+    assert tb is not None
+    cfg = pillars_from_content_identity(None, {"param1": 2})
+    # candidate not derivable: permitted leaves the trial unadmitted, nothing copied
+    binder.admit_trial(trial_id="t_1", trial_block=tb, observed=cfg)
+    assert [a for a in server.admissions if "trial_id" in a] == []
+    assert binder.unadmitted_reason == "local_observation_incomplete"
+    binder.unadmitted_reason = None
+    binder.admit_trial(
+        trial_id="t_1", trial_block=tb, observed={**cfg, c.KIND_AGENT: pillar}
+    )
+    sent = [a for a in server.admissions if "trial_id" in a][0]["trial_observed"]
+    roles = {o["binding_role"]: o["version_ref"] for o in sent}
+    assert roles["trial_candidate"] not in (vref(4),)
+    assert (
+        server.versions[roles["trial_candidate"]]["fingerprint"] == pillar.fingerprint
+    )
+
+
+def _binder_for(server: FakeServer, bindings: list[tuple[str, str]]) -> LegendRunBinder:
+    b = start_binder(
+        session_id="sess_1",
+        raw_block=block(bindings),
+        options=LegendOptions(mode="permitted", transport=server),
+        privacy_enabled=False,
+    )
+    assert b is not None
+    return b
+
+
+@pytest.mark.asyncio
+async def test_parallel_refusal_finalizes_the_issued_trial_as_not_executed() -> None:
+    from traigent.api.types import TrialStatus
+    from traigent.legend.run_binding import LegendTrialRefused
+
+    server = FakeServer()
+    suggested = _config_ref(server, {"param1": 1})
+    plan = [
+        {
+            "param1": 2,  # differs from the suggestion => strict refusal pre-evaluation
+            "_traigent_backend_trial_id": "issued_1",
+            "_traigent_legend_trial": _trial_block(
+                1, suggested.version_ref, [("run_base_configuration", vref(7))]
+            ),
+        }
+    ]
+    optimizer = _Optimizer({"param1": [0, 1, 2]}, ["accuracy"])
+    optimizer.plan = plan
+    evaluator = _Evaluator()
+    orch = OptimizationOrchestrator(
+        optimizer=optimizer,
+        evaluator=evaluator,
+        max_trials=3,
+        parallel_trials=2,
+        default_config={"param1": 1},
+        config=TraigentConfig(no_egress=True, enable_usage_analytics=False),
+    )
+    orch.legend_options = LegendOptions(transport=server)
+    orch.backend_session_manager.create_session = lambda **kw: SessionContext(  # type: ignore[method-assign]
+        "s", "d", "f", "o", 0.0, legend=block([("run_base_configuration", vref(7))])
+    )
+    handled: list[Any] = []
+    real = orch._handle_trial_result
+
+    async def spy(**kw: Any) -> Any:
+        handled.append(kw["trial_result"])
+        return await real(**kw)
+
+    orch._handle_trial_result = spy  # type: ignore[method-assign]
+
+    async def f(input_data: dict[str, Any], **cfg: Any) -> Any:
+        return "x"
+
+    with pytest.raises((LegendTrialRefused, OptimizationError)):
+        await orch.optimize(f, Dataset([EvaluationExample({"q": "a"}, "b")], name="ds"))
+    refused = [t for t in handled if t.trial_id == "issued_1"]
+    assert refused and refused[0].status == TrialStatus.CANCELLED  # not FAILED
+    assert refused[0].metadata["backend_trial_id_acquired"] is True
+    assert 2 not in [cfg.get("param1") for cfg in evaluator.configs]
+
+
+# ----------------------------------------------------------------------- HTTP transport
+class _FakeClient:
+    """Stands in for the authenticated backend client: records route + body."""
+
+    def __init__(self, server: FakeServer) -> None:
+        self.server = server
+        self.posts: list[tuple[str, dict[str, Any]]] = []
+
+    def legend_post_sync(self, suffix: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self.posts.append((suffix, json.loads(json.dumps(payload))))
+        if suffix == "/legend/declare":
+            r = self.server.declare(payload)
+            return {
+                "version_ref": r.version_ref,
+                "entity_ref": r.entity_ref,
+                "event_ref": r.event_ref,
+                "created_version": r.created,
+            }
+        return self.server.admit("x", payload)
+
+
+@pytest.mark.asyncio
+async def test_backend_flag_on_binds_through_the_authenticated_client(
+    schemas: Any,
+) -> None:
+    server = FakeServer()
+    client = _FakeClient(server)
+    optimizer = _Optimizer({"param1": [0, 1]}, ["accuracy"])
+    optimizer.plan = []
+    orch = OptimizationOrchestrator(
+        optimizer=optimizer,
+        evaluator=_Evaluator(),
+        max_trials=1,
+        config=TraigentConfig(no_egress=True, enable_usage_analytics=False),
+        default_config={"param1": 1},
+    )
+    orch.backend_client = client  # type: ignore[assignment]
+    orch.backend_session_manager.create_session = lambda **kw: SessionContext(  # type: ignore[method-assign]
+        "sess_1",
+        "d",
+        "f",
+        "o",
+        0.0,
+        legend=block([("run_base_configuration", vref(7))]),
+    )
+
+    async def f(input_data: dict[str, Any], **cfg: Any) -> Any:
+        return "x"
+
+    await orch.optimize(f, Dataset([EvaluationExample({"q": "a"}, "b")], name="ds"))
+    routes = [r for r, _ in client.posts]
+    assert routes == ["/legend/declare", "/sessions/sess_1/legend/admission"]
+    schemas.validate("legend_requests_v0.json", "DeclareRequestV0", client.posts[0][1])
+    assert set(client.posts[1][1]) == {"run_observed", "mode"}
+
+
+def test_backend_client_posts_with_auth_bounded_timeout_and_closed_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import MagicMock
+
+    import requests
+
+    from traigent.cloud.backend_client import BackendIntegratedClient
+    from traigent.legend.run_binding import BackendLegendTransport
+
+    client = BackendIntegratedClient.__new__(BackendIntegratedClient)
+    client.api_base_url = "https://api.example.test/api/v1"  # type: ignore[attr-defined]
+    client.timeout = 120.0  # type: ignore[attr-defined]
+    client._raise_if_backend_egress_disabled = lambda *_a, **_k: None  # type: ignore[method-assign]
+    client._get_sync_auth_headers = lambda target="backend": {
+        "Authorization": "Bearer t"
+    }  # type: ignore[method-assign]
+    seen: dict[str, Any] = {}
+
+    def fake_post(url: str, json: Any, headers: Any, timeout: Any) -> Any:
+        seen.update(url=url, json=json, headers=headers, timeout=timeout)
+        resp = MagicMock()
+        resp.status_code = status["code"]
+        resp.json.return_value = status["body"]
+        resp.text = ""
+        resp.headers = {}
+        return resp
+
+    status: dict[str, Any] = {
+        "code": 200,
+        "body": {"data": {"run_tuple_digest": "sha256:" + "0" * 64}},
+    }
+    monkeypatch.setattr(requests, "post", fake_post)
+    out = BackendLegendTransport(client).admit(
+        "s1", {"run_observed": [], "mode": "strict"}
+    )
+    assert out["run_tuple_digest"].startswith("sha256:")
+    assert seen["url"] == "https://api.example.test/api/v1/sessions/s1/legend/admission"
+    assert seen["headers"]["Authorization"] == "Bearer t" and seen["timeout"] == 30.0
+    assert seen["json"] == {"run_observed": [], "mode": "strict"}
+    status.update(code=409, body={"error_code": "manifest_mismatch", "message": CANARY})
+    with pytest.raises(LegendError) as err:
+        BackendLegendTransport(client).admit(
+            "s1", {"run_observed": [], "mode": "strict"}
+        )
+    assert err.value.code == "manifest_mismatch" and CANARY not in str(err.value)

@@ -513,7 +513,9 @@ class TrialLifecycle:
         # Pillar Legend: re-check the configuration this trial will actually
         # evaluate, immediately before any evaluator or model call. A strict
         # refusal propagates (nothing has been invoked yet). No binder => no-op.
-        await self._admit_legend_trial(config, evaluation_config, backend_trial_id)
+        await self._admit_legend_trial(
+            config, evaluation_config, backend_trial_id, func, dataset
+        )
 
         # Phase 2: Setup progress tracking and budget
         progress_callback, progress_state = self._create_progress_tracking(
@@ -545,6 +547,8 @@ class TrialLifecycle:
         config: Any,
         evaluation_config: dict[str, Any],
         backend_trial_id: Any,
+        func: Callable[..., Any],
+        dataset: Dataset,
     ) -> None:
         """Admit this trial's observed configuration when Legend run binding is on."""
         binder = getattr(self._orchestrator, "_legend_binder", None)
@@ -553,11 +557,30 @@ class TrialLifecycle:
         raw_block = config.get("_traigent_legend_trial")
         if raw_block is None or not isinstance(backend_trial_id, str):
             return
-        from traigent.legend.run_binding import admit_trial_config
-
-        await asyncio.to_thread(
-            admit_trial_config, binder, backend_trial_id, raw_block, evaluation_config
+        from traigent.legend.errors import LegendError
+        from traigent.legend.run_binding import (
+            LegendTrialRefused,
+            admit_trial_config,
+            candidate_pillar,
         )
+
+        # The candidate the trial will EXECUTE, derived here (never the suggestion).
+        candidate = candidate_pillar(
+            self._content_identity_run(func, dataset), evaluation_config
+        )
+        try:
+            await asyncio.to_thread(
+                admit_trial_config,
+                binder,
+                backend_trial_id,
+                raw_block,
+                evaluation_config,
+                candidate,
+            )
+        except LegendError as refusal:
+            # Pre-evaluation refusal: keep the ISSUED backend trial id so it can be
+            # finalized as not-executed instead of becoming a fabricated failure.
+            raise LegendTrialRefused(refusal.code, backend_trial_id) from refusal
 
     async def _execute_trial_with_tracing(
         self,
