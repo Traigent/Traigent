@@ -324,10 +324,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `traigent.utils.exceptions.ObjectiveDirectionOverrideWarning` naming the reserved
   keyword, its default direction, and the direction you declared. The Traigent Backend
   certificate for that run will refuse to assert a comparison claim for that objective,
-  because the declared direction contradicts the reserved keyword's preset (see
-  TraigentBackend's `front_claim_producer.check_preset_direction`); this warning surfaces
-  that at declaration time instead of only when the certificate is issued. No warning for
-  a bare name taking its canonical default, or for any custom (non-reserved) name.
+  because the declared direction contradicts the reserved keyword's preset; this warning
+  surfaces that at declaration time instead of only when the certificate is issued. No
+  warning for a bare name taking its canonical default, or for any custom (non-reserved) name.
 
 ### Fixed
 
