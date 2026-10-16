@@ -131,12 +131,10 @@ def build_snapshot() -> dict[str, Any]:
     from traigent.config.types import TraigentConfig
     from traigent.core.metadata_helpers import build_backend_metadata
 
-    # Scoped to this run: a bare ``os.environ`` write would leak an explicit cost
-    # limit into every later test in the same process.
-    run_env = {"TRAIGENT_COST_APPROVED": "true", "TRAIGENT_RUN_COST_LIMIT": "100.0"}
-    with mock.patch.dict(
-        os.environ, {k: v for k, v in run_env.items() if k not in os.environ}
-    ):
+    # No explicit TRAIGENT_RUN_COST_LIMIT: under honest cost a run that reports no
+    # cost is refused when a limit is set, by design. The approval flag is scoped
+    # to this call so nothing leaks into later tests in the same process.
+    with mock.patch.dict(os.environ, {"TRAIGENT_COST_APPROVED": "true"}):
         captured, result = asyncio.run(_run_optimize())
     trials = []
     for trial in result.trials:
