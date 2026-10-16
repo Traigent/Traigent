@@ -30,7 +30,7 @@ from __future__ import annotations
 import re
 import threading
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 from traigent.legend import _contract as c
@@ -69,6 +69,9 @@ _KIND_BY_ROLE: dict[str, str] = {
     "search_set": c.KIND_DATASET,
 }
 _MAX_BINDINGS = 64
+_ADVERTISABLE_SOURCES = frozenset(
+    {c.IDENTITY_SDK_FINGERPRINTED, c.IDENTITY_CLIENT_DECLARED}
+)
 _RUN_REF_RE = re.compile(r"runref_[0-9a-f]{32}")
 _TRIAL_REF_RE = re.compile(r"trialref_[0-9a-f]{32}")
 _OPAQUE_ID_RE = re.compile(r"[A-Za-z0-9_.\-]{1,128}")
@@ -182,9 +185,16 @@ class LegendBlock:
     # Declaring the observed identity UNDER that entity makes a matching fingerprint
     # resolve to the advertised version itself.
     entities: tuple[tuple[SlotKey, str], ...] = ()
+    # What the Backend's proposal is: (fingerprint_scheme, fingerprint, identity_source) per
+    # slot, when it advertises them. identity_source is immutable (first declaration wins), so
+    # an observation of the SAME fingerprint is declared with the advertised source.
+    proposals: tuple[tuple[SlotKey, tuple[str, str, str]], ...] = ()
 
     def entity_of(self, key: SlotKey) -> str | None:
         return dict(self.entities).get(key)
+
+    def proposal_of(self, key: SlotKey) -> tuple[str, str, str] | None:
+        return dict(self.proposals).get(key)
 
     def refs(self) -> dict[SlotKey, str]:
         return dict(self.bindings)
@@ -209,6 +219,7 @@ def parse_block(raw: Any) -> LegendBlock | None:
         return None
     parsed: list[tuple[SlotKey, str]] = []
     entities: list[tuple[SlotKey, str]] = []
+    proposals: list[tuple[SlotKey, tuple[str, str, str]]] = []
     seen: set[SlotKey] = set()
     for item in items:
         if not isinstance(item, Mapping):
@@ -234,7 +245,19 @@ def parse_block(raw: Any) -> LegendBlock | None:
             if not isinstance(entity, str) or not c.ENTITY_REF_RE.fullmatch(entity):
                 return None
             entities.append((key, entity))
-    return LegendBlock(run_ref, trial_ref, tuple(parsed), tuple(entities))
+        scheme = item.get("fingerprint_scheme")
+        fingerprint = item.get("fingerprint")
+        source = item.get("identity_source")
+        if (
+            isinstance(scheme, str)
+            and isinstance(fingerprint, str)
+            and 0 < len(fingerprint) <= 256
+            and source in _ADVERTISABLE_SOURCES
+        ):  # malformed or absent proposal details are ignored, never trusted
+            proposals.append((key, (scheme, fingerprint, source)))
+    return LegendBlock(
+        run_ref, trial_ref, tuple(parsed), tuple(entities), tuple(proposals)
+    )
 
 
 def pillars_from_content_identity(
@@ -350,6 +373,7 @@ class LegendRunBinder:
             pillar.fingerprint_scheme,
             pillar.key_id,
             pillar.fingerprint,
+            pillar.identity_source,
             entity,
             previous,
             initial_parent,
@@ -375,8 +399,27 @@ class LegendRunBinder:
             self._declared[memo] = result
         return result
 
+    @staticmethod
+    def _adopt_source(pillar: Pillar, proposal: tuple[str, str, str] | None) -> Pillar:
+        """Declare an observation that EQUALS the Backend's proposal (same scheme and
+        fingerprint) with the proposal's identity_source, which is immutable on its version;
+        anything else is the SDK's own computation (``sdk_fingerprinted``). Never retried."""
+        if proposal is None:
+            return pillar
+        scheme, fingerprint, source = proposal
+        if (
+            pillar.fingerprint_scheme == scheme
+            and pillar.fingerprint == fingerprint
+            and pillar.identity_source != source
+        ):
+            return replace(pillar, identity_source=source)
+        return pillar
+
     def _observe(
-        self, pillar: Pillar, declared: DeclaredVersion | None
+        self,
+        pillar: Pillar,
+        declared: DeclaredVersion | None,
+        proposal: tuple[str, str, str] | None = None,
     ) -> tuple[DeclareResult, bool]:
         """Declare an observed pillar; resolve drift against the declared version.
 
@@ -385,7 +428,7 @@ class LegendRunBinder:
         version in the declared entity.
         """
         entity = declared.entity_ref if declared is not None else None
-        result = self._declare(pillar, entity=entity)
+        result = self._declare(self._adopt_source(pillar, proposal), entity=entity)
         if declared is None or result.version_ref == declared.version_ref:
             if declared is None and entity is None:
                 self._note_new_entity(pillar.kind, result)
@@ -480,7 +523,11 @@ class LegendRunBinder:
             baseline = want or (
                 DeclaredVersion(advertised, entity) if entity is not None else None
             )
-            result, _drifted = self._observe(observed[kind], baseline)
+            result, _drifted = self._observe(
+                observed[kind],
+                baseline,
+                self._block.proposal_of(key) if want is None else None,
+            )
             run_refs[key] = result.version_ref
             self._run_entities[kind] = result.entity_ref
         self._run_observed = run_refs
@@ -539,7 +586,9 @@ class LegendRunBinder:
                 # the advertised version; a different one is drift (strict refuses,
                 # permitted records a same-entity child).
                 result, _drift = self._observe(
-                    pillar, DeclaredVersion(advertised, entity)
+                    pillar,
+                    DeclaredVersion(advertised, entity),
+                    trial_block.proposal_of(key),
                 )
                 trial_observed[key] = result.version_ref
             else:

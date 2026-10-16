@@ -1389,7 +1389,9 @@ _D7_ROLES = {
 }
 
 
-def _d7_admit_run(server: FakeServer, source: str) -> dict[str, DeclareResult]:
+def _d7_admit_run(
+    server: FakeServer, source: str, advertise: bool = False
+) -> dict[str, DeclareResult]:
     from traigent.legend.run_binding import pillars_from_content_identity
 
     pillars = pillars_from_content_identity(_D7_WIRE, {"param1": 1})
@@ -1398,6 +1400,10 @@ def _d7_admit_run(server: FakeServer, source: str) -> dict[str, DeclareResult]:
     for b in blk["bindings"]:
         kind = next(k for k, role in _D7_ROLES.items() if role == b["binding_role"])
         b["entity_ref"] = proposals[kind].entity_ref
+        if advertise:
+            b["fingerprint_scheme"] = pillars[kind].fingerprint_scheme
+            b["fingerprint"] = pillars[kind].fingerprint
+            b["identity_source"] = source
     binder = start_binder(
         session_id="sess_1",
         raw_block=blk,
@@ -1442,29 +1448,85 @@ def test_d7_a_mismatched_source_is_still_refused() -> None:
     }  # one attempt per slot, no alternate
 
 
-def test_d7_trial_configuration_declare_matches_the_advertised_source() -> None:
-    server = FakeServer()
-    cfg = compute_pillar(c.KIND_CONFIGURATION, ConfigurationSource({"param1": 3}))
-    proposal = _backend_proposal(server, cfg, c.IDENTITY_SDK_FINGERPRINTED)
+def _advertised_trial(
+    server: FakeServer, cfg: dict[str, Any], source: str, advertise: bool = True
+) -> tuple[DeclareResult, dict[str, Any]]:
+    pillar = compute_pillar(c.KIND_CONFIGURATION, ConfigurationSource(cfg))
+    proposal = _backend_proposal(server, pillar, source)
     blk = _trial_block(
         1,
         proposal.version_ref,
         [("run_base_configuration", vref(7))],
         entity=proposal.entity_ref,
     )
-    _admit_one(server, "strict", blk, {"param1": 3})
+    if advertise:
+        for b in blk["bindings"]:
+            if b["binding_role"] == "trial_configuration":
+                b["fingerprint_scheme"] = pillar.fingerprint_scheme
+                b["fingerprint"] = pillar.fingerprint
+                b["identity_source"] = source
+    return proposal, blk
+
+
+def _trial_observed_ref(server: FakeServer) -> str:
     sent = [a for a in server.admissions if "trial_id" in a][0]["trial_observed"]
-    assert [
+    return [
         o["version_ref"] for o in sent if o["binding_role"] == "trial_configuration"
-    ] == [proposal.version_ref]
-    bad = FakeServer()
-    old = _backend_proposal(bad, cfg, c.IDENTITY_CLIENT_DECLARED)
-    blk = _trial_block(
-        1, old.version_ref, [("run_base_configuration", vref(7))], entity=old.entity_ref
-    )
+    ][0]
+
+
+def test_d7_matching_digest_adopts_the_advertised_client_declared_source() -> None:
+    """The Backend hashed the suggestion itself (client_declared). The SDK's identical digest
+    is declared WITH the advertised source and returns the advertised version."""
+    server = FakeServer()
+    proposal, blk = _advertised_trial(server, {"param1": 3}, c.IDENTITY_CLIENT_DECLARED)
+    _admit_one(server, "strict", blk, {"param1": 3})
+    assert _trial_observed_ref(server) == proposal.version_ref
+    last = [d for d in server.declare_attempts if d["entity_ref"] is not None][-1]
+    assert last["identity_source"] == c.IDENTITY_CLIENT_DECLARED
+
+
+def test_d7_differing_digest_is_drift_declared_sdk_fingerprinted() -> None:
+    server = FakeServer()
+    proposal, blk = _advertised_trial(server, {"param1": 3}, c.IDENTITY_CLIENT_DECLARED)
     with pytest.raises(LegendError) as err:
-        _admit_one(bad, "strict", blk, {"param1": 3})
+        _admit_one(server, "strict", blk, {"param1": 4})
+    assert err.value.code == "manifest_mismatch"
+    _admit_one(server, "permitted", blk, {"param1": 4})
+    ref = _trial_observed_ref(server)
+    assert ref != proposal.version_ref
+    assert (
+        server.versions[ref]["entity_ref"] == proposal.entity_ref
+    )  # same-entity child
+    assert server.versions[ref]["identity_source"] == c.IDENTITY_SDK_FINGERPRINTED
+
+
+def test_d7_without_advertised_details_a_source_mismatch_is_refused_not_retried() -> (
+    None
+):
+    server = FakeServer()
+    _proposal, blk = _advertised_trial(
+        server, {"param1": 3}, c.IDENTITY_CLIENT_DECLARED, advertise=False
+    )
+    before = len(server.declare_attempts)
+    with pytest.raises(LegendError) as err:
+        _admit_one(server, "strict", blk, {"param1": 3})
     assert err.value.code == "invalid_request"
+    sdk_calls = [
+        d for d in server.declare_attempts[before:] if d["entity_ref"] is not None
+    ]
+    assert len(sdk_calls) == 1  # one attempt, no alternate source
+
+
+def test_d7_run_slots_adopt_advertised_sources_for_every_kind() -> None:
+    server = FakeServer()
+    proposals = _d7_admit_run(server, c.IDENTITY_CLIENT_DECLARED, advertise=True)
+    sent = {
+        o["binding_role"]: o["version_ref"]
+        for o in server.admissions[0]["run_observed"]
+    }
+    for kind, role in _D7_ROLES.items():
+        assert sent[role] == proposals[kind].version_ref
 
 
 def test_d7_hosted_dataset_is_identity_drift_not_a_source_mismatch() -> None:
