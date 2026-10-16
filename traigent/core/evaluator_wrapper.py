@@ -576,12 +576,23 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             row_reports_zero_provider_attempts(row) and not row_has_measured_cost(row)
             for row in all_metrics
         ):
-            # Rows that explicitly report zero provider attempts spent nothing:
-            # that is an established, measured zero, so materialize it for the
-            # cost keys no row reported (a sum over no rows would omit them).
-            for metric in _LLM_COST_METRICS:
-                if aggregated.get(metric) is None:
-                    aggregated[metric] = 0.0
+            # Rows that explicitly report zero provider attempts spent nothing.
+            # Fold the spend the other rows reported under ANY cost alias
+            # first (``cost`` is not one of the summed keys above), and only
+            # when no row reported any cost materialize the established
+            # measured zero (a sum over no rows would omit the keys).
+            reported = sum(
+                known_spend_lower_bound(row)
+                for row in all_metrics
+                if row_has_measured_cost(row)
+            )
+            if any(row_has_measured_cost(row) for row in all_metrics):
+                if aggregated.get("total_cost") is None:
+                    aggregated["total_cost"] = reported
+            else:
+                for metric in _LLM_COST_METRICS:
+                    if aggregated.get(metric) is None:
+                        aggregated[metric] = 0.0
 
         measured_rows = sum(
             1

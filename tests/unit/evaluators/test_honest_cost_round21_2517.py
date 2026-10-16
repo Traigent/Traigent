@@ -246,3 +246,48 @@ def test_only_zero_attempt_failed_rows_complete_with_cost_zero_under_explicit_li
     assert not trial.metrics.get("cost_unmeasured")
     assert trial.metrics.get("total_cost") == 0.0
     assert datetime.now(UTC)  # (keeps the import used)
+
+
+# --------------------------------------------------------------------------- #
+# Round 3 review: metadata-only pricing entries; zero-attempt rows keep spend   #
+# --------------------------------------------------------------------------- #
+def test_metadata_only_litellm_entry_is_unpriced_not_free(monkeypatch) -> None:
+    import litellm
+
+    from traigent.utils import cost_calculator as cc
+
+    _free_pricing(monkeypatch)
+    entry = "acme/metadata-only-model"
+    monkeypatch.setitem(litellm.model_cost, entry, {"litellm_provider": "acme"})
+    monkeypatch.setattr(cc, "_is_model_known_to_litellm", lambda m: m == entry)
+
+    assert cc.model_pricing_resolves(entry) is False
+    assert cc.model_pricing_resolves(_FREE) is True  # explicit custom 0 rates
+    assert cc.model_pricing_resolves("gpt-4o-mini") is True  # normally priced
+    assert cc.model_pricing_resolves(_UNKNOWN) is False
+
+
+def _wrapper_aggregate(rows, successes):
+    from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
+
+    results = [
+        ExampleResult(f"e{i}", {}, None, None, dict(r), 0.0, ok)
+        for i, (r, ok) in enumerate(zip(rows, successes, strict=True))
+    ]
+    wrapper = object.__new__(CustomEvaluatorWrapper)
+    return wrapper._aggregate_llm_metrics([r.metrics for r in results], results)
+
+
+def test_zero_attempt_row_does_not_overwrite_spend_reported_as_cost() -> None:
+    aggregated = _wrapper_aggregate(
+        [{"cost": 0.25}, {"provider_attempts": 0}], [True, False]
+    )
+    assert not aggregated.get("cost_unmeasured")
+    assert aggregated["total_cost"] == pytest.approx(0.25)
+
+
+def test_all_zero_attempt_rows_materialize_zero() -> None:
+    aggregated = _wrapper_aggregate(
+        [{"provider_attempts": 0}, {"provider_attempts": 0}], [False, False]
+    )
+    assert aggregated["total_cost"] == 0.0
